@@ -1222,9 +1222,11 @@ export function SessionMessageColumn({
       />
       {findOpen && (conversationFindError || conversationFind.error) ? <div role="alert">{conversationFindError || conversationFind.error}<button className="drawer-toggle compact secondary" type="button" onClick={() => { setConversationFindError(""); conversationFind.retry(); }}>Retry</button></div> : null}
       {conversationPaging && (conversationPaging.loading || conversationPaging.error) ? (
-        <div className="conversation-page-controls" aria-busy={conversationPaging.loading}>
-          {conversationPaging.loading ? <LoadingIndicator label="Loading Messages" /> : null}
-          {conversationPaging.error ? <><span role="alert">{conversationPaging.error}</span><button className="drawer-toggle compact secondary" type="button" onClick={conversationPaging.onRetry}>Retry</button></> : null}
+        <div className="conversation-page-feedback">
+          <div className="conversation-page-controls" aria-busy={conversationPaging.loading}>
+            {conversationPaging.loading ? <LoadingIndicator inline label="Loading Messages" /> : null}
+            {conversationPaging.error ? <><span role="alert">{conversationPaging.error}</span><button className="drawer-toggle compact secondary" type="button" onClick={conversationPaging.onRetry}>Retry</button></> : null}
+          </div>
         </div>
       ) : null}
       {conversationPaging ? <div className="conversation-live-request"><LiveRequestSurface

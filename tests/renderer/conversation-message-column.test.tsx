@@ -384,6 +384,196 @@ test("queued images load through their Main or Auxiliary conversation context", 
   }
 });
 
+async function mountScrollingConversation() {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  globals.forEach((key) => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }));
+  const previousAct = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  dom.window.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
+  dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
+  const history = (start: number) => Array.from({ length: Math.min(60, 600 - start) }, (_, index) => ({ role: "user" as const, text: `message ${start + index}`, historyIndex: start + index }));
+  const tail = history(540);
+  const requests: Array<{ id: string; start: number; resolve: (page: ConversationPage) => void; reject: (error: Error) => void }> = [];
+  const api: ConversationMessageColumnApi = {
+    getConversationPage: (id, request) => new Promise((resolve, reject) => requests.push({ id, start: request?.startIndex ?? 540, resolve, reject })),
+  };
+  const cache = new Map<string, ConversationColumnCache>();
+  let latest: ReturnType<typeof useConversationMessageColumn> = null;
+  let controls: ConversationColumnControls | undefined;
+  const column = () => { assert.ok(latest); return latest; };
+  const list = () => column().messageListRef.current!;
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    clientHeight: { configurable: true, get: () => 200 },
+    scrollHeight: { configurable: true, get: () => (latest?.messages.length ?? 60) * 40 },
+    getBoundingClientRect: { configurable: true, value: function (this: HTMLElement) {
+      return new dom.window.DOMRect(0, this.classList.contains("session-message-virtual-row") ? Number(this.dataset.index) * 40 - list().scrollTop : 0, 500, this.classList.contains("session-message-virtual-row") ? 40 : 200);
+    } },
+  });
+  function Probe({ id, enabled }: { id: string; enabled: boolean }) {
+    latest = useConversationMessageColumn({ session: { id, incarnationId: id, messages: tail, messageCount: 600 }, baseProps: createBaseProps(id), enabled, messageSourceKind: id === "aux" ? "auxiliary" : "session", api, stateCache: cache, liveRun: null, onColumnControls: (value) => { controls = value; } });
+    return <div ref={latest?.messageListRef} onScroll={latest?.onMessageListScroll}>{latest?.messages.map((message, index) => <div key={message.historyIndex} className="session-message-virtual-row" data-index={index}>{message.text}</div>)}</div>;
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = async (id = "main", enabled = true) => act(async () => root.render(<Probe id={id} enabled={enabled} />));
+  const flush = async () => act(async () => {
+    const callbacks = [...frames.values()]; frames.clear();
+    callbacks.forEach((callback) => callback(0));
+  });
+  const scroll = async (top: number) => {
+    await act(async () => {
+      list().dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: top <= list().scrollTop ? -1 : 1, bubbles: true }));
+      list().scrollTop = top;
+      list().dispatchEvent(new dom.window.Event("scroll"));
+    });
+    await flush();
+  };
+  const complete = async (request = requests.at(-1)!) => act(async () => request.resolve({ sessionId: request.id, incarnationId: request.id, startIndex: request.start, totalCount: 600, messages: history(request.start) }));
+  // This hook fixture consumes the restoration request; actual virtualizer geometry is checked separately.
+  const restore = async () => {
+    const jump = column().messageJumpRequest;
+    assert.ok(jump);
+    const index = column().messageKeys!.indexOf(jump.key);
+    assert.ok(index >= 0);
+    list().scrollTop = index * 40 - (jump.offset ?? 0);
+    await act(async () => column().onMessageListLayout?.());
+    await flush();
+  };
+  await render();
+  return { column, list, requests, cache, render, flush, scroll, complete, restore,
+    jump: async (key: string) => act(async () => { controls!.onJumpToMessage(key); }),
+    close: async () => {
+      await act(async () => root.unmount()); dom.window.close();
+      globals.forEach((key, index) => { const descriptor = previous[index]; if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); });
+      (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousAct;
+    },
+  };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryはスクロールで古い本文を連続取得し、重複なしの有限範囲と応答到着時の閲覧anchorを保持して新しい本文側と最新追従へ戻れる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの会話の追加読み込み" }
+// fault = "scrollから取得しない、既存本文を失う、本文を重複・無限蓄積する、要求時の古いanchorへ戻す、または過去page末尾を最新と扱う"
+// observable = "scroll後のAPI要求、列propsのhistoryIndex列・件数・追従状態、復元requestのkeyとoffset、Messages jump後の追加取得範囲"
+// observation_boundary = "component-behavior"
+// scope = "実conversation/follow hookと制御されたページAPI・行矩形。実virtualizerの最終描画位置は対象外"
+// lifecycle = "permanent"
+// impact = "長い会話をスクロールだけで読み返し、現在へ戻る主要導線と保持量を維持する"
+// distinction = "既存page testは取得callbackを直接呼ぶためscroll起点の結合を検出できない。小さい2会話fixtureで有限窓と実follow hookを確認する"
+// @end-test-value
+test("conversation scroll loads bounded history in both directions for Main and Auxiliary", async () => {
+  const view = await mountScrollingConversation();
+  try {
+    for (const id of ["main", "aux"]) {
+      await view.render(id);
+      await view.flush();
+      const initialReads = view.requests.length;
+      assert.equal(view.column().messages.length, 60);
+      assert.equal(view.column().isMessageListFollowing, true);
+      await view.scroll(93);
+      assert.equal(view.requests.length, initialReads + 1);
+      assert.equal(view.requests.at(-1)?.start, 480);
+      await view.scroll(133);
+      assert.equal(view.requests.length, initialReads + 1, "scrolls during a request do not duplicate it");
+      await view.complete();
+      assert.equal(view.column().messages.length, 120);
+      assert.deepEqual({ key: view.column().messageJumpRequest?.key, offset: view.column().messageJumpRequest?.offset }, { key: `session-${id}-543`, offset: -13 });
+      await view.restore();
+      for (const start of [420, 360]) {
+        await view.scroll(13);
+        assert.equal(view.requests.at(-1)?.start, start);
+        await view.complete();
+        assert.deepEqual(view.column().messages.map((message) => message.historyIndex), Array.from({ length: 180 }, (_, index) => start + index));
+        await view.restore();
+      }
+      await view.scroll(view.list().scrollHeight - view.list().clientHeight);
+      assert.equal(view.requests.at(-1)?.start, 540);
+      assert.equal(view.column().isMessageListFollowing, false, "a history-window boundary is not the conversation end");
+      await view.complete();
+      assert.deepEqual(view.column().messages.map((message) => message.historyIndex), Array.from({ length: 180 }, (_, index) => 420 + index));
+      await view.restore();
+      await view.scroll(view.list().scrollHeight - view.list().clientHeight);
+      assert.equal(view.column().isMessageListFollowing, true);
+      assert.equal(view.column().messages[0]?.historyIndex, 540);
+      await view.jump(`session-${id}-100`);
+      assert.equal(view.requests.at(-1)?.start, 70);
+      await view.complete();
+      assert.equal(view.column().messageJumpRequest?.key, `session-${id}-100`);
+      await view.restore();
+      await view.scroll(13);
+      assert.equal(view.requests.at(-1)?.start, 10);
+      await view.complete();
+      assert.deepEqual(view.column().messages.map((message) => message.historyIndex), Array.from({ length: 120 }, (_, index) => 10 + index));
+      await view.restore();
+      await view.scroll(13);
+      assert.equal(view.requests.at(-1)?.start, 0);
+      await view.complete();
+      assert.deepEqual(view.column().messages.map((message) => message.historyIndex), Array.from({ length: 130 }, (_, index) => index));
+      await view.restore();
+      const oldestReads = view.requests.length;
+      await view.scroll(0);
+      assert.equal(view.requests.length, oldestReads, "the oldest boundary does not reload overlapping pages");
+    }
+  } finally { await view.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "履歴の追加取得失敗は既存本文を保持し明示Retryだけで再開し、後続jump・会話切替・非表示後の応答は表示を上書きしない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの会話の追加読み込み" }
+// fault = "失敗を自動再試行する、Retryで範囲を置換する、または失効した追加取得を後続操作へ適用する"
+// observable = "API要求数、error・loading、historyIndex列、jump key、owner別表示、復帰時の要求範囲"
+// observation_boundary = "component-behavior"
+// scope = "実conversation hookのscroll取得と遅延応答・Retry・navigation。APIのみ制御しDOMの行矩形を固定する"
+// lifecycle = "permanent"
+// impact = "通信失敗や操作の競合で閲覧中の会話と位置を失わない"
+// distinction = "既存直接page取得testは追加結合のRetryとscroll要求の失効を通らない。制御promiseで待ち時間なく検証する"
+// @end-test-value
+test("conversation scroll retries preserve history and reject superseded requests", async () => {
+  const view = await mountScrollingConversation();
+  try {
+    await view.scroll(13);
+    await act(async () => view.requests[0].reject(new Error("page unavailable")));
+    assert.match(view.column().conversationPaging!.error, /page unavailable/);
+    assert.equal(view.column().messages[0]?.historyIndex, 540);
+    await view.scroll(14);
+    assert.equal(view.requests.length, 1);
+    await act(async () => { view.column().conversationPaging!.onRetry(); view.column().conversationPaging!.onRetry(); });
+    assert.equal(view.requests.length, 2);
+    await view.complete();
+    assert.equal(view.column().messages.length, 120);
+    await view.restore();
+    await view.scroll(13);
+    const superseded = view.requests.at(-1)!;
+    await view.jump("session-main-550");
+    await view.complete(superseded);
+    assert.equal(view.column().messages[0]?.historyIndex, 480);
+    assert.equal(view.column().messageJumpRequest?.key, "session-main-550");
+    await view.restore();
+    await view.scroll(13);
+    const hidden = view.requests.at(-1)!;
+    await view.render("main", false);
+    await view.render("main", true);
+    await view.complete(hidden);
+    assert.equal(view.column().messages[0]?.historyIndex, 480);
+    await view.restore();
+    await view.scroll(13);
+    const oldOwner = view.requests.at(-1)!;
+    await view.render("aux");
+    await view.complete(oldOwner);
+    assert.equal(view.column().sessionId, "aux");
+    assert.equal(view.column().messages[0]?.historyIndex, 540);
+    await view.render("main");
+    assert.equal(view.requests.at(-1)?.start, 450, "restore reloads around the visible global anchor");
+    await view.complete();
+    assert.ok(view.column().messageKeys?.includes("session-main-480"));
+  } finally { await view.close(); }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,

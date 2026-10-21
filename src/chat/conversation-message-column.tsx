@@ -23,6 +23,10 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { MarkdownImageContext, MarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
 
+const CONVERSATION_WINDOW_SIZE = CONVERSATION_PAGE_SIZE * 3;
+const CONVERSATION_LOAD_MARGIN = 96;
+type ConversationPageDirection = "earlier" | "later";
+
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
   "messages" | "messageCount" | "incarnationId" | "updatedAt" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors" | "accessMode" | "provider"
 >>;
@@ -107,6 +111,10 @@ export function useConversationMessageColumn({
   const [navigatorRevision, setNavigatorRevision] = useState(0);
   const pageRevision = useRef(0);
   const requestedPageStart = useRef<number | undefined>(undefined);
+  const requestedPageDirection = useRef<ConversationPageDirection | undefined>(undefined);
+  const inFlightPage = useRef<number | null>(null);
+  const capturePageAnchor = useRef<() => ConversationColumnCache["anchor"]>(() => undefined);
+  const loadAtBoundary = useRef<() => void>(() => {});
   const bookmarkRevision = useRef(0);
   const pageOwner = `${sessionId}:${session?.incarnationId ?? ""}`;
   const activePageOwner = useRef(pageOwner);
@@ -153,6 +161,8 @@ export function useConversationMessageColumn({
   const currentPage = browsePage?.sessionId === sessionId && (!session?.incarnationId || browsePage.incarnationId === session.incarnationId) ? browsePage : null;
   const isBrowsing = conversation.pageStart !== undefined;
   const messages = isBrowsing && currentPage ? currentPage.messages : tailMessages;
+  const displayedHistory = useRef(messages);
+  displayedHistory.current = messages;
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; };
@@ -160,10 +170,12 @@ export function useConversationMessageColumn({
   const refresh = useCallback(() => {
     if (mounted.current && displayedId.current === sessionId) rerender((revision) => revision + 1);
   }, [sessionId]);
-  const loadPage = useCallback(async (startIndex?: number): Promise<number | undefined> => {
+  const loadPage = useCallback(async (startIndex?: number, direction?: ConversationPageDirection): Promise<number | undefined> => {
     if (!api?.getConversationPage) return;
     requestedPageStart.current = startIndex;
+    requestedPageDirection.current = direction;
     const revision = ++pageRevision.current;
+    inFlightPage.current = revision;
     const mutationRevision = bookmarkRevision.current;
     const owner = pageOwner;
     setPageLoading(true);
@@ -172,27 +184,51 @@ export function useConversationMessageColumn({
       const page = await api.getConversationPage(sessionId, startIndex === undefined ? undefined : { startIndex });
       if (!mounted.current || activePageOwner.current !== owner || revision !== pageRevision.current) return;
       if (!page || page.sessionId !== sessionId || (session?.incarnationId && page.incarnationId !== session.incarnationId)) throw new Error("Conversation Is No Longer Available");
-      if (mutationRevision !== bookmarkRevision.current) return loadPage(startIndex);
-      conversation.pageStart = startIndex === undefined ? undefined : page.startIndex;
-      setBrowsePage(startIndex === undefined ? null : page);
-      const anchor = conversation.anchor;
+      if (mutationRevision !== bookmarkRevision.current) return loadPage(startIndex, direction);
+      const anchor = direction ? capturePageAnchor.current() : conversation.anchor;
+      let nextPage = page;
+      if (direction) {
+        if (!displayEnabled.current || !anchor) return;
+        const merged = new Map(displayedHistory.current
+          .map((message, index) => [getMessageHistoryIndex(message, index), message] as const)
+          .filter(([index]) => index < page.totalCount));
+        page.messages.forEach((message, index) => merged.set(getMessageHistoryIndex(message, page.startIndex + index), message));
+        const ordered = [...merged.entries()].sort(([left], [right]) => left - right);
+        const retained = direction === "earlier" ? ordered.slice(0, CONVERSATION_WINDOW_SIZE) : ordered.slice(-CONVERSATION_WINDOW_SIZE);
+        // The reader may have reversed direction while the request was in flight.
+        if (!retained.some(([index]) => `session-${sessionId}-${index}` === anchor.key)) return;
+        nextPage = { ...page, startIndex: retained[0][0], messages: retained.map(([, message]) => message) };
+      }
+      conversation.pageStart = startIndex === undefined ? undefined : nextPage.startIndex;
+      setBrowsePage(startIndex === undefined ? null : nextPage);
       if (anchor && startIndex !== undefined) conversation.messageJumpRequest = { sessionId, ...anchor, requestId: ++conversation.messageJumpRequestId };
       return revision;
     } catch (error) {
       if (activePageOwner.current === owner && revision === pageRevision.current) setPageError(error instanceof Error ? error.message : String(error));
     } finally {
+      if (inFlightPage.current === revision) inFlightPage.current = null;
       if (activePageOwner.current === owner && revision === pageRevision.current) setPageLoading(false);
     }
   }, [api, conversation, pageOwner, session?.incarnationId, sessionId]);
   useEffect(() => {
     ++pageRevision.current;
     requestedPageStart.current = conversation.pageStart;
+    requestedPageDirection.current = undefined;
     setBrowsePage(null);
     setPageError("");
     setPageLoading(false);
-    if (conversation.pageStart !== undefined) void loadPage(conversation.pageStart);
+    if (conversation.pageStart !== undefined) {
+      const anchorIndex = Number(conversation.anchor?.key.slice(`session-${sessionId}-`.length));
+      void loadPage(Number.isInteger(anchorIndex) ? Math.max(0, anchorIndex - CONVERSATION_PAGE_SIZE / 2) : conversation.pageStart);
+    }
     return () => { ++pageRevision.current; };
   }, [pageOwner]);
+  useEffect(() => {
+    if (!enabled && requestedPageDirection.current && inFlightPage.current === pageRevision.current) {
+      ++pageRevision.current;
+      setPageLoading(false);
+    }
+  }, [enabled]);
   useEffect(() => { setNavigatorFilter("all"); setNavigatorOffset(0); }, [pageOwner]);
   const navigator = useConversationQueryPages({
     identity: `${pageOwner}:${totalCount}:${session?.updatedAt ?? ""}:${navigatorRevision}:${navigatorFilter}`,
@@ -374,16 +410,21 @@ export function useConversationMessageColumn({
       const rect = row.getBoundingClientRect();
       if (rect.bottom <= listTop || rect.top >= listBottom) continue;
       const key = projection.keys[Number(row.dataset.index)];
-      if (key) conversation.anchor = { key, offset: rect.top - listTop };
+      if (key) {
+        conversation.anchor = { key, offset: rect.top - listTop };
+        return conversation.anchor;
+      }
       break;
     }
   }, [conversation, enabled, isBrowsing, projection.keys]);
+  capturePageAnchor.current = captureAnchor;
   const scheduleAnchorCapture = useCallback(() => {
     const element = following.messageListRef.current;
     if (!enabled || !element || anchorFrame.current !== null || (!isBrowsing && conversation.scrollState?.isFollowing)) return;
     anchorFrame.current = element.ownerDocument.defaultView!.requestAnimationFrame(() => {
       anchorFrame.current = null;
       captureAnchor();
+      loadAtBoundary.current();
     });
   }, [captureAnchor, conversation, enabled, isBrowsing]);
   useLayoutEffect(() => {
@@ -402,14 +443,10 @@ export function useConversationMessageColumn({
       refresh();
     }
   }, [enabled, pageOwner]);
-  const onMessageListScroll = useCallback((_event: UIEvent<HTMLDivElement>) => {
-    if (!enabled) return;
-    following.handleMessageListScroll();
-    scheduleAnchorCapture();
-  }, [following.handleMessageListScroll, scheduleAnchorCapture, enabled]);
   const followLatest = useCallback(() => {
     ++pageRevision.current;
     requestedPageStart.current = undefined;
+    requestedPageDirection.current = undefined;
     conversation.pageStart = undefined;
     conversation.anchor = undefined;
     conversation.scrollState = { scrollTop: 0, isFollowing: true };
@@ -418,6 +455,34 @@ export function useConversationMessageColumn({
     setPageLoading(false);
     following.followMessageListLatest();
   }, [conversation, following.followMessageListLatest]);
+  const onMessageListScroll = useCallback((_event: UIEvent<HTMLDivElement>) => {
+    if (!enabled) return;
+    following.handleMessageListScroll();
+    if (isBrowsing && conversation.scrollState?.isFollowing) {
+      const last = messages.at(-1);
+      if (last && getMessageHistoryIndex(last, messages.length - 1) >= totalCount - 1) {
+        followLatest();
+        return;
+      }
+      following.pauseMessageListFollowing();
+      conversation.scrollState.isFollowing = false;
+    }
+    scheduleAnchorCapture();
+  }, [following.handleMessageListScroll, following.pauseMessageListFollowing, scheduleAnchorCapture, enabled, isBrowsing, conversation, messages, totalCount, followLatest]);
+  loadAtBoundary.current = () => {
+    const element = following.messageListRef.current;
+    if (!enabled || !paged || !element || pageLoading || pageError || inFlightPage.current === pageRevision.current
+      || (!isBrowsing && conversation.scrollState?.isFollowing !== false) || !messages.length) return;
+    const first = getMessageHistoryIndex(messages[0], 0);
+    const end = getMessageHistoryIndex(messages[messages.length - 1], messages.length - 1) + 1;
+    if (element.scrollTop <= CONVERSATION_LOAD_MARGIN && first > 0) {
+      following.pauseMessageListFollowing();
+      void loadPage(Math.max(0, first - CONVERSATION_PAGE_SIZE), "earlier");
+    } else if (isBrowsing && element.scrollHeight - element.clientHeight - element.scrollTop <= CONVERSATION_LOAD_MARGIN && end < totalCount) {
+      following.pauseMessageListFollowing();
+      void loadPage(end, "later");
+    }
+  };
   const captureMessageListSend = useCallback((scrollToLatestOnSend: boolean) =>
     following.captureMessageListSend(scrollToLatestOnSend, followLatest), [followLatest, following.captureMessageListSend]);
   const onToggleMessageCollapse = (key: string) => {
@@ -521,6 +586,7 @@ export function useConversationMessageColumn({
     } else {
       ++pageRevision.current;
       requestedPageStart.current = conversation.pageStart;
+      requestedPageDirection.current = undefined;
       setPageLoading(false);
       setPageError("");
     }
@@ -656,7 +722,11 @@ export function useConversationMessageColumn({
     onJumpToBottom: followLatest,
     conversationPaging: session.messageCount !== undefined && api?.getConversationPage ? {
       loading: pageLoading, error: pageError,
-      onRetry: () => { setNavigatorRevision((revision) => revision + 1); void loadPage(requestedPageStart.current); },
+      onRetry: () => {
+        if (inFlightPage.current === pageRevision.current) return;
+        setNavigatorRevision((revision) => revision + 1);
+        void loadPage(requestedPageStart.current, requestedPageDirection.current);
+      },
     } : undefined,
     searchConversation: api?.searchConversation && session.messageCount !== undefined ? async (request) => {
       const outcome = await api.searchConversation!(sessionId, request);
@@ -675,6 +745,7 @@ export function useConversationMessageColumn({
       } else {
         ++pageRevision.current;
         requestedPageStart.current = conversation.pageStart;
+        requestedPageDirection.current = undefined;
         setPageLoading(false);
         setPageError("");
       }
