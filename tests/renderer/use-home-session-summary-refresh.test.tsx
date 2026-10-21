@@ -80,9 +80,9 @@ async function mount(t: TestContext) {
 
 // @test-value v2
 // kind = "contract"
-// claim = "初回debounce前の検索でも全scopeを初期化し、その後の検索はRecent/Pinnedを置換してopenと利用履歴の状態を維持し、focus・open ID変更・再有効化は全scopeを更新する"
+// claim = "適用済み検索には追加待機せずRecent/Pinnedを置換し、初回待機中なら全scopeを初期化する。以降の検索はopenと利用履歴を保持し、focus・open ID変更・再有効化は全scopeを更新する"
 // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md 再取得時の状態維持" }
-// fault = "初回全scope要求を検索で取消すか、検索ごとに検索非依存のreadを発行するか、full更新契機を検索専用へ縮小する"
+// fault = "適用済み検索に二重待機を加える、初回全scope要求を検索で取消す、検索ごとに検索非依存のreadを発行する、またはfull更新契機を検索専用へ縮小する"
 // observable = "hook経由のAPI要求scope・検索語・回数とopen/利用履歴の取得status・保持値"
 // observation_boundary = "component-behavior"
 // scope = "Home summary hookのdebounceと取得scope選択"
@@ -94,7 +94,6 @@ test("検索は一覧pageだけを置換し、初回とfull更新契機は独立
   const home = await mount(t);
   await home.render();
   await home.render("before-initial");
-  await home.tick();
   assert.deepEqual(home.pageRequests.map((request) => request.scope), ["recent", "pinned", "open"]);
   assert.equal(home.usageRequests, 1);
   const open = home.state.openSummaries;
@@ -103,8 +102,9 @@ test("検索は一覧pageだけを置換し、初回とfull更新契機は独立
   await home.render("latest");
   assert.equal(home.state.openStatus, "loaded");
   assert.equal(home.state.characterUsageStatus, "loaded");
-  await home.tick();
   assert.deepEqual(home.pageRequests.slice(3).map((request) => [request.scope, request.searchText]), [["recent", "latest"], ["pinned", "latest"]]);
+  await home.tick();
+  assert.equal(home.pageRequests.length, 5);
   assert.equal(home.usageRequests, 1);
   assert.equal(home.state.openSummaries, open);
   assert.equal(home.state.characterUsage, usage);
@@ -126,17 +126,17 @@ test("検索は一覧pageだけを置換し、初回とfull更新契機は独立
 
 // @test-value v2
 // kind = "invariant"
-// claim = "検索変更前後に届いた通知は失効中のreadがdebounce前に完了しても最新検索へ反映し、検索専用debounceはその後の独立情報を再取得しない"
+// claim = "検索変更前後に届いた通知は失効中のread完了後に最新検索へ反映し、検索変更で独立情報の更新を落とさず重複取得もしない"
 // oracle = { type = "contract", ref = "docs/features/home-session-pagination.md 再取得時の状態維持" }
 // fault = "query変更時に実行中またはpendingの通知IDを失うか、後続検索要求が独立情報のstatusをloadingのまま残す"
 // observable = "open APIへ渡す通知ID集合、利用履歴取得数、最新検索pageと各scopeのloaded状態"
 // observation_boundary = "component-behavior"
-// scope = "Home summary hookの検索debounceとSession通知の競合"
+// scope = "Home summary hookの検索適用とSession通知の競合"
 // lifecycle = "permanent"
 // impact = "検索中に更新されたopen Sessionの表示やRandomの利用履歴が古いまま残る"
-// distinction = "pure admissionのtestでは通らないlayout effect失効・subscription・120ms debounceの先後をdeferredで制御する"
+// distinction = "pure admissionのtestでは通らないlayout effect失効・subscription・検索適用の先後をdeferredで制御する"
 // @end-test-value
-test("検索変更前後の通知scopeをdebounce前の再取得へ引き継ぐ", async (t) => {
+test("検索変更前後の通知scopeを最新の再取得へ引き継ぐ", async (t) => {
   const home = await mount(t);
   await home.render();
   await home.tick();

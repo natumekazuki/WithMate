@@ -6,8 +6,10 @@ import { LoadError } from "../ui/load-error.js";
 import { renderHomePlusIcon, renderHomeSearchIcon } from "./home-icons.js";
 
 export type HomeHeaderProps = {
-  searchText: string;
+  searchInputText: string;
   onChangeSearchText: (value: string) => void;
+  onSearchCompositionStart?: () => void;
+  onSearchCompositionEnd?: (value: string) => void;
   onOpenLaunchDialog: () => void;
   canCreateSession: boolean;
   rightPaneView: "monitor" | "characters";
@@ -25,8 +27,10 @@ export type HomeHeaderProps = {
 };
 
 export function HomeHeader({
-  searchText,
+  searchInputText,
   onChangeSearchText,
+  onSearchCompositionStart,
+  onSearchCompositionEnd,
   onOpenLaunchDialog,
   canCreateSession,
   rightPaneView,
@@ -53,10 +57,12 @@ export function HomeHeader({
             className="toolbar-search-input"
             type="search"
             aria-label="Search Sessions And Characters"
-            value={searchText}
+            value={searchInputText}
             onChange={(event) => onChangeSearchText(event.target.value)}
+            onCompositionStart={onSearchCompositionStart}
+            onCompositionEnd={(event) => onSearchCompositionEnd?.(event.currentTarget.value)}
           />
-          {searchText ? (
+          {searchInputText ? (
             <button
               className="home-search-clear"
               type="button"

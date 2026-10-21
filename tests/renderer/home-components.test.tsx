@@ -1263,7 +1263,7 @@ describe("HomeRecentSessionsPanel", () => {
   // @end-test-value
   it("Session作成の準備が未完了の時は New Session が無効化される", () => {
     const html = renderToStaticMarkup(<HomeHeader
-      searchText=""
+      searchInputText=""
       onChangeSearchText={noOp}
       onOpenLaunchDialog={noOp}
       canCreateSession={false}
@@ -2158,7 +2158,7 @@ describe("HomeRightPane", () => {
     characterLoadStatus: "loading" | "loaded" | "error" = "loaded",
   ) => renderToStaticMarkup(<>
     <HomeHeader
-      searchText=""
+      searchInputText=""
       onChangeSearchText={noOp}
       onOpenLaunchDialog={noOp}
       canCreateSession

@@ -101,6 +101,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 閉じたpaneは非表示・操作不可にし、検索入力や一覧のDOMを保持する。左右の最小幅はそれぞれ300px／320pxとし、両側を表示できる幅があるときはWindow縮小後も比率を補正して最小幅を維持する。縮小だけで閉じたpaneを開かない
   - Monitor／Characters切替とSettings／Restore Sessions／独立Monitorの操作はHome共通headerに置く。切替は右寄せし、共通操作ボタン群の直前に置く。headerは左右分割の外に常設し、paneの幅調整・開閉で操作ボタンを移動・非表示にしない。開閉対象名は現在表示中のMonitor／Charactersへ合わせる
   - header左側には共通検索と＋iconの`New Session`を置く。検索は1つの語でRecentSessions、Home内Monitor、Charactersを絞り込み、対象切替は設けない。検索語はMonitor／Characters切替とpane開閉で保持し、`Clear Search`で全一覧の絞り込みを解除して検索inputへfocusを戻す。独立Monitor Windowへは共有しない
+  - 入力文字は即座に表示し、最後の入力から300ms後に共通の検索語を3一覧へ適用する。IME変換中は適用せず、確定値から待機する。空入力・`Clear Search`は待機中の検索を取り消して即座に解除する。Recent／Pinnedの取得中は前回の結果を保持し、scopeごとの取得成功時に置換する
   - Session検索は`taskTitle / workspacePath / workspaceLabel / kind label / Mainの保存済みCharacter表示名`のいずれかへの部分一致とする。Charactersはcatalogの名前のみを対象とする。前後の空白とASCIIの大文字小文字を無視し、AuxiliaryのCharacter名、会話本文、Character説明文は検索しない。通常SessionのCharacter名はcatalogの改名へ追従しない
   - 検索inputのplaceholderは表示せず、accessible nameは`Search Sessions And Characters`とする。`New Session`は表示中のpaneにかかわらず同じdialogを開き、初期データの準備状態によるdisabled条件は維持する。狭幅ではheaderの操作群を折り返し、検索・作成・共通操作へ到達可能にする
 - 2 カラムの外側とMonitorのAttention／Running／Stopped sectionを装飾cardで囲まず、余白と区切り線で構成する
@@ -112,7 +113,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 初期表示は `Monitor`
   - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで表示し、幅に応じて折り返す。直下のclick専用splitterで残量一覧だけを開閉し、閉じてもcomponentとcache購読を維持する。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、表示中のloading・取得失敗・前回値を区別する。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - 親Sessionは1行にまとめ、左側で`Main`状態をavatarと親titleへ近接させる。右端はSession Windowと共通のAuxiliary icon・状態別件数・展開矢印を一つのbuttonへまとめ、配下の一覧との関係を示す。列見出しは置かず、Auxiliaryがない親には右端のbuttonを表示しない。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない。状態と操作のaccessible name・tooltipは維持する
-  - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、`RecentSessions` と同じ filtered session list の交差集合を使う
+  - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、共通検索語に一致するSession summaryの交差集合を使う。Recent／Pinnedの再取得待ちで保持した旧pageを検索一致として扱わない
   - section
     - `Attention`: Main／Auxiliaryのいずれかに有効な承認待ち、質問・MCP form／URLの入力待ちがある親Session。Codexのblocking／nonblocking／async質問を含む。会話単位では取消状態を承認・入力待ちより優先するが、別の会話が承認・入力待ちなら親はこの枠へ入る
     - `Running`: Attentionに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）

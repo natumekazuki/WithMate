@@ -36,17 +36,20 @@ function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): Au
   const isActive = (session: AuxiliarySessionSummary) => ["running", "approval"].includes(getHomeAuxiliarySessionState(session).kind);
   return [...sessions].sort((left, right) => Number(isActive(right)) - Number(isActive(left)) || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id));
 }
-export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary[], openSessionWindowIds: readonly string[], sessionSearchText: string, auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = []): HomeSessionProjection {
+export function buildHomeSessionProjection(sessions: readonly HomeSessionSummary[], openSessionWindowIds: readonly string[], sessionSearchText: string, auxiliarySessionSummaries: readonly AuxiliarySessionSummary[] = [], pageSessionIds?: ReadonlySet<string>): HomeSessionProjection {
   const normalizedSessionSearch = sessionSearchText.trim().toLocaleLowerCase();
   const byParent = new Map<string, AuxiliarySessionSummary[]>();
   for (const auxiliary of auxiliarySessionSummaries) byParent.set(auxiliary.parentSessionId, [...(byParent.get(auxiliary.parentSessionId) ?? []), auxiliary]);
   for (const [id, auxiliaries] of byParent) byParent.set(id, sortAuxiliarySessions(auxiliaries));
-  const filteredSessionEntries = sessions.filter((session) => {
+  const matchesSearch = (session: HomeSessionSummary) => {
     if (!normalizedSessionSearch) return true;
     return [session.taskTitle, session.workspacePath, session.workspaceLabel, session.character, ...getHomeSessionKindSearchLabels(session)].map((value) => value.toLocaleLowerCase()).some((value) => value.includes(normalizedSessionSearch));
-  }).map((session) => { const auxiliarySessions = [...(byParent.get(session.id) ?? [])]; return { kind: "agent" as const, session, state: getHomeSessionState(session, auxiliarySessions), mainState: getHomeSessionState(session), auxiliarySessions }; });
+  };
+  // Page membership is already filtered by the backend; retain it until its replacement arrives.
+  const filteredSessionEntries = sessions.filter((session) => pageSessionIds?.has(session.id) || matchesSearch(session))
+    .map((session) => { const auxiliarySessions = [...(byParent.get(session.id) ?? [])]; return { kind: "agent" as const, session, state: getHomeSessionState(session, auxiliarySessions), mainState: getHomeSessionState(session), auxiliarySessions }; });
   const openIds = new Set(openSessionWindowIds);
-  const monitorEntries = filteredSessionEntries.filter(({ session }) => openIds.has(session.id));
+  const monitorEntries = filteredSessionEntries.filter(({ session }) => openIds.has(session.id) && matchesSearch(session));
   const approvalMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "approval");
   const runningMonitorEntries = monitorEntries.filter(({ state }) => state.kind === "running");
   const nonRunningMonitorEntries = monitorEntries.filter(({ state }) => state.kind !== "running" && state.kind !== "approval");

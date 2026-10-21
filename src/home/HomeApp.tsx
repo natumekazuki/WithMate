@@ -60,6 +60,7 @@ import {
   type HomeSessionSummariesState,
 } from "./home-session-summaries-state.js";
 import { useHomeSessionSummaryRefresh } from "./use-home-session-summary-refresh.js";
+import { useHomeSearchInput } from "./use-home-search-input.js";
 import { buildHomeRightPaneProps } from "./home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home-window-mode.js";
@@ -123,7 +124,13 @@ export default function HomeApp() {
     sessionIds: [],
   });
   const openSessionWindowIds = openSessionWindowIdsState.sessionIds;
-  const [sessionSearchText, setSessionSearchText] = useState("");
+  const {
+    inputText: searchInputText,
+    searchText: sessionSearchText,
+    onChangeInputText,
+    onCompositionStart,
+    onCompositionEnd,
+  } = useHomeSearchInput();
   const [pendingSessionPinIds, setPendingSessionPinIds] = useState<string[]>([]);
   const [sessionWindowRestoreIds, setSessionWindowRestoreIds] = useState<string[]>([]);
   const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
@@ -608,12 +615,16 @@ export default function HomeApp() {
       openSessionWindowIds,
       sessionSearchText,
       auxiliarySessionSummaries,
+      new Set([...sessionSummariesState.recentPages, ...sessionSummariesState.pinnedPages]
+        .flatMap(({ page }) => page.entries.map(({ id }) => id))),
     ),
     [
       auxiliarySessionSummaries,
       openSessionWindowIds,
       sessionSearchText,
       sessions,
+      sessionSummariesState.recentPages,
+      sessionSummariesState.pinnedPages,
     ],
   );
   const {
@@ -937,6 +948,7 @@ export default function HomeApp() {
     }),
     rightPane: buildHomeRightPaneProps({
       searchText: sessionSearchText,
+      searchInputText,
       canCreateSession: canUsePrimaryFeatures,
       providerQuota: <ProviderQuotaOverview api={getWithMateApi()} />,
       rightPaneView,
@@ -954,7 +966,9 @@ export default function HomeApp() {
       characterListFeedback,
       monitorWindowIcon: renderHomeMonitorWindowIcon(),
       handlers: {
-        onChangeSearchText: setSessionSearchText,
+        onChangeSearchText: onChangeInputText,
+        onSearchCompositionStart: onCompositionStart,
+        onSearchCompositionEnd: onCompositionEnd,
         onOpenLaunchDialog: homeLaunchHandlers.onOpenLaunchDialog,
         onChangeRightPaneView: setRightPaneView,
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),

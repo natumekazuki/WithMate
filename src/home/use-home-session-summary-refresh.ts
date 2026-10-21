@@ -60,7 +60,6 @@ export function useHomeSessionSummaryRefresh({
     if (searchChanged) {
       setSessionSummariesState((current) => ({
         ...current,
-        ...applyHomeSessionSummaryPages(current, { recent: [], pinned: [], open: current.openSummaries }),
         recentStatus: "loading",
         pinnedStatus: "loading",
         recentError: "",
@@ -93,9 +92,7 @@ export function useHomeSessionSummaryRefresh({
       : openSessionWindowIds.filter((id) => invalidation?.scope === "ids" && invalidation.sessionIds.includes(id));
     const refreshOpen = refreshAllOpen || currentOpenSessionIds.length > 0;
     setSessionSummariesState((current) => ({
-      ...(mode === "replace"
-        ? applyHomeSessionSummaryPages(current, { recent: [], pinned: [], open: current.openSummaries })
-        : current),
+      ...current,
       recentStatus: "loading",
       pinnedStatus: "loading",
       ...(refreshOpen ? { openStatus: "loading" as const } : {}),
@@ -198,11 +195,16 @@ export function useHomeSessionSummaryRefresh({
       return;
     }
 
-    const timer = window.setTimeout(() => {
+    const refresh = () => {
       const invalidation = sessionRefreshInvalidationRef.current;
       sessionRefreshInvalidationRef.current = null;
       void refreshSessionSummaries(sessionRefreshModeRef.current, invalidation);
-    }, 120);
+    };
+    if (sessionRefreshModeRef.current === "replace") {
+      refresh();
+      return;
+    }
+    const timer = window.setTimeout(refresh, 120);
     return () => window.clearTimeout(timer);
   }, [enabled, openSessionWindowIds, refreshSessionSummaries, sessionSearchText]);
 

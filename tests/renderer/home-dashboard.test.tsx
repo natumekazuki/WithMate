@@ -40,7 +40,7 @@ test("Homeは共通splitterの開閉と外側縮小でpaneと最小幅を保持�
   const renderScreen = (view: "monitor" | "characters" = "monitor") => root.render(<HomeDashboardScreen
     homePageClassName="home-page"
     header={<HomeHeader
-      searchText="keep this search"
+      searchInputText="keep this search"
       onChangeSearchText={() => {}}
       onOpenLaunchDialog={() => { launchCalls += 1; }}
       canCreateSession

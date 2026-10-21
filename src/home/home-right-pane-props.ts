@@ -12,6 +12,8 @@ import type {
 
 type HomeRightPaneHandlers = {
   onChangeSearchText: (value: string) => void;
+  onSearchCompositionStart?: () => void;
+  onSearchCompositionEnd?: (value: string) => void;
   onOpenLaunchDialog: () => void;
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
   onOpenSessionMonitorWindow: () => void;
@@ -29,6 +31,7 @@ type HomeRightPaneHandlers = {
 
 export type HomeRightPanePropsInput = {
   searchText: string;
+  searchInputText: string;
   canCreateSession: boolean;
   providerQuota?: ReactNode;
   rightPaneView: HomeRightPaneProps["rightPaneView"];
@@ -57,6 +60,7 @@ export type HomeRightPanePropsInput = {
 
 export function buildHomeRightPaneProps({
   searchText,
+  searchInputText,
   canCreateSession,
   providerQuota,
   rightPaneView,
@@ -84,8 +88,11 @@ export function buildHomeRightPaneProps({
 }: HomeRightPanePropsInput): HomeRightPaneProps & HomeHeaderProps {
   return {
     searchText,
+    searchInputText,
     canCreateSession,
     onChangeSearchText: handlers.onChangeSearchText,
+    onSearchCompositionStart: handlers.onSearchCompositionStart,
+    onSearchCompositionEnd: handlers.onSearchCompositionEnd,
     onOpenLaunchDialog: handlers.onOpenLaunchDialog,
     providerQuota,
     rightPaneView,
