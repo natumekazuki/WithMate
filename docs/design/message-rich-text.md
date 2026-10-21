@@ -34,6 +34,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 
 ## Image Handling
 
+- 通常Markdown画像はリンク内にあっても画像の選択でlightboxだけを開き、親リンク先へは移動しない。lightboxの背景click・Escapeは閉じる操作だけを行い、元の画像へfocusを戻す。画像以外のリンク本文を明示的に選択した場合は通常のLink Handlingを維持する
 - chatと中央／独立File Previewは、通常Markdown画像とMermaid画像に同じ画像resolverを使用する。local画像は登録root内外とも既定表示し、相対pathはchatではWorkspace、file previewでは元fileの親directory基準とする。絶対path、file URL、UNCを扱い、Additional DirectoriesやProvider権限を変更しない。Git commit previewの相対local画像は解決せず、絶対pathと外部画像のみを扱う
 - HTTP、HTTPS、data image、blobを許可し、protocol-relative URLはHTTPSへ正規化する。他のURL schemeは拒否する。外部通信の判断は[ADR 012](../adr/012-markdown-resource-loading-policy.md)、local画像の共通認可境界は[ADR 026](../adr/026-shared-image-resource-loading.md)を正本とする
 - SVG は `<img>` の resource として描画し、inline DOM へ挿入しない
