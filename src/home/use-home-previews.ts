@@ -5,7 +5,7 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 
 export type HomePreviewsApi = Pick<WithMateWindowApi,
   "listSessionFilePreviewWindows" | "subscribeSessionFilePreviewWindowsChanged" |
-  "subscribeOpenSessionWindowIds" |
+  "subscribeOpenSessionWindowIds" | "subscribeSessionInvalidation" |
   "focusSessionFilePreviewWindow" | "closeSessionFilePreviewWindow" | "closeSessionFilePreviewWindows" |
   "showSessionFilePreviewContextMenu" | "openSession">;
 
@@ -43,12 +43,14 @@ export function useHomePreviews(api: HomePreviewsApi) {
     mounted.current = true;
     const unsubscribe = api.subscribeSessionFilePreviewWindowsChanged(() => void refresh());
     const unsubscribeSessions = api.subscribeOpenSessionWindowIds(() => void refresh());
+    const unsubscribeInvalidation = api.subscribeSessionInvalidation(() => void refresh());
     void refresh();
     return () => {
       mounted.current = false;
       generation.current += 1;
       unsubscribe();
       unsubscribeSessions();
+      unsubscribeInvalidation();
     };
   }, [api, refresh]);
 

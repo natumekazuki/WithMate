@@ -64,6 +64,7 @@ test("Previews dispatches the selected preview token and owning group independen
     listSessionFilePreviewWindows: async () => [group("parent-a", "main-preview"), group("parent-b", "aux-preview")],
     subscribeSessionFilePreviewWindowsChanged: () => () => {},
     subscribeOpenSessionWindowIds: () => () => {},
+    subscribeSessionInvalidation: () => () => {},
     focusSessionFilePreviewWindow: async (token) => { calls.push(["focus", token]); },
     closeSessionFilePreviewWindow: async (token) => { calls.push(["close", token]); if (closeFailure) throw new Error("Window close failed"); },
     closeSessionFilePreviewWindows: async (owner) => { calls.push(["group", owner]); },
@@ -114,45 +115,61 @@ test("Previews dispatches the selected preview token and owning group independen
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Previewsの変更通知後は最新取得だけを反映し、読込失敗時は取得済み内容とRetryを保持し、正常0件へ復帰できる"
+// claim = "PreviewsはSession名変更通知で親title・tooltip・accessible nameを更新し、最新取得だけを反映して失敗時の一覧保持とRetryを維持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
-// fault = "遅れた取得が最新一覧を上書きする、取得失敗を0件扱いする、またはRetryで復帰できない"
-// observable = "読込busy、最新path、失敗alertと保持中のpath、Retry後の正常0件、購読解除"
+// fault = "Session名変更を反映しない、遅れた取得が最新名を上書きする、取得失敗を0件扱いする、またはRetryで復帰できない"
+// observable = "読込busy、親title・tooltip・accessible name、失敗alertと保持中のtitle、Retry後の正常0件、PreviewとSession通知の購読解除"
 // observation_boundary = "component-behavior"
-// scope = "Home Previews panelの初回取得と変更通知による並行取得・再試行"
+// scope = "Home Previews panelの初回取得とPreview/Session変更通知による並行取得・再試行"
 // lifecycle = "permanent"
-// impact = "閉じたWindowの古い一覧で操作させず、一覧取得失敗から回復できる"
+// impact = "現在のSession名でPreviewを識別し、遅延した取得や読込失敗でも一覧と回復操作を保つ"
 // distinction = "取得完了順と通知・再試行を跨ぐ表示状態は型checkや静的renderでは確認できない"
 // @end-test-value
 test("Previews keeps the latest refresh and recovers a failed refresh without discarding its list", async () => {
   const requests: ReturnType<typeof deferred<SessionFilePreviewWindowGroup[]>>[] = [];
   let emit = () => {};
+  let emitSession: Parameters<HomePreviewsApi["subscribeSessionInvalidation"]>[0] = () => {};
   let unsubscribed = false;
+  let sessionUnsubscribed = false;
   const api: HomePreviewsApi = {
     listSessionFilePreviewWindows: () => { const request = deferred<SessionFilePreviewWindowGroup[]>(); requests.push(request); return request.promise; },
     subscribeSessionFilePreviewWindowsChanged: (listener) => { emit = listener; return () => { unsubscribed = true; }; },
     subscribeOpenSessionWindowIds: () => () => {},
+    subscribeSessionInvalidation: (listener) => { emitSession = listener; return () => { sessionUnsubscribed = true; }; },
     focusSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindows: async () => {},
     showSessionFilePreviewContextMenu: async () => "dismissed", openSession: async () => {},
   };
   await withPreviews(api, async (doc) => {
+    const renamedGroup = (title: string) => ({ ...group("parent"), session: normalizeSessionSummary({ id: "parent", taskTitle: title }) });
+    const assertTitle = (title: string) => {
+      const parent = doc.querySelector<HTMLButtonElement>(".home-previews-session")!;
+      assert.equal(parent.querySelector("strong")!.textContent, title);
+      assert.equal(parent.title, title);
+      assert.equal(parent.getAttribute("aria-label"), `Open session: ${title}`);
+      assert.equal(doc.querySelector(".home-previews-disclosure")!.getAttribute("aria-label"), `Show previews for ${title}`);
+    };
     assert.equal(doc.querySelector(".home-previews-body")!.getAttribute("aria-busy"), "true");
+    await act(async () => requests[0]!.resolve([renamedGroup("Original Session")]));
+    assertTitle("Original Session");
     await act(async () => emit());
-    await act(async () => requests[1]!.resolve([group("latest")]));
-    await act(async () => requests[0]!.resolve([group("stale")]));
+    await act(async () => emitSession({ scope: "ids", sessionIds: ["parent"], detailChanged: false }));
+    assert.equal(requests.length, 3);
+    await act(async () => requests[2]!.resolve([renamedGroup("Renamed Session")]));
+    await act(async () => requests[1]!.resolve([renamedGroup("Original Session")]));
     assert.equal(doc.querySelectorAll(".home-monitor-card").length, 1);
-    assert.match(doc.querySelector(".home-previews-file")!.getAttribute("title")!, /latest/);
-    await act(async () => emit());
-    await act(async () => requests[2]!.reject(new Error("Registry unavailable")));
+    assertTitle("Renamed Session");
+    await act(async () => emitSession({ scope: "all" }));
+    await act(async () => requests[3]!.reject(new Error("Registry unavailable")));
     assert.match(doc.querySelector('[role="alert"]')!.textContent!, /Registry unavailable/);
-    assert.match(doc.querySelector(".home-previews-file")!.getAttribute("title")!, /latest/);
+    assertTitle("Renamed Session");
     await act(async () => doc.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
-    await act(async () => requests[3]!.resolve([]));
+    await act(async () => requests[4]!.resolve([]));
     assert.equal(doc.querySelector(".home-previews-body")!.getAttribute("aria-busy"), "false");
     assert.equal(doc.querySelectorAll(".home-monitor-card").length, 0);
     assert.equal(doc.querySelectorAll('[role="alert"]').length, 0);
   });
   assert.equal(unsubscribed, true);
+  assert.equal(sessionUnsubscribed, true);
 });
 
 // @test-value v2
@@ -180,6 +197,7 @@ test("Previews retains open sessions after Close All and reacts to Session Windo
     listSessionFilePreviewWindows: async () => groups,
     subscribeSessionFilePreviewWindowsChanged: (listener) => { emitPreviews = listener; return () => { previewUnsubscribed = true; }; },
     subscribeOpenSessionWindowIds: (listener) => { emitSessions = listener; return () => { sessionUnsubscribed = true; }; },
+    subscribeSessionInvalidation: () => () => {},
     focusSessionFilePreviewWindow: async () => {}, closeSessionFilePreviewWindow: async () => {},
     closeSessionFilePreviewWindows: async (owner) => {
       closed.push(owner);
