@@ -382,6 +382,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - user の scroll intent と末尾移動は一つの follow owner が決定し、virtual row の再計測は visible anchor の補正だけを担当する。viewportより完全に上側の行の高さ変更を補正し、読みかけの行自身の高さ変更では行先頭のviewport内offsetを変えない
   - 上方向のwheel・キー・touchとscrollbarによる読み返し、検索・一覧からの移動で追従を停止する。子のスクロール領域が消費する操作、入力欄操作、zoom、クリック・選択だけでは会話の追従意図を変えない
   - 遅延描画・行高再計測・viewport resizeによる位置変化では追従意図を変更しない。追従中の末尾補正は同frameに集約し、既に末尾1px以内なら書き込まない
+  - virtual rowのResizeObserver計測はrequestAnimationFrame経由で反映し、通知中の再layoutによる通知ループを避ける。計測のframe待ちでanchorの補正条件や追従意図は変えない
   - 追従停止中は位置を維持し、userの下方向操作で末尾24px以内へ戻ると追従を再開する。layout変化だけで末尾へ近づいても再開しない
   - 会話の初回表示は末尾へ追従する。切替・previewからの復帰では会話incarnation別cacheの追従状態と閲覧位置を復元し、読み返し位置はmessage keyとviewport内offsetを優先する
   - 追従停止中だけ列内overlayの`Jump to latest`を表示する。本文・予約状態の更新有無によらず、通常の下矢印icon-only buttonの外観と操作名を維持する
@@ -390,6 +391,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - pending 中の live activity / streaming response
 - Main／Auxiliaryは送信直後に会話ID・incarnation・request IDと捕捉本文のWindow内表示を作る。準備・受付待ちは正常な待機枠または予約本文を保ち、明示的な処理エラー・timeoutだけを対象送信のerror表示へ切り替える。受付後は同じrequest IDのreceiptへ、実開始後は保存user seqへ接続する。ACKや高速な終端が会話取得より先でも送信文と応答面を保持し、確定時に重複追加しない。先行表示から保存済み本文・実行状態を生成しない
 - streamingの`assistantText`は会話本文として表示する。送信時から応答用のassistant行にCharacter avatarとdot bubbleを置き、準備・受付・実行開始を待たず通常の応答面を確保する。本文の到着後も同じレスポンス枠内にdot bubbleを維持する。処理中表示だけの独立したavatarや行は作らず、同じrunの既定待機文を会話本文へ重ねない
+- Main／Auxiliaryの通常応答はrequest／turnの表示identityを保ち、待機・live本文・保存済み本文への接続でassistant行・avatar・応答cardを差し替えない。表示中の応答本文はPreview／Source共通で100ms単位の最新snapshotへ集約し、通信の細かな到着間隔をそのまま高さ更新へ流さない。timerの実行が遅れても中間本文を順次再生せず最新を表示する。終了・失敗・取消・承認・質問・本文検索では集約待ちを解除し、会話切替・非表示・unmount時は旧応答の待機更新を破棄する。実行・保存と操作可否は実状態のままとし、表示待ちにはしない
 - 確定した送信・実行失敗は応答側の共通エラー欄へ`Failed`と理由を一度だけ表示する。開始前・本文なしでは同じ欄だけを置き、途中失敗では受信済み本文・Detailsを保持して本文の下へ置く。失敗通知は生成本文に追記せず、Copy／Quote対象の本文と分離し、本文を折りたたんでも理由を隠さない。送信側の失敗理由・Failed表示は重ねない。`Resend`／`Edit`、結果不明の`Interrupted`と`Release Later Turns`、取得失敗の`Retry`はそれぞれの責務を維持する
 - 確定失敗の応答枠はCharacter色ではなく固定のエラー色で左線と薄い背景を表示し、エラー欄自体には枠・背景を重ねない。通常応答のCharacter色とavatarによる識別は維持する
 - 処理中表示の所属は、投影が会話ID・thread・メッセージ位置から生成するmessage keyで識別する。保存済み本文とlive本文が異なる場合も対象の応答枠を使い、本文一致や最後のassistantから推測しない。Main／Auxiliaryで所属を分離し、完了・失敗・キャンセル後は本文を重複させず処理中表示を消す

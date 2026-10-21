@@ -386,10 +386,10 @@ test("queued images load through their Main or Auxiliary conversation context", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxの連続queueはlocal submissionの有無によらず前turnのcanonical未到着中に次turn本文が届いても各応答を保持し、requestのuser keyと各応答keyをcanonical合流・submission消費後まで維持する。seq未確認のrequestはcanonical先着でも再照会で接続する"
+// claim = "Main/Auxの連続queueはlocal submissionの有無によらず前turnのcanonical未到着中に次turn本文が届いても各応答を保持し、queue receiptが旧turnのまま次liveが先着しても異なる表示identityを確保してreceipt追従後まで維持する。requestのuser keyと各応答keyはcanonical合流・submission消費後まで維持し、seq未確認のrequestはcanonical先着でも再照会で接続する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映; docs/design/desktop-ui.md: 確定応答の取得待ち" }
-// fault = "次runのlive本文が前応答を置換する、user/assistantの順序を崩す、canonical到着で二重化する、またはreceipt解放後に同じ表示行のkeyを差し替える"
-// observable = "共有Column propsの本文順序・messageKeys、canonical到着後のsubmission消費、非表示中のpropsからのlive本文除外"
+// fault = "次runのlive本文が前応答を置換する、旧receiptと異なるlive turnへ同じ表示keyを割り当てる、user/assistantの順序を崩す、canonical到着で二重化する、またはreceipt解放後に同じ表示行のkeyを差し替える"
+// observable = "共有Column propsの本文順序・messageKeys・responsePresentationKey、canonical到着後のsubmission消費、非表示中のpropsからのlive本文除外"
 // observation_boundary = "component-behavior"
 // scope = "consecutive queued conversation handoff"
 // lifecycle = "permanent"
@@ -435,13 +435,20 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       active = [receipt(1)]; live = run(1);
       await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
       const firstResponseKey = column().messageKeys?.[1];
+      const firstPresentationKey = column().responsePresentationKey;
       assert.equal(column().messageKeys?.[0], firstUserKey);
+      await act(async () => { store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-2", userMessage: "prompt-2", historyMessageCount: 0, queuedBehindRun: true, error: "" }); });
+      live = run(2);
+      await render(); // The live ingress advances before the queue snapshot.
+      const earlySecondPresentationKey = column().responsePresentationKey;
+      assert.notEqual(earlySecondPresentationKey, firstPresentationKey, "a conflicting live turn cannot inherit the old receipt's response identity");
+      assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "response-1", "response-2"]);
       terminals.set("request-1", { ...receipt(1), state: "completed" });
       active = [receipt(2)]; live = run(2);
       await act(async () => {
-        store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-2", userMessage: "prompt-2", historyMessageCount: 0, queuedBehindRun: true, error: "" });
         changed?.(kind); root.render(<View key={kind} />);
       });
+      assert.equal(column().responsePresentationKey, earlySecondPresentationKey, "the new receipt binds the response surface already owned by its live turn");
       assert.deepEqual(column().messages.map((message) => message.text), ["prompt-1", "response-1", "prompt-2", "response-2"]);
       const secondResponseKey = column().messageKeys?.[3];
       assert.equal(column().messageKeys?.[1], firstResponseKey);
@@ -1088,17 +1095,18 @@ test("completed receipt reads converge even when queue notifications arrive befo
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/AuxのSendはreceipt未取得からpromptと通常待機枠を描画し、ACK・開始・終端先着・追加入力userを含むcanonical到着を同じrequestで橋渡しする。次の予約は前応答・未解放の中断予約より後ろを維持し、取消と明示解放で対象予約だけを更新する。失敗とownerを分離する"
+// claim = "Main/AuxのSendはreceipt未取得からpromptと通常待機枠を描画し、ACK・開始・終端先着・追加入力userを含むcanonical到着まで同じ応答DOMを保持する。Preview/Source本文は100ms集約し終端で最新rawへ接続する。次の予約は前応答・未解放の中断予約より後ろを維持し、取消と明示解放で対象予約だけを更新する。失敗とownerを分離する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 送信直後の先行表示; docs/design/auxiliary-session.md: 送信受付の共通反映" }
 // fault = "ACKまで枠を出さない、ACK/保存到着でpromptや枠を消す・二重化する、次予約を前応答や未解放中断より先に表示する、保留中に応答枠を出す、取消/解放の対象を誤る、先行表示で実runを偽造する、または失敗をspinnerのまま隠す"
-// observable = "実Column DOMのprompt件数・pending枠・alert・応答本文・予約の表示順、Cancel/Release操作の宛先、ColumnのisRunning/responsePending、storeの所有request"
+// observable = "実Column DOMのprompt件数・pending枠と応答のnode identity・制御clockごとの本文・alert・予約の表示順、Cancel/Release操作の宛先、ColumnのisRunning/responsePending、storeの所有request"
 // observation_boundary = "component-behavior"
 // scope = "optimistic conversation submission handoff"
 // lifecycle = "permanent"
 // impact = "送信直後とデータ到着順により会話が飛び、失敗した要求を待ち続けたり別会話に誤表示したりする。中断後に保留された後続を実行待機と誤認させない"
 // distinction = "operation通知testはColumnの実購読とreceipt/canonical結合、保留中のCancel/Releaseを通らない。小さいJSDOM遷移で正常・失敗・高速終端・中断保留の継続契約を確認する"
 // @end-test-value
-test("conversation column bridges optimistic sends to receipts and canonical responses", async () => {
+test("conversation column bridges optimistic sends to receipts and canonical responses", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
   const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -1142,7 +1150,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       function View() {
         latest = useConversationMessageColumn({
           session: { id: kind, incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" },
-          baseProps: { ...createBaseProps(kind), turnSubmissions: store }, enabled: true, api, liveRun: live, messageSourceKind: kind,
+          baseProps: { ...createBaseProps(kind), turnSubmissions: store, messageViewMode: kind === "session" ? "preview" : "source" }, enabled: true, api, liveRun: live, messageSourceKind: kind,
         });
         return latest ? <SessionMessageColumn {...latest} /> : null;
       }
@@ -1162,6 +1170,8 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       await act(async () => { start(); });
       assert.equal(promptCount(), 1);
       assert.equal(pendingCount(), 1);
+      const responseRow = dom.window.document.querySelector(".pending-row");
+      assert.ok(responseRow?.closest(".session-message-virtual-row"));
       assert.equal(column().isRunning, false);
       assert.equal(column().responsePending, true);
       assert.equal(dom.window.document.querySelector("[role=alert]"), null);
@@ -1191,8 +1201,19 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       await render();
       assert.equal(promptCount(), 1);
       assert.equal(pendingCount(), 0, "the same response surface now owns streaming content");
+      assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseRow);
       assert.equal(dom.window.document.querySelectorAll(".pending-response-content").length, 1);
-      assert.match(dom.window.document.body.textContent!, /streamed answer/);
+      assert.equal(dom.window.document.body.textContent?.includes("streamed answer"), false);
+      await act(async () => context.mock.timers.tick(50));
+      live = { ...live, assistantText: "streamed answer changed" };
+      await render();
+      await act(async () => context.mock.timers.tick(49));
+      assert.equal(dom.window.document.body.textContent?.includes("streamed answer"), false);
+      await act(async () => context.mock.timers.tick(1));
+      assert.match(dom.window.document.body.textContent!, /streamed answer changed/);
+      live = { ...live, assistantText: "streamed answer" };
+      await render();
+      assert.match(dom.window.document.body.textContent!, /streamed answer changed/);
       resolved = { ...active[0], state: "completed" };
       active = [];
       live = null;
@@ -1201,6 +1222,8 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.equal(pendingCount(), 0, "the streamed response keeps its surface while canonical saving catches up");
       assert.equal(dom.window.document.querySelectorAll(".pending-response-content").length, 1);
       assert.match(dom.window.document.body.textContent!, /streamed answer/);
+      assert.equal(dom.window.document.body.textContent?.includes("streamed answer changed"), false, "terminal flushes the latest replacement without waiting for the next interval");
+      assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseRow);
       const nextReceipt = { ...receipt, id: "next-receipt", requestId: "next-request", sequence: 2,
         captured: { ...receipt.captured, request: { ...receipt.captured.request, clientRequestId: "next-request", userMessage: "next reserved prompt" } } };
       active = [nextReceipt];
@@ -1216,6 +1239,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.equal(dom.window.document.querySelectorAll(".pending-response-content").length, 1);
       saved = [...saved, { role: "assistant", text: "final answer" }];
       await render();
+      assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseRow, "canonical saving updates the same virtualized response row");
       assert.equal(promptCount(), 1);
       assert.equal(pendingCount(), 1, "the next turn gets its own response surface only after the prior canonical response arrives");
       assert.equal(column().isRunning, false);
@@ -1235,6 +1259,8 @@ test("conversation column bridges optimistic sends to receipts and canonical res
         store.start({ sessionId: kind, incarnationId: "inc", requestId: "fast-request", userMessage: "captured prompt", historyMessageCount: 3, queuedBehindRun: false, error: "" });
         store.accept({ ...fastReceipt, state: "starting" });
       });
+      const fastResponseRow = dom.window.document.querySelector(".pending-row");
+      assert.ok(fastResponseRow);
       saved = [...saved, { role: "user", text: "captured prompt" }, { role: "assistant", text: "fast answer" }];
       await render();
       assert.equal(promptCount(), 2, "canonical user must not insert a second prompt before its receipt sequence arrives");
@@ -1245,6 +1271,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.equal(promptCount(), 2);
       assert.equal(pendingCount(), 0);
       assert.match(dom.window.document.body.textContent!, /fast answer/);
+      assert.equal([...dom.window.document.querySelectorAll(".message-row.assistant")].at(-1), fastResponseRow, "canonical-first completion preserves the initial response row");
       assert.equal(store.getSnapshot().length, 0);
 
       const interrupted = { ...receipt, id: "interrupted", requestId: "interrupted-request", sequence: 4, state: "interrupted" as const,

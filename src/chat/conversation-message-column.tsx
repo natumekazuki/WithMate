@@ -101,6 +101,7 @@ export function useConversationMessageColumn({
   const retainedBridges = useRef<{ owner: string; projections: LiveAssistantProjection[] }>({ owner: "", projections: [] });
   const stableMessageKeys = useRef<{ owner: string; keys: Map<number, { role: "user" | "assistant"; key: string }> }>({ owner: "", keys: new Map() });
   const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
+  const responsePresentation = useRef<{ owner: string; requestId?: string; turnId?: string; key: string } | null>(null);
   const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -368,6 +369,25 @@ export function useConversationMessageColumn({
     && (liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
     && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
     ? bridgeKey : null;
+  const responseTurnId = hasActiveRun ? liveRun?.turnId : undefined;
+  const responseReceipt = queuedProjection.activeReceipt;
+  const responseRequestId = responseTurnId && responseReceipt?.turnId && responseReceipt.turnId !== responseTurnId
+    ? undefined : responseReceipt?.requestId ?? queuedProjection.pendingSubmission?.requestId;
+  if (responseRequestId || responseTurnId) {
+    const previous = responsePresentation.current;
+    const sameResponse = previous?.owner === pageOwner && (responseTurnId && previous.turnId
+      ? previous.turnId === responseTurnId : responseRequestId && previous.requestId === responseRequestId);
+    responsePresentation.current = { owner: pageOwner, requestId: responseRequestId ?? (sameResponse ? previous.requestId : undefined), turnId: responseTurnId,
+      key: sameResponse ? previous.key : `response-${pageOwner}-${responseRequestId ?? responseTurnId}` };
+  }
+  const responsePresentationKey = !isBrowsing && responsePresentation.current?.owner === pageOwner
+    ? responsePresentation.current.key : !isBrowsing && hasActiveRun
+      ? `response-${pageOwner}-${pendingResponseMessageKey && bridge ? bridge.messageIndex : tail ? getMessageHistoryIndex(tail, tailMessages.length - 1) + (tail.role === "assistant" ? 2 : 1) : 1}` : undefined;
+  const presentationReceipt = queue.receipts.find((receipt) => receipt.requestId === responsePresentation.current?.requestId);
+  const presentationResponseIndex = pendingResponseMessageKey ? responseIndex : projection.sources.findIndex((source, index) => projection.messages[index].role === "assistant"
+    && (source.kind === "turn-queue" && source.receipt.requestId === responsePresentation.current?.requestId
+      || presentationReceipt?.userMessageSeq != null && (source.kind === "session" || source.kind === "auxiliary") && source.messageIndex > presentationReceipt.userMessageSeq));
+  const presentationResponseKey = presentationResponseIndex >= 0 ? projection.keys[presentationResponseIndex] : null;
   const historyScrollSignature = useMemo(
     () => `${keyedHistory.keys.join("\u001f")}:${keyedHistory.messages.map((message) => message.text.length).join(",")}`,
     [keyedHistory],
@@ -668,7 +688,11 @@ export function useConversationMessageColumn({
     queueBusyId: queue.busyId,
     queueBusyKind: queue.busyKind,
     renderQueueTail,
-    pendingResponseMessageKey,
+    pendingResponseMessageKey: pendingResponseMessageKey ?? presentationResponseKey,
+    responsePresentationKey,
+    streamingResponseMessageKey: hasActiveRun && !hasSavedBridge && !liveRun?.cancellationState && !liveRun?.errorMessage
+      && !liveRun?.approvalRequest && !liveRun?.elicitationRequest && !liveRun?.elicitationRequests?.length
+      && (api || !baseProps.liveRunErrorMessage && !baseProps.liveApprovalRequest && !baseProps.liveElicitationRequest && !baseProps.liveElicitationRequests?.length) ? pendingResponseMessageKey : null,
     messageGroups: projection.groups,
     messageCollapseTargets: collapseTargets,
     collapsedMessageKeys,

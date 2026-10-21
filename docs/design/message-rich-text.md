@@ -71,7 +71,8 @@ flowchart LR
 ## Rendering Policy
 
 - message と file preview は同じ component mapping を使う
-- PreviewはGFM・KaTeX・footnoteを含む完全Markdown描画を常に使用し、本文更新で未整形表示へ巻き戻さない。受信中の追記だけを100ms単位のsnapshotへまとめ、継続受信でも予定を延期せず最新本文を反映する。初回、追記以外の置換、受信終了（成功・失敗・取消）、検索中の`forceFullRender`指定は即時反映し、Sourceは常に最新の原文を表示する。会話の実行状態はMain／Auxiliaryの対象応答とpending本文のownerから渡す。
+- PreviewはGFM・KaTeX・footnoteを含む完全Markdown描画を常に使用し、本文更新で未整形表示へ巻き戻さない。Main／Auxiliaryの応答本文は共通のmessage columnでPreview／Sourceとも100ms単位の最新snapshotへ集約する。初回と置換も同じ周期で扱い、継続受信で予定を延期せず、中間snapshotを再生するqueueは持たない。受信終了（成功・失敗・取消）、承認・質問の入力待ち、非空queryによる本文検索では最新本文を即時反映する。Sourceはsnapshotの原文を改変せず表示する。会話の実行状態は対象応答とpending本文のownerから渡し、表示の集約で実行・保存・操作可否を遅延させない。
+- 上位で集約済みの本文は`streamingTextPresented`で通知し、Markdown側のtimerを重ねない。それ以外の呼出元では受信中の追記だけを100ms単位へまとめ、初回・追記以外の置換・受信終了・検索中の`forceFullRender`指定は即時反映する。受信状態は構文描画へ引き続き渡す。
 - 呼び出し元はpath openと画像読込・画像操作のcontextを注入する。画像操作のcontextはlink操作の可否から独立させ、Git previewでも画像読込と同じSession/base resourceを使う
 - Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
 - assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `tests/renderer/session-message-column.test.ts` を正本とする
