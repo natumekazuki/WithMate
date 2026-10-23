@@ -348,9 +348,9 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
 
 // @test-value v2
 // kind = "contract"
-// claim = "本文buttonやlinkのfocusからも上方向キーで読み返しを保持し、buttonのactivationキーは意図を変えず、下向き操作で24px以内へ戻ると追尾し、layout更新の補正をframe内で集約する"
+// claim = "本文buttonやlinkからの閲覧意図を保ち、下向き操作で24px以内へ戻ると追尾する。本文更新の補正をframe内で集約し、ActionDockでviewportが変わる時は描画前に末尾を合わせる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
-// fault = "子button/linkからの閲覧キーをactivationと混同して末尾へ戻す、layoutや内部操作で追尾が外れる、読み返し中に復帰する、または重複補正を繰り返す"
+// fault = "子button/linkの閲覧意図を上書きする、読み返し中に追尾を再開する、重複補正を繰り返す、またはviewport変化の補正を次frameまで遅らせる"
 // observable = "following状態、scrollTop、同frame内の末尾補正回数"
 // observation_boundary = "component-behavior"
 // scope = "useSessionMessageListFollowing"
@@ -659,9 +659,15 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
 
     clientHeight = 140;
     await act(async () => {
+      const viewportResize: ResizeObserverEntry = {
+        target: messageList,
+        contentRect: messageList.getBoundingClientRect(),
+        borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [],
+      };
       for (const observer of resizeObservers) {
-        observer.callback([], observer as unknown as ResizeObserver);
+        observer.callback([viewportResize], observer as unknown as ResizeObserver);
       }
+      assert.equal(messageList.scrollTop, 1_120, "viewport resizeは次のRAFを待たず描画前に末尾を合わせる");
       await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
     });
     assert.equal(messageList.scrollTop, 1_120, "ActionDock resize後のviewport末尾へ追従する");
@@ -1001,4 +1007,164 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
   }
 });
 
-/* removed: priority persistence is no longer a renderer concern */
+// @test-value v2
+// kind = "contract"
+// claim = "送信時の末尾追従は既存位置から開始し、Dockによるviewport変化と新着高さを取り込み末尾へ収束する。送信した新規行はhandoff中に遅れてmountしても一度だけfadeし、既存行の再mountや後続の追加は再演出しない。手動scroll・owner変更・非表示で古い移動を中止し、scroll設定OFFとreduced motionを尊重する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockの送信handoffとmessage list follow mode" }
+// fault = "送信直後に末尾へjumpする、Dock変化後の末尾や遅れてmountする新規行のfadeを取り逃す、同じ行を再演出する、または古いframeが手動閲覧・別会話を上書きする"
+// observable = "実follow hookへ渡したlistのscrollTop、追従状態、新規行のanimate呼出、owner変更後の補正"
+// observation_boundary = "component-behavior"
+// scope = "useSessionMessageListFollowingの送信、制御RAF/ResizeObserverとvirtual rowのmount。CSS実描画の滑らかさは別途browser確認"
+// lifecycle = "permanent"
+// impact = "送信時に読む位置を見失い、手動操作した本文を自動scrollで奪う"
+// distinction = "既存追従testは即時補正のみ。短い制御frame遷移で送信handoffと割込みの契約を検出する"
+// @end-test-value
+test("送信handoffは位置をつなぎ、手動意図・owner・motion設定を守る", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  const values = [dom.window, dom.window.document, dom.window.HTMLElement, dom.window.Node, dom.window.navigator, true];
+  globals.forEach((key, index) => Object.defineProperty(globalThis, key, { configurable: true, value: values[index] }));
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  let reducedMotion = false;
+  let resize = () => {};
+  const timers = new Map<number, { callback: () => void; delay: number | undefined }>();
+  let timerId = 0;
+  dom.window.setTimeout = (callback, delay) => {
+    assert.equal(typeof callback, "function");
+    timers.set(++timerId, { callback: callback as () => void, delay });
+    return timerId;
+  };
+  dom.window.clearTimeout = (id) => { if (id !== undefined) timers.delete(id); };
+  dom.window.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
+  dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
+  Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: reducedMotion }) });
+  Object.defineProperty(dom.window, "ResizeObserver", { value: class {
+    constructor(callback: (entries: ResizeObserverEntry[]) => void) { resize = () => callback([]); }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } });
+  let current!: ReturnType<typeof useSessionMessageListFollowing>;
+  function Harness({ owner = "main", enabled = true }: { owner?: string; enabled?: boolean }) {
+    current = useSessionMessageListFollowing({ ownerKey: owner, enabled, scrollSignature: "tail" });
+    return React.createElement("div", {
+      ref: current.messageListRef, onScroll: current.handleMessageListScroll,
+      "data-message-count": 2, style: { "--session-dock-motion-duration": "300ms" } as React.CSSProperties,
+    }, React.createElement("div", { className: "session-message-list-window" }));
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = (owner = "main", enabled = true) => act(async () => root.render(React.createElement(Harness, { owner, enabled })));
+  const frame = (time: number) => act(async () => {
+    const pending = [...frames.values()]; frames.clear();
+    pending.forEach((callback) => callback(time));
+  });
+  try {
+    await render();
+    const list = current.messageListRef.current!;
+    let height = 1600, viewport = 400;
+    Object.defineProperties(list, {
+      scrollHeight: { get: () => height }, clientHeight: { get: () => viewport },
+    });
+    await act(async () => current.followMessageListLatest());
+    await frame(0);
+    const fades: number[] = [];
+    const addRow = (index: number) => {
+      const row = dom.window.document.createElement("div");
+      row.className = "session-message-virtual-row";
+      row.dataset.index = String(index);
+      const message = dom.window.document.createElement("article");
+      message.className = "message-row";
+      message.animate = () => { fades.push(index); return {} as Animation; };
+      row.append(message); list.firstElementChild!.append(row);
+      return row;
+    };
+    addRow(1);
+    const submitted = current.captureMessageListSend(true);
+    height += 160; list.dataset.messageCount = "4";
+    const promptRow = addRow(2);
+    await act(async () => submitted());
+    assert.equal(list.scrollTop, 1200, "送信DOMの追加直後に読む位置を飛ばさない");
+    assert.deepEqual(fades, [2], "既にmountされた送信文は直ちにfadeする");
+    await frame(0);
+    await act(async () => {
+      addRow(0); promptRow.remove(); addRow(2);
+      addRow(3);
+      addRow(4);
+    });
+    assert.deepEqual(fades, [2, 3], "後からmountする応答枠も一度だけfadeし、既存行の再mountや後続の追加は対象にしない");
+    viewport += 100; height += 20;
+    await act(async () => resize());
+    await frame(150);
+    assert.ok(list.scrollTop > 1100 && list.scrollTop < height - viewport, "途中位置から変化後の末尾へ向かう");
+    await frame(300);
+    assert.equal(list.scrollTop, height - viewport);
+    await act(async () => { submitted(); resize(); });
+    await frame(400);
+    assert.deepEqual(fades, [2, 3], "受付/保存の追加補正で入場を再実行しない");
+
+    list.querySelector('[data-index="4"]')!.remove();
+    list.dataset.messageCount = "4";
+    const interrupted = current.captureMessageListSend(true);
+    height += 200; list.dataset.messageCount = "6";
+    await act(async () => interrupted());
+    await frame(500); await frame(600);
+    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    const readingTop = list.scrollTop;
+    height += 100; viewport += 50;
+    await act(async () => resize()); await frame(1000);
+    assert.equal(current.isMessageListFollowing, false);
+    assert.equal(list.scrollTop, readingTop, "新着やDockが変化しても手動閲覧位置を上書きしない");
+    await act(async () => { addRow(4); addRow(5); });
+    assert.deepEqual(fades, [2, 3], "手動閲覧で中断した後のmountを古い送信の演出に巻き込まない");
+    const noScroll = current.captureMessageListSend(false);
+    height += 100;
+    await act(async () => noScroll()); await frame(1100);
+    assert.equal(list.scrollTop, readingTop, "Scroll on send OFFは読み返しを解除しない");
+
+    reducedMotion = true;
+    const reduced = current.captureMessageListSend(true);
+    height += 100; list.dataset.messageCount = "7"; addRow(6);
+    await act(async () => reduced());
+    assert.equal(list.scrollTop, height - viewport);
+    assert.deepEqual(fades, [2, 3], "reduced motionでは新しい行もfadeさせない");
+    reducedMotion = false;
+    const stale = current.captureMessageListSend(true);
+    await render("aux");
+    await frame(1200);
+    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    list.scrollTop = 300;
+    await act(async () => stale()); await frame(1250);
+    assert.equal(list.scrollTop, 300, "旧ownerの送信完了を次の会話に適用しない");
+    const hidden = current.captureMessageListSend(true);
+    height += 100;
+    await act(async () => hidden()); await frame(1300);
+    await render("aux", false);
+    const hiddenTop = list.scrollTop;
+    await frame(1700);
+    assert.equal(list.scrollTop, hiddenTop, "非表示になった会話のmotionを停止する");
+
+    await render("aux");
+    list.dataset.messageCount = "7";
+    const expires = current.captureMessageListSend(true);
+    list.dataset.messageCount = "8";
+    await act(async () => expires());
+    assert.equal(timers.size, 1);
+    assert.equal([...timers.values()][0].delay, 300, "未mount行の待機は送信handoffの期間に限る");
+    await act(async () => {
+      const pending = [...timers.values()]; timers.clear();
+      pending.forEach(({ callback }) => callback());
+      addRow(7);
+    });
+    assert.deepEqual(fades, [2, 3], "handoff終了後に初めて読む行を遅れて演出しない");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => {
+      const descriptor = previous[index];
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    });
+  }
+});

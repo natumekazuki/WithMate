@@ -11,12 +11,11 @@ import {
   type PointerEventHandler,
   type ReactNode,
   type RefObject,
-  type SetStateAction,
 } from "react";
 
 import { clampAuxiliaryWidthRatio } from "./use-auxiliary-workspace.js";
+import { useMessageViewTransition } from "./use-message-view-transition.js";
 
-import type { MessageViewMode } from "../ui/markdown/MessageRichText.js";
 import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.js";
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
@@ -462,10 +461,15 @@ export function ChatWindow({
   renderRightPane,
   ...screenProps
 }: ChatWindowProps) {
-  const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
   const conversationStateCacheRef = useRef(new Map<string, ConversationColumnCache>());
   const mainColumnElementRef = useRef<HTMLDivElement | null>(null);
   const auxiliaryColumnElementRef = useRef<HTMLDivElement | null>(null);
+  const { selectedMode: messageViewMode, renderedMode: renderedMessageViewMode, changeMode: handleMessageViewModeChange } = useMessageViewTransition(
+    mainColumnElementRef,
+    auxiliaryColumnElementRef,
+    `${concurrentChats?.mainSession?.id ?? concurrentChats?.main.sessionId ?? messageColumnProps.sessionId}:${concurrentChats?.mainSession?.incarnationId ?? ""}:${concurrentChats?.auxiliarySession?.id ?? concurrentChats?.auxiliary?.sessionId ?? ""}:${concurrentChats?.auxiliarySession?.incarnationId ?? ""}:${concurrentChats?.widthRatio === 0}:${concurrentChats?.widthRatio === 1}`,
+    !screenProps.mainContent,
+  );
   const mainColumnControlsRef = useRef<ConversationColumnControls | null>(null);
   const [messageNavigatorActive, setMessageNavigatorActive] = useState(false);
   const auxiliaryColumnControlsRef = useRef<ConversationColumnControls | null>(null);
@@ -482,10 +486,6 @@ export function ChatWindow({
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasSkillPickerOpenRef = useRef(false);
   const showMessageViewModeControls = messageColumnProps.onQuoteMessageText !== undefined;
-  const handleMessageViewModeChange = useCallback((mode: SetStateAction<MessageViewMode>) => {
-    window.getSelection()?.removeAllRanges();
-    setMessageViewMode(mode);
-  }, []);
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageToggleViewMode,
     () => {
@@ -706,7 +706,7 @@ export function ChatWindow({
                 ...resolvedMessageColumnProps,
                 isContentActive: (resolvedMessageColumnProps.isContentActive ?? true)
                   && concurrentChats.target === "main",
-                messageViewMode,
+                messageViewMode: renderedMessageViewMode,
               }}
               enabled={!screenProps.mainContent && (concurrentChats.widthRatio < 1)}
               api={concurrentChats.api}
@@ -718,7 +718,7 @@ export function ChatWindow({
           ) : (
             <StableSessionMessageColumn
               {...resolvedMessageColumnProps}
-              messageViewMode={messageViewMode}
+              messageViewMode={renderedMessageViewMode}
             />
           )}
           {concurrentChats && concurrentChats.target !== "main" && mainHasConversationContent ? (
@@ -773,7 +773,7 @@ export function ChatWindow({
                     ...concurrentChats.auxiliary,
                     isContentActive: (concurrentChats.auxiliary.isContentActive ?? true)
                       && concurrentChats.target === "auxiliary",
-                    messageViewMode,
+                    messageViewMode: renderedMessageViewMode,
                   }}
                   enabled={!screenProps.mainContent && concurrentChats.widthRatio > 0}
                   api={concurrentChats.api}

@@ -10,8 +10,8 @@ import type { Session } from "../../src-shared/session/session-state.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainの取消受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻ってもCancelのtooltipとdisabled/busyへ投影される。通常Sendは次Turnを予約し、現在Turnへの追加入力は拒否する。後続runの通知後に旧取消ACKが届いても巻き戻さない"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Mainの取消受付後; https://github.com/natumekazuki/WithMate/issues/773" }
+// claim = "Mainの取消click直後はlive受付前からCancelをbusyにし、受付と終了待ちは保存Sessionがidleでも、AuxiliaryからMainへ戻っても維持する。通常Sendは次Turnを予約し、現在Turnへの追加入力は拒否する。後続runの通知後に旧取消ACKが届いても巻き戻さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの取消click直後からのbusyとlive状態への引継ぎ; https://github.com/natumekazuki/WithMate/issues/773" }
 // fault = "live取消状態を切替で消去する、取消中の次Turn受付を拒否する、現在Turnへsteerや直接runを送る、または旧取消ACKで後続run表示を巻き戻す"
 // observable = "実SessionWindowAppのexpanded/compact CancelのCanceling tooltipとdisabled/busy、Send受付とdraft consume、preload enqueue/steer/run呼出数、後続run通知後のCancel表示"
 // observation_boundary = "component-behavior"
@@ -68,8 +68,6 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
   let cancelCalls = 0;
   api.cancelSessionRun = async () => {
     cancelCalls += 1;
-    live = { ...live!, cancellationState: "requested" };
-    broadcastLive();
     await cancelAck;
   };
   let sendCalls = 0;
@@ -112,6 +110,10 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     }
     assert.equal(cancelCalls, 1);
     assert.ok(cancelingButtons().length >= 2, "expanded and compact docks must both reflect cancellation");
+    await act(async () => {
+      live = { ...live!, cancellationState: "requested" };
+      broadcastLive();
+    });
     assert.equal(send().disabled, true);
     await act(async () => {
       session = { ...session, runState: "idle", status: "idle" };

@@ -34,7 +34,6 @@ export function useSessionRunControls(api: WithMateWindowApi | null, selectedSes
   const setLiveRunState = useCallback((update: SetStateAction<OwnedLiveSessionRunState>) => {
     if (api && activeRunSessionId) updateSessionLiveState(api, activeRunSessionId, update);
   }, [api, activeRunSessionId]);
-  const { cancellationState: _activeCancellationState, ...controls } = active;
-  return { ...controls, getLiveRunRevision, setLiveRunState,
+  return { ...active, getLiveRunRevision, setLiveRunState,
     hasSelectedSessionLiveRun: main.hasLiveRun, selectedSessionCancellationState: main.cancellationState };
 }

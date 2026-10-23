@@ -453,6 +453,14 @@
     --session-dock-motion-duration: 0ms;
   }
 
+  .session-chat-layout,
+  .session-header-dock-slot,
+  .session-left-pane-slot,
+  .session-right-pane-slot,
+  .session-action-dock-content {
+    transition-property: none;
+  }
+
   .workspace-changes-root-spinner {
     animation: none;
   }

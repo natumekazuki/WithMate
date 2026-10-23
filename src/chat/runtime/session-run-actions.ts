@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 import type {
   LiveApprovalRequest,
   LiveElicitationRequest,
@@ -11,8 +11,10 @@ import {
 } from "./session-live-run-state.js";
 import {
   runRunningSessionCancelOperation,
+  resolveRunningSessionCancelTargetId,
   type RunningSessionCancelTarget,
 } from "../send-or-cancel.js";
+import { subscribeSessionLiveEvents } from "./session-window-live-ingress.js";
 
 type LiveRunStateUpdater = (update: SetStateAction<OwnedLiveSessionRunState>) => void;
 
@@ -26,10 +28,25 @@ export function useSessionRunActions(options: {
   elicitationActionRequestId: string | null;
   resolveLiveApproval: (request: LiveApprovalRequest, decision: "approve" | "deny") => Promise<void>;
   resolveLiveElicitation: (request: LiveElicitationRequest, response: LiveElicitationResponse) => Promise<void>;
-  cancelRun: (target: RunningSessionCancelTarget) => Promise<void>;
+  pendingCancelSessionIds: ReadonlySet<string>;
+  cancelRun: (target: RunningSessionCancelTarget, kind?: "main" | "auxiliary", turnId?: string) => Promise<void>;
 } {
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
+  const pendingCancels = useRef(new Map<string, { turnId?: string; handedOff: boolean }>());
+  const [pendingCancelSessionIds, setPendingCancelSessionIds] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (!options.api) return;
+    return subscribeSessionLiveEvents(options.api, (id, state) => {
+      const pending = pendingCancels.current.get(id);
+      if (pending && state && pending.turnId === undefined) pending.turnId = state.turnId;
+      if (pending && (!state || state.cancellationState || state.turnId !== pending.turnId)) {
+        if (!state || !state.cancellationState && state.turnId !== pending.turnId) pendingCancels.current.delete(id);
+        else pending.handedOff = true;
+        setPendingCancelSessionIds(new Set([...pendingCancels.current].filter(([, request]) => !request.handedOff).map(([sessionId]) => sessionId)));
+      }
+    });
+  }, [options.api]);
 
   useEffect(() => {
     setApprovalActionRequestId(null);
@@ -83,20 +100,33 @@ export function useSessionRunActions(options: {
     }
   }, [elicitationActionRequestId, options.activeRunSessionId, options.api, options.onError, options.setLiveRunState]);
 
-  const cancelRun = useCallback(async (target: RunningSessionCancelTarget) => {
+  const cancelRun = useCallback(async (target: RunningSessionCancelTarget, kind: "main" | "auxiliary" = "main", turnId?: string) => {
+    const id = resolveRunningSessionCancelTargetId(target);
+    if (!id || !options.api || pendingCancels.current.has(id)) return;
+    const pending = { turnId, handedOff: false };
+    pendingCancels.current.set(id, pending);
+    setPendingCancelSessionIds(new Set([...pendingCancels.current].filter(([, request]) => !request.handedOff).map(([sessionId]) => sessionId)));
     try {
       await runRunningSessionCancelOperation({
         target,
-        cancelRun: options.api ? (sessionId) => options.api!.cancelSessionRun(sessionId) : null,
+        cancelRun: (sessionId) => kind === "auxiliary"
+          ? options.api!.cancelAuxiliarySessionRun(sessionId)
+          : options.api!.cancelSessionRun(sessionId),
       });
     } catch (error) {
       options.onError(error instanceof Error ? error.message : "Could not cancel the run.");
+    } finally {
+      if (pendingCancels.current.get(id) === pending) {
+        pendingCancels.current.delete(id);
+        setPendingCancelSessionIds(new Set([...pendingCancels.current].filter(([, request]) => !request.handedOff).map(([sessionId]) => sessionId)));
+      }
     }
   }, [options.api, options.onError]);
 
   return {
     approvalActionRequestId,
     elicitationActionRequestId,
+    pendingCancelSessionIds,
     resolveLiveApproval,
     resolveLiveElicitation,
     cancelRun,

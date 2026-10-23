@@ -36,6 +36,18 @@ import {
 
 const noop = () => {};
 
+function createChatDom(...args: ConstructorParameters<typeof JSDOM>) {
+  const dom = new JSDOM(...args);
+  dom.window.matchMedia = (query) => Object.assign(new dom.window.EventTarget(), {
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: noop,
+    removeListener: noop,
+  });
+  return dom;
+}
+
 // @test-value v2
 // kind = "contract"
 // claim = "queue対応Composerは実行中も次依頼の作成操作と全設定選択を使え、read-only/close凍結/Reviewer制約では変更を拒否する"
@@ -49,7 +61,7 @@ const noop = () => {};
 // distinction = "backend selection testsではComposerのnative control抑止とcallback到達を検出できない"
 // @end-test-value
 test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は編集を止める", async () => {
-  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { pretendToBeVisual: true });
+  const dom = createChatDom('<!doctype html><html><body><div id="root"></div></body></html>', { pretendToBeVisual: true });
   const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
   const values = [dom.window, dom.window.document, dom.window.HTMLElement, dom.window.Node, dom.window.navigator, true];
@@ -122,7 +134,7 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
 // distinction = "registry testとは異なり実ChatWindowのmode button操作と保持境界を確認する。PTY process自体の保持は主張しない"
 // @end-test-value
 test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", async () => {
-  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+  const dom = createChatDom('<!doctype html><html><body><div id="root"></div></body></html>');
   const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
   const values = [dom.window, dom.window.document, dom.window.HTMLElement, dom.window.Node, dom.window.navigator, true];
@@ -630,6 +642,18 @@ test("Skill候補検索はnameとdescriptionを対象にしsource labelを対象
   assert.equal(filterChatSkillItems(items, "missing").length, 0);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Skill panelは矢印で候補を移動しEnterで選択、Escapeで取消し、閉じると起点へfocusを戻す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Skill picker" }
+// fault = "候補のkeyboard操作または終了後のfocus復帰が機能しない"
+// observable = "候補callback、開閉状態、検索入力値とactiveElement"
+// observation_boundary = "component-behavior"
+// scope = "ChatWindow Skill picker keyboard interaction"
+// lifecycle = "permanent"
+// impact = "keyboard利用者がSkillを選択または取消して入力へ戻れなくなる"
+// distinction = "候補filterのunit testではChatWindow内のfocus移動とcallback接続を確認できない"
+// @end-test-value
 test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱う", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -639,7 +663,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -783,7 +807,7 @@ test("ChatWindow はcompact dockの空白全体から展開し内包する操作
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
   class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
@@ -895,6 +919,18 @@ test("ChatWindow はcompact dockの空白全体から展開し内包する操作
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Preview/Sourceのbuttonとshortcutはdock間で選択と本文表現を共有し、切替時に旧文字選択を解除する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Preview / Source" }
+// fault = "buttonとshortcutで異なるmodeを保持するか、旧本文の文字選択を保持する"
+// observable = "本文のlinkまたはsource文字列、dock buttonのaria-pressed、selection rangeCount"
+// observation_boundary = "component-behavior"
+// scope = "ChatWindow共有本文modeの操作routing"
+// lifecycle = "permanent"
+// impact = "選択した表現と読む本文が一致しないか、古い選択からCopy/Quoteしてしまう"
+// distinction = "transition hook単体ではdockのbuttonとshortcut registryの接続を検証できない"
+// @end-test-value
 test("ChatWindow は button とshortcutで共有表示modeを双方向に切り替える", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -904,7 +940,7 @@ test("ChatWindow は button とshortcutで共有表示modeを双方向に切り�
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1550,7 +1586,7 @@ test("ChatWindow は concurrent chat shell の操作対象と切り替え導線�
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
   });
   class TestResizeObserver {
@@ -1721,7 +1757,7 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 600 });
@@ -1920,7 +1956,7 @@ test("ChatWindow はAuxiliary detail error中もsummary switcherを維持する"
   const previousNavigator = globalThis.navigator;
   const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
   class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
@@ -2009,7 +2045,7 @@ test("ChatWindow はMain/Auxiliaryの末尾移動buttonとshortcutを独立し�
   const previousNavigator = globalThis.navigator;
   const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
   const resizeCallbacks = new Map<Element, () => void>();
   class TestResizeObserver {
     constructor(private readonly callback: () => void) {}
@@ -2312,7 +2348,7 @@ test("ChatWindow はcomposer入力後もMain/Auxiliaryの表示済み画像DOM�
   const previousNavigator = globalThis.navigator;
   const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   const previousResizeObserver = globalThis.ResizeObserver;
-  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  const dom = createChatDom("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   class TestResizeObserver { observe() {} unobserve() {} disconnect() {} }
   const originalGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;

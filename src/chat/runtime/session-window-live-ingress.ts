@@ -33,6 +33,7 @@ export function projectSessionRunControls(state: LiveState) {
     hasInProgressStep: Boolean(state?.steps.some((step) => step.status === "in_progress")),
     errorMessage: state?.errorMessage ?? "",
     cancellationState: state?.cancellationState,
+    runTurnId: state?.turnId,
     inputTurnId: state?.inputAvailable === true && !state.cancellationState ? state.turnId : undefined,
   };
 }
