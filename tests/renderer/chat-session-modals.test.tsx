@@ -86,7 +86,7 @@ test("AuxiliaryLaunchProviderDialog は provider catalog の loading/error と r
 
   const readyZeroHtml = renderDialog({ providerLoadStatus: "loaded" });
   assert.equal((readyZeroHtml.match(/No enabled coding providers\./g) ?? []).length, 1);
-  assert.doesNotMatch(readyZeroHtml, /class="launch-feedback"/);
+  assert.match(readyZeroHtml, /class="launch-feedback" role="status"><\/p>/);
 
   const readyHtml = renderDialog({
     providers: [{ id: "codex", label: "Codex" }],

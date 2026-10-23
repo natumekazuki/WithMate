@@ -2383,6 +2383,7 @@ export default function AgentSessionWindowApp() {
         feedback={auxiliaryLaunchFeedback}
         starting={auxiliaryCreationStarting}
         creationInFlight={auxiliaryCreation.inFlight}
+        checkingCreationResult={auxiliaryCreationStatus === "unknown"}
         cancelling={auxiliaryCreationCancelling}
         canCancelCreation={canCancelAuxiliaryLaunchCreation(auxiliaryCreationStatus)}
         onClose={handleCloseAuxiliaryLaunchDialog}

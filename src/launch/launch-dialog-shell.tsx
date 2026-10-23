@@ -10,6 +10,7 @@ type LaunchDialogShellProps = {
   closeOnBackdropClick?: boolean;
   className?: string;
   dialogClassName?: string;
+  dialogTabIndex?: number;
   children: ReactNode;
   footer?: ReactNode;
 };
@@ -29,6 +30,9 @@ export type LaunchDialogFooterProps = {
   cancelButtonLabel?: string;
   onCancel?: () => void;
   cancelButtonDisabled?: boolean;
+  cancelButtonBusy?: boolean;
+  cancelButtonLoadingText?: string;
+  reserveFeedbackSpace?: boolean;
 };
 
 export function LaunchDialogFooter({
@@ -46,18 +50,28 @@ export function LaunchDialogFooter({
   cancelButtonLabel,
   onCancel,
   cancelButtonDisabled = false,
+  cancelButtonBusy = false,
+  cancelButtonLoadingText,
+  reserveFeedbackSpace = false,
 }: LaunchDialogFooterProps) {
   return (
     <>
-      {feedback ? <p className="launch-feedback">{feedback}</p> : null}
+      {feedback || reserveFeedbackSpace ? <p className="launch-feedback" role={reserveFeedbackSpace ? "status" : undefined}>{feedback}</p> : null}
       {backButtonLabel && onBack ? (
         <button className="drawer-toggle compact secondary" type="button" disabled={backButtonDisabled} onClick={onBack}>
           {backButtonLabel}
         </button>
       ) : null}
       {cancelButtonLabel && onCancel ? (
-        <button className="drawer-toggle compact secondary" type="button" disabled={cancelButtonDisabled} onClick={onCancel}>
-          {cancelButtonLabel}
+        <button
+          className="drawer-toggle compact secondary launch-cancel-button"
+          type="button"
+          disabled={cancelButtonDisabled || cancelButtonBusy}
+          aria-busy={cancelButtonBusy || undefined}
+          aria-label={cancelButtonBusy ? (cancelButtonLoadingText || cancelButtonLabel) : undefined}
+          onClick={onCancel}
+        >
+          <ButtonContent busy={cancelButtonBusy}>{cancelButtonLabel}</ButtonContent>
         </button>
       ) : null}
       <button
@@ -85,6 +99,7 @@ export function LaunchDialogShell({
   closeOnBackdropClick = true,
   className = "launch-modal",
   dialogClassName,
+  dialogTabIndex,
   children,
   footer,
 }: LaunchDialogShellProps) {
@@ -100,6 +115,7 @@ export function LaunchDialogShell({
       <section
         ref={dialogRef}
         className={dialogClassNameValue}
+        tabIndex={dialogTabIndex}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={onKeyDown}
       >

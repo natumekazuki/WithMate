@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import type { AuxiliaryCreationRequest, AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { useAuxiliaryCreation } from "../../src/chat/use-auxiliary-creation.js";
 import { AuxiliaryLaunchProviderDialog } from "../../src/chat/AuxiliaryLaunchProviderDialog.js";
+import { canCancelAuxiliaryLaunchCreation } from "../../src/chat/auxiliary-launch-state.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -29,10 +30,15 @@ async function mount(t: TestContext, api: Api) {
   let state!: ReturnType<typeof useAuxiliaryCreation>;
   const applied: AuxiliarySession[] = [];
   function Harness({ parent }: { parent: string | null }) {
-    state = useAuxiliaryCreation({ parentSessionId: parent, api, onCommitted: (session) => applied.push(session), onFeedback: () => undefined });
-    return <AuxiliaryLaunchProviderDialog open providers={[{ id: "codex", label: "Codex" }]}
-      selectedProviderId="codex" feedback="" starting={state.starting} creationInFlight={state.inFlight}
-      onClose={() => undefined} onSelectProvider={() => undefined} onStart={() => { void state.start("codex"); }} />;
+    const [feedback, setFeedback] = React.useState("");
+    const [provider, setProvider] = React.useState("codex");
+    state = useAuxiliaryCreation({ parentSessionId: parent, api, onCommitted: (session) => applied.push(session), onFeedback: setFeedback });
+    return <AuxiliaryLaunchProviderDialog open providers={[{ id: "codex", label: "Codex" }, { id: "copilot", label: "Copilot" }]}
+      selectedProviderId={provider} feedback={feedback} starting={state.starting} creationInFlight={state.inFlight}
+      checkingCreationResult={state.status === "unknown"} cancelling={state.cancelling}
+      canCancelCreation={canCancelAuxiliaryLaunchCreation(state.status)}
+      onCancelCreation={() => { void state.cancel(); }}
+      onClose={() => undefined} onSelectProvider={setProvider} onStart={() => { void state.start(provider); }} />;
   }
   const render = async (parent: string | null) => { await act(async () => root.render(<Harness parent={parent} />)); };
   t.after(async () => {
@@ -45,6 +51,7 @@ async function mount(t: TestContext, api: Api) {
     }
   });
   return { render, get state() { return state; }, applied, storage: dom.window.localStorage,
+    document: dom.window.document,
     get startButton() { return dom.window.document.querySelector<HTMLButtonElement>(".start-session-button")!; },
     poll: async () => { await act(async () => { t.mock.timers.tick(500); }); } };
 }
@@ -177,4 +184,73 @@ test("Auxiliary commit wins over cancel and late create failure", async (t) => {
   assert.equal(fixture.state.starting, false);
   assert.equal(fixture.state.cancelling, false);
   assert.equal(fixture.applied.length, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "作成中は選択と再開始を止め、取消応答待ちは状態更新後も取消buttonのbusyで通知し、取消失敗・結果不明・失敗確定に応じて操作を戻す"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#ui-flow" }
+// fault = "取消待ちを非表示または開始busyだけで表すか、応答待ちにproviderや同一操作を再実行できるか、結果不明で再開始を許可する"
+// observable = "実hookとdialogのbutton disabled/aria-busy/accessible name、provider選択、API呼出し数、feedback、終端後の操作可否"
+// observation_boundary = "component-behavior"
+// scope = "auxiliary-creation-dialog-busy-transitions"
+// lifecycle = "permanent"
+// impact = "利用者が取消応答待ちを認識し、送信済みproviderとの不一致や二重作成を起こさず失敗から回復できる"
+// distinction = "状態helperやmarkupだけの検査と異なり実hookのpoll・保留API・取消失敗をdialogへ結線し、操作と通知の契約を短いDOM testで保持する"
+// @end-test-value
+test("Auxiliary dialog keeps cancellation busy through polling and recovers controls after failure", async (t) => {
+  const pendingCreate = deferred<AuxiliarySession>();
+  const pendingCancel = deferred<Awaited<ReturnType<Api["cancelAuxiliaryCreation"]>>>();
+  let polledStatus: "preparing" | "committing" | "failed" = "preparing";
+  const providers: string[] = [];
+  let cancels = 0;
+  const fixture = await mount(t, apiWith({
+    createAuxiliarySession: (input) => { providers.push(input.provider); return pendingCreate.promise; },
+    cancelAuxiliaryCreation: () => { cancels += 1; return pendingCancel.promise; },
+    getAuxiliaryCreation: async () => ({ status: polledStatus }),
+  }));
+  await fixture.render("parent-1");
+  const options = [...fixture.document.querySelectorAll<HTMLButtonElement>("[role=option]")];
+  await act(async () => { options[1]!.click(); });
+  assert.equal(options[1]!.getAttribute("aria-selected"), "true");
+  await act(async () => { fixture.startButton.click(); });
+  assert.deepEqual(providers, ["copilot"]);
+  assert.equal(fixture.startButton.getAttribute("aria-busy"), "true");
+  assert.equal(fixture.startButton.getAttribute("aria-label"), "Starting Auxiliary");
+  assert.ok(options.every((option) => option.disabled && option.tabIndex === -1));
+  await act(async () => { options[0]!.click(); fixture.startButton.click(); });
+  assert.equal(options[1]!.getAttribute("aria-selected"), "true");
+  assert.deepEqual(providers, ["copilot"]);
+
+  const cancel = fixture.document.querySelector<HTMLButtonElement>(".launch-cancel-button")!;
+  assert.ok(cancel && !cancel.disabled);
+  await act(async () => { cancel.click(); });
+  assert.equal(cancel.disabled, true);
+  assert.equal(cancel.getAttribute("aria-busy"), "true");
+  assert.equal(cancel.getAttribute("aria-label"), "Canceling Auxiliary Creation");
+  assert.equal(fixture.startButton.disabled, true);
+  assert.equal(fixture.startButton.hasAttribute("aria-busy"), false);
+  polledStatus = "committing";
+  await fixture.poll();
+  assert.equal(fixture.document.querySelector(".launch-cancel-button"), cancel);
+  assert.equal(cancel.getAttribute("aria-busy"), "true");
+  await act(async () => { cancel.click(); });
+  assert.equal(cancels, 1);
+
+  await act(async () => { pendingCancel.reject(new Error("Cancel request failed.")); });
+  assert.equal(fixture.state.cancelling, false);
+  assert.equal(fixture.document.querySelector("[role=status]")?.textContent, "Cancel request failed.");
+  assert.equal(fixture.startButton.getAttribute("aria-busy"), "true");
+  await act(async () => { pendingCreate.reject(new Error("Create response lost.")); });
+  assert.equal(fixture.state.status, "unknown");
+  assert.equal(fixture.startButton.getAttribute("aria-label"), "Checking Auxiliary Creation Result");
+  await act(async () => { fixture.startButton.click(); });
+  assert.deepEqual(providers, ["copilot"]);
+
+  polledStatus = "failed";
+  await fixture.poll();
+  assert.equal(fixture.startButton.disabled, false);
+  assert.equal(fixture.startButton.hasAttribute("aria-busy"), false);
+  assert.ok(options.every((option) => !option.disabled));
+  assert.equal(fixture.document.querySelector("[role=status]")?.textContent, "Could not start the Auxiliary session.");
 });
