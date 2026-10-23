@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { LoadError } from "../../ui/load-error.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
+import { ComposerIcon } from "../composer/composer-icon.js";
 
 export type SessionRecoveryActionsProps = {
   retryState: {
@@ -99,16 +100,22 @@ export function SessionRecoveryActions({
           <p>{retryState.lastRequestText}</p>
           <button className="drawer-toggle compact secondary" type="button" onClick={() => requestDialogRef.current?.close()}>Close</button>
         </dialog>
-        <button className="drawer-toggle compact secondary" type="button" onClick={() => { if (!isRetryActionDisabled) onResendLastMessage(); }} disabled={isRetryActionDisabled}>Resend</button>
-        <button ref={editRef} className="drawer-toggle compact secondary" type="button" onClick={() => { if (!isRetryEditDisabled) onEditLastMessage(); }} disabled={isRetryEditDisabled}>Edit</button>
+        <button className="drawer-toggle compact secondary composer-icon-button" type="button" title={`${targetLabel}: Resend Previous Request`} aria-label={`${targetLabel}: Resend Previous Request`} onClick={() => { if (!isRetryActionDisabled) onResendLastMessage(); }} disabled={isRetryActionDisabled}>
+          <ComposerIcon name="resend" />
+          <span className="visually-hidden">Resend</span>
+        </button>
+        <button ref={editRef} className="drawer-toggle compact secondary composer-icon-button" type="button" title={`${targetLabel}: Edit Previous Request`} aria-label={`${targetLabel}: Edit Previous Request`} onClick={() => { if (!isRetryEditDisabled) onEditLastMessage(); }} disabled={isRetryEditDisabled}>
+          <ComposerIcon name="edit" />
+          <span className="visually-hidden">Edit</span>
+        </button>
       </> : null}
       {latestTurnLoading ? <LoadingIndicator label="Loading latest execution" inline /> : null}
       {latestTurnError ? <LoadError message={`Could not load the latest execution: ${latestTurnError}`} onRetry={onRetryLatestTurn} retryDisabled={latestTurnLoading} /> : null}
       {retryState ? <dialog ref={conflictDialogRef} className="session-recovery-conflict" aria-label={`${targetLabel}: Replace Current Draft`} onClick={(event) => event.stopPropagation()} onCancel={(event) => { event.preventDefault(); onCancelRetryDraftReplace(); editRef.current?.focus(); }}>
         <p>Your current draft is preserved.</p>
         <div className="session-recovery-conflict-actions">
-          <button className="drawer-toggle compact secondary" type="button" onClick={() => { if (!isRetryEditDisabled) onConfirmRetryDraftReplace(); }} disabled={isRetryEditDisabled}>Replace With Previous Request</button>
           <button ref={keepRef} className="drawer-toggle compact secondary" type="button" onClick={() => { onCancelRetryDraftReplace(); editRef.current?.focus(); }}>Keep Current Draft</button>
+          <button className="drawer-toggle compact danger" type="button" onClick={() => { if (!isRetryEditDisabled) onConfirmRetryDraftReplace(); }} disabled={isRetryEditDisabled}>Replace With Previous Request</button>
         </div>
       </dialog> : null}
     </div>

@@ -3243,17 +3243,16 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 12px;
   min-width: 0;
   max-width: 100%;
   color: var(--ink);
 }
 
-.session-recovery-actions > .drawer-toggle,
-.session-action-dock-compact-actions .session-recovery-actions .drawer-toggle {
-  min-height: 36px;
+.session-recovery-actions dialog .drawer-toggle {
+  min-height: 40px;
   padding: 6px 10px;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .session-recovery-request {
@@ -3339,7 +3338,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 12px;
 }
 
 .session-recovery-conflict p {
@@ -3448,6 +3447,7 @@
 }
 
 .composer .composer-icon-button,
+.session-recovery-actions .composer-icon-button,
 .session-action-dock-compact-actions .composer-icon-button {
   display: inline-flex;
   flex: 0 0 auto;
@@ -3460,11 +3460,13 @@
 }
 
 .composer .drawer-toggle.composer-icon-button,
+.session-recovery-actions .drawer-toggle.composer-icon-button,
 .session-action-dock-compact-actions .drawer-toggle.composer-icon-button {
   border-radius: 10px;
 }
 
-.composer-icon-button:focus-visible {
+.composer-icon-button:focus-visible,
+.session-recovery-actions dialog button:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
   outline-offset: 2px;
 }

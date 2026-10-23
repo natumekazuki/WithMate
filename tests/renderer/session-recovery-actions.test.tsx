@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { JSDOM } from "jsdom";
 import { buildLiveSessionRecoveryActions } from "../../src/chat/live-session-projection.js";
 import { SessionRecoveryActions } from "../../src/chat/runtime/session-recovery-actions.js";
 
@@ -9,10 +10,10 @@ const noop = () => {};
 
 // @test-value v2
 // kind = "contract"
-// claim = "回復操作は対象会話と前回依頼を示し、Resend/Editと既存draftの明示的な置換・保持を提供する"
+// claim = "回復操作は対象会話と前回依頼を示し、icon-onlyのResend/Editにも対象付き操作名を保ち、draftの明示的な置換・保持を提供する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
-// fault = "回復対象の区別またはdraft保護の置換・保持操作を失う"
-// observable = "対象付きgroupと依頼preview、Resend/Edit、置換・保持buttonの描画"
+// fault = "回復対象の区別、icon-only操作のaccessible name、またはdraft保護の置換・保持操作を失う"
+// observable = "対象付きgroupと依頼preview、Resend/Editのaccessible nameとtooltip、置換・保持buttonの描画"
 // observation_boundary = "component-behavior"
 // scope = "session-recovery-actions"
 // lifecycle = "permanent"
@@ -35,8 +36,14 @@ test("recovery actions は対象と前回依頼とdraft保護操作を表示す�
   const html = renderToStaticMarkup(<SessionRecoveryActions {...recovery} />);
   assert.match(html, /aria-label="Auxiliary: Review: Previous Request Actions"/);
   assert.match(html, /Fix this request/);
-  assert.match(html, />Resend<\/button>/);
-  assert.match(html, />Edit<\/button>/);
+  const document = new JSDOM(html).window.document;
+  for (const action of ["Resend", "Edit"]) {
+    const name = `Auxiliary: Review: ${action} Previous Request`;
+    const button = document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`);
+    assert.ok(button);
+    assert.equal(button.title, name);
+    assert.equal(button.querySelector("svg")?.getAttribute("aria-hidden"), "true");
+  }
   assert.match(html, /Your current draft is preserved\./);
   assert.match(html, />Replace With Previous Request<\/button>/);
   assert.match(html, />Keep Current Draft<\/button>/);
@@ -65,8 +72,12 @@ test("recovery actions はlatest turn再取得中とerrorでも既知の操作�
       latestTurnLoading latestTurnError="Read failed" onRetryLatestTurn={noop}
     />);
     assert.match(html, /aria-busy="true"/);
-    assert.match(html, /disabled="">Resend<\/button>/);
-    assert.match(html, /disabled="">Edit<\/button>/);
+    const document = new JSDOM(html).window.document;
+    for (const action of ["Resend", "Edit"]) {
+      const button = document.querySelector<HTMLButtonElement>(`button[aria-label="Main: ${action} Previous Request"]`);
+      assert.ok(button);
+      assert.equal(button.disabled, true);
+    }
     assert.match(html, /Loading latest execution/);
     assert.match(html, /Could not load the latest execution: Read failed/);
     assert.match(html, /Retry<\/button>/);
