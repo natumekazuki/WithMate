@@ -3061,6 +3061,77 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
 
 // @test-value v2
 // kind = "contract"
+// claim = "承認要求はページング有無によらず実行中の応答本文の後ろで操作でき、解決・終了後は会話本文だけを保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests" }
+// fault = "承認が会話の外や説明本文の前へ出る、別requestへ判断を送る、または解決・終了後も古い承認操作が残る"
+// observable = "応答行内の本文と承認cardのDOM順、許可・拒否callbackのrequestとdecision、解決・終了後の本文と操作面"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnのページングと未投影・投影済み応答における承認操作"
+// lifecycle = "permanent"
+// impact = "利用者が実行中の会話から承認を見つけられず、古い要求や別の要求へ判断する誤操作につながる"
+// distinction = "既存のcard単体testでは会話内の配置を、末尾SSR testではページングと解決時の操作遷移を検出できない。既存DOM fixtureの4組合せで確認する"
+// @end-test-value
+test("SessionMessageColumn は承認を実行中の応答本文の後ろで操作して閉じる", async () => {
+  for (const paged of [false, true]) {
+    for (const projected of [false, true]) {
+      let request: LiveApprovalRequest | null = createLiveApprovalRequest();
+      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
+      const explanation = "操作前の説明";
+      const messages: Message[] = [{ role: "user", text: "依頼" }];
+      if (projected) messages.push({ role: "assistant", text: explanation });
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props,
+          conversationPaging: paged ? { loading: false, error: "", onRetry() {} } : undefined,
+          pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: request,
+          onResolveLiveApproval: (...args) => decisions.push(args),
+        });
+      }
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages, messageKeys: projected ? ["prompt", "response"] : ["prompt"],
+        isRunning: true, liveRunAssistantText: explanation,
+      });
+      try {
+        const { container, dom } = mounted;
+        const card = container.querySelector<HTMLElement>('[aria-label="Approval required"]');
+        assert.ok(card);
+        assert.equal(container.querySelectorAll('[aria-label="Approval required"]').length, 1);
+        const response = card.closest(".session-message-list .message-row.assistant");
+        assert.ok(response, "承認はメッセージ一覧内の応答に属する");
+        const body = [...response.querySelectorAll("p")].find((node) => node.textContent === explanation);
+        assert.ok(body);
+        assert.ok(body.compareDocumentPosition(card) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.match(card.textContent ?? "", /npm test を実行します/);
+        assert.match(card.textContent ?? "", /確認してね/);
+        const allow = [...card.querySelectorAll("button")].find((button) => button.textContent === "Allow Once");
+        assert.ok(allow);
+        await act(async () => allow.click());
+        assert.deepEqual(decisions, [[request, "approve"]]);
+
+        request = null;
+        await mounted.rerender({});
+        assert.equal(container.querySelector('[aria-label="Approval required"]'), null);
+        assert.match(container.textContent ?? "", /操作前の説明/);
+        assert.equal(container.textContent?.includes("npm test を実行します"), false);
+
+        request = { ...createLiveApprovalRequest(), requestId: "approval-2", summary: "次の操作" };
+        await mounted.rerender({});
+        const reject = [...container.querySelectorAll<HTMLButtonElement>('[aria-label="Approval required"] button')]
+          .find((button) => button.textContent === "Reject");
+        assert.ok(reject);
+        await act(async () => reject.click());
+        assert.deepEqual(decisions.at(-1), [request, "deny"]);
+        await mounted.rerender({ isRunning: false, messages: [{ role: "assistant", text: explanation }], messageKeys: ["response"], liveRunAssistantText: "" });
+        assert.equal(container.querySelector('[aria-label="Approval required"]'), null, "終了後はstale requestを操作面へ戻さない");
+        assert.match(container.textContent ?? "", /操作前の説明/);
+      } finally { await mounted.cleanup(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "投影済みの実行中assistant本文と処理中bubbleを同じレスポンス枠に表示する"
 // oracle = { type = "contract", ref = "Issue #742: 完了条件; docs/design/desktop-ui.md: pending中のlive activity / streaming response" }
 // fault = "streaming本文と処理中bubbleが別のassistant行に分かれ、avatarと本文を重複して見せる"

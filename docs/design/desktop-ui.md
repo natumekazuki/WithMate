@@ -45,6 +45,12 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 同一会話・同一requestの重複callbackは通知を増やさず、解決・abort・cancel・resetで通知を撤去する。設定取得中に解決した古い通知は表示しない。通知の識別・後続通知への置換・削除時の撤去は既存の会話単位の基盤を使い、古い要求の解決で後続通知を消さない。通知失敗は承認decisionやproviderの結果を変更しない。
 - 同一会話の承認要求はFIFOで先頭1件だけを既存の承認cardへ表示し、表示した要求だけ通知する。判断後に次へ進み、Monitorは未解決要求がある間も会話単位で数える。要求の識別と取消の契約は[Session Run Lifecycle](session-run-lifecycle.md#sessionapprovalservice)を参照する。
 
+## Approval Requests
+
+- Main／Auxiliaryの承認要求は、実行中のassistant応答欄で本文の後ろに表示する。会話のページング有無で配置を分けず、過去pageの先頭へ要求を移さない。
+- 要求内容・警告・詳細と`Allow Once / Reject`を同じ場所に保ち、判断送信中の二重操作防止とaccessible statusを維持する。
+- 解決・取消・turn終了後は承認操作面を閉じる。承認card専用の会話履歴は保存せず、既存の会話本文・実行記録は維持する。
+
 ## Question Forms
 
 - Main／Auxiliaryとも、有効な構造化入力要求を会話内で操作する。Codexの非同期質問はsource item IDに対応する本文範囲をformへ置き換え、通常本文から質問を推測しない。本文を持たない要求は受信時点の応答本文の後ろへ挿入し、後続本文より前の位置を保持する。

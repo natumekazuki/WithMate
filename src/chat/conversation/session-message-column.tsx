@@ -1156,19 +1156,6 @@ export function SessionMessageColumn({
 
   const renderPendingContent = () => (
     <div className="pending-response-content">
-      {!conversationPaging ? <LiveRequestSurface
-        liveApprovalRequest={liveApprovalRequest}
-        approvalActionRequestId={approvalActionRequestId}
-        approvalActionDecision={approvalActionDecision}
-        liveElicitationRequest={null}
-        inputAvailable={elicitationInputAvailable}
-        drafts={elicitationDrafts}
-        elicitationActionRequestId={elicitationActionRequestId}
-        elicitationAction={elicitationAction}
-        onResolveLiveApproval={onResolveLiveApproval}
-        onResolveLiveElicitation={onResolveLiveElicitation}
-        onOpenPath={onOpenPath}
-      /> : null}
       {pendingResponseMessageIndex < 0 ? <InlineQuestionContent
         text={liveRunAssistantText}
         responseProvider={provider}
@@ -1207,6 +1194,19 @@ export function SessionMessageColumn({
           />
         </div>
       ) : null}
+      <LiveRequestSurface
+        liveApprovalRequest={liveApprovalRequest}
+        approvalActionRequestId={approvalActionRequestId}
+        approvalActionDecision={approvalActionDecision}
+        liveElicitationRequest={null}
+        inputAvailable={elicitationInputAvailable}
+        drafts={elicitationDrafts}
+        elicitationActionRequestId={elicitationActionRequestId}
+        elicitationAction={elicitationAction}
+        onResolveLiveApproval={onResolveLiveApproval}
+        onResolveLiveElicitation={onResolveLiveElicitation}
+        onOpenPath={onOpenPath}
+      />
       {liveRunErrorMessage ? (
         <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
       ) : null}
@@ -1252,19 +1252,6 @@ export function SessionMessageColumn({
           </div>
         </div>
       ) : null}
-      {conversationPaging ? <div className="conversation-live-request"><LiveRequestSurface
-        liveApprovalRequest={liveApprovalRequest}
-        approvalActionRequestId={approvalActionRequestId}
-        approvalActionDecision={approvalActionDecision}
-        liveElicitationRequest={null}
-        inputAvailable={elicitationInputAvailable}
-        drafts={elicitationDrafts}
-        elicitationActionRequestId={elicitationActionRequestId}
-        elicitationAction={elicitationAction}
-        onResolveLiveApproval={onResolveLiveApproval}
-        onResolveLiveElicitation={onResolveLiveElicitation}
-        onOpenPath={onOpenPath}
-      /></div> : null}
       {onJumpToBottom && !isMessageListFollowing ? (
         <button
           className="message-list-jump-bottom-button"

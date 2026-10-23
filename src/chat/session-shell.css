@@ -636,13 +636,6 @@
   flex: 1 1 0;
 }
 
-.conversation-live-request {
-  flex: 0 0 auto;
-  min-height: 0;
-  max-height: 45%;
-  overflow: auto;
-}
-
 .conversation-message-column > .session-message-column {
   flex: 1 1 auto;
   min-width: 0;
