@@ -58,6 +58,8 @@ export type SessionWindowRendererState = "responsive" | "unresponsive" | "gone";
 
 export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly sessionWindows = new Map<string, TWindow>();
+  private readonly retainedMonitorSessionIds = new Set<string>();
+  private readonly retainMonitorOnClose = new Map<TWindow, boolean>();
   private readonly openingSessionWindows = new Map<string, Promise<TWindow>>();
   private readonly rendererStates = new Map<TWindow, SessionWindowRendererState>();
   private readonly allowCloseSessionWindows = new Set<TWindow>();
@@ -98,6 +100,21 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     return openSessionIds;
+  }
+
+  listMonitorSessionIds(): string[] {
+    return [...new Set([...this.listOpenSessionWindowIds(), ...this.retainedMonitorSessionIds])];
+  }
+
+  retainSessionForMonitor(sessionId: string): void {
+    this.retainedMonitorSessionIds.add(sessionId);
+    const window = this.sessionWindows.get(sessionId);
+    // Work that starts during a stopped close also needs a later explicit dismissal.
+    if (window && this.retainMonitorOnClose.has(window)) this.retainMonitorOnClose.set(window, true);
+  }
+
+  forgetSessionForMonitor(sessionId: string): void {
+    this.retainedMonitorSessionIds.delete(sessionId);
   }
 
   listSettledOpenSessionWindowIds(): string[] {
@@ -258,8 +275,10 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   discardSessionWindow(sessionId: string): void {
+    this.forgetSessionForMonitor(sessionId);
     const window = this.sessionWindows.get(sessionId);
     if (!window || window.isDestroyed()) return;
+    this.retainMonitorOnClose.set(window, false);
     this.allowCloseSessionWindows.add(window);
     window.close();
   }
@@ -340,6 +359,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
 
   closeAllSessionWindows(): void {
     // DB reset explicitly discards sessions; ordinary close first attempts draft persistence.
+    this.retainedMonitorSessionIds.clear();
     for (const sessionId of Array.from(this.sessionWindows.keys())) {
       this.discardSessionWindow(sessionId);
     }
@@ -388,6 +408,9 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     const hasRunningSession = this.deps.isRunInFlight(sessionId);
+    // Capture before confirmation/flush: terminal completion must not turn a
+    // running close into a stopped close that ends monitoring.
+    this.retainMonitorOnClose.set(window, hasRunningSession);
     const hasTerminalsRequiringConfirmation = (this.deps.getTerminalCloseConfirmationCount?.(window) ?? 0) > 0;
     if (hasRunningSession || hasTerminalsRequiringConfirmation) {
       event.preventDefault();
@@ -415,6 +438,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.pendingCloseConfirmations.delete(window);
     if (this.sessionWindows.get(sessionId) !== window || window.isDestroyed() || this.draftFlushGateActive) return;
     if (!approved) {
+      this.retainMonitorOnClose.delete(window);
       this.resolveCloseRequest(window, false);
       return;
     }
@@ -423,6 +447,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       try { window.close(); }
       catch (error) {
         this.allowCloseSessionWindows.delete(window);
+        this.retainMonitorOnClose.delete(window);
         this.resolveCloseRequest(window, false);
         console.error("Session Window close failed after confirmation:", error);
       }
@@ -462,6 +487,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
         }
       } catch {
         this.allowCloseSessionWindows.delete(window);
+        this.retainMonitorOnClose.delete(window);
         this.releaseDraftFlush(window, false);
         this.resolveCloseRequest(window, false);
       }
@@ -477,11 +503,18 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     this.allowCloseSessionWindows.delete(window);
     this.cancelCloseConfirmation(window);
     this.pendingDraftFlushWindows.delete(window);
+    const retainOnClose = this.retainMonitorOnClose.get(window);
+    this.retainMonitorOnClose.delete(window);
     if (this.sessionWindows.get(sessionId) !== window) {
       return;
     }
 
     this.sessionWindows.delete(sessionId);
+    if (retainOnClose || this.deps.isRunInFlight(sessionId)) {
+      this.retainedMonitorSessionIds.add(sessionId);
+    } else if (retainOnClose === false) {
+      this.retainedMonitorSessionIds.delete(sessionId);
+    }
     this.deps.onSessionWindowClosed?.(sessionId);
     const wasSnapshotEligible = this.snapshotEligibleWindows.delete(window);
     this.broadcast();

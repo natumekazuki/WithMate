@@ -59,20 +59,6 @@ function PinIcon({ active }: { active: boolean }) {
   );
 }
 
-function getAgentSessionModeBadge(session: HomeSessionSummary): { className: string; label: string } {
-  if (session.sessionKind === "character-authoring") {
-    return {
-      className: "session-mode-badge character",
-      label: "Character",
-    };
-  }
-
-  return {
-    className: "session-mode-badge agent",
-    label: "Agent",
-  };
-}
-
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
   onOpenSession,
@@ -140,9 +126,9 @@ export function HomeRecentSessionsPanel({
       >
         {launchResults}
         {visibleSessionEntries.map((item) => {
-          const { session, state } = item.entry;
+          const { session } = item.entry;
           const isReadOnly = isReadOnlySession(session);
-          const modeBadge = getAgentSessionModeBadge(session);
+          const isCharacterAuthoring = session.sessionKind === "character-authoring";
           const isPinPending = pendingSessionPinIds.includes(session.id);
           return (
             <div
@@ -169,11 +155,12 @@ export function HomeRecentSessionsPanel({
                 </div>
               </button>
               <div className="home-session-card-actions">
-                <div className="home-session-card-badges">
-                  <span className={modeBadge.className}>{modeBadge.label}</span>
-                  {isReadOnly ? <span className="session-status home-session-status neutral">Read Only</span> : null}
-                  <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
-                </div>
+                {isCharacterAuthoring || isReadOnly ? (
+                  <div className="home-session-card-badges">
+                    {isCharacterAuthoring ? <span className="session-mode-badge character">Character</span> : null}
+                    {isReadOnly ? <span className="session-status home-session-status neutral">Read Only</span> : null}
+                  </div>
+                ) : null}
                 <button
                   className={`home-session-pin-button${session.isPinned ? " is-active" : ""}`}
                   type="button"

@@ -10,7 +10,6 @@ import type {
 import {
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
@@ -71,7 +70,6 @@ export function registerAuxiliaryHandlers(
     if (
       !deps.listAuxiliarySessions ||
       !deps.listOpenActiveAuxiliarySessionSummaries ||
-      !deps.listOpenAuxiliarySessionSummaries ||
       !deps.getActiveAuxiliarySession ||
       !deps.getAuxiliarySession ||
       !deps.createAuxiliarySession ||
@@ -85,7 +83,6 @@ export function registerAuxiliaryHandlers(
     ) {
       throw new Error(
         "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenActiveAuxiliarySessionSummaries, " +
-          "listOpenAuxiliarySessionSummaries, " +
           "getActiveAuxiliarySession, getAuxiliarySession, createAuxiliarySession, updateAuxiliarySession, " +
           "closeAuxiliarySession, runAuxiliarySessionTurn, cancelAuxiliarySessionRun, " +
           "getAuxiliaryDraft, saveAuxiliaryDraft, and getAuxiliarySessionStatus are required.",
@@ -96,7 +93,6 @@ export function registerAuxiliaryHandlers(
       listAuxiliarySessions: deps.listAuxiliarySessions,
       listOpenActiveAuxiliarySessionSummaries:
         deps.listOpenActiveAuxiliarySessionSummaries,
-      listOpenAuxiliarySessionSummaries: deps.listOpenAuxiliarySessionSummaries,
       getActiveAuxiliarySession: deps.getActiveAuxiliarySession,
       getAuxiliarySession: deps.getAuxiliarySession,
       createAuxiliarySession: deps.createAuxiliarySession,
@@ -123,9 +119,6 @@ export function registerAuxiliaryHandlers(
   ipcMain.handle(
     WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
     () => getAuxiliaryDeps(deps).listOpenActiveAuxiliarySessionSummaries(),
-  );
-  ipcMain.handle(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL, () =>
-    getAuxiliaryDeps(deps).listOpenAuxiliarySessionSummaries(),
   );
   ipcMain.handle(
     WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,

@@ -77,6 +77,7 @@ type Harness = {
   setUsage: (handler: () => Promise<Array<{ characterId: string; sessionKind: "default" }>>) => void;
   setCreate: (handler: (input: CreateSessionRequest) => Promise<ReturnType<typeof buildNewSession>>) => void;
   setAuxiliaryQuery: (handler: () => Promise<AuxiliarySessionSummary[]>) => void;
+  setMonitorEntries: (handler: () => Promise<HomeSessionSummary[]>) => void;
   emitLive: (sessionId: string, cancellationState?: LiveSessionRunStatus["cancellationState"] | null) => Promise<void>;
   liveSubscriptionCount: () => number;
   characterQueryCount: () => number;
@@ -104,6 +105,8 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     request.scope === "open" ? [{ ...session("open"), cancellationState: initial?.mainCancellation }] : [],
   );
   let auxiliaryQuery = async () => initial?.auxiliaries ?? [];
+  let monitorEntries: () => Promise<HomeSessionSummary[]> = async () => (initial?.openIds ?? ["open"])
+    .map((id) => ({ ...session(id), cancellationState: initial?.mainCancellation }));
   const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
   const invalidationListeners = new Set<(payload: SessionSummaryInvalidation) => void>();
   const openIdListeners = new Set<(ids: string[]) => void>();
@@ -142,6 +145,10 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
       lastErrors: [],
     }),
     listSessionSummaryPage: async (request) => listPage(request ?? {}),
+    listSessionMonitorPage: async () => {
+      const [entries, auxiliarySessions] = await Promise.all([monitorEntries(), auxiliaryQuery()]);
+      return { entries, auxiliarySessions, hasMore: false, nextCursor: null };
+    },
     listSessionCharacterUsage: async () => usage(),
     subscribeSessionInvalidation: (listener) => {
       invalidationListeners.add(listener);
@@ -154,7 +161,6 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     },
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
-    listOpenAuxiliarySessionSummaries: () => auxiliaryQuery(),
     subscribeLiveSessionRunStatus: (listener) => {
       liveListeners.add(listener);
       return () => { liveListeners.delete(listener); };
@@ -214,6 +220,7 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     setUsage: (handler) => { usage = handler; },
     setCreate: (handler) => { create = handler; },
     setAuxiliaryQuery: (handler) => { auxiliaryQuery = handler; },
+    setMonitorEntries: (handler) => { monitorEntries = handler; },
     emitLive: async (sessionId, cancellationState) => {
       await act(async () => {
         const status: LiveSessionRunStatus | null = cancellationState === null
@@ -267,6 +274,7 @@ test("Home/Monitorの再表示で取消待ちを復元し、最後の実終了�
       assert.deepEqual(home.opened, [["open", "aux"]]);
 
       home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
+      home.setMonitorEntries(async () => [session("open")]);
       await home.emitLive("open", null);
       assert.ok(running.querySelector('[aria-label="Main Idle"]'));
       assert.equal(running.querySelectorAll(".home-monitor-card").length, 1);
@@ -301,9 +309,11 @@ test("旧turn通知と遅いsnapshotで現在のMain/Auxiliaryを巻き戻さな
     const staleMain = deferred<HomeSessionSummaryPageResult>();
     const staleAuxiliary = deferred<AuxiliarySessionSummary[]>();
     home.setListPage(async (request) => request.scope === "open" ? staleMain.promise : page([]));
+    home.setMonitorEntries(async () => (await staleMain.promise).entries);
     home.setAuxiliaryQuery(() => staleAuxiliary.promise);
     await home.emitLive("open", "terminating");
     home.setListPage(async (request) => page(request.scope === "open" ? [{ ...session("open"), runState: "running" }] : []));
+    home.setMonitorEntries(async () => [{ ...session("open"), runState: "running" }]);
     home.setAuxiliaryQuery(async () => [auxiliary("aux", "terminating")]);
     await home.emitLive("open");
     await home.emitLive("aux", "terminating");
@@ -317,6 +327,7 @@ test("旧turn通知と遅いsnapshotで現在のMain/Auxiliaryを巻き戻さな
     await home.emitLive("open", "requested"); // Old-turn notification; query still returns the new turn.
     assert.ok(home.element.querySelector('[aria-label="Main Running"]'));
     home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
+    home.setMonitorEntries(async () => [session("open")]);
     home.setAuxiliaryQuery(async () => [auxiliary("aux")]);
     await home.emitLive("open");
     await home.emitLive("aux");
@@ -716,6 +727,8 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
       search.dispatchEvent(new home.dom.window.Event("input", { bubbles: true }));
     });
     await home.emitOpenIds(["fresh-open"]);
+    home.setMonitorEntries(async () => [session("fresh-open")]);
+    await home.focus();
     await home.settle(320);
     assert.equal(requests.length, 3);
     await act(async () => oldPage.resolve(page([session("obsolete")], "old-next")));
@@ -748,6 +761,8 @@ test("通知集中と検索・open変更は最新1件へ収束して旧2page目�
 test("header検索をSessions・Monitor・Charactersで共有し、タブ往復とclearで保持・復帰する", async () => {
   const home = await mountHome({ openIds: ["open", "other-open"] });
   try {
+    home.setMonitorEntries(async () => [session("open", "used"), session("other-open", "other")]);
+    await home.focus();
     home.setListPage(async (request) => {
       if (request.scope === "open") return page((request.sessionIds ?? []).map((id) => session(id, id === "open" ? "used" : "other")));
       if (request.scope === "pinned") return page([]);
@@ -906,6 +921,7 @@ test("ID通知は一覧membershipを取り直しopenだけ対象を絞る", asyn
       if (request.scope === "recent") throw new Error("Recent unavailable");
       return page(request.scope === "open" ? [{ ...session("open"), runState: "running" }] : [session("moving", "used", true)]);
     });
+    home.setMonitorEntries(async () => [{ ...session("open"), runState: "running" }, session("other-open")]);
     await home.emitInvalidation({ scope: "ids", sessionIds: ["open"], detailChanged: false });
     assert.deepEqual(requests.find(({ scope }) => scope === "open")?.sessionIds, ["open"]);
     assert.match(home.element.querySelector('[aria-labelledby="home-monitor-running"]')?.textContent ?? "", /open/);

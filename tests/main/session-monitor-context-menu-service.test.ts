@@ -19,6 +19,33 @@ type PopupOptions = {
   callback?: () => void;
 };
 
+// @test-value v2
+// kind = "contract"
+// claim = "閉じた監視対象はCloseを無効化し、Session IDのコピーは利用できる"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "Windowがない対象へ無効なClose操作を提示するかコピーを阻害する"
+// observable = "menu enabled状態とcopy結果"
+// observation_boundary = "public-boundary"
+// scope = "monitor-closed-window-menu"
+// lifecycle = "permanent"
+// @end-test-value
+test("閉じた監視対象のCloseは無効でもSession IDをコピーできる", async () => {
+  const harness = createMenuHarness();
+  const copied: string[] = [];
+  const service = new SessionMonitorContextMenuService({
+    isSessionWindowOpen: () => false,
+    requestCloseSessionWindow: async () => { throw new Error("Window is not open"); },
+    writeText: (value) => { copied.push(value); },
+    buildMenu: harness.buildMenu,
+  });
+  const result = service.showContextMenu({} as BrowserWindow, { kind: "agent", sessionId: "closed", point: { x: 0, y: 0 } });
+  assert.equal(harness.getTemplate()[0]!.enabled, false);
+  invokeMenuItem(harness.getTemplate().find((item) => item.label === "Copy Session ID")!);
+  assert.deepEqual(await result, { status: "copied" });
+  assert.deepEqual(copied, ["closed"]);
+});
+
+
 function createMenuHarness() {
   let template: MenuItemConstructorOptions[] = [];
   let popupOptions: PopupOptions | null = null;
@@ -68,6 +95,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
     const harness = createMenuHarness();
     const closedTargets: string[] = [];
     const deps: SessionMonitorContextMenuServiceDeps = {
+      isSessionWindowOpen: () => true,
       requestCloseSessionWindow(sessionId) {
         closedTargets.push(`agent:${sessionId}`);
         return Promise.resolve(true);
@@ -97,6 +125,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
     requestCloseSessionWindow() {
       return Promise.resolve(true);
     },
+    isSessionWindowOpen: () => true,
     writeText() {},
     buildMenu: harness.buildMenu,
   });
@@ -125,6 +154,7 @@ test("Session Monitor context menu はclose delegateの取消をclosedとして�
   const harness = createMenuHarness();
   const service = new SessionMonitorContextMenuService({
     requestCloseSessionWindow: async () => false,
+    isSessionWindowOpen: () => true,
     writeText() {},
     buildMenu: harness.buildMenu,
   });
@@ -163,6 +193,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
         closedTargets.push(`agent:${sessionId}`);
         return Promise.resolve(true);
       },
+      isSessionWindowOpen: () => true,
       writeText(value) {
         copiedTexts.push(value);
       },
@@ -187,6 +218,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
         closedTargets.push("agent");
         return Promise.resolve(true);
       },
+      isSessionWindowOpen: () => true,
       writeText() {
         copyAttempts += 1;
         throw new Error("clipboard unavailable");

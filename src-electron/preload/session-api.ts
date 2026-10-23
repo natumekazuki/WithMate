@@ -16,6 +16,9 @@ export function createSessionApi(
         request ?? null,
       );
     },
+    listSessionMonitorPage(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_SESSION_MONITOR_PAGE_CHANNEL, request ?? null);
+    },
     listSessionCharacterUsage() {
       return ipcRenderer.invoke(
         channels.WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,

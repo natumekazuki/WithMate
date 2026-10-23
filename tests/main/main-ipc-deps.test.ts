@@ -197,6 +197,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       deletePromptTemplate: () => [],
     } satisfies MainIpcPromptTemplateDepsArgs,
     sessionQuery: {
+      listSessionMonitorPage: () => ({ entries: [], auxiliarySessions: [], nextCursor: null, hasMore: false }),
       listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
       listSessionCharacterUsage: () => [],
         getLatestSessionTurn: () => null,

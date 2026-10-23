@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { buildNewSession, getSessionIncarnationId, projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { projectLiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
+import { AuxiliaryLiveRunParents } from "../../src-electron/auxiliary/auxiliary-live-run-parents.js";
+import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
+import { admitSessionTurn } from "../../src-electron/session/session-turn-admission.js";
+import { readSessionMonitorPage } from "../../src-electron/session/session-monitor-query.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import {
   SessionWindowBridge,
@@ -11,6 +20,261 @@ import {
   type SessionWindowRendererState,
 } from "../../src-electron/windows/session-window-bridge.js";
 import { DEFAULT_DRAFT_FLUSH_TIMEOUT_MS, DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS, type DraftFlushResult } from "../../src-electron/platform/draft-flush-coordinator.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryのqueue開始準備中にquitが取消を要求して失敗しても、親の通常closeは取消収束後までMonitorを保持しStopped再closeで解除する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "admission予約前またはprovider読取待ちの取消が子IDを保持し、親closeをStoppedと誤判定する"
+// observable = "実runtimeのguardと取消state、close確認回数、Monitor queryの親entryとAuxiliary取消状態、Stopped再close後の空のMonitor"
+// observation_boundary = "public-boundary"
+// scope = "AuxiliaryLiveRunParents + SessionRuntimeService + admitSessionTurn + SessionWindowBridge + Monitor query"
+// lifecycle = "permanent"
+// impact = "履歴に状態を表示しない構成で取消終了待ちと結果の確認先を失う"
+// distinction = "個別guard stubでは検出できないqueue開始前の親登録と実取消通知、quit失敗後closeの結合をメモリのみで検証する"
+// @end-test-value
+it("queue準備中のAuxiliary取消はquit中止後のcloseでも親を監視保持する", async () => {
+  for (const phase of ["reservation", "provider-read"] as const) {
+    const parent = createSession({ id: "parent" });
+    const auxiliary: AuxiliarySessionSummary = {
+      ...parent, id: "aux", parentSessionId: parent.id, title: "Auxiliary", status: "active", runState: "idle",
+      displayAfterMessageIndex: null, createdAt: "now", closedAt: "",
+    };
+    const owner = {};
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const preparing = new Promise<void>((resolve) => { entered = resolve; });
+    const pause = () => { entered(); return gate; };
+    let confirmations = 0;
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: (id) => id === parent.id ? parent : null,
+      isRunInFlight: (id) => runtime.isRunInFlight(id) || parents.hasPendingRunForParent(id),
+      confirmCloseWhileRunning: () => { confirmations += 1; return true; },
+      broadcastOpenSessionWindowIds() {},
+      getWindowSender: (window) => window,
+      sendDraftFlushRequest: (window, request) => {
+        queueMicrotask(() => bridge.acknowledgeDraftFlush(request.requestId, window, request.reason === "close"));
+      },
+      cancelInFlightSessionRuns: () => runtime.cancelAllRuns(),
+    });
+    const parents = new AuxiliaryLiveRunParents({
+      getStorageOwner: () => owner,
+      isRunPending: (id) => runtime.isRunInFlight(id),
+      hasLiveSessionRun: (id) => Boolean(observability.getLiveSessionRun(id)),
+      broadcastLiveSessionRun: (id, state) => {
+        const status = projectLiveSessionRunStatus(state);
+        if (status?.runState === "running" || status?.cancellationState || status?.approvalPending) {
+          bridge.retainSessionForMonitor(parents.get(id) ?? id);
+        }
+      },
+    });
+    const observability = new SessionObservabilityService({
+      onLiveSessionRunChanged: (id, state) => parents.publish(id, state, owner),
+      onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {}, onSessionBackgroundActivityChanged() {},
+    });
+    const unexpected = () => assert.fail("Canceled admission must not reach provider preparation or persistence");
+    const runtime = new SessionRuntimeService({
+      runSessionAdmissionExclusive: (_id, reserve, signal) => admitSessionTurn({
+        runExclusive: async (operation) => {
+          if (phase === "reservation") await pause();
+          return operation();
+        },
+        assertCurrent: () => { if (signal.aborted) throw new Error("Session run canceled."); },
+        reserve,
+        readProvider: async () => { await pause(); return "codex"; },
+        assertProviderAvailable() {},
+      }),
+      getSession: unexpected, persistRunningTurnStart: unexpected, appendRunningInput: unexpected,
+      appendTerminalSession: unexpected, checkpointRuntimeMetadata: unexpected,
+      resolveComposerPreview: unexpected, getAppSettings: unexpected, resolveProviderCatalog: unexpected,
+      getProviderCodingAdapter: unexpected, getSessionMemory: unexpected, resolveProjectMemoryEntriesForPrompt: unexpected,
+      createSessionTurn: unexpected, updateSessionTurn: unexpected,
+      setLiveSessionRun: (id, state) => observability.setLiveSessionRun(id, state),
+      getLiveSessionRun: (id) => observability.getLiveSessionRun(id),
+      broadcastLiveSessionRun: (id) => parents.publish(id, observability.getLiveSessionRun(id), owner),
+      waitForApprovalDecision: unexpected, waitForElicitationResponse: unexpected,
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    const receipt: SessionTurnQueueReceipt = {
+      sessionId: auxiliary.id, incarnationId: getSessionIncarnationId(parent), id: "queue", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
+      sequence: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
+      createdAt: "now", updatedAt: "now",
+      captured: { provider: parent.provider, workspacePath: parent.workspacePath, attachments: [],
+        request: { clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10", submitSource: "composer",
+          userMessage: "queued input", executionOptions: captureSessionExecutionOptions(parent) } },
+    };
+    const readMonitor = () => readSessionMonitorPage({
+      listMonitorSessionIds: () => bridge.listMonitorSessionIds(),
+      readSummaries: async (ids) => ids.includes(parent.id) ? [projectHomeSessionSummary(parent)] : [],
+      readAuxiliarySummaries: async (ids) => ids.includes(parent.id) ? [auxiliary] : [],
+      getLiveSessionRun: (id) => observability.getLiveSessionRun(id),
+    });
+    await bridge.openSessionWindow(parent.id);
+    const run = parents.trackRun(auxiliary, owner, () => runtime.runQueuedSessionTurn(receipt, unexpected));
+    const canceled = assert.rejects(run, /Session run canceled/);
+    try {
+      await preparing;
+      assert.equal(runtime.isRunInFlight(auxiliary.id), true, phase);
+      assert.equal(await bridge.flushSessionWindowDrafts(), false);
+      assert.equal(bridge.isQuitPending(), false);
+      assert.equal(observability.getLiveSessionRun(auxiliary.id)?.cancellationState, "requested");
+      assert.equal(await bridge.requestCloseSessionWindow(parent.id), true);
+      assert.equal(confirmations, 1);
+      assert.deepEqual(bridge.listOpenSessionWindowIds(), []);
+      assert.deepEqual(bridge.listMonitorSessionIds(), [parent.id]);
+      assert.equal(runtime.isRunInFlight(auxiliary.id), true);
+      const canceling = await readMonitor();
+      assert.deepEqual(canceling.entries.map((entry) => entry.id), [parent.id]);
+      assert.equal(canceling.auxiliarySessions[0]!.cancellationState, "requested");
+
+      release();
+      await canceled;
+      await runtime.waitForPendingRuns();
+      assert.equal(runtime.isRunInFlight(auxiliary.id), false);
+      assert.equal(parents.size, 0);
+      const stopped = await readMonitor();
+      assert.deepEqual(stopped.entries.map((entry) => entry.id), [parent.id]);
+      assert.equal(stopped.auxiliarySessions[0]!.cancellationState, undefined);
+      await bridge.openSessionWindow(parent.id);
+      assert.equal(await bridge.requestCloseSessionWindow(parent.id), true);
+      assert.equal(confirmations, 1);
+      assert.deepEqual(bridge.listMonitorSessionIds(), []);
+      assert.deepEqual((await readMonitor()).entries, []);
+    } finally {
+      release();
+      await canceled;
+      observability.dispose();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実行中のcloseは確認中に完了してもMonitorに残し、再open後のStopped closeでだけ除外する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "非同期close完了時の状態で保持判断を上書きする"
+// observable = "WindowとMonitorのID一覧、確認取消後のclose結果"
+// observation_boundary = "public-boundary"
+// scope = "monitor-close-intent"
+// lifecycle = "permanent"
+// @end-test-value
+it("Monitor保持はclose開始時の状態を使い、Stoppedでの再closeを解除とする", async () => {
+  let running = true;
+  let resolveConfirmation!: (value: boolean) => void;
+  const bridge = new SessionWindowBridge({
+    createWindow: () => new StubWindow(),
+    async loadChatEntry() {},
+    getSession: (id) => createSession({ id }),
+    isRunInFlight: () => running,
+    confirmCloseWhileRunning: () => new Promise<boolean>((resolve) => { resolveConfirmation = resolve; }),
+    broadcastOpenSessionWindowIds() {},
+  });
+  await bridge.openSessionWindow("parent");
+  bridge.retainSessionForMonitor("parent");
+  const closing = bridge.requestCloseSessionWindow("parent");
+  running = false;
+  resolveConfirmation(true);
+  assert.equal(await closing, true);
+  assert.deepEqual(bridge.listOpenSessionWindowIds(), []);
+  assert.deepEqual(bridge.listMonitorSessionIds(), ["parent"]);
+  await bridge.openSessionWindow("parent");
+  assert.deepEqual(bridge.listMonitorSessionIds(), ["parent"]);
+  assert.equal(await bridge.requestCloseSessionWindow("parent"), true);
+  assert.deepEqual(bridge.listMonitorSessionIds(), []);
+
+  running = true;
+  await bridge.openSessionWindow("parent");
+  const canceled = bridge.requestCloseSessionWindow("parent");
+  resolveConfirmation(false);
+  assert.equal(await canceled, false);
+  running = false;
+  assert.equal(await bridge.requestCloseSessionWindow("parent"), true);
+  assert.deepEqual(bridge.listMonitorSessionIds(), []);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "closeのdraft flush中に完了または新規実行したSessionは結果確認前にMonitorから除外しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "flush ACK後にStoppedだけを見て実行中closeを監視解除する"
+// observable = "ACK前後のMonitor ID、実Window ID"
+// observation_boundary = "public-boundary"
+// scope = "monitor-close-flush"
+// lifecycle = "permanent"
+// @end-test-value
+it("draft flush中の完了と新規実行をMonitorへ保持する", async () => {
+  let running = true;
+  const f = createDraftFlushBridge({ isRunInFlight: () => running, confirmCloseWhileRunning: () => true });
+  await f.bridge.openSessionWindow("running-parent");
+  const firstClose = f.bridge.requestCloseSessionWindow("running-parent");
+  await new Promise((resolve) => setImmediate(resolve));
+  running = false;
+  let request = f.requests.at(-1)!;
+  f.bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
+  assert.equal(await firstClose, true);
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), ["running-parent"]);
+
+  await f.bridge.openSessionWindow("new-work");
+  const nextClose = f.bridge.requestCloseSessionWindow("new-work");
+  f.bridge.retainSessionForMonitor("new-work");
+  request = f.requests.at(-1)!;
+  f.bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
+  assert.equal(await nextClose, true);
+  assert.deepEqual(new Set(f.bridge.listMonitorSessionIds()), new Set(["running-parent", "new-work"]));
+  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), []);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "未実行Windowの通常closeは監視終了し、明示削除とDB resetは閉鎖済み監視対象と保留closeの保持意図を除去する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "Windowのない保持IDが削除やreset後も残る、保留closeの完了で削除済みIDが復活する"
+// observable = "Monitor ID一覧と実Window一覧"
+// observation_boundary = "public-boundary"
+// scope = "monitor-cleanup"
+// lifecycle = "permanent"
+// @end-test-value
+it("未実行Windowと削除・resetのMonitor対象を整理する", async () => {
+  const f = createDraftFlushBridge();
+  const window = await f.bridge.openSessionWindow("unrun");
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), ["unrun"]);
+  const closing = f.bridge.requestCloseSessionWindow("unrun");
+  f.bridge.acknowledgeDraftFlush(f.requests[0]!.requestId, window, true);
+  assert.equal(await closing, true);
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), []);
+  f.bridge.retainSessionForMonitor("deleted");
+  f.bridge.discardSessionWindow("deleted");
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), []);
+  f.bridge.retainSessionForMonitor("retained");
+  await f.bridge.openSessionWindow("open");
+  f.bridge.closeAllSessionWindows();
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), []);
+  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), []);
+
+  for (const action of ["delete", "reset"] as const) {
+    for (const phase of ["confirmation", "flush"] as const) {
+      let running = true;
+      const race = createDraftFlushBridge({ isRunInFlight: () => running, confirmCloseWhileRunning: () => true });
+      await race.bridge.openSessionWindow("running");
+      const pendingClose = race.bridge.requestCloseSessionWindow("running");
+      if (phase === "flush") await new Promise((resolve) => setImmediate(resolve));
+      running = false;
+      if (action === "delete") race.bridge.discardSessionWindow("running");
+      else race.bridge.closeAllSessionWindows();
+      assert.equal(await pendingClose, true);
+      const request = race.requests.at(-1);
+      if (request) assert.equal(race.bridge.acknowledgeDraftFlush(request.requestId, request.window, true), false);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(race.bridge.listMonitorSessionIds(), [], `${action} during ${phase}`);
+      assert.deepEqual(race.bridge.listOpenSessionWindowIds(), []);
+    }
+  }
+});
+
 
 function createSession(overrides?: Partial<Session>): Session {
   return {

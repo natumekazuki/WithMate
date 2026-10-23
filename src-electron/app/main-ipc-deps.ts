@@ -121,6 +121,7 @@ import type {
   OpenPathResult,
   OpenSessionWindowIdsPageRequest,
   OpenSessionWindowIdsPageResult,
+  SessionMonitorPageResult,
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
 } from "../../src-shared/window/withmate-window-types.js";
@@ -269,6 +270,7 @@ export type MainIpcSessionQueryDepsArgs = {
   getConversationPage?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["getConversationPage"];
   resolveConversationQueryOwner?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["resolveConversationQueryOwner"];
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listSessionMonitorPage(request: { cursor: string | null; limit: number }): Awaitable<SessionMonitorPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   getLatestSessionTurn(sessionId: string): Awaitable<SessionTurnRecord | null>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
@@ -331,7 +333,6 @@ export type MainIpcAuxiliaryDepsArgs = {
   listAuxiliarySessions(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): Awaitable<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
-  listOpenAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliaryDraft(auxiliarySessionId: string): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
@@ -419,7 +420,6 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
     listAuxiliarySessions: () => [],
     listAuxiliarySessionSummaries: () => [],
     listOpenActiveAuxiliarySessionSummaries: () => [],
-    listOpenAuxiliarySessionSummaries: () => [],
     getActiveAuxiliarySession: () => null,
     getAuxiliarySession: () => null,
     getAuxiliaryDraft: () => null,

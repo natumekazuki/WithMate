@@ -66,13 +66,13 @@ test("閉じた開始試行の完了を次のNew Sessionから分離する", asy
       models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
     }] }),
     listSessionSummaryPage: async () => ({ entries: saved.map(projectHomeSessionSummary), hasMore: false, nextCursor: null }),
+    listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
     listSessionCharacterUsage: async () => [],
     subscribeSessionInvalidation: () => () => {},
     listOpenSessionWindowIds: async () => [],
     subscribeOpenSessionWindowIds: () => () => {},
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
-    listOpenAuxiliarySessionSummaries: async () => [],
     subscribeLiveSessionRunStatus: () => () => {},
     createSession: (input) => {
       const response = deferred<Session>();

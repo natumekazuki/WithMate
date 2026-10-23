@@ -7,6 +7,34 @@ import { WindowBroadcastService } from "../../src-electron/windows/window-broadc
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "親の停止判定は全Auxiliaryの実guardを集約し、保持liveだけでは実行中にせず、owner交換後は解除する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "選択外Auxiliaryや取消終了待ちを見落とす、完了後も停止不能にする"
+// observable = "親ごとのhasPendingRunForParent結果"
+// observation_boundary = "public-boundary"
+// scope = "monitor-auxiliary-aggregate"
+// lifecycle = "permanent"
+// @end-test-value
+test("全Auxiliaryの実guardを親の停止判定へ集約する", () => {
+  const f = fixture();
+  f.inFlight.add("a");
+  f.inFlight.add("b");
+  f.parents.remember(auxiliary("a"), f.owner);
+  f.parents.remember(auxiliary("b"), f.owner);
+  f.observability.setLiveSessionRun("b", live("b", { runState: "idle", cancellationState: "terminating" }));
+  f.inFlight.delete("a");
+  assert.equal(f.parents.hasPendingRunForParent("parent-a"), true);
+  assert.equal(f.parents.hasPendingRunForParent("parent-b"), false);
+  f.inFlight.delete("b");
+  assert.equal(f.parents.hasPendingRunForParent("parent-a"), false);
+  f.inFlight.add("b");
+  f.replaceOwner();
+  assert.equal(f.parents.hasPendingRunForParent("parent-a"), false);
+});
+
+
 function auxiliary(id: string, parentSessionId = "parent-a", status: AuxiliarySession["status"] = "active") {
   return { id, parentSessionId, status };
 }

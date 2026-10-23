@@ -91,6 +91,7 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
       lastErrors: [],
     }),
     listSessionSummaryPage: async () => ({ entries: [], hasMore: false, nextCursor: null }),
+    listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
     listSessionCharacterUsage: async () => {
       usageRequested.resolve();
       if (usageFailed) throw new Error("Usage unavailable");
@@ -104,7 +105,6 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
     subscribeOpenSessionWindowIds: (listener) => { onOpenWindows = listener; return () => {}; },
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
-    listOpenAuxiliarySessionSummaries: async () => [],
     subscribeLiveSessionRunStatus: () => () => {},
     createSession: () => { createCount += 1; return creation.promise; },
   };

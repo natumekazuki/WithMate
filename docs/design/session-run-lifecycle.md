@@ -89,6 +89,7 @@ atomic開始後に結果不明となった要求の明示解放は、実guard解
 ### SessionWindowBridge
 
 - `Session Window` の registry
+- Windowと独立したSession単位のMonitor保持。実行開始はMainのlive状態から捕捉する
 - 既存 window の再利用
 - running 中 close の確認ダイアログ制御
 - `session-start` の character reflection 起動
@@ -128,6 +129,8 @@ atomic開始後に結果不明となった要求の明示解放は、実guard解
   - `閉じて続行`: 下記のdraft flushを試みてwindowを閉じる。session実行は継続する
 - 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・送信例外・ACKのtimeoutでも、入力中promptの未保存範囲を破棄してWindowを閉じる。終了済みRendererにはACKを要求せず、保存できなかった結果を保持してWindowを破棄する。close成立とdraft保存成功は別の結果として扱う。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
 - Windowの破棄はMain Processが所有するprovider実行・取得済み応答・terminal保存を中止しない。表示への通知失敗で保存処理を中断しない。Windowを開き直すと同じSessionと既存runへ接続し、runを再実行しない
+- 一度実行したSessionはMain／全Auxiliaryの実行中、承認・入力待ち、取消終了待ちのcloseではMonitorに保持する。Windowを閉じたまま完了してもStoppedへ移すだけで、同じSessionを再openしてStopped状態で通常closeするまで残す。close開始時の状態を捕捉し、確認・draft flush中の完了では解除へ読み替えず、その間に始まった実行も保持する。監視終了は本文の既読証明ではない
+- Monitor保持はMainの生存期間内の一時状態とし、アプリ再起動へ永続化しない。未実行Windowは開いている間だけ対象とする。Session削除と明示DBリセットでは対応する保持も除去する。閉じた監視対象のcontext menuではWindowを閉じる操作を無効にし、IDコピーは維持する
 - 同じSessionを開く操作では、応答可能な既存Windowを再利用する。Renderer終了後は実際のclosedで旧Windowの登録・ownerを解放してから再生成する。応答不能の場合は通常closeの確認・flushを経て再生成し、確認取消では旧Windowを維持する。黒画面だけを根拠に自動破棄しない
 - 通常closeとapp quitが重なる場合、保存だけを待つclose ACKをquitに流用しない。quitは送信結果と復元保存まで待つ専用requestを送り、全体の終了判定まで通常closeによるWindow破棄と解凍を保留する。失敗時は生存Windowを解凍し、保留中の通常closeも中止して再試行を可能にする。ACK前のWindow消滅は保存成功として扱わない
 - Sessionを対象に含む明示的DBリセットでは、通常closeの保存待ちを使わずWindowを破棄する。管理登録とownerの解放は実際のclosed通知に合わせ、Windowが残ったまま登録だけを消さない

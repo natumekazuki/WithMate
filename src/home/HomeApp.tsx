@@ -8,10 +8,6 @@ import { startAppSettingsSubscription } from "../settings/app-settings-subscript
 import {
   projectHomeSessionSummary,
 } from "../../src-shared/session/session-state.js";
-import {
-  type AuxiliarySessionSummary,
-} from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import type { LiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
 import { type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "../app/open-session-window-subscription.js";
@@ -38,7 +34,6 @@ import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.
 import { buildHomeMateProfileHandlers } from "./home-mate-profile-handlers.js";
 import {
   buildHomeSessionProjection,
-  type HomeMonitorAuxiliaryDataState,
 } from "./home-session-projection.js";
 import { buildHomeLaunchHandlers, type HomeLaunchLifetime } from "./home-launch-handlers.js";
 import { HomeLaunchResults } from "./HomeLaunchResults.js";
@@ -98,10 +93,7 @@ import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
 } from "../../src-shared/window/withmate-window-types.js";
-import {
-  createHomeAuxiliarySessionRefresher,
-  resolveHomeAuxiliarySessionSummariesState,
-} from "./home-active-auxiliary-refresh.js";
+import { useHomeSessionMonitor } from "./use-home-session-monitor.js";
 import { resolveRandomHomeLaunchFeedback, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
 
 type HomeRightPaneView = "monitor" | "characters" | "previews";
@@ -116,14 +108,12 @@ export default function HomeApp() {
     createEmptyHomeSessionSummariesState,
   );
   const sessions = sessionSummariesState.summaries;
-  const [auxiliarySessionSummaries, setAuxiliarySessionSummaries] = useState<AuxiliarySessionSummary[]>([]);
-  const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
-  const hasLoadedAuxiliarySessionSummariesRef = useRef(false);
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
     status: "loading",
     sessionIds: [],
   });
   const openSessionWindowIds = openSessionWindowIdsState.sessionIds;
+  const monitorSnapshot = useHomeSessionMonitor(!isSettingsWindowMode && !isMemoryReviewWindowMode, openSessionWindowIds);
   const {
     inputText: searchInputText,
     searchText: sessionSearchText,
@@ -136,7 +126,6 @@ export default function HomeApp() {
   const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
   const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
   const [sessionMonitorFeedback, setSessionMonitorFeedback] = useState("");
-  const [auxiliaryLoadFeedback, setAuxiliaryLoadFeedback] = useState("");
   const pendingSessionWindowRestoreIds = useMemo(
     () => openSessionWindowIdsState.status === "loaded"
       ? selectPendingSessionWindowRestoreIds(sessionWindowRestoreIds, openSessionWindowIds)
@@ -551,75 +540,16 @@ export default function HomeApp() {
     }
   };
 
-  useEffect(() => {
-    if (isSettingsWindowMode || isMemoryReviewWindowMode) return;
-    const withmateApi = getWithMateApi();
-    if (!withmateApi) {
-      setAuxiliarySessionSummaries([]);
-      setAuxiliaryDataState("ready");
-      return;
-    }
-
-    const refresher = createHomeAuxiliarySessionRefresher({
-      fetchAuxiliarySessionSummaries: () => withmateApi.listOpenAuxiliarySessionSummaries(),
-      setAuxiliarySessionSummaries: (sessions) => {
-        setAuxiliarySessionSummaries((current) =>
-          resolveHomeAuxiliarySessionSummariesState(current, sessions),
-        );
-      },
-      onLoadState: (state) => {
-        if (state === "ready") {
-          hasLoadedAuxiliarySessionSummariesRef.current = true;
-        }
-        if (state !== "loading" || !hasLoadedAuxiliarySessionSummariesRef.current) {
-          setAuxiliaryDataState(state);
-        }
-        if (state === "ready" || (state === "loading" && !hasLoadedAuxiliarySessionSummariesRef.current)) {
-          setAuxiliaryLoadFeedback("");
-        }
-      },
-      onError: (error) => {
-        console.error(error);
-        setAuxiliaryLoadFeedback(error instanceof Error ? error.message : "Could not load Auxiliary sessions.");
-      },
-    });
-
-    const monitorRunStates = new Map<string, LiveSessionRunStatus>();
-    const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRunStatus((sessionId, status) => {
-      const nextState = { runState: status?.runState, cancellationState: status?.cancellationState, approvalPending: status?.approvalPending };
-      const previousState = monitorRunStates.get(sessionId);
-      if (previousState
-        && previousState.runState === nextState.runState
-        && previousState.cancellationState === nextState.cancellationState
-        && previousState.approvalPending === nextState.approvalPending) return;
-      monitorRunStates.set(sessionId, nextState);
-      // Notifications invalidate snapshots; only fresh Main queries supply the display state.
-      void refreshSessionSummaries("preserve");
-      refresher.refresh();
-    });
-    const unsubscribeSessionInvalidation = withmateApi.subscribeSessionInvalidation(() => {
-      refresher.refresh();
-    });
-    refresher.refresh();
-
-    return () => {
-      refresher.dispose();
-      unsubscribeLiveRun();
-      unsubscribeSessionInvalidation();
-    };
-  }, [isMemoryReviewWindowMode, isSettingsWindowMode, openSessionWindowIds, refreshSessionSummaries]);
-
-  const sessionProjection = useMemo(
+  const historyProjection = useMemo(
     () => buildHomeSessionProjection(
       sessions,
       openSessionWindowIds,
       sessionSearchText,
-      auxiliarySessionSummaries,
+      [],
       new Set([...sessionSummariesState.recentPages, ...sessionSummariesState.pinnedPages]
         .flatMap(({ page }) => page.entries.map(({ id }) => id))),
     ),
     [
-      auxiliarySessionSummaries,
       openSessionWindowIds,
       sessionSearchText,
       sessions,
@@ -627,8 +557,17 @@ export default function HomeApp() {
       sessionSummariesState.pinnedPages,
     ],
   );
+  const { filteredSessionEntries } = historyProjection;
+  const sessionProjection = useMemo(
+    () => buildHomeSessionProjection(
+      monitorSnapshot.entries,
+      monitorSnapshot.entries.map(({ id }) => id),
+      sessionSearchText,
+      monitorSnapshot.auxiliarySessions,
+    ),
+    [monitorSnapshot.entries, monitorSnapshot.auxiliarySessions, sessionSearchText],
+  );
   const {
-    filteredSessionEntries,
     approvalMonitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,
@@ -882,7 +821,7 @@ export default function HomeApp() {
   };
 
 
-  const monitorFeedback = [sessionMonitorFeedback, sessionSummariesState.openError, auxiliaryLoadFeedback].filter(Boolean).join(" ");
+  const monitorFeedback = [sessionMonitorFeedback, monitorSnapshot.feedback].filter(Boolean).join(" ");
   const sessionListFeedback = [
     sessionSummariesState.recentError && `Recent sessions: ${sessionSummariesState.recentError}`,
     sessionSummariesState.pinnedError && `Pinned sessions: ${sessionSummariesState.pinnedError}`,
@@ -914,12 +853,12 @@ export default function HomeApp() {
       providerQuota: <ProviderQuotaOverview api={getWithMateApi()} />,
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
-      auxiliaryDataState,
-      sessionWindowsDataState: openSessionsLoadStatus,
+      auxiliaryDataState: monitorSnapshot.status === "loaded" ? "ready" : monitorSnapshot.status,
+      sessionWindowsDataState: monitorSnapshot.status,
       runningEmptyMessage: monitorRunningEmptyMessage,
       nonRunningEmptyMessage: monitorCompletedEmptyMessage,
       feedback: monitorFeedback,
-      onRetry: sessionSummariesState.openError ? () => void refreshSessionSummaries("preserve") : undefined,
+      onRetry: monitorSnapshot.feedback ? monitorSnapshot.refresh : undefined,
       onOpenSession: openMonitorSession,
       onShowContextMenu: showSessionMonitorContextMenu,
     }),
@@ -955,12 +894,12 @@ export default function HomeApp() {
       approvalMonitorEntries,
       runningMonitorEntries,
       nonRunningMonitorEntries,
-      auxiliaryDataState,
-      sessionWindowsDataState: openSessionsLoadStatus,
+      auxiliaryDataState: monitorSnapshot.status === "loaded" ? "ready" : monitorSnapshot.status,
+      sessionWindowsDataState: monitorSnapshot.status,
       monitorRunningEmptyMessage,
       monitorNonRunningEmptyMessage: monitorCompletedEmptyMessage,
       sessionMonitorFeedback: monitorFeedback,
-      onRetrySessionSummaries: sessionSummariesState.openError ? () => void refreshSessionSummaries("preserve") : undefined,
+      onRetrySessionSummaries: monitorSnapshot.feedback ? monitorSnapshot.refresh : undefined,
       characterEntries,
       characterLoadStatus,
       characterListFeedback,

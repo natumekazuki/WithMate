@@ -1,6 +1,7 @@
 import type { AppSettings } from "../settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../settings/model-catalog.js";
-import type { Session } from "../session/session-state.js";
+import type { HomeSessionSummary, Session } from "../session/session-state.js";
+import type { AuxiliarySessionSummary } from "../auxiliary/auxiliary-session-state.js";
 
 export const OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX = 100;
 export const OPEN_SESSION_WINDOW_IDS_PAGE_MAX = 100;
@@ -12,6 +13,15 @@ export type OpenSessionWindowIdsPageRequest = {
 
 export type OpenSessionWindowIdsPageResult = {
   sessionIds: string[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+export type SessionMonitorPageRequest = OpenSessionWindowIdsPageRequest;
+
+export type SessionMonitorPageResult = {
+  entries: HomeSessionSummary[];
+  auxiliarySessions: AuxiliarySessionSummary[];
   nextCursor: string | null;
   hasMore: boolean;
 };

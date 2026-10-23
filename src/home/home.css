@@ -945,11 +945,6 @@
   color: var(--card-ink, var(--ink));
 }
 
-.home-page .session-mode-badge.agent {
-  border-color: rgba(111, 184, 199, 0.28);
-  background: rgba(111, 184, 199, 0.14);
-}
-
 .home-page .session-mode-badge.auxiliary {
   border-color: rgba(245, 158, 11, 0.34);
   background: rgba(245, 158, 11, 0.16);
@@ -960,21 +955,18 @@
   background: rgba(125, 211, 168, 0.18);
 }
 
-.home-page .home-session-chip-status.running,
-.home-page .home-session-status.running {
+.home-page .home-session-chip-status.running {
   border-color: rgba(111, 184, 199, 0.34);
   background: rgba(111, 184, 199, 0.22);
   color: var(--card-ink, var(--ink));
 }
 
-.home-page .home-session-chip-status.interrupted,
-.home-page .home-session-status.interrupted {
+.home-page .home-session-chip-status.interrupted {
   border-color: rgba(255, 171, 119, 0.34);
   background: rgba(255, 171, 119, 0.22);
 }
 
-.home-page .home-session-chip-status.error,
-.home-page .home-session-status.error {
+.home-page .home-session-chip-status.error {
   border-color: rgba(255, 124, 124, 0.34);
   background: rgba(255, 124, 124, 0.2);
 }
@@ -1119,6 +1111,7 @@
   width: 34px;
   min-width: 34px;
   height: 34px;
+  margin-top: auto;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--card-ink, var(--ink)) 22%, transparent);
   border-radius: 999px;

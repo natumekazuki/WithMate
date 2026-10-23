@@ -17,11 +17,6 @@ export function createAuxiliaryApi(
         channels.WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
       );
     },
-    listOpenAuxiliarySessionSummaries() {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-      );
-    },
     getActiveAuxiliarySession(parentSessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,

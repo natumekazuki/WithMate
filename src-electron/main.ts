@@ -129,6 +129,7 @@ import { SessionFilePreviewImageCopyService } from "./files/session-file-preview
 import { SessionFileObjectCopyService } from "./files/session-file-object-copy-service.js";
 import { SessionFileTreeContextMenuService } from "./files/session-file-tree-context-menu-service.js";
 import { SessionMonitorContextMenuService } from "./session/session-monitor-context-menu-service.js";
+import { readSessionMonitorPage } from "./session/session-monitor-query.js";
 import { SessionFilePreviewContextMenuService } from "./files/session-file-preview-context-menu-service.js";
 import { MarkdownLinkContextMenuService } from "./windows/markdown-link-context-menu-service.js";
 import { WindowsFileDropClipboardWriter } from "./files/windows-file-drop-clipboard-writer.js";
@@ -333,6 +334,7 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
+  isSessionWindowOpen: (sessionId) => requireSessionWindowBridge().getWindow(sessionId) !== null,
   requestCloseSessionWindow: (sessionId) => requireMainWindowFacade().requestCloseSessionWindow(sessionId),
   writeText: (value) => clipboard.writeText(value),
   buildMenu: (template) => Menu.buildFromTemplate(template),
@@ -1058,7 +1060,14 @@ const auxiliaryLiveRunParents = new AuxiliaryLiveRunParents({
   isRunPending: (sessionId) => auxiliaryRunParents.has(sessionId)
     || Boolean(auxiliarySessionRuntimeService?.isRunInFlight(sessionId)),
   hasLiveSessionRun: (sessionId) => Boolean(sessionObservabilityService?.getLiveSessionRun(sessionId)),
-  broadcastLiveSessionRun: (sessionId, state) => requireWindowBroadcastService().broadcastLiveSessionRun(sessionId, state),
+  broadcastLiveSessionRun: (sessionId, state) => {
+    const status = projectLiveSessionRunStatus(state);
+    if (status?.runState === "running" || status?.cancellationState || status?.approvalPending) {
+      requireSessionWindowBridge().retainSessionForMonitor(auxiliaryLiveRunParents.get(sessionId)
+        ?? auxiliaryRunParents.get(sessionId) ?? sessionId);
+    }
+    requireWindowBroadcastService().broadcastLiveSessionRun(sessionId, state);
+  },
 });
 let databaseMaintenanceRequested = false;
 function requireActivePersistentStoreOwnerForFactory(ownerName: string): PersistentStoreBundle {
@@ -1080,7 +1089,8 @@ function isSessionRunInFlight(sessionId: string, scope: "self" | "with-auxiliary
       auxiliarySessionRuntimeService?.isRunInFlight(sessionId) || auxiliaryRunParents.has(sessionId)) {
     return true;
   }
-  return scope === "with-auxiliary" && [...auxiliaryRunParents.values()].includes(sessionId);
+  return scope === "with-auxiliary" && ([...auxiliaryRunParents.values()].includes(sessionId)
+    || auxiliaryLiveRunParents.hasPendingRunForParent(sessionId));
 }
 
 function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
@@ -1364,6 +1374,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 deletePromptTemplate,
               },
               sessionQuery: {
+                listSessionMonitorPage: (request) => readSessionMonitorPage({
+                  listMonitorSessionIds: () => requireSessionWindowBridge().listMonitorSessionIds(),
+                  readSummaries: async (sessionIds) => (await requireMainQueryService().listSessionSummaryPage({ scope: "open", sessionIds })).entries,
+                  readAuxiliarySummaries: (sessionIds) => requireAuxiliarySessionService().listAuxiliarySessionSummaries(sessionIds),
+                  getLiveSessionRun,
+                }, request),
                 listSessionSummaryPage: (request) => listSessionSummaryPage(request),
                 listSessionCharacterUsage: () => listSessionCharacterUsage(),
                 getLatestSessionTurn: (sessionId) => getLatestSessionTurn(sessionId),
@@ -1447,20 +1463,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().listActiveAuxiliarySessionSummaries([
                     ...listOpenSessionWindowIds(),
                   ]),
-                listOpenAuxiliarySessionSummaries: async () => {
-                  const parentSessionIds = Array.from(new Set([
-                    ...listOpenSessionWindowIds(),
-                  ]));
-                  const summaries = await requireAuxiliarySessionService().listAuxiliarySessionSummaries(parentSessionIds);
-                  return summaries.map((summary) => {
-                    const status = projectLiveSessionRunStatus(getLiveSessionRun(summary.id));
-                    return {
-                      ...summary,
-                      cancellationState: status?.cancellationState,
-                      approvalPending: status?.approvalPending ?? false,
-                    };
-                  });
-                },
                 getActiveAuxiliarySession: (parentSessionId) =>
                   requireAuxiliarySessionService().getActiveAuxiliarySessionView(parentSessionId),
                 getAuxiliarySession: (auxiliarySessionId) =>
@@ -2289,8 +2291,12 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
       },
       dispatch: async (receipt, onStarted) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const runtime = await resolveQueueSessionRuntime(receipt.sessionId);
-        const result = await runtime.runQueuedSessionTurn(receipt, onStarted);
+        const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(receipt.sessionId);
+        assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
+        const result = await (auxiliary
+          ? auxiliaryLiveRunParents.trackRun(auxiliary, owner, () =>
+            requireAuxiliarySessionRuntimeService().runQueuedSessionTurn(receipt, onStarted))
+          : requireSessionRuntimeService().runQueuedSessionTurn(receipt, onStarted));
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         return result;
       },
@@ -2607,6 +2613,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
           auxiliaryLiveRunParents.delete(sessionId, owner);
         },
         closeSessionWindow: (sessionId) => {
+          requireSessionWindowBridge().forgetSessionForMonitor(sessionId);
           requireSessionWindowBridge().closeSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
         },

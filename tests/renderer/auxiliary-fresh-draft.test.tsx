@@ -60,7 +60,7 @@ test("新規Auxiliaryの初回draft保存からqueue受付まで成立する", a
     const api: WithMateWindowAuxiliaryApi = {
       getAuxiliaryDraft: (id) => service.getAuxiliaryDraft(id), getAuxiliarySessionStatus: (id) => service.getAuxiliarySessionStatus(id),
       saveAuxiliaryDraft: (input) => service.saveAuxiliaryDraft(input),
-      listAuxiliarySessions: unused, listOpenActiveAuxiliarySessionSummaries: unused, listOpenAuxiliarySessionSummaries: unused,
+      listAuxiliarySessions: unused, listOpenActiveAuxiliarySessionSummaries: unused,
       getActiveAuxiliarySession: unused, getAuxiliarySession: unused, createAuxiliarySession: unused,
       getAuxiliaryCreationContext: unused, cancelAuxiliaryCreation: unused, getAuxiliaryCreation: unused,
       updateAuxiliarySession: unused, setAuxiliaryExecutionOptions: unused, setAuxiliaryTitle: unused,

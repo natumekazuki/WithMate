@@ -8,6 +8,7 @@ import type {
 type SessionMonitorContextMenu = Pick<Menu, "popup">;
 
 export type SessionMonitorContextMenuServiceDeps = {
+  isSessionWindowOpen(sessionId: string): boolean;
   requestCloseSessionWindow(sessionId: string): Promise<boolean>;
   writeText(value: string): void;
   buildMenu(template: MenuItemConstructorOptions[]): SessionMonitorContextMenu;
@@ -52,6 +53,7 @@ export class SessionMonitorContextMenuService {
       };
       const template: MenuItemConstructorOptions[] = [{
         label: "Close",
+        enabled: this.deps.isSessionWindowOpen(request.sessionId),
         click: () => {
           if (settled || selectionStarted) {
             return;
