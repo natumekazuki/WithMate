@@ -1,4 +1,4 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import {
   Fragment,
   useCallback,
@@ -174,7 +174,6 @@ export function SessionFileExplorerPane({
   const readingContextRef = useRef<{
     anchor: string;
     offset: number;
-    focus: { rowKey: string; element: Element; pin: boolean } | null;
   } | null>(null);
   const pinFilterRef = useRef<HTMLButtonElement | null>(null);
   const [pinnedOnly, setPinnedOnly] = useState(false);
@@ -463,6 +462,9 @@ export function SessionFileExplorerPane({
     }
     return rows;
   }, [entriesByDirectory, expandedDirectories, loadingDirectories, roots, pinnedOnly, filePins.pins, pinsByEntry, rootPaths]);
+  const focusedRowKey = treeScrollRef.current?.contains(document.activeElement)
+    ? document.activeElement?.closest<HTMLElement>("[data-file-row-key]")?.dataset.fileRowKey
+    : undefined;
   const treeVirtualizer = useVirtualizer({
     count: treeRows.length,
     getScrollElement: () => treeScrollRef.current,
@@ -470,6 +472,12 @@ export function SessionFileExplorerPane({
     overscan: 18,
     useFlushSync: false,
     getItemKey: (index) => treeRows[index] ? treeRowKey(treeRows[index]) : index,
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range);
+      const focusedIndex = treeRows.findIndex((row) => treeRowKey(row) === focusedRowKey);
+      if (focusedIndex >= 0 && !indexes.includes(focusedIndex)) indexes.push(focusedIndex);
+      return indexes.sort((left, right) => left - right);
+    },
   });
 
   useLayoutEffect(() => {
@@ -479,14 +487,9 @@ export function SessionFileExplorerPane({
       const item = treeVirtualizer.getVirtualItems().find((row) => row.end > scroller.scrollTop);
       const row = item && treeRows[item.index];
       if (!row || !item) return;
-      const element = document.activeElement;
-      const focused = element && scroller.contains(element) ? element.closest<HTMLElement>("[data-file-row-key]") : null;
       readingContextRef.current = {
         anchor: treeRowKey(row),
         offset: scroller.scrollTop - item.start,
-        focus: focused?.dataset.fileRowKey && element
-          ? { rowKey: focused.dataset.fileRowKey, element, pin: element.classList.contains("session-file-pin-toggle") }
-          : null,
       };
     };
     const context = readingContextRef.current;
@@ -497,10 +500,6 @@ export function SessionFileExplorerPane({
     if (index >= 0 && scroller) {
       const offset = treeVirtualizer.getOffsetForIndex(index, "start");
       if (offset) scroller.scrollTop = offset[0] + context.offset;
-    }
-    if (context.focus && !context.focus.element.isConnected && document.activeElement === document.body) {
-      const row = Array.from(scroller?.querySelectorAll<HTMLElement>("[data-file-row-key]") ?? []).find((element) => element.dataset.fileRowKey === context.focus?.rowKey);
-      row?.querySelector<HTMLButtonElement>(context.focus.pin ? ".session-file-pin-toggle" : "button:not(.session-file-pin-toggle)")?.focus({ preventScroll: true });
     }
   }, [treeRows, treeVirtualizer]);
 

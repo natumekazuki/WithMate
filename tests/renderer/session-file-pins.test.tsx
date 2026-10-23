@@ -91,7 +91,7 @@ function baseApi(): NonNullable<PaneProps["api"]> {
 // @test-value v2
 // kind = "contract"
 // claim = "Filesは表示時に最新の展開済み階層を取得し、更新中と失敗時に読む位置と内容を保ち、削除された子孫を除去する"
-// oracle = { type = "contract", ref = "#875 approved Files event refresh and reading-context preservation" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Files更新時の取得対象・閲覧状態保持・失敗と削除" }
 // fault = "更新でtreeを初期化する、読込失敗を空にする、削除directoryのcacheを復活させる、または未展開directoryまで走査する"
 // observable = "tree行、focus対象、scrollTop、directory取得path、errorと再試行後の内容"
 // observation_boundary = "component-behavior"
@@ -198,8 +198,69 @@ test("Filesの更新はPin controlのfocusと利用者のfocus移動を保つ", 
 
 // @test-value v2
 // kind = "contract"
+// claim = "多数の前方追加を伴うFiles更新は閲覧位置と行またはPinのfocusを保持し、削除やowner切替では古いfocusを引き継がない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Filesの同一owner／root更新時のfocus・scroll保持とowner境界" }
+// fault = "仮想範囲の移動時にfocus中のcontrolをunmountする、または削除行や旧ownerのfocusを同名の別対象へ移す"
+// observable = "更新前後のactiveElement identityとscrollTop、削除とowner変更後のfocus、focusされたcontrolのopen／Pin保存結果"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane virtualized refresh focus"
+// lifecycle = "permanent"
+// impact = "自動更新だけでkeyboard操作の起点を失ったり別Sessionの対象を操作したりすることを防ぐ"
+// distinction = "少数行のfocus確認では通らないoverscanを超える前方追加を、実際の仮想化と二種類のcontrolで確認する"
+// @end-test-value
+test("Filesの多数前方追加で行とPinのfocusを保持し削除とowner切替では引き継がない", async () => {
+  for (const control of ["file", "pin"] as const) {
+    const api = baseApi();
+    const original = Array.from({ length: 500 }, (_, index) => entry(`file-${String(index).padStart(4, "0")}.txt`));
+    const target = "file-0200.txt";
+    let entries = original;
+    const saved: string[] = [];
+    api.listSessionDirectory = async () => entries;
+    api.pinSessionFile = async (request) => { saved.push(request.relativePath); return pin(request.relativePath); };
+    await withPane(api, async ({ document, render, click, until, opened }) => {
+      await click("Workspace");
+      const scroller = document.querySelector<HTMLDivElement>(".session-file-explorer-body")!;
+      await act(async () => scroller.scrollTo({ top: 6200 }));
+      const selector = control === "pin" ? `[aria-label='Pin ${target}']` : `[title='${target}']`;
+      await until(() => !!document.querySelector(selector));
+      const focused = document.querySelector<HTMLButtonElement>(selector)!;
+      focused.focus();
+      entries = [...Array.from({ length: 70 }, (_, index) => entry(`added-${index}.txt`)), ...original];
+      await render("session-a", "session-a", { refreshRevision: 1 });
+      assert.equal(scroller.scrollTop, 6200 + 70 * 31, "前方追加分だけ閲覧位置を補正する");
+      assert.equal(document.activeElement, focused, "仮想範囲の再描画を待つ間も同じcontrolを保持する");
+      await act(async () => scroller.scrollTo({ top: scroller.scrollTop }));
+      assert.equal(document.activeElement, focused, "補正後の仮想範囲でもfocusを保持する");
+      assert.ok(document.querySelectorAll(".session-file-tree-row").length < 100, "全件描画へ切り替えない");
+      await act(async () => focused.click());
+      assert.deepEqual(opened, control === "file" ? [target] : []);
+      assert.deepEqual(saved, control === "pin" ? [target] : []);
+
+      entries = entries.filter((item) => item.relativePath !== target);
+      await render("session-a", "session-a", { refreshRevision: 2 });
+      assert.equal(focused.isConnected, false);
+      assert.equal(document.activeElement, document.body, "削除行のfocusを隣の対象へ移さない");
+      entries = original;
+      await render("session-a", "session-a", { refreshRevision: 3 });
+      await act(async () => scroller.scrollTo({ top: 6200 }));
+      await until(() => !!document.querySelector(selector));
+      assert.equal(document.activeElement, document.body, "同名行の再登場で古いfocusを復元しない");
+      const oldOwnerControl = document.querySelector<HTMLButtonElement>(selector)!;
+      oldOwnerControl.focus();
+      await render("session-b");
+      assert.equal(oldOwnerControl.isConnected, false);
+      await click("Workspace");
+      await act(async () => scroller.scrollTo({ top: 6200 }));
+      await until(() => !!document.querySelector(selector));
+      assert.equal(document.activeElement, document.body, "新ownerの同名行へ古いfocusを移さない");
+    });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "非表示のFilesとPinは取得を始めず、再表示で更新し、重複通知は一つの後続更新へまとめ、折りたたみとowner切替を保つ"
-// oracle = { type = "contract", ref = "#875 approved visible-only refresh with coalescing and owner isolation" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Explorer表示時更新・通知集約・owner境界" }
 // fault = "hiddenでI/Oを始める、通知ごとに並行取得する、非表示後に子孫取得を続ける、または旧ownerのtreeを表示する"
 // observable = "roots・Pin・directoryの取得回数とowner、遅延応答後のtreeとPin行の内容"
 // observation_boundary = "component-behavior"
