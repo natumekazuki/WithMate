@@ -22,6 +22,14 @@ export class AuxiliaryLiveRunParents {
     return entry?.owner === this.options.getStorageOwner() ? entry.parentSessionId : undefined;
   }
 
+  public hasPendingRunForParent(parentSessionId: string): boolean {
+    for (const [sessionId, entry] of this.parents) {
+      if (entry.owner === this.options.getStorageOwner() && entry.parentSessionId === parentSessionId
+        && this.options.isRunPending(sessionId)) return true;
+    }
+    return false;
+  }
+
   public remember(session: Pick<AuxiliarySession, "id" | "parentSessionId" | "status">, owner: object): void {
     if (owner !== this.options.getStorageOwner() || session.status !== "active"
       || !this.options.isRunPending(session.id)) return;

@@ -75,6 +75,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_MONITOR_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -84,6 +85,7 @@ import {
 import {
   parseOpenSessionWindowIdsPageRequest,
   type OpenSessionWindowIdsPageRequest,
+  type SessionMonitorPageRequest,
 } from "../../src-shared/window/withmate-window-types.js";
 
 import type {
@@ -138,6 +140,11 @@ export function registerSessionQueryHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSessionQueryDeps,
 ): void {
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_MONITOR_PAGE_CHANNEL,
+    (_event, request: SessionMonitorPageRequest | null | undefined) =>
+      deps.listSessionMonitorPage(parseOpenSessionWindowIdsPageRequest(request)),
+  );
   ipcMain.handle(
     WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
     (_event, request: SessionSummaryPageRequest | null | undefined) =>

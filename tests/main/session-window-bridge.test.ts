@@ -12,6 +12,130 @@ import {
 } from "../../src-electron/windows/session-window-bridge.js";
 import { DEFAULT_DRAFT_FLUSH_TIMEOUT_MS, DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS, type DraftFlushResult } from "../../src-electron/platform/draft-flush-coordinator.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "実行中のcloseは確認中に完了してもMonitorに残し、再open後のStopped closeでだけ除外する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "非同期close完了時の状態で保持判断を上書きする"
+// observable = "WindowとMonitorのID一覧、確認取消後のclose結果"
+// observation_boundary = "public-boundary"
+// scope = "monitor-close-intent"
+// lifecycle = "permanent"
+// @end-test-value
+it("Monitor保持はclose開始時の状態を使い、Stoppedでの再closeを解除とする", async () => {
+  let running = true;
+  let resolveConfirmation!: (value: boolean) => void;
+  const bridge = new SessionWindowBridge({
+    createWindow: () => new StubWindow(),
+    async loadChatEntry() {},
+    getSession: (id) => createSession({ id }),
+    isRunInFlight: () => running,
+    confirmCloseWhileRunning: () => new Promise<boolean>((resolve) => { resolveConfirmation = resolve; }),
+    broadcastOpenSessionWindowIds() {},
+  });
+  await bridge.openSessionWindow("parent");
+  bridge.retainSessionForMonitor("parent");
+  const closing = bridge.requestCloseSessionWindow("parent");
+  running = false;
+  resolveConfirmation(true);
+  assert.equal(await closing, true);
+  assert.deepEqual(bridge.listOpenSessionWindowIds(), []);
+  assert.deepEqual(bridge.listMonitorSessionIds(), ["parent"]);
+  await bridge.openSessionWindow("parent");
+  assert.deepEqual(bridge.listMonitorSessionIds(), ["parent"]);
+  assert.equal(await bridge.requestCloseSessionWindow("parent"), true);
+  assert.deepEqual(bridge.listMonitorSessionIds(), []);
+
+  running = true;
+  await bridge.openSessionWindow("parent");
+  const canceled = bridge.requestCloseSessionWindow("parent");
+  resolveConfirmation(false);
+  assert.equal(await canceled, false);
+  running = false;
+  assert.equal(await bridge.requestCloseSessionWindow("parent"), true);
+  assert.deepEqual(bridge.listMonitorSessionIds(), []);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "closeのdraft flush中に完了または新規実行したSessionは結果確認前にMonitorから除外しない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "flush ACK後にStoppedだけを見て実行中closeを監視解除する"
+// observable = "ACK前後のMonitor ID、実Window ID"
+// observation_boundary = "public-boundary"
+// scope = "monitor-close-flush"
+// lifecycle = "permanent"
+// @end-test-value
+it("draft flush中の完了と新規実行をMonitorへ保持する", async () => {
+  let running = true;
+  const f = createDraftFlushBridge({ isRunInFlight: () => running, confirmCloseWhileRunning: () => true });
+  await f.bridge.openSessionWindow("running-parent");
+  const firstClose = f.bridge.requestCloseSessionWindow("running-parent");
+  await new Promise((resolve) => setImmediate(resolve));
+  running = false;
+  let request = f.requests.at(-1)!;
+  f.bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
+  assert.equal(await firstClose, true);
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), ["running-parent"]);
+
+  await f.bridge.openSessionWindow("new-work");
+  const nextClose = f.bridge.requestCloseSessionWindow("new-work");
+  f.bridge.retainSessionForMonitor("new-work");
+  request = f.requests.at(-1)!;
+  f.bridge.acknowledgeDraftFlush(request.requestId, request.window, true);
+  assert.equal(await nextClose, true);
+  assert.deepEqual(new Set(f.bridge.listMonitorSessionIds()), new Set(["running-parent", "new-work"]));
+  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), []);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "未実行Windowの通常closeは監視終了し、明示削除とDB resetは閉鎖済み監視対象と保留closeの保持意図を除去する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "Windowのない保持IDが削除やreset後も残る、保留closeの完了で削除済みIDが復活する"
+// observable = "Monitor ID一覧と実Window一覧"
+// observation_boundary = "public-boundary"
+// scope = "monitor-cleanup"
+// lifecycle = "permanent"
+// @end-test-value
+it("未実行Windowと削除・resetのMonitor対象を整理する", async () => {
+  const f = createDraftFlushBridge();
+  const window = await f.bridge.openSessionWindow("unrun");
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), ["unrun"]);
+  const closing = f.bridge.requestCloseSessionWindow("unrun");
+  f.bridge.acknowledgeDraftFlush(f.requests[0]!.requestId, window, true);
+  assert.equal(await closing, true);
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), []);
+  f.bridge.retainSessionForMonitor("deleted");
+  f.bridge.discardSessionWindow("deleted");
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), []);
+  f.bridge.retainSessionForMonitor("retained");
+  await f.bridge.openSessionWindow("open");
+  f.bridge.closeAllSessionWindows();
+  assert.deepEqual(f.bridge.listMonitorSessionIds(), []);
+  assert.deepEqual(f.bridge.listOpenSessionWindowIds(), []);
+
+  for (const action of ["delete", "reset"] as const) {
+    for (const phase of ["confirmation", "flush"] as const) {
+      let running = true;
+      const race = createDraftFlushBridge({ isRunInFlight: () => running, confirmCloseWhileRunning: () => true });
+      await race.bridge.openSessionWindow("running");
+      const pendingClose = race.bridge.requestCloseSessionWindow("running");
+      if (phase === "flush") await new Promise((resolve) => setImmediate(resolve));
+      running = false;
+      if (action === "delete") race.bridge.discardSessionWindow("running");
+      else race.bridge.closeAllSessionWindows();
+      assert.equal(await pendingClose, true);
+      const request = race.requests.at(-1);
+      if (request) assert.equal(race.bridge.acknowledgeDraftFlush(request.requestId, request.window, true), false);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(race.bridge.listMonitorSessionIds(), [], `${action} during ${phase}`);
+      assert.deepEqual(race.bridge.listOpenSessionWindowIds(), []);
+    }
+  }
+});
+
+
 function createSession(overrides?: Partial<Session>): Session {
   return {
     ...buildNewSession({

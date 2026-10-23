@@ -76,7 +76,7 @@ describe("home-session-projection", () => {
   // kind = "contract"
   // claim = "Monitorは有効なMainまたはAuxiliary承認待ちをAttentionへ一度だけ分類し、同じ会話の取消を優先しつつ別Auxiliaryの承認を保持する"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window / Issue #483" }
-  // fault = "承認待ちをRunningへ混ぜる、閉じたSessionを表示する、取消中の承認を表示する、または別Auxiliaryの承認まで隠す"
+  // fault = "承認待ちをRunningへ混ぜる、監視対象外Sessionを表示する、取消中の承認を表示する、または別Auxiliaryの承認まで隠す"
   // observable = "Attention/Running/Stopped分類のsession ID、MainとAuxiliaryのkindとlabel、承認解除後の所属"
   // observation_boundary = "public-boundary"
   // scope = "Home summary正規化とMain/Auxiliary承認状態のMonitor投影"

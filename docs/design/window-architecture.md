@@ -8,7 +8,7 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 | Session | Main／Auxiliaryの共通chat shell、承認・実行設定、file／Git preview、artifact Details、会話操作、Window所有の組み込みTerminal |
 | Character Editor | Character profile、icon、theme、`character.md`、`character-notes.md`の編集 |
 | Settings | app共通設定、provider設定、model catalog、診断 |
-| Session Monitor | 開いているSessionの状態をcompactに監視 |
+| Session Monitor | 開いているSessionと、実行後に保持したSessionの状態をcompactに監視 |
 | Diff | 広い面でGit差分を比較 |
 | File Preview | 対象fileを独立Windowで表示 |
 

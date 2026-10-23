@@ -162,6 +162,7 @@ import {
   type DeleteSessionsResult,
   type OpenSessionWindowIdsPageRequest,
   type OpenSessionWindowIdsPageResult,
+  type SessionMonitorPageResult,
   type ResetAppDatabaseRequest,
   type SavePastedSessionFileRequest,
   type SessionMonitorContextMenuRequest,
@@ -361,7 +362,6 @@ export type MainIpcAuxiliaryDeps = MainIpcEventWindowDeps &
     listOpenActiveAuxiliarySessionSummaries?(): Awaitable<
       AuxiliarySessionSummary[]
     >;
-    listOpenAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
     getActiveAuxiliarySession?(
       parentSessionId: string,
     ): Awaitable<AuxiliarySession | null>;
@@ -427,7 +427,6 @@ export type MainIpcAuxiliaryDepsRequired = {
   listOpenActiveAuxiliarySessionSummaries: () => Awaitable<
     AuxiliarySessionSummary[]
   >;
-  listOpenAuxiliarySessionSummaries: () => Awaitable<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession: (
     parentSessionId: string,
   ) => Awaitable<AuxiliarySession | null>;
@@ -482,6 +481,7 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     listSessionSummaryPage(
       request?: SessionSummaryPageRequest | null,
     ): Awaitable<HomeSessionSummaryPageResult>;
+    listSessionMonitorPage(request: { cursor: string | null; limit: number }): Awaitable<SessionMonitorPageResult>;
     listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
     getLatestSessionTurn(sessionId: string): Awaitable<import("../../src-shared/session/session-turn-state.js").SessionTurnRecord | null>;
     listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;

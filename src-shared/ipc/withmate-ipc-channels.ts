@@ -10,6 +10,7 @@ export const WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL = "withmate:open-memo
 export const WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL = "withmate:open-character-editor-window";
 export const WITHMATE_OPEN_DIFF_WINDOW_CHANNEL = "withmate:open-diff-window";
 export const WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL = "withmate:list-session-summary-page";
+export const WITHMATE_LIST_SESSION_MONITOR_PAGE_CHANNEL = "withmate:list-session-monitor-page";
 export const WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL = "withmate:list-session-character-usage";
 export const WITHMATE_GET_SESSION_CHANNEL = "withmate:get-session";
 export const WITHMATE_GET_CONVERSATION_PAGE_CHANNEL = "withmate:get-conversation-page";
@@ -69,8 +70,6 @@ export const WITHMATE_GET_DIFF_PREVIEW_CHANNEL = "withmate:get-diff-preview";
 export const WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL = "withmate:list-auxiliary-sessions";
 export const WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL =
   "withmate:list-open-active-auxiliary-session-summaries";
-export const WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL =
-  "withmate:list-open-auxiliary-session-summaries";
 export const WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL = "withmate:get-active-auxiliary-session";
 export const WITHMATE_GET_AUXILIARY_SESSION_CHANNEL = "withmate:get-auxiliary-session";
 export const WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL = "withmate:create-auxiliary-session";

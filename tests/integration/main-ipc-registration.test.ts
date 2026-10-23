@@ -465,7 +465,6 @@ import {
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
@@ -892,7 +891,6 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_DELETE_SESSION_CHANNEL));
   assert.ok(handlers.has(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_SESSION_TURN_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL));
 
   const removedChannels = [
     "withmate:open-memory-management-window",
@@ -1012,6 +1010,37 @@ test("Session MonitorのAuxiliary navigationは対象と親を検証してWindow
     /The Auxiliary Session parent does not match/,
   );
   assert.equal(calls.length, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Monitor page IPCは既定100親とcursor/limitを正規化し、範囲外の要求をqueryへ渡さない"
+// oracle = { type = "contract", ref = "GitHub Issue #876 Monitor専用queryの100親上限" }
+// fault = "上限超過や不正cursorを許可するか、正規化前のrequestをMain queryへ渡す"
+// observable = "query依存へ渡ったrequest、IPC結果、無効要求のrejectと依存呼出数"
+// observation_boundary = "public-boundary"
+// scope = "Session Monitor page IPC validation"
+// lifecycle = "permanent"
+// impact = "rendererからの無制限readとMonitor pagingの取り違えを防ぐ"
+// distinction = "型checkやMain query単体testでは登録済みIPCのparse結線を保証できない"
+// @end-test-value
+test("Monitor page IPCは100親上限で検証し正規化requestを渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const requests: unknown[] = [];
+  const result = { entries: [], auxiliarySessions: [], nextCursor: null, hasMore: false };
+  const { deps } = createDeps({
+    listSessionMonitorPage: (request: unknown) => { requests.push(request); return result; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get("withmate:list-session-monitor-page");
+  assert.ok(handler);
+  assert.deepEqual(await handler({}), result);
+  assert.deepEqual(await handler({}, { cursor: " parent-1 ", limit: 25 }), result);
+  assert.deepEqual(requests, [{ cursor: null, limit: 100 }, { cursor: "parent-1", limit: 25 }]);
+  for (const request of [{ limit: 101 }, { limit: 0 }, { cursor: 1 }, []]) {
+    await assert.rejects(async () => handler({}, request), /Invalid open Session Window ID page request/);
+  }
+  assert.equal(requests.length, 2);
 });
 
 test("Session summary IPC は bounded requestをparseしてpage / Character usageへ委譲する", async () => {
@@ -3434,41 +3463,6 @@ test("Home 用 Auxiliary summary IPC は main が確定した open parent scope 
   assert.deepEqual(calls, ["listOpenActiveAuxiliarySessionSummaries"]);
   assert.equal("messages" in summary, false);
   assert.equal("composerDraft" in summary, false);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "Home Monitor用Auxiliary summary IPC handlerは依存serviceからactive/closedを含むsummaryをそのまま返す"
-// oracle = { type = "contract", ref = "issue-722 all stored Auxiliary summaries" }
-// fault = "handlerが依存serviceのclosed summaryを落とし、展開一覧へ渡すsummary集合を欠損させる"
-// observable = "listOpenAuxiliarySessionSummaries channelの返却summary一覧とdependency呼び出し"
-// observation_boundary = "public-boundary"
-// scope = "Home Monitor Auxiliary summary IPC"
-// lifecycle = "permanent"
-// impact = "Monitorの展開一覧がserviceから渡された親ごとのsummaryを欠損なく表示できる"
-// distinction = "Main側のopen parent ID集約とstorage/service経路ではなく、IPC handlerのdelegationとpayload保持を検証する"
-// @end-test-value
-test("Home Monitor用Auxiliary summary IPCは全保存済みsummaryを返す", async () => {
-  const { ipcMain, handlers } = createIpcMainStub();
-  const summaries = [
-    createAuxiliarySessionStub({ id: "aux-open", closedAt: "" }),
-    createAuxiliarySessionStub({ id: "aux-closed", closedAt: "2026-07-05T00:00:00.000Z", status: "closed" }),
-  ].map(({ messages: _messages, composerDraft: _composerDraft, ...summary }) => summary);
-  const calls: string[] = [];
-  const { deps } = createDeps({
-    listOpenAuxiliarySessionSummaries: async () => {
-      calls.push("listOpenAuxiliarySessionSummaries");
-      return summaries;
-    },
-  });
-
-  registerMainIpcHandlers(ipcMain, deps);
-
-  assert.deepEqual(
-    await handlers.get(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
-    summaries,
-  );
-  assert.deepEqual(calls, ["listOpenAuxiliarySessionSummaries"]);
 });
 
 // @test-value v2

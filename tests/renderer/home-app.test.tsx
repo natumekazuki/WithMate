@@ -109,13 +109,13 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
       lastErrors: [],
     }),
     listSessionSummaryPage: async () => ({ entries: [], hasMore: false, nextCursor: null }),
+    listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
     listSessionCharacterUsage: async () => [],
     subscribeSessionInvalidation: () => () => {},
     listOpenSessionWindowIds: async () => [],
     subscribeOpenSessionWindowIds: () => () => {},
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
-    listOpenAuxiliarySessionSummaries: async () => [],
     subscribeLiveSessionRunStatus: () => () => {},
     createSession: async (input) => {
       requests.push(input);
@@ -417,7 +417,7 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
     subscribeSessionInvalidation: () => () => {},
     listOpenSessionWindowIds: async () => [],
     subscribeOpenSessionWindowIds: () => () => {},
-    listOpenAuxiliarySessionSummaries: async () => [],
+    listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
     subscribeLiveSessionRunStatus: () => () => {},
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
@@ -458,9 +458,9 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Homeと独立Monitorは同じquota cache表示とlive通知の実行・取消・承認・入力待ち状態の変化から最新summaryを再取得し、MainとAuxiliaryをリロードなしで表示する"
+// claim = "Homeと独立Monitorはopen Windowや履歴pageにない親も専用Monitor snapshotから表示し、quota cacheとlive通知の実行・取消・承認・入力待ち変化をMain/Auxiliaryへ反映する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window / 共通仕様のlive eventと軽量summary再読込" }
-// fault = "quotaの表示経路を接続し忘れる、実行・承認・入力待ち状態だけの変化を捨てる、通知payloadをsnapshotの代わりに表示する、終了後のlive stateを見落とす、または本文更新ごとにsummaryを再取得する"
+// fault = "Monitorをopen IDsや履歴に制限する、quota経路を失う、実行・承認・入力待ち変化を捨てる、通知payloadをsnapshotの代わりに表示する、または本文更新ごとに再取得する"
 // observable = "provider残率とcacheOnly引数、Attention/Running/Stopped sectionの親card、Main/Auxiliaryのaccessible状態、summary API取得回数、unmount後のlive購読数"
 // observation_boundary = "component-behavior"
 // scope = "HomeAppのlive event購読とMonitor描画（home/monitor mode、Main/Auxiliary）"
@@ -495,7 +495,7 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
     };
     const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
     let summaryReads = 0;
-    let auxiliaryReads = 0;
+    let monitorReads = 0;
     const quotaReads: Parameters<WithMateWindowApi["getProviderQuotaTelemetry"]>[] = [];
     const api: Partial<WithMateWindowApi> = {
       getMateState: async () => "not_created",
@@ -513,17 +513,17 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       listCharacters: async () => [],
       listSessionSummaryPage: async (request) => {
         summaryReads += 1;
-        return { entries: request?.scope === "pinned" ? [] : [summary], hasMore: false, nextCursor: null };
+        return { entries: [], hasMore: false, nextCursor: null };
       },
       listSessionCharacterUsage: async () => [],
       subscribeSessionInvalidation: () => () => {},
-      listOpenSessionWindowIds: async () => [summary.id],
+      listOpenSessionWindowIds: async () => [],
       subscribeOpenSessionWindowIds: () => () => {},
       getSessionWindowRestoreSet: async () => [],
       subscribeSessionWindowRestoreSet: () => () => {},
-      listOpenAuxiliarySessionSummaries: async () => {
-        auxiliaryReads += 1;
-        return [auxiliary];
+      listSessionMonitorPage: async () => {
+        monitorReads += 1;
+        return { entries: [summary], auxiliarySessions: [auxiliary], hasMore: false, nextCursor: null };
       },
       subscribeLiveSessionRunStatus: (listener) => {
         liveListeners.add(listener);
@@ -575,9 +575,9 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       await emitLive(summary.id, createLiveState(summary.id, "running"));
       assertMonitor("running", "Running", "Idle");
 
-      const readsBeforeStreaming = [summaryReads, auxiliaryReads];
+      const readsBeforeStreaming = [summaryReads, monitorReads];
       await emitLive(summary.id, { ...createLiveState(summary.id, "running"), assistantText: "Streaming text" });
-      assert.deepEqual([summaryReads, auxiliaryReads], readsBeforeStreaming);
+      assert.deepEqual([summaryReads, monitorReads], readsBeforeStreaming);
 
       const approvalRequest = { requestId: "approval-1", provider: "codex", kind: "command", title: "Command", summary: "Run command", decisionMode: "direct-decision" as const };
       const pendingMain = { ...createLiveState(summary.id, "running"), approvalRequest };
@@ -587,9 +587,9 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       await emitLive(summary.id, createLiveState(summary.id, "running"));
       await emitLive(summary.id, pendingMain);
       assertMonitor("approval", "Attention", "Idle");
-      const readsBeforeApprovalText = [summaryReads, auxiliaryReads];
+      const readsBeforeApprovalText = [summaryReads, monitorReads];
       await emitLive(summary.id, { ...pendingMain, assistantText: "More text" });
-      assert.deepEqual([summaryReads, auxiliaryReads], readsBeforeApprovalText);
+      assert.deepEqual([summaryReads, monitorReads], readsBeforeApprovalText);
       summary = { ...summary, approvalPending: false };
       await emitLive(summary.id, createLiveState(summary.id, "running"));
       assertMonitor("running", "Running", "Idle");

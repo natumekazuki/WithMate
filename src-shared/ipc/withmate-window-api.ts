@@ -51,6 +51,8 @@ import type {
   SavePastedSessionFileRequest,
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
+  SessionMonitorPageRequest,
+  SessionMonitorPageResult,
   AuxiliarySessionSelectionPayload,
   AuxiliarySessionNavigationPayload,
 } from "../window/withmate-window-types.js";
@@ -173,6 +175,7 @@ export type WithMateWindowCatalogApi = {
 export type WithMateWindowSessionApi = {
   isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
+  listSessionMonitorPage(request?: SessionMonitorPageRequest | null): Promise<SessionMonitorPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
   getConversationPage(sessionId: string, request?: ConversationPageRequest): Promise<ConversationPage | null>;
@@ -263,7 +266,6 @@ export type WithMateWindowSessionApi = {
 export type WithMateWindowAuxiliaryApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
-  listOpenAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
   getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliaryDraft(auxiliarySessionId: string): Promise<AuxiliaryDraftRecord | null>;

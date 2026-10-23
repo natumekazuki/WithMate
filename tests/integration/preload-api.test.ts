@@ -349,6 +349,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-session-summary-page",
     args: [{ scope: "recent", limit: 25 }],
   });
+  assert.deepEqual(await api.listSessionMonitorPage({ cursor: "parent-1", limit: 25 }), {
+    channel: "withmate:list-session-monitor-page",
+    args: [{ cursor: "parent-1", limit: 25 }],
+  });
   assert.deepEqual(await api.listSessionCharacterUsage(), {
     channel: "withmate:list-session-character-usage",
     args: [],
@@ -804,13 +808,13 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listConversationNavigator",
     "cancelConversationQuery",
     "listOpenActiveAuxiliarySessionSummaries",
-    "listOpenAuxiliarySessionSummaries",
     "listOpenSessionWindowIds",
     "listPromptTemplates",
     "listSessionCustomAgents",
     "listSessionSkills",
     "listSessionCharacterUsage",
     "listSessionSummaryPage",
+    "listSessionMonitorPage",
     "listFileRootChanges",
     "listFileRootChangesRepositories",
     "listFileRootGitHistoryRepositories",

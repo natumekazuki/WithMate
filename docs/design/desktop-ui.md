@@ -113,7 +113,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 初期表示は `Monitor`
   - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで表示し、幅に応じて折り返す。直下のclick専用splitterで残量一覧だけを開閉し、閉じてもcomponentとcache購読を維持する。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、表示中のloading・取得失敗・前回値を区別する。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - 親Sessionは1行にまとめ、左側で`Main`状態をavatarと親titleへ近接させる。右端はSession Windowと共通のAuxiliary icon・状態別件数・展開矢印を一つのbuttonへまとめ、配下の一覧との関係を示す。列見出しは置かず、Auxiliaryがない親には右端のbuttonを表示しない。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない。状態と操作のaccessible name・tooltipは維持する
-  - source は `src-electron/windows/session-window-bridge.ts` が所有する Window map 由来の open session ids と、共通検索語に一致するSession summaryの交差集合を使う。Recent／Pinnedの再取得待ちで保持した旧pageを検索一致として扱わない
+  - source は `src-electron/windows/session-window-bridge.ts` が所有する監視対象Session IDと、共通検索語に一致するSession summaryの交差集合を使う。対象は開いているWindowと、Main／Auxiliaryの実行後に保持したSessionであり、Recent／Pinnedの取得範囲に依存しない。親を最大100件ずつ取得し、全pageの親・Auxiliary summaryを投影する
+  - Running／Attention／取消終了待ちでWindowを閉じても監視を継続し、閉鎖後に完了してもStoppedへ移すだけで除外しない。同じSessionを再openし、Mainと全AuxiliaryがStoppedに属する状態で通常closeした時に監視を終了する。確認・draft flush中の完了をStopped closeへ読み替えず、その間の新規実行も保持する。監視の保持はMainの生存期間内だけで、アプリ再起動へ永続化しない。未実行Windowは通常の開閉に追従する
   - section
     - `Attention`: Main／Auxiliaryのいずれかに有効な承認待ち、質問・MCP form／URLの入力待ちがある親Session。Codexのblocking／nonblocking／async質問を含む。会話単位では取消状態を承認・入力待ちより優先するが、別の会話が承認・入力待ちなら親はこの枠へ入る
     - `Running`: Attentionに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
@@ -129,28 +130,22 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Attention`とする。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
   - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する
   - 取消・承認・入力待ち状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。summaryと本文を含まないlive状態通知は共通の投影を使い、`approvalPending`に承認・入力待ちを集約する。Home／Monitorは初回・再表示時にsummaryを取得し、取消・承認・入力待ち状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
-  - Auxiliary一覧の取得状態はMonitor領域のstatus feedbackで示す。未取得の親cardに架空のAuxiliary集約を作らず、既に取得したsummaryがある場合は既知のrun状態を保持して取得errorと区別する
-  - open Session summaryの取得失敗もMonitor領域へ表示し、`Retry`で再取得できる。取得済みのcardは再取得中も保持する
-  - open な SessionWindow がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
+  - 監視対象の親・Auxiliary summaryの取得状態はMonitor領域のstatus feedbackで示し、失敗時は`Retry`で再取得できる。取得済みのcardは再取得中・失敗時も保持し、未知のAuxiliary集約や正常な0件へ置き換えない
+  - 監視対象がないときは、正常なempty本文を出さず、Monitorのshellと必要なstatus/accessibilityだけを保つ
   - `MonitorWindow` button から独立した monitor window を開ける
 - `RecentSessions`
   - 作成は共通headerの`New Session`から行う。保存済みWindowの復元操作は`Restore Sessions`とする
   - resume picker
   - 検索は共通headerの入力を使い、上下に余白を持たせたsession listだけをスクロールする
   - Recent、Pinned、open Session summary、Random用のCharacter利用履歴は取得結果と失敗を分離する。Recent／Pinnedの取得・追加page取得の失敗は既存rowの有無によらず一覧のfeedbackと`Retry`へ表示し、New Sessionの開始エラーには混入させない。追加pageの失敗は自動再試行を続けず、`Retry`で続きの取得を再試行する
-  - 同じSession IDがopen summaryとPinned／Recentのpageにある場合は、page順序を維持してopen summaryの内容を一覧とMonitorへ反映する。pageの再取得失敗で保持したrowが、成功したopen取得の状態・titleを隠さない
+  - 同じSession IDがopen summaryとPinned／Recentのpageにある場合は、page順序を維持してopen summaryの内容を一覧へ反映する。Monitorは独立した監視対象queryを使い、履歴やRandom用取得の失敗をMonitorの失敗として扱わない
   - session list は全 session を正本として表示し、storage 既定の `last_active_at DESC` を崩さない。検索0件でも本文を埋める説明文は出さない
   - `sessionKind === "character-authoring"` の Character authoring session は通常 session と同じ削除・再開導線へ到達できるよう表示する
   - session card の常時表示情報
-    - `avatar / taskTitle / runState badge / workspacePath / updatedAt`
+    - `avatar / taskTitle / workspacePath / updatedAt`
     - `taskSummary` は 1 行補助情報として、空なら省略可
-  - Home の state precedence
-    - live取消待ちを保存済みstateより優先し、`Canceling`／`Waiting For Stop`として実行中に分類する
-    - `status === "running"` または `runState === "running"` を最優先
-    - 次に `runState === "interrupted"`
-    - 次に `runState === "error"`
-    - それ以外は neutral な non-active
-    - 未知 state でも card は欠落させない
+    - 通常種別の`Agent`と実行状態badgeは表示しない。履歴の検索・再開を役割とし、実行状態はMonitorで確認する
+    - Character authoringの`Character`と旧schema等の`Read Only`は、種別・利用制限の識別として表示する
   - card theme
     - background = mate `main`
     - left accent bar = mate `sub`
@@ -259,7 +254,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `always on top` を初期 slice から有効にする
 - renderer は `HomeApp` の compact monitor mode を再利用する
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
-  - open な `Session Window` のみ表示する
+  - Homeと同じ監視対象と保持条件を使い、閉鎖後も監視中のSessionを表示する
   - `Attention` / `Running` / `Stopped` の3枠を、0件でも常に表示する
   - 親SessionはHomeと共通のcompactな行で表示し、Main状態を親名の側、Aux状態集約と展開操作を右端へ分ける。3分類はHomeと共通の高さ調整・件数/優先順位によるclick開閉・個別scrollを使い、本文幅740px以上では各分類を2列にする。文字の縮小だけで件数を詰め込まない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
@@ -524,9 +519,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Home から Session / Settings / Session Monitor を開く
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
-- Home の `Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する
-- Home の `Monitor` と `Session Monitor Window` は同じ projection / component を使い、open parentに紐づく保存済みAuxiliary summaryを同じ順序で集約する。状態更新は既存のlive eventと軽量summary再読込で反映し、pollingやMonitor専用storageは持たない
-- Auxiliary summary再読込はopen parent集合を一括取得し、親数に比例した個別SQLite取得を行わない
+- Home の `Monitor` は Main Processの開いているWindowと保持済みSessionを、専用のbounded summary queryで参照する。実際のopen Window IDはRandom起動・Window復元等のために別の集合として維持する
+- Home の `Monitor` と `Session Monitor Window` は同じ query / projection / component を使い、監視対象の親に紐づく保存済みAuxiliary summaryを同じ順序で集約する。状態更新は既存のlive event、Window開閉、Session invalidation、focusによる再読込で反映し、pollingやMonitor専用storageは持たない
+- Auxiliary summary再読込は監視対象parentのpage単位で一括取得し、親数に比例した個別SQLite取得を行わない
 - MonitorからAuxiliaryを選択して開いたときは、Mainがstable Auxiliary IDとparent IDを検証してnavigationし、既存Windowにはselection event、新規Windowにはentry queryで正確な会話を渡す
 - 通常履歴の応答Detailsから操作結果を閲覧する。Latest Commandは実行中・取消待ちのliveを優先し、終了後はReasoning／background tasksのsnapshotを保持していても、対象会話の最新turnとその`assistantMessageSeq`に対応するartifactを遅延取得する。最新turnにcommandがなければ以前のturnへ遡らない。未記録・正常emptyと取得失敗を区別し、対象切替・次turn開始後に遅い結果を適用しない。Window再open・再起動、failed／canceled後も同じ対象境界を使う
 - chat message は限定的な rich text renderer で整形表示する

@@ -149,6 +149,9 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         deletePromptTemplate: () => [],
       } satisfies MainIpcPromptTemplateDepsArgs,
       sessionQuery: {
+        listSessionMonitorPage: async () => {
+          throw new Error("unused session query fixture method");
+        },
         listSessionSummaryPage: async () => {
           throw new Error("unused session query fixture method");
         },
