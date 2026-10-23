@@ -12,25 +12,6 @@ import type {
   ElicitationRecord,
 } from "../../../src-shared/session/runtime-state.js";
 
-function liveApprovalKindLabel(kind: string): string {
-  switch (kind) {
-    case "shell":
-      return "Shell Command";
-    case "write":
-      return "File Change";
-    case "mcp":
-      return "MCP Tool";
-    case "custom-tool":
-      return "Custom Tool";
-    case "url":
-      return "URL Fetch";
-    case "read":
-      return "File Read";
-    default:
-      return kind;
-  }
-}
-
 type LiveElicitationFieldValue = string | number | boolean | string[];
 export type LiveElicitationDrafts = Map<string, {
   fieldValues: Record<string, LiveElicitationFieldValue>;
@@ -587,22 +568,9 @@ export function LiveRequestSurface({
           aria-label="Approval required"
           aria-busy={isApprovalSubmitting || undefined}
         >
-          <div className="live-approval-head">
-            <div className="live-approval-copy">
-              <span className="live-approval-badge">Approval Required</span>
-              <p className="live-approval-title">{liveApprovalRequest.title}</p>
-            </div>
-            <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
-          </div>
-          <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
+          <p className="live-approval-summary">{liveApprovalRequest.summary}</p>
           {liveApprovalRequest.warning ? (
             <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
-          ) : null}
-          {liveApprovalRequest.details ? (
-            <details className="live-approval-details">
-              <summary>Details</summary>
-              <pre>{liveApprovalRequest.details}</pre>
-            </details>
           ) : null}
           <div className="live-approval-actions">
             {isApprovalSubmitting ? <span className="visually-hidden" role="status">Processing approval request</span> : null}
@@ -623,6 +591,12 @@ export function LiveRequestSurface({
             >
               <ButtonContent busy={approvalDecision === "deny"}>Reject</ButtonContent>
             </button>
+            {liveApprovalRequest.details ? (
+              <details className="live-approval-details">
+                <summary>Details</summary>
+                <pre>{liveApprovalRequest.details}</pre>
+              </details>
+            ) : null}
           </div>
         </section>
       ) : null}

@@ -3029,7 +3029,7 @@ test("SessionMessageColumn の Source は通常 message と pending の元 Markd
 // claim = "pending rowとlive approval/elicitationは既存messageの後、bottom anchorの前へ一度ずつ維持される"
 // oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx" }
 // fault = "実行中のrequest UIを既存messageの途中へ挿入するか末尾のpending/approvalを失う"
-// observable = "pending row、Approval Required、approval/elicitation custom content、既存messageとanchorのDOM順"
+// observable = "pending row、承認groupのaccessible name、approval/elicitation custom content、既存messageとanchorのDOM順"
 // observation_boundary = "component-behavior"
 // scope = "session-message-live-request-tail"
 // lifecycle = "permanent"
@@ -3045,8 +3045,9 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   });
 
   assert.match(html, /pending-row/);
-  assert.match(html, /Approval Required/);
-  assert.match(html, /コマンド実行の承認/);
+  const approval = new JSDOM(html).window.document.querySelector('[role="group"][aria-label="Approval required"]');
+  assert.ok(approval);
+  assert.match(approval.textContent ?? "", /npm test を実行します/);
   assert.match(html, /対象ブランチを選んでね。/);
   assert.match(html, /Branch/);
   assert.ok(
@@ -3632,9 +3633,9 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageText: "Preparing a response",
     pendingMessageTextVisible: false,
   });
-  assert.match(approvalHtml, /Approval Required/);
-  assert.match(approvalHtml, /コマンド実行の承認/);
-  assert.match(new JSDOM(approvalHtml).window.document.querySelector(".pending-row")?.textContent ?? "", /コマンド実行の承認/);
+  const approval = new JSDOM(approvalHtml).window.document.querySelector('.pending-row [role="group"][aria-label="Approval required"]');
+  assert.ok(approval);
+  assert.match(approval.textContent ?? "", /npm test を実行します/);
   assert.doesNotMatch(approvalHtml, /Preparing a response/);
 
   const errorHtml = renderSessionMessageColumn({

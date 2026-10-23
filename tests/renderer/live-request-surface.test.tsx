@@ -124,8 +124,8 @@ const elicitationRequest: LiveElicitationRequest = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
-// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
+// claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求本文・警告・折りたたみ詳細・操作識別を維持する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン と docs/design/desktop-ui.md#Approval Requests" }
 // fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたは要求本文・操作labelを失う"
 // observable = "request領域と各buttonのaria-busy、spinnerの所属、status数、要求本文、warning/details、操作label"
 // observation_boundary = "component-behavior"
@@ -158,10 +158,15 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
     assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
     assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
     assert.ok(buttons.every((button) => button.disabled));
-    assert.match(html, /Run a command/);
-    assert.match(html, /npm test/);
-    assert.match(html, /This command can change workspace state\./);
-    assert.match(html, /The command will inspect the workspace\./);
+    const group = document.querySelector('[role="group"][aria-label="Approval required"]');
+    assert.ok(group);
+    assert.equal(group.querySelector("p")?.textContent, approvalRequest.summary);
+    assert.equal(group.querySelector('[role="alert"]')?.textContent, approvalRequest.warning);
+    const details = group.querySelector("details");
+    assert.ok(details);
+    assert.equal(details.open, false);
+    assert.equal(details.querySelector("summary")?.textContent, "Details");
+    assert.equal(details.querySelector("pre")?.textContent, approvalRequest.details);
   }
 });
 
