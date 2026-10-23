@@ -3,18 +3,17 @@ import type { Message } from "../../src-shared/session/session-state.js";
 import { getMessageHistoryIndex } from "../../src-shared/session/conversation-page.js";
 import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 
-export type RetryBannerKind = "interrupted" | "failed" | "canceled";
+export type RetryKind = "interrupted" | "failed" | "canceled";
 
-export type RetryBannerState = {
-  kind: RetryBannerKind;
-  badge: string;
-  title: string;
+export type RetryState = {
+  kind: RetryKind;
   lastRequestText: string;
 };
 
-export type RetryBannerSource = {
-  kind: RetryBannerKind;
+export type RetrySource = {
+  kind: RetryKind;
   lastRequestText: string;
+  userMessageSeq: number;
   terminalTurn: SessionTurnRecord | null;
 };
 
@@ -130,10 +129,11 @@ export function createCancelRetryDraftReplaceHandler(input: {
   return () => applyCancelRetryDraftReplace(input);
 }
 
-export function resolveRetryBannerKind(input: {
+export function resolveRetryKind(input: {
   runState: string | null | undefined;
   latestTurnPhase?: SessionTurnRecord["phase"] | null;
-}): RetryBannerKind | null {
+}): RetryKind | null {
+  if (input.runState === "running") return null;
   if (input.runState === "interrupted") {
     return "interrupted";
   }
@@ -149,13 +149,13 @@ export function resolveRetryBannerKind(input: {
   return null;
 }
 
-export function resolveRetryBannerSource(input: {
+export function resolveRetrySource(input: {
   sessionId: string | null | undefined;
   messages: readonly Message[];
   latestUserMessage?: Message | null;
   latestTurn: SessionTurnRecord | null;
   runState: string | null | undefined;
-}): RetryBannerSource | null {
+}): RetrySource | null {
   if (!input.sessionId || input.runState === "running") {
     return null;
   }
@@ -180,7 +180,7 @@ export function resolveRetryBannerSource(input: {
   const terminalTurn = input.latestTurn?.sessionId === input.sessionId
     && input.latestTurn.userMessageSeq === lastUserMessageSeq
     && input.latestTurn.phase !== "running" ? input.latestTurn : null;
-  const kind = resolveRetryBannerKind({
+  const kind = resolveRetryKind({
     runState: input.runState,
     latestTurnPhase: terminalTurn?.phase,
   });
@@ -189,40 +189,39 @@ export function resolveRetryBannerSource(input: {
     ? {
         kind,
         lastRequestText: lastUserMessage?.text ?? "",
+        userMessageSeq: lastUserMessageSeq,
         terminalTurn,
       }
     : null;
 }
 
 export function shouldProtectRetryEditDraft(input: {
-  retryBanner: Pick<RetryBannerState, "lastRequestText"> | null;
+  retryState: Pick<RetryState, "lastRequestText"> | null;
   draft: string;
 }): boolean {
-  return !!input.retryBanner
+  return !!input.retryState
     && input.draft.trim().length > 0
-    && input.draft !== input.retryBanner.lastRequestText;
+    && input.draft !== input.retryState.lastRequestText;
 }
 
-export function shouldShowRetryBanner(input: {
-  hasActiveAuxiliarySession: boolean;
+export function shouldShowRetryActions(input: {
   hasLastUserMessage: boolean;
   isReadOnly: boolean;
   runState: string | null | undefined;
 }): boolean {
-  return !input.hasActiveAuxiliarySession
-    && input.hasLastUserMessage
+  return input.hasLastUserMessage
     && !input.isReadOnly
     && input.runState !== "running";
 }
 
 export function isRetryActionDisabled(input: {
-  retryBanner: RetryBannerState | null;
+  retryState: RetryState | null;
   hasLastUserMessage: boolean;
   composerBlocked: boolean;
   isReadOnly: boolean;
   runState: string | null | undefined;
 }): boolean {
-  return !input.retryBanner
+  return !input.retryState
     || !input.hasLastUserMessage
     || input.composerBlocked
     || input.isReadOnly

@@ -260,7 +260,6 @@ export type SessionChatScreenProps = {
   workSurfaceOverlay?: ReactNode;
   supportingSurface?: ReactNode;
   errorSurface?: ReactNode;
-  recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
   isActionDockExpanded: boolean;
@@ -297,7 +296,6 @@ export function SessionChatScreen({
   workSurfaceOverlay = null,
   supportingSurface = null,
   errorSurface = null,
-  recoveryActions = null,
   actionDock,
   actionDockSplitter,
   isActionDockExpanded,
@@ -501,11 +499,6 @@ export function SessionChatScreen({
         </div>
         {workSurfaceOverlay}
         {supportingSurface}
-        {recoveryActions ? (
-          <div className="session-recovery-actions-slot">
-            {recoveryActions}
-          </div>
-        ) : null}
         {errorSurface}
       </section>
 

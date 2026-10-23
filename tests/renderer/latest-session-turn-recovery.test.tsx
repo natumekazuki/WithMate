@@ -6,8 +6,9 @@ import { JSDOM } from "jsdom";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { useLatestSessionTurn, type LatestSessionTurnApi } from "../../src/chat/runtime/use-latest-session-turn.js";
-import { resolveRetryBannerSource } from "../../src/chat/retry-state.js";
+import { resolveRetrySource } from "../../src/chat/retry-state.js";
 import { buildLiveSessionRecoveryActions } from "../../src/chat/live-session-projection.js";
+import { SessionRecoveryActions } from "../../src/chat/runtime/session-recovery-actions.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -22,10 +23,10 @@ function canceledTurn(sessionId: string): SessionTurnRecord {
 
 // @test-value v2
 // kind = "contract"
-// claim = "正常なturn読込は枠のないbusy status、実際の取得失敗はalertとRetryで示し、既知のCanceled回復操作を保持しながらowner/incarnationを分離する"
+// claim = "turn読込はbusy status、取得失敗はalertとRetryで示し、既知のCanceled回復操作を保持しながらowner/incarnationを分離する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
-// fault = "正常な読込を警告用の回復枠へ入れる、再取得で既知turnを消す、実際の取得失敗のRetryを失う、または別owner/incarnationへ古いturn応答を反映する"
-// observable = "production hookのturn/loading/error、通常loading statusのbusy属性と回復枠との分離、Canceled・Resend・Edit・alert・RetryのDOM、API読取回数"
+// fault = "読込statusを失う、再取得で既知turnを消す、取得失敗のRetryを失う、または別owner/incarnationへ古いturn応答を反映する"
+// observable = "production hookのturn/loading/error、loading statusのbusy属性、Resend・Edit・alert・RetryのDOM、API読取回数"
 // observation_boundary = "consumer"
 // scope = "latest-session-turn-and-recovery-actions"
 // lifecycle = "permanent"
@@ -56,13 +57,14 @@ test("latest turn recovery separates normal loading, preserves recovery, and iso
   const noop = () => {};
   function Harness() {
     output = useLatestSessionTurn(api, sessionId, scope, revision);
-    const source = resolveRetryBannerSource({ sessionId, messages: [{ role: "user", text: "Fix it" }], latestTurn: output.turn, runState });
-    return buildLiveSessionRecoveryActions({
-      retryBanner: source ? { kind: source.kind, badge: "Canceled", title: "This request was stopped", lastRequestText: source.lastRequestText } : null,
+    const source = resolveRetrySource({ sessionId, messages: [{ role: "user", text: "Fix it" }], latestTurn: output.turn, runState });
+    return <SessionRecoveryActions {...buildLiveSessionRecoveryActions({
+      retryState: source ? { kind: source.kind, lastRequestText: source.lastRequestText } : null,
+      requestKey: `${sessionId}:${scope}:0`, targetLabel: sessionId,
       latestTurnLoading: output.loading, latestTurnError: output.error, onRetryLatestTurn: output.retry,
       isRetryActionDisabled: false, isRetryEditDisabled: false, isRetryDraftReplacePending: false,
       onResendLastMessage: noop, onEditLastMessage: noop, onConfirmRetryDraftReplace: noop, onCancelRetryDraftReplace: noop,
-    });
+    })} />;
   }
   const state = () => { assert.ok(output); return output; };
   const render = async () => { await act(async () => root.render(<Harness />)); };
@@ -72,12 +74,11 @@ test("latest turn recovery separates normal loading, preserves recovery, and iso
     const status = host.querySelector('[role="status"][aria-label="Loading latest execution"]');
     assert.ok(status);
     assert.equal(status.getAttribute("aria-busy"), "true");
-    assert.equal(status.closest(".resume-banner") !== null, false, "Normal loading must not use a recovery frame.");
     assert.equal(host.querySelector('[role="alert"]'), null);
     assert.equal(button("Resend"), undefined);
   };
   const assertCanceledActions = () => {
-    assert.match(host.textContent ?? "", /Canceled/);
+    assert.equal(state().turn?.phase, "canceled");
     assert.ok(button("Resend"));
     assert.ok(button("Edit"));
     assert.equal(button("Resend")!.disabled, false);
@@ -97,7 +98,7 @@ test("latest turn recovery separates normal loading, preserves recovery, and iso
 
     await update();
     assert.equal(state().turn?.phase, "canceled");
-    assert.equal(host.querySelector("section")!.getAttribute("aria-busy"), "true");
+    assert.equal(host.querySelector('[role="group"]')!.getAttribute("aria-busy"), "true");
     assertCanceledActions();
     await act(async () => requests[2].result.reject(new Error("refresh failed")));
     assertCanceledActions();

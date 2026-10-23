@@ -48,6 +48,7 @@ export type SessionActionDockCompactRowProps = {
   isRunning: boolean;
   isCanceling?: boolean;
   targetDock?: ReactNode;
+  recoveryActions?: ReactNode;
   dockModeSwitch?: ReactNode;
   providerQuota?: ReactNode;
   showExpandControl?: boolean;
@@ -66,6 +67,7 @@ export function SessionActionDockCompactRow({
   isRunning,
   isCanceling = false,
   targetDock = null,
+  recoveryActions = null,
   dockModeSwitch = null,
   providerQuota = null,
   showExpandControl = true,
@@ -94,6 +96,7 @@ export function SessionActionDockCompactRow({
         ) : null}
       </button> : <span className="session-action-dock-compact-meta" aria-hidden="true" />}
       <div className="session-action-dock-compact-actions">
+        {recoveryActions}
         <div
           className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
           aria-hidden={isRunning ? undefined : true}

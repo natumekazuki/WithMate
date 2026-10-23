@@ -168,12 +168,11 @@ import {
   createRetryDraftReplaceConfirmationHandler,
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
-  resolveRetryBannerSource,
+  resolveRetrySource,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
-  shouldShowRetryBanner,
-  type RetryBannerKind,
-  type RetryBannerState,
+  shouldShowRetryActions,
+  type RetryState,
 } from "../chat/retry-state.js";
 import { loadOwnedAuxiliaryMessageArtifact, resolvePendingAuxiliaryMessageGroupId } from "../chat/auxiliary/auxiliary-session-message-projection.js";
 import {
@@ -366,7 +365,7 @@ export default function AgentSessionWindowApp() {
   const [appSettingsLoadStatus, setAppSettingsLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [appSettingsLoadError, setAppSettingsLoadError] = useState("");
   const [appSettingsReadRevision, setAppSettingsReadRevision] = useState(0);
-  const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
+  const [retryDraftReplaceRequestKey, setRetryDraftReplaceRequestKey] = useState<string | null>(null);
   const handleHeaderPreferenceChange = useCallback((value: "hidden" | "visible") => {
     void persistChatLayoutPreference(withmateApi, { target: "header", value });
   }, [withmateApi]);
@@ -621,7 +620,9 @@ export default function AgentSessionWindowApp() {
       activeRunMessageCount,
     ));
   }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
-  const latestMainTurn = useLatestSessionTurn(withmateApi, selectedSession?.id ?? null, selectedSession ? getSessionIncarnationId(selectedSession) : null, selectedSession?.updatedAt);
+  const recoverySession = auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession : selectedSession;
+  const recoveryIncarnation = activeAuxiliarySession?.createdAt ?? (selectedSession ? getSessionIncarnationId(selectedSession) : null);
+  const latestRecoveryTurn = useLatestSessionTurn(withmateApi, recoverySession?.id ?? null, recoveryIncarnation, recoverySession?.updatedAt);
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
     hasLiveRun: hasSelectedSessionLiveRun,
@@ -645,6 +646,27 @@ export default function AgentSessionWindowApp() {
     [displayedSession],
   );
   const isSelectedSessionReadOnly = selectedSession ? isReadOnlySession(selectedSession) : false;
+  const retrySource = useMemo(() => recoverySession ? resolveRetrySource({
+    sessionId: recoverySession.id,
+    messages: recoverySession.messages,
+    latestUserMessage: activeAuxiliarySession ? null : selectedSession?.latestUserMessage,
+    latestTurn: latestRecoveryTurn.turn,
+    runState: visibleSessionRunState,
+  }) : null, [recoverySession, activeAuxiliarySession, selectedSession?.latestUserMessage, latestRecoveryTurn.turn, visibleSessionRunState]);
+  const retryState = useMemo<RetryState | null>(() => {
+    if (!retrySource || !shouldShowRetryActions({
+      hasLastUserMessage: true,
+      isReadOnly: isSelectedSessionReadOnly,
+      runState: visibleSessionRunState,
+    })) return null;
+    return { kind: retrySource.kind, lastRequestText: retrySource.lastRequestText };
+  }, [retrySource, isSelectedSessionReadOnly, visibleSessionRunState]);
+  const retryRequestKey = retryState ? `${recoverySession?.id}:${recoveryIncarnation}:${retrySource?.userMessageSeq}` : "";
+  const retryRequestKeyRef = useRef(retryRequestKey);
+  retryRequestKeyRef.current = retryRequestKey;
+  const isRetryDraftReplacePending = !!retryRequestKey && retryDraftReplaceRequestKey === retryRequestKey;
+  const setIsRetryDraftReplacePending = (pending: boolean) => setRetryDraftReplaceRequestKey(pending ? retryRequestKey : null);
+  useEffect(() => { setRetryDraftReplaceRequestKey(null); }, [retryRequestKey]);
   const persistSession = useCallback(async (nextSession: Session) => {
     const current = getCurrentMainSession();
     if (!current || current.id !== nextSession.id) {
@@ -705,7 +727,6 @@ export default function AgentSessionWindowApp() {
     forceActionDockExpanded: [
       isAgentPickerOpen,
       isSkillPickerOpen,
-      isRetryDraftReplacePending,
     ],
     focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
   });
@@ -935,74 +956,11 @@ export default function AgentSessionWindowApp() {
 
     return options;
   }, [availableReasoningEfforts, displayedSession, selectedProviderCatalog]);
-  const lastUserMessage = useMemo(
-    () =>
-      selectedSession
-        ? [...selectedSession.messages].reverse().find((message) => message.role === "user") ?? selectedSession.latestUserMessage ?? null
-        : null,
-    [selectedSession],
-  );
   const contextRenderedIsRunning = activeAuxiliarySession
     ? activeAuxiliarySession.runState === "running"
     : resolveSelectedSessionIsRunning({ runState: selectedSessionRunState });
-  const retryBanner = useMemo<RetryBannerState | null>(() => {
-    if (!selectedSession || !shouldShowRetryBanner({
-      hasActiveAuxiliarySession: !!activeAuxiliarySession,
-      hasLastUserMessage: !!lastUserMessage,
-      isReadOnly: isSelectedSessionReadOnly,
-      runState: selectedSessionRunState,
-    })) {
-      return null;
-    }
-
-    const source = resolveRetryBannerSource({
-      sessionId: selectedSession.id,
-      messages: selectedSession.messages,
-      latestUserMessage: selectedSession.latestUserMessage,
-      latestTurn: latestMainTurn.turn,
-      runState: selectedSessionRunState,
-    });
-    if (!source) {
-      return null;
-    }
-
-    const { kind, lastRequestText } = source;
-
-    switch (kind) {
-      case "interrupted":
-        return {
-          kind,
-          badge: "Interrupted",
-          title: "The previous request was interrupted",
-          lastRequestText,
-        };
-      case "failed":
-        return {
-          kind,
-          badge: "Failed",
-          title: "The previous request could not be completed",
-          lastRequestText,
-        };
-      case "canceled":
-        return {
-          kind,
-          badge: "Canceled",
-          title: "This request was stopped",
-          lastRequestText,
-        };
-      default:
-        return null;
-    }
-  }, [
-    lastUserMessage,
-    selectedSession,
-    latestMainTurn.turn,
-    selectedSessionRunState,
-    isSelectedSessionReadOnly,
-    activeAuxiliarySession,
-  ]);
   const shouldProtectDraftOnRetryEdit = () => shouldProtectRetryEditDraft({
-    retryBanner,
+    retryState,
     draft: getComposerDraft(),
   });
   const isComposerDisabled = !!composerBlockedReason || isSelectedSessionReadOnly;
@@ -1028,11 +986,12 @@ export default function AgentSessionWindowApp() {
   );
   const isSendDisabled = composerSendability.isSendDisabled;
   const isRetryActionDisabled = resolveRetryActionDisabled({
-    retryBanner,
-    hasLastUserMessage: !!lastUserMessage,
-    composerBlocked: !!composerBlockedReason,
+    retryState,
+    hasLastUserMessage: !!retrySource,
+    composerBlocked: !!composerBlockedReason || composerRegistry.isFrozen
+      || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id),
     isReadOnly: isSelectedSessionReadOnly,
-    runState: selectedSessionRunState,
+    runState: visibleSessionRunState,
   });
   const isRetryEditDisabled = isRetryActionDisabled || isComposerDisabled;
   const {
@@ -1058,12 +1017,6 @@ export default function AgentSessionWindowApp() {
       }
     };
   };
-  useEffect(() => {
-    if (!retryBanner) {
-      setIsRetryDraftReplacePending(false);
-    }
-  }, [retryBanner]);
-
   useEffect(() => {
     setForceComposerBlockedFeedback(false);
   }, [selectedSession?.id]);
@@ -1393,39 +1346,53 @@ export default function AgentSessionWindowApp() {
 
   const handleResendLastMessage = async () => {
     await runRetryResendCommand({
-      isDisabled: !!composerBlockedReason || isSelectedSessionReadOnly,
-      messageText: lastUserMessage?.text,
-      resendMessage: (messageText) => sendMessage(messageText, { clearDraft: false, submitSource: "retry" }),
+      isDisabled: isRetryActionDisabled || retryRequestKeyRef.current !== retryRequestKey,
+      messageText: retryState?.lastRequestText,
+      resendMessage: async (messageText) => {
+        if (activeAuxiliarySession) {
+          await sendAuxiliaryMessage(messageText, { clearDraft: false, submitSource: "retry", collapseActionDock: false });
+        } else {
+          await sendMessage(messageText, { clearDraft: false, submitSource: "retry" });
+        }
+      },
     });
   };
 
   const restoreLastUserMessageToDraft = (messageText: string) => {
-    if (composerRegistry.isFrozen) return;
-    const textarea = composerTextareaRef.current;
+    if (composerRegistry.isFrozen || retryRequestKeyRef.current !== retryRequestKey) return;
     applyRetryDraftRestoreCommand({
       messageText,
-      setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
-      setDraft,
+      setActionDockPinnedExpanded: () => handleExpandActionDock({ focusComposer: false }),
+      setDraft: activeAuxiliarySession
+        ? (value) => { void auxiliaryDraftPersistence.changeDraft(activeAuxiliarySession, value, value.length); }
+        : setDraft,
       setCaret: setComposerCaret,
-      syncCaret: (caret) => {
+      syncCaret: activeAuxiliarySession ? undefined : (caret) => {
         mainComposerCaretRef.current = caret;
       },
       setRetryDraftReplacePending: setIsRetryDraftReplacePending,
-      focusComposer: (caret) => restoreComposerTextareaFocusAndCaret(textarea, caret),
+      focusComposer: (caret) => requestAnimationFrame(() => {
+        if (retryRequestKeyRef.current !== retryRequestKey) return;
+        const textarea = composerTextareaRef.current;
+        textarea?.focus();
+        textarea?.setSelectionRange(caret, caret);
+      }),
     });
   };
 
   const handleEditLastMessage = createRetryEditHandler({
-    isDisabled: !retryBanner || isRetryEditDisabled,
-    messageText: lastUserMessage?.text,
+    isDisabled: isRetryEditDisabled,
+    messageText: retryState?.lastRequestText,
     shouldProtectDraft: shouldProtectDraftOnRetryEdit,
-    requestDraftReplaceConfirmation: () => setIsRetryDraftReplacePending(true),
+    requestDraftReplaceConfirmation: () => {
+      if (retryRequestKeyRef.current === retryRequestKey) setIsRetryDraftReplacePending(true);
+    },
     restoreDraft: restoreLastUserMessageToDraft,
   });
 
   const handleConfirmRetryDraftReplace = createRetryDraftReplaceConfirmationHandler({
-    isDisabled: !retryBanner || isRetryEditDisabled,
-    messageText: lastUserMessage?.text,
+    isDisabled: isRetryEditDisabled || !isRetryDraftReplacePending,
+    messageText: retryState?.lastRequestText,
     restoreDraft: restoreLastUserMessageToDraft,
   });
 
@@ -1524,7 +1491,10 @@ export default function AgentSessionWindowApp() {
     auxiliaryDraftPersistence.retrySave(activeAuxiliarySession);
   };
 
-  const sendAuxiliaryMessage = (): Promise<unknown> => {
+  const sendAuxiliaryMessage = (
+    messageText?: string,
+    options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
+  ): Promise<unknown> => {
     if (!withmateApi || composerRegistry.isFrozen) return Promise.resolve();
     const selected = activeAuxiliarySessionRef.current;
     if (!selected || !displayedSession) return Promise.resolve();
@@ -1533,7 +1503,7 @@ export default function AgentSessionWindowApp() {
     if (!draftOwner) return Promise.resolve();
     const selectionContext = dockContextRef.current;
     const collapseSentActionDock = captureSendDockCollapse();
-    const followAcceptedSend = captureMessageListSendRef.current?.(selected.id);
+    const followAcceptedSend = options?.submitSource === "retry" ? undefined : captureMessageListSendRef.current?.(selected.id);
     const isCurrentSubmission = () => dockContextRef.current === selectionContext && composerOwnerRef.current === selected.id
       && auxiliaryBinding.getSession()?.createdAt === selected.createdAt;
     const releaseDetail = auxiliaryBinding.retainDetail();
@@ -1541,18 +1511,18 @@ export default function AgentSessionWindowApp() {
       sessionId: selected.id,
       selectedSession: { ...displayedSession, id: selected.id, incarnationId: selected.createdAt },
       request: {
-        userMessage: composerRegistry.capture(owner).draft,
+        userMessage: messageText ?? composerRegistry.capture(owner).draft,
         clientRequestId: createSessionTurnClientRequestId(),
-        submitSource: "composer",
+        submitSource: options?.submitSource ?? "composer",
         executionOptions: captureSessionExecutionOptions(selected),
         displayAnchorParentMessageCount: selectedSession?.messageCount ?? selectedSession?.messages.length ?? 0,
       },
       composerOwner: owner,
-      auxiliaryDraftOwner: draftOwner,
+      auxiliaryDraftOwner: options?.submitSource === "retry" ? undefined : draftOwner,
       isCurrentSubmission,
-      clearDraft: true,
+      clearDraft: options?.clearDraft ?? true,
       queueTurn: true,
-      shouldCollapseActionDock: appSettings.autoCollapseActionDockOnSend,
+      shouldCollapseActionDock: options?.collapseActionDock ?? appSettings.autoCollapseActionDockOnSend,
       selectedSessionRunState: selected.runState,
       blockedReason: sessionExecutionBlockedReason,
       isReadOnly: isSelectedSessionReadOnly,
@@ -2199,10 +2169,12 @@ export default function AgentSessionWindowApp() {
   });
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
     recovery: {
-      retryBanner: activeAuxiliarySession ? null : retryBanner,
-      latestTurnLoading: !activeAuxiliarySession && latestMainTurn.loading,
-      latestTurnError: activeAuxiliarySession ? null : latestMainTurn.error,
-      onRetryLatestTurn: latestMainTurn.retry,
+      retryState,
+      requestKey: retryRequestKey,
+      targetLabel: activeAuxiliarySession ? (activeAuxiliarySession.title.trim() ? `Aux · ${activeAuxiliarySession.title}` : "Aux") : "Main",
+      latestTurnLoading: latestRecoveryTurn.loading,
+      latestTurnError: latestRecoveryTurn.error,
+      onRetryLatestTurn: latestRecoveryTurn.retry,
       isRetryActionDisabled,
       isRetryEditDisabled,
       isRetryDraftReplacePending,

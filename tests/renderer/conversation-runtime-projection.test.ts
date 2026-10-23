@@ -4,7 +4,7 @@ import type { Message } from "../../src-shared/session/session-state.js";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { createOptimisticRunningSessionState } from "../../src-shared/session/session-run-transition.js";
 import { mergeMessageBookmarkProjection } from "../../src/chat/runtime/session-submit-coordinator.js";
-import { resolveRetryBannerSource } from "../../src/chat/retry-state.js";
+import { resolveRetrySource } from "../../src/chat/retry-state.js";
 
 // @test-value v2
 // kind = "contract"
@@ -85,8 +85,8 @@ test("retry resolves a global user sequence inside and outside the loaded page",
     reasoningEffort: "medium", approvalMode: "never", userMessageSeq: 420, assistantMessageSeq: 421,
     threadId: "thread", errorMessage: "",
   };
-  const expected = { kind: "canceled", lastRequestText: "retry this", terminalTurn: canceled };
-  assert.deepEqual(resolveRetryBannerSource({ sessionId: "main", messages: [user, assistant], latestTurn: canceled, runState: "idle" }), expected);
-  assert.deepEqual(resolveRetryBannerSource({ sessionId: "main", messages: [assistant], latestUserMessage: user, latestTurn: canceled, runState: "idle" }), expected);
-  assert.equal(resolveRetryBannerSource({ sessionId: "main", messages: [user, assistant], latestTurn: { ...canceled, userMessageSeq: 0 }, runState: "idle" }), null);
+  const expected = { kind: "canceled", lastRequestText: "retry this", userMessageSeq: 420, terminalTurn: canceled };
+  assert.deepEqual(resolveRetrySource({ sessionId: "main", messages: [user, assistant], latestTurn: canceled, runState: "idle" }), expected);
+  assert.deepEqual(resolveRetrySource({ sessionId: "main", messages: [assistant], latestUserMessage: user, latestTurn: canceled, runState: "idle" }), expected);
+  assert.equal(resolveRetrySource({ sessionId: "main", messages: [user, assistant], latestTurn: { ...canceled, userMessageSeq: 0 }, runState: "idle" }), null);
 });
