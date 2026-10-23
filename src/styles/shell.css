@@ -77,8 +77,8 @@
 }
 
 .session-chat-layout {
-  --session-dock-motion-duration: 220ms;
-  --session-dock-motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
+  --session-dock-motion-duration: 300ms;
+  --session-dock-motion-easing: cubic-bezier(0.333333, 1, 0.666667, 1);
   --session-dock-splitter-size: 20px;
   --session-header-dock-row-height: 0px;
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 48px);

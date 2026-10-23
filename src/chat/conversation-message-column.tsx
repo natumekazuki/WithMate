@@ -276,7 +276,8 @@ export function useConversationMessageColumn({
   }, [api, enabled, liveRunOverride, pageOwner, sessionId, refresh, liveReadRevision]);
 
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
-  const hasActiveRun = liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun;
+  const isCancelRequested = baseProps.pendingCancelSessionIds?.has(sessionId) ?? false;
+  const hasActiveRun = isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun);
   const assistantText = api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
   const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
     const ownsRun = receipt.state === "running" && !receipt.inputTurnId
@@ -727,7 +728,7 @@ export function useConversationMessageColumn({
     }
   };
   const canSendQueuedInput = !!api?.sendQueuedSessionInput && !!liveRun?.turnId && liveRun.inputAvailable === true
-    && !liveRun.cancellationState && (session?.accessMode === undefined || session.accessMode === "active") && !queueActionsFrozen;
+    && !liveRun.cancellationState && !isCancelRequested && (session?.accessMode === undefined || session.accessMode === "active") && !queueActionsFrozen;
   const currentInputTurnId = liveRun?.turnId;
   const sendQueuedInput = useCallback((receipt: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt) => {
     if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
@@ -758,7 +759,7 @@ export function useConversationMessageColumn({
     renderQueueTail,
     pendingResponseMessageKey: pendingResponseMessageKey ?? presentationResponseKey,
     responsePresentationKey,
-    streamingResponseMessageKey: hasActiveRun && !hasSavedBridge && !liveRun?.cancellationState && !liveRun?.errorMessage
+    streamingResponseMessageKey: hasActiveRun && !hasSavedBridge && !isCancelRequested && !liveRun?.cancellationState && !liveRun?.errorMessage
       && !liveRun?.approvalRequest && !liveRun?.elicitationRequest && !liveRun?.elicitationRequests?.length
       && (api || !baseProps.liveRunErrorMessage && !baseProps.liveApprovalRequest && !baseProps.liveElicitationRequest && !baseProps.liveElicitationRequests?.length) ? pendingResponseMessageKey : null,
     messageGroups: projection.groups,
@@ -769,16 +770,16 @@ export function useConversationMessageColumn({
     responsePending: !isBrowsing && !hasActiveRun && (!!queuedProjection.activeReceipt || !!queuedProjection.pendingSubmission && !queuedProjection.pendingSubmission.error),
     submissionError: queuedProjection.pendingSubmission?.error ?? "",
     submissionUncertain: queuedProjection.pendingSubmission?.uncertain ?? false,
-    pendingRunIndicatorAnnouncement: messageSourceKind === "session"
-      ? baseProps.pendingRunIndicatorAnnouncement
-      : "Running",
+    pendingRunIndicatorAnnouncement: liveRun?.cancellationState
+      ? liveRun.cancellationState === "terminating" ? "Waiting for the run to stop" : "Canceling run"
+      : isCancelRequested ? "Canceling run" : messageSourceKind === "session" ? baseProps.pendingRunIndicatorAnnouncement : "Running",
     liveRunAssistantText: assistantText,
     hasLiveRunAssistantText: assistantText.length > 0,
     liveApprovalRequest: api ? liveRun?.approvalRequest ?? null : baseProps.liveApprovalRequest,
     liveElicitationRequest: api ? liveRun?.elicitationRequest ?? null : baseProps.liveElicitationRequest,
     liveElicitationRequests: api ? liveRun?.elicitationRequests : baseProps.liveElicitationRequests,
     liveElicitationRecords: api ? liveRun?.elicitationRecords : baseProps.liveElicitationRecords,
-    elicitationInputAvailable: api ? liveRun?.inputAvailable === true && !liveRun.cancellationState : baseProps.elicitationInputAvailable,
+    elicitationInputAvailable: api ? liveRun?.inputAvailable === true && !liveRun.cancellationState && !isCancelRequested : baseProps.elicitationInputAvailable,
     approvalActionRequestId: conversation.approvalRequestId,
     approvalActionDecision: conversation.approvalDecision,
     elicitationActionRequestId: conversation.elicitationRequestId,

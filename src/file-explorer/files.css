@@ -1582,26 +1582,23 @@
   overflow: hidden;
   padding: 4px 6px;
   opacity: 0;
-  transform: translateY(10px);
   visibility: hidden;
   pointer-events: none;
   transition:
-    opacity var(--session-dock-motion-duration) var(--session-dock-motion-easing),
-    transform var(--session-dock-motion-duration) var(--session-dock-motion-easing),
-    visibility 0s linear var(--session-dock-motion-duration);
+    opacity calc(var(--session-dock-motion-duration) * 0.4) ease-out,
+    visibility 0s linear calc(var(--session-dock-motion-duration) * 0.4);
 }
 
 .session-action-dock-content.is-active {
   position: relative;
   inset: auto;
   opacity: 1;
-  transform: translateY(0);
   visibility: visible;
   pointer-events: auto;
   transition-delay: 0s;
 }
 
 .session-action-dock-compact-content {
-  align-self: center;
-  padding: 8px 10px;
+  align-self: start;
+  padding: 10px 12px;
 }

@@ -172,6 +172,7 @@ export type LiveSessionMessageColumnProps = {
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: ChatMessageColumnProps["pendingRunIndicatorAnnouncement"];
+  pendingCancelSessionIds?: ReadonlySet<string>;
   liveApprovalRequest: ChatMessageColumnProps["liveApprovalRequest"];
   approvalActionRequestId: ChatMessageColumnProps["approvalActionRequestId"];
   liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
@@ -353,6 +354,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
     pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
+    pendingCancelSessionIds: input.pendingCancelSessionIds,
     liveApprovalRequest: input.liveApprovalRequest,
     approvalActionRequestId: input.approvalActionRequestId,
     liveElicitationRequest: input.liveElicitationRequest,

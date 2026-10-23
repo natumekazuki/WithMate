@@ -703,6 +703,64 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxの取消要求と終了待ちは保存runStateがidleでも同じ応答identityと受信済み本文を維持し、停止通知で待機indicatorを終える"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの取消click直後からのbusyと停止確定までの応答保持" }
+// fault = "保存idleで停止待ちindicatorを消す、取消中に本文または応答keyを失う、または停止通知後もrunningを保持する"
+// observable = "共有Column propsのisRunning、pendingRunIndicatorAnnouncement、本文、responsePresentationKey"
+// observation_boundary = "consumer"
+// scope = "Main/Aux cancel response surface lifetime"
+// lifecycle = "permanent"
+// impact = "取消で読んでいた応答を見失い、処理が停止済みか終了待ちか分からなくなる"
+// distinction = "取消buttonのWindow testは本文bridgeの保持とAuxのannouncementを検査しない。小さいcolumn consumerで保存idleとlive終了待ちの配送順を固定する"
+// @end-test-value
+test("conversation column はMain/Auxの取消終了待ちで応答面を保持する", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) {
+      let requested = false;
+      const api: ConversationMessageColumnApi = {};
+      const messages: SessionMessageColumnProps["messages"] = [{ role: "user", text: "prompt" }];
+      let live: LiveSessionRunState | null = { sessionId: kind, threadId: "thread", turnId: "turn", runState: "running", assistantText: "received response", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      let latest: SessionMessageColumnProps | null = null;
+      const column = () => { assert.ok(latest); return latest; };
+      function View() {
+        latest = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", runState: "idle", messages },
+          baseProps: { ...createBaseProps(kind), pendingCancelSessionIds: new Set(requested ? [kind] : ["other"]) }, messageSourceKind: kind, enabled: true, api, liveRun: live });
+        return null;
+      }
+      const render = () => act(async () => root.render(<View key={kind} />));
+      await render();
+      const key = column().responsePresentationKey;
+      assert.ok(key);
+      requested = true; await render();
+      assert.equal(column().isRunning, true);
+      assert.equal(column().pendingRunIndicatorAnnouncement, "Canceling run");
+      assert.equal(column().messages.at(-1)?.text, "received response");
+      assert.equal(column().responsePresentationKey, key);
+      requested = false;
+      live = { ...live!, runState: "idle", cancellationState: "terminating", assistantText: "" };
+      await render();
+      assert.equal(column().isRunning, true, "saved idle is not an authoritative stop while termination is pending");
+      assert.equal(column().pendingRunIndicatorAnnouncement, "Waiting for the run to stop");
+      assert.equal(column().messages.at(-1)?.text, "received response");
+      assert.equal(column().responsePresentationKey, key);
+      live = null; await render();
+      assert.equal(column().isRunning, false);
+      assert.equal(column().messages.at(-1)?.text, "received response", "canonical handoff retains the body after confirmed stop");
+      assert.equal(column().responsePresentationKey, key);
+    }
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,

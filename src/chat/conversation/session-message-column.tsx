@@ -111,6 +111,7 @@ export type SessionMessageColumnProps = {
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
+  pendingCancelSessionIds?: ReadonlySet<string>;
   pendingRunIndicatorAnnouncement?: string;
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
@@ -1281,7 +1282,7 @@ export function SessionMessageColumn({
           </svg>
         </button>
       ) : null}
-      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} tabIndex={0} role="region" aria-label="Conversation messages">
+      <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll} data-message-count={messages.length} tabIndex={0} role="region" aria-label="Conversation messages">
         {messages.length > 0 || isRunning || responsePending || submissionError || renderQueueTail ? (
           <div className="session-message-list-window">
             <div

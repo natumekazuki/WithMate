@@ -339,6 +339,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
   - 通常送信はworkspace確認・preview・受付ACKを待たず、対象Columnへ送信文と通常の応答待機枠をDOM反映してから、設定に従ってcompactへ戻し、`Scroll To Latest On Send`を一度適用する。既に実行中なら次Turnの予約本文を現在の応答より後へ置く。内部の準備・受付・実行は表示から独立して進め、固定delayやdockのtransition完了待ちは追加しない。受付再照会・元要求の再試行によってdock開閉や末尾追従を繰り返さず、後続の手動操作を上書きしない
+  - 送信時のhandoffは入力から会話へ読む位置を渡す一つの遷移とする。送信前のscroll位置から末尾までの差を、dockの外寸変化と共通の300msのease-outで解消し、途中の本文高・viewport高の変化を吸収する。新しい送信文と応答待機枠だけを180msでfade-inし、既存行や本文到着・保存時には入場演出を繰り返さない。dock内の共通操作列は上端からの位置を揃え、内容は独立した上下移動を加えず120msで切り替える
+  - auto close OFFでも送信時のhandoffを使う。`Scroll To Latest On Send`がOFFで読み返し中なら位置を動かさない。遷移中のwheel・scrollbar・touch・scroll keyは手動操作を優先し、会話owner変更・非表示では旧Columnの補正を破棄する。`prefers-reduced-motion`では移動とfadeを省き、同じ状態・操作可否へ直接切り替える
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
@@ -392,7 +394,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - message list は条件付き follow mode で動かす
   - user の scroll intent と末尾移動は一つの follow owner が決定し、virtual row の再計測は visible anchor の補正だけを担当する。viewportより完全に上側の行の高さ変更を補正し、読みかけの行自身の高さ変更では行先頭のviewport内offsetを変えない
   - 上方向のwheel・キー・touchとscrollbarによる読み返し、検索・一覧からの移動で追従を停止する。子のスクロール領域が消費する操作、入力欄操作、zoom、クリック・選択だけでは会話の追従意図を変えない
-  - 遅延描画・行高再計測・viewport resizeによる位置変化では追従意図を変更しない。追従中の末尾補正は同frameに集約し、既に末尾1px以内なら書き込まない
+  - 遅延描画・行高再計測・viewport resizeによる位置変化では追従意図を変更しない。通常の末尾補正は同frameに集約し、既に末尾1px以内なら書き込まない。送信handoff中は変化したviewportをpaint前に反映し、dockに対して1frame遅れた位置へ補正しない
   - virtual rowのResizeObserver計測はrequestAnimationFrame経由で反映し、通知中の再layoutによる通知ループを避ける。計測のframe待ちでanchorの補正条件や追従意図は変えない
   - 追従停止中は位置を維持し、userの下方向操作で末尾24px以内へ戻ると追従を再開する。layout変化だけで末尾へ近づいても再開しない
   - 会話の初回表示は末尾へ追従する。切替・previewからの復帰では会話incarnation別cacheの追従状態と閲覧位置を復元し、読み返し位置はmessage keyとviewport内offsetを優先する
@@ -448,7 +450,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 予約は通常のuser bubbleとして現在Turnの応答より後へ受付順に置く。本文を主役にし、下部に右寄せの個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順や開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅では操作を折り返し、本文を縮小しない
 - 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
 - 追加入力は受付を確認したdraft revisionだけを消す。失敗・結果不明時は対象会話のcomposerに理由を示し、draftを保持する。Auxiliaryの受付待ち中に編集した本文は成功・拒否後のdurable revisionへ保存し、通常の追編集にRetryを要求しない。Auxiliaryでは失敗後も現在のdurable draft revisionで明示再送できる。送信準備中のdraft編集・会話切替は古い送信を無効化し、受付待ち中の重複送信を通さない。Providerからの入力質問は会話内のQuestion Formsで回答し、secret textはpassword inputで扱う。nonblockingの質問も受付状態の見出しは置かず、必須待ちと区別して応答生成中のstatusを維持する
-- Mainの取消受付後は同じ位置の`Cancel`をdisabledとbusy stateにし、共通ボタン規約に従ってspinnerだけを表示する。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する。
+- Main／Auxiliaryとも取消click直後から同じ位置の`Cancel`をdisabledとbusy stateにし、共通ボタン規約に従ってspinnerだけを表示する。通知前の要求待ちは対象会話・Turnに限定し、liveの取消受付・終了待ちへつなぐ。失敗では理由を示して再操作できる状態へ戻し、旧取消要求の遅いACKで後続Turnを巻き戻さない。取消終了待ちでも予約受付は可能だが、現在Turnへの追加入力と新しい実行開始は許可しない。保存済みSessionがidleになってもlive取消状態を優先し、元処理と必要な終了処理の解放通知後に後続の実行を開始する
+- 取消は送信の逆再生にしない。受信済み本文・応答枠・avatarを保持し、同じ枠内の待機状態を停止確定までつなぐ。本文未着では同じ待機枠を使い、停止を完了応答に見せない。取消を理由にdockを自動展開・折りたたみしたり、draft・閲覧位置を巻き戻したりしない
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
   - 詳細が欠落・取得失敗した場合はDetails内に状態と再openによる再試行を示し、会話本文と保存済みsummaryを維持する。同じ展開・表示期間では本文更新による自動再取得を行わず、閉じて再open・非表示からの復帰・履歴page復帰で取得し直す

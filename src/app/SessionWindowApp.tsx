@@ -46,7 +46,6 @@ import {
   buildRunningSessionCancelTarget,
   resolveSelectedSessionIsRunning,
   resolveSelectedSessionRunState,
-  runRunningSessionCancelOperation,
 } from "../chat/send-or-cancel.js";
 import {
   approvalModeLabel,
@@ -483,6 +482,8 @@ export default function AgentSessionWindowApp() {
     getLiveRunRevision,
     hasSelectedSessionLiveRun,
     selectedSessionCancellationState,
+    cancellationState: activeCancellationState,
+    runTurnId,
     hasLiveRun,
     hasAssistantText: hasLiveRunAssistantText,
     hasApprovalRequest: isApprovalRequestPending,
@@ -499,12 +500,14 @@ export default function AgentSessionWindowApp() {
     resolveLiveApproval,
     resolveLiveElicitation,
     cancelRun,
+    pendingCancelSessionIds,
   } = useSessionRunActions({
     api: withmateApi,
     activeRunSessionId,
     setLiveRunState,
     onError: (message) => window.alert(message),
   });
+  const isActiveCancelRequested = pendingCancelSessionIds.has(activeRunSessionId ?? "");
   const composerOwner = useMemo<ComposerOwner>(
     () => ({
       kind: auxiliaryWorkspace.target === "auxiliary" ? "auxiliary" : "main",
@@ -526,7 +529,7 @@ export default function AgentSessionWindowApp() {
     visibleRunState: activeAuxiliarySession?.runState ?? resolveSelectedSessionRunState({
       runState: selectedSession?.runState,
       hasLiveRun: hasSelectedSessionLiveRun,
-      isCancellationPending: !!selectedSessionCancellationState,
+      isCancellationPending: !!selectedSessionCancellationState || pendingCancelSessionIds.has(selectedSession?.id ?? ""),
     }),
     auxiliaryDraftPersistence,
     setForceComposerBlockedFeedback,
@@ -625,7 +628,7 @@ export default function AgentSessionWindowApp() {
   const selectedSessionRunState: Session["runState"] | null = resolveSelectedSessionRunState({
     runState: selectedSession?.runState,
     hasLiveRun: hasSelectedSessionLiveRun,
-    isCancellationPending: !!selectedSessionCancellationState,
+    isCancellationPending: !!selectedSessionCancellationState || pendingCancelSessionIds.has(selectedSession?.id ?? ""),
   });
   const visibleSessionRunState: Session["runState"] | null = activeAuxiliarySession?.runState ?? selectedSessionRunState;
   const selectedSessionCharacter = useMemo(
@@ -797,7 +800,7 @@ export default function AgentSessionWindowApp() {
     return "";
   }, [activeAuxiliarySession, auxiliaryWorkspace.detailError, auxiliaryWorkspace.error, auxiliaryWorkspace.target, isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate, loadedSession, mainSessionRuntime.readError, appSettingsLoadStatus, modelCatalogLoadStatus, appSettingsLoadError, modelCatalogLoadError]);
   const turnInput = useSessionTurnInput({ api: withmateApi, composerRegistry, drafts: auxiliaryDraftPersistence });
-  const canSendInput = displayedSession?.provider === "codex" && visibleSessionRunState === "running" && !!inputTurnId;
+  const canSendInput = displayedSession?.provider === "codex" && visibleSessionRunState === "running" && !!inputTurnId && !isActiveCancelRequested;
   const steeringError = activeRunSessionId && turnInput.errors[activeRunSessionId]?.revision === composerRegistry.get(composerOwner).revision
     ? turnInput.errors[activeRunSessionId].message : "";
   const composerBusyReason = activeRunSessionId && turnInput.pendingIds.has(activeRunSessionId)
@@ -1191,12 +1194,12 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelRun = async () => {
-    if (selectedSessionCancellationState) return;
+    if (selectedSessionCancellationState || pendingCancelSessionIds.has(selectedSession?.id ?? "")) return;
     await cancelRun(buildRunningSessionCancelTarget({
       sessionId: selectedSession?.id,
       runState: selectedSessionRunState,
       isRunning: isSelectedSessionRunning,
-    }));
+    }), "main", runTurnId);
   };
 
   const handleComposerSubmitShortcut = () => applyComposerSubmitCommand({
@@ -1464,14 +1467,8 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleCancelAuxiliaryRun = async () => {
-    try {
-      await runRunningSessionCancelOperation({
-        target: buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }),
-        cancelRun: withmateApi ? (sessionId) => withmateApi.cancelAuxiliarySessionRun(sessionId) : null,
-      });
-    } catch (error) {
-      window.alert(resolveSessionRunErrorMessage(error, "Could not cancel the run."));
-    }
+    if (activeCancellationState) return;
+    await cancelRun(buildAuxiliarySessionCancelTarget({ session: activeAuxiliarySession }), "auxiliary", runTurnId);
   };
 
   const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
@@ -1913,8 +1910,8 @@ export default function AgentSessionWindowApp() {
     fallbackErrorMessage: "Could not open the Session files directory.",
   });
 
-  const pendingRunIndicatorAnnouncement = !activeAuxiliarySession && selectedSessionCancellationState
-    ? selectedSessionCancellationState === "terminating" ? "Waiting for the run to stop" : "Canceling run"
+  const pendingRunIndicatorAnnouncement = activeCancellationState || isActiveCancelRequested
+    ? activeCancellationState === "terminating" ? "Waiting for the run to stop" : "Canceling run"
     : isApprovalRequestPending || isBlockingElicitationRequestPending
     ? "Waiting for approval"
     : hasInProgressLiveRunStep
@@ -1927,7 +1924,7 @@ export default function AgentSessionWindowApp() {
     runState: selectedSessionRunState,
   });
   const renderedIsRunning = activeAuxiliarySession
-    ? activeAuxiliarySession.runState === "running"
+    ? activeAuxiliarySession.runState === "running" || !!activeCancellationState || isActiveCancelRequested
     : isSelectedSessionRunning;
 
   const renderedSession = displayedSession;
@@ -2056,7 +2053,7 @@ export default function AgentSessionWindowApp() {
       queueTurnBusy: pendingSubmitSessionId === renderedSession.id,
       hasUncertainTurn: mainSessionRuntime.hasUncertainTurnFor(renderedSession.id),
       inputError: steeringError,
-      isCanceling: !activeAuxiliarySession && !!selectedSessionCancellationState,
+      isCanceling: !!activeCancellationState || isActiveCancelRequested,
       selectedRunState: selectedSessionRunState,
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
       busyReason: composerBusyReason,
@@ -2167,6 +2164,7 @@ export default function AgentSessionWindowApp() {
     messageJumpRequest: null,
     isRunning: renderedIsRunning,
     pendingRunIndicatorAnnouncement,
+    pendingCancelSessionIds,
     liveApprovalRequest: null,
     approvalActionRequestId,
     liveElicitationRequest: null,

@@ -1001,4 +1001,131 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
   }
 });
 
-/* removed: priority persistence is no longer a renderer concern */
+// @test-value v2
+// kind = "contract"
+// claim = "送信時の末尾追従は既存位置から開始し、Dockによるviewport変化と新着高さを取り込み末尾へ収束する。新規行のfadeは送信ごとに一度だけで、手動scroll・owner変更・非表示で古い移動を中止し、scroll設定OFFとreduced motionを尊重する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockの送信handoffとmessage list follow mode" }
+// fault = "送信直後に末尾へjumpする、Dock変化後の末尾を取り逃す、同じ行を再演出する、または古いframeが手動閲覧・別会話を上書きする"
+// observable = "実follow hookへ渡したlistのscrollTop、追従状態、新規行のanimate呼出、owner変更後の補正"
+// observation_boundary = "component-behavior"
+// scope = "useSessionMessageListFollowingの送信と制御RAF/ResizeObserver。CSS実描画の滑らかさは別途browser確認"
+// lifecycle = "permanent"
+// impact = "送信時に読む位置を見失い、手動操作した本文を自動scrollで奪う"
+// distinction = "既存追従testは即時補正のみ。短い制御frame遷移で送信handoffと割込みの契約を検出する"
+// @end-test-value
+test("送信handoffは位置をつなぎ、手動意図・owner・motion設定を守る", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  const values = [dom.window, dom.window.document, dom.window.HTMLElement, dom.window.Node, dom.window.navigator, true];
+  globals.forEach((key, index) => Object.defineProperty(globalThis, key, { configurable: true, value: values[index] }));
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  let reducedMotion = false;
+  let resize = () => {};
+  dom.window.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
+  dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
+  Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: reducedMotion }) });
+  Object.defineProperty(dom.window, "ResizeObserver", { value: class {
+    constructor(callback: () => void) { resize = callback; }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } });
+  let current!: ReturnType<typeof useSessionMessageListFollowing>;
+  function Harness({ owner = "main", enabled = true }: { owner?: string; enabled?: boolean }) {
+    current = useSessionMessageListFollowing({ ownerKey: owner, enabled, scrollSignature: "tail" });
+    return React.createElement("div", {
+      ref: current.messageListRef, onScroll: current.handleMessageListScroll,
+      "data-message-count": 2, style: { "--session-dock-motion-duration": "300ms" } as React.CSSProperties,
+    }, React.createElement("div", { className: "session-message-list-window" }));
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = (owner = "main", enabled = true) => act(async () => root.render(React.createElement(Harness, { owner, enabled })));
+  const frame = (time: number) => act(async () => {
+    const pending = [...frames.values()]; frames.clear();
+    pending.forEach((callback) => callback(time));
+  });
+  try {
+    await render();
+    const list = current.messageListRef.current!;
+    let height = 1600, viewport = 400;
+    Object.defineProperties(list, {
+      scrollHeight: { get: () => height }, clientHeight: { get: () => viewport },
+    });
+    await act(async () => current.followMessageListLatest());
+    await frame(0);
+    const fades: number[] = [];
+    const addRow = (index: number) => {
+      const row = dom.window.document.createElement("div");
+      row.className = "session-message-virtual-row";
+      row.dataset.index = String(index);
+      const message = dom.window.document.createElement("article");
+      message.className = "message-row";
+      message.animate = () => { fades.push(index); return {} as Animation; };
+      row.append(message); list.firstElementChild!.append(row);
+    };
+    addRow(1);
+    const submitted = current.captureMessageListSend(true);
+    height += 160; addRow(2); addRow(3);
+    await act(async () => submitted());
+    assert.equal(list.scrollTop, 1200, "送信DOMの追加直後に読む位置を飛ばさない");
+    assert.deepEqual(fades, [2, 3], "送信文と応答枠を同じ入口で現す");
+    await frame(0);
+    viewport += 100; height += 20;
+    await act(async () => resize());
+    await frame(150);
+    assert.ok(list.scrollTop > 1100 && list.scrollTop < height - viewport, "途中位置から変化後の末尾へ向かう");
+    await frame(300);
+    assert.equal(list.scrollTop, height - viewport);
+    await act(async () => { submitted(); resize(); });
+    await frame(400);
+    assert.deepEqual(fades, [2, 3], "受付/保存の追加補正で入場を再実行しない");
+
+    list.dataset.messageCount = "4";
+    const interrupted = current.captureMessageListSend(true);
+    height += 200;
+    await act(async () => interrupted());
+    await frame(500); await frame(600);
+    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    const readingTop = list.scrollTop;
+    height += 100; viewport += 50;
+    await act(async () => resize()); await frame(1000);
+    assert.equal(current.isMessageListFollowing, false);
+    assert.equal(list.scrollTop, readingTop, "新着やDockが変化しても手動閲覧位置を上書きしない");
+    const noScroll = current.captureMessageListSend(false);
+    height += 100;
+    await act(async () => noScroll()); await frame(1100);
+    assert.equal(list.scrollTop, readingTop, "Scroll on send OFFは読み返しを解除しない");
+
+    reducedMotion = true;
+    const reduced = current.captureMessageListSend(true);
+    height += 100; addRow(4);
+    await act(async () => reduced());
+    assert.equal(list.scrollTop, height - viewport);
+    assert.deepEqual(fades, [2, 3], "reduced motionでは新しい行もfadeさせない");
+    reducedMotion = false;
+    const stale = current.captureMessageListSend(true);
+    await render("aux");
+    await frame(1200);
+    await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true })));
+    list.scrollTop = 300;
+    await act(async () => stale()); await frame(1250);
+    assert.equal(list.scrollTop, 300, "旧ownerの送信完了を次の会話に適用しない");
+    const hidden = current.captureMessageListSend(true);
+    height += 100;
+    await act(async () => hidden()); await frame(1300);
+    await render("aux", false);
+    const hiddenTop = list.scrollTop;
+    await frame(1700);
+    assert.equal(list.scrollTop, hiddenTop, "非表示になった会話のmotionを停止する");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((key, index) => {
+      const descriptor = previous[index];
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    });
+  }
+});

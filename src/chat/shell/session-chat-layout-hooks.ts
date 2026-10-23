@@ -517,6 +517,13 @@ export function useSessionMessageListFollowing({
   const canResumeMessageListFollowingRef = useRef(false);
   const intentRevisionRef = useRef(0);
   const correctionFrameRef = useRef<number | null>(null);
+  const sendMotionRef = useRef<{
+    startedAt: number | null;
+    duration: number;
+    remaining: number;
+    fraction: number;
+    contentHeight: number;
+  } | null>(null);
   const messageListScrollIntentTimerRef = useRef<number | null>(null);
   const messageListPointerIdRef = useRef<number | null>(null);
   const pointerScrollTopRef = useRef(0);
@@ -525,6 +532,7 @@ export function useSessionMessageListFollowing({
     ? savedScrollState?.isFollowing ?? true : isMessageListFollowing;
 
   const cancelCorrection = useCallback(() => {
+    sendMotionRef.current = null;
     if (correctionFrameRef.current !== null) {
       messageListRef.current?.ownerDocument.defaultView?.cancelAnimationFrame(correctionFrameRef.current);
       correctionFrameRef.current = null;
@@ -576,6 +584,7 @@ export function useSessionMessageListFollowing({
         return;
       }
       if (event.deltaY > 0) {
+        if (sendMotionRef.current) pauseMessageListFollowing();
         keepResumeIntentUntilScrollSettles();
       }
     };
@@ -591,6 +600,7 @@ export function useSessionMessageListFollowing({
       const rect = messageListElement.getBoundingClientRect();
       const scrollbarWidth = Math.max(16, messageListElement.offsetWidth - messageListElement.clientWidth);
       if (event.target !== messageListElement || event.clientX < rect.right - scrollbarWidth) return;
+      if (sendMotionRef.current) pauseMessageListFollowing();
       ++intentRevisionRef.current;
       messageListPointerIdRef.current = event.pointerId;
       pointerScrollTopRef.current = messageListElement.scrollTop;
@@ -601,7 +611,10 @@ export function useSessionMessageListFollowing({
       touchY = event.clientY;
       if (Math.abs(delta) < 1 || isInternalScroll(touchTarget, delta)) return;
       if (delta < 0) pauseMessageListFollowing();
-      else keepResumeIntentUntilScrollSettles();
+      else {
+        if (sendMotionRef.current) pauseMessageListFollowing();
+        keepResumeIntentUntilScrollSettles();
+      }
     };
     const handlePointerEnd = (event: PointerEvent) => {
       touchY = null;
@@ -639,6 +652,7 @@ export function useSessionMessageListFollowing({
       }
       if (["ArrowDown", "PageDown", "End"].includes(event.key) || event.key === " ") {
         if (isInternalScroll(target, 1)) return;
+        if (sendMotionRef.current) pauseMessageListFollowing();
         keepResumeIntentUntilScrollSettles();
       }
     };
@@ -664,22 +678,44 @@ export function useSessionMessageListFollowing({
     };
   }, [enabled, ownerKey, pauseMessageListFollowing, cancelCorrection]);
 
-  const scrollMessageListToBottom = useCallback(() => {
+  const scrollMessageListToBottom = useCallback((timestamp?: number) => {
     const messageListElement = messageListRef.current;
     if (!messageListElement) {
       return;
     }
 
+    const motion = sendMotionRef.current;
+    if (motion && !messageListElement.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      const height = messageListElement.scrollHeight;
+      motion.remaining += height - motion.contentHeight;
+      motion.contentHeight = height;
+      if (timestamp !== undefined) {
+        motion.startedAt ??= timestamp;
+        const progress = Math.min(1, Math.max(0, (timestamp - motion.startedAt) / motion.duration));
+        // Matches --session-dock-motion-easing: cubic-bezier(1/3, 1, 2/3, 1).
+        const fraction = (1 - progress) ** 3;
+        motion.remaining *= fraction / motion.fraction;
+        motion.fraction = fraction;
+        if (progress === 1) sendMotionRef.current = null;
+      }
+      messageListElement.scrollTop = Math.max(0, height - messageListElement.clientHeight - motion.remaining);
+      return;
+    }
+    sendMotionRef.current = null;
     scrollMessageListElementToBottom(messageListElement);
   }, []);
 
   const scheduleCorrection = useCallback(() => {
     const ownerWindow = messageListRef.current?.ownerDocument.defaultView;
     if (!ownerWindow || correctionFrameRef.current !== null) return;
-    correctionFrameRef.current = ownerWindow.requestAnimationFrame(() => {
+    const correct = (timestamp: number) => {
       correctionFrameRef.current = null;
-      if (messageListEnabledRef.current && isMessageListFollowingRef.current) scrollMessageListToBottom();
-    });
+      if (messageListEnabledRef.current && isMessageListFollowingRef.current) {
+        scrollMessageListToBottom(timestamp);
+        if (sendMotionRef.current) correctionFrameRef.current = ownerWindow.requestAnimationFrame(correct);
+      }
+    };
+    correctionFrameRef.current = ownerWindow.requestAnimationFrame(correct);
   }, [scrollMessageListToBottom]);
 
   const followMessageListLatest = useCallback(() => {
@@ -757,6 +793,8 @@ export function useSessionMessageListFollowing({
 
     const observer = new ownerWindow.ResizeObserver(() => {
       if (isMessageListFollowingRef.current) {
+        // Read the animated viewport before paint, not one frame behind the dock.
+        if (sendMotionRef.current) scrollMessageListToBottom();
         scheduleCorrection();
       }
     });
@@ -773,7 +811,7 @@ export function useSessionMessageListFollowing({
     const mutationObserver = new ownerWindow.MutationObserver(observeContent);
     mutationObserver.observe(messageListElement, { childList: true });
     return () => { observer.disconnect(); mutationObserver.disconnect(); };
-  }, [enabled, ownerKey, scheduleCorrection]);
+  }, [enabled, ownerKey, scheduleCorrection, scrollMessageListToBottom]);
 
   const handleMessageListScroll = useCallback(() => {
     const messageListElement = messageListRef.current;
@@ -809,13 +847,37 @@ export function useSessionMessageListFollowing({
   const captureMessageListSend = useCallback((scrollToLatestOnSend: boolean, onAccepted = followMessageListLatest) => {
     const revision = intentRevisionRef.current;
     const owner = messageListOwnerKeyRef.current;
+    const element = messageListRef.current;
+    const scrollTop = element?.scrollTop ?? 0;
+    const messageCount = Number(element?.dataset.messageCount);
     let consumed = false;
     return () => {
       if (consumed) return;
       consumed = true;
-      if (scrollToLatestOnSend && revision === intentRevisionRef.current && owner === messageListOwnerKeyRef.current) onAccepted();
+      if (revision !== intentRevisionRef.current || owner !== messageListOwnerKeyRef.current) return;
+      const view = element?.ownerDocument.defaultView;
+      const cssDuration = element && view?.getComputedStyle(element).getPropertyValue("--session-dock-motion-duration").trim();
+      const duration = cssDuration ? Number.parseFloat(cssDuration) * (cssDuration.endsWith("ms") ? 1 : 1000) : 0;
+      const motionEnabled = element && view && duration > 0 && !view.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      if (motionEnabled) {
+        if (scrollToLatestOnSend || isMessageListFollowingRef.current) {
+          sendMotionRef.current = {
+            startedAt: null, duration, fraction: 1, contentHeight: element.scrollHeight,
+            remaining: Math.max(0, element.scrollHeight - element.clientHeight) - scrollTop,
+          };
+        }
+        for (const row of element.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
+          if (Number(row.dataset.index) >= messageCount) {
+            row.querySelector<HTMLElement>(".message-row")?.animate?.(
+              [{ opacity: 0 }, { opacity: 1 }], { duration: duration * 0.6, easing: "ease-out" },
+            );
+          }
+        }
+      }
+      if (scrollToLatestOnSend) onAccepted();
+      else if (sendMotionRef.current) scheduleCorrection();
     };
-  }, [followMessageListLatest]);
+  }, [followMessageListLatest, scheduleCorrection]);
 
   return {
     messageListRef,
