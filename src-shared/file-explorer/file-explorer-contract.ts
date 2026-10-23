@@ -109,7 +109,7 @@ export type SessionDirectoryEntry = {
   modifiedAt: string | null;
 };
 
-export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "binary";
+export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "pdf" | "binary";
 export type SessionFileEncoding = "utf-8" | "shift_jis" | "utf-16le" | "utf-16be";
 
 export type SessionFileRootResourceRequest = {

@@ -14,6 +14,16 @@ WithMateはHome、Session、Character Editor、Settings、Session Monitor、Diff
 
 Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編集面を持たない。Auxiliaryは専用Windowを作らず、親Session Windowの同じchat shell内でMainと切り替える。親配下の複数Auxiliaryはstable IDで保存し、表示中でないrunも継続・terminal保存する。詳細は[Auxiliary Session](auxiliary-session.md)を参照する。
 
+## PDF readerの隔離境界
+
+中央・独立File Previewの`SessionFilePreview`は、認可済みのPDF bytesを`PdfFilePreview`から別originの`withmate-pdf://reader/index.html` iframeへ渡す。iframeは`allow-scripts allow-same-origin`のsandboxで動作し、preloadとWithMate APIを持たない。Mainの`pdf-reader-protocol.ts`と`pdf-reader-assets.ts`は専用buildの同梱assetだけを配信し、CSPで通信・workerを同originへ限定し、frame navigationとform送信・入れ子frame・objectを制限する。PDF.jsのscripting managerは使用せず、文書内JavaScriptやLaunch、フォーム送信を有効化しない。
+
+ホストとreaderの通信契約は`src-shared/file-explorer/pdf-reader-contract.ts`に置く。両側で送信元window、origin、frame instance IDを照合し、ready後に一度だけ転送用bytesをコピーして渡す。テーマとwheel刻みの更新、Find commandは文書の再転送とは分離する。resource切替・Reloadではiframeを作り直し、旧frameのmessageを無視する。reader内の文書とworker・描画資源の破棄はreaderが所有する。
+
+readerからのselectionとlink messageだけではホストAPIを実行しない。Copy／Quoteはホストbuttonから既存callbackを呼び、文書外linkはホストが対象を表示してユーザーがOpenした後にだけ、元resourceを基準として既存の`openSessionFilePreviewWindow`へ渡す。添付はreader内で対応形式を閲覧し、外部実行・保存経路を作らない。既存のfile認可、50MiB確認、Git snapshotのread-only境界は変更しない。利用者向け操作・制約は[Desktop UI](desktop-ui.md)を参照する。
+
+PDF readerは`src/pdf-reader/`を`vite.pdf-reader.config.ts`で独立buildし、PDF.js worker、cMap、font、WASM、ICC、画像を同梱する。開発時も同じ配信経路を使い、HMRは使わず再buildとPreviewのReloadで更新する。起動・build手順は[README](../../README.md#ソースから起動する)を参照する。
+
 ## Home rendererの実装方針
 
 Home関連の追加・修正では、`HomeApp`への責務集中を抑えるため、変更対象の責務を独立して保守できるまとまりで分離する。`HomeApp`は画面の組立てと機能間の接続を中心とする。

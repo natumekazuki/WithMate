@@ -1722,6 +1722,8 @@
 }
 
 .session-file-preview-actions button,
+.session-pdf-selection-actions button,
+.session-pdf-link-confirmation button,
 .session-file-preview-actions select,
 .session-file-preview-segmented button,
 .session-content-find button,
@@ -1738,6 +1740,8 @@
 }
 
 .session-file-preview-actions button,
+.session-pdf-selection-actions button,
+.session-pdf-link-confirmation button,
 .session-file-preview-segmented button,
 .session-content-find button,
 .session-file-preview-large-warning button,

@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
+import { PdfFilePreview, type PdfFilePreviewHandle } from "./PdfFilePreview.js";
 import { MermaidDiagram } from "../ui/markdown/markdown-code.js";
 import { useMarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { AppNotification, type AppNotificationState } from "../ui/app-notification.js";
@@ -571,6 +572,7 @@ export function SessionFilePreview({
   const actionRevisionRef = useRef(0);
   const busyActionRef = useRef<PreviewAction | null>(null);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const pdfPreviewRef = useRef<PdfFilePreviewHandle>(null);
   const imageViewport = useImageViewport(imageObjectUrl);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
@@ -868,7 +870,10 @@ export function SessionFilePreview({
 
   useShortcutScope("file-preview");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
-    if (previewKind === "text" || isRichPreview) {
+    if (previewKind === "pdf") {
+      pdfPreviewRef.current?.find();
+      setFeedback("");
+    } else if (previewKind === "text" || isRichPreview) {
       setFindOpen(true);
       setFeedback("");
     } else {
@@ -1358,6 +1363,17 @@ export function SessionFilePreview({
         </div>
       ) : null}
 
+      {loadState.status === "ready" && loaded && previewKind === "pdf" ? (
+        <PdfFilePreview
+          ref={pdfPreviewRef}
+          key={`${loadRevisionRef.current}:${descriptor?.revision}`}
+          bytes={loaded.bytes}
+          name={loaded.descriptor.name}
+          onCopyText={onCopyText}
+          onQuoteText={onQuoteText}
+          onOpenLink={handleOpenMarkdownPath}
+        />
+      ) : null}
       {loadState.status === "ready" && loaded && previewKind === "text" ? (
         <VirtualizedTextContent
           text={displayedText}

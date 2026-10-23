@@ -252,6 +252,7 @@ import {
   WITHMATE_TERMINAL_EVENT,
 } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./storage/database-schema-v2.js";
+import { registerPdfReaderProtocol, registerPdfReaderScheme } from "./windows/pdf-reader-protocol.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./storage/database-schema-v3.js";
 import { isValidV4Database } from "./storage/database-schema-v4.js";
 import { ensureV6Schema } from "./storage/database-schema-v6.js";
@@ -264,6 +265,7 @@ import {
 } from "./storage/sqlite-connection.js";
 
 markMainThreadAsNonStorageOwner();
+registerPdfReaderScheme();
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
@@ -3535,6 +3537,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    registerPdfReaderProtocol(path.join(rendererDistPath, "pdf-reader"));
     if (!isBackgroundLaunch) {
       await openBootWindow();
     }

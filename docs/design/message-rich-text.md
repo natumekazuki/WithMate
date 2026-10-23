@@ -27,7 +27,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 
 ## Assistant File References
 
-- Codexを応答元とするMain／Auxiliaryのassistant本文とagent message DetailsのPreviewでは、`visualize`マーカーのJSONと`:codex-file-citation{...}`のローカル絶対`path`を、pathそのものをlabelに持つ通常のfile linkとして表示する。拡張子による絞り込みは行わず、開く時の解決・認可・失敗表示は既存のLink Handlingに従う。HTMLやOffice、PDF等の専用描画や自動実行は行わない。
+- Codexを応答元とするMain／Auxiliaryのassistant本文とagent message DetailsのPreviewでは、`visualize`マーカーのJSONと`:codex-file-citation{...}`のローカル絶対`path`を、pathそのものをlabelに持つ通常のfile linkとして表示する。拡張子による絞り込みは行わず、開く時の解決・認可・失敗表示は既存のLink Handlingに従う。会話本文内でHTMLやOffice、PDF等を専用描画・自動実行しない。PDFのfile linkを明示的に開いた場合は、File Previewの隔離された閲覧専用readerで表示する。
 - 両記法は単一行で終端まで揃ったものを対象とする。`visualize`はJSON objectを読み、`mode`は省略または`wide`を扱う。file citationはquoted属性を読み、`mode="live"`、URLや非local artifact参照はfile linkへ変換しない。コード例、成立したMarkdown link／image内、未完／不正記法は通常のMarkdownとして保持する。通常textの角括弧や未閉じlabelは変換の対象外にしない。User本文とMarkdown file previewにはこの変換を適用しない。
 - 保存本文・Sourceは原文を保持する。title、mode、purpose、sheet、range等の属性を保存値から削除せず、今回の表示はpathに集約する。filesystem pathはURLの予約文字をencodeして既存open経路へ渡し、`file:` URLは既存のencodeを維持する。Previewの検索・選択Copy／Quoteは表示文字列と一致させ、Sourceでは元の記法を対象にする。折りたたみ見出しは既存の改行・空白を正規化したplain summaryとし、本文Previewと同じ描画を保証するものではない。
 - Codex固有構文は`src-shared/text/codex-file-references.ts`へ分離する。`src-shared/text/provider-response-markdown.ts`が応答元providerに応じたparser extensionを選び、本文描画・検索・plain summaryで共有する。providerは対象会話の所有元から渡し、User本文・通常のMarkdown・未対応providerには固有解析を適用しない。Markdownとfile linkの描画・操作はprovider共通とする。
