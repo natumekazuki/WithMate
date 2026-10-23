@@ -377,10 +377,10 @@ test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧す
 
 // @test-value v2
 // kind = "regression"
-// claim = "repository別groupはnon-Git結果を除外して失敗を局所表示し、変更導線・仮想化とentries差替え時の閲覧anchorを維持する"
+// claim = "repository別groupはnon-Git結果を除外して失敗を局所表示し、大量・同件数のentries差替えとerror行出現・消失でも閲覧anchorと操作対象を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Files / Changes; docs/adr/015-file-root-scoped-git-changes.md: root別取得失敗と独立scope" }
-// fault = "non-Git除外、repository別failure、directory collapse、diff/file previewや大量表示が壊れるか、先頭の変更追加・削除で閲覧rowが画面内を移動する"
-// observable = "repository group数、failure alert表示、directory操作、diff/file request、virtual row数、および先頭変更追加・削除前後の閲覧rowのviewport内offsetとfocus"
+// fault = "non-Git除外、repository別failure、directory collapse、diff/file previewや仮想化が壊れるか、前方の行追加・削除と取得失敗／回復で閲覧rowが移動しfocusを失う"
+// observable = "repository group数、failure alert表示、directory操作、diff/file request、virtual row数、60行追加・同件数差替え・削除・取得失敗／回復前後の閲覧offsetとfocus、およびanchorとは別のfocus行の次render後identity"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane repository groups"
 // lifecycle = "permanent"
@@ -479,6 +479,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     openInWindow: boolean;
   }> = [];
   let workspaceEntries = entries;
+  let workspaceFailure = false;
   const roots: SessionFileRoot[] = [
     { id: "session-folder", kind: "session-folder", label: "Session Folder", displayPath: "C:/session" },
     { id: "additional:broken", kind: "additional", label: "broken", displayPath: "C:/broken" },
@@ -495,6 +496,9 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
       requestedRootIds.push(request.rootId);
       if (request.rootId === "additional:broken") {
         return { status: "failed" as const, message: "Git status failed for broken root." };
+      }
+      if (request.rootId === "workspace" && workspaceFailure) {
+        return { status: "failed" as const, message: "Workspace status unavailable." };
       }
       return {
         status: "ok" as const,
@@ -719,6 +723,58 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
     assert.equal(rowOffset(anchorButton.closest<HTMLElement>(".workspace-change-virtual-row")!), anchorOffset);
+
+    const refreshWorkspace = async (refreshRevision: number, focusedButton = anchorButton) => {
+      await act(async () => {
+        root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-1", refreshRevision }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        // JSDOMはscrollTop代入でnative scroll eventを発生させない。
+        workspaceList.dispatchEvent(new dom.window.Event("scroll"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      assert.equal(dom.window.document.activeElement, focusedButton);
+      assert.ok(anchorButton.isConnected);
+      assert.equal(rowOffset(anchorButton.closest<HTMLElement>(".workspace-change-virtual-row")!), anchorOffset);
+      assert.ok(workspaceList.querySelectorAll(".workspace-change-virtual-row").length < 100);
+    };
+    const addedEntries = Array.from({ length: 60 }, (_, index) => ({
+      ...entries[0]!, relativePath: `src/000-added-${index}.ts`,
+    }));
+    workspaceEntries = [...addedEntries, ...entries];
+    await refreshWorkspace(23);
+    // 件数と先頭・末尾のkeyが同じでも、途中の差替えでanchorは移動する。
+    workspaceEntries = [
+      ...addedEntries,
+      ...addedEntries.map((entry) => ({ ...entry, relativePath: entry.relativePath.replace("000-added", "000-before") })),
+      ...entries.slice(0, 340),
+    ];
+    await refreshWorkspace(24);
+    workspaceEntries = entries;
+    await refreshWorkspace(25);
+    workspaceFailure = true;
+    await refreshWorkspace(26);
+    workspaceFailure = false;
+    await refreshWorkspace(27);
+
+    const lowerButton = [...workspaceList.querySelectorAll<HTMLButtonElement>(".workspace-change-row")]
+      .find((button) => rowOffset(button.closest<HTMLElement>(".workspace-change-virtual-row")!) > 300);
+    assert.ok(lowerButton);
+    lowerButton.focus();
+    workspaceEntries = [...entries, ...addedEntries.map((entry, index) => ({
+      ...entry, relativePath: `${anchorButton.title}-between-${index}`,
+    }))];
+    await refreshWorkspace(28, lowerButton);
+    // anchorより後ろのfocus行がviewport外へ移っても、次の通常renderで操作対象を失わない。
+    await refreshWorkspace(28, lowerButton);
+    assert.ok(lowerButton.isConnected);
+    await act(async () => {
+      repoList.focus();
+      workspaceList.scrollTop = 100;
+      workspaceList.dispatchEvent(new dom.window.Event("scroll"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.equal(dom.window.document.activeElement, repoList);
+    assert.equal(workspaceList.scrollTop, 100);
 
     workspaceEntries = entries.slice(0, 1);
     await act(async () => {

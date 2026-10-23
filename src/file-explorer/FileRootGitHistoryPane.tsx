@@ -656,6 +656,10 @@ export function FileRootGitHistoryPane({
           }
           chooseRepository(result.repositories[0] ?? null, refresh.generation);
           refreshAfterPageRef.current = refresh.trailing && pageRequestRef.current !== null;
+          if (!pageRequestRef.current) {
+            refreshRef.current = refresh;
+            continue;
+          }
           return;
         }
         const repository = result.repositories.find((candidate) => (

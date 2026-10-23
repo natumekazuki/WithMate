@@ -1,4 +1,4 @@
-import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, measureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import {
@@ -201,12 +201,55 @@ export function FileRootChangesGroup({
     setScrollMargin(list.getBoundingClientRect().top - container.getBoundingClientRect().top
       + container.scrollTop - container.clientTop);
   });
+  const previousLayoutRef = useRef<{
+    rootId: string;
+    displayPath: string;
+    entries: FileRootGitChangeEntry[];
+    message: string;
+    collapsedDirectories: Record<string, boolean>;
+    scopes: typeof scopes;
+    scrollElement: HTMLDivElement | null;
+    items: Array<{ key: string | number | bigint; start: number; end: number }>;
+  } | null>(null);
+  const readingContextRef = useRef<{ anchor: string; offset: number } | null>(null);
+  const restoredScrollTopRef = useRef<number | null>(null);
+  const focusedKey = preserveScrollAnchor && scrollRef.current?.contains(document.activeElement)
+    ? document.activeElement?.closest<HTMLElement>("[data-change-row-key]")?.dataset.changeRowKey ?? null : null;
+  const scrollElement = getScrollElement();
+  const previous = previousLayoutRef.current;
+  const sameReadingContext = preserveScrollAnchor && scrollElement && previous?.scrollElement === scrollElement
+    && previous.rootId === rootChange.root.id && previous.displayPath === rootChange.root.displayPath
+    && previous.collapsedDirectories === collapsedDirectories && previous.scopes === scopes;
+  if (!sameReadingContext) {
+    readingContextRef.current = null;
+  } else if (!readingContextRef.current
+    && (previous.entries !== rootChange.entries || previous.message !== rootChange.message)) {
+    const anchor = previous.items.find((item) => item.end > scrollElement.scrollTop);
+    if (anchor && rows.some((row) => row.key === anchor.key)) {
+      readingContextRef.current = {
+        anchor: String(anchor.key),
+        offset: scrollElement.scrollTop - anchor.start,
+      };
+      restoredScrollTopRef.current = scrollElement.scrollTop;
+    }
+  }
+  const cancelReadingRestore = () => { readingContextRef.current = null; };
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement,
     scrollMargin,
     getItemKey: (index) => rows[index]?.key ?? index,
     estimateSize: (index) => estimatedRowHeight(rows[index]!),
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range);
+      const context = readingContextRef.current;
+      // 更新中のanchorと現在の操作対象だけは仮想範囲外でもmountを維持する。
+      for (const key of [context?.anchor, focusedKey]) {
+        const index = rows.findIndex((row) => row.key === key);
+        if (index >= 0 && !indexes.includes(index)) indexes.push(index);
+      }
+      return indexes.sort((left, right) => left - right);
+    },
     measureElement: (element, entry, instance) => {
       if (!getScrollElement()?.clientHeight) {
         const index = instance.indexFromElement(element);
@@ -218,38 +261,32 @@ export function FileRootChangesGroup({
     initialRect: { width: 280, height: Math.min(360, Math.max(90, naturalHeight - ROOT_HEADER_ESTIMATED_HEIGHT)) },
     useFlushSync: false,
   });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = readingContextRef.current ? () => false : undefined;
   const totalSize = virtualizer.getTotalSize();
   const virtualItems = virtualizer.getVirtualItems();
-  const previousLayoutRef = useRef<{
-    rootId: string;
-    displayPath: string;
-    entries: FileRootGitChangeEntry[];
-    collapsedDirectories: Record<string, boolean>;
-    scopes: typeof scopes;
-    scrollElement: HTMLDivElement | null;
-    items: Array<{ key: string | number | bigint; start: number; end: number }>;
-  } | null>(null);
 
   useLayoutEffect(() => {
     const scrollElement = getScrollElement();
-    const previous = previousLayoutRef.current;
-    if (preserveScrollAnchor && scrollElement && previous?.scrollElement === scrollElement
-      && previous.rootId === rootChange.root.id && previous.displayPath === rootChange.root.displayPath
-      && previous.entries !== rootChange.entries && previous.collapsedDirectories === collapsedDirectories
-      && previous.scopes === scopes) {
-      const anchor = previous.items.find((item) => item.end > scrollElement.scrollTop);
-      const nextIndex = anchor ? rows.findIndex((row) => row.key === anchor.key) : -1;
-      if (anchor && nextIndex >= 0) {
-        const nextOffset = virtualizer.getOffsetForIndex(nextIndex, "start")?.[0];
-        if (nextOffset !== undefined) {
-          scrollElement.scrollTop = nextOffset + scrollElement.scrollTop - anchor.start;
+    const context = readingContextRef.current;
+    if (context && scrollElement) {
+      const anchor = virtualizer.getVirtualItems().find((item) => item.key === context.anchor);
+      const renderedAnchor = virtualItems.find((item) => item.key === context.anchor);
+      if (anchor) {
+        scrollElement.scrollTop = Math.max(0, anchor.start + context.offset);
+        restoredScrollTopRef.current = scrollElement.scrollTop;
+        // refでの計測とscroll eventを反映したrenderまで同じanchorを保持する。
+        if (renderedAnchor?.start === anchor.start && Math.abs((virtualizer.scrollOffset ?? 0) - scrollElement.scrollTop) < 1) {
+          readingContextRef.current = null;
         }
+      } else {
+        readingContextRef.current = null;
       }
     }
     previousLayoutRef.current = {
       rootId: rootChange.root.id,
       displayPath: rootChange.root.displayPath,
       entries: rootChange.entries,
+      message: rootChange.message,
       collapsedDirectories,
       scopes,
       scrollElement,
@@ -304,6 +341,14 @@ export function FileRootChangesGroup({
         role="list"
         aria-label={`${rootChange.root.label} changes`}
         tabIndex={0}
+        onWheelCapture={cancelReadingRestore}
+        onPointerDownCapture={cancelReadingRestore}
+        onKeyDownCapture={cancelReadingRestore}
+        onScroll={(event) => {
+          if (readingContextRef.current && event.currentTarget.scrollTop !== restoredScrollTopRef.current) {
+            cancelReadingRestore();
+          }
+        }}
       >
         <div className="workspace-changes-list-inner" style={{ height: totalSize || naturalHeight }}>
           {virtualItems.map((virtualRow) => {
@@ -316,6 +361,7 @@ export function FileRootChangesGroup({
                 key={row.key}
                 className={`workspace-change-virtual-row ${row.type}`}
                 data-index={virtualRow.index}
+                data-change-row-key={row.key}
                 ref={virtualizer.measureElement}
                 style={{ transform: `translateY(${virtualRow.start - scrollMargin}px)` }}
               >

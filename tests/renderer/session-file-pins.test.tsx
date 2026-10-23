@@ -139,6 +139,65 @@ test("Filesの更新は展開と読む位置を保ち削除と取得失敗を区
 
 // @test-value v2
 // kind = "contract"
+// claim = "Filesのrootsとdirectory更新後もPin操作のfocusを保持し、更新待ちに利用者が移したfocusを奪わない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Filesの同一owner／root更新とPin keyboard操作" }
+// fault = "同じ行のPin buttonから展開buttonへfocusを移す、または更新応答で別controlからfocusを奪う"
+// observable = "roots・directory応答後のactiveElement identity、focus中buttonからのPin保存、展開中の子行と外部controlのfocus"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane refresh control focus"
+// lifecycle = "permanent"
+// impact = "更新後のkeyboard操作が意図したPinを変更し、誤ってdirectory開閉やpreviewを実行しない"
+// distinction = "既存の行先頭buttonのfocus確認では区別できない、同じ行の複数controlと遅延応答を検証する"
+// @end-test-value
+test("Filesの更新はPin controlのfocusと利用者のfocus移動を保つ", async () => {
+  const api = baseApi();
+  let pins: SessionFilePin[] = [];
+  const saved: string[] = [];
+  let refreshing = false;
+  let finishDirectory: ((entries: SessionDirectoryEntry[]) => void) | undefined;
+  api.listSessionFilePins = async () => pins;
+  api.pinSessionFile = async (request) => {
+    saved.push(request.relativePath);
+    const result = pin(request.relativePath, "directory");
+    pins = [result];
+    return result;
+  };
+  api.listSessionDirectory = async ({ relativePath }) => {
+    if (!relativePath && refreshing) return new Promise((resolve) => { finishDirectory = resolve; });
+    return relativePath ? [entry("folder/child.txt")] : [entry("folder", "directory")];
+  };
+  await withPane(api, async ({ document, render, click, until, opened }) => {
+    await click("Workspace");
+    await click("folder");
+    const pinButton = document.querySelector<HTMLButtonElement>("[aria-label='Pin folder']")!;
+    pinButton.focus();
+    refreshing = true;
+    await render("session-a", "session-a", { refreshRevision: 1 });
+    await until(() => !!finishDirectory);
+    assert.equal(document.activeElement, pinButton, "roots応答でもPin controlを維持する");
+    await act(async () => finishDirectory?.([entry("folder", "directory"), entry("new.txt")]));
+    await until(() => !!document.querySelector("[title='new.txt']"));
+    assert.equal(document.activeElement, pinButton, "directory応答でもPin controlを維持する");
+    await act(async () => (document.activeElement as HTMLButtonElement).click());
+    assert.deepEqual(saved, ["folder"]);
+    assert.deepEqual(opened, []);
+    assert.ok(document.querySelector("[title='folder/child.txt']"), "Pin操作でdirectoryを閉じない");
+    assert.equal(pinButton.getAttribute("aria-label"), "Unpin folder");
+    pinButton.focus();
+    finishDirectory = undefined;
+    await render("session-a", "session-a", { refreshRevision: 2 });
+    await until(() => !!finishDirectory);
+    assert.equal(document.activeElement, pinButton, "Unpin controlもroots応答で維持する");
+    const filter = document.querySelector<HTMLButtonElement>("[aria-label='Pinned only']")!;
+    filter.focus();
+    await act(async () => finishDirectory?.([entry("folder", "directory"), entry("latest.txt")]));
+    await until(() => !!document.querySelector("[title='latest.txt']"));
+    assert.equal(document.activeElement, filter, "待機中に移したfocusを奪わない");
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "非表示のFilesとPinは取得を始めず、再表示で更新し、重複通知は一つの後続更新へまとめ、折りたたみとowner切替を保つ"
 // oracle = { type = "contract", ref = "#875 approved visible-only refresh with coalescing and owner isolation" }
 // fault = "hiddenでI/Oを始める、通知ごとに並行取得する、非表示後に子孫取得を続ける、または旧ownerのtreeを表示する"

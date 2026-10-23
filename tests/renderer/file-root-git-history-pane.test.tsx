@@ -1570,3 +1570,158 @@ test("History refreshは既読page範囲をatomicに置換し失敗時は保持�
     restore();
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "Historyは初回discoveryがrepositoryなし・branchなし・detachedでも、取得中の複数通知を後続discovery一回へ集約し、通知なしでは再取得しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "page取得を開始しない初回応答で通知を捨てる、通知数だけ再取得する、または通知がないのに再取得する"
+// observable = "repositoryとcommit API呼出数、branch selectorの選択値、取得したcommit row"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane initial no-page refresh queue"
+// lifecycle = "permanent"
+// impact = "初回取得中のGit初期化やref更新を取りこぼさず、detached時の明示的なbranch選択も保つ"
+// distinction = "既存のpage取得後のqueue testでは通らない三種類のno-page初回応答を遅延させ、通知の有無を比較する"
+// @end-test-value
+test("Historyはpageのない初回discovery中の通知を後続一回へ集約する", async () => {
+  const initialRepositories: FileRootGitHistoryRepository[][] = [
+    [],
+    [{ ...repositoryA, branches: [], currentBranch: null, refs: [] }],
+    [{ ...repositoryA, currentBranch: null }],
+  ];
+  for (const repositories of initialRepositories) {
+    for (const notify of [false, true]) {
+      const { dom, restore } = installDom();
+      let repositoryReads = 0;
+      let pageReads = 0;
+      let resolveInitial: ((result: FileRootGitHistoryRepositoriesResult) => void) | undefined;
+      const api = {
+        listFileRootGitHistoryRepositories: async () => {
+          repositoryReads += 1;
+          return repositoryReads === 1
+            ? new Promise<FileRootGitHistoryRepositoriesResult>((resolve) => { resolveInitial = resolve; })
+            : { status: "ok" as const, repositories: [repositoryA] };
+        },
+        listFileRootGitHistoryCommits: async () => {
+          pageReads += 1;
+          return { status: "ok" as const, page: { entries: [commit("a", "latest discovered commit")], nextCursor: null, hasMore: false } };
+        },
+        getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "unused" }),
+        getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+        getFileRootGitHistoryComparison: unusedHistoryComparison,
+      };
+      let root: Root | null = null;
+      try {
+        const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+        root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+        const render = async (refreshRevision: number) => {
+          await act(async () => root?.render(React.createElement(FileRootGitHistoryPane, {
+            api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision,
+            onOpenDiff: async () => null,
+          })));
+          await flush();
+        };
+        await render(0);
+        if (notify) {
+          await render(1);
+          await render(2);
+        }
+        assert.equal(repositoryReads, 1);
+        assert.equal(pageReads, 0);
+        assert.ok(resolveInitial);
+        await act(async () => resolveInitial?.({ status: "ok", repositories }));
+        await flush();
+        assert.equal(repositoryReads, notify ? 2 : 1);
+        if (!notify) {
+          assert.equal(pageReads, 0);
+          continue;
+        }
+        if (repositories.length > 0) {
+          const branch = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+          assert.ok(branch);
+          assert.equal(branch.value, "");
+          assert.equal(pageReads, 0);
+          await act(async () => {
+            branch.value = "main";
+            branch.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+          });
+          await flush();
+        }
+        assert.equal(pageReads, 1);
+        assert.match(dom.window.document.querySelector(".file-history-commit-row")?.textContent ?? "", /latest discovered commit/);
+        assert.equal(repositoryReads, 2);
+      } finally {
+        await act(async () => root?.unmount());
+        restore();
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Historyの初回discovery中に通知があっても、非表示またはsession切替後の旧応答は後続取得を開始しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "旧ownerのtrailing通知を新ownerへ引き継ぐ、またはhiddenのまま後続discoveryを開始する"
+// observable = "session別repository API呼出列とcommit API呼出数"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane initial no-page queue invalidation"
+// lifecycle = "permanent"
+// impact = "閲覧していないHistoryの不要取得と、別sessionへの旧通知の漏出を防ぐ"
+// distinction = "初回pageなし応答を非表示・owner切替後まで保留し、非表示からの復帰だけが新取得を開始することを確認する"
+// @end-test-value
+test("Historyは初回pageなし応答後もhiddenと旧ownerの取得を止める", async () => {
+  for (const changeOwner of [false, true]) {
+    const { dom, restore } = installDom();
+    const repositorySessions: string[] = [];
+    const pending: Array<(result: FileRootGitHistoryRepositoriesResult) => void> = [];
+    let pageReads = 0;
+    const api = {
+      listFileRootGitHistoryRepositories: async (request: { sessionId: string }) => {
+        repositorySessions.push(request.sessionId);
+        return new Promise<FileRootGitHistoryRepositoriesResult>((resolve) => pending.push(resolve));
+      },
+      listFileRootGitHistoryCommits: async () => {
+        pageReads += 1;
+        return { status: "ok" as const, page: { entries: [], nextCursor: null, hasMore: false } };
+      },
+      getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "unused" }),
+      getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+      getFileRootGitHistoryComparison: unusedHistoryComparison,
+    };
+    let root: Root | null = null;
+    try {
+      const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      const render = async (sessionId: string, visible: boolean, refreshRevision: number) => {
+        await act(async () => root?.render(React.createElement(FileRootGitHistoryPane, {
+          api, sessionId, enabled: true, visible, rootsRevision: "roots-1", refreshRevision,
+          onOpenDiff: async () => null,
+        })));
+        await flush();
+      };
+      await render("session-1", true, 0);
+      await render("session-1", true, 1);
+      await render(changeOwner ? "session-2" : "session-1", changeOwner, 1);
+      assert.deepEqual(repositorySessions, changeOwner ? ["session-1", "session-2"] : ["session-1"]);
+      await act(async () => pending[0]?.({ status: "ok", repositories: [] }));
+      await flush();
+      if (changeOwner) {
+        await act(async () => pending[1]?.({ status: "ok", repositories: [] }));
+        await flush();
+        assert.deepEqual(repositorySessions, ["session-1", "session-2"]);
+      } else {
+        assert.deepEqual(repositorySessions, ["session-1"]);
+        await render("session-1", true, 1);
+        assert.deepEqual(repositorySessions, ["session-1", "session-1"]);
+        await act(async () => pending[1]?.({ status: "ok", repositories: [] }));
+        await flush();
+        assert.equal(repositorySessions.length, 2);
+      }
+      assert.equal(pageReads, 0);
+    } finally {
+      await act(async () => root?.unmount());
+      restore();
+    }
+  }
+});

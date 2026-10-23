@@ -171,7 +171,11 @@ export function SessionFileExplorerPane({
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const captureReadingContextRef = useRef<() => void>(() => {});
-  const readingContextRef = useRef<{ anchor: string; offset: number; focus: string | null } | null>(null);
+  const readingContextRef = useRef<{
+    anchor: string;
+    offset: number;
+    focus: { rowKey: string; element: Element; pin: boolean } | null;
+  } | null>(null);
   const pinFilterRef = useRef<HTMLButtonElement | null>(null);
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [revealTarget, setRevealTarget] = useState<string | null>(null);
@@ -475,8 +479,15 @@ export function SessionFileExplorerPane({
       const item = treeVirtualizer.getVirtualItems().find((row) => row.end > scroller.scrollTop);
       const row = item && treeRows[item.index];
       if (!row || !item) return;
-      const focused = document.activeElement?.closest<HTMLElement>("[data-file-row-key]");
-      readingContextRef.current = { anchor: treeRowKey(row), offset: scroller.scrollTop - item.start, focus: focused?.dataset.fileRowKey ?? null };
+      const element = document.activeElement;
+      const focused = element && scroller.contains(element) ? element.closest<HTMLElement>("[data-file-row-key]") : null;
+      readingContextRef.current = {
+        anchor: treeRowKey(row),
+        offset: scroller.scrollTop - item.start,
+        focus: focused?.dataset.fileRowKey && element
+          ? { rowKey: focused.dataset.fileRowKey, element, pin: element.classList.contains("session-file-pin-toggle") }
+          : null,
+      };
     };
     const context = readingContextRef.current;
     if (!context) return;
@@ -487,9 +498,9 @@ export function SessionFileExplorerPane({
       const offset = treeVirtualizer.getOffsetForIndex(index, "start");
       if (offset) scroller.scrollTop = offset[0] + context.offset;
     }
-    if (context.focus && (document.activeElement === document.body || scroller?.contains(document.activeElement))) {
-      const row = Array.from(scroller?.querySelectorAll<HTMLElement>("[data-file-row-key]") ?? []).find((element) => element.dataset.fileRowKey === context.focus);
-      row?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    if (context.focus && !context.focus.element.isConnected && document.activeElement === document.body) {
+      const row = Array.from(scroller?.querySelectorAll<HTMLElement>("[data-file-row-key]") ?? []).find((element) => element.dataset.fileRowKey === context.focus?.rowKey);
+      row?.querySelector<HTMLButtonElement>(context.focus.pin ? ".session-file-pin-toggle" : "button:not(.session-file-pin-toggle)")?.focus({ preventScroll: true });
     }
   }, [treeRows, treeVirtualizer]);
 
