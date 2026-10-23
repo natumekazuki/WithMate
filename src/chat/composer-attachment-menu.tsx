@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 
 import { focusRovingItemByKey } from "../ui/a11y.js";
 import { ComposerIcon } from "./composer/composer-icon.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 type ComposerAttachmentMenuProps = {
   disabled: boolean;
+  busy?: boolean;
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   onPickFile: () => void;
@@ -37,6 +39,7 @@ const MENU_THEME_PROPERTIES = ["--ink", "--muted", "--character-main-soft"] as c
 
 export function ComposerAttachmentMenu({
   disabled,
+  busy = false,
   isOpen,
   onOpenChange,
   onPickFile,
@@ -47,6 +50,7 @@ export function ComposerAttachmentMenu({
   onPickSessionFolder,
   onPickSessionImage,
 }: ComposerAttachmentMenuProps) {
+  const menuId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -226,15 +230,15 @@ export function ComposerAttachmentMenu({
   const menu = isOpen ? createPortal(
     <div
       ref={menuRef}
-      id="composer-attachment-menu"
+      id={menuId}
       className="composer-attachment-menu"
       role="menu"
       aria-label="Add attachment"
       style={menuStyle}
       onKeyDown={handleMenuKeyDown}
     >
-      {renderSection("composer-attach-source", "Attach", attachItems, 0)}
-      {renderSection("composer-session-files", "Session Files", sessionItems, attachItems.length)}
+      {renderSection(`${menuId}-source`, "Attach", attachItems, 0)}
+      {renderSection(`${menuId}-session-files`, "Session Files", sessionItems, attachItems.length)}
     </div>,
     document.body,
   ) : null;
@@ -248,7 +252,8 @@ export function ComposerAttachmentMenu({
         disabled={disabled}
         aria-expanded={isOpen}
         aria-haspopup="menu"
-        aria-controls={isOpen ? "composer-attachment-menu" : undefined}
+        aria-controls={isOpen ? menuId : undefined}
+        aria-busy={busy || undefined}
         aria-label="Attach"
         title="Attach a file, folder, image, or Session file"
         onClick={() => onOpenChange(!isOpen)}
@@ -259,8 +264,7 @@ export function ComposerAttachmentMenu({
           }
         }}
       >
-        <ComposerIcon name="attach" />
-        <span className="visually-hidden">Attach</span>
+        <ButtonContent busy={busy}><ComposerIcon name="attach" /><span className="visually-hidden">Attach</span></ButtonContent>
       </button>
       {menu}
     </div>

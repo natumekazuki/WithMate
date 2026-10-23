@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 import { ButtonContent } from "../../ui/button-content.js";
+import { QuestionAnswerEditor } from "./question-answer-editor.js";
 
 import type {
   LiveApprovalRequest,
@@ -189,6 +190,9 @@ function mergeFreeTextAnswers(
 }
 
 type LiveElicitationCardProps = {
+  sessionId?: string;
+  workspacePath?: string | null;
+  disabled?: boolean;
   request: LiveElicitationRequest;
   elicitationActionRequestId: string | null;
   elicitationAction?: LiveElicitationResponse["action"] | null;
@@ -199,6 +203,9 @@ type LiveElicitationCardProps = {
 };
 
 function LiveElicitationCard({
+  sessionId,
+  workspacePath,
+  disabled = false,
   request,
   elicitationActionRequestId,
   elicitationAction,
@@ -213,6 +220,8 @@ function LiveElicitationCard({
   const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>(() => drafts?.get(request.requestId)?.freeTextValues ?? {});
   const [customFields, setCustomFields] = useState<string[]>(() => drafts?.get(request.requestId)?.customFields ?? []);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
+  const pendingAttachments = useRef(new Set<string>());
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
   const fieldIdPrefix = useId();
 
   useEffect(() => {
@@ -221,11 +230,12 @@ function LiveElicitationCard({
 
   const isSubmitting = elicitationActionRequestId === request.requestId;
   const submittedAction = isSubmitting ? elicitationAction : null;
-  const isActionPending = elicitationActionRequestId !== null;
-  const acceptDisabled = isActionPending || (request.delivery === "user-message" && !inputAvailable);
+  const isActionPending = disabled || elicitationActionRequestId !== null;
+  const isEditingDisabled = disabled || isSubmitting;
+  const acceptDisabled = isActionPending || attachmentBusy || (request.delivery === "user-message" && !inputAvailable);
 
   const handleSubmit = (action: LiveElicitationResponse["action"]) => {
-    if (isActionPending || (action === "accept" && acceptDisabled)) return;
+    if (isActionPending || (action === "accept" && (acceptDisabled || pendingAttachments.current.size > 0))) return;
     if (action === "accept") {
       const answers = mergeFreeTextAnswers(request, fieldValues, freeTextValues);
       for (const field of request.fields) {
@@ -252,6 +262,24 @@ function LiveElicitationCard({
     onResolveLiveElicitation(request, { action });
   };
 
+  const renderAnswerEditor = (field: LiveElicitationField, index: number, value: string, onChange: (value: string) => void, custom = false) => (
+    <QuestionAnswerEditor
+      label={custom ? `${field.title} Custom Answer` : field.title}
+      describedBy={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
+      value={value}
+      onChange={onChange}
+      disabled={isEditingDisabled}
+      sessionId={sessionId}
+      workspacePath={workspacePath}
+      onSubmit={() => handleSubmit("accept")}
+      onBusyChange={(busy) => {
+        if (busy) pendingAttachments.current.add(field.name);
+        else pendingAttachments.current.delete(field.name);
+        setAttachmentBusy(pendingAttachments.current.size > 0);
+      }}
+    />
+  );
+
   return (
     <section
       className="live-elicitation-card"
@@ -269,7 +297,7 @@ function LiveElicitationCard({
               type="button"
               className="drawer-toggle secondary"
               onClick={() => onOpenPath(request.url!)}
-              disabled={isSubmitting}
+              disabled={isEditingDisabled}
             >
               Open
             </button>
@@ -290,14 +318,8 @@ function LiveElicitationCard({
                 </span>
               ) : null}
               {field.type === "text" ? (
-                !field.secret && field.maxLength !== undefined && field.maxLength > 120 ? (
-                  <textarea
-                    aria-label={field.title}
-                    aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
-                    value={liveElicitationTextValue(fieldValues[field.name])}
-                    onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
-                    disabled={isSubmitting}
-                  />
+                !field.secret && !field.format ? renderAnswerEditor(field, index, liveElicitationTextValue(fieldValues[field.name]),
+                  (value) => setFieldValues((current) => ({ ...current, [field.name]: value })),
                 ) : (
                   <input
                     type={field.secret ? "password" : field.format === "email" ? "email" : field.format === "uri" ? "url" : field.format === "date" ? "date" : "text"}
@@ -305,7 +327,7 @@ function LiveElicitationCard({
                     aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                     value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
-                    disabled={isSubmitting}
+                    disabled={isEditingDisabled}
                   />
                 )
               ) : null}
@@ -321,7 +343,7 @@ function LiveElicitationCard({
                       ...current,
                       [field.name]: event.target.value === "" ? "" : Number(event.target.value),
                     }))}
-                  disabled={isSubmitting}
+                  disabled={isEditingDisabled}
                 />
               ) : null}
               {field.type === "boolean" ? (
@@ -332,7 +354,7 @@ function LiveElicitationCard({
                     aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                     checked={fieldValues[field.name] === true}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.checked }))}
-                    disabled={isSubmitting}
+                    disabled={isEditingDisabled}
                   />
                   <span>Enabled</span>
                 </span>
@@ -347,21 +369,20 @@ function LiveElicitationCard({
                           onChange={() => {
                             setCustomFields((current) => current.filter((name) => name !== field.name));
                             setFieldValues((current) => ({ ...current, [field.name]: option.value }));
-                          }} disabled={isSubmitting} />
+                          }} disabled={isEditingDisabled} />
                         <span>{option.label}</span>
                       </label>
                     ))}
                     <label className="live-elicitation-option">
                       <input type="radio" name={`${fieldIdPrefix}-${index}`} checked={customFields.includes(field.name)}
                         onChange={() => setCustomFields((current) => [...current.filter((name) => name !== field.name), field.name])}
-                        disabled={isSubmitting} />
+                        disabled={isEditingDisabled} />
                       <span>Custom Answer</span>
                     </label>
-                    <textarea aria-label={`${field.title} Custom Answer`} value={freeTextValues[field.name] ?? ""}
-                      onChange={(event) => {
+                    {renderAnswerEditor(field, index, freeTextValues[field.name] ?? "", (value) => {
                         setCustomFields((current) => current.includes(field.name) ? current : [...current, field.name]);
-                        setFreeTextValues((current) => ({ ...current, [field.name]: event.target.value }));
-                      }} disabled={isSubmitting} />
+                        setFreeTextValues((current) => ({ ...current, [field.name]: value }));
+                      }, true)}
                   </div>
                 ) : (
                   <select
@@ -369,7 +390,7 @@ function LiveElicitationCard({
                     aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                     value={liveElicitationTextValue(fieldValues[field.name])}
                     onChange={(event) => setFieldValues((current) => ({ ...current, [field.name]: event.target.value }))}
-                    disabled={isSubmitting}
+                    disabled={isEditingDisabled}
                   >
                     <option value="" disabled={field.required}>No Selection</option>
                     {field.options.map((option) => (
@@ -406,23 +427,18 @@ function LiveElicitationCard({
                               };
                             });
                           }}
-                          disabled={isSubmitting}
+                          disabled={isEditingDisabled}
                         />
                         <span>{option.label}</span>
                       </label>
                     );
                   })}
                   {field.allowFreeText ? (
-                    <label className="live-elicitation-field">
+                    <div className="live-elicitation-field">
                       <span>Custom Answer</span>
-                      <input
-                        type="text"
-                        aria-label={`${field.title} Custom Answer`}
-                        value={freeTextValues[field.name] ?? ""}
-                        onChange={(event) => setFreeTextValues((current) => ({ ...current, [field.name]: event.target.value }))}
-                        disabled={isSubmitting}
-                      />
-                    </label>
+                      {renderAnswerEditor(field, index, freeTextValues[field.name] ?? "",
+                        (value) => setFreeTextValues((current) => ({ ...current, [field.name]: value })), true)}
+                    </div>
                   ) : null}
                 </div>
               ) : null}
@@ -517,7 +533,7 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
     const start = valid ? (sourceText !== undefined ? range.end : range.start) : text.length;
     const end = valid ? range.end : start;
     if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-${start}-${record.requestId}`, offset));
-    fragments.push(<Fragment key={record.requestId}>{request
+    fragments.push(<Fragment key={`${cardProps.sessionId ?? ""}:${record.requestId}`}>{request
       ? <LiveElicitationCard {...cardProps} request={request} />
       : <ElicitationRecords records={[record]} sourceText={sourceText} responseProvider={responseProvider} />}</Fragment>);
     offset = end;
@@ -527,6 +543,9 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
 }
 
 export type LiveRequestSurfaceProps = {
+  sessionId?: string;
+  workspacePath?: string | null;
+  disabled?: boolean;
   liveApprovalRequest: LiveApprovalRequest | null;
   approvalActionRequestId: string | null;
   approvalActionDecision?: "approve" | "deny" | null;
@@ -543,6 +562,9 @@ export type LiveRequestSurfaceProps = {
 };
 
 export function LiveRequestSurface({
+  sessionId,
+  workspacePath,
+  disabled,
   liveApprovalRequest,
   approvalActionRequestId,
   approvalActionDecision,
@@ -619,7 +641,10 @@ export function LiveRequestSurface({
       <ElicitationRecords records={visibleRecords} />
       {requests.map((request) => (
         <LiveElicitationCard
-          key={request.requestId}
+          key={`${sessionId ?? ""}:${request.requestId}`}
+          sessionId={sessionId}
+          workspacePath={workspacePath}
+          disabled={disabled}
           request={request}
           inputAvailable={inputAvailable}
           drafts={drafts}

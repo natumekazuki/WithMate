@@ -28,7 +28,7 @@ const CONVERSATION_LOAD_MARGIN = 96;
 type ConversationPageDirection = "earlier" | "later";
 
 export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Session,
-  "messages" | "messageCount" | "incarnationId" | "updatedAt" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors" | "accessMode" | "provider"
+  "messages" | "messageCount" | "incarnationId" | "updatedAt" | "runState" | "threadId" | "characterId" | "character" | "characterIconPath" | "characterThemeColors" | "accessMode" | "provider" | "workspacePath"
 >>;
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
@@ -745,6 +745,8 @@ export function useConversationMessageColumn({
   return {
     ...baseProps,
     sessionId,
+    workspacePath: session.workspacePath ?? baseProps.workspacePath,
+    elicitationDisabled: queueActionsFrozen || !enabled || (session.accessMode !== undefined && session.accessMode !== "active"),
     provider: session.provider,
     artifactDetailsEnabled: enabled,
     character: columnCharacter,

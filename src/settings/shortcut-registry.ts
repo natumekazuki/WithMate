@@ -662,6 +662,13 @@ export class ShortcutDispatcher {
     return this.activeScopes.has(scope);
   }
 
+  matchesCommandShortcut(commandId: string, event: KeyboardEvent): boolean {
+    const entry = this.entries.find((candidate) => candidate.id === commandId);
+    return !!entry && !getBlockedKeyboardEventReason(event)
+      && (!event.repeat || entry.allowRepeat)
+      && matchesAccelerator(event, resolveShortcutAcceleratorForEntry(entry, this.platform, this.settings));
+  }
+
   dispatch(event: KeyboardEvent): boolean {
     const blockedReason = getBlockedKeyboardEventReason(event);
     if (blockedReason) {

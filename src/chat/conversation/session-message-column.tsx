@@ -83,6 +83,8 @@ export type SessionMessageColumnProps = {
   queueBusyKind?: SessionTurnQueueActionKind | null;
   renderQueueTail?: (resolveImageSource: MarkdownImageResolver, markdownImageContext: MarkdownImageContext) => ReactNode;
   sessionId: string;
+  workspacePath?: string | null;
+  elicitationDisabled?: boolean;
   provider?: string;
   character: CharacterProfile;
   messages: Message[];
@@ -444,6 +446,8 @@ export function SessionMessageColumn({
   submissionError = "",
   submissionUncertain = false,
   sessionId,
+  workspacePath,
+  elicitationDisabled,
   provider,
   character,
   messages: suppliedMessages,
@@ -1157,6 +1161,9 @@ export function SessionMessageColumn({
   const renderPendingContent = () => (
     <div className="pending-response-content">
       {!conversationPaging ? <LiveRequestSurface
+        sessionId={sessionId}
+        workspacePath={workspacePath}
+        disabled={elicitationDisabled}
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
         approvalActionDecision={approvalActionDecision}
@@ -1170,6 +1177,9 @@ export function SessionMessageColumn({
         onOpenPath={onOpenPath}
       /> : null}
       {pendingResponseMessageIndex < 0 ? <InlineQuestionContent
+        sessionId={sessionId}
+        workspacePath={workspacePath}
+        disabled={elicitationDisabled}
         text={liveRunAssistantText}
         responseProvider={provider}
         records={visibleLiveElicitationRecords}
@@ -1253,6 +1263,9 @@ export function SessionMessageColumn({
         </div>
       ) : null}
       {conversationPaging ? <div className="conversation-live-request"><LiveRequestSurface
+        sessionId={sessionId}
+        workspacePath={workspacePath}
+        disabled={elicitationDisabled}
         liveApprovalRequest={liveApprovalRequest}
         approvalActionRequestId={approvalActionRequestId}
         approvalActionDecision={approvalActionDecision}
@@ -1445,6 +1458,9 @@ export function SessionMessageColumn({
                       >
                         {shouldRenderFullMessage ? (
                           <InlineQuestionContent
+                            sessionId={sessionId}
+                            workspacePath={workspacePath}
+                            disabled={elicitationDisabled}
                             text={message.text}
                             responseProvider={message.role === "assistant" ? provider : undefined}
                             records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}

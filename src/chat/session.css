@@ -2259,6 +2259,17 @@
   resize: vertical;
 }
 
+.question-answer-editor {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.question-answer-toolbar {
+  display: flex;
+  align-items: center;
+}
+
 .live-elicitation-checkbox,
 .live-elicitation-option {
   display: inline-flex;
@@ -3459,6 +3470,7 @@
 }
 
 .composer .composer-icon-button,
+.question-answer-editor .composer-icon-button,
 .session-action-dock-compact-actions .composer-icon-button {
   display: inline-flex;
   flex: 0 0 auto;
@@ -3471,6 +3483,7 @@
 }
 
 .composer .drawer-toggle.composer-icon-button,
+.question-answer-editor .drawer-toggle.composer-icon-button,
 .session-action-dock-compact-actions .drawer-toggle.composer-icon-button {
   border-radius: 10px;
 }
