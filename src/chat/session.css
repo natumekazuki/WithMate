@@ -2265,16 +2265,25 @@
   gap: 8px;
 }
 
-.question-answer-input {
+.question-answer-attachment-actions {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  flex: 1;
   gap: 8px;
   min-width: 0;
+  margin-right: auto;
 }
 
-.question-answer-input textarea {
-  flex: 1 1 0;
-  min-width: 0;
+.question-answer-attachment-actions:empty {
+  display: none;
+}
+
+.question-answer-attachment-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .live-elicitation-option.live-elicitation-custom-option {
@@ -3489,7 +3498,6 @@
 }
 
 .composer .composer-icon-button,
-.question-answer-editor .composer-icon-button,
 .live-elicitation-card .live-approval-actions .composer-icon-button,
 .session-action-dock-compact-actions .composer-icon-button {
   display: inline-flex;
@@ -3503,7 +3511,6 @@
 }
 
 .composer .drawer-toggle.composer-icon-button,
-.question-answer-editor .drawer-toggle.composer-icon-button,
 .live-elicitation-card .live-approval-actions .drawer-toggle.composer-icon-button,
 .session-action-dock-compact-actions .drawer-toggle.composer-icon-button {
   border-radius: 10px;

@@ -391,6 +391,80 @@ test("LiveRequestSurface はAttachの各操作を質問回答へ接続する", a
 
 // @test-value v2
 // kind = "contract"
+// claim = "共有Attachは対象回答欄を識別してfocusに追従し、picker待ちに別欄へ移っても開始時の欄へ挿入して元質問に送る"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: Attachの配置、初期対象、focusと保存中の対象固定" }
+// fault = "共有Attachが別欄や別質問へpathを混入する、対象表示と挿入先が異なる、または選択式の自由回答を有効にしない"
+// observable = "Attachのaccessible nameと対象欄名、picker待ち前後の各回答値とSubmit可否、送信された元質問のpayload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-shared-attachment-target"
+// lifecycle = "permanent"
+// impact = "添付資料が意図しない質問の回答へ混入するか、入力した資料が選択肢に置換されて送信されない"
+// distinction = "既存pasteと7種pickerのtestは一つのAttachを複数回答欄で共有するfocus切替と非同期完了先を検証しない"
+// @end-test-value
+test("LiveRequestSurface は共有Attachの対象を示し選択開始時の回答欄を維持する", async () => {
+  const request: LiveElicitationRequest = { ...elicitationRequest, kind: "question", fields: [
+    { type: "text", name: "answer", title: "Answer", required: true, defaultValue: "First" },
+    { type: "select", name: "choice", title: "Choice", required: true, allowFreeText: true,
+      defaultValue: "keep", options: [{ value: "keep", label: "Keep" }] },
+    { type: "text", name: "url", title: "URL", required: false, format: "uri" },
+  ] };
+  const other: LiveElicitationRequest = { ...elicitationRequest, kind: "question", requestId: "other", fields: [
+    { type: "text", name: "other", title: "Other answer", required: false, defaultValue: "Other" },
+  ] };
+  let finishPick!: (path: string) => void;
+  const pending = new Promise<string>((resolve) => { finishPick = resolve; });
+  let picks = 0;
+  const props = { sessionId: "session-shared", liveElicitationRequests: [request, other] };
+  const mounted = await mountElicitation(request, props);
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      pickFile() { return ++picks === 1 ? pending : Promise.resolve("C:/choice.txt"); },
+    } });
+    await mounted.render(request, props);
+    const [card, otherCard] = mounted.container.querySelectorAll('section[role="group"]');
+    const answer = card.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')!;
+    const choice = card.querySelector<HTMLTextAreaElement>('textarea[aria-label="Choice Custom Answer"]')!;
+    const url = card.querySelector<HTMLInputElement>('input[aria-label="URL"]')!;
+    const custom = card.querySelector<HTMLInputElement>('input[aria-label="Choice Custom Answer"]')!;
+    const pick = async (label: string) => {
+      const trigger = card.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      assert.ok(trigger);
+      await act(async () => trigger.click());
+      const item = mounted.dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Attach the original file as a reference"]');
+      assert.ok(item);
+      await act(async () => item.click());
+    };
+    assert.deepEqual([...card.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")), ["Attach to Answer", "Close", "Submit"]);
+    answer.setSelectionRange(answer.value.length, answer.value.length);
+    await pick("Attach to Answer");
+    assert.equal(answer.disabled, true);
+    assert.equal(card.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!.disabled, true);
+    assert.equal(otherCard.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!.disabled, false);
+    await act(async () => custom.focus());
+    assert.ok(card.querySelector('button[aria-label="Attach to Choice"]'));
+    assert.equal(card.querySelector(".question-answer-attachment-label")?.textContent, "Choice");
+    await act(async () => url.focus());
+    assert.ok(card.querySelector('button[aria-label="Attach to Choice"]'));
+    await act(async () => {
+      finishPick("C:/first.txt");
+      await new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve()));
+    });
+    assert.equal(answer.value, "First @C:/first.txt");
+    assert.equal(choice.value, "");
+    assert.equal(url.value, "");
+    assert.equal(otherCard.querySelector("textarea")?.value, "Other");
+    await act(async () => choice.focus());
+    await pick("Attach to Choice");
+    assert.equal(choice.value, "@C:/choice.txt");
+    assert.equal(custom.checked, true);
+    assert.equal(card.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!.disabled, false);
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: "First @C:/first.txt", choice: "@C:/choice.txt" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
 // fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたは要求本文・操作labelを失う"

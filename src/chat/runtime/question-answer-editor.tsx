@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../settings/shortcut-registry.js";
@@ -22,10 +23,13 @@ type QuestionAnswerEditorProps = {
   disabled: boolean;
   sessionId?: string;
   workspacePath?: string | null;
+  attachmentTarget: HTMLElement | null;
+  attachmentLabel?: string;
 };
 
 export function QuestionAnswerEditor({
   label, describedBy, value, onChange, onSubmit, onBusyChange, disabled, sessionId, workspacePath,
+  attachmentTarget, attachmentLabel,
 }: QuestionAnswerEditorProps) {
   const api = getWithMateApi();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -38,6 +42,8 @@ export function QuestionAnswerEditor({
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => { setMenuOpen(false); }, [attachmentTarget]);
 
   useEffect(() => {
     mounted.current = true;
@@ -91,46 +97,47 @@ export function QuestionAnswerEditor({
 
   return (
     <div className="question-answer-editor" aria-busy={busy || undefined}>
-      <div className="question-answer-input">
-        <textarea
-          ref={textareaRef}
-          rows={3}
-          aria-label={label}
-          aria-describedby={describedBy}
-          data-shortcut-scope="question-answer"
-          value={value}
-          disabled={disabled || busy}
-          onChange={(event) => { setError(""); onChange(event.target.value); }}
-          onCompositionStart={() => { composing.current = true; }}
-          onCompositionEnd={() => { composing.current = false; }}
-          onKeyDown={(event) => {
-            if (composing.current || event.nativeEvent.keyCode === 229) return;
-            if (!getShortcutDispatcher()?.matchesCommandShortcut(SHORTCUT_COMMAND_IDS.composerSubmit, event.nativeEvent)) return;
-            event.preventDefault();
-            event.stopPropagation();
-            if (!current.current.disabled && !operationRef.current) onSubmit();
-          }}
-          onPaste={(event) => {
-            if (!collectPastedClipboardFiles(event.clipboardData).length) return;
-            event.preventDefault();
-            if (!api || !sessionId) {
-              setError("File attachments are unavailable for this session.");
-              return;
-            }
-            const clipboardData = event.clipboardData;
-            void attach((isCurrent) => collectPastedSessionAttachments({
-              clipboardData,
-              preventDefault() {},
-              sessionId,
-              currentTimestampLabel: () => new Date().toISOString(),
-              savePastedSessionFile: (request) => {
-                if (!isCurrent()) throw new Error("The input request is no longer available.");
-                return api.savePastedSessionFile(request);
-              },
-            }));
-          }}
-        />
-        {sessionId && api ? <ComposerAttachmentMenu
+      <textarea
+        ref={textareaRef}
+        rows={3}
+        aria-label={label}
+        aria-describedby={describedBy}
+        data-shortcut-scope="question-answer"
+        value={value}
+        disabled={disabled || busy}
+        onChange={(event) => { setError(""); onChange(event.target.value); }}
+        onCompositionStart={() => { composing.current = true; }}
+        onCompositionEnd={() => { composing.current = false; }}
+        onKeyDown={(event) => {
+          if (composing.current || event.nativeEvent.keyCode === 229) return;
+          if (!getShortcutDispatcher()?.matchesCommandShortcut(SHORTCUT_COMMAND_IDS.composerSubmit, event.nativeEvent)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (!current.current.disabled && !operationRef.current) onSubmit();
+        }}
+        onPaste={(event) => {
+          if (!collectPastedClipboardFiles(event.clipboardData).length) return;
+          event.preventDefault();
+          if (!api || !sessionId) {
+            setError("File attachments are unavailable for this session.");
+            return;
+          }
+          const clipboardData = event.clipboardData;
+          void attach((isCurrent) => collectPastedSessionAttachments({
+            clipboardData,
+            preventDefault() {},
+            sessionId,
+            currentTimestampLabel: () => new Date().toISOString(),
+            savePastedSessionFile: (request) => {
+              if (!isCurrent()) throw new Error("The input request is no longer available.");
+              return api.savePastedSessionFile(request);
+            },
+          }));
+        }}
+      />
+      {sessionId && api && attachmentTarget ? createPortal(<>
+        <ComposerAttachmentMenu
+          targetLabel={attachmentLabel}
           disabled={disabled || busy}
           busy={busy}
           isOpen={menuOpen}
@@ -153,8 +160,9 @@ export function QuestionAnswerEditor({
             const path = await api.pickSessionImageFile(sessionId);
             return pathReferences(path ? [path] : []);
           })}
-        /> : null}
-      </div>
+        />
+        {attachmentLabel ? <span className="question-answer-attachment-label" title={attachmentLabel}>{attachmentLabel}</span> : null}
+      </>, attachmentTarget) : null}
       {busy ? <span className="visually-hidden" role="status">Attaching files</span> : null}
       {error ? <p className="live-approval-warning" role="alert">{error}</p> : null}
     </div>

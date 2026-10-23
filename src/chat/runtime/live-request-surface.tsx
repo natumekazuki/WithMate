@@ -223,6 +223,11 @@ function LiveElicitationCard({
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const pendingAttachments = useRef(new Set<string>());
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const answerFields = request.mode === "form" ? request.fields.filter((field) =>
+    field.type === "text" ? !field.secret && !field.format : (field.type === "select" || field.type === "multi-select") && field.allowFreeText,
+  ) : [];
+  const [attachmentField, setAttachmentField] = useState(() => answerFields[0]?.name);
+  const [attachmentTarget, setAttachmentTarget] = useState<HTMLDivElement | null>(null);
   const fieldIdPrefix = useId();
 
   useEffect(() => {
@@ -272,6 +277,8 @@ function LiveElicitationCard({
       disabled={isEditingDisabled}
       sessionId={sessionId}
       workspacePath={workspacePath}
+      attachmentTarget={attachmentField === field.name ? attachmentTarget : null}
+      attachmentLabel={answerFields.length > 1 ? field.title : undefined}
       onSubmit={() => handleSubmit("accept")}
       onBusyChange={(busy) => {
         if (busy) pendingAttachments.current.add(field.name);
@@ -308,7 +315,9 @@ function LiveElicitationCard({
       {request.mode === "form" && request.fields.length > 0 ? (
         <div className="live-elicitation-form">
           {request.fields.map((field, index) => (
-            <div key={field.name} className="live-elicitation-field">
+            <div key={field.name} className="live-elicitation-field" onFocusCapture={() => {
+              if (answerFields.some((answerField) => answerField.name === field.name)) setAttachmentField(field.name);
+            }}>
               <span className="live-elicitation-label" id={request.kind === "question" && field.description ? `${fieldIdPrefix}-description-${index}` : undefined}>
                 {request.kind === "question" ? field.description || field.title : field.title}
                 {field.required && request.kind !== "question" ? <strong> *</strong> : null}
@@ -444,6 +453,7 @@ function LiveElicitationCard({
       ) : null}
       {validationMessage ? <p className="live-approval-warning" role="alert">{validationMessage}</p> : null}
       <div className="live-approval-actions">
+        {answerFields.length > 0 ? <div className="question-answer-attachment-actions" ref={setAttachmentTarget} /> : null}
         {isSubmitting ? <span className="visually-hidden" role="status">Processing input request</span> : null}
         {request.kind !== "question" ? <button
           className="drawer-toggle secondary"

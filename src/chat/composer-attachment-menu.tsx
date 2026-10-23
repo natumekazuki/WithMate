@@ -8,6 +8,7 @@ import { ButtonContent } from "../ui/button-content.js";
 type ComposerAttachmentMenuProps = {
   disabled: boolean;
   busy?: boolean;
+  targetLabel?: string;
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   onPickFile: () => void;
@@ -40,6 +41,7 @@ const MENU_THEME_PROPERTIES = ["--ink", "--muted", "--character-main-soft"] as c
 export function ComposerAttachmentMenu({
   disabled,
   busy = false,
+  targetLabel,
   isOpen,
   onOpenChange,
   onPickFile,
@@ -55,6 +57,7 @@ export function ComposerAttachmentMenu({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPosition, setMenuPosition] = useState<ComposerAttachmentMenuPosition | null>(null);
+  const isMenuPositioned = menuPosition !== null;
 
   const attachItems: ComposerAttachmentMenuItem[] = [
     {
@@ -110,10 +113,10 @@ export function ComposerAttachmentMenu({
   }, [disabled, isOpen, onOpenChange]);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && isMenuPositioned) {
       menuRef.current?.querySelector<HTMLElement>("[role=\"menuitem\"]")?.focus();
     }
-  }, [isOpen]);
+  }, [isOpen, isMenuPositioned]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -254,8 +257,8 @@ export function ComposerAttachmentMenu({
         aria-haspopup="menu"
         aria-controls={isOpen ? menuId : undefined}
         aria-busy={busy || undefined}
-        aria-label="Attach"
-        title="Attach a file, folder, image, or Session file"
+        aria-label={targetLabel ? `Attach to ${targetLabel}` : "Attach"}
+        title={targetLabel ? `Attach to ${targetLabel}` : "Attach a file, folder, image, or Session file"}
         onClick={() => onOpenChange(!isOpen)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
