@@ -86,9 +86,9 @@ export type HomeSettingsContentProps = {
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
   onChangeProviderInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
-  onBrowseProviderSkillRootPath: (providerId: string) => void;
-  onBrowseProviderSkillRelativePath: (providerId: string) => void;
-  onBrowseProviderInstructionRelativePath: (providerId: string) => void;
+  onBrowseProviderSkillRootPath: (providerId: string) => void | Promise<void>;
+  onBrowseProviderSkillRelativePath: (providerId: string) => void | Promise<void>;
+  onBrowseProviderInstructionRelativePath: (providerId: string) => void | Promise<void>;
   onImportModelCatalog: () => void | Promise<void>;
   onExportModelCatalog: () => void | Promise<void>;
   onOpenAppLogFolder: () => void | Promise<void>;
@@ -108,9 +108,9 @@ type SettingsActionKey =
   | "review-memory"
   | "install-cli-shim"
   | "uninstall-cli-shim"
-  | "browse-root"
-  | "browse-skill"
-  | "browse-instruction"
+  | `browse-root:${string}`
+  | `browse-skill:${string}`
+  | `browse-instruction:${string}`
   | "delete-sessions"
   | "save-settings";
 
@@ -403,14 +403,14 @@ export function HomeSettingsContent({
                             <button
                               className="launch-toggle"
                               type="button"
-                              onClick={() => void runAction("browse-root", () => onBrowseProviderSkillRootPath(provider.id))}
+                              onClick={() => void runAction(`browse-root:${provider.id}`, () => onBrowseProviderSkillRootPath(provider.id))}
                               disabled={isBusy}
-                              aria-busy={actionIsBusy("browse-root")}
-                              aria-label={actionIsBusy("browse-root") ? "Opening provider root directory" : "Browse"}
+                              aria-busy={actionIsBusy(`browse-root:${provider.id}`)}
+                              aria-label={actionIsBusy(`browse-root:${provider.id}`) ? `Opening provider root directory for ${provider.label}` : "Browse"}
                             >
                               <ButtonContent
-                                busy={actionIsBusy("browse-root")}
-                                busyLabel="Opening provider root directory."
+                                busy={actionIsBusy(`browse-root:${provider.id}`)}
+                                busyLabel={`Opening provider root directory for ${provider.label}.`}
                               >
                                 Browse
                               </ButtonContent>
@@ -431,14 +431,14 @@ export function HomeSettingsContent({
                             <button
                               className="launch-toggle"
                               type="button"
-                              onClick={() => void runAction("browse-skill", () => onBrowseProviderSkillRelativePath(provider.id))}
+                              onClick={() => void runAction(`browse-skill:${provider.id}`, () => onBrowseProviderSkillRelativePath(provider.id))}
                               disabled={isBusy}
-                              aria-busy={actionIsBusy("browse-skill")}
-                              aria-label={actionIsBusy("browse-skill") ? "Opening skill folder" : "Browse"}
+                              aria-busy={actionIsBusy(`browse-skill:${provider.id}`)}
+                              aria-label={actionIsBusy(`browse-skill:${provider.id}`) ? `Opening skill folder for ${provider.label}` : "Browse"}
                             >
                               <ButtonContent
-                                busy={actionIsBusy("browse-skill")}
-                                busyLabel="Opening skill folder."
+                                busy={actionIsBusy(`browse-skill:${provider.id}`)}
+                                busyLabel={`Opening skill folder for ${provider.label}.`}
                               >
                                 Browse
                               </ButtonContent>
@@ -459,14 +459,14 @@ export function HomeSettingsContent({
                             <button
                               className="launch-toggle"
                               type="button"
-                              onClick={() => void runAction("browse-instruction", () => onBrowseProviderInstructionRelativePath(provider.id))}
+                              onClick={() => void runAction(`browse-instruction:${provider.id}`, () => onBrowseProviderInstructionRelativePath(provider.id))}
                               disabled={isBusy}
-                              aria-busy={actionIsBusy("browse-instruction")}
-                              aria-label={actionIsBusy("browse-instruction") ? "Opening instruction file" : "Browse"}
+                              aria-busy={actionIsBusy(`browse-instruction:${provider.id}`)}
+                              aria-label={actionIsBusy(`browse-instruction:${provider.id}`) ? `Opening instruction file for ${provider.label}` : "Browse"}
                             >
                               <ButtonContent
-                                busy={actionIsBusy("browse-instruction")}
-                                busyLabel="Opening instruction file."
+                                busy={actionIsBusy(`browse-instruction:${provider.id}`)}
+                                busyLabel={`Opening instruction file for ${provider.label}.`}
                               >
                                 Browse
                               </ButtonContent>

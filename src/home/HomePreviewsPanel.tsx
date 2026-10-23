@@ -65,9 +65,11 @@ export function HomePreviewsContent({ groups, status, readError, actionError, pe
                   if (next.has(group.ownerSessionId)) next.delete(group.ownerSessionId); else next.add(group.ownerSessionId);
                   return next;
                 })}>
-                <ButtonContent busy={groupPending}><ComposerIcon name="preview" /></ButtonContent>
-                <span className="home-monitor-status-icon-count">{group.previews.length.toLocaleString("en-US")}</span>
-                <span aria-hidden="true">{hasPreviews ? isExpanded ? "▾" : "▸" : null}</span>
+                <ButtonContent busy={groupPending}>
+                  <ComposerIcon name="preview" />
+                  <span className="home-monitor-status-icon-count">{group.previews.length.toLocaleString("en-US")}</span>
+                  <span aria-hidden="true">{hasPreviews ? isExpanded ? "▾" : "▸" : null}</span>
+                </ButtonContent>
               </button>
             </div>
             <div id={childrenId} className="home-monitor-auxiliary-list home-previews-children" aria-label={`Previews for ${title}`} hidden={!isExpanded}>

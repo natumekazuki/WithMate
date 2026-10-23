@@ -346,6 +346,14 @@
   width: 100%;
 }
 
+.home-page .home-character-load-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-height: 24px;
+}
+
 .home-page .home-monitor-body {
   display: flex;
   flex: 1 1 auto;
@@ -706,6 +714,19 @@
 
 .home-page .home-monitor-disclosure .home-monitor-status-cluster {
   padding: 0;
+}
+
+.home-page .home-previews-disclosure > .button-content {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.home-page .home-previews-disclosure .button-content-label {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 8px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
 }
 
 .home-page .home-monitor-disclosure:hover {

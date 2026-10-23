@@ -41,6 +41,9 @@ export function HomeCharactersPanel({
       <section className="home-monitor-section">
         <div className="home-monitor-section-head">
           <div className="home-character-toolbar">
+            <span className="home-character-load-status">
+              {characterLoadStatus === "loading" ? <LoadingIndicator label="Loading characters" inline /> : null}
+            </span>
             <button
               className="launch-toggle compact home-create-button"
               type="button"
@@ -53,38 +56,30 @@ export function HomeCharactersPanel({
             </button>
           </div>
         </div>
-        {feedback && characterLoadStatus !== "error" ? (
+        <div className="home-character-list">
+          {visibleCharacters.map((character) => (
+            <button
+              key={character.id}
+              className="home-character-card"
+              type="button"
+              style={buildCardThemeStyle({ main: character.theme.main, sub: character.theme.sub })}
+              onClick={() => onEditCharacter(character.id)}
+            >
+              <CharacterAvatar character={{ name: character.name, iconPath: character.iconFilePath }} size="medium" />
+              <span className="home-character-card-copy">
+                <span className="home-character-card-title">
+                  {character.name}
+                </span>
+                <span>{character.description || character.id}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        {characterLoadStatus === "error" ? (
+          <LoadError message={feedback || "Could not load characters."} onRetry={onRetry} />
+        ) : feedback ? (
           <p className="settings-feedback" role="status" aria-live="polite">{feedback}</p>
         ) : null}
-        {characterLoadStatus === "loading" ? (
-          <LoadingIndicator label="Loading characters" className="home-monitor-empty" />
-        ) : characterLoadStatus === "error" ? (
-          <LoadError message={feedback || "Could not load characters."} onRetry={onRetry} className="home-monitor-empty" />
-        ) : characters.length === 0 ? (
-          null
-        ) : visibleCharacters.length === 0 ? (
-          null
-        ) : (
-          <div className="home-character-list">
-            {visibleCharacters.map((character) => (
-              <button
-                key={character.id}
-                className="home-character-card"
-                type="button"
-                style={buildCardThemeStyle({ main: character.theme.main, sub: character.theme.sub })}
-                onClick={() => onEditCharacter(character.id)}
-              >
-                <CharacterAvatar character={{ name: character.name, iconPath: character.iconFilePath }} size="medium" />
-                <span className="home-character-card-copy">
-                  <span className="home-character-card-title">
-                    {character.name}
-                  </span>
-                  <span>{character.description || character.id}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
       </section>
     </div>
   );

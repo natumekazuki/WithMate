@@ -80,6 +80,122 @@ function createDeferred<T>() {
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "Character Editorは実行したSaveまたはArchiveだけをbusyとして通知し、失敗後にdraftを保持して再試行でき、保存中の追加編集を上書きせず、現在の編集面を通知する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ; docs/design/ui-design-guidelines.md#ボタン; docs/design/desktop-ui.md#character-editor-window" }
+// fault = "ArchiveをSaveのbusyとして通知する、失敗後に操作不能となる、保存応答で追加編集を消す、または選択状態を通知しない"
+// observable = "button aria-busy/aria-label/aria-pressed/disabled、spinner、保存API入力、icon入力値、feedback、archive確認回数"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp save/archive lifecycle and editor selectors"
+// lifecycle = "permanent"
+// impact = "操作と状態の誤通知、失敗後の再試行不能、保存中のdraft消失を防ぐ"
+// distinction = "state helperと型検査では観測できない実componentの操作別busy・API応答後の編集保持を少数の保留promiseで検証する"
+// @end-test-value
+test("CharacterEditorApp は操作別busyと編集状態を成功・失敗後も保つ", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: "https://withmate.local/character-editor.html?characterId=char-1",
+  });
+  const previous = Object.fromEntries(["window", "document", "navigator", "HTMLElement"].map((key) =>
+    [key, Object.getOwnPropertyDescriptor(globalThis, key)]
+  ));
+  for (const key of Object.keys(previous)) {
+    Object.defineProperty(globalThis, key, { value: Reflect.get(dom.window, key), configurable: true });
+  }
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  let currentCharacter = createCharacterDetail();
+  let saveRequest = createDeferred<void>();
+  let archiveRequest = createDeferred<CharacterDetail>();
+  let selectedIcon = "C:\\icons\\first.png";
+  let confirmations = 0;
+  const savedIcons: string[] = [];
+  dom.window.confirm = () => { confirmations += 1; return true; };
+  dom.window.withmate = {
+    async getModelCatalog() { return createModelCatalog(); },
+    async getAppSettings() { return createDefaultAppSettings(); },
+    async getCharacter() { return currentCharacter; },
+    async pickImageFile() { return selectedIcon; },
+    async updateCharacterDefinition() { await saveRequest.promise; return currentCharacter; },
+    async updateCharacterMetadata(input) {
+      savedIcons.push(input.iconFilePath ?? "");
+      currentCharacter = { ...currentCharacter, iconFilePath: input.iconFilePath ?? "" };
+      return currentCharacter;
+    },
+    async archiveCharacter() { return archiveRequest.promise; },
+  } as Partial<WithMateWindowApi> as WithMateWindowApi;
+  const click = async (label: string) => {
+    await act(async () => findButtonByText(container, label).click());
+  };
+  const assertBusy = (button: HTMLButtonElement, busy: boolean, label: string) => {
+    assert.equal(button.getAttribute("aria-busy"), busy ? "true" : null);
+    assert.equal(button.getAttribute("aria-label"), label);
+    assert.equal(Boolean(button.querySelector(".button-content-spinner")), busy);
+  };
+  try {
+    await act(async () => root.render(<CharacterEditorApp />));
+    assert.equal(findButtonByText(container, "Profile").getAttribute("aria-pressed"), "true");
+    assert.equal(container.querySelectorAll('nav button[aria-pressed="true"]').length, 1);
+    for (const label of ["Profile", "character.md", "character-notes.md", "Preview", "Profile"]) {
+      await click(label);
+      const selectors = [...container.querySelectorAll<HTMLButtonElement>("nav button")];
+      assert.equal(selectors.filter((button) => button.getAttribute("aria-pressed") === "true").length, 1);
+      assert.equal(findButtonByText(container, label).getAttribute("aria-pressed"), "true");
+    }
+    await click("Import Image");
+    const save = findButtonByText(container, "Save");
+    const archive = findButtonByText(container, "Archive");
+    await click("Save");
+    assertBusy(save, true, "Saving character");
+    assertBusy(archive, false, "Archive");
+    assert.equal(save.disabled, true);
+    assert.equal(archive.disabled, true);
+    selectedIcon = "C:\\icons\\second.png";
+    await click("Import Image");
+    await act(async () => saveRequest.resolve());
+    assert.deepEqual(savedIcons, ["C:\\icons\\first.png"]);
+    assert.equal(container.querySelectorAll("input")[2]?.value, selectedIcon);
+    assert.equal(save.disabled, false);
+    assertBusy(save, false, "Save");
+
+    saveRequest = createDeferred<void>();
+    await click("Save");
+    await act(async () => saveRequest.reject(new Error("save failed")));
+    assert.match(container.textContent ?? "", /save failed/);
+    assert.equal(container.querySelectorAll("input")[2]?.value, selectedIcon);
+    assert.equal(save.disabled, false);
+    saveRequest = createDeferred<void>();
+    await click("Save");
+    await act(async () => saveRequest.resolve());
+    assert.equal(save.disabled, true);
+    assert.equal(archive.disabled, false);
+
+    await click("Archive");
+    assertBusy(archive, true, "Archiving character");
+    assertBusy(save, false, "Save");
+    assert.equal(save.disabled, true);
+    assert.equal(archive.disabled, true);
+    await act(async () => archiveRequest.reject(new Error("archive failed")));
+    assert.match(container.textContent ?? "", /archive failed/);
+    assertBusy(archive, false, "Archive");
+    assert.equal(archive.disabled, false);
+    archiveRequest = createDeferred<CharacterDetail>();
+    await click("Archive");
+    await act(async () => archiveRequest.resolve({ ...currentCharacter, state: "archived" }));
+    assert.equal(confirmations, 2);
+    assertBusy(archive, false, "Archive");
+    assert.equal(archive.disabled, true);
+    assert.match(container.textContent ?? "", /Character archived\./);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Character Editorのauthoring provider pickerは取得中と取得失敗を有効providerゼロと区別し、editor本体の初期読み込みをbusyとして公開する"
 // oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }

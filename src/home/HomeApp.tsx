@@ -119,6 +119,7 @@ export default function HomeApp() {
   const [auxiliarySessionSummaries, setAuxiliarySessionSummaries] = useState<AuxiliarySessionSummary[]>([]);
   const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
   const hasLoadedAuxiliarySessionSummariesRef = useRef(false);
+  const auxiliarySessionRefresherRef = useRef<ReturnType<typeof createHomeAuxiliarySessionRefresher> | null>(null);
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
     status: "loading",
     sessionIds: [],
@@ -572,9 +573,9 @@ export default function HomeApp() {
           hasLoadedAuxiliarySessionSummariesRef.current = true;
         }
         if (state !== "loading" || !hasLoadedAuxiliarySessionSummariesRef.current) {
-          setAuxiliaryDataState(state);
+          setAuxiliaryDataState((current) => state === "loading" && current === "error" ? current : state);
         }
-        if (state === "ready" || (state === "loading" && !hasLoadedAuxiliarySessionSummariesRef.current)) {
+        if (state === "ready") {
           setAuxiliaryLoadFeedback("");
         }
       },
@@ -585,6 +586,7 @@ export default function HomeApp() {
     });
 
     const monitorRunStates = new Map<string, LiveSessionRunStatus>();
+    auxiliarySessionRefresherRef.current = refresher;
     const unsubscribeLiveRun = withmateApi.subscribeLiveSessionRunStatus((sessionId, status) => {
       const nextState = { runState: status?.runState, cancellationState: status?.cancellationState, approvalPending: status?.approvalPending };
       const previousState = monitorRunStates.get(sessionId);
@@ -603,6 +605,7 @@ export default function HomeApp() {
     refresher.refresh();
 
     return () => {
+      auxiliarySessionRefresherRef.current = null;
       refresher.dispose();
       unsubscribeLiveRun();
       unsubscribeSessionInvalidation();
@@ -883,6 +886,10 @@ export default function HomeApp() {
 
 
   const monitorFeedback = [sessionMonitorFeedback, sessionSummariesState.openError, auxiliaryLoadFeedback].filter(Boolean).join(" ");
+  const retryMonitorLoad = sessionSummariesState.openError || auxiliaryDataState === "error" ? () => {
+    if (sessionSummariesState.openError) void refreshSessionSummaries("preserve");
+    if (auxiliaryDataState === "error") auxiliarySessionRefresherRef.current?.refresh();
+  } : undefined;
   const sessionListFeedback = [
     sessionSummariesState.recentError && `Recent sessions: ${sessionSummariesState.recentError}`,
     sessionSummariesState.pinnedError && `Pinned sessions: ${sessionSummariesState.pinnedError}`,
@@ -919,7 +926,7 @@ export default function HomeApp() {
       runningEmptyMessage: monitorRunningEmptyMessage,
       nonRunningEmptyMessage: monitorCompletedEmptyMessage,
       feedback: monitorFeedback,
-      onRetry: sessionSummariesState.openError ? () => void refreshSessionSummaries("preserve") : undefined,
+      onRetry: retryMonitorLoad,
       onOpenSession: openMonitorSession,
       onShowContextMenu: showSessionMonitorContextMenu,
     }),
@@ -960,7 +967,7 @@ export default function HomeApp() {
       monitorRunningEmptyMessage,
       monitorNonRunningEmptyMessage: monitorCompletedEmptyMessage,
       sessionMonitorFeedback: monitorFeedback,
-      onRetrySessionSummaries: sessionSummariesState.openError ? () => void refreshSessionSummaries("preserve") : undefined,
+      onRetrySessionSummaries: retryMonitorLoad,
       characterEntries,
       characterLoadStatus,
       characterListFeedback,

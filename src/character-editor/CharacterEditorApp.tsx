@@ -93,7 +93,8 @@ export default function CharacterEditorApp() {
   const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
   const [selectedTab, setSelectedTab] = useState<CharacterEditorTab>("profile");
   const [loading, setLoading] = useState(Boolean(initialCharacterId));
-  const [saving, setSaving] = useState(false);
+  const [savingAction, setSavingAction] = useState<"save" | "archive" | null>(null);
+  const saving = savingAction !== null;
   const [authoringStarting, setAuthoringStarting] = useState(false);
   const [feedback, setFeedback] = useState("");
   const draftRef = useRef(draft);
@@ -290,6 +291,9 @@ export default function CharacterEditorApp() {
   };
 
   const saveCharacter = async () => {
+    if (saving) {
+      return;
+    }
     const api = getWithMateApi();
     if (!api) {
       setFeedback("Open Character Editor in Electron.");
@@ -311,7 +315,7 @@ export default function CharacterEditorApp() {
     }
 
     const draftAtSave = draft;
-    setSaving(true);
+    setSavingAction("save");
     setFeedback("");
     try {
       if (draftAtSave.mode === "create") {
@@ -360,20 +364,21 @@ export default function CharacterEditorApp() {
     } catch (error) {
       setFeedback(formatCharacterEditorError(error, "Could not save character."));
     } finally {
-      setSaving(false);
+      setSavingAction(null);
     }
   };
 
   const archiveCharacter = async () => {
     const api = getWithMateApi();
-    if (!api || !draft.characterId || archived) {
+    if (!api || !draft.characterId || archived || saving) {
       return;
     }
     if (!window.confirm("Archive this character?\n\nIt will be removed from the Home list and New Session selector.")) {
       return;
     }
 
-    setSaving(true);
+    setSavingAction("archive");
+    setFeedback("");
     try {
       const archivedCharacter = await api.archiveCharacter(draft.characterId);
       setDraft((current) => updateCharacterEditorDraft(current, {
@@ -391,7 +396,7 @@ export default function CharacterEditorApp() {
     } catch (error) {
       setFeedback(formatCharacterEditorError(error, "Could not archive character."));
     } finally {
-      setSaving(false);
+      setSavingAction(null);
     }
   };
 
@@ -578,6 +583,7 @@ export default function CharacterEditorApp() {
               key={tab}
               className={`character-editor-tab ${selectedTab === tab ? "active" : ""}`.trim()}
               type="button"
+              aria-pressed={selectedTab === tab}
               onClick={() => setSelectedTab(tab)}
             >
               {tab === "definition"
@@ -818,8 +824,10 @@ export default function CharacterEditorApp() {
             type="button"
             onClick={archiveCharacter}
             disabled={saving || authoringStarting || archived || draft.mode !== "edit"}
+            aria-busy={savingAction === "archive" || undefined}
+            aria-label={savingAction === "archive" ? "Archiving character" : "Archive"}
           >
-            Archive
+            <ButtonContent busy={savingAction === "archive"}>Archive</ButtonContent>
           </button>
           <span>{feedback}</span>
           <button
@@ -839,10 +847,10 @@ export default function CharacterEditorApp() {
             type="button"
             onClick={saveCharacter}
             disabled={saving || authoringStarting || archived || !dirty}
-            aria-busy={saving || undefined}
-            aria-label={saving ? "Saving character" : "Save"}
+            aria-busy={savingAction === "save" || undefined}
+            aria-label={savingAction === "save" ? "Saving character" : "Save"}
           >
-            <ButtonContent busy={saving}>Save</ButtonContent>
+            <ButtonContent busy={savingAction === "save"}>Save</ButtonContent>
           </button>
         </footer>
       </section>

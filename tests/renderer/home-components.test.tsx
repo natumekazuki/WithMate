@@ -301,6 +301,76 @@ describe("HomeSettingsContent", () => {
   });
 
   // @test-value v2
+  // kind = "contract"
+  // claim = "Providerの各Browseはクリックした対象だけをbusyとして通知し、応答待ちの重複実行を抑止して完了後に操作を戻す"
+  // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
+  // fault = "同じ種類の別Providerボタンへbusyを表示する、異なるBrowseを重複実行する、または応答後も操作を無効にする"
+  // observable = "各ProviderのRoot/Skill/Instruction Browse callback引数と回数、buttonのaria-busy/disabled/accessible name/spinner、完了後の操作可否"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeSettingsContent provider browse actions"
+  // lifecycle = "permanent"
+  // impact = "利用者と支援技術が実際に実行中のProvider操作を識別でき、pickerの二重起動を防ぐ"
+  // distinction = "型やstatic markupでは検出できない複数Providerを同時表示した非同期操作中と完了後の投影を、既存componentで検証する"
+  // @end-test-value
+  it("Browseのbusyは実行したProviderと操作に限定し、完了後に解除する", async () => {
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+    const container = dom.window.document.getElementById("root")!;
+    const root = createRoot(container);
+    const calls: Array<{ kind: string; providerId: string }> = [];
+    let release!: () => void;
+    const browse = (kind: string, providerId: string) => {
+      calls.push({ kind, providerId });
+      return new Promise<void>((resolve) => { release = resolve; });
+    };
+    try {
+      await act(async () => root.render(React.cloneElement(buildSettingsContent(), {
+        onBrowseProviderSkillRootPath: (id: string) => browse("root", id),
+        onBrowseProviderSkillRelativePath: (id: string) => browse("skill", id),
+        onBrowseProviderInstructionRelativePath: (id: string) => browse("instruction", id),
+      })));
+      const buttons = [...container.querySelectorAll<HTMLButtonElement>(".settings-provider-card .settings-provider-input button")];
+      assert.equal(buttons.length, 6);
+      for (const [providerIndex, providerId] of ["codex", "copilot"].entries()) {
+        for (const [actionIndex, kind] of ["root", "skill", "instruction"].entries()) {
+          const selected = buttons[providerIndex * 3 + actionIndex]!;
+          const previousCalls = calls.length;
+          await act(async () => selected.click());
+          assert.deepEqual(calls.at(-1), { kind, providerId });
+          assert.equal(calls.length, previousCalls + 1);
+          for (const button of buttons) {
+            assert.equal(button.disabled, true);
+            assert.equal(button.getAttribute("aria-busy"), String(button === selected));
+            assert.equal(button.querySelectorAll(".loading-indicator-spinner").length, button === selected ? 1 : 0);
+          }
+          assert.ok(selected.getAttribute("aria-label")?.includes(providerSettingRows[providerIndex]!.provider.label));
+          await act(async () => {
+            for (const button of buttons) button.click();
+          });
+          assert.equal(calls.length, previousCalls + 1);
+          await act(async () => release());
+          for (const button of buttons) {
+            assert.equal(button.disabled, false);
+            assert.equal(button.getAttribute("aria-busy"), "false");
+            assert.equal(button.querySelectorAll(".loading-indicator-spinner").length, 0);
+          }
+        }
+      }
+    } finally {
+      await act(async () => root.unmount());
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+      dom.window.close();
+    }
+  });
+
+  // @test-value v2
   // kind = "security"
   // claim = "Storage maintenanceはDelete Old Sessionsと選択日より前を対象にし実行中Sessionを保持するhelpを表示する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }

@@ -89,7 +89,7 @@ type Harness = {
   close: () => Promise<void>;
 };
 
-async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["cancellationState"]; auxiliaries?: AuxiliarySessionSummary[]; monitor?: boolean; openIds?: string[] }): Promise<Harness> {
+async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["cancellationState"]; auxiliaries?: AuxiliarySessionSummary[]; auxiliaryError?: Error; monitor?: boolean; openIds?: string[] }): Promise<Harness> {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     url: initial?.monitor ? "https://withmate.local/?mode=monitor" : "https://withmate.local/",
   });
@@ -103,7 +103,10 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
   let listPage = async (request: SessionSummaryPageRequest) => page(
     request.scope === "open" ? [{ ...session("open"), cancellationState: initial?.mainCancellation }] : [],
   );
-  let auxiliaryQuery = async () => initial?.auxiliaries ?? [];
+  let auxiliaryQuery = async () => {
+    if (initial?.auxiliaryError) throw initial.auxiliaryError;
+    return initial?.auxiliaries ?? [];
+  };
   const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
   const invalidationListeners = new Set<(payload: SessionSummaryInvalidation) => void>();
   const openIdListeners = new Set<(ids: string[]) => void>();
@@ -232,6 +235,72 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     focus, settle, launch, close,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Homeと独立MonitorはAuxiliaryの初回取得・再取得の失敗から対象だけをRetryし、確定済みerrorと取得済み一覧をpending中も保持して回復する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "Auxiliary単独失敗でRetryがない、再試行時に無関係なsummaryとCharacter利用履歴を取得する、またはpending中に確定済みerrorを隠す"
+// observable = "error理由とRetry、再試行API件数、保持中の親/子表示、pending中と失敗後のalert、成功後の更新されたAuxiliary preview"
+// observation_boundary = "component-behavior"
+// scope = "HomeAppのhome/monitor consumerとAuxiliary summary取得の失敗・再試行"
+// lifecycle = "permanent"
+// impact = "Auxiliaryの状態を対象面から回復できず、別の取得や利用可能な一覧まで巻き込む"
+// distinction = "refresher単体や型checkでは検出できない両consumerのRetry配線と取得範囲を既存Home harnessで確認する"
+// @end-test-value
+test("Home and Monitor retry only the failed Auxiliary stream", async () => {
+  for (const { monitor, initiallyLoaded } of [false, true].flatMap((monitor) =>
+    [false, true].map((initiallyLoaded) => ({ monitor, initiallyLoaded }))
+  )) {
+    const home = await mountHome({
+      monitor,
+      auxiliaries: initiallyLoaded ? [auxiliary("known-aux")] : [],
+      auxiliaryError: initiallyLoaded ? undefined : new Error("Auxiliary registry unavailable"),
+    });
+    try {
+      await home.settle();
+      let pageReads = 0;
+      let usageReads = 0;
+      let auxiliaryReads = 0;
+      home.setListPage(async (request) => { pageReads++; return page(request.scope === "open" ? [session("open")] : []); });
+      home.setUsage(async () => { usageReads++; return []; });
+      if (initiallyLoaded) {
+        home.setAuxiliaryQuery(async () => { throw new Error("Auxiliary registry unavailable"); });
+        await home.emitInvalidation({ scope: "all" });
+        await home.settle();
+      }
+      const card = home.element.querySelector(".home-monitor-card")!;
+      if (initiallyLoaded) {
+        const disclosure = card.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for open"]')!;
+        await act(async () => disclosure.click());
+        assert.ok(card.querySelector('[aria-label="Open Auxiliary: known-aux"]'));
+      }
+      const baseline = [pageReads, usageReads, home.characterQueryCount()];
+      const pending = deferred<AuxiliarySessionSummary[]>();
+      home.setAuxiliaryQuery(() => { auxiliaryReads++; return pending.promise; });
+      const alert = () => home.element.querySelector('[role="alert"]')!;
+      assert.match(alert().textContent!, /Auxiliary registry unavailable/);
+      await act(async () => alert().querySelector<HTMLButtonElement>("button")!.click());
+      assert.equal(auxiliaryReads, 1);
+      assert.match(alert().textContent!, /Auxiliary registry unavailable/);
+      assert.equal(home.element.querySelector(".home-monitor-card"), card);
+      await act(async () => pending.reject(new Error("Still unavailable")));
+      assert.match(alert().textContent!, /Still unavailable/);
+      home.setAuxiliaryQuery(async () => { auxiliaryReads++; return [auxiliary("fresh-aux")]; });
+      await act(async () => alert().querySelector<HTMLButtonElement>("button")!.click());
+      assert.equal(auxiliaryReads, 2);
+      assert.equal(home.element.querySelector('[role="alert"]'), null);
+      if (!initiallyLoaded) {
+        const disclosure = card.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for open"]')!;
+        await act(async () => disclosure.click());
+      }
+      assert.ok(card.querySelector('[aria-label="Open Auxiliary: fresh-aux"]'));
+      assert.deepEqual([pageReads, usageReads, home.characterQueryCount()], baseline);
+    } finally {
+      await home.close();
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
