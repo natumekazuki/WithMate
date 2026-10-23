@@ -260,6 +260,78 @@ test("LiveRequestSurface は添付保存中の送信を止め失敗した回答�
 
 // @test-value v2
 // kind = "contract"
+// claim = "添付待ちの単一選択fieldだけ回答選択を止め、並行保存の成功・失敗ごとに再選択を許可し、最後に選んだ回答を送信する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: 添付待ちの対象入力・選択肢とSubmitの無効化、他fieldとCloseの維持" }
+// fault = "添付待ちのradio選択を後着の添付が取り消す、別fieldまで無効化する、並行保存中の一部完了で操作可否を誤る"
+// observable = "各fieldのradioとSubmit/Closeのdisabled、checked状態、保存結果と失敗alert、再選択後の回答payload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-attachment-choice-lock"
+// lifecycle = "permanent"
+// impact = "利用者が最後に選んだ回答と異なる内容を送るか、無関係な回答編集・質問の終了を妨げる"
+// distinction = "既存の添付pending testはtext欄だけで、単一選択radioとの競合や複数fieldの並行保存の操作可否を検証しない"
+// @end-test-value
+test("LiveRequestSurface は添付待ちの回答選択をfieldごとに保護する", async () => {
+  const request: LiveElicitationRequest = { ...elicitationRequest, kind: "question", fields: ["First", "Second"].map((title) => ({
+    type: "select", name: title.toLowerCase(), title, required: true, allowFreeText: true, defaultValue: "keep",
+    options: [{ value: "keep", label: "Keep" }, { value: "adjust", label: "Adjust" }],
+  })) };
+  let finishFirst!: (path: string) => void;
+  let failSecond!: (error: Error) => void;
+  const firstSave = new Promise<string>((resolve) => { finishFirst = resolve; });
+  const secondSave = new Promise<string>((_resolve, reject) => { failSecond = reject; });
+  const mounted = await mountElicitation(request, { sessionId: "session-choice" });
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      savePastedSessionFile(input: { fileName: string }) { return input.fileName === "first.txt" ? firstSave : secondSave; },
+    } });
+    const groups = [...mounted.container.querySelectorAll('[role="radiogroup"]')];
+    const [first, second] = groups.map((group) => ({
+      editor: group.querySelector("textarea")!,
+      radios: [...group.querySelectorAll<HTMLInputElement>('input[type="radio"]')],
+      adjust: group.querySelector<HTMLInputElement>('input[value="adjust"]')!,
+      custom: group.querySelector<HTMLInputElement>('input[aria-label]')!,
+    }));
+    const submitButton = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!;
+    const closeButton = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!;
+    await enterText(mounted.dom, first.editor, "Draft");
+    first.editor.setSelectionRange(first.editor.value.length, first.editor.value.length);
+    await pasteFiles(mounted.dom, first.editor, [pastedFile("first.txt", "text/plain")]);
+    assert.ok(first.radios.every((radio) => radio.disabled));
+    assert.ok(second.radios.every((radio) => !radio.disabled));
+    assert.equal(second.editor.disabled, false);
+    assert.equal(closeButton.disabled, false);
+    assert.equal(submitButton.disabled, true);
+    await act(async () => { first.adjust.click(); second.adjust.click(); });
+    assert.equal(first.custom.checked, true);
+    assert.equal(second.adjust.checked, true);
+    await pasteFiles(mounted.dom, second.editor, [pastedFile("second.txt", "text/plain")]);
+    assert.ok(second.radios.every((radio) => radio.disabled));
+    await act(async () => second.custom.click());
+    assert.equal(second.adjust.checked, true);
+    await act(async () => finishFirst("C:/session-files/first.txt"));
+    assert.equal(first.editor.value, "Draft @C:/session-files/first.txt");
+    assert.ok(first.radios.every((radio) => !radio.disabled));
+    assert.ok(second.radios.every((radio) => radio.disabled));
+    assert.equal(submitButton.disabled, true);
+    await act(async () => first.adjust.click());
+    assert.equal(first.adjust.checked, true);
+    await act(async () => failSecond(new Error("Second attachment failed")));
+    assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", /Second attachment failed/);
+    assert.ok(second.radios.every((radio) => !radio.disabled));
+    assert.equal(second.editor.value, "");
+    assert.equal(second.adjust.checked, true);
+    assert.equal(first.adjust.checked, true);
+    assert.equal(submitButton.disabled, false);
+    await act(async () => second.custom.click());
+    assert.equal(second.custom.checked, true);
+    await act(async () => second.radios[0]!.click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { first: "adjust", second: "keep" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "質問置換後に完了した添付保存は次のrequestの入力や回答へ混入しない"
 // oracle = { type = "contract", ref = "Issue #862 request-bound attachments; docs/design/desktop-ui.md#question-forms" }
 // fault = "unmount済み質問の非同期完了で次の質問のdraftを更新する"

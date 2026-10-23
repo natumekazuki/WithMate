@@ -222,7 +222,7 @@ function LiveElicitationCard({
   const [customFields, setCustomFields] = useState<string[]>(() => drafts?.get(request.requestId)?.customFields ?? []);
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const pendingAttachments = useRef(new Set<string>());
-  const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const [attachingFields, setAttachingFields] = useState<ReadonlySet<string>>(() => new Set());
   const answerFields = request.mode === "form" ? request.fields.filter((field) =>
     field.type === "text" ? !field.secret && !field.format : (field.type === "select" || field.type === "multi-select") && field.allowFreeText,
   ) : [];
@@ -238,7 +238,7 @@ function LiveElicitationCard({
   const submittedAction = isSubmitting ? elicitationAction : null;
   const isActionPending = disabled || elicitationActionRequestId !== null;
   const isEditingDisabled = disabled || isSubmitting;
-  const acceptDisabled = isActionPending || attachmentBusy || (request.delivery === "user-message" && !inputAvailable);
+  const acceptDisabled = isActionPending || attachingFields.size > 0 || (request.delivery === "user-message" && !inputAvailable);
 
   const handleSubmit = (action: LiveElicitationResponse["action"]) => {
     if (isActionPending || (action === "accept" && (acceptDisabled || pendingAttachments.current.size > 0))) return;
@@ -283,7 +283,7 @@ function LiveElicitationCard({
       onBusyChange={(busy) => {
         if (busy) pendingAttachments.current.add(field.name);
         else pendingAttachments.current.delete(field.name);
-        setAttachmentBusy(pendingAttachments.current.size > 0);
+        setAttachingFields(new Set(pendingAttachments.current));
       }}
     />
   );
@@ -379,7 +379,7 @@ function LiveElicitationCard({
                           onChange={() => {
                             setCustomFields((current) => current.filter((name) => name !== field.name));
                             setFieldValues((current) => ({ ...current, [field.name]: option.value }));
-                          }} disabled={isEditingDisabled} />
+                          }} disabled={isEditingDisabled || attachingFields.has(field.name)} />
                         <span>{option.label}</span>
                       </label>
                     ))}
@@ -387,7 +387,7 @@ function LiveElicitationCard({
                       <input type="radio" name={`${fieldIdPrefix}-${index}`} aria-label={`${field.title} Custom Answer`}
                         checked={customFields.includes(field.name)}
                         onChange={() => setCustomFields((current) => [...current.filter((name) => name !== field.name), field.name])}
-                        disabled={isEditingDisabled} />
+                        disabled={isEditingDisabled || attachingFields.has(field.name)} />
                       {renderAnswerEditor(field, index, freeTextValues[field.name] ?? "", (value) => {
                         setCustomFields((current) => current.includes(field.name) ? current : [...current, field.name]);
                         setFreeTextValues((current) => ({ ...current, [field.name]: value }));
