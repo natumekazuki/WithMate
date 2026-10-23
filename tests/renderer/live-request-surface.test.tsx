@@ -6,7 +6,7 @@ import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
-import { InlineQuestionContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
+import { InlineResponseContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -378,16 +378,16 @@ test("LiveRequestSurface renders question records and active forms without dupli
 // fault = "同じ文言の別箇所を置換する、後続本文より後ろへ質問が移動する、または終了時に質問本文を失う"
 // observable = "質問前後の本文・候補・フォームのDOM順序と終了後の本文"
 // observation_boundary = "component-behavior"
-// scope = "InlineQuestionContent source ranges and receipt anchors"
+// scope = "InlineResponseContent source ranges and receipt anchors"
 // lifecycle = "permanent"
 // impact = "質問と回答の文脈を読み違えるか、履歴から質問が消える"
 // distinction = "providerのID検査だけでは会話への差し替え位置と復元を保証できない"
 // @end-test-value
-test("InlineQuestionContent replaces only the source range and fixes tool questions at receipt", () => {
+test("InlineResponseContent replaces only the source range and fixes tool questions at receipt", () => {
   const text = "Same? Before Same? After";
   const request: LiveElicitationRequest = { requestId: "async", provider: "codex", kind: "question", mode: "form", message: "Question", fields: [{ type: "text", name: "q", title: "Same?", required: true }] };
   const tool: LiveElicitationRequest = { ...request, requestId: "tool", fields: [{ type: "text", name: "q", title: "Tool question", required: true }] };
-  const render = (active: boolean) => new JSDOM(renderToStaticMarkup(React.createElement(InlineQuestionContent, {
+  const render = (active: boolean) => new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
     text,
     records: [
       { requestId: "async", kind: "question", textRange: { start: 13, end: 18 }, message: "Question", fields: [{ title: "Same?" }], status: active ? "pending" : "answered" },
@@ -411,12 +411,12 @@ test("InlineQuestionContent replaces only the source range and fixes tool questi
 // fault = "live request消失時に構造化候補を捨てるか、本文にもある質問・候補を二重に追加する"
 // observable = "通常本文の保持と順序、補完候補の値、質問の出現数、解決済みフォームのcontrol数"
 // observation_boundary = "component-behavior"
-// scope = "InlineQuestionContent resolved source records"
+// scope = "InlineResponseContent resolved source records"
 // lifecycle = "permanent"
 // impact = "回答・Close・失効後に質問の選択条件を履歴から確認できなくなる"
 // distinction = "既存配置testのsource質問には候補がなく、型検査は解決後の表示欠落を検出しない。短い静的描画で既存本文との補完境界を継続検査する"
 // @end-test-value
-test("InlineQuestionContent retains structured choices when a source question resolves", () => {
+test("InlineResponseContent retains structured choices when a source question resolves", () => {
   for (const status of ["answered", "declined", "canceled", "expired", "pending"] as const) {
     for (const [source, missing] of [
       ["Which branch?", ["Main", "Feature"]],
@@ -429,7 +429,7 @@ test("InlineQuestionContent retains structured choices when a source question re
         textRange: { start: 7, end: 7 + source.length },
         fields: [{ title: "Which branch?", options: ["Main", "Feature"] }],
       };
-      const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineQuestionContent, {
+      const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
         text: `Before\n${source}\nAfter`, records: [record], requests: [],
         elicitationActionRequestId: null, onResolveLiveElicitation() {},
         renderText: (value, key) => React.createElement("p", { key, className: "body" }, value),

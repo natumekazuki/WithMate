@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 import { ButtonContent } from "../../ui/button-content.js";
+import type { MessageInlineContent } from "../../ui/markdown/MessageRichText.js";
 
 import type {
   LiveApprovalRequest,
@@ -494,12 +495,13 @@ export function ElicitationRecords({ records, sourceText, responseProvider }: { 
   });
 }
 
-export function InlineQuestionContent({ text, records = [], requests = [], renderText, responseProvider, ...cardProps }: {
+export function InlineResponseContent({ text, records = [], requests = [], renderText, responseProvider, inlineContent, ...cardProps }: {
   text: string;
   responseProvider?: string;
   records?: readonly ElicitationRecord[];
   requests?: readonly LiveElicitationRequest[];
-  renderText: (text: string, key: string, sourceStart: number) => ReactNode;
+  inlineContent?: MessageInlineContent;
+  renderText: (text: string, key: string, sourceStart: number, inlineContent?: MessageInlineContent) => ReactNode;
 } & Omit<LiveElicitationCardProps, "request">) {
   const entries = records.map((record) => ({ record, request: requests.find((request) => request.requestId === record.requestId) }));
   for (const request of requests) {
@@ -509,6 +511,14 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
   }
   const fragments: ReactNode[] = [];
   let offset = 0;
+  let contentInserted = false;
+  const appendText = (end: number, key: string) => {
+    const content = inlineContent && !contentInserted && Math.min(inlineContent.position, text.length) <= end
+      ? { ...inlineContent, position: Math.max(0, inlineContent.position - offset) } : undefined;
+    if (content) contentInserted = true;
+    if (end > offset) fragments.push(renderText(text.slice(offset, end), key, offset, content));
+    else if (content) fragments.push(<Fragment key={content.key}>{content.content}</Fragment>);
+  };
   for (const { record, request } of entries.sort((a, b) => (a.record.textRange?.start ?? text.length) - (b.record.textRange?.start ?? text.length))) {
     const range = record.textRange;
     const valid = range && range.start >= offset && range.end >= range.start && range.end <= text.length;
@@ -516,13 +526,13 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
     const sourceText = !request && valid && range.end > range.start ? text.slice(range.start, range.end) : undefined;
     const start = valid ? (sourceText !== undefined ? range.end : range.start) : text.length;
     const end = valid ? range.end : start;
-    if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-${start}-${record.requestId}`, offset));
+    appendText(start, `text-${offset}-${start}-${record.requestId}`);
     fragments.push(<Fragment key={record.requestId}>{request
       ? <LiveElicitationCard {...cardProps} request={request} />
       : <ElicitationRecords records={[record]} sourceText={sourceText} responseProvider={responseProvider} />}</Fragment>);
     offset = end;
   }
-  if (offset < text.length) fragments.push(renderText(text.slice(offset), `text-${offset}`, offset));
+  appendText(text.length, `text-${offset}`);
   return <>{fragments}</>;
 }
 

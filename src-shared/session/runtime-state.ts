@@ -82,6 +82,7 @@ export type LiveApprovalDecisionMode = "direct-decision" | "retry-with-policy-ch
 
 export type LiveApprovalRequest = {
   requestId: string;
+  textPosition?: number;
   provider: string;
   kind: string;
   title: string;
