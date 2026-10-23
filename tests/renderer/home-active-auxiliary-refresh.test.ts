@@ -48,22 +48,24 @@ function createAuxiliarySummary(id: string): AuxiliarySessionSummary {
 describe("createHomeAuxiliarySessionRefresher", () => {
   // @test-value v2
   // kind = "invariant"
-  // claim = "Auxiliary summary refresherは取得中の無効化より古いsnapshotを適用せず、繰り越した取得から現行summaryを反映する"
+  // claim = "Auxiliary summary refresherは取得中のRetryを重複させず、event無効化時だけ古いsnapshotを破棄してbusyを維持したまま最新を再取得する"
   // oracle = { type = "contract", ref = "GitHub Issue #783 / docs/design/desktop-ui.md Home Window" }
-  // fault = "無効化済みsnapshotを適用して現行の取消待ちを消すか、後続の取得を捨てる"
-  // observable = "fetchCallCountとsetAuxiliarySessionSummariesへ渡されたsummary列"
+  // fault = "Retry連打で進行中の結果を無効化する、event無効化の後続取得を捨てる、または取得中にbusyを解除する"
+  // observable = "fetchCallCount、setAuxiliarySessionSummariesへ渡されたsummary列、onRefreshingChangeの現在値"
   // observation_boundary = "implementation"
   // scope = "createHomeAuxiliarySessionRefresher in-flight scheduling"
   // lifecycle = "permanent"
   // impact = "遅い取得が取消待ちの表示を巻き戻し、実停止していない会話をStoppedへ移す"
-  // distinction = "型検査では判別できないdeferred取得と無効化の順序を、2応答の低コストなtestで直接確認する"
+  // distinction = "型検査では判別できないRetryとevent無効化の順序を、3応答の低コストなtestで直接確認する"
   // @end-test-value
-  it("無効化済みsnapshotを破棄し、in-flight中のrefreshを再実行する", async () => {
+  it("Retry重複を無視し、無効化済みsnapshotだけを破棄して再取得する", async () => {
     const firstFetch = createDeferred<AuxiliarySessionSummary[]>();
     const secondFetch = createDeferred<AuxiliarySessionSummary[]>();
+    const thirdFetch = createDeferred<AuxiliarySessionSummary[]>();
     let fetchCallCount = 0;
+    let refreshing = false;
     const setCalls: AuxiliarySessionSummary[][] = [];
-    const pendingFetches = [firstFetch, secondFetch];
+    const pendingFetches = [firstFetch, secondFetch, thirdFetch];
     const refresher = createHomeAuxiliarySessionRefresher({
       fetchAuxiliarySessionSummaries: () => {
         fetchCallCount += 1;
@@ -72,23 +74,39 @@ describe("createHomeAuxiliarySessionRefresher", () => {
         return fetch.promise;
       },
       setAuxiliarySessionSummaries: (sessions) => setCalls.push(sessions),
+      onRefreshingChange: (value) => { refreshing = value; },
     });
 
-    refresher.refresh();
-    refresher.refresh();
-
+    refresher.retry();
+    refresher.retry();
     assert.equal(fetchCallCount, 1);
-
-    firstFetch.resolve([createAuxiliarySummary("aux-stale")]);
+    assert.equal(refreshing, true);
+    const known = [createAuxiliarySummary("aux-known")];
+    firstFetch.resolve(known);
     await flushPromises();
+    assert.equal(fetchCallCount, 1);
+    assert.deepEqual(setCalls, [known]);
+    assert.equal(refreshing, false);
+
+    refresher.retry();
+    refresher.refresh();
+    refresher.retry();
 
     assert.equal(fetchCallCount, 2);
-    assert.deepEqual(setCalls, []);
+    assert.equal(refreshing, true);
 
-    secondFetch.resolve([]);
+    secondFetch.resolve([createAuxiliarySummary("aux-stale")]);
     await flushPromises();
 
-    assert.deepEqual(setCalls, [[]]);
+    assert.equal(fetchCallCount, 3);
+    assert.deepEqual(setCalls, [known]);
+    assert.equal(refreshing, true);
+
+    thirdFetch.resolve([]);
+    await flushPromises();
+
+    assert.deepEqual(setCalls, [known, []]);
+    assert.equal(refreshing, false);
   });
 
   // @test-value v2

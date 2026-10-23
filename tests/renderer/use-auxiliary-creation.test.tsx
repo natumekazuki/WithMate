@@ -29,6 +29,7 @@ async function mount(t: TestContext, api: Api) {
   const root = createRoot(dom.window.document.getElementById("root")!);
   let state!: ReturnType<typeof useAuxiliaryCreation>;
   const applied: AuxiliarySession[] = [];
+  let closes = 0;
   function Harness({ parent }: { parent: string | null }) {
     const [feedback, setFeedback] = React.useState("");
     const [provider, setProvider] = React.useState("codex");
@@ -38,7 +39,7 @@ async function mount(t: TestContext, api: Api) {
       checkingCreationResult={state.status === "unknown"} cancelling={state.cancelling}
       canCancelCreation={canCancelAuxiliaryLaunchCreation(state.status)}
       onCancelCreation={() => { void state.cancel(); }}
-      onClose={() => undefined} onSelectProvider={setProvider} onStart={() => { void state.start(provider); }} />;
+      onClose={() => { closes++; }} onSelectProvider={setProvider} onStart={() => { void state.start(provider); }} />;
   }
   const render = async (parent: string | null) => { await act(async () => root.render(<Harness parent={parent} />)); };
   t.after(async () => {
@@ -51,6 +52,7 @@ async function mount(t: TestContext, api: Api) {
     }
   });
   return { render, get state() { return state; }, applied, storage: dom.window.localStorage,
+    get closes() { return closes; },
     document: dom.window.document,
     get startButton() { return dom.window.document.querySelector<HTMLButtonElement>(".start-session-button")!; },
     poll: async () => { await act(async () => { t.mock.timers.tick(500); }); } };
@@ -66,6 +68,57 @@ function apiWith(overrides: Partial<Api> = {}): Api {
     ...overrides,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary作成待ちでdialog自体にfocusが退避してもTab/Shift+Tabは利用可能な取消操作へ移り、取消待ちの全無効時にもfocusとEscapeをdialog内に保つ"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
+// fault = "dialog自身からのTab移動を捕捉せず、背景へfocusが抜けて取消とEscapeに到達できなくなる"
+// observable = "実hook/dialogのactiveElement、TabのdefaultPrevented、Escapeのclose callback回数"
+// observation_boundary = "component-behavior"
+// scope = "Auxiliary dialogの作成待ち・取消待ち・取消失敗後のkeyboard操作"
+// lifecycle = "permanent"
+// impact = "keyboard利用者が作成待ちの取消やdialogを閉じる操作へ到達できなくなる"
+// distinction = "既存busy testや型検査では扱わない非同期control無効化後のfocus境界を同じ軽量DOM harnessで検証する"
+// @end-test-value
+test("Auxiliary dialog keeps Tab and Escape inside while creation controls change", async (t) => {
+  const pendingCreate = deferred<AuxiliarySession>();
+  const pendingCancel = deferred<Awaited<ReturnType<Api["cancelAuxiliaryCreation"]>>>();
+  const fixture = await mount(t, apiWith({
+    createAuxiliarySession: () => pendingCreate.promise,
+    cancelAuxiliaryCreation: () => pendingCancel.promise,
+  }));
+  await fixture.render("parent-1");
+  await act(async () => { fixture.startButton.focus(); fixture.startButton.click(); });
+  const dialog = fixture.document.querySelector<HTMLElement>('[role="dialog"] > section')!;
+  const cancel = fixture.document.querySelector<HTMLButtonElement>(".launch-cancel-button")!;
+  assert.ok(fixture.document.activeElement === dialog, "disabled start moves focus to the dialog");
+  const press = async (key: string, shiftKey = false) => {
+    const event = new fixture.document.defaultView!.KeyboardEvent("keydown", { key, shiftKey, bubbles: true, cancelable: true });
+    await act(async () => { fixture.document.activeElement!.dispatchEvent(event); });
+    assert.equal(event.defaultPrevented, true);
+  };
+  for (const shiftKey of [true, false]) {
+    dialog.focus();
+    await press("Tab", shiftKey);
+    assert.ok(fixture.document.activeElement === cancel, "dialog Tab moves to Cancel Creation");
+    await press("Tab", shiftKey);
+    assert.ok(fixture.document.activeElement === cancel, "Tab wraps within the dialog");
+  }
+  await act(async () => cancel.click());
+  assert.equal(cancel.disabled, true);
+  assert.ok(fixture.document.activeElement === dialog, "disabled cancel moves focus to the dialog");
+  await press("Tab", true);
+  assert.ok(fixture.document.activeElement === dialog, "Tab keeps focus in the dialog when every control is disabled");
+  await press("Escape");
+  assert.equal(fixture.closes, 1);
+  await act(async () => pendingCancel.reject(new Error("Cancel unavailable")));
+  assert.equal(cancel.disabled, false);
+  await press("Tab", true);
+  assert.ok(fixture.document.activeElement === cancel, "cancel recovery restores keyboard access");
+  await press("Escape");
+  assert.equal(fixture.closes, 2);
+});
 
 // @test-value v2
 // kind = "regression"

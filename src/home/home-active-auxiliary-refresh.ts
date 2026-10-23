@@ -4,11 +4,13 @@ export type HomeAuxiliarySessionRefresherInput = {
   fetchAuxiliarySessionSummaries: () => Promise<AuxiliarySessionSummary[]>;
   setAuxiliarySessionSummaries: (sessions: AuxiliarySessionSummary[]) => void;
   onLoadState?: (state: "loading" | "ready" | "error") => void;
+  onRefreshingChange?: (refreshing: boolean) => void;
   onError?: (error: unknown) => void;
 };
 
 export type HomeAuxiliarySessionRefresher = {
   refresh(): void;
+  retry(): void;
   dispose(): void;
 };
 
@@ -23,6 +25,7 @@ export function createHomeAuxiliarySessionRefresher({
   fetchAuxiliarySessionSummaries,
   setAuxiliarySessionSummaries,
   onLoadState,
+  onRefreshingChange,
   onError,
 }: HomeAuxiliarySessionRefresherInput): HomeAuxiliarySessionRefresher {
   let active = true;
@@ -41,6 +44,7 @@ export function createHomeAuxiliarySessionRefresher({
 
     refreshInFlight = true;
     refreshRequestedWhileInFlight = false;
+    onRefreshingChange?.(true);
     if (lastAppliedSessions === null) {
       onLoadState?.("loading");
     }
@@ -67,12 +71,17 @@ export function createHomeAuxiliarySessionRefresher({
       refreshInFlight = false;
       if (active && refreshRequestedWhileInFlight) {
         refresh();
+      } else if (active) {
+        onRefreshingChange?.(false);
       }
     });
   };
 
   return {
     refresh,
+    retry() {
+      if (!refreshInFlight) refresh();
+    },
     dispose() {
       active = false;
     },

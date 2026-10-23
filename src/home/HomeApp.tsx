@@ -118,6 +118,7 @@ export default function HomeApp() {
   const sessions = sessionSummariesState.summaries;
   const [auxiliarySessionSummaries, setAuxiliarySessionSummaries] = useState<AuxiliarySessionSummary[]>([]);
   const [auxiliaryDataState, setAuxiliaryDataState] = useState<HomeMonitorAuxiliaryDataState>("loading");
+  const [auxiliaryRefreshing, setAuxiliaryRefreshing] = useState(false);
   const hasLoadedAuxiliarySessionSummariesRef = useRef(false);
   const auxiliarySessionRefresherRef = useRef<ReturnType<typeof createHomeAuxiliarySessionRefresher> | null>(null);
   const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
@@ -563,6 +564,7 @@ export default function HomeApp() {
 
     const refresher = createHomeAuxiliarySessionRefresher({
       fetchAuxiliarySessionSummaries: () => withmateApi.listOpenAuxiliarySessionSummaries(),
+      onRefreshingChange: setAuxiliaryRefreshing,
       setAuxiliarySessionSummaries: (sessions) => {
         setAuxiliarySessionSummaries((current) =>
           resolveHomeAuxiliarySessionSummariesState(current, sessions),
@@ -888,7 +890,7 @@ export default function HomeApp() {
   const monitorFeedback = [sessionMonitorFeedback, sessionSummariesState.openError, auxiliaryLoadFeedback].filter(Boolean).join(" ");
   const retryMonitorLoad = sessionSummariesState.openError || auxiliaryDataState === "error" ? () => {
     if (sessionSummariesState.openError) void refreshSessionSummaries("preserve");
-    if (auxiliaryDataState === "error") auxiliarySessionRefresherRef.current?.refresh();
+    if (auxiliaryDataState === "error") auxiliarySessionRefresherRef.current?.retry();
   } : undefined;
   const sessionListFeedback = [
     sessionSummariesState.recentError && `Recent sessions: ${sessionSummariesState.recentError}`,
@@ -922,6 +924,7 @@ export default function HomeApp() {
       runningEntries: runningMonitorEntries,
       nonRunningEntries: nonRunningMonitorEntries,
       auxiliaryDataState,
+      auxiliaryRefreshing,
       sessionWindowsDataState: openSessionsLoadStatus,
       runningEmptyMessage: monitorRunningEmptyMessage,
       nonRunningEmptyMessage: monitorCompletedEmptyMessage,
@@ -963,6 +966,7 @@ export default function HomeApp() {
       runningMonitorEntries,
       nonRunningMonitorEntries,
       auxiliaryDataState,
+      auxiliaryRefreshing,
       sessionWindowsDataState: openSessionsLoadStatus,
       monitorRunningEmptyMessage,
       monitorNonRunningEmptyMessage: monitorCompletedEmptyMessage,
