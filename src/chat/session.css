@@ -2100,13 +2100,28 @@
   width: auto;
 }
 
+.live-approval-card .live-approval-allow {
+  background: var(--orange);
+  color: #10151d;
+}
+
+.live-approval-card .live-approval-allow:hover:not(:disabled) {
+  background: var(--orange);
+  filter: brightness(1.12);
+}
+
+.live-approval-card .drawer-toggle:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
 .live-approval-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-.live-approval-actions button {
+:where(.live-elicitation-card) .live-approval-actions button {
   justify-self: start;
   padding: 10px 16px;
   border-radius: 999px;
@@ -2114,7 +2129,7 @@
   color: #fff;
 }
 
-.live-approval-actions .drawer-toggle.secondary {
+:where(.live-elicitation-card) .live-approval-actions .drawer-toggle.secondary {
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
   box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.14);

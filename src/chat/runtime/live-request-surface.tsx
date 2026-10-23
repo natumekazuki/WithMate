@@ -580,6 +580,7 @@ function LiveApprovalCard({
       <div className="live-approval-actions">
         {isApprovalSubmitting ? <span className="visually-hidden" role="status">Processing approval request</span> : null}
         <button
+          className="drawer-toggle live-approval-allow"
           type="button"
           onClick={() => resolveApproval("approve")}
           disabled={isApprovalSubmitting}
