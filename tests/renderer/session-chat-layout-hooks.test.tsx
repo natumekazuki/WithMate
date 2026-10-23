@@ -348,9 +348,9 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
 
 // @test-value v2
 // kind = "contract"
-// claim = "本文buttonやlinkのfocusからも上方向キーで読み返しを保持し、buttonのactivationキーは意図を変えず、下向き操作で24px以内へ戻ると追尾し、layout更新の補正をframe内で集約する"
+// claim = "本文buttonやlinkからの閲覧意図を保ち、下向き操作で24px以内へ戻ると追尾する。本文更新の補正をframe内で集約し、ActionDockでviewportが変わる時は描画前に末尾を合わせる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: message list follow mode" }
-// fault = "子button/linkからの閲覧キーをactivationと混同して末尾へ戻す、layoutや内部操作で追尾が外れる、読み返し中に復帰する、または重複補正を繰り返す"
+// fault = "子button/linkの閲覧意図を上書きする、読み返し中に追尾を再開する、重複補正を繰り返す、またはviewport変化の補正を次frameまで遅らせる"
 // observable = "following状態、scrollTop、同frame内の末尾補正回数"
 // observation_boundary = "component-behavior"
 // scope = "useSessionMessageListFollowing"
@@ -659,9 +659,15 @@ test("useSessionMessageListFollowing は操作意図とlayout補正を分離す�
 
     clientHeight = 140;
     await act(async () => {
+      const viewportResize: ResizeObserverEntry = {
+        target: messageList,
+        contentRect: messageList.getBoundingClientRect(),
+        borderBoxSize: [], contentBoxSize: [], devicePixelContentBoxSize: [],
+      };
       for (const observer of resizeObservers) {
-        observer.callback([], observer as unknown as ResizeObserver);
+        observer.callback([viewportResize], observer as unknown as ResizeObserver);
       }
+      assert.equal(messageList.scrollTop, 1_120, "viewport resizeは次のRAFを待たず描画前に末尾を合わせる");
       await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
     });
     assert.equal(messageList.scrollTop, 1_120, "ActionDock resize後のviewport末尾へ追従する");
@@ -1027,7 +1033,7 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
   dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
   Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: reducedMotion }) });
   Object.defineProperty(dom.window, "ResizeObserver", { value: class {
-    constructor(callback: () => void) { resize = callback; }
+    constructor(callback: (entries: ResizeObserverEntry[]) => void) { resize = () => callback([]); }
     observe() {}
     unobserve() {}
     disconnect() {}

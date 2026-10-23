@@ -791,10 +791,12 @@ export function useSessionMessageListFollowing({
       return;
     }
 
-    const observer = new ownerWindow.ResizeObserver(() => {
+    const observer = new ownerWindow.ResizeObserver((entries) => {
       if (isMessageListFollowingRef.current) {
-        // Read the animated viewport before paint, not one frame behind the dock.
-        if (sendMotionRef.current) scrollMessageListToBottom();
+        // Keep ordinary dock resizing on the same paint as the viewport, too.
+        if (sendMotionRef.current || entries.some((entry) => entry.target === messageListElement)) {
+          scrollMessageListToBottom();
+        }
         scheduleCorrection();
       }
     });

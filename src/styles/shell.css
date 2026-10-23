@@ -92,9 +92,7 @@
     minmax(0, 1fr)
     var(--session-dock-splitter-size)
     var(--session-action-dock-row-height);
-  transition:
-    grid-template-rows var(--session-dock-motion-duration) var(--session-dock-motion-easing),
-    grid-template-columns var(--session-dock-motion-duration) var(--session-dock-motion-easing);
+  transition: grid-template-rows var(--session-dock-motion-duration) var(--session-dock-motion-easing);
 }
 
 .session-selection-action-overlay {

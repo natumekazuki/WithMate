@@ -316,6 +316,8 @@ export function SessionChatScreen({
 }: SessionChatScreenProps) {
   const ownLayoutRef = useRef<HTMLDivElement | null>(null);
   const centralRef = useRef<HTMLElement | null>(null);
+  const previousSidePanesRef = useRef(`${isLeftPaneVisible}:${isRightPaneVisible}`);
+  const sidePaneAnimationRef = useRef<Animation | null>(null);
   const previousActionDockExpandedRef = useRef(isActionDockExpanded);
   const [isActionDockTransitioning, setIsActionDockTransitioning] = useState(false);
   const [isCentralCollapsed, setIsCentralCollapsed] = useState(false);
@@ -330,6 +332,35 @@ export function SessionChatScreen({
   }, [layoutRef, workbenchRef]);
   const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
   const actionDockHeight = (style as Record<string, unknown> | undefined)?.["--session-action-dock-height"];
+  useLayoutEffect(() => {
+    const sidePanes = `${isLeftPaneVisible}:${isRightPaneVisible}`;
+    if (previousSidePanesRef.current === sidePanes) return;
+    previousSidePanesRef.current = sidePanes;
+    const layout = ownLayoutRef.current;
+    const view = layout?.ownerDocument.defaultView;
+    const content = centralRef.current?.querySelector<HTMLElement>(".session-central-surface:not([hidden])");
+    const opacity = content && sidePaneAnimationRef.current ? view?.getComputedStyle(content).opacity : "0";
+    sidePaneAnimationRef.current?.cancel();
+    sidePaneAnimationRef.current = null;
+    // Only discrete horizontal pane changes reflow text. Dragging and vertical resizing stay direct.
+    if (!layout || !view || !content || view.innerWidth < 1400) return;
+    const media = view.matchMedia("(prefers-reduced-motion: reduce)");
+    if (media.matches) return;
+    const duration = Number.parseFloat(view.getComputedStyle(layout).getPropertyValue("--session-dock-motion-duration"));
+    if (duration > 0) {
+      const animation = content.animate?.([{ opacity: opacity ?? "0" }, { opacity: 1 }], { duration: duration * 0.6, easing: "ease-out" });
+      if (animation) {
+        sidePaneAnimationRef.current = animation;
+        const reduceMotion = () => { if (media.matches) animation.cancel(); };
+        media.addEventListener("change", reduceMotion);
+        animation.oncancel = animation.onfinish = () => {
+          media.removeEventListener("change", reduceMotion);
+          if (sidePaneAnimationRef.current === animation) sidePaneAnimationRef.current = null;
+        };
+      }
+    }
+  }, [isLeftPaneVisible, isRightPaneVisible]);
+  useLayoutEffect(() => () => sidePaneAnimationRef.current?.cancel(), []);
   useLayoutEffect(() => {
     if (previousActionDockExpandedRef.current === isActionDockExpanded) {
       return;

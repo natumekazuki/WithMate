@@ -649,7 +649,7 @@ export function SessionMessageColumn({
     directDomUpdates: true,
     directDomUpdatesMode: "position",
     useFlushSync: false,
-    useAnimationFrameWithResizeObserver: true,
+    useAnimationFrameWithResizeObserver: false,
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({

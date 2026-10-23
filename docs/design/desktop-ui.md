@@ -297,6 +297,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
   - 左右splitterはclickで開閉し、開いた領域をdragと矢印キーでサイズ調整する。幅0でもclick用の操作領域を残す
+  - 横配置の左右pane開閉では中央本文を最終幅へ一度だけ再配置し、paneのslideと中央内容の短いfadeで接続する。幅を補間して改行を繰り返したり文字を横伸縮させたりしない。ActionDockや縦配置paneの高さ変更では本文幅を保ち、末尾追従中はviewportの変化を描画前に補正する。読み返し中は既存のmessage anchorとoffsetを保つ。dragはpointerへ直接追従し、fadeや遅延を加えない
   - 中央が高さ0の間もHeaderとActionDockのsplitterを操作可能に保つ。中央内のsplitterは操作不可とする
   - 共有下部パネルの展開時最小高さは296pxとする。Promptでは実行設定を常時表示し、textarea自体は最低100pxを保ち、feedbackの高さは別に確保する。候補一覧は既存の高さ上限内で表示し、縮めて消さない。高さが不足する場合は内部スクロールで設定と送信操作へ到達できるようにする
   - 最小サイズは各領域のCSS custom propertyで所有し、レイアウト側が読み取る。File Explorerの最小幅は260px、Context paneは360px、縦stack時は各200px、中央の最小高さは160pxとする。Main／Auxiliaryは各360pxで、両側表示中に中央の実幅が両者とsplitterの合計未満なら送信対象側だけを表示する。中央splitterは1本とし、端へ寄せて片側の要求幅が最小幅の半分未満になるとその側を閉じ、反対側を全幅表示する。閉じた側はclickで両側表示へ戻す。表示比率と送信対象は独立して保持する
@@ -335,6 +336,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Agent Sessionでは`Preview / Source`の右に同じ表示形式の`Prompt / Terminal`切替を置き、押したmodeを展開する。初期選択はPrompt。既定shortcutはWindows／Linuxの`Ctrl+Shift+T`、macOSの`Cmd+Shift+T`で、Settingsから変更できる。composerと端末本文のどちらにfocusがあっても切り替えられ、IME変換中とkey repeatでは発火しない
   - PromptとTerminalは同時表示せず、非表示側をinertにしてmountを維持する。Promptのdraft・selectionとTerminalのタブ・出力・PTYを保持し、Promptへ戻るとcomposerへ、Terminalを選ぶと選択端末へfocusする。splitterで再展開した時は選択modeを維持する。Quote／参照挿入などcomposerを開く操作はPromptへ戻す
   - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はPromptのexpandedで表示し、実行中indicatorはmessage listに置く
+  - `Preview / Source`は同じ本文の表現変更として、選択buttonを即時反映し、本文だけを70msのfade-out、表現の交換、110msのfade-inでつなぐ。行・avatar・質問入力・実行状態は維持し、検索と文字選択は実際の本文表現へ合わせる。読み返しのmessage anchorとoffset、末尾追従を維持し、連続操作は最新選択を優先する。会話切替・非表示・reduced motionでは旧演出を取消し、最新選択へ直接切り替える
   - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の40px固定幅領域を常時予約し、非実行中は不可視にする。Sendは下段右端の40×40pxの円形buttonと約20pxの紙飛行機iconで表示し、busy中は同寸法のspinnerへ切り替える。設定群が狭幅で折り返してもSendを独立した右列に保ち、開閉やMain / Auxiliary切替で主操作の位置を変えない
   - 開閉は下 splitter を主導線とし、compact では実行状態によらずdock全体の余白からも展開できる。非表示の `Cancel` 予約領域と操作間の隙間も対象とし、表示中の操作ボタンは自身の操作を優先してdockを展開しない。dock 内に `Hide` は置かない
   - Promptのexpandedでは上部操作列と下部設定・送信列の高さを固定し、dragで中央のtextarea領域を伸縮させる。Main／Auxiliaryの実行中も次の依頼を準備するため、Template・Skill・添付・Additional Directory・対応する実行設定を使える。実行中Turnの設定・認可済みdirectoryは捕捉値を維持し、編集値は次の送信から適用する。read-only、入力のblocked条件、quit／close凍結は維持する。Terminalでは切替操作列とタブバーを固定し、端末本文へ残りの高さを割り当てる
