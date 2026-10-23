@@ -7,10 +7,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
 import { InlineQuestionContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
+import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../src/settings/shortcut-registry.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-async function mountElicitation(request: LiveElicitationRequest) {
+async function mountElicitation(request: LiveElicitationRequest, initialProps: Partial<LiveRequestSurfaceProps> = {}) {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -39,7 +40,7 @@ async function mountElicitation(request: LiveElicitationRequest) {
       ...props,
     })));
   };
-  await render(request);
+  await render(request, initialProps);
   return {
     container, dom, responses, render,
     async cleanup() {
@@ -69,6 +70,17 @@ async function submit(container: HTMLElement) {
     .find((candidate) => candidate.textContent === "Submit");
   assert.ok(button);
   await act(async () => button.click());
+}
+
+async function pasteFiles(dom: JSDOM, input: HTMLTextAreaElement, files: Array<{ name: string; type: string; arrayBuffer(): Promise<ArrayBuffer> }>) {
+  const event = new dom.window.Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", { value: { files, items: [] } });
+  await act(async () => { input.dispatchEvent(event); });
+  return event;
+}
+
+function pastedFile(name: string, type: string) {
+  return { name, type, arrayBuffer: async () => new TextEncoder().encode(name).buffer };
 }
 
 const approvalRequest: LiveApprovalRequest = {
@@ -124,6 +136,407 @@ const elicitationRequest: LiveElicitationRequest = {
 
 // @test-value v2
 // kind = "contract"
+// claim = "質問の画像と通常fileのpasteは対象sessionへ保存され、改行を保持した同じrequestの同じfieldの文字列回答になる"
+// oracle = { type = "contract", ref = "Issue #862: multiline free answer and attachment paths in the original question response; docs/design/desktop-ui.md#question-forms" }
+// fault = "pasteを通常composerや別質問へ挿入する、sessionを誤る、または添付を別promptや別payloadへ分離する"
+// observable = "保存APIのsessionIdとfile内容、各textarea値、元requestのSubmit payload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-paste-routing"
+// lifecycle = "permanent"
+// impact = "質問への回答が別会話へ漏れるか、添付と回答の文脈が失われる"
+// distinction = "paste helper単体はフォームのfield/requestとの接続や最終回答payloadを検証できない"
+// @end-test-value
+test("LiveRequestSurface はmixed pasteを対象質問の文字列回答に保持する", async () => {
+  const request: LiveElicitationRequest = { ...elicitationRequest, requestId: "paste-a", fields: [
+    { type: "text", name: "answer", title: "Answer A", required: true },
+    { type: "text", name: "note", title: "Note A", required: false },
+  ] };
+  const other: LiveElicitationRequest = { ...elicitationRequest, requestId: "paste-b", fields: [
+    { type: "text", name: "answer", title: "Answer B", required: true },
+  ] };
+  const saved: Array<{ sessionId: string; fileName: string; content: string }> = [];
+  const submitted: Array<{ requestId: string; response: unknown }> = [];
+  const mounted = await mountElicitation(request, {
+    sessionId: "session-paste", workspacePath: "C:/workspace", liveElicitationRequests: [request, other],
+    onResolveLiveElicitation(current, response) { submitted.push({ requestId: current.requestId, response }); },
+  });
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      async savePastedSessionFile(input: { sessionId: string; fileName: string; data: ArrayBuffer }) {
+        saved.push({ sessionId: input.sessionId, fileName: input.fileName, content: new TextDecoder().decode(input.data) });
+        return `C:/session-files/${input.fileName}`;
+      },
+    } });
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer A"]')!;
+    const note = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note A"]')!;
+    const otherAnswer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer B"]')!;
+    assert.ok(answer && note && otherAnswer);
+    await enterText(mounted.dom, answer, "First line\nSecond line\n");
+    await enterText(mounted.dom, note, "Keep this note");
+    answer.setSelectionRange(answer.value.length, answer.value.length);
+    const event = await pasteFiles(mounted.dom, answer, [pastedFile("capture.png", "image/png"), pastedFile("notes.txt", "text/plain")]);
+    assert.equal(event.defaultPrevented, true);
+    assert.deepEqual(saved, [
+      { sessionId: "session-paste", fileName: "capture.png", content: "capture.png" },
+      { sessionId: "session-paste", fileName: "notes.txt", content: "notes.txt" },
+    ]);
+    assert.match(answer.value, /^First line\nSecond line\n!\[.*\]\(C:\/session-files\/capture\.png\) @C:\/session-files\/notes\.txt$/);
+    assert.equal(note.value, "Keep this note");
+    assert.equal(otherAnswer.value, "");
+    await submit(mounted.container);
+    assert.deepEqual(submitted, [{ requestId: "paste-a", response: { action: "accept", content: { answer: answer.value, note: "Keep this note" } } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "自由回答のmultiline化後も文字数制約を検証し、format付きfieldは既存native inputから同じ構造化回答を送信する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: native response constraints and strict MCP schemas" }
+// fault = "textarea化でminLength/maxLength検証を迂回するか、format付き入力を自由回答へ置換してpayloadを変える"
+// observable = "短すぎる/長すぎる回答のvalidationと送信件数、format input type、受理された回答payload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-schema-preservation"
+// lifecycle = "permanent"
+// impact = "providerが要求したschemaに違反する回答や変形した形式付き回答を送信する"
+// distinction = "schema型検査ではmultiline editorの入力からSubmitへのvalidation接続を検証できない"
+// @end-test-value
+test("LiveRequestSurface はmultiline回答でも文字数制約とformat fieldを維持する", async () => {
+  const mounted = await mountElicitation({ requestId: "strict", provider: "codex", mode: "form", message: "Enter values", fields: [
+    { type: "text", name: "answer", title: "Answer", required: true, minLength: 3, maxLength: 5 },
+    { type: "text", name: "url", title: "URL", required: true, format: "uri" },
+  ] });
+  try {
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')!;
+    const url = mounted.container.querySelector<HTMLInputElement>('input[aria-label="URL"]')!;
+    assert.ok(answer && url);
+    assert.equal(url.type, "url");
+    await enterText(mounted.dom, url, "https://example.test/reference");
+    for (const [value, error] of [["a", "at least 3"], ["abc\ndef", "at most 5"]]) {
+      await enterText(mounted.dom, answer, value);
+      await submit(mounted.container);
+      assert.deepEqual(mounted.responses, []);
+      assert.ok(mounted.container.textContent?.includes(error));
+    }
+    await enterText(mounted.dom, answer, "a\nb");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: "a\nb", url: "https://example.test/reference" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問添付の保存待ちはSubmitを止めCloseを残し、保存失敗では入力回答を保持して理由を表示し再送できる"
+// oracle = { type = "contract", ref = "Issue #862 attachment failure and pending submission contract; docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
+// fault = "保存前に未添付回答を送る、Closeまで禁止する、失敗を成功扱いしてdraftを消す"
+// observable = "保存待ちのSubmit/Close disabled、失敗alert、textarea値、失敗後の回答payload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-attachment-pending-failure"
+// lifecycle = "permanent"
+// impact = "添付が欠けた回答を送信するか入力内容を失い、保存待ちから質問を閉じられなくなる"
+// distinction = "単体paste helperではフォーム送信の競合や利用可能なCloseを検証できない"
+// @end-test-value
+test("LiveRequestSurface は添付保存中の送信を止め失敗した回答を保持する", async () => {
+  let rejectSave!: (error: Error) => void;
+  const pending = new Promise<string>((_resolve, reject) => { rejectSave = reject; });
+  const mounted = await mountElicitation(elicitationRequest, { sessionId: "session-pending" });
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: { savePastedSessionFile: () => pending } });
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Branch"]')!;
+    assert.ok(answer);
+    await enterText(mounted.dom, answer, "Keep\nmy answer");
+    await pasteFiles(mounted.dom, answer, [pastedFile("notes.txt", "text/plain")]);
+    const buttons = [...mounted.container.querySelectorAll<HTMLButtonElement>("button")];
+    assert.equal(buttons.find(button => button.textContent === "Submit")?.disabled, true);
+    assert.equal(buttons.find(button => button.textContent === "Close")?.disabled, false);
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, []);
+    await act(async () => { rejectSave(new Error("Session file save failed")); });
+    assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", /Session file save failed/);
+    assert.equal(answer.value, "Keep\nmy answer");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { branch: "Keep\nmy answer" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "添付待ちの単一選択fieldだけ回答選択を止め、並行保存の成功・失敗ごとに再選択を許可し、最後に選んだ回答を送信する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: 添付待ちの対象入力・選択肢とSubmitの無効化、他fieldとCloseの維持" }
+// fault = "添付待ちのradio選択を後着の添付が取り消す、別fieldまで無効化する、並行保存中の一部完了で操作可否を誤る"
+// observable = "各fieldのradioとSubmit/Closeのdisabled、checked状態、保存結果と失敗alert、再選択後の回答payload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-attachment-choice-lock"
+// lifecycle = "permanent"
+// impact = "利用者が最後に選んだ回答と異なる内容を送るか、無関係な回答編集・質問の終了を妨げる"
+// distinction = "既存の添付pending testはtext欄だけで、単一選択radioとの競合や複数fieldの並行保存の操作可否を検証しない"
+// @end-test-value
+test("LiveRequestSurface は添付待ちの回答選択をfieldごとに保護する", async () => {
+  const request: LiveElicitationRequest = { ...elicitationRequest, kind: "question", fields: ["First", "Second"].map((title) => ({
+    type: "select", name: title.toLowerCase(), title, required: true, allowFreeText: true, defaultValue: "keep",
+    options: [{ value: "keep", label: "Keep" }, { value: "adjust", label: "Adjust" }],
+  })) };
+  let finishFirst!: (path: string) => void;
+  let failSecond!: (error: Error) => void;
+  const firstSave = new Promise<string>((resolve) => { finishFirst = resolve; });
+  const secondSave = new Promise<string>((_resolve, reject) => { failSecond = reject; });
+  const mounted = await mountElicitation(request, { sessionId: "session-choice" });
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      savePastedSessionFile(input: { fileName: string }) { return input.fileName === "first.txt" ? firstSave : secondSave; },
+    } });
+    const groups = [...mounted.container.querySelectorAll('[role="radiogroup"]')];
+    const [first, second] = groups.map((group) => ({
+      editor: group.querySelector("textarea")!,
+      radios: [...group.querySelectorAll<HTMLInputElement>('input[type="radio"]')],
+      adjust: group.querySelector<HTMLInputElement>('input[value="adjust"]')!,
+      custom: group.querySelector<HTMLInputElement>('input[aria-label]')!,
+    }));
+    const submitButton = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!;
+    const closeButton = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!;
+    await enterText(mounted.dom, first.editor, "Draft");
+    first.editor.setSelectionRange(first.editor.value.length, first.editor.value.length);
+    await pasteFiles(mounted.dom, first.editor, [pastedFile("first.txt", "text/plain")]);
+    assert.ok(first.radios.every((radio) => radio.disabled));
+    assert.ok(second.radios.every((radio) => !radio.disabled));
+    assert.equal(second.editor.disabled, false);
+    assert.equal(closeButton.disabled, false);
+    assert.equal(submitButton.disabled, true);
+    await act(async () => { first.adjust.click(); second.adjust.click(); });
+    assert.equal(first.custom.checked, true);
+    assert.equal(second.adjust.checked, true);
+    await pasteFiles(mounted.dom, second.editor, [pastedFile("second.txt", "text/plain")]);
+    assert.ok(second.radios.every((radio) => radio.disabled));
+    await act(async () => second.custom.click());
+    assert.equal(second.adjust.checked, true);
+    await act(async () => finishFirst("C:/session-files/first.txt"));
+    assert.equal(first.editor.value, "Draft @C:/session-files/first.txt");
+    assert.ok(first.radios.every((radio) => !radio.disabled));
+    assert.ok(second.radios.every((radio) => radio.disabled));
+    assert.equal(submitButton.disabled, true);
+    await act(async () => first.adjust.click());
+    assert.equal(first.adjust.checked, true);
+    await act(async () => failSecond(new Error("Second attachment failed")));
+    assert.match(mounted.container.querySelector('[role="alert"]')?.textContent ?? "", /Second attachment failed/);
+    assert.ok(second.radios.every((radio) => !radio.disabled));
+    assert.equal(second.editor.value, "");
+    assert.equal(second.adjust.checked, true);
+    assert.equal(first.adjust.checked, true);
+    assert.equal(submitButton.disabled, false);
+    await act(async () => second.custom.click());
+    assert.equal(second.custom.checked, true);
+    await act(async () => second.radios[0]!.click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { first: "adjust", second: "keep" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問置換後に完了した添付保存は次のrequestの入力や回答へ混入しない"
+// oracle = { type = "contract", ref = "Issue #862 request-bound attachments; docs/design/desktop-ui.md#question-forms" }
+// fault = "unmount済み質問の非同期完了で次の質問のdraftを更新する"
+// observable = "置換requestのtextarea値、Submit有効性と回答payload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-stale-attachment"
+// lifecycle = "permanent"
+// impact = "別質問に意図しないfile参照が送られ回答の文脈とデータ境界が破れる"
+// distinction = "同期のfield分離検査はrequest置換中の遅延保存を観測しない"
+// @end-test-value
+test("LiveRequestSurface は古い添付の完了を置換質問へ適用しない", async () => {
+  let finishSave!: (path: string) => void;
+  const pending = new Promise<string>(resolve => { finishSave = resolve; });
+  const mounted = await mountElicitation(elicitationRequest, { sessionId: "session-old" });
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: { savePastedSessionFile: () => pending } });
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Branch"]')!;
+    assert.ok(answer);
+    await enterText(mounted.dom, answer, "Old answer");
+    await pasteFiles(mounted.dom, answer, [pastedFile("old.txt", "text/plain")]);
+    await mounted.render({ ...elicitationRequest, requestId: "replacement" }, { sessionId: "session-next" });
+    const next = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Branch"]')!;
+    await enterText(mounted.dom, next, "New answer");
+    await act(async () => { finishSave("C:/session-files/old.txt"); });
+    assert.equal(next.value, "New answer");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { branch: "New answer" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問回答の通常Enterは改行用に残し、設定済み送信shortcutだけが元の質問を送信し、IME変換中とrepeatは送信しない"
+// oracle = { type = "contract", ref = "Issue #862: multiline question editor with configured composerSubmit shortcut and IME/repeat guards" }
+// fault = "Enterで質問を誤送信する、custom bindingを無視する、IME確定で送信する、または通常composerへ誤送信する"
+// observable = "keyboard eventのdefaultPrevented、質問response数、通常composer handlerの呼出数"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-local-shortcut"
+// lifecycle = "permanent"
+// impact = "未完成の回答または別の通常メッセージが意図せず送信される"
+// distinction = "registry単体では質問textareaのlocal handler、IME状態とフォーム送信の接続を検証しない"
+// @end-test-value
+test("LiveRequestSurface は設定shortcutを質問内だけで扱う", async () => {
+  const mounted = await mountElicitation(elicitationRequest);
+  const dispatcher = getShortcutDispatcher()!;
+  let composerSends = 0;
+  dispatcher.setSettings({ overrides: { [SHORTCUT_COMMAND_IDS.composerSubmit]: {
+    windows: { key: "Enter", altKey: true }, linux: { key: "Enter", altKey: true }, macos: { key: "Enter", altKey: true },
+  } } });
+  const unregisterScope = dispatcher.registerScope("composer");
+  const unregisterHandler = dispatcher.registerHandler(SHORTCUT_COMMAND_IDS.composerSubmit, () => { composerSends += 1; });
+  try {
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Branch"]')!;
+    assert.ok(answer);
+    await enterText(mounted.dom, answer, "First\nSecond");
+    const key = async (init: KeyboardEventInit) => {
+      const event = new mounted.dom.window.KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter", ...init });
+      await act(async () => { answer.dispatchEvent(event); });
+      return event;
+    };
+    assert.equal((await key({})).defaultPrevented, false);
+    assert.equal((await key({ ctrlKey: true })).defaultPrevented, false);
+    await key({ altKey: true, repeat: true });
+    await key({ altKey: true, isComposing: true });
+    await act(async () => { answer.dispatchEvent(new mounted.dom.window.CompositionEvent("compositionstart", { bubbles: true })); });
+    await key({ altKey: true });
+    await act(async () => { answer.dispatchEvent(new mounted.dom.window.CompositionEvent("compositionend", { bubbles: true })); });
+    assert.deepEqual(mounted.responses, []);
+    assert.equal((await key({ altKey: true })).defaultPrevented, true);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { branch: "First\nSecond" } }]);
+    assert.equal(composerSends, 0);
+  } finally {
+    unregisterHandler();
+    unregisterScope();
+    dispatcher.dispose();
+    await mounted.cleanup();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問回答のAttachは元file/folder/imageとSession Filesのcopy/file/folder/imageを同じ回答fieldへpath文字列として挿入する"
+// oracle = { type = "contract", ref = "Issue #862: ActionDock-equivalent attachment actions; docs/design/desktop-ui.md#question-forms" }
+// fault = "質問menuの操作を別APIへ接続する、sessionIdを渡さない、または回答にpathを含めない"
+// observable = "各menu操作で呼ばれたpicker/copy APIと引数、回答payloadのpath文字列"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-attachment-menu-routing"
+// lifecycle = "permanent"
+// impact = "利用者が選んだ資料やSession Filesが質問への回答に含まれない"
+// distinction = "共有menuの単体testは質問editorが各callbackを正しいAPIと回答へ接続したことを保証しない"
+// @end-test-value
+test("LiveRequestSurface はAttachの各操作を質問回答へ接続する", async () => {
+  const mounted = await mountElicitation(elicitationRequest, { sessionId: "session-menu", workspacePath: "C:/workspace" });
+  const calls: unknown[] = [];
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      async pickFile(path: string) { calls.push(["file", path]); return "C:/original/file.txt"; },
+      async pickDirectory(path: string) { calls.push(["folder", path]); return "C:/original/folder"; },
+      async pickImageFile(path: string) { calls.push(["image", path]); return "C:/original/image.png"; },
+      async pickFiles(path: string) { calls.push(["copy-pick", path]); return ["C:/original/copy.txt"]; },
+      async copyFilesToSessionFiles(id: string, paths: string[]) { calls.push(["copy", id, paths]); return ["C:/session/copied.txt"]; },
+      async pickSessionFiles(id: string) { calls.push(["session-file", id]); return ["C:/session/file.txt"]; },
+      async pickSessionFolder(id: string) { calls.push(["session-folder", id]); return "C:/session/folder"; },
+      async pickSessionImageFile(id: string) { calls.push(["session-image", id]); return "C:/session/image.png"; },
+    } });
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Branch"]')!;
+    assert.ok(answer);
+    await enterText(mounted.dom, answer, "References: ");
+    for (const label of [
+      "Attach the original file as a reference", "Attach the original folder as a reference", "Attach the original image as a reference",
+      "Copy files to Session files and attach them", "Attach a file from Session files", "Attach a folder from Session files", "Attach an image from Session files",
+    ]) {
+      answer.setSelectionRange(answer.value.length, answer.value.length);
+      await act(async () => { mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Attach"]')!.click(); });
+      const action = mounted.dom.window.document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      assert.ok(action);
+      await act(async () => { action.click(); });
+    }
+    assert.deepEqual(calls, [
+      ["file", "C:/workspace"], ["folder", "C:/original"], ["image", "C:/original/folder"], ["copy-pick", "C:/original"],
+      ["copy", "session-menu", ["C:/original/copy.txt"]], ["session-file", "session-menu"], ["session-folder", "session-menu"], ["session-image", "session-menu"],
+    ]);
+    const expected = "References: @C:/original/file.txt @C:/original/folder @C:/original/image.png @C:/session/copied.txt @C:/session/file.txt @C:/session/folder @C:/session/image.png";
+    assert.equal(answer.value, expected);
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { branch: expected } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "共有Attachは対象回答欄を識別してfocusに追従し、picker待ちに別欄へ移っても開始時の欄へ挿入して元質問に送る"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: Attachの配置、初期対象、focusと保存中の対象固定" }
+// fault = "共有Attachが別欄や別質問へpathを混入する、対象表示と挿入先が異なる、または選択式の自由回答を有効にしない"
+// observable = "Attachのaccessible nameと対象欄名、picker待ち前後の各回答値とSubmit可否、送信された元質問のpayload"
+// observation_boundary = "component-behavior"
+// scope = "question-answer-shared-attachment-target"
+// lifecycle = "permanent"
+// impact = "添付資料が意図しない質問の回答へ混入するか、入力した資料が選択肢に置換されて送信されない"
+// distinction = "既存pasteと7種pickerのtestは一つのAttachを複数回答欄で共有するfocus切替と非同期完了先を検証しない"
+// @end-test-value
+test("LiveRequestSurface は共有Attachの対象を示し選択開始時の回答欄を維持する", async () => {
+  const request: LiveElicitationRequest = { ...elicitationRequest, kind: "question", fields: [
+    { type: "text", name: "answer", title: "Answer", required: true, defaultValue: "First" },
+    { type: "select", name: "choice", title: "Choice", required: true, allowFreeText: true,
+      defaultValue: "keep", options: [{ value: "keep", label: "Keep" }] },
+    { type: "text", name: "url", title: "URL", required: false, format: "uri" },
+  ] };
+  const other: LiveElicitationRequest = { ...elicitationRequest, kind: "question", requestId: "other", fields: [
+    { type: "text", name: "other", title: "Other answer", required: false, defaultValue: "Other" },
+  ] };
+  let finishPick!: (path: string) => void;
+  const pending = new Promise<string>((resolve) => { finishPick = resolve; });
+  let picks = 0;
+  const props = { sessionId: "session-shared", liveElicitationRequests: [request, other] };
+  const mounted = await mountElicitation(request, props);
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      pickFile() { return ++picks === 1 ? pending : Promise.resolve("C:/choice.txt"); },
+    } });
+    await mounted.render(request, props);
+    const [card, otherCard] = mounted.container.querySelectorAll('section[role="group"]');
+    const answer = card.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')!;
+    const choice = card.querySelector<HTMLTextAreaElement>('textarea[aria-label="Choice Custom Answer"]')!;
+    const url = card.querySelector<HTMLInputElement>('input[aria-label="URL"]')!;
+    const custom = card.querySelector<HTMLInputElement>('input[aria-label="Choice Custom Answer"]')!;
+    const pick = async (label: string) => {
+      const trigger = card.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      assert.ok(trigger);
+      await act(async () => trigger.click());
+      const item = mounted.dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Attach the original file as a reference"]');
+      assert.ok(item);
+      await act(async () => item.click());
+    };
+    assert.deepEqual([...card.querySelectorAll("button")].map((button) => button.getAttribute("aria-label")), ["Attach to Answer", "Close", "Submit"]);
+    answer.setSelectionRange(answer.value.length, answer.value.length);
+    await pick("Attach to Answer");
+    assert.equal(answer.disabled, true);
+    assert.equal(card.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!.disabled, true);
+    assert.equal(otherCard.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!.disabled, false);
+    await act(async () => custom.focus());
+    assert.ok(card.querySelector('button[aria-label="Attach to Choice"]'));
+    assert.equal(card.querySelector(".question-answer-attachment-label")?.textContent, "Choice");
+    await act(async () => url.focus());
+    assert.ok(card.querySelector('button[aria-label="Attach to Choice"]'));
+    await act(async () => {
+      finishPick("C:/first.txt");
+      await new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve()));
+    });
+    assert.equal(answer.value, "First @C:/first.txt");
+    assert.equal(choice.value, "");
+    assert.equal(url.value, "");
+    assert.equal(otherCard.querySelector("textarea")?.value, "Other");
+    await act(async () => choice.focus());
+    await pick("Attach to Choice");
+    assert.equal(choice.value, "@C:/choice.txt");
+    assert.equal(custom.checked, true);
+    assert.equal(card.querySelector<HTMLButtonElement>('button[aria-label="Submit"]')!.disabled, false);
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: "First @C:/first.txt", choice: "@C:/choice.txt" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
 // fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたは要求本文・操作labelを失う"
@@ -167,10 +580,10 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
 
 // @test-value v2
 // kind = "contract"
-// claim = "Live input requestは実行したactionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
+// claim = "質問のicon buttonとMCPの文字buttonは実行したactionだけにspinnerとbusyを示し、単一のstatusと要求内容・accessible nameを維持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
 // fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたはrequest本文・操作labelを失う"
-// observable = "input request領域と各buttonのaria-busy、spinnerの所属、status数、request本文、操作label"
+// observable = "input request領域と各buttonのaria-busy、spinnerの所属、status数、request本文、accessible name、質問iconのtooltipとaria-hidden"
 // observation_boundary = "component-behavior"
 // scope = "live-input-request-resolution-feedback"
 // lifecycle = "permanent"
@@ -178,39 +591,50 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
 // distinction = "disabled属性の有無だけでなく、busy announcementが一つだけ存在し、要求内容と操作識別が同時に残ることを確認する"
 // @end-test-value
 test("LiveRequestSurface はinput解決中のbusy announcementと操作labelを保つ", () => {
-  for (const action of ["accept", "decline", "cancel"] as const) {
-    const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
-      liveApprovalRequest: null,
-      approvalActionRequestId: null,
-      liveElicitationRequest: elicitationRequest,
-      elicitationActionRequestId: elicitationRequest.requestId,
-      elicitationAction: action,
-      onResolveLiveApproval() {},
-      onResolveLiveElicitation() {},
-    }));
+  for (const kind of [undefined, "question"] as const) {
+    for (const action of ["accept", "decline", "cancel"] as const) {
+      if (kind === "question" && action === "decline") continue;
+      const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
+        liveApprovalRequest: null,
+        approvalActionRequestId: null,
+        liveElicitationRequest: { ...elicitationRequest, kind },
+        elicitationActionRequestId: elicitationRequest.requestId,
+        elicitationAction: action,
+        onResolveLiveApproval() {},
+        onResolveLiveElicitation() {},
+      }));
 
-    assert.match(html, /class="live-elicitation-card"[^>]*aria-busy="true"/);
-    const document = new JSDOM(html).window.document;
-    assert.equal(document.querySelectorAll('[role="status"]').length, 1);
-    assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing input request");
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
-    assert.deepEqual(buttons.map((button) => button.textContent), ["Reject", "Close", "Submit"]);
-    const active = buttons[action === "accept" ? 2 : action === "decline" ? 0 : 1];
-    assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
-    assert.equal(active.getAttribute("aria-busy"), "true");
-    assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
-    assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
-    assert.ok(buttons.every((button) => button.disabled));
-    assert.match(html, /Choose a branch/);
+      assert.match(html, /class="live-elicitation-card"[^>]*aria-busy="true"/);
+      const document = new JSDOM(html).window.document;
+      assert.equal(document.querySelectorAll('[role="status"]').length, 1);
+      assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing input request");
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+      const labels = kind === "question" ? ["Close", "Submit"] : ["Reject", "Close", "Submit"];
+      assert.deepEqual(buttons.map((button) => button.getAttribute("aria-label") ?? button.textContent), labels);
+      if (kind === "question") {
+        assert.deepEqual(buttons.map((button) => button.title), labels);
+        assert.ok(buttons.every((button) => button.querySelector('svg[aria-hidden="true"]')));
+      } else {
+        assert.deepEqual(buttons.map((button) => button.textContent), labels);
+      }
+      const actionLabel = action === "accept" ? "Submit" : action === "decline" ? "Reject" : "Close";
+      const active = buttons[labels.indexOf(actionLabel)];
+      assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
+      assert.equal(active.getAttribute("aria-busy"), "true");
+      assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
+      assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
+      assert.ok(buttons.every((button) => button.disabled));
+      assert.match(html, kind === "question" ? /Branch/ : /Choose a branch/);
+    }
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "自由入力を許す単一選択は候補を残しつつ空の必須回答を拒否し、候補外の回答を文字列で送れる"
-// oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract" }
-// fault = "候補が初期選択されたように見える、自由入力を拒否する、または空白を必須回答として送る"
-// observable = "候補付き入力の初期値・候補、validation、送信payload"
+// claim = "自由入力を許す単一選択はaccessible nameを持つradioで自由回答へ戻れ、候補を残しつつ空回答を拒否して改行を含む回答を送れる"
+// oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract; Issue #862 multiline answers" }
+// fault = "候補が初期選択されたように見える、自由入力や改行を失う、または空白を必須回答として送る"
+// observable = "候補付き入力の初期値・候補、自由回答radioのaccessible nameと選択状態、validation、送信payload"
 // observation_boundary = "component-behavior"
 // scope = "live-elicitation-free-text-select"
 // lifecycle = "permanent"
@@ -219,7 +643,7 @@ test("LiveRequestSurface はinput解決中のbusy announcementと操作labelを�
 // @end-test-value
 test("LiveRequestSurface は自由入力の単一選択を候補付きで回答する", async () => {
   const request: LiveElicitationRequest = {
-    requestId: "single-free", provider: "claude", mode: "form", message: "Choose direction",
+    requestId: "single-free", provider: "claude", kind: "question", mode: "form", message: "Choose direction",
     fields: [{ type: "select", name: "direction", title: "Direction", required: true, allowFreeText: true,
       options: [{ value: "north", label: "North" }] }],
   };
@@ -238,15 +662,17 @@ test("LiveRequestSurface は自由入力の単一選択を候補付きで回答�
     await enterText(mounted.dom, input, "  ");
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, []);
-    await enterText(mounted.dom, input, "northeast");
+    await enterText(mounted.dom, input, "northeast\nvia river");
     await act(async () => north.click());
     await submit(mounted.container);
     assert.deepEqual(mounted.responses.pop(), { action: "accept", content: { direction: "north" } });
-    const custom = mounted.container.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1];
+    const custom = mounted.container.querySelector<HTMLInputElement>('input[type="radio"][aria-label="Direction Custom Answer"]');
+    assert.ok(custom);
     await act(async () => custom.click());
-    assert.equal(input.value, "northeast");
+    assert.equal(custom.checked, true);
+    assert.equal(input.value, "northeast\nvia river");
     await submit(mounted.container);
-    assert.deepEqual(mounted.responses, [{ action: "accept", content: { direction: "northeast" } }]);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { direction: "northeast\nvia river" } }]);
   } finally {
     await mounted.cleanup();
   }
@@ -254,9 +680,9 @@ test("LiveRequestSurface は自由入力の単一選択を候補付きで回答�
 
 // @test-value v2
 // kind = "contract"
-// claim = "自由入力を許す複数選択は選択肢だけ・自由入力だけ・双方を同じstring[] payloadで回答でき、空の必須回答を拒否する"
-// oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract" }
-// fault = "自由入力のために既存選択肢を選ぶ必要がある、選択した候補を失う、または空回答を送る"
+// claim = "自由入力を許す複数選択は選択肢だけ・改行を含む自由入力だけ・双方を同じstring[] payloadで回答でき、空の必須回答を拒否する"
+// oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract; Issue #862 multiline answers" }
+// fault = "自由入力のために既存選択肢を選ぶ必要がある、選択した候補や自由入力の改行を失う、または空回答を送る"
 // observable = "checkboxとCustom Answer入力のDOM操作、validation、送信payload"
 // observation_boundary = "component-behavior"
 // scope = "live-elicitation-free-text-multi-select"
@@ -274,18 +700,18 @@ test("LiveRequestSurface は自由入力の複数選択を候補と併用でき�
   try {
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, []);
-    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Custom Answer"]');
+    const input = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Tools Custom Answer"]');
     assert.ok(input);
-    await enterText(mounted.dom, input, "terminal");
+    await enterText(mounted.dom, input, "terminal\nwith shell");
     await submit(mounted.container);
-    assert.deepEqual(mounted.responses, [{ action: "accept", content: { tools: ["terminal"] } }]);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { tools: ["terminal\nwith shell"] } }]);
     const checkbox = mounted.container.querySelector<HTMLInputElement>('.live-elicitation-option input[type="checkbox"]');
     assert.ok(checkbox);
     await act(async () => checkbox.click());
     await submit(mounted.container);
-    assert.deepEqual(mounted.responses[1], { action: "accept", content: { tools: ["editor", "terminal"] } });
+    assert.deepEqual(mounted.responses[1], { action: "accept", content: { tools: ["editor", "terminal\nwith shell"] } });
     await mounted.render({ ...request, requestId: "multi-free-next" });
-    const nextInput = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Tools Custom Answer"]');
+    const nextInput = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Tools Custom Answer"]');
     const nextCheckbox = mounted.container.querySelector<HTMLInputElement>('.live-elicitation-option input[type="checkbox"]');
     assert.ok(nextInput);
     assert.ok(nextCheckbox);
@@ -323,7 +749,7 @@ test("LiveRequestSurface preserves concurrent question drafts across availabilit
   try {
     await mounted.render(request, { ...active, inputAvailable: false });
     assert.equal(mounted.container.querySelectorAll(".live-elicitation-card").length, 2);
-    const input = mounted.container.querySelector<HTMLInputElement>('input[aria-label="Direction"]');
+    const input = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Direction"]');
     assert.ok(input);
     await enterText(mounted.dom, input, "northeast");
     const buttons = [...mounted.container.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent === "Submit");
@@ -333,7 +759,7 @@ test("LiveRequestSurface preserves concurrent question drafts across availabilit
     assert.deepEqual(mounted.responses, []);
     await mounted.render(request, { liveElicitationRequests: [], drafts });
     await mounted.render(request, { ...active, inputAvailable: true });
-    assert.equal(mounted.container.querySelector<HTMLInputElement>('input[aria-label="Direction"]')?.value, "northeast");
+    assert.equal(mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Direction"]')?.value, "northeast");
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, [{ action: "accept", content: { direction: "northeast" } }]);
   } finally {
@@ -398,7 +824,7 @@ test("InlineQuestionContent replaces only the source range and fixes tool questi
   const pending = render(true);
   assert.deepEqual([...pending.body.children].map(node => node.className), ["body", "live-elicitation-card", "live-elicitation-card", "body"]);
   assert.deepEqual([...pending.querySelectorAll('.body')].map(node => node.textContent), ["Same? Before ", " After"]);
-  assert.equal(pending.querySelectorAll('input').length, 2);
+  assert.equal(pending.querySelectorAll('textarea').length, 2);
   const resolved = render(false);
   assert.deepEqual([...resolved.body.children].map(node => node.textContent), ["Same? Before Same?", "Tool questionAB", " After"]);
   assert.equal(resolved.querySelectorAll('input,button').length, 0);

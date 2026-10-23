@@ -1,7 +1,7 @@
 export type ComposerIconName =
   | "attach" | "template" | "skill" | "agent" | "folder-add" | "path" | "folders"
   | "main" | "auxiliary" | "preview" | "source" | "prompt" | "terminal"
-  | "send" | "resend" | "edit" | "stop" | "jump-bottom";
+  | "send" | "resend" | "edit" | "stop" | "close" | "jump-bottom";
 
 function iconBody(name: ComposerIconName) {
   switch (name) {
@@ -38,6 +38,8 @@ function iconBody(name: ComposerIconName) {
       return <><path d="m4 16-1 5 5-1L21 7l-4-4L4 16ZM14 6l4 4M4 16l4 4" /></>;
     case "stop":
       return <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" stroke="none" />;
+    case "close":
+      return <path d="m6 6 12 12M6 18 18 6" />;
     case "jump-bottom":
       return <path d="M12 3v13m-6-6 6 6 6-6M4 21h16" />;
   }

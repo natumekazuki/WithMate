@@ -14,6 +14,8 @@ Session Local Filesはcomposerの`@path` preview、Markdown local image、provid
 
 textareaへの画像pasteはPNG、JPEG、GIF、WebP、BMP、SVGを保存してMarkdown image参照を挿入する。一般のfile pasteはmanaged directoryへコピーして`@path`を挿入する。basenameが重なれば採番する。Rendererはpaste bytesやsource pathを直接providerへ送らず、Mainのcopy／write APIを使う。
 
+会話内の質問の自由回答も同じ添付メニュー・保存・参照挿入を使い、質問を所有するSession IDのmanaged directoryを保存先とする。回答の送信形式と操作条件は[Question Forms](desktop-ui.md#question-forms)に従う。
+
 ## 削除時の扱い
 
 外部workspaceを使うSessionの削除では、そのSession IDのmanaged directoryをbest-effortで片付ける。managed directory自身をworkspaceとするSessionは、recordを削除してもdirectoryと内容を保持する。期間指定の一括削除でも、未読込Sessionのworkspace種別をstorage summaryで判定する。実装上のAPIとcleanupは`src-electron/files/session-files.ts`を正本とする。
