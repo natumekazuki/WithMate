@@ -2291,8 +2291,12 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
       },
       dispatch: async (receipt, onStarted) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const runtime = await resolveQueueSessionRuntime(receipt.sessionId);
-        const result = await runtime.runQueuedSessionTurn(receipt, onStarted);
+        const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(receipt.sessionId);
+        assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
+        const result = await (auxiliary
+          ? auxiliaryLiveRunParents.trackRun(auxiliary, owner, () =>
+            requireAuxiliarySessionRuntimeService().runQueuedSessionTurn(receipt, onStarted))
+          : requireSessionRuntimeService().runQueuedSessionTurn(receipt, onStarted));
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         return result;
       },

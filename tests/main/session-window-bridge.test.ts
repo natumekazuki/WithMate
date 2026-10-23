@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { buildNewSession, getSessionIncarnationId, projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { projectLiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
+import { AuxiliaryLiveRunParents } from "../../src-electron/auxiliary/auxiliary-live-run-parents.js";
+import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
+import { admitSessionTurn } from "../../src-electron/session/session-turn-admission.js";
+import { readSessionMonitorPage } from "../../src-electron/session/session-monitor-query.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import {
   SessionWindowBridge,
@@ -11,6 +20,137 @@ import {
   type SessionWindowRendererState,
 } from "../../src-electron/windows/session-window-bridge.js";
 import { DEFAULT_DRAFT_FLUSH_TIMEOUT_MS, DEFAULT_QUIT_DRAFT_FLUSH_TIMEOUT_MS, type DraftFlushResult } from "../../src-electron/platform/draft-flush-coordinator.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryのqueue開始準備中にquitが取消を要求して失敗しても、親の通常closeは取消収束後までMonitorを保持しStopped再closeで解除する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close" }
+// fault = "admission予約前またはprovider読取待ちの取消が子IDを保持し、親closeをStoppedと誤判定する"
+// observable = "実runtimeのguardと取消state、close確認回数、Monitor queryの親entryとAuxiliary取消状態、Stopped再close後の空のMonitor"
+// observation_boundary = "public-boundary"
+// scope = "AuxiliaryLiveRunParents + SessionRuntimeService + admitSessionTurn + SessionWindowBridge + Monitor query"
+// lifecycle = "permanent"
+// impact = "履歴に状態を表示しない構成で取消終了待ちと結果の確認先を失う"
+// distinction = "個別guard stubでは検出できないqueue開始前の親登録と実取消通知、quit失敗後closeの結合をメモリのみで検証する"
+// @end-test-value
+it("queue準備中のAuxiliary取消はquit中止後のcloseでも親を監視保持する", async () => {
+  for (const phase of ["reservation", "provider-read"] as const) {
+    const parent = createSession({ id: "parent" });
+    const auxiliary: AuxiliarySessionSummary = {
+      ...parent, id: "aux", parentSessionId: parent.id, title: "Auxiliary", status: "active", runState: "idle",
+      displayAfterMessageIndex: null, createdAt: "now", closedAt: "",
+    };
+    const owner = {};
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const preparing = new Promise<void>((resolve) => { entered = resolve; });
+    const pause = () => { entered(); return gate; };
+    let confirmations = 0;
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: (id) => id === parent.id ? parent : null,
+      isRunInFlight: (id) => runtime.isRunInFlight(id) || parents.hasPendingRunForParent(id),
+      confirmCloseWhileRunning: () => { confirmations += 1; return true; },
+      broadcastOpenSessionWindowIds() {},
+      getWindowSender: (window) => window,
+      sendDraftFlushRequest: (window, request) => {
+        queueMicrotask(() => bridge.acknowledgeDraftFlush(request.requestId, window, request.reason === "close"));
+      },
+      cancelInFlightSessionRuns: () => runtime.cancelAllRuns(),
+    });
+    const parents = new AuxiliaryLiveRunParents({
+      getStorageOwner: () => owner,
+      isRunPending: (id) => runtime.isRunInFlight(id),
+      hasLiveSessionRun: (id) => Boolean(observability.getLiveSessionRun(id)),
+      broadcastLiveSessionRun: (id, state) => {
+        const status = projectLiveSessionRunStatus(state);
+        if (status?.runState === "running" || status?.cancellationState || status?.approvalPending) {
+          bridge.retainSessionForMonitor(parents.get(id) ?? id);
+        }
+      },
+    });
+    const observability = new SessionObservabilityService({
+      onLiveSessionRunChanged: (id, state) => parents.publish(id, state, owner),
+      onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {}, onSessionBackgroundActivityChanged() {},
+    });
+    const unexpected = () => assert.fail("Canceled admission must not reach provider preparation or persistence");
+    const runtime = new SessionRuntimeService({
+      runSessionAdmissionExclusive: (_id, reserve, signal) => admitSessionTurn({
+        runExclusive: async (operation) => {
+          if (phase === "reservation") await pause();
+          return operation();
+        },
+        assertCurrent: () => { if (signal.aborted) throw new Error("Session run canceled."); },
+        reserve,
+        readProvider: async () => { await pause(); return "codex"; },
+        assertProviderAvailable() {},
+      }),
+      getSession: unexpected, persistRunningTurnStart: unexpected, appendRunningInput: unexpected,
+      appendTerminalSession: unexpected, checkpointRuntimeMetadata: unexpected,
+      resolveComposerPreview: unexpected, getAppSettings: unexpected, resolveProviderCatalog: unexpected,
+      getProviderCodingAdapter: unexpected, getSessionMemory: unexpected, resolveProjectMemoryEntriesForPrompt: unexpected,
+      createSessionTurn: unexpected, updateSessionTurn: unexpected,
+      setLiveSessionRun: (id, state) => observability.setLiveSessionRun(id, state),
+      getLiveSessionRun: (id) => observability.getLiveSessionRun(id),
+      broadcastLiveSessionRun: (id) => parents.publish(id, observability.getLiveSessionRun(id), owner),
+      waitForApprovalDecision: unexpected, waitForElicitationResponse: unexpected,
+      setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+    });
+    const receipt: SessionTurnQueueReceipt = {
+      sessionId: auxiliary.id, incarnationId: getSessionIncarnationId(parent), id: "queue", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
+      sequence: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
+      createdAt: "now", updatedAt: "now",
+      captured: { provider: parent.provider, workspacePath: parent.workspacePath, attachments: [],
+        request: { clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10", submitSource: "composer",
+          userMessage: "queued input", executionOptions: captureSessionExecutionOptions(parent) } },
+    };
+    const readMonitor = () => readSessionMonitorPage({
+      listMonitorSessionIds: () => bridge.listMonitorSessionIds(),
+      readSummaries: async (ids) => ids.includes(parent.id) ? [projectHomeSessionSummary(parent)] : [],
+      readAuxiliarySummaries: async (ids) => ids.includes(parent.id) ? [auxiliary] : [],
+      getLiveSessionRun: (id) => observability.getLiveSessionRun(id),
+    });
+    await bridge.openSessionWindow(parent.id);
+    const run = parents.trackRun(auxiliary, owner, () => runtime.runQueuedSessionTurn(receipt, unexpected));
+    const canceled = assert.rejects(run, /Session run canceled/);
+    try {
+      await preparing;
+      assert.equal(runtime.isRunInFlight(auxiliary.id), true, phase);
+      assert.equal(await bridge.flushSessionWindowDrafts(), false);
+      assert.equal(bridge.isQuitPending(), false);
+      assert.equal(observability.getLiveSessionRun(auxiliary.id)?.cancellationState, "requested");
+      assert.equal(await bridge.requestCloseSessionWindow(parent.id), true);
+      assert.equal(confirmations, 1);
+      assert.deepEqual(bridge.listOpenSessionWindowIds(), []);
+      assert.deepEqual(bridge.listMonitorSessionIds(), [parent.id]);
+      assert.equal(runtime.isRunInFlight(auxiliary.id), true);
+      const canceling = await readMonitor();
+      assert.deepEqual(canceling.entries.map((entry) => entry.id), [parent.id]);
+      assert.equal(canceling.auxiliarySessions[0]!.cancellationState, "requested");
+
+      release();
+      await canceled;
+      await runtime.waitForPendingRuns();
+      assert.equal(runtime.isRunInFlight(auxiliary.id), false);
+      assert.equal(parents.size, 0);
+      const stopped = await readMonitor();
+      assert.deepEqual(stopped.entries.map((entry) => entry.id), [parent.id]);
+      assert.equal(stopped.auxiliarySessions[0]!.cancellationState, undefined);
+      await bridge.openSessionWindow(parent.id);
+      assert.equal(await bridge.requestCloseSessionWindow(parent.id), true);
+      assert.equal(confirmations, 1);
+      assert.deepEqual(bridge.listMonitorSessionIds(), []);
+      assert.deepEqual((await readMonitor()).entries, []);
+    } finally {
+      release();
+      await canceled;
+      observability.dispose();
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"

@@ -36,6 +36,22 @@ export class AuxiliaryLiveRunParents {
     this.parents.set(session.id, { parentSessionId: session.parentSessionId, owner });
   }
 
+  public async trackRun<T>(
+    session: Pick<AuxiliarySession, "id" | "parentSessionId" | "status">,
+    owner: object,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    // Admission can publish cancellation before the first provider/session read.
+    if (owner === this.options.getStorageOwner() && session.status === "active") {
+      this.parents.set(session.id, { parentSessionId: session.parentSessionId, owner });
+    }
+    try {
+      return await run();
+    } finally {
+      this.releaseIfUnused(session.id, owner);
+    }
+  }
+
   public delete(sessionId: string, owner: object): void {
     if (this.parents.get(sessionId)?.owner === owner) this.parents.delete(sessionId);
   }
