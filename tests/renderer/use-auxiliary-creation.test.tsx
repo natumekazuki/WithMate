@@ -153,9 +153,9 @@ test("Auxiliary reopen recovers unknown commit once and stops polling", async (t
 // @test-value v2
 // kind = "contract"
 // claim = "cancelがcommitに負けた場合は作成結果を一度だけ適用し、遅いcreate失敗でunknownへ戻さない"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#runtime-model" }
 // fault = "取消意図がcommit済み結果を隠す、または古いcreate finally/catchが確定後の状態を破壊する"
-// observable = "cancel APIの要求、hook status、適用Session数と確定後poll停止"
+// observable = "cancel APIの要求、遅いcreate失敗とpoll tick後のhook status・busy、適用Session数"
 // observation_boundary = "component-behavior"
 // scope = "auxiliary-creation-renderer-cancel"
 // lifecycle = "permanent"
