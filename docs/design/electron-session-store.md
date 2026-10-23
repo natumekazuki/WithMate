@@ -30,7 +30,7 @@ Session identity、確定message、最小turnの実行記録、provider thread�
 
 ### Turn Queue
 
-永続受付は`session_turn_queue_v6`を正本とし、Main／Auxiliaryの対象ID・incarnationとGUI request IDで一意にする。受付時の本文・実行設定・添付path descriptor・provider／workspaceを保存し、同じIDの再送は捕捉済み要求との直接比較で照合する。Auxiliaryはdurable draftの照合・consumeとreceipt INSERTを同じtransactionで行い、既知receipt照会をdraft revision照合より先に行う。受付はtransaction commit後にACKする。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。
+永続受付は`session_turn_queue_v6`を正本とし、Main／Auxiliaryの対象ID・incarnationとGUI request IDで一意にする。受付時の本文・実行設定・添付path descriptor・provider／workspaceを保存し、同じIDの再送は捕捉済み要求との直接比較で照合する。Auxiliaryの通常送信はdurable draftの照合・consumeとreceipt INSERTを同じtransactionで行い、既知receipt照会をdraft revision照合より先に行う。前回依頼の明示再送（`submitSource: retry`）は現在のdraftを送信元とせず、draftの本文・revisionを変更しない。対象owner・incarnation・親のwrite guardとreceiptのdedupは通常送信と共通にする。受付はtransaction commit後にACKする。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。
 
 queued開始は`appendRunningTurnStart`の既存transactionで、user message、最小turn、queue receiptのturn ID／user seqとrunning状態を同時保存する。terminalも既存append transactionへreceipt終端を含める。確定したterminalの返信喪失を、後からinterruptedに退行させない。queue専用commandも既存Workerのtyped proxy／generation境界を使い、Mainの同期SQLite接続やSession全履歴保存を追加しない。
 

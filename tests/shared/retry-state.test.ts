@@ -11,11 +11,11 @@ import {
   createRetryDraftReplaceConfirmationHandler,
   createRetryEditHandler,
   isRetryActionDisabled,
-  resolveRetryBannerSource,
-  resolveRetryBannerKind,
+  resolveRetrySource,
+  resolveRetryKind,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
-  shouldShowRetryBanner,
+  shouldShowRetryActions,
 } from "../../src/chat/retry-state.js";
 
 test("buildRetryDraftRestoreState は retry 編集復元時の composer state を作る", () => {
@@ -210,16 +210,18 @@ test("createCancelRetryDraftReplaceHandler は retry draft replace cancel handle
 // claim = "retry種別は実行状態と最新の最小turn phaseからinterrupted/failed/canceledを区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state後の再送導線" }
 // fault = "正常完了をcanceledとして扱うか取消後の再送導線を落とす"
-// observable = "resolveRetryBannerKindのkind"
+// observable = "resolveRetryKindのkind"
 // observation_boundary = "consumer"
 // scope = "retry-terminal-kind"
 // lifecycle = "permanent"
 // @end-test-value
-test("resolveRetryBannerKind は session state と 最小turn から retry 種別を解決する", () => {
-  assert.equal(resolveRetryBannerKind({ runState: "interrupted" }), "interrupted");
-  assert.equal(resolveRetryBannerKind({ runState: "error" }), "failed");
-  assert.equal(resolveRetryBannerKind({ runState: "idle", latestTurnPhase: "canceled" }), "canceled");
-  assert.equal(resolveRetryBannerKind({ runState: "idle", latestTurnPhase: "completed" }), null);
+test("resolveRetryKind は session state と 最小turn から retry 種別を解決する", () => {
+  assert.equal(resolveRetryKind({ runState: "interrupted" }), "interrupted");
+  assert.equal(resolveRetryKind({ runState: "error" }), "failed");
+  assert.equal(resolveRetryKind({ runState: "idle", latestTurnPhase: "canceled" }), "canceled");
+  assert.equal(resolveRetryKind({ runState: "idle", latestTurnPhase: "completed" }), null);
+  assert.equal(resolveRetryKind({ runState: "running", latestTurnPhase: "failed" }), null);
+  assert.equal(resolveRetryKind({ runState: "running", latestTurnPhase: "canceled" }), null);
 });
 
 // @test-value v2
@@ -232,7 +234,7 @@ test("resolveRetryBannerKind は session state と 最小turn から retry 種�
 // scope = "retry-owner-sequence"
 // lifecycle = "permanent"
 // @end-test-value
-test("resolveRetryBannerSource は最後の未完了依頼と同じ session / message seq の terminal event だけを使う", () => {
+test("resolveRetrySource は最後の未完了依頼と同じ session / message seq の terminal event だけを使う", () => {
   const canceled = {
     id: 10,
     sessionId: "session-1",
@@ -261,7 +263,7 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
     { role: "user" as const, text: "新しい依頼" },
   ];
 
-  assert.deepEqual(resolveRetryBannerSource({
+  assert.deepEqual(resolveRetrySource({
     sessionId: "session-1",
     messages: nextMessages.slice(0, 2),
     latestTurn: canceled,
@@ -269,45 +271,46 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
   }), {
     kind: "canceled",
     lastRequestText: "古い依頼",
+    userMessageSeq: 0,
     terminalTurn: canceled,
   });
 
-  assert.equal(resolveRetryBannerSource({
+  assert.equal(resolveRetrySource({
     sessionId: "session-1",
     messages: nextMessages,
     latestTurn: canceled,
     runState: "running",
   }), null);
 
-  assert.equal(resolveRetryBannerSource({
+  assert.equal(resolveRetrySource({
     sessionId: "session-1",
     messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
     latestTurn: completed,
     runState: "idle",
   }), null);
 
-  assert.equal(resolveRetryBannerSource({
+  assert.equal(resolveRetrySource({
     sessionId: "session-1",
     messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
     latestTurn: completed,
     runState: "idle",
   }), null);
 
-  assert.equal(resolveRetryBannerSource({
+  assert.equal(resolveRetrySource({
     sessionId: "session-1",
     messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
     latestTurn: canceled,
     runState: "idle",
   }), null);
 
-  assert.equal(resolveRetryBannerSource({
+  assert.equal(resolveRetrySource({
     sessionId: "session-1",
     messages: nextMessages,
     latestTurn: { ...canceled, sessionId: "auxiliary-1", userMessageSeq: 2 },
     runState: "idle",
   }), null);
 
-  assert.deepEqual(resolveRetryBannerSource({
+  assert.deepEqual(resolveRetrySource({
     sessionId: "session-1",
     messages: nextMessages,
     latestTurn: null,
@@ -315,54 +318,75 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
   }), {
     kind: "failed",
     lastRequestText: "新しい依頼",
+    userMessageSeq: 2,
     terminalTurn: null,
   });
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "Editは前回依頼とは異なる非空draftだけを置換確認の対象にする"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "異なるdraftを無確認で上書きするか空draftの復元を阻む"
+// observable = "shouldProtectRetryEditDraftのboolean"
+// observation_boundary = "consumer"
+// scope = "retry-edit-draft-protection"
+// lifecycle = "permanent"
+// @end-test-value
 test("shouldProtectRetryEditDraft は既存 draft の暗黙上書きを避ける", () => {
-  const retryBanner = { lastRequestText: "前回の依頼" };
+  const retryState = { lastRequestText: "前回の依頼" };
 
-  assert.equal(shouldProtectRetryEditDraft({ retryBanner, draft: "" }), false);
-  assert.equal(shouldProtectRetryEditDraft({ retryBanner, draft: "前回の依頼" }), false);
-  assert.equal(shouldProtectRetryEditDraft({ retryBanner, draft: "今の下書き" }), true);
-  assert.equal(shouldProtectRetryEditDraft({ retryBanner: null, draft: "今の下書き" }), false);
+  assert.equal(shouldProtectRetryEditDraft({ retryState, draft: "" }), false);
+  assert.equal(shouldProtectRetryEditDraft({ retryState, draft: "前回の依頼" }), false);
+  assert.equal(shouldProtectRetryEditDraft({ retryState, draft: "今の下書き" }), true);
+  assert.equal(shouldProtectRetryEditDraft({ retryState: null, draft: "今の下書き" }), false);
 });
 
-test("shouldShowRetryBanner は mode-neutral な表示 precondition を評価する", () => {
-  assert.equal(shouldShowRetryBanner({
-    hasActiveAuxiliarySession: false,
+// @test-value v2
+// kind = "invariant"
+// claim = "回復操作の表示可否は会話種別によらず前回依頼・編集権限・実行状態で決まる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "依頼なしやread-onlyや実行中に回復操作を許可する"
+// observable = "shouldShowRetryActionsのboolean"
+// observation_boundary = "consumer"
+// scope = "retry-action-visibility-guard"
+// lifecycle = "permanent"
+// @end-test-value
+test("shouldShowRetryActions は mode-neutral な表示 precondition を評価する", () => {
+  assert.equal(shouldShowRetryActions({
     hasLastUserMessage: true,
     isReadOnly: false,
     runState: "error",
   }), true);
-  assert.equal(shouldShowRetryBanner({
-    hasActiveAuxiliarySession: true,
-    hasLastUserMessage: true,
-    isReadOnly: false,
-    runState: "error",
-  }), false);
-  assert.equal(shouldShowRetryBanner({
-    hasActiveAuxiliarySession: false,
+  assert.equal(shouldShowRetryActions({
     hasLastUserMessage: false,
     isReadOnly: false,
     runState: "error",
   }), false);
-  assert.equal(shouldShowRetryBanner({
-    hasActiveAuxiliarySession: false,
+  assert.equal(shouldShowRetryActions({
     hasLastUserMessage: true,
     isReadOnly: true,
     runState: "error",
   }), false);
-  assert.equal(shouldShowRetryBanner({
-    hasActiveAuxiliarySession: false,
+  assert.equal(shouldShowRetryActions({
     hasLastUserMessage: true,
     isReadOnly: false,
     runState: "running",
   }), false);
 });
 
+// @test-value v2
+// kind = "invariant"
+// claim = "回復状態と前回依頼がある編集可能な非実行中会話だけが再送操作できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "blockedまたはread-only会話で再送できるか回復対象なしで再送できる"
+// observable = "isRetryActionDisabledのboolean"
+// observation_boundary = "consumer"
+// scope = "retry-action-disabled-guard"
+// lifecycle = "permanent"
+// @end-test-value
 test("isRetryActionDisabled は shared precondition を評価する", () => {
-  const retryBanner = {
+  const retryState = {
     kind: "failed" as const,
     badge: "失敗",
     title: "失敗",
@@ -370,42 +394,42 @@ test("isRetryActionDisabled は shared precondition を評価する", () => {
   };
 
   assert.equal(isRetryActionDisabled({
-    retryBanner,
+    retryState,
     hasLastUserMessage: true,
     composerBlocked: false,
     isReadOnly: false,
     runState: "idle",
   }), false);
   assert.equal(isRetryActionDisabled({
-    retryBanner,
+    retryState,
     hasLastUserMessage: true,
     composerBlocked: true,
     isReadOnly: false,
     runState: "idle",
   }), true);
   assert.equal(isRetryActionDisabled({
-    retryBanner,
+    retryState,
     hasLastUserMessage: true,
     composerBlocked: false,
     isReadOnly: true,
     runState: "idle",
   }), true);
   assert.equal(isRetryActionDisabled({
-    retryBanner: null,
+    retryState: null,
     hasLastUserMessage: true,
     composerBlocked: false,
     isReadOnly: false,
     runState: "idle",
   }), true);
   assert.equal(isRetryActionDisabled({
-    retryBanner,
+    retryState,
     hasLastUserMessage: false,
     composerBlocked: false,
     isReadOnly: false,
     runState: "idle",
   }), true);
   assert.equal(isRetryActionDisabled({
-    retryBanner,
+    retryState,
     hasLastUserMessage: true,
     composerBlocked: false,
     isReadOnly: false,

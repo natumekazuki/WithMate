@@ -75,7 +75,9 @@ test("session runtime feature は blocked feedback と workspace/path notice を
   const onDismissInlinePathFeedback = () => {};
   const feature = buildSessionChatRuntimeFeature({
     recovery: {
-      retryBanner: null,
+      retryState: null,
+      requestKey: "",
+      targetLabel: "Main",
       isRetryActionDisabled: false,
       isRetryEditDisabled: false,
       isRetryDraftReplacePending: false,
@@ -565,7 +567,9 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
 
     const runtime = buildSessionChatRuntimeFeature({
       recovery: {
-        retryBanner: null,
+        retryState: null,
+        requestKey: "",
+        targetLabel: "Main",
         isRetryActionDisabled: false,
         isRetryEditDisabled: false,
         isRetryDraftReplacePending: false,

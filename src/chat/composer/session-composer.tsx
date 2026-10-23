@@ -72,6 +72,7 @@ export type SessionComposerExpandedProps = {
   onRetryOriginalTurn?: () => void;
   submissionError?: string;
   targetDock?: ReactNode;
+  recoveryActions?: ReactNode;
   dockModeSwitch?: ReactNode;
   providerQuota?: ReactNode;
   chatNotice?: string;
@@ -164,6 +165,7 @@ export function SessionComposerExpanded({
   onRetryOriginalTurn,
   submissionError,
   targetDock = null,
+  recoveryActions = null,
   dockModeSwitch = null,
   providerQuota = null,
   chatNotice,
@@ -315,6 +317,7 @@ export function SessionComposerExpanded({
     showMessageViewModeControls ||
     showJumpToBottom ||
     !!targetDock ||
+    !!recoveryActions ||
     !!providerQuota ||
     !!chatNotice ||
     isRunning;
@@ -480,8 +483,9 @@ export function SessionComposerExpanded({
             </div>
           ) : null}
           {providerQuota ? <div className="session-provider-quota-slot">{providerQuota}</div> : null}
-          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch ? (
+          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch || recoveryActions ? (
             <div className="composer-toolbar-view-actions">
+              {recoveryActions}
               <div
                 className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
                 aria-hidden={isRunning ? undefined : true}

@@ -1,17 +1,16 @@
 import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
-import type { SessionRetryBannerProps } from "./runtime/session-retry.js";
+import type { SessionRecoveryActionsProps } from "./runtime/session-recovery-actions.js";
 import {
   buildLiveSessionContextPaneProps,
   type LiveSessionComposerDockPropsInput,
   type LiveSessionMessageColumnProps,
 } from "./chat-window-adapter.js";
-import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 import type { ChatErrorNotice } from "./chat-window.js";
 
-export type LiveSessionRecoveryActionsInput = SessionRetryBannerProps;
+export type LiveSessionRecoveryActionsInput = SessionRecoveryActionsProps;
 
 export function buildLiveSessionRecoveryActions(input: LiveSessionRecoveryActionsInput) {
-  return buildLiveSessionRetryBanner(input);
+  return input;
 }
 
 export function buildLiveSessionErrorNotices(input: {

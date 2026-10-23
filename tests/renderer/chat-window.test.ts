@@ -309,18 +309,37 @@ test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレン�
   assert.doesNotMatch(html, /session-plain/);
 });
 
-test("ChatWindow は preview と compact ActionDock の間に recovery actions を維持する", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "中央Preview中のcompact ActionDockでも前回依頼のResend/EditをDock内に提供する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "Previewかcompact表示で回復操作を隠すかDock外へ切り離す"
+// observable = "Previewとcompact Dock内の対象依頼、Resend/Edit button"
+// observation_boundary = "component-behavior"
+// scope = "chat-window-compact-preview-recovery"
+// lifecycle = "permanent"
+// @end-test-value
+test("ChatWindow は preview と compact ActionDock 内に recovery actions を維持する", () => {
   const props = createChatWindowProps();
   props.mainContent = React.createElement("div", null, "File Preview");
-  props.recoveryActions = React.createElement("div", null, "Retry Actions");
+  props.recoveryActions = {
+    retryState: { kind: "failed", badge: "Failed", title: "Failed", lastRequestText: "Retry this request" },
+    requestKey: "main:incarnation:0", targetLabel: "Main",
+    isRetryActionDisabled: false, isRetryEditDisabled: false, isRetryDraftReplacePending: false,
+    onResendLastMessage() {}, onEditLastMessage() {}, onConfirmRetryDraftReplace() {}, onCancelRetryDraftReplace() {},
+  };
   props.isActionDockExpanded = false;
 
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
 
-  assert.match(html, /class="session-recovery-actions-slot"><div>Retry Actions<\/div>/);
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
-  assert.ok(html.indexOf("File Preview") < html.indexOf("Retry Actions"));
-  assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
+  const dom = new JSDOM(html);
+  const dock = dom.window.document.querySelector("#session-action-dock")!;
+  assert.ok(dock.querySelector('[aria-label="Main: Previous Request Actions"]'));
+  assert.match(dock.textContent!, /Retry this request/);
+  assert.ok([...dock.querySelectorAll("button")].some((button) => button.textContent === "Resend"));
+  assert.ok([...dock.querySelectorAll("button")].some((button) => button.textContent === "Edit"));
+  dom.window.close();
 });
 
 // @test-value v2

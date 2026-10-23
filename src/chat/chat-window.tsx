@@ -21,6 +21,7 @@ import type { AdditionalDirectoryItem } from "./composer/session-composer-paths.
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ComposerIcon } from "./composer/composer-icon.js";
+import { SessionRecoveryActions, SessionRecoveryAnnouncement, type SessionRecoveryActionsProps } from "./runtime/session-recovery-actions.js";
 
 import { SessionActionDockCompactRow, SessionActionDockModeSwitch, type SessionActionDockMode, type SessionActionDockCompactRowProps } from "./approval/session-action-dock.js";
 import { SESSION_ACTION_DOCK_ID, SESSION_HEADER_DOCK_ID, SESSION_RIGHT_PANE_ID, SESSION_LEFT_PANE_ID, SessionHeader, SessionHeaderHandle, type SessionHeaderProps } from "./shell/session-header.js";
@@ -77,7 +78,7 @@ export type ChatWindowProps = Omit<
   headerProps: SessionHeaderProps;
   messageColumnProps: SessionMessageColumnProps;
   errorNotices?: readonly ChatErrorNotice[];
-  recoveryActions?: ChatScreenProps["recoveryActions"];
+  recoveryActions?: SessionRecoveryActionsProps;
   isActionDockExpanded: boolean;
   terminalContent?: ReactNode;
   actionDockModeControl?: { mode: SessionActionDockMode; onChange(mode: SessionActionDockMode): void };
@@ -628,6 +629,10 @@ export function ChatWindow({
     }
     : screenProps.rightPaneProps;
 
+  const recoveryControls = recoveryActions && (recoveryActions.retryState || recoveryActions.latestTurnLoading || recoveryActions.latestTurnError)
+    ? <SessionRecoveryActions key={recoveryActions.requestKey} {...recoveryActions} />
+    : null;
+
   return (
     <SessionChatScreen
       {...screenProps}
@@ -685,7 +690,6 @@ export function ChatWindow({
           ))}
         </div>
       ) : null}
-      recoveryActions={recoveryActions}
       supportingSurface={additionalDirectoryListProps ? (
         <ChatAdditionalDirectoryList {...additionalDirectoryListProps} />
       ) : null}
@@ -809,6 +813,7 @@ export function ChatWindow({
               else compactActionDockProps.onExpand();
             }}
           >
+          <SessionRecoveryAnnouncement recovery={recoveryActions} />
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${
               isActionDockExpanded && !isTerminalMode ? " is-active" : ""
@@ -818,6 +823,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              recoveryActions={isActionDockExpanded && !isTerminalMode ? recoveryControls : null}
               providerQuota={isActionDockExpanded && !isTerminalMode ? providerQuota : null}
               externalErrorDescriptionIds={[composerProps.externalErrorDescriptionIds, composerErrorDescriptionIds].filter(Boolean).join(" ") || undefined}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : composerProps.showJumpToBottom}
@@ -840,6 +846,7 @@ export function ChatWindow({
           >
             <SessionActionDockCompactRow
               {...compactActionDockProps}
+              recoveryActions={!isActionDockExpanded ? recoveryControls : null}
               providerQuota={!isActionDockExpanded ? providerQuota : null}
               onJumpToBottom={targetColumnControls?.followLatest ?? compactActionDockProps.onJumpToBottom}
               showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}
@@ -855,6 +862,7 @@ export function ChatWindow({
               aria-hidden={!isActionDockExpanded || !isTerminalMode} inert={!isActionDockExpanded || !isTerminalMode}>
               <SessionActionDockCompactRow
                 {...compactActionDockProps}
+                recoveryActions={isActionDockExpanded && isTerminalMode ? recoveryControls : null}
                 providerQuota={isActionDockExpanded && isTerminalMode ? providerQuota : null}
                 showExpandControl={false}
                 showJumpToBottom={concurrentChats ? false : targetColumnControls ? !targetColumnControls.isMessageListFollowing : compactActionDockProps.showJumpToBottom}

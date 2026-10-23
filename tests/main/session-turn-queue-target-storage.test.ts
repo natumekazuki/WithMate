@@ -34,6 +34,57 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Auxiliaryのretry受付は前回本文をreceiptへ保存し現在draftの本文とrevisionを一致・不一致・空の各場合に保持し、同requestをdedupし、古いownerを拒否し、通常composer受付ではdraft消費を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "retryが現在draftを消費または本文一致を要求する、別incarnationを受け入れる、同requestを二重受付する、または通常送信のdraft消費をやめる"
+// observable = "実Storage Workerのreceipt本文/id、Auxiliary draft text/durableRevision、owner mismatch例外"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-retry-queue-draft-preservation"
+// lifecycle = "permanent"
+// impact = "再送で未送信draftを喪失するか現在draftが前回本文と異なるために回復できなくなる"
+// distinction = "renderer stubはSQLite受付transaction内のdraft消費を実行せず、通常queue testはretryを扱わない"
+// @end-test-value
+test("Aux retry受付は現在draftを保持し通常composer受付だけがdraftを消費する", async () => {
+  const f = await fixture();
+  try {
+    for (const [index, text] of ["Different unsent draft", "Previous request", ""].entries()) {
+      const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session,
+        id: `retry-aux-${index}`, parentSessionId: f.session.id, title: "Recovery", status: "active", runState: "error",
+        composerDraft: text, messages: [], displayAfterMessageIndex: null,
+        characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: `created-${index}`, updatedAt: "created", closedAt: "",
+      });
+      const owner = { sessionId: aux.id, incarnationId: aux.createdAt };
+      const before = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      const retry = f.captured("Previous request");
+      retry.request.submitSource = "retry";
+      await assert.rejects(f.bundle.stores.queue.enqueue({ ...owner, incarnationId: "stale" }, retry), /incarnation mismatch/);
+      const receipt = await f.bundle.stores.queue.enqueue(owner, retry);
+      assert.equal(receipt.captured.request.userMessage, "Previous request");
+      assert.equal(receipt.captured.request.submitSource, "retry");
+      assert.equal((await f.bundle.stores.queue.enqueue(owner, retry)).id, receipt.id);
+      const after = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      assert.equal(after.text, text);
+      assert.equal(after.durableRevision, before.durableRevision);
+
+      const saved = await f.bundle.stores.auxiliary.saveAuxiliaryDraft({ auxiliarySessionId: aux.id,
+        parentSessionId: aux.parentSessionId, incarnation: after.incarnation, expectedDurableRevision: after.durableRevision,
+        text: "Normal composer request", updatedAt: "normal-draft" });
+      assert.equal(saved.outcome, "saved");
+      const normalDraft = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      const normal = f.captured("Normal composer request");
+      normal.request.submitSource = "composer";
+      normal.request.auxiliaryDraftIncarnation = normalDraft.incarnation;
+      normal.request.auxiliaryDraftDurableRevision = normalDraft.durableRevision;
+      await f.bundle.stores.queue.enqueue(owner, normal);
+      const consumed = (await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))!;
+      assert.equal(consumed.text, "");
+      assert.equal(consumed.durableRevision, normalDraft.durableRevision + 1);
+    }
+  } finally { await f.dispose(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Mainの予約入力はcurrent turnへ一度だけ原子的に保存され、dispatch前復元と不明結果解放はcanonical turnを変えない"
 // oracle = { type = "contract", ref = "Issue #801: selected queued current-turn input, atomic append, pre-provider restore and unknown hold" }
 // fault = "provider turn IDとSQLite turn IDを同一視する、receiptだけcompletedにする、inputを二重appendする、stale ownerを受け入れる、またはinput解放でcurrent turnを中断する"

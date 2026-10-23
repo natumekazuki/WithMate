@@ -62,13 +62,15 @@ export class SessionTurnQueueStorageV6 {
         .get(owner.sessionId, owner.incarnationId) as { parent_session_id: string } | undefined;
       if (auxiliary) {
         const request = captured.request;
-        if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) throw new Error("Auxiliary queue draft identity is required.");
-        const consumed = consumeAuxiliaryDraftInTransaction(this.db, {
-          auxiliarySessionId: owner.sessionId, parentSessionId: auxiliary.parent_session_id,
-          incarnation: request.auxiliaryDraftIncarnation, expectedDurableRevision: request.auxiliaryDraftDurableRevision,
-          expectedText: request.userMessage, allowRunningInput: true,
-        });
-        if (consumed.outcome !== "consumed") throw new Error("Auxiliary queue draft is stale or unavailable.");
+        if (request.submitSource !== "retry") {
+          if (!request.auxiliaryDraftIncarnation || request.auxiliaryDraftDurableRevision === undefined) throw new Error("Auxiliary queue draft identity is required.");
+          const consumed = consumeAuxiliaryDraftInTransaction(this.db, {
+            auxiliarySessionId: owner.sessionId, parentSessionId: auxiliary.parent_session_id,
+            incarnation: request.auxiliaryDraftIncarnation, expectedDurableRevision: request.auxiliaryDraftDurableRevision,
+            expectedText: request.userMessage, allowRunningInput: true,
+          });
+          if (consumed.outcome !== "consumed") throw new Error("Auxiliary queue draft is stale or unavailable.");
+        }
         if (request.displayAnchorParentMessageCount !== undefined) {
           const count = request.displayAnchorParentMessageCount;
           if (!Number.isSafeInteger(count) || count < 0) throw new Error("Auxiliary display anchor is invalid.");
