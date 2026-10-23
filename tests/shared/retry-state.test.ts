@@ -388,8 +388,6 @@ test("shouldShowRetryActions は mode-neutral な表示 precondition を評価�
 test("isRetryActionDisabled は shared precondition を評価する", () => {
   const retryState = {
     kind: "failed" as const,
-    badge: "失敗",
-    title: "失敗",
     lastRequestText: "直して",
   };
 

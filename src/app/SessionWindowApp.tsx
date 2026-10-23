@@ -659,12 +659,7 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       runState: visibleSessionRunState,
     })) return null;
-    const labels = {
-      interrupted: { badge: "Interrupted", title: "The previous request was interrupted" },
-      failed: { badge: "Failed", title: "The previous request could not be completed" },
-      canceled: { badge: "Canceled", title: "This request was stopped" },
-    };
-    return { ...labels[retrySource.kind], kind: retrySource.kind, lastRequestText: retrySource.lastRequestText };
+    return { kind: retrySource.kind, lastRequestText: retrySource.lastRequestText };
   }, [retrySource, isSelectedSessionReadOnly, visibleSessionRunState]);
   const retryRequestKey = retryState ? `${recoverySession?.id}:${recoveryIncarnation}:${retrySource?.userMessageSeq}` : "";
   const retryRequestKeyRef = useRef(retryRequestKey);

@@ -492,13 +492,13 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - terminal state 後の再送導線
   - `runState === "running"` 中は recovery action surface を出さず、既存 pending / `Cancel` を維持する
   - 最新turn記録の取得だけでは再送用の警告枠を生成しない。通常の読込中は枠のないspinnerとaccessible busy status、実際の取得失敗はerrorと`Retry`で示す。既知のterminal stateがある場合は、その回復操作を再取得中・取得失敗時にも保持する
-  - `runState === "interrupted"` + `lastUserMessage` ありで `Interrupted`、`runState === "error"` + `lastUserMessage` ありで回復操作を出す。失敗の事実・理由は応答側の共通failure rowに集約し、操作列で重複させない
-  - `runState === "idle"` でも最新turn記録 `phase === "canceled"` + `lastUserMessage` ありなら canceled copy を出す
+  - `runState === "interrupted"` または `runState === "error"` で、`lastUserMessage` がある場合に回復操作を出す。失敗の事実・理由は応答側の共通failure row、中断は既存のchat noticeで示し、操作列で重複させない
+  - `runState === "idle"` でも最新turn記録 `phase === "canceled"` + `lastUserMessage` ありなら回復操作を出す。取消状態は既存のchat本文で示す
   - `lastUserMessage` がない session では retry 不能のため surface を出さない
   - 共通 `ChatWindow` が回復操作を所有し、Action Dockの既存上段操作列へ配置する。Prompt展開・compact・Terminal・中央file previewのいずれでも到達でき、activeな列だけに描画する。通常時は回復用の空領域を予約せず、既存Cancelの予約領域を維持する
   - Mainと選択中Auxiliaryは同じ操作を使う。対象会話、前回依頼、最新turn、編集先draftを同じownerへ束縛し、会話・incarnation・依頼の切替で古い置換確認を無効にする
-  - 対象名と短い前回依頼previewを操作に隣接して表示する。全文はclickまたはkeyboardで開くdialogから確認でき、hoverだけに依存しない。停止地点や失敗理由の詳細はtranscriptを正本とする
-  - 回復操作の出現と`Resend`はAction Dockのexpanded / compact、Prompt / Terminalの選択を変更しない。狭いWindowでは操作を折り返し、preview文字列や長い会話名で横overflowさせない
+  - 通常の回復表示は`Resend` / `Edit`の2つのicon-only操作に限定する。操作対象は既存のMain / Auxiliary切替、前回依頼・停止状態・失敗理由はtranscriptから確認する。tooltipとaccessible nameには対象会話と操作名を含める
+  - 回復操作の出現と`Resend`はAction Dockのexpanded / compact、Prompt / Terminalの選択を変更しない。狭いWindowでは操作を折り返し、横overflowさせない
   - 回復操作の出現とdraft置換確認は単一のpolite statusで通知する。無関係な再描画やDockのmode切替では重複通知せず、出現時にfocusを奪わない
   - retry CTA は `Resend` と `Edit`
     - `Resend`: 選択会話の既存送信経路で前回本文を即時再送し、現在のdraftを送信・消去・書換えしない。受付不明時は再送を無効にし、既存の`Check Receipt` / `Retry Original Turn`を使う

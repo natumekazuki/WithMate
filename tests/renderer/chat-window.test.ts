@@ -314,7 +314,7 @@ test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレン�
 // claim = "中央Preview中のcompact ActionDockでも前回依頼のResend/EditをDock内に提供する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
 // fault = "Previewかcompact表示で回復操作を隠すかDock外へ切り離す"
-// observable = "Previewとcompact Dock内の対象依頼、Resend/Edit button"
+// observable = "Previewとcompact Dock内の対象付きaccessible nameを持つResend/Edit button"
 // observation_boundary = "component-behavior"
 // scope = "chat-window-compact-preview-recovery"
 // lifecycle = "permanent"
@@ -323,7 +323,7 @@ test("ChatWindow は preview と compact ActionDock 内に recovery actions を�
   const props = createChatWindowProps();
   props.mainContent = React.createElement("div", null, "File Preview");
   props.recoveryActions = {
-    retryState: { kind: "failed", badge: "Failed", title: "Failed", lastRequestText: "Retry this request" },
+    retryState: { kind: "failed", lastRequestText: "Retry this request" },
     requestKey: "main:incarnation:0", targetLabel: "Main",
     isRetryActionDisabled: false, isRetryEditDisabled: false, isRetryDraftReplacePending: false,
     onResendLastMessage() {}, onEditLastMessage() {}, onConfirmRetryDraftReplace() {}, onCancelRetryDraftReplace() {},
@@ -336,9 +336,8 @@ test("ChatWindow は preview と compact ActionDock 内に recovery actions を�
   const dom = new JSDOM(html);
   const dock = dom.window.document.querySelector("#session-action-dock")!;
   assert.ok(dock.querySelector('[aria-label="Main: Previous Request Actions"]'));
-  assert.match(dock.textContent!, /Retry this request/);
-  assert.ok([...dock.querySelectorAll("button")].some((button) => button.textContent === "Resend"));
-  assert.ok([...dock.querySelectorAll("button")].some((button) => button.textContent === "Edit"));
+  assert.ok(dock.querySelector('button[aria-label="Main: Resend Previous Request"]'));
+  assert.ok(dock.querySelector('button[aria-label="Main: Edit Previous Request"]'));
   dom.window.close();
 });
 

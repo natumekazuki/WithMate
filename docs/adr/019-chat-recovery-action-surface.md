@@ -9,6 +9,8 @@
 
 本文中のCompanionに関する記述は当時の設計判断として保持するが、Companionの撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。以下の本文は当時の判断を保持する。
 
+Issue #871のUI見直しにより、上記後継判断のうち対象名・前回依頼previewを操作に隣接させる部分も適用対象外とする。対象会話は既存のMain / Auxiliary切替、依頼と停止状態はchat transcriptで確認できるため、回復操作の通常表示は`Resend` / `Edit`の2つのicon-only操作に限定する。前回依頼の全文dialogと停止状態badgeは設けない。対象付きtooltip・accessible name、実行記録の取得失敗時の`Retry`、draft置換確認は維持する。現行契約の正本は上記Desktop UIとする。
+
 ## Context
 
 失敗、中断、キャンセル後の retry UI は Action Dock の expanded composer 内にあり、表示時に dock を強制展開していた。banner には停止地点と前回の依頼も複製されていたが、停止地点は直前の chat response、依頼は user message から確認できる。情報の重複により中央領域と composer の高さが圧迫され、file preview 中や狭い Window では回復操作を見つけにくかった。

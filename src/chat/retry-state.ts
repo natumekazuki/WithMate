@@ -7,8 +7,6 @@ export type RetryKind = "interrupted" | "failed" | "canceled";
 
 export type RetryState = {
   kind: RetryKind;
-  badge: string;
-  title: string;
   lastRequestText: string;
 };
 
