@@ -2055,21 +2055,33 @@
   line-height: 1.6;
 }
 
+.live-approval-summary-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
 .live-approval-summary {
+  flex: 1;
+  min-width: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.live-approval-details pre {
+.live-approval-card .live-approval-details-toggle {
+  flex: none;
+  width: 24px;
+}
+
+.live-approval-details {
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
-  padding: 12px 14px;
-  border: 1px solid rgba(32, 36, 55, 0.08);
-  border-radius: 14px;
-  background: rgba(18, 24, 39, 0.96);
-  color: rgba(245, 245, 247, 0.96);
+  padding-block-start: 10px;
+  border-block-start: 1px solid var(--line);
   font: 0.82rem/1.55 "IBM Plex Mono", monospace;
   white-space: pre-wrap;
-  overflow: auto;
+  overflow-wrap: anywhere;
 }
 
 .live-approval-warning {
@@ -2078,23 +2090,6 @@
 
 .session-page .live-approval-warning {
   color: #ffd7bc;
-}
-
-.live-approval-details {
-  min-width: 0;
-  max-width: 100%;
-}
-
-.live-approval-details[open] {
-  flex-basis: 100%;
-}
-
-.live-approval-details summary {
-  padding-block: 8px;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 0.8rem;
-  user-select: none;
 }
 
 .live-approval-card .live-approval-actions {

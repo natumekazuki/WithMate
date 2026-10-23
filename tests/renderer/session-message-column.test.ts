@@ -3185,7 +3185,10 @@ test("承認はMarkdownのblock境界へ入りSourceと縮小済み応答でも�
     assert.ok(sourceCard);
     assert.ok(source[0].compareDocumentPosition(sourceCard) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
     assert.ok(sourceCard.compareDocumentPosition(source[1]) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
-    assert.equal(sourceCard.querySelectorAll("button").length, 2);
+    const decisions = [...sourceCard.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((button) => button.textContent === "Allow Once" || button.textContent === "Reject");
+    assert.deepEqual(decisions.map((button) => button.textContent), ["Allow Once", "Reject"]);
+    assert.ok(decisions.every((button) => !button.disabled));
   } finally { await mounted.cleanup(); }
 });
 

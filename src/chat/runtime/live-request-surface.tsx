@@ -533,6 +533,75 @@ export type LiveRequestSurfaceProps = {
   onOpenPath?: (target: string) => void;
 };
 
+function LiveApprovalCard({
+  request,
+  approvalActionRequestId,
+  approvalActionDecision,
+  onResolveLiveApproval,
+}: { request: LiveApprovalRequest } & Pick<LiveRequestSurfaceProps,
+  "approvalActionRequestId" | "approvalActionDecision" | "onResolveLiveApproval">) {
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const detailsId = useId();
+  const isApprovalSubmitting = approvalActionRequestId === request.requestId;
+  const approvalDecision = isApprovalSubmitting ? approvalActionDecision : null;
+  const resolveApproval = (decision: "approve" | "deny") => {
+    if (isApprovalSubmitting) return;
+    onResolveLiveApproval(request, decision);
+  };
+
+  return (
+    <section
+      className="live-approval-card"
+      role="group"
+      aria-label="Approval required"
+      aria-busy={isApprovalSubmitting || undefined}
+    >
+      <div className="live-approval-summary-row">
+        <p className="live-approval-summary">{request.summary}</p>
+        {request.details ? (
+          <button
+            className="artifact-toggle artifact-toggle-icon live-approval-details-toggle"
+            type="button"
+            onClick={() => setDetailsExpanded((expanded) => !expanded)}
+            aria-expanded={detailsExpanded}
+            aria-controls={detailsId}
+            aria-label={detailsExpanded ? "Hide approval details" : "Show approval details"}
+            title={detailsExpanded ? "Hide details" : "Details"}
+          >
+            <span aria-hidden="true">{detailsExpanded ? "−" : "i"}</span>
+          </button>
+        ) : null}
+      </div>
+      {request.warning ? (
+        <p className="live-approval-warning" role="alert">{request.warning}</p>
+      ) : null}
+      {request.details ? (
+        <pre id={detailsId} className="live-approval-details" hidden={!detailsExpanded}>{request.details}</pre>
+      ) : null}
+      <div className="live-approval-actions">
+        {isApprovalSubmitting ? <span className="visually-hidden" role="status">Processing approval request</span> : null}
+        <button
+          type="button"
+          onClick={() => resolveApproval("approve")}
+          disabled={isApprovalSubmitting}
+          aria-busy={approvalDecision === "approve" || undefined}
+        >
+          <ButtonContent busy={approvalDecision === "approve"}>Allow Once</ButtonContent>
+        </button>
+        <button
+          className="drawer-toggle secondary"
+          type="button"
+          onClick={() => resolveApproval("deny")}
+          disabled={isApprovalSubmitting}
+          aria-busy={approvalDecision === "deny" || undefined}
+        >
+          <ButtonContent busy={approvalDecision === "deny"}>Reject</ButtonContent>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function LiveRequestSurface({
   liveApprovalRequest,
   approvalActionRequestId,
@@ -550,55 +619,17 @@ export function LiveRequestSurface({
 }: LiveRequestSurfaceProps) {
   const requests = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
   const visibleRecords = elicitationRecords?.filter((record) => !requests.some((request) => request.requestId === record.requestId));
-  const isApprovalSubmitting = liveApprovalRequest
-    ? approvalActionRequestId === liveApprovalRequest.requestId
-    : false;
-  const approvalDecision = isApprovalSubmitting ? approvalActionDecision : null;
-  const resolveApproval = (decision: "approve" | "deny") => {
-    if (!liveApprovalRequest || isApprovalSubmitting) return;
-    onResolveLiveApproval(liveApprovalRequest, decision);
-  };
 
   return (
     <>
       {liveApprovalRequest ? (
-        <section
-          className="live-approval-card"
-          role="group"
-          aria-label="Approval required"
-          aria-busy={isApprovalSubmitting || undefined}
-        >
-          <p className="live-approval-summary">{liveApprovalRequest.summary}</p>
-          {liveApprovalRequest.warning ? (
-            <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
-          ) : null}
-          <div className="live-approval-actions">
-            {isApprovalSubmitting ? <span className="visually-hidden" role="status">Processing approval request</span> : null}
-            <button
-              type="button"
-              onClick={() => resolveApproval("approve")}
-              disabled={isApprovalSubmitting}
-              aria-busy={approvalDecision === "approve" || undefined}
-            >
-              <ButtonContent busy={approvalDecision === "approve"}>Allow Once</ButtonContent>
-            </button>
-            <button
-              className="drawer-toggle secondary"
-              type="button"
-              onClick={() => resolveApproval("deny")}
-              disabled={isApprovalSubmitting}
-              aria-busy={approvalDecision === "deny" || undefined}
-            >
-              <ButtonContent busy={approvalDecision === "deny"}>Reject</ButtonContent>
-            </button>
-            {liveApprovalRequest.details ? (
-              <details className="live-approval-details">
-                <summary>Details</summary>
-                <pre>{liveApprovalRequest.details}</pre>
-              </details>
-            ) : null}
-          </div>
-        </section>
+        <LiveApprovalCard
+          key={liveApprovalRequest.requestId}
+          request={liveApprovalRequest}
+          approvalActionRequestId={approvalActionRequestId}
+          approvalActionDecision={approvalActionDecision}
+          onResolveLiveApproval={onResolveLiveApproval}
+        />
       ) : null}
       <ElicitationRecords records={visibleRecords} />
       {requests.map((request) => (

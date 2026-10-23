@@ -150,7 +150,8 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
     const document = new JSDOM(html).window.document;
     assert.equal(document.querySelectorAll('[role="status"]').length, 1);
     assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing approval request");
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+      .filter((button) => button.textContent === "Allow Once" || button.textContent === "Reject");
     assert.deepEqual(buttons.map((button) => button.textContent), ["Allow Once", "Reject"]);
     const active = buttons[decision === "approve" ? 0 : 1];
     assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
@@ -162,12 +163,76 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
     assert.ok(group);
     assert.equal(group.querySelector("p")?.textContent, approvalRequest.summary);
     assert.equal(group.querySelector('[role="alert"]')?.textContent, approvalRequest.warning);
-    const details = group.querySelector("details");
+    const detailsToggle = group.querySelector<HTMLButtonElement>('button[aria-label="Show approval details"]');
+    assert.ok(detailsToggle);
+    assert.equal(detailsToggle.disabled, false);
+    assert.equal(detailsToggle.getAttribute("aria-expanded"), "false");
+    const details = document.getElementById(detailsToggle.getAttribute("aria-controls")!);
     assert.ok(details);
-    assert.equal(details.open, false);
-    assert.equal(details.querySelector("summary")?.textContent, "Details");
-    assert.equal(details.querySelector("pre")?.textContent, approvalRequest.details);
+    assert.equal(details.hidden, true);
+    assert.equal(details.textContent, approvalRequest.details);
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "承認詳細は名前付きbuttonで開閉でき、同じ要求の更新と送信中は開閉状態を保ち、新しい要求では閉じる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#Approval Requests" }
+// fault = "詳細buttonが開閉しない、aria-expandedと表示が食い違う、同じ要求の更新で閉じる、または次の要求へ開状態を持ち越す"
+// observable = "詳細buttonのaccessible name・aria-expanded・aria-controls、対応する本文のhiddenと内容、更新前後のbutton同一性とfocus"
+// observation_boundary = "component-behavior"
+// scope = "live-approval-details-disclosure"
+// lifecycle = "permanent"
+// impact = "承認判断に必要な補足を開けないか、送信中や後続要求の表示が予期せず変わる"
+// distinction = "静的markupと型検査では利用者の開閉操作と要求更新時の状態・focusを検証できず、局所的なDOM操作testで確認する"
+// @end-test-value
+test("LiveRequestSurface は承認詳細の開閉を要求ごとに保持する", async () => {
+  const mounted = await mountElicitation(elicitationRequest);
+  const renderApproval = (request: LiveApprovalRequest, busy = false) => mounted.render(elicitationRequest, {
+    liveElicitationRequest: null,
+    liveApprovalRequest: request,
+    approvalActionRequestId: busy ? request.requestId : null,
+    approvalActionDecision: busy ? "approve" : null,
+  });
+  try {
+    await renderApproval(approvalRequest);
+    const toggle = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Show approval details"]');
+    assert.ok(toggle);
+    const details = mounted.dom.window.document.getElementById(toggle.getAttribute("aria-controls")!);
+    assert.ok(details);
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(details.hidden, true);
+    toggle.focus();
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-label"), "Hide approval details");
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(details.hidden, false);
+    assert.equal(details.textContent, approvalRequest.details);
+
+    await renderApproval({ ...approvalRequest, summary: "Run the workspace tests" }, true);
+    assert.equal(mounted.container.querySelector('[aria-label="Hide approval details"]'), toggle);
+    assert.equal(mounted.dom.window.document.activeElement, toggle);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(toggle.disabled, false);
+    assert.equal(details.hidden, false);
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-label"), "Show approval details");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(details.hidden, true);
+    await act(async () => toggle.click());
+    assert.equal(details.hidden, false);
+
+    await renderApproval({ ...approvalRequest, requestId: "approval-2", details: "Next request details" });
+    const nextToggle = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Show approval details"]');
+    assert.ok(nextToggle);
+    assert.equal(nextToggle.getAttribute("aria-expanded"), "false");
+    const nextDetails = mounted.dom.window.document.getElementById(nextToggle.getAttribute("aria-controls")!);
+    assert.ok(nextDetails);
+    assert.equal(nextDetails.hidden, true);
+    await act(async () => nextToggle.click());
+    assert.equal(nextDetails.hidden, false);
+    assert.equal(nextDetails.textContent, "Next request details");
+  } finally { await mounted.cleanup(); }
 });
 
 // @test-value v2
