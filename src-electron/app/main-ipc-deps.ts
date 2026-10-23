@@ -294,6 +294,7 @@ export type MainIpcSessionQueryDepsArgs = {
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
   inspectSessionFile(request: SessionFilePreviewResourceRequest): Awaitable<SessionFileDescriptor>;
   inspectSessionImage(request: SessionImageResourceRequest): Awaitable<SessionFileDescriptor>;
+  readSessionHtmlPreview(request: import("../../src-shared/file-explorer/session-html-preview-contract.js").SessionHtmlPreviewRequest): Awaitable<import("../../src-shared/file-explorer/session-html-preview-contract.js").SessionHtmlPreviewResult>;
   readSessionImageChunk(request: SessionImageChunkRequest): Awaitable<SessionFileChunkResult>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;

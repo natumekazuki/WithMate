@@ -8,7 +8,7 @@ import {
 import { GlossaryAnnotationSpan } from "../../glossary/MessageGlossaryAnnotations.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
 import { MarkdownPre } from "./markdown-code.js";
-import { MarkdownLink } from "./markdown-links.js";
+import { MarkdownAnchor } from "./MarkdownHtmlPreview.js";
 import { MarkdownImageComponent } from "./markdown-images.js";
 
 function mergeClassName(baseClassName: string, className?: string) {
@@ -122,7 +122,7 @@ export const markdownComponents: Components = {
   ),
   span: GlossaryAnnotationSpan,
   pre: MarkdownPre,
-  a: MarkdownLink,
+  a: MarkdownAnchor,
   img: MarkdownImageComponent,
 };
 export function renderMarkdownFrontmatter(_state: unknown, node: Node) {

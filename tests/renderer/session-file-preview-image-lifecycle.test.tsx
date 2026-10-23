@@ -16,6 +16,7 @@ import type {
   SessionFileResourceRequest,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
+import type { WithMateHtmlPreviewApi } from "../../src-shared/window/html-preview.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -617,6 +618,96 @@ test("MMD File Preview はMermaid表示経路とSourceを切り替える", async
     restoreElementSize();
     restoreGlobals();
     dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "HTMLとHTMのFile PreviewはPreviewを既定とし、同内容のReloadでも隔離viewを再生成し、Findで原文Sourceへ切り替えてPreviewへ戻れる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央 file previewのHTML" }
+// fault = "HTMLを通常textへ流す、Reload後も以前のJS実行状態を保持する、Findで隔離viewのDOMを検索しようとする、またはSource原文を変える"
+// observable = "HTML display mode、mount/disposeのIDとHTML、Sourceのcode本文、Find barとSource内一致件数"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreviewのHTML resourceからPreview/Sourceと検索への接続"
+// lifecycle = "permanent"
+// impact = "HTML成果物を表示できない、または表示失敗時に原文を調べて引用できない"
+// distinction = "native preview単体testではfile拡張子判定と既存Source・Find consumer接続を確認できない"
+// @end-test-value
+test("HTML File PreviewはReloadでviewを再生成し原文SourceとFindを保持する", async () => {
+  for (const name of ["page.html", "page.HTM"]) {
+    const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+      pretendToBeVisual: true,
+      url: "http://localhost/",
+    });
+    const restoreGlobals = installDomGlobals(dom);
+    const restoreElementSize = installElementSize(dom);
+    const previousComputedStyle = Object.getOwnPropertyDescriptor(globalThis, "getComputedStyle");
+    Object.defineProperty(globalThis, "getComputedStyle", { configurable: true, value: dom.window.getComputedStyle.bind(dom.window) });
+    Object.defineProperties(dom.window.HTMLElement.prototype, {
+      attachEvent: { value(this: HTMLElement, name: string, listener: EventListener) { this.addEventListener(name.replace(/^on/, ""), listener); } },
+      detachEvent: { value(this: HTMLElement, name: string, listener: EventListener) { this.removeEventListener(name.replace(/^on/, ""), listener); } },
+    });
+    const request: SessionFileRootResourceRequest = {
+      sessionId: "session-1", rootId: "workspace", relativePath: `docs/${name}`,
+    };
+    const source = '<!doctype html><style>h1 {color: red}</style><h1>Original &amp; Text</h1>';
+    const api = createTextPreviewApi(request, name, source, "html-r1");
+    const mounts: Array<{ id: string; html: string }> = [];
+    const disposed: string[] = [];
+    const htmlApi: WithMateHtmlPreviewApi = {
+      async mountHtmlPreview(input) { mounts.push(input); },
+      async disposeHtmlPreview(id) { disposed.push(id); },
+      layoutHtmlPreview() {},
+      focusHtmlPreview() {},
+      subscribeHtmlPreviewEvents() { return () => {}; },
+    };
+    Object.defineProperty(dom.window, "withmate", { configurable: true, value: htmlApi });
+    const container = dom.window.document.getElementById("root");
+    let root: Root | null = null;
+    try {
+      assert.ok(container);
+      root = await renderPreview(api, container, request);
+      await waitFor(() => container.querySelector(".session-file-html") !== null);
+      const mode = container.querySelector("[aria-label='HTML display mode']");
+      assert.equal(mode?.querySelector(".is-active")?.textContent, "Preview");
+      assert.equal(mounts.length, 1);
+      const reload = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Reload");
+      assert.ok(reload);
+      await act(async () => reload.click());
+      assert.equal(mounts.length, 2);
+      assert.notEqual(mounts[0].id, mounts[1].id);
+      assert.deepEqual(mounts.map((mount) => mount.html), [source, source]);
+      assert.deepEqual(disposed, [mounts[0].id]);
+      const find = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Find");
+      assert.ok(find);
+      await act(async () => find.click());
+      await waitFor(() => container.querySelector(".session-file-text-line code") !== null);
+      assert.equal(mode?.querySelector(".is-active")?.textContent, "Source");
+      assert.equal(container.querySelector(".session-file-text-line code")?.textContent, source);
+      const input = container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+      assert.ok(input);
+      const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+      assert.ok(setValue);
+      await act(async () => {
+        setValue.call(input, "&amp;");
+        const event = new dom.window.Event("propertychange", { bubbles: true });
+        Object.defineProperty(event, "propertyName", { value: "value" });
+        input.dispatchEvent(event);
+      });
+      assert.equal(container.querySelector(".session-content-find-count")?.textContent, "1/1");
+      const preview = Array.from(mode?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Preview");
+      assert.ok(preview);
+      await act(async () => preview.click());
+      assert.ok(container.querySelector(".session-file-html"));
+      assert.equal(container.querySelector("input[aria-label='Find in current content']"), null);
+    } finally {
+      if (root) await act(async () => root?.unmount());
+      restoreElementSize();
+      restoreGlobals();
+      if (previousComputedStyle) Object.defineProperty(globalThis, "getComputedStyle", previousComputedStyle);
+      else Reflect.deleteProperty(globalThis, "getComputedStyle");
+      dom.window.close();
+    }
   }
 });
 

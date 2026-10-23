@@ -129,6 +129,8 @@ import type {
   SessionGlossaryProjection,
 } from "../glossary/glossary-contract.js";
 import type { SessionWindowRestoreResult } from "../window/session-window-restore.js";
+import type { WithMateHtmlPreviewApi } from "../window/html-preview.js";
+import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../file-explorer/session-html-preview-contract.js";
 
 export type WithMateWindowNavigationApi = {
   showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
@@ -171,6 +173,7 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
+  readSessionHtmlPreview(request: SessionHtmlPreviewRequest): Promise<SessionHtmlPreviewResult>;
   isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
@@ -386,6 +389,7 @@ export type WithMateWindowCharacterApi = {
 };
 
 export type WithMateWindowApi =
+  & WithMateHtmlPreviewApi
   & WithMateWindowNavigationApi
   & MemoryV6ReviewApi
   & WithMateWindowCatalogApi

@@ -146,6 +146,19 @@ node-ptyはタブごとのElectron utility process内で起動要求時にload�
 
 タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。Window close時も個別タブと同じ判定で、実行中・起動中・判別不能な端末があれば終了を非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認は省略し、AI実行中ならWindowを閉じても実行を継続する確認へまとめる。確認待ちの重複closeを抑止し、承認後も既存のdraft flushを待つ。確認結果は元のWindow identityへ限定する。
 
+## HTML Preview Isolation
+
+中央・独立File PreviewとCodexのチャット内visualizeは`HtmlPreview`と`HtmlPreviewService`を共用する。信頼済みrendererのmain frameだけが自分のWindowへmount／layout／focus／disposeでき、HTMLへアプリのpreloadやIPCは公開しない。
+
+- HTMLは専用の非永続Electron Sessionに属する`WebContentsView`で実行する。`sandbox: true`、`nodeIntegration: false`、`contextIsolation: true`、`webSecurity: true`を固定し、CSPの`sandbox allow-scripts`でopaque originにする。アプリ本体のCSPとsandbox設定は変更しない。
+- 認可済みの本文だけをメモリー上のHTTPS responseで配信する。main processはviewごとのURLとwebContents identityを照合し、Electron webRequestが扱う要求はそのmain documentのGET以外を拒否する。`file:` URLを直接loadせず、相対資源・外部CDNを代理取得しない。
+- 固定response CSPはinline CSS／JSとdata／blobの埋込みimage／media、data fontだけを許可する。frame、worker、object、form、base URL、popup、document navigation／redirect、download、device／permissionは許可しない。WebRTC等を含む通信の完全遮断は保証しない。HTML内の情報や入力内容が通信で送られる可能性を許容し、アプリ権限の隔離とoffline保証を区別する。
+- 原本を書き換えず、UTF-8換算50 MiBを超える実行入力は明示的に拒否する。初回document loadは15秒で打ち切り、File PreviewのSourceと文字コード切替は既存経路を維持する。JavaScriptの総実行時間やDOM容量に上限を保証するものではなく、renderer終了・応答不能を失敗として通知する。
+- viewはDOM枠と祖先のscroll clipに追従し、modal表示中または重なるdialog／menu／listbox／popover表示中は隠す。画面外、Source切替、unmount、ownerのdocument navigation／終了ではviewを解放し、再表示ではHTMLを再実行する。HTML内の状態は永続化しない。表示に失敗してもSourceへ戻れる。
+- HTML自身のJavaScriptによる表示・操作を対象とする。公式visualizeのhost CSS、`window.openai`、Tweak、状態保存や会話送信の互換bridgeは提供しない。
+
+チャットのHTML読込は`readSessionHtmlPreview`専用IPCで既存local link resolverを利用する。所有Session／preview baseと送信main frameを読込前後で確認し、`.html`／`.htm`のtextとrevision固定chunkだけを読む。汎用file readのroot認可を緩めず、Additional Directoryやprovider権限を追加しない。
+
 ## URL Resolution
 
 ### Development

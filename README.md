@@ -51,7 +51,9 @@ Session WindowのFile Explorerには次のタブがあります。
 - `Changes`: Gitの作業ツリー差分を表示
 - `History`: repositoryのcommit履歴とcommit時点のファイル、差分を表示
 
-ファイルは中央の作業面または独立したFile Preview Windowで開けます。テキスト、Markdown、Mermaid（`.mmd`）、JSON、JSONC、YAML、画像、SVGに対応し、バイナリファイルは内容を展開せずに表示します。Git差分はSplitとInlineを切り替えられます。
+ファイルは中央の作業面または独立したFile Preview Windowで開けます。テキスト、Markdown、Mermaid（`.mmd`）、HTML（`.html`／`.htm`）、JSON、JSONC、YAML、画像、SVGに対応し、バイナリファイルは内容を展開せずに表示します。Git差分はSplitとInlineを切り替えられます。
+
+HTMLは自己完結したCSS／JavaScriptを隔離して表示し、Sourceへ切り替えられます。外部スクリプトや相対ファイルの読込、WithMate APIは利用できません。通信の完全遮断を保証する機能ではありません。Codexの`visualize`参照も同じHTML表示をチャット内で使います（公式visualize runtimeとの互換機能ではありません）。
 
 ### Repository Glossary
 

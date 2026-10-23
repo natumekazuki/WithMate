@@ -15,3 +15,5 @@
 @import "./diff/diff.css";
 @import "./styles/responsive.css";
 @import "./provider-usage/provider-quota.css";
+@import "./ui/html-preview/html-preview.css";
+@import "./ui/markdown/markdown-html-preview.css";

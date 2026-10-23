@@ -28,17 +28,17 @@ function visualize(path: string): string {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "両file参照記法は拡張子に依存せず元pathをlabelとtargetに持つ通常linkとしてparseされる"
+// claim = "両file参照記法は元pathのlink nodeとsource位置を保持し、visualizeだけがtitleとmodeを保持したpreview metadataを持つ"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
 // fault = "記法が文字列として残る、またはlabelやtargetのpathを変形する"
-// observable = "public Markdown parser出力のlink URL、children、source offsetsとremark consumer出力"
+// observable = "public Markdown parser出力のlink URL、children、source offsets、hPropertiesとremark consumer出力"
 // observation_boundary = "consumer"
 // scope = "assistant file-reference markdown parsing"
 // lifecycle = "permanent"
 // impact = "利用者がHTMLやOffice成果物のpathを通常のファイル操作へ渡せなくなる"
 // distinction = "type/buildは入力記法から生成されるMarkdown nodeと原文offsetの正しさを検証しない。少数の短い入力で継続検証できる"
 // @end-test-value
-test("file references produce ordinary links with exact source offsets across parser consumers", () => {
+test("file references preserve links and exact offsets with visualize preview metadata", () => {
   const sources = ["html", "xlsx", "docx", "pptx", "pdf"].flatMap((extension) => {
     const path = `C:/work/日本語 _[成果💡] (1).${extension}`;
     return [
@@ -53,6 +53,11 @@ test("file references produce ordinary links with exact source offsets across pa
     assert.equal(references.length, 1);
     assert.equal(decodeURIComponent(references[0].url), path);
     assert.deepEqual(references[0].children, [{ type: "text", value: path }]);
+    assert.deepEqual(references[0].data?.hProperties, source.startsWith("visualize") ? {
+      "data-codex-visualize-path": path,
+      "data-codex-visualize-title": "成果物",
+      "data-codex-visualize-mode": "wide",
+    } : undefined);
     assert.equal(body.slice(references[0].position?.start.offset, references[0].position?.end.offset), source);
     assert.deepEqual(unified().use(remarkParse).use(remarkProviderResponse, "codex").parse(body), tree);
   }

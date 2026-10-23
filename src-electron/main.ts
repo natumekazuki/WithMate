@@ -54,6 +54,8 @@ import {
   isSessionFileGitCommitResource,
 } from "../src-shared/file-explorer/file-explorer-contract.js";
 import { SessionTurnService } from "./session/session-turn-service.js";
+import { registerHtmlPreviewHandlers } from "./ipc/html-preview.js";
+import { readSessionHtmlPreview } from "./files/session-html-preview-reader.js";
 import type { SessionTurnRecord } from "../src-shared/session/session-turn-state.js";
 import { AppSettingsStorage } from "./app/app-settings-storage.js";
 import { PromptTemplateStorage } from "./prompt-templates/prompt-template-storage.js";
@@ -1217,6 +1219,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               registerMainIpcHandlers(ipc, deps);
               if (!terminalService) throw new Error("Terminal service is unavailable.");
               registerTerminalHandlers(ipc, terminalService);
+              registerHtmlPreviewHandlers(ipc);
             },
             initializePersistentStores,
             recoverInterruptedSessions,
@@ -1408,6 +1411,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 unpinSessionFile: (request) => createSessionFileExplorerService().unpinSessionFile(request),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
                 inspectSessionImage: (request) => createSessionFileExplorerService().inspectImage(request),
+                readSessionHtmlPreview: (request) => readSessionHtmlPreview(createSessionFileExplorerService(), request),
                 readSessionImageChunk: (request) => createSessionFileExplorerService().readImageChunk(request),
                 inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
                   ? createFileRootGitChangesService().inspectHistoryFile(request)
