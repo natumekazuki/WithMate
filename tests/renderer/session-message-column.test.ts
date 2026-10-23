@@ -1766,6 +1766,79 @@ test("質問前後のFindは本文の一致番号で強調・移動し解決後�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "承認の要約や詳細と本文に同じ検索語があっても、Findの件数・強調・前後移動は本文の一致だけを対象にする"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Rendering PolicyとStreaming projectionの検索契約" }
+// fault = "承認の要約または閉じた詳細がDOM検索へ混入し、本文の一致番号と強調・移動先がずれる"
+// observable = "Find件数、CSS HighlightのRange内容と所属text、前後移動時のscroll対象、詳細開閉・承認解除後の一致"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnのPreview／Sourceにおけるinline承認と本文Find"
+// lifecycle = "permanent"
+// impact = "利用者が本文の検索結果へ移動できず、非表示の承認詳細を現在位置として選んでしまう"
+// distinction = "既存の質問Findは操作面が本文DOMの外にあり、承認を含むMarkdown内の検索境界を通らない。既存DOM fixtureで2表示modeの短い操作を確認する"
+// @end-test-value
+test("承認の詳細開閉と解除を通してFindは本文の一致だけを辿る", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+    add(range: Range) { this.ranges.push(range); return this; }
+  }
+  for (const messageViewMode of ["preview", "source"] as const) {
+    const before = "Before needle\n\n";
+    const text = `${before}After needle`;
+    let request: LiveApprovalRequest | null = {
+      ...createLiveApprovalRequest(), textPosition: before.length,
+      summary: "needle command", details: "needle hidden details",
+    };
+    function Column(props: SessionMessageColumnProps) {
+      return React.createElement(SessionMessageColumn, {
+        ...props, pendingResponseMessageKey: "response", liveApprovalRequest: request,
+      });
+    }
+    const mounted = await mountSessionMessageColumn({
+      component: Column, messages: [{ role: "assistant", text }], messageKeys: ["response"],
+      isRunning: true, liveRunAssistantText: text, messageViewMode,
+    });
+    try {
+      const highlights = new Map<string, TestHighlight>();
+      Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+      Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+      let scrolledText = "";
+      mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () { scrolledText = this.textContent ?? ""; };
+      await setMessageFindQuery(mounted, "needle");
+      const assertCurrent = (ordinal: number, expectedText: RegExp) => {
+        assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `${ordinal}/2`);
+        assert.deepEqual(highlights.get("withmate-find-match")?.ranges.map(range => range.toString()), ["needle", "needle"]);
+        const current = highlights.get("withmate-find-current")?.ranges[0];
+        assert.equal(current?.toString(), "needle");
+        assert.match(current?.startContainer.textContent ?? "", expectedText);
+        assert.match(scrolledText, expectedText);
+      };
+      assertCurrent(1, /Before needle/);
+      const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
+      const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!;
+      await act(async () => next.click());
+      assertCurrent(2, /After needle/);
+      await act(async () => previous.click());
+      assertCurrent(1, /Before needle/);
+      await act(async () => next.click());
+      assertCurrent(2, /After needle/);
+      const toggle = mounted.container.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+      const details = mounted.container.querySelector<HTMLElement>(".live-approval-details")!;
+      assert.equal(details.hidden, true);
+      await act(async () => toggle.click());
+      assert.equal(details.hidden, false);
+      assertCurrent(2, /After needle/);
+      await act(async () => toggle.click());
+      assert.equal(details.hidden, true);
+      assertCurrent(2, /After needle/);
+      request = null;
+      await mounted.rerender({});
+      assertCurrent(2, /After needle/);
+    } finally { await mounted.cleanup(); }
+  }
+});
+
 test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序で数え現在位置をclampする", async () => {
   class TestHighlight {
     readonly ranges: Range[] = [];
@@ -3138,6 +3211,61 @@ test("SessionMessageColumn は承認を受信時の応答位置で操作して�
         await mounted.rerender({ isRunning: false, messages: [{ role: "assistant", text: explanation }], messageKeys: ["response"], liveRunAssistantText: "" });
         assert.equal(container.querySelector('[aria-label="Approval required"]'), null, "終了後はstale requestを操作面へ戻さない");
         assert.match(container.textContent ?? "", /操作前の説明/);
+      } finally { await mounted.cleanup(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ承認要求を空本文へ表示した後に本文が届いても、詳細の開状態とkeyboard focusを保持して同じ要求を判断できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requestsとdocs/design/ui-design-guidelines.mdの操作位置・focus維持" }
+// fault = "空本文から非空本文への遷移で承認cardが再mountされ、詳細が閉じるかfocusが外れる"
+// observable = "詳細toggleとcardのDOM同一性、aria-expanded、詳細のhidden、document.activeElement、許可callbackのrequestとdecision"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnの未投影／投影済み応答とPreview／Sourceにおける空本文からの承認操作"
+// lifecycle = "permanent"
+// impact = "詳細を読んでいる途中に内容と操作位置を失い、keyboardで承認判断を継続できなくなる"
+// distinction = "既存の承認位置testは初めから本文があり、card単体testは本文rendererの親切替を通らない。既存DOM fixtureの4条件で状態とfocusを直接確認する"
+// @end-test-value
+test("空本文への承認は本文到着後も詳細とfocusを保持する", async () => {
+  for (const projected of [false, true]) {
+    for (const messageViewMode of ["preview", "source"] as const) {
+      const request = { ...createLiveApprovalRequest(), textPosition: 0 };
+      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
+      const messages: Message[] = projected ? [{ role: "assistant", text: "" }] : [];
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props, pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: request, onResolveLiveApproval: (...args) => decisions.push(args),
+        });
+      }
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages, messageKeys: projected ? ["response"] : [],
+        isRunning: true, liveRunAssistantText: "", messageViewMode,
+      });
+      try {
+        const { container, dom } = mounted;
+        const card = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
+        const toggle = card.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+        await act(async () => toggle.click());
+        toggle.focus();
+        assert.equal(toggle.getAttribute("aria-expanded"), "true");
+        const text = "Subsequent assistant text";
+        await mounted.rerender({
+          messages: projected ? [{ role: "assistant", text }] : messages,
+          liveRunAssistantText: text,
+        });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+        assert.equal(container.querySelector("[aria-label='Approval required']") === card, true);
+        assert.equal(card.querySelector("[aria-label='Hide approval details']") === toggle, true);
+        assert.equal(toggle.getAttribute("aria-expanded"), "true");
+        assert.equal(card.querySelector<HTMLElement>(".live-approval-details")?.hidden, false);
+        assert.equal(dom.window.document.activeElement === toggle, true);
+        assert.match(container.textContent ?? "", /Subsequent assistant text/);
+        const allow = [...card.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Allow Once")!;
+        await act(async () => allow.click());
+        assert.deepEqual(decisions, [[request, "approve"]]);
       } finally { await mounted.cleanup(); }
     }
   }
