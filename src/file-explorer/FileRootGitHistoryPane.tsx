@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -45,6 +46,7 @@ export type FileRootGitHistoryPaneProps = {
   api: FileRootGitHistoryApi | null;
   sessionId: string | null;
   enabled: boolean;
+  visible?: boolean;
   rootsRevision: string;
   refreshRevision: number;
   onOpenDiff: (request: FileRootGitHistoryDiffRequest, openInWindow: boolean) => Promise<string | null>;
@@ -382,16 +384,27 @@ export function FileRootGitHistoryPane({
   api,
   sessionId,
   enabled,
+  visible = true,
   rootsRevision,
   refreshRevision,
   onOpenDiff,
   onRepositoryChange,
 }: FileRootGitHistoryPaneProps) {
   const generationRef = useRef(0);
+  const onRepositoryChangeRef = useRef(onRepositoryChange);
+  onRepositoryChangeRef.current = onRepositoryChange;
+  const removedRepositoryRef = useRef(false);
   const selectedRepositoryRef = useRef<FileRootGitHistoryRepository | null>(null);
   const selectedRepositorySessionIdRef = useRef<string | null>(null);
   const selectedBranchRef = useRef<string | null>(null);
-  const lastRootsRevisionRef = useRef(rootsRevision);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const loadedPagesRef = useRef(0);
+  const listRefreshRequiredRef = useRef(false);
+  const refreshRef = useRef<{ generation: number; trailing: boolean } | null>(null);
+  const refreshAfterPageRef = useRef(false);
+  const requestRefreshRef = useRef<() => void>(() => {});
+  const scrollAnchorRef = useRef<{ id: string; offset: number; scrollTop: number } | null>(null);
   const pageRequestRef = useRef<HistoryPageIdentity | null>(null);
   const cursorRef = useRef<string | null>(null);
   const hasMoreRef = useRef(false);
@@ -408,7 +421,7 @@ export function FileRootGitHistoryPane({
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
   const [commits, setCommits] = useState<FileRootGitHistoryCommit[]>([]);
   const [hasMore, setHasMore] = useState(false);
-  const [loadingRepositories, setLoadingRepositories] = useState(() => Boolean(api && sessionId && enabled));
+  const [loadingRepositories, setLoadingRepositories] = useState(() => Boolean(api && sessionId && enabled && visible));
   const [repositoryState, setRepositoryState] = useState<HistoryRepositoryState>(() => (
     api && sessionId && enabled ? "pending" : "unavailable"
   ));
@@ -425,6 +438,9 @@ export function FileRootGitHistoryPane({
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const [lastSelectedCommitId, setLastSelectedCommitId] = useState<string | null>(null);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const comparisonOpenRef = useRef(comparisonOpen);
+  comparisonOpenRef.current = comparisonOpen;
+  const listRefreshDeferredRef = useRef(false);
   const [comparisonDraft, setComparisonDraft] = useState<HistoryComparisonDraft>({
     base: null,
     target: null,
@@ -455,7 +471,7 @@ export function FileRootGitHistoryPane({
     requestedCursor: string | null,
     replace: boolean,
   ) => {
-    if (!api || !sessionId || !enabled || !isCurrentRepository(generation, repository)) {
+    if (!api || !sessionId || !enabled || !visibleRef.current || !isCurrentRepository(generation, repository)) {
       return;
     }
     const currentRequest = pageRequestRef.current;
@@ -501,6 +517,7 @@ export function FileRootGitHistoryPane({
         return next;
       });
       cursorRef.current = result.page.nextCursor;
+      loadedPagesRef.current = replace ? 1 : loadedPagesRef.current + 1;
       hasMoreRef.current = result.page.hasMore;
       setHasMore(result.page.hasMore);
       setListMessage("");
@@ -519,6 +536,10 @@ export function FileRootGitHistoryPane({
       if (isCurrentRepository(generation, repository)) {
         setLoadingCommits(false);
         setLoadingMore(false);
+        if (refreshAfterPageRef.current) {
+          refreshAfterPageRef.current = false;
+          requestRefreshRef.current();
+        }
       }
     }
   }, [api, enabled, isCurrentRepository, sessionId]);
@@ -532,6 +553,12 @@ export function FileRootGitHistoryPane({
     const nextGeneration = generation ?? generationRef.current + 1;
     generationRef.current = nextGeneration;
     pageRequestRef.current = null;
+    refreshRef.current = null;
+    refreshAfterPageRef.current = false;
+    loadedPagesRef.current = 0;
+    listRefreshRequiredRef.current = false;
+    listRefreshDeferredRef.current = false;
+    scrollAnchorRef.current = null;
     selectedRepositoryRef.current = repository;
     selectedRepositorySessionIdRef.current = sessionId;
     selectedBranchRef.current = branch;
@@ -554,6 +581,7 @@ export function FileRootGitHistoryPane({
     setListMessage("");
     setLoadingCommits(false);
     setLoadingMore(false);
+    setLoadingRepositories(false);
     setCollapsedDirectories({});
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
@@ -568,7 +596,7 @@ export function FileRootGitHistoryPane({
     if (!preserveComparisonDraft) {
       setComparisonDraft({ base: null, target: null, mode: "branch" });
     }
-    onRepositoryChange?.(repository?.repositoryId ?? null);
+    onRepositoryChangeRef.current?.(repository?.repositoryId ?? null);
     if (!repository) {
       return;
     }
@@ -579,7 +607,7 @@ export function FileRootGitHistoryPane({
       return;
     }
     void loadPage(repository, branch, nextGeneration, null, true);
-  }, [loadPage, onRepositoryChange, sessionId]);
+  }, [loadPage, sessionId]);
 
   const chooseBranch = useCallback((branch: string | null) => {
     const repository = selectedRepositoryRef.current;
@@ -589,76 +617,187 @@ export function FileRootGitHistoryPane({
     chooseRepository(repository, undefined, branch, true);
   }, [chooseRepository]);
 
-  const reloadRepositories = useCallback(async (preserveSelection: boolean) => {
-    const generation = generationRef.current + 1;
-    const previousRepository = selectedRepositorySessionIdRef.current === sessionId
-      ? selectedRepositoryRef.current
-      : null;
-    const previousRepositoryId = previousRepository?.repositoryId ?? null;
-    const previousRootId = previousRepository?.rootId ?? null;
-    const previousBranch = previousRepository ? selectedBranchRef.current : null;
-    chooseRepository(null, generation);
-    setRepositories([]);
-    setLoadingRepositories(true);
-    if (!api || !sessionId || !enabled) {
-      setRepositoryState("unavailable");
-      setLoadingRepositories(false);
+  const reloadRepositories = useCallback(async () => {
+    if (!api || !sessionId || !enabled || !visibleRef.current) {
       return;
     }
-    setRepositoryState("pending");
+    if (refreshRef.current) {
+      refreshRef.current.trailing = true;
+      return;
+    }
+    if (pageRequestRef.current) {
+      refreshAfterPageRef.current = true;
+      return;
+    }
+    const refresh = { generation: generationRef.current, trailing: false };
+    refreshRef.current = refresh;
+    listRefreshRequiredRef.current = selectedRepositoryRef.current !== null;
+    const isCurrent = () => generationRef.current === refresh.generation && refreshRef.current === refresh;
+    setLoadingRepositories(true);
     try {
-      const result: FileRootGitHistoryRepositoriesResult = await api.listFileRootGitHistoryRepositories({ sessionId });
-      if (generationRef.current !== generation || selectedRepositorySessionIdRef.current !== sessionId) {
-        return;
-      }
-      if (result.status !== "ok") {
-        setRepositoryState("error");
-        setListMessage(result.message);
-        return;
-      }
-      setRepositoryState("ready");
-      setRepositories(result.repositories);
-      const nextRepository = preserveSelection
-        ? result.repositories.find((repository) => repository.repositoryId === previousRepositoryId
-          && repository.rootId === previousRootId)
-        : null;
-      const resolvedRepository = nextRepository ?? result.repositories[0] ?? null;
-      const nextBranch = preserveSelection
-        && resolvedRepository?.repositoryId === previousRepositoryId
-        && resolvedRepository.rootId === previousRootId
-        ? previousBranch
-        : resolvedRepository?.currentBranch ?? null;
-      chooseRepository(resolvedRepository, generation, nextBranch);
+      do {
+        refresh.trailing = false;
+        const result: FileRootGitHistoryRepositoriesResult = await api.listFileRootGitHistoryRepositories({ sessionId });
+        if (!isCurrent()) {
+          return;
+        }
+        if (result.status !== "ok") {
+          setRepositoryState("error");
+          setListMessage(result.message);
+          continue;
+        }
+        setRepositoryState("ready");
+        setRepositories(result.repositories);
+        const previousRepository = selectedRepositoryRef.current;
+        if (!previousRepository) {
+          if (removedRepositoryRef.current) {
+            setListMessage("The selected Git repository is no longer available. Select a repository to continue.");
+            continue;
+          }
+          chooseRepository(result.repositories[0] ?? null, refresh.generation);
+          refreshAfterPageRef.current = refresh.trailing && pageRequestRef.current !== null;
+          return;
+        }
+        const repository = result.repositories.find((candidate) => (
+          candidate.repositoryId === previousRepository.repositoryId && candidate.rootId === previousRepository.rootId
+        ));
+        if (!repository) {
+          chooseRepository(null);
+          removedRepositoryRef.current = true;
+          setListMessage("The selected Git repository is no longer available.");
+          return;
+        }
+        selectedRepositoryRef.current = repository;
+        setSelectedRepository(repository);
+        const branch = selectedBranchRef.current;
+        if (branch === null) {
+          continue;
+        }
+        if (!repository.branches.includes(branch)) {
+          setListMessage(`The selected branch ${branch} is no longer available.`);
+          continue;
+        }
+        if (selectedCommitIdRef.current || comparisonOpenRef.current) {
+          listRefreshDeferredRef.current = true;
+          continue;
+        }
+        // Offset cursors from an older prefix cannot be appended to a refreshed one.
+        // Replace the loaded extent atomically using only cursors from this pass.
+        const nextCommits: FileRootGitHistoryCommit[] = [];
+        let nextCursor: string | null = null;
+        let nextHasMore = false;
+        let pages = 0;
+        const extent = Math.max(1, loadedPagesRef.current);
+        let failed = false;
+        do {
+          if (!visibleRef.current) {
+            failed = true;
+            break;
+          }
+          const page: FileRootGitHistoryCommitsResult = await api.listFileRootGitHistoryCommits({
+            sessionId, repositoryId: repository.repositoryId, rootId: repository.rootId, branch, cursor: nextCursor,
+          });
+          if (!isCurrent()) {
+            return;
+          }
+          if (page.status !== "ok") {
+            setListMessage(page.message);
+            failed = true;
+            break;
+          }
+          nextCommits.push(...page.page.entries);
+          nextCursor = page.page.nextCursor;
+          nextHasMore = page.page.hasMore;
+          pages += 1;
+        } while (pages < extent && nextHasMore && nextCursor !== null);
+        if (!failed) {
+          const list = listScrollRef.current;
+          const anchor = list && [...list.querySelectorAll<HTMLElement>(".file-history-commit-row")]
+            .find((row) => row.getBoundingClientRect().bottom > list.getBoundingClientRect().top);
+          scrollAnchorRef.current = list && anchor ? {
+            id: anchor.dataset.commitId ?? "",
+            offset: anchor.getBoundingClientRect().top - list.getBoundingClientRect().top,
+            scrollTop: list.scrollTop,
+          } : null;
+          setCommits([...new Map(nextCommits.map((commit) => [commit.id, commit])).values()]);
+          cursorRef.current = nextCursor;
+          hasMoreRef.current = nextHasMore;
+          loadedPagesRef.current = pages;
+          listRefreshRequiredRef.current = false;
+          setHasMore(nextHasMore);
+          setListMessage("");
+        }
+      } while (refresh.trailing && visibleRef.current);
     } catch (error) {
-      if (generationRef.current === generation) {
+      if (isCurrent()) {
         setRepositoryState("error");
-        setListMessage(error instanceof Error ? error.message : "Git repositories could not be loaded.");
+        setListMessage(error instanceof Error ? error.message : "Git history could not be refreshed.");
       }
     } finally {
-      if (generationRef.current === generation) {
+      if (generationRef.current === refresh.generation) {
         setLoadingRepositories(false);
       }
+      if (refreshRef.current === refresh) {
+        refreshRef.current = null;
+        if (refresh.trailing && visibleRef.current) {
+          requestRefreshRef.current();
+        }
+      }
     }
-  }, [api, chooseRepository, enabled, onRepositoryChange, sessionId]);
+  }, [api, chooseRepository, enabled, sessionId]);
+  requestRefreshRef.current = () => void reloadRepositories();
 
   useEffect(() => {
-    const preserveSelection = lastRootsRevisionRef.current === rootsRevision;
-    lastRootsRevisionRef.current = rootsRevision;
-    void reloadRepositories(preserveSelection);
+    chooseRepository(null);
+    removedRepositoryRef.current = false;
+    setRepositories([]);
+    setRepositoryState(api && sessionId && enabled ? "pending" : "unavailable");
+    setLoadingRepositories(false);
     return () => {
       generationRef.current += 1;
       pageRequestRef.current = null;
       detailRequestRef.current += 1;
       comparisonRequestRef.current += 1;
     };
-  }, [reloadRepositories, refreshRevision, rootsRevision]);
+  }, [api, chooseRepository, enabled, rootsRevision, sessionId]);
+
+  useEffect(() => {
+    if (visible) {
+      void reloadRepositories();
+    }
+  }, [reloadRepositories, refreshRevision, rootsRevision, visible]);
+
+  useEffect(() => {
+    if (visible && !selectedCommitId && !comparisonOpen && listRefreshDeferredRef.current) {
+      listRefreshDeferredRef.current = false;
+      void reloadRepositories();
+    }
+  }, [comparisonOpen, reloadRepositories, selectedCommitId, visible]);
+
+  useLayoutEffect(() => {
+    const anchor = scrollAnchorRef.current;
+    const list = listScrollRef.current;
+    if (!anchor || !list) {
+      return;
+    }
+    const row = [...list.querySelectorAll<HTMLElement>(".file-history-commit-row")]
+      .find((candidate) => candidate.dataset.commitId === anchor.id);
+    list.scrollTop = row
+      ? list.scrollTop + row.getBoundingClientRect().top - list.getBoundingClientRect().top - anchor.offset
+      : anchor.scrollTop;
+    listScrollTopRef.current = list.scrollTop;
+    scrollAnchorRef.current = null;
+  }, [commits]);
 
   const loadMore = useCallback(() => {
     const repository = selectedRepositoryRef.current;
     const branch = selectedBranchRef.current;
     const requestedCursor = cursorRef.current;
     if (
-      !repository
+      !visibleRef.current
+      || refreshRef.current
+      || listRefreshRequiredRef.current
+      || !repository
       || !branch
       || !hasMoreRef.current
       || requestedCursor === null
@@ -670,7 +809,7 @@ export function FileRootGitHistoryPane({
   }, [loadPage]);
 
   useEffect(() => {
-    if (selectedCommitId || comparisonOpen || !hasMore || loadingRepositories || !selectedRepository) {
+    if (!visible || selectedCommitId || comparisonOpen || !hasMore || loadingRepositories || !selectedRepository) {
       return;
     }
     const sentinel = sentinelRef.current;
@@ -685,7 +824,7 @@ export function FileRootGitHistoryPane({
     }, { root, rootMargin: "0px 0px 96px" });
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [comparisonOpen, hasMore, loadMore, loadingRepositories, selectedCommitId, selectedRepository]);
+  }, [comparisonOpen, hasMore, loadMore, loadingRepositories, selectedCommitId, selectedRepository, visible]);
 
   useEffect(() => {
     if (selectedCommitId || comparisonOpen) {
@@ -1064,7 +1203,7 @@ export function FileRootGitHistoryPane({
 
   return (
     <div className="file-history-pane" aria-busy={isBusy}>
-      {repositories.length > 1 ? (
+      {repositories.length > 1 || (repositories.length > 0 && !selectedRepository) ? (
         <label className="file-history-repository-selector">
           <span>Repository</span>
           <select
@@ -1072,9 +1211,11 @@ export function FileRootGitHistoryPane({
             value={selectedRepository?.repositoryId ?? ""}
             onChange={(event) => {
               const repository = repositories.find((candidate) => candidate.repositoryId === event.target.value) ?? null;
+              removedRepositoryRef.current = false;
               chooseRepository(repository);
             }}
           >
+            {!selectedRepository ? <option value="" disabled>Select A Repository</option> : null}
             {repositories.map((repository) => (
               <option key={repository.repositoryId} value={repository.repositoryId}>
                 {repository.label}
@@ -1120,6 +1261,9 @@ export function FileRootGitHistoryPane({
         </div>
       ) : null}
 
+      {(comparisonOpen || selectedCommitId) && listMessage ? (
+        <p className="file-history-message" role="alert">{listMessage}</p>
+      ) : null}
       {comparisonOpen ? (
         <div className="file-history-comparison" ref={setChangedFilesScrollElement} aria-busy={comparisonLoading || undefined}>
           <button className="file-history-back" type="button" onClick={backFromComparison}>
@@ -1333,7 +1477,7 @@ export function FileRootGitHistoryPane({
           tabIndex={0}
         >
           {listMessage ? <p className="file-history-message" role="alert">{listMessage}</p> : null}
-          {loadingRepositories || repositoryState === "pending" || (loadingCommits && commits.length === 0) ? (
+          {commits.length === 0 && (loadingRepositories || repositoryState === "pending" || loadingCommits) ? (
             <div className="workspace-changes-loading">
               <LoadingIndicator label="Loading commit history" />
             </div>
@@ -1344,6 +1488,7 @@ export function FileRootGitHistoryPane({
               <div className="file-history-commit-row-wrapper" key={commit.id}>
                 <button
                   className={`file-history-commit-row${lastSelectedCommitId === commit.id ? " is-selected" : ""}`}
+                  data-commit-id={commit.id}
                   type="button"
                   onClick={() => void selectCommit(commit)}
                 >

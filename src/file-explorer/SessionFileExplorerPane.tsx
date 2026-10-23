@@ -34,6 +34,8 @@ type SessionFileExplorerPaneProps = {
   api: FileExplorerApi | null;
   sessionId: string | null;
   enabled: boolean;
+  visible?: boolean;
+  refreshRevision?: number;
   rootsRevision: string;
   selectedFile: SessionFileRootResourceRequest | null;
   activeTab: "files" | "changes" | "history";
@@ -98,6 +100,13 @@ function pinEntryKey(rootId: string, relativePath: string, rootPath: string): st
   return directoryKey(rootId, /^[a-z]:[\\/]|^\\\\/i.test(rootPath) ? normalized.toLocaleLowerCase("en-US") : normalized);
 }
 
+function treeRowKey(row: FileTreeRow): string {
+  if (row.kind === "root") return `root:${row.root.id}`;
+  if (row.kind === "entry") return `entry:${directoryKey(row.rootId, row.entry.relativePath)}`;
+  if (row.kind === "pin") return `pin:${JSON.stringify([row.pin.rootKind, row.pin.rootPath, row.pin.relativePath])}`;
+  return row.id;
+}
+
 function entryIcon(entry: SessionDirectoryEntry): string {
   if (entry.kind === "directory") {
     return "▸";
@@ -112,6 +121,8 @@ export function SessionFileExplorerPane({
   api,
   sessionId,
   enabled,
+  visible = true,
+  refreshRevision = 0,
   rootsRevision,
   selectedFile,
   activeTab,
@@ -139,6 +150,11 @@ export function SessionFileExplorerPane({
     };
   }, [canInsertPathReference, onInsertPathReference, rootsRevision, sessionId]);
   const loadRevisionRef = useRef(0);
+  const activeRef = useRef({ visible, files: activeTab === "files" });
+  useLayoutEffect(() => { activeRef.current = { visible, files: activeTab === "files" }; }, [visible, activeTab]);
+  const refreshInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
+  const rootsRef = useRef<SessionFileRoot[]>([]);
   const directoryRequestSequenceRef = useRef(0);
   const inFlightDirectoryLoadsRef = useRef(new Map<string, DirectoryLoadRequest>());
   const latestDirectoryRequestsRef = useRef(new Map<string, Pick<DirectoryLoadRequest, "revision" | "requestId">>());
@@ -154,10 +170,12 @@ export function SessionFileExplorerPane({
   const [errorMessage, setErrorMessage] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const captureReadingContextRef = useRef<() => void>(() => {});
+  const readingContextRef = useRef<{ anchor: string; offset: number; focus: string | null } | null>(null);
   const pinFilterRef = useRef<HTMLButtonElement | null>(null);
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [revealTarget, setRevealTarget] = useState<string | null>(null);
-  const filePins = useSessionFilePins({ api, sessionId, enabled, rootsRevision });
+  const filePins = useSessionFilePins({ api, sessionId, enabled, rootsRevision, active: visible && activeTab === "files", refreshRevision });
   const pinsByEntry = useMemo(() => new Map(filePins.pins.flatMap((pin) => pin.rootId
     ? [[pinEntryKey(pin.rootId, pin.relativePath, pin.rootPath), pin] as const]
     : [])), [filePins.pins]);
@@ -194,7 +212,7 @@ export function SessionFileExplorerPane({
     });
   }, [activeTab, tabOwnerKey]);
 
-  const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number): Promise<boolean> => {
+  const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number, clearError = true): Promise<boolean> => {
     if (!api || !sessionId) {
       return Promise.resolve(false);
     }
@@ -218,12 +236,26 @@ export function SessionFileExplorerPane({
         if (!isCurrentRequest()) {
           return false;
         }
-        setEntriesByDirectory((current) => {
-          const next = { ...current, [key]: entries };
+        captureReadingContextRef.current();
+        {
+          const next = { ...entriesByDirectoryRef.current, [key]: entries };
+          const directories = new Set(entries.filter((entry) => entry.kind === "directory").map((entry) => entry.relativePath));
+          const prefix = relativePath ? `${relativePath}/` : "";
+          const deleted = (candidate: string) => {
+            const [candidateRoot, path] = candidate.split("\u0000");
+            if (candidateRoot !== rootId || path === relativePath || !path.startsWith(prefix)) return false;
+            return !directories.has(`${prefix}${path.slice(prefix.length).split("/")[0]}`);
+          };
+          for (const candidate of Object.keys(next)) if (deleted(candidate)) delete next[candidate];
+          for (const candidate of latestDirectoryRequestsRef.current.keys()) if (deleted(candidate)) latestDirectoryRequestsRef.current.delete(candidate);
+          const expanded = { ...expandedDirectoriesRef.current };
+          for (const candidate of Object.keys(expanded)) if (deleted(candidate)) delete expanded[candidate];
+          expandedDirectoriesRef.current = expanded;
+          setExpandedDirectories(expanded);
           entriesByDirectoryRef.current = next;
-          return next;
-        });
-        setErrorMessage("");
+          setEntriesByDirectory(next);
+        }
+        if (clearError) setErrorMessage("");
         return true;
       } catch (error) {
         if (isCurrentRequest()) {
@@ -245,44 +277,81 @@ export function SessionFileExplorerPane({
   }, [api, sessionId]);
 
   const reloadRoots = useCallback(async () => {
-    const revision = loadRevisionRef.current + 1;
-    loadRevisionRef.current = revision;
+    if (!api || !sessionId || !enabled || !activeRef.current.visible) return;
+    if (refreshInFlightRef.current) { refreshQueuedRef.current = true; return; }
+    const revision = loadRevisionRef.current;
+    refreshInFlightRef.current = true;
+    do {
+      refreshQueuedRef.current = false;
+      setRootsLoadState("loading");
+      setErrorMessage("");
+      try {
+        const nextRoots = await api.listSessionFileRoots(sessionId);
+        if (loadRevisionRef.current !== revision) return;
+        captureReadingContextRef.current();
+        const retained = new Set(nextRoots.filter((root) => rootsRef.current.some((old) => old.id === root.id && old.displayPath === root.displayPath)).map((root) => root.id));
+        const sameRoots = JSON.stringify(rootsRef.current) === JSON.stringify(nextRoots);
+        if (!sameRoots) { rootsRef.current = nextRoots; setRoots(nextRoots); }
+        const entries = Object.fromEntries(Object.entries(entriesByDirectoryRef.current).filter(([key]) => retained.has(key.split("\u0000")[0])));
+        for (const key of latestDirectoryRequestsRef.current.keys()) if (!retained.has(key.split("\u0000")[0])) latestDirectoryRequestsRef.current.delete(key);
+        entriesByDirectoryRef.current = entries;
+        setEntriesByDirectory(entries);
+        const expanded = Object.fromEntries(Object.entries(expandedDirectoriesRef.current).filter(([key]) => retained.has(key.split("\u0000")[0])));
+        expandedDirectoriesRef.current = expanded;
+        setExpandedDirectories(expanded);
+        // Only already-open directories are refreshed, parents before descendants.
+        const opened = Object.keys(expanded).filter((key) => expanded[key]).sort((left, right) => left.split("/").length - right.split("/").length);
+        for (const key of opened) {
+          if (loadRevisionRef.current !== revision || !activeRef.current.visible || !activeRef.current.files) break;
+          const [rootId, relativePath] = key.split("\u0000");
+          const segments = relativePath.split("/");
+          if (!expandedDirectoriesRef.current[key] || (relativePath && !segments.every((_, index) => expandedDirectoriesRef.current[directoryKey(rootId, segments.slice(0, index).join("/"))]))) continue;
+          const pending = inFlightDirectoryLoadsRef.current.get(key);
+          if (pending) await pending.promise;
+          if (loadRevisionRef.current !== revision || !activeRef.current.visible || !activeRef.current.files || !expandedDirectoriesRef.current[key]) continue;
+          await loadDirectory(rootId, relativePath, revision, false);
+        }
+        if (loadRevisionRef.current === revision) setRootsLoadState("ready");
+      } catch (error) {
+        if (loadRevisionRef.current === revision) {
+          setRootsLoadState("error");
+          setErrorMessage(error instanceof Error ? error.message : "File roots could not be loaded.");
+        }
+      }
+    } while (loadRevisionRef.current === revision && refreshQueuedRef.current && activeRef.current.visible && activeRef.current.files);
+    if (loadRevisionRef.current === revision) { refreshInFlightRef.current = false; refreshQueuedRef.current = false; }
+  }, [api, enabled, sessionId, loadDirectory]);
+
+  useLayoutEffect(() => {
+    loadRevisionRef.current += 1;
+    refreshInFlightRef.current = false;
+    refreshQueuedRef.current = false;
     inFlightDirectoryLoadsRef.current.clear();
     latestDirectoryRequestsRef.current.clear();
+    rootsRef.current = [];
+    readingContextRef.current = null;
     setRoots([]);
-    setEntriesByDirectory({});
     entriesByDirectoryRef.current = {};
-    setExpandedDirectories({});
+    setEntriesByDirectory({});
     expandedDirectoriesRef.current = {};
+    setExpandedDirectories({});
     setLoadingDirectories({});
     setErrorMessage("");
     setFeedbackMessage("");
-    if (!api || !sessionId || !enabled) {
-      setRootsLoadState("unavailable");
-      return;
-    }
-    setRootsLoadState("loading");
-    try {
-      const nextRoots = await api.listSessionFileRoots(sessionId);
-      if (loadRevisionRef.current !== revision) {
-        return;
-      }
-      setRoots(nextRoots);
-      setRootsLoadState("ready");
-    } catch (error) {
-      if (loadRevisionRef.current === revision) {
-        setRootsLoadState("error");
-        setErrorMessage(error instanceof Error ? error.message : "File roots could not be loaded.");
-      }
-    }
-  }, [api, enabled, sessionId]);
-
-  useEffect(() => {
-    void reloadRoots();
+    setRootsLoadState(api && sessionId && enabled ? "ready" : "unavailable");
     return () => {
       loadRevisionRef.current += 1;
     };
   }, [reloadRoots, rootsRevision]);
+
+  const previousRefreshRef = useRef<{ owner: string; visible: boolean; tab: string; revision: number; loader: typeof reloadRoots } | null>(null);
+  useEffect(() => {
+    const previous = previousRefreshRef.current;
+    previousRefreshRef.current = { owner: tabOwnerKey, visible, tab: activeTab, revision: refreshRevision, loader: reloadRoots };
+    if (visible && (!previous || previous.owner !== tabOwnerKey || !previous.visible || previous.loader !== reloadRoots || (activeTab === "files" && (previous.tab !== "files" || previous.revision !== refreshRevision)))) {
+      void reloadRoots();
+    }
+  }, [activeTab, visible, refreshRevision, tabOwnerKey, reloadRoots, enabled, api]);
 
   const toggleDirectory = (rootId: string, relativePath: string) => {
     const key = directoryKey(rootId, relativePath);
@@ -304,7 +373,7 @@ export function SessionFileExplorerPane({
     const segments = pin.relativePath.split("/");
     setPinnedOnly(false);
     for (let index = 0; index <= segments.length; index += 1) {
-      if (loadRevisionRef.current !== revision) return;
+      if (loadRevisionRef.current !== revision || !activeRef.current.visible || !activeRef.current.files) return;
       const relativePath = segments.slice(0, index).join("/");
       const key = directoryKey(pin.rootId, relativePath);
       const nextExpanded = { ...expandedDirectoriesRef.current, [key]: true };
@@ -396,7 +465,33 @@ export function SessionFileExplorerPane({
     estimateSize: (index) => treeRows[index]?.kind === "pin" ? (treeRows[index].pin.unavailableReason ? 78 : 58) : 31,
     overscan: 18,
     useFlushSync: false,
+    getItemKey: (index) => treeRows[index] ? treeRowKey(treeRows[index]) : index,
   });
+
+  useLayoutEffect(() => {
+    captureReadingContextRef.current = () => {
+      const scroller = treeScrollRef.current;
+      if (!scroller || readingContextRef.current) return;
+      const item = treeVirtualizer.getVirtualItems().find((row) => row.end > scroller.scrollTop);
+      const row = item && treeRows[item.index];
+      if (!row || !item) return;
+      const focused = document.activeElement?.closest<HTMLElement>("[data-file-row-key]");
+      readingContextRef.current = { anchor: treeRowKey(row), offset: scroller.scrollTop - item.start, focus: focused?.dataset.fileRowKey ?? null };
+    };
+    const context = readingContextRef.current;
+    if (!context) return;
+    readingContextRef.current = null;
+    const index = treeRows.findIndex((row) => treeRowKey(row) === context.anchor);
+    const scroller = treeScrollRef.current;
+    if (index >= 0 && scroller) {
+      const offset = treeVirtualizer.getOffsetForIndex(index, "start");
+      if (offset) scroller.scrollTop = offset[0] + context.offset;
+    }
+    if (context.focus && (document.activeElement === document.body || scroller?.contains(document.activeElement))) {
+      const row = Array.from(scroller?.querySelectorAll<HTMLElement>("[data-file-row-key]") ?? []).find((element) => element.dataset.fileRowKey === context.focus);
+      row?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    }
+  }, [treeRows, treeVirtualizer]);
 
   useLayoutEffect(() => { treeVirtualizer.measure(); }, [pinnedOnly, treeVirtualizer, filePins.pins]);
   useEffect(() => {
@@ -498,19 +593,19 @@ export function SessionFileExplorerPane({
         aria-busy={rootsLoadState === "loading" || (!!api && !!sessionId && enabled && filePins.status === "loading")}
         hidden={activeTab !== "files"}
       >
-        {errorMessage ? <p className="session-file-tree-error" role="alert">{errorMessage}</p> : null}
+        {errorMessage ? <><p className="session-file-tree-error" role="alert">{errorMessage}</p><button type="button" onClick={() => void reloadRoots()}>Retry Files</button></> : null}
         {filePins.error ? (
           <div className="session-file-tree-error session-file-pins-error" role="alert">
             {filePins.error} <button type="button" onClick={() => void filePins.refresh()}>Retry Pins</button>
           </div>
         ) : null}
-        {enabled && api && sessionId && filePins.status === "loading" ? (
+        {enabled && api && sessionId && filePins.status === "loading" && filePins.pins.length === 0 && roots.length === 0 ? (
           <p className="session-file-tree-status"><LoadingIndicator inline label="Loading pins" /></p>
         ) : null}
         {feedbackMessage ? (
           <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
         ) : null}
-        {rootsLoadState === "loading" ? (
+        {rootsLoadState === "loading" && roots.length === 0 ? (
           <p className="session-file-tree-status">
             <LoadingIndicator inline label="Loading files" />
           </p>
@@ -533,6 +628,7 @@ export function SessionFileExplorerPane({
                 className="session-file-tree-virtual-row"
                 key={rowKey}
                 data-index={virtualRow.index}
+                data-file-row-key={treeRowKey(row)}
                 ref={row.kind === "pin" ? treeVirtualizer.measureElement : undefined}
                 style={{ height: row.kind === "pin" ? undefined : virtualRow.size, transform: `translateY(${virtualRow.start}px)` }}
               >

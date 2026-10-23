@@ -19,7 +19,9 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 - 同一rootのrefreshでは選択中branchを保持し、root変更では新しいrootのcurrent branchを初期選択します。選択branchが削除された場合は、利用できない状態を表示します。現在選択中のbranchには表示label `Current`を付けます。
 - merge commitのdetailとdiffはfirst parentとの比較として表示します。
 
-履歴やfile一覧はpage単位で読み込み、commit listの追加pageは専用scroll rootの末尾sentinelが表示領域に入ったときに取得します。repositoryの選択を変更した場合は表示中のcommit listをクリアし、以前の非同期取得結果を新しい選択へ反映しません。repository一覧の再読込開始時も、旧repositoryの詳細・比較・差分表示と関連する非同期取得を即時に失効させ、再読込失敗は現在のpaneへ表示します。
+履歴やfile一覧はpage単位で読み込み、commit listの追加pageは表示中の専用scroll rootの末尾sentinelが表示領域に入ったときに取得します。初回表示・tab／pane／Windowの復帰、関連Main／Auxiliaryのturn終端、`Refresh`でrepository・refs・一覧を更新します。非表示中は新しい取得を開始しません。
+
+同一repositoryの更新では取得済み内容、選択中branch、commit詳細、Compare、中央Diffと閲覧位置を保持し、失敗は内容を残したまま理由を表示します。詳細／Compareを閲覧中のcommit list更新は一覧へ戻るまで延期します。一覧更新は取得済み件数を目安に先頭からpageを取り直し、新しい先頭と古いoffset cursorを混在させません。repositoryや認可rootの選択を変更した場合は旧表示と非同期取得を失効させ、新しい選択へ旧応答を反映しません。
 
 ## Compare
 
@@ -29,7 +31,7 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 
 - `Direct comparison`は解決したbase commitからtarget commitまでを比較します。
 - `Branch changes`はbaseとtargetのmerge-baseからtargetまでを比較します。merge-baseがない場合や複数ある場合は、空の差分と混同しないエラーとして表示します。
-- 比較開始時に解決したcommit object IDをsnapshotとして保持します。refが移動しても表示中のpatchを別のcommitへ差し替えず、`Compare`の再実行またはrefreshで明示的に更新します。
+- 比較開始時に解決したcommit object IDをsnapshotとして保持します。refが移動しても表示中のpatchを別のcommitへ差し替えず、`Compare`の再実行で明示的に更新します。File Explorerの`Refresh`は比較結果や開いているDiffを再取得しません。
 - changed file listは既存のChangesと同じtree shell、filter、`Open All Changes`を使います。patchは選択したfileまたは全fileを必要時に取得し、rename、add、deleteでは利用可能なbefore / after previewをそれぞれ表示します。
 - nested rootではrepository全体ではなく、そのrootに認可されたrelative pathだけを比較対象にします。working tree、index、checkout、fetch、worktreeの作成は行いません。
 - 変更なし、invalid selector、commit not found、merge-base unavailable / ambiguous、Gitの上限超過・実行失敗は別の結果として扱います。

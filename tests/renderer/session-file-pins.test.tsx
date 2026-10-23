@@ -7,6 +7,7 @@ import type { SessionDirectoryEntry, SessionFilePin } from "../../src-shared/fil
 import type { SessionFileExplorerPane } from "../../src/file-explorer/SessionFileExplorerPane.js";
 
 type PaneProps = Parameters<typeof SessionFileExplorerPane>[0];
+type RefreshOptions = Pick<PaneProps, "visible" | "refreshRevision"> & { activeTab?: PaneProps["activeTab"] };
 const pin = (relativePath: string, kind: "file" | "directory" = "file"): SessionFilePin => ({
   rootKind: "workspace", rootPath: "C:\\workspace", rootId: "workspace", rootLabel: "Workspace", relativePath, kind, unavailableReason: null,
 });
@@ -16,11 +17,11 @@ const entry = (relativePath: string, kind: "file" | "directory" = "file"): Sessi
 
 async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
   document: Document;
-  render(sessionId: string, rootsRevision?: string): Promise<void>;
+  render(sessionId: string, rootsRevision?: string, options?: RefreshOptions): Promise<void>;
   click(label: string): Promise<void>;
   until(condition: () => boolean): Promise<void>;
   opened: string[];
-}) => Promise<void>) {
+}) => Promise<void>, initialOptions: RefreshOptions = {}) {
   const dom = new JSDOM("<html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
   const replacements = {
     window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
@@ -47,10 +48,10 @@ async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
   const { SessionFileExplorerPane: Pane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
   const opened: string[] = [];
-  const render = async (sessionId: string, rootsRevision = sessionId) => {
+  const render = async (sessionId: string, rootsRevision = sessionId, options: RefreshOptions = {}) => {
     await act(async () => root.render(<Pane api={api} sessionId={sessionId} enabled rootsRevision={rootsRevision}
       selectedFile={null} activeTab="files" onActiveTabChange={() => {}} onRefreshChanges={() => {}}
-      onOpenFile={(request) => opened.push(request.relativePath)} canInsertPathReference={false} onInsertPathReference={() => {}} />));
+      onOpenFile={(request) => opened.push(request.relativePath)} canInsertPathReference={false} onInsertPathReference={() => {}} {...options} />));
   };
   const until = async (condition: () => boolean) => {
     for (let count = 0; count < 200; count += 1) {
@@ -65,7 +66,7 @@ async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
     assert.equal(button.disabled, false, `Disabled button: ${label}`);
     await act(async () => button.click());
   };
-  try { await render("session-a"); await run({ document: dom.window.document, render, click, until, opened }); }
+  try { await render("session-a", "session-a", initialOptions); await run({ document: dom.window.document, render, click, until, opened }); }
   finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -86,6 +87,166 @@ function baseApi(): NonNullable<PaneProps["api"]> {
     async unpinSessionFile() {},
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Filesは表示時に最新の展開済み階層を取得し、更新中と失敗時に読む位置と内容を保ち、削除された子孫を除去する"
+// oracle = { type = "contract", ref = "#875 approved Files event refresh and reading-context preservation" }
+// fault = "更新でtreeを初期化する、読込失敗を空にする、削除directoryのcacheを復活させる、または未展開directoryまで走査する"
+// observable = "tree行、focus対象、scrollTop、directory取得path、errorと再試行後の内容"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane event refresh"
+// lifecycle = "permanent"
+// impact = "外部変更を反映しつつ閲覧中のファイル階層とkeyboard操作を継続する"
+// distinction = "単発のdirectory展開やPin操作では検出できない更新・削除・失敗の連携を検証する"
+// @end-test-value
+test("Filesの更新は展開と読む位置を保ち削除と取得失敗を区別する", async () => {
+  const api = baseApi();
+  let phase = 0;
+  const reads: string[] = [];
+  api.listSessionDirectory = async ({ relativePath }) => {
+    reads.push(relativePath);
+    if (phase === 2) throw new Error("Refresh failed.");
+    if (!relativePath) return [entry("closed", "directory"), ...(phase === 3 ? [] : [entry("folder", "directory")]), ...Array.from({ length: 30 }, (_, index) => entry(`file-${index}.txt`))];
+    return [entry(`folder/${phase ? "latest" : "original"}.txt`)];
+  };
+  await withPane(api, async ({ document, render, click, until }) => {
+    await click("Workspace");
+    await click("folder");
+    await until(() => !!document.querySelector("[title='folder/original.txt']"));
+    const folder = document.querySelector<HTMLButtonElement>("[title='folder']")!;
+    folder.focus();
+    const scroller = document.querySelector<HTMLDivElement>(".session-file-explorer-body")!;
+    await act(async () => scroller.scrollTo({ top: 31 }));
+    phase = 1;
+    await render("session-a", "session-a", { refreshRevision: 1 });
+    await until(() => !!document.querySelector("[title='folder/latest.txt']"));
+    assert.equal(document.activeElement, folder);
+    assert.equal(scroller.scrollTop, 31);
+    assert.deepEqual(reads, ["", "folder", "", "folder"]);
+    phase = 2;
+    await render("session-a", "session-a", { refreshRevision: 2 });
+    await until(() => document.querySelector("[role='alert']")?.textContent === "Refresh failed.");
+    assert.ok(document.querySelector("[title='folder/latest.txt']"));
+    phase = 3;
+    await click("Retry Files");
+    await until(() => !document.querySelector("[title='folder']"));
+    assert.equal(document.querySelector("[title='folder/latest.txt']"), null);
+    assert.equal(reads.at(-1), "");
+    assert.equal(reads.includes("closed"), false);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "非表示のFilesとPinは取得を始めず、再表示で更新し、重複通知は一つの後続更新へまとめ、折りたたみとowner切替を保つ"
+// oracle = { type = "contract", ref = "#875 approved visible-only refresh with coalescing and owner isolation" }
+// fault = "hiddenでI/Oを始める、通知ごとに並行取得する、非表示後に子孫取得を続ける、または旧ownerのtreeを表示する"
+// observable = "roots・Pin・directoryの取得回数とowner、遅延応答後のtreeとPin行の内容"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane refresh lifecycle"
+// lifecycle = "permanent"
+// impact = "不可視の余分なI/OとSessionを跨いだ誤表示を防ぐ"
+// distinction = "表示切替と未解決requestを組み合わせたlifecycleは型検査や単発取得testでは保証できない"
+// @end-test-value
+test("Filesの非表示と重複通知とowner切替を未解決request越しに扱う", async () => {
+  const api = baseApi();
+  let rootReads = 0;
+  let pinReads = 0;
+  let hold = false;
+  const pending: Array<() => void> = [];
+  const pendingPins: Array<{ sessionId: string; resolve: (pins: SessionFilePin[]) => void }> = [];
+  const directories: string[] = [];
+  api.listSessionFileRoots = async (sessionId) => {
+    rootReads += 1;
+    if (hold) await new Promise<void>((resolve) => pending.push(resolve));
+    return [{ id: "workspace", kind: "workspace", label: sessionId, displayPath: `C:\\${sessionId}` }];
+  };
+  api.listSessionFilePins = async (sessionId) => {
+    pinReads += 1;
+    return new Promise<SessionFilePin[]>((resolve) => pendingPins.push({ sessionId, resolve }));
+  };
+  api.listSessionDirectory = async ({ sessionId }) => { directories.push(sessionId); return [entry("current.txt")]; };
+  await withPane(api, async ({ document, render, click, until }) => {
+    assert.equal(rootReads, 0);
+    assert.equal(pinReads, 0);
+    await render("session-a");
+    assert.equal(pinReads, 1);
+    assert.equal(pendingPins[0]?.sessionId, "session-a");
+    await act(async () => pendingPins.shift()?.resolve([pin("initial.md")]));
+    await click("Pinned only");
+    assert.match(document.querySelector(".session-file-pinned-row")?.textContent ?? "", /initial\.md/);
+    await click("Pinned only");
+    await click("session-a");
+    await until(() => !!document.querySelector("[title='current.txt']"));
+    hold = true;
+    await render("session-a", "session-a", { refreshRevision: 1 });
+    await render("session-a", "session-a", { refreshRevision: 2 });
+    await render("session-a", "session-a", { refreshRevision: 3 });
+    assert.equal(rootReads, 2);
+    assert.equal(pinReads, 2);
+    await click("Pinned only");
+    assert.match(document.querySelector(".session-file-pinned-row")?.textContent ?? "", /initial\.md/);
+    await act(async () => pendingPins.shift()?.resolve([pin("intermediate.md")]));
+    await until(() => pinReads === 3);
+    assert.match(document.querySelector(".session-file-pinned-row")?.textContent ?? "", /intermediate\.md/);
+    assert.equal(pendingPins.length, 1);
+    assert.equal(pendingPins[0]?.sessionId, "session-a");
+    await click("Pinned only");
+    await act(async () => pending.shift()?.());
+    await until(() => rootReads === 3);
+    await click("session-a");
+    await render("session-a", "session-a", { refreshRevision: 4 });
+    assert.equal(pinReads, 3);
+    await render("session-a", "session-a", { visible: false, refreshRevision: 5 });
+    const directoryCount = directories.length;
+    await act(async () => {
+      pending.shift()?.();
+      pendingPins.shift()?.resolve([pin("settled-while-hidden.md")]);
+    });
+    assert.equal(directories.length, directoryCount);
+    assert.equal(document.querySelector("[title='current.txt']"), null);
+    assert.equal(rootReads, 3);
+    assert.equal(pinReads, 3);
+    assert.equal(pendingPins.length, 0);
+    await render("session-a", "session-a", { refreshRevision: 5 });
+    assert.equal(rootReads, 4);
+    assert.equal(pinReads, 4);
+    await click("Pinned only");
+    assert.match(document.querySelector(".session-file-pinned-row")?.textContent ?? "", /settled-while-hidden\.md/);
+    await act(async () => {
+      pending.shift()?.();
+      pendingPins.shift()?.resolve([pin("resumed-current.md")]);
+    });
+    await until(() => document.querySelector(".session-file-pinned-row")?.textContent?.includes("resumed-current.md") ?? false);
+    assert.equal(pinReads, 4);
+    assert.equal(document.querySelectorAll(".session-file-pinned-row").length, 1);
+    await render("session-a", "session-a", { refreshRevision: 6 });
+    assert.equal(rootReads, 5);
+    assert.equal(pinReads, 5);
+    await render("session-b");
+    assert.equal(rootReads, 6);
+    assert.equal(pinReads, 6);
+    assert.deepEqual(pendingPins.map((request) => request.sessionId), ["session-a", "session-b"]);
+    assert.equal(document.querySelector(".session-file-pinned-row"), null);
+    await act(async () => {
+      pending.shift()?.();
+      pendingPins.shift()?.resolve([pin("stale-session-a.md")]);
+    });
+    assert.equal(document.querySelector(".session-file-root-row"), null);
+    assert.equal(document.querySelector(".session-file-pinned-row"), null);
+    await act(async () => {
+      pending.shift()?.();
+      pendingPins.shift()?.resolve([pin("session-b-current.md")]);
+    });
+    await until(() => document.querySelector(".session-file-pinned-row")?.textContent?.includes("session-b-current.md") ?? false);
+    assert.equal(pinReads, 6);
+    assert.doesNotMatch(document.querySelector(".session-file-pinned-row")?.textContent ?? "", /stale-session-a|settled-while-hidden/);
+    await click("Pinned only");
+    assert.equal(document.querySelector(".session-file-root-row")?.textContent, "▸session-b");
+    assert.equal(document.body.textContent?.includes("current.txt"), false);
+  }, { visible: false });
+});
 
 // @test-value v2
 // kind = "invariant"

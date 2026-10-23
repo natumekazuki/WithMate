@@ -84,6 +84,7 @@ type FileRootChangesGroupProps = {
   loadingKey: string;
   scopes?: readonly (readonly [FileRootGitChangeScope, string])[];
   selectedEntryKey?: string | null;
+  preserveScrollAnchor?: boolean;
   onToggleDirectory: (rootId: string, scope: FileRootGitChangeScope, relativePath: string) => void;
   onOpenEntry: (
     rootId: string,
@@ -104,6 +105,7 @@ export function FileRootChangesGroup({
   onOpenEntry,
   scopes = DEFAULT_SCOPES,
   selectedEntryKey = null,
+  preserveScrollAnchor = false,
 }: FileRootChangesGroupProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -218,6 +220,42 @@ export function FileRootChangesGroup({
   });
   const totalSize = virtualizer.getTotalSize();
   const virtualItems = virtualizer.getVirtualItems();
+  const previousLayoutRef = useRef<{
+    rootId: string;
+    displayPath: string;
+    entries: FileRootGitChangeEntry[];
+    collapsedDirectories: Record<string, boolean>;
+    scopes: typeof scopes;
+    scrollElement: HTMLDivElement | null;
+    items: Array<{ key: string | number | bigint; start: number; end: number }>;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    const scrollElement = getScrollElement();
+    const previous = previousLayoutRef.current;
+    if (preserveScrollAnchor && scrollElement && previous?.scrollElement === scrollElement
+      && previous.rootId === rootChange.root.id && previous.displayPath === rootChange.root.displayPath
+      && previous.entries !== rootChange.entries && previous.collapsedDirectories === collapsedDirectories
+      && previous.scopes === scopes) {
+      const anchor = previous.items.find((item) => item.end > scrollElement.scrollTop);
+      const nextIndex = anchor ? rows.findIndex((row) => row.key === anchor.key) : -1;
+      if (anchor && nextIndex >= 0) {
+        const nextOffset = virtualizer.getOffsetForIndex(nextIndex, "start")?.[0];
+        if (nextOffset !== undefined) {
+          scrollElement.scrollTop = nextOffset + scrollElement.scrollTop - anchor.start;
+        }
+      }
+    }
+    previousLayoutRef.current = {
+      rootId: rootChange.root.id,
+      displayPath: rootChange.root.displayPath,
+      entries: rootChange.entries,
+      collapsedDirectories,
+      scopes,
+      scrollElement,
+      items: virtualItems.map(({ key, start, end }) => ({ key, start, end })),
+    };
+  });
 
   useEffect(() => {
     const scrollElement = getScrollElement();

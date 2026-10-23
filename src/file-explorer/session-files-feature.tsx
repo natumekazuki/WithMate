@@ -15,6 +15,8 @@ export type SessionFilesFeatureProps = {
   workspacePath: string | null;
   additionalDirectories: readonly string[];
   enabled: boolean;
+  visible: boolean;
+  relatedSessionIds: readonly string[];
   paneHost: HTMLElement | null;
   previewHost: HTMLElement | null;
   composer: {
