@@ -48,15 +48,15 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 ## Question Forms
 
 - Main／Auxiliaryとも、有効な構造化入力要求を会話内で操作する。Codexの非同期質問はsource item IDに対応する本文範囲をformへ置き換え、通常本文から質問を推測しない。本文を持たない要求は受信時点の応答本文の後ろへ挿入し、後続本文より前の位置を保持する。
-- 通常の質問は質問文、選択肢、`Custom Answer`を直接表示し、受付状態の見出しは置かない。選択肢がない場合は自由入力だけにする。Codexの非同期質問は最初の候補を選択するが、自動送信はしない。nativeの回答制約とMCPの厳密schema・secret fieldは維持する。
+- 通常の質問は質問文、選択肢、自由入力欄を直接表示し、受付状態の見出しや`Custom Answer`の可視labelは置かない。自由入力のaccessible nameは維持し、単一選択の自由回答radioは入力欄に隣接させる。選択肢がない場合は自由入力だけにする。Codexの非同期質問は最初の候補を選択するが、自動送信はしない。nativeの回答制約とMCPの厳密schema・secret fieldは維持する。
 - 書式指定・secretではないtextと、単一／複数選択の`Custom Answer`は複数行入力にする。`Enter`は改行し、Settingsで設定したComposer送信shortcutはfocus中の質問だけを送信する。IME変換中とkey repeatでは送信しない。
-- 自由回答の`Attach`はActionDockと同じ`File / Folder / Image`、`Session Files`の`Copy / File / Folder / Image`を提供する。既存ファイルは参照し、clipboardから貼り付けた画像・ファイルは質問を所有するSession Filesへ保存して本文へ参照を挿入する。本文とパスを元の質問への回答として渡し、内容の読取・活用はエージェント側の権限と機能に委ねる。添付専用の回答型や通常チャットへの別送は設けず、非同期質問の既存の画像解決は維持する。
+- 自由回答の`Attach`は入力欄の右横に置き、ActionDockと同じ`File / Folder / Image`、`Session Files`の`Copy / File / Folder / Image`を提供する。既存ファイルは参照し、clipboardから貼り付けた画像・ファイルは質問を所有するSession Filesへ保存して本文へ参照を挿入する。本文とパスを元の質問への回答として渡し、内容の読取・活用はエージェント側の権限と機能に委ねる。添付専用の回答型や通常チャットへの別送は設けず、非同期質問の既存の画像解決は維持する。
 - 非同期質問の`Submit`は`【質問】`、質問原文、`【回答】`、回答をそれぞれ改行で区切って現在turnへ通常追加入力として送る。複数質問は質問・回答の組を空行で連結する。UI事情の説明は加えず、チャットのuser messageには回答だけを保存・表示する。入力を受け付けないturnでは送信できず、次turnへ自動振替しない。RPC質問の回答は元のrequestへの構造化応答とする。
 - 同じturnの複数質問は個別formとし、他の質問の受信、通常チャット割り込み、履歴スクロールで未送信回答を消さない。過去pageへ移動した間は質問を別の位置へ移さず、元のpageへ戻った時にdraftを復元する。
 - 送信中は重複操作を止め、受付失敗時は有効なformと入力値を保持してerrorを示す。通常チャットの本文からform回答を推測せず、通常割り込みだけでは回答済みにしない。
 - 添付の選択・保存中は対象入力と`Submit`を無効化し、`Close`は維持する。添付失敗時は入力を保持してerrorを表示し、要求の終了・切替後に完了した選択・保存結果を別のSession・質問・fieldへ挿入しない。
 - 回答・拒否・Close・要求失効・turn終了後はformを閉じ、元の質問文と選択肢を通常の会話として残す。回答済み等の状態ラベルは表示しない。通常チャットで回答したかどうかは判定しない。
-- 通常質問の操作は`Close / Submit`とし、Closeは質問だけを終了する。Codex nativeでは空の`answers`を返し、Claudeでは質問toolを拒否してturn自体は中断しない。turn停止は既存のCancelから行う。MCP formは`Reject / Close / Submit`、URL要求は`Reject / Close / Complete`を維持する。
+- 通常質問の操作は`Close / Submit`とし、×と通常送信と共通の紙飛行機iconを使う。操作名はtooltipとaccessible nameへ残し、busy中もbuttonの寸法を維持する。Closeは質問だけを終了する。Codex nativeでは空の`answers`を返し、Claudeでは質問toolを拒否してturn自体は中断しない。turn停止は既存のCancelから行う。MCP formは`Reject / Close / Submit`、URL要求は`Reject / Close / Complete`の可視labelを維持する。
 - 終端時の記録は通常assistant messageへ保存し、次turnや会話再表示でも操作を復元しない。記録にはformの入力値・既定値を保存しない。非同期回答を受け付けた本文は通常user messageとして保存する。強制終了前のlive formや未送信回答の復元は行わない。
 
 ## UI Implementation Boundary

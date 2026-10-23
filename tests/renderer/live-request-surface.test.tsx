@@ -434,10 +434,10 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
 
 // @test-value v2
 // kind = "contract"
-// claim = "Live input requestは実行したactionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
+// claim = "質問のicon buttonとMCPの文字buttonは実行したactionだけにspinnerとbusyを示し、単一のstatusと要求内容・accessible nameを維持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
 // fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたはrequest本文・操作labelを失う"
-// observable = "input request領域と各buttonのaria-busy、spinnerの所属、status数、request本文、操作label"
+// observable = "input request領域と各buttonのaria-busy、spinnerの所属、status数、request本文、accessible name、質問iconのtooltipとaria-hidden"
 // observation_boundary = "component-behavior"
 // scope = "live-input-request-resolution-feedback"
 // lifecycle = "permanent"
@@ -445,39 +445,50 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
 // distinction = "disabled属性の有無だけでなく、busy announcementが一つだけ存在し、要求内容と操作識別が同時に残ることを確認する"
 // @end-test-value
 test("LiveRequestSurface はinput解決中のbusy announcementと操作labelを保つ", () => {
-  for (const action of ["accept", "decline", "cancel"] as const) {
-    const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
-      liveApprovalRequest: null,
-      approvalActionRequestId: null,
-      liveElicitationRequest: elicitationRequest,
-      elicitationActionRequestId: elicitationRequest.requestId,
-      elicitationAction: action,
-      onResolveLiveApproval() {},
-      onResolveLiveElicitation() {},
-    }));
+  for (const kind of [undefined, "question"] as const) {
+    for (const action of ["accept", "decline", "cancel"] as const) {
+      if (kind === "question" && action === "decline") continue;
+      const html = renderToStaticMarkup(React.createElement(LiveRequestSurface, {
+        liveApprovalRequest: null,
+        approvalActionRequestId: null,
+        liveElicitationRequest: { ...elicitationRequest, kind },
+        elicitationActionRequestId: elicitationRequest.requestId,
+        elicitationAction: action,
+        onResolveLiveApproval() {},
+        onResolveLiveElicitation() {},
+      }));
 
-    assert.match(html, /class="live-elicitation-card"[^>]*aria-busy="true"/);
-    const document = new JSDOM(html).window.document;
-    assert.equal(document.querySelectorAll('[role="status"]').length, 1);
-    assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing input request");
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
-    assert.deepEqual(buttons.map((button) => button.textContent), ["Reject", "Close", "Submit"]);
-    const active = buttons[action === "accept" ? 2 : action === "decline" ? 0 : 1];
-    assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
-    assert.equal(active.getAttribute("aria-busy"), "true");
-    assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
-    assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
-    assert.ok(buttons.every((button) => button.disabled));
-    assert.match(html, /Choose a branch/);
+      assert.match(html, /class="live-elicitation-card"[^>]*aria-busy="true"/);
+      const document = new JSDOM(html).window.document;
+      assert.equal(document.querySelectorAll('[role="status"]').length, 1);
+      assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing input request");
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+      const labels = kind === "question" ? ["Close", "Submit"] : ["Reject", "Close", "Submit"];
+      assert.deepEqual(buttons.map((button) => button.getAttribute("aria-label") ?? button.textContent), labels);
+      if (kind === "question") {
+        assert.deepEqual(buttons.map((button) => button.title), labels);
+        assert.ok(buttons.every((button) => button.querySelector('svg[aria-hidden="true"]')));
+      } else {
+        assert.deepEqual(buttons.map((button) => button.textContent), labels);
+      }
+      const actionLabel = action === "accept" ? "Submit" : action === "decline" ? "Reject" : "Close";
+      const active = buttons[labels.indexOf(actionLabel)];
+      assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
+      assert.equal(active.getAttribute("aria-busy"), "true");
+      assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
+      assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
+      assert.ok(buttons.every((button) => button.disabled));
+      assert.match(html, kind === "question" ? /Branch/ : /Choose a branch/);
+    }
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "自由入力を許す単一選択は候補を残しつつ空の必須回答を拒否し、改行を含む候補外の回答を文字列で送れる"
+// claim = "自由入力を許す単一選択はaccessible nameを持つradioで自由回答へ戻れ、候補を残しつつ空回答を拒否して改行を含む回答を送れる"
 // oracle = { type = "contract", ref = "Claude AskUserQuestion required free-text answer contract; Issue #862 multiline answers" }
 // fault = "候補が初期選択されたように見える、自由入力や改行を失う、または空白を必須回答として送る"
-// observable = "候補付き入力の初期値・候補、validation、送信payload"
+// observable = "候補付き入力の初期値・候補、自由回答radioのaccessible nameと選択状態、validation、送信payload"
 // observation_boundary = "component-behavior"
 // scope = "live-elicitation-free-text-select"
 // lifecycle = "permanent"
@@ -486,7 +497,7 @@ test("LiveRequestSurface はinput解決中のbusy announcementと操作labelを�
 // @end-test-value
 test("LiveRequestSurface は自由入力の単一選択を候補付きで回答する", async () => {
   const request: LiveElicitationRequest = {
-    requestId: "single-free", provider: "claude", mode: "form", message: "Choose direction",
+    requestId: "single-free", provider: "claude", kind: "question", mode: "form", message: "Choose direction",
     fields: [{ type: "select", name: "direction", title: "Direction", required: true, allowFreeText: true,
       options: [{ value: "north", label: "North" }] }],
   };
@@ -509,8 +520,10 @@ test("LiveRequestSurface は自由入力の単一選択を候補付きで回答�
     await act(async () => north.click());
     await submit(mounted.container);
     assert.deepEqual(mounted.responses.pop(), { action: "accept", content: { direction: "north" } });
-    const custom = mounted.container.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1];
+    const custom = mounted.container.querySelector<HTMLInputElement>('input[type="radio"][aria-label="Direction Custom Answer"]');
+    assert.ok(custom);
     await act(async () => custom.click());
+    assert.equal(custom.checked, true);
     assert.equal(input.value, "northeast\nvia river");
     await submit(mounted.container);
     assert.deepEqual(mounted.responses, [{ action: "accept", content: { direction: "northeast\nvia river" } }]);

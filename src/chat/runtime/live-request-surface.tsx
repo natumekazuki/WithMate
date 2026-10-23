@@ -2,6 +2,7 @@ import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "re
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 import { ButtonContent } from "../../ui/button-content.js";
+import { ComposerIcon } from "../composer/composer-icon.js";
 import { QuestionAnswerEditor } from "./question-answer-editor.js";
 
 import type {
@@ -373,16 +374,16 @@ function LiveElicitationCard({
                         <span>{option.label}</span>
                       </label>
                     ))}
-                    <label className="live-elicitation-option">
-                      <input type="radio" name={`${fieldIdPrefix}-${index}`} checked={customFields.includes(field.name)}
+                    <div className="live-elicitation-option live-elicitation-custom-option">
+                      <input type="radio" name={`${fieldIdPrefix}-${index}`} aria-label={`${field.title} Custom Answer`}
+                        checked={customFields.includes(field.name)}
                         onChange={() => setCustomFields((current) => [...current.filter((name) => name !== field.name), field.name])}
                         disabled={isEditingDisabled} />
-                      <span>Custom Answer</span>
-                    </label>
-                    {renderAnswerEditor(field, index, freeTextValues[field.name] ?? "", (value) => {
+                      {renderAnswerEditor(field, index, freeTextValues[field.name] ?? "", (value) => {
                         setCustomFields((current) => current.includes(field.name) ? current : [...current, field.name]);
                         setFreeTextValues((current) => ({ ...current, [field.name]: value }));
                       }, true)}
+                    </div>
                   </div>
                 ) : (
                   <select
@@ -433,13 +434,8 @@ function LiveElicitationCard({
                       </label>
                     );
                   })}
-                  {field.allowFreeText ? (
-                    <div className="live-elicitation-field">
-                      <span>Custom Answer</span>
-                      {renderAnswerEditor(field, index, freeTextValues[field.name] ?? "",
-                        (value) => setFreeTextValues((current) => ({ ...current, [field.name]: value })), true)}
-                    </div>
-                  ) : null}
+                  {field.allowFreeText ? renderAnswerEditor(field, index, freeTextValues[field.name] ?? "",
+                    (value) => setFreeTextValues((current) => ({ ...current, [field.name]: value })), true) : null}
                 </div>
               ) : null}
             </div>
@@ -459,16 +455,25 @@ function LiveElicitationCard({
           <ButtonContent busy={isSubmitting && submittedAction === "decline"}>Reject</ButtonContent>
         </button> : null}
         <button
-          className="drawer-toggle secondary"
+          className={`drawer-toggle secondary${request.kind === "question" ? " composer-icon-button" : ""}`}
           type="button"
+          aria-label="Close"
+          title="Close"
           onClick={() => handleSubmit("cancel")}
           disabled={isActionPending}
           aria-busy={(isSubmitting && submittedAction === "cancel") || undefined}
         >
-          <ButtonContent busy={isSubmitting && submittedAction === "cancel"}>Close</ButtonContent>
+          <ButtonContent busy={isSubmitting && submittedAction === "cancel"}>
+            {request.kind === "question" ? <><ComposerIcon name="close" /><span className="visually-hidden">Close</span></> : "Close"}
+          </ButtonContent>
         </button>
-        <button type="button" onClick={() => handleSubmit("accept")} disabled={acceptDisabled} aria-busy={(isSubmitting && submittedAction === "accept") || undefined}>
-          <ButtonContent busy={isSubmitting && submittedAction === "accept"}>{request.mode === "url" ? "Complete" : "Submit"}</ButtonContent>
+        <button type="button" className={request.kind === "question" ? "composer-icon-button" : undefined}
+          aria-label={request.mode === "url" ? "Complete" : "Submit"}
+          title={request.mode === "url" ? "Complete" : "Submit"}
+          onClick={() => handleSubmit("accept")} disabled={acceptDisabled} aria-busy={(isSubmitting && submittedAction === "accept") || undefined}>
+          <ButtonContent busy={isSubmitting && submittedAction === "accept"}>
+            {request.kind === "question" ? <><ComposerIcon name="send" /><span className="visually-hidden">Submit</span></> : request.mode === "url" ? "Complete" : "Submit"}
+          </ButtonContent>
         </button>
       </div>
     </section>

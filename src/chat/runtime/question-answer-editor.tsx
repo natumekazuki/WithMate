@@ -91,8 +91,46 @@ export function QuestionAnswerEditor({
 
   return (
     <div className="question-answer-editor" aria-busy={busy || undefined}>
-      {sessionId && api ? <div className="question-answer-toolbar">
-        <ComposerAttachmentMenu
+      <div className="question-answer-input">
+        <textarea
+          ref={textareaRef}
+          rows={3}
+          aria-label={label}
+          aria-describedby={describedBy}
+          data-shortcut-scope="question-answer"
+          value={value}
+          disabled={disabled || busy}
+          onChange={(event) => { setError(""); onChange(event.target.value); }}
+          onCompositionStart={() => { composing.current = true; }}
+          onCompositionEnd={() => { composing.current = false; }}
+          onKeyDown={(event) => {
+            if (composing.current || event.nativeEvent.keyCode === 229) return;
+            if (!getShortcutDispatcher()?.matchesCommandShortcut(SHORTCUT_COMMAND_IDS.composerSubmit, event.nativeEvent)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (!current.current.disabled && !operationRef.current) onSubmit();
+          }}
+          onPaste={(event) => {
+            if (!collectPastedClipboardFiles(event.clipboardData).length) return;
+            event.preventDefault();
+            if (!api || !sessionId) {
+              setError("File attachments are unavailable for this session.");
+              return;
+            }
+            const clipboardData = event.clipboardData;
+            void attach((isCurrent) => collectPastedSessionAttachments({
+              clipboardData,
+              preventDefault() {},
+              sessionId,
+              currentTimestampLabel: () => new Date().toISOString(),
+              savePastedSessionFile: (request) => {
+                if (!isCurrent()) throw new Error("The input request is no longer available.");
+                return api.savePastedSessionFile(request);
+              },
+            }));
+          }}
+        />
+        {sessionId && api ? <ComposerAttachmentMenu
           disabled={disabled || busy}
           busy={busy}
           isOpen={menuOpen}
@@ -115,47 +153,9 @@ export function QuestionAnswerEditor({
             const path = await api.pickSessionImageFile(sessionId);
             return pathReferences(path ? [path] : []);
           })}
-        />
-        {busy ? <span className="visually-hidden" role="status">Attaching files</span> : null}
-      </div> : null}
-      <textarea
-        ref={textareaRef}
-        rows={3}
-        aria-label={label}
-        aria-describedby={describedBy}
-        data-shortcut-scope="question-answer"
-        value={value}
-        disabled={disabled || busy}
-        onChange={(event) => { setError(""); onChange(event.target.value); }}
-        onCompositionStart={() => { composing.current = true; }}
-        onCompositionEnd={() => { composing.current = false; }}
-        onKeyDown={(event) => {
-          if (composing.current || event.nativeEvent.keyCode === 229) return;
-          if (!getShortcutDispatcher()?.matchesCommandShortcut(SHORTCUT_COMMAND_IDS.composerSubmit, event.nativeEvent)) return;
-          event.preventDefault();
-          event.stopPropagation();
-          if (!current.current.disabled && !operationRef.current) onSubmit();
-        }}
-        onPaste={(event) => {
-          if (!collectPastedClipboardFiles(event.clipboardData).length) return;
-          event.preventDefault();
-          if (!api || !sessionId) {
-            setError("File attachments are unavailable for this session.");
-            return;
-          }
-          const clipboardData = event.clipboardData;
-          void attach((isCurrent) => collectPastedSessionAttachments({
-            clipboardData,
-            preventDefault() {},
-            sessionId,
-            currentTimestampLabel: () => new Date().toISOString(),
-            savePastedSessionFile: (request) => {
-              if (!isCurrent()) throw new Error("The input request is no longer available.");
-              return api.savePastedSessionFile(request);
-            },
-          }));
-        }}
-      />
+        /> : null}
+      </div>
+      {busy ? <span className="visually-hidden" role="status">Attaching files</span> : null}
       {error ? <p className="live-approval-warning" role="alert">{error}</p> : null}
     </div>
   );
