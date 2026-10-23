@@ -22,6 +22,29 @@ export class AuxiliaryLiveRunParents {
     return entry?.owner === this.options.getStorageOwner() ? entry.parentSessionId : undefined;
   }
 
+  public hasPendingRunForParent(parentSessionId: string): boolean {
+    const owner = this.options.getStorageOwner();
+    for (const [sessionId, entry] of this.parents) {
+      if (entry.owner === owner && entry.parentSessionId === parentSessionId
+        && this.options.isRunPending(sessionId)) return true;
+    }
+    return false;
+  }
+
+  public async trackRun<T>(
+    session: Pick<AuxiliarySession, "id" | "parentSessionId" | "status">,
+    owner: object,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const pending = run();
+    this.remember(session, owner);
+    try {
+      return await pending;
+    } finally {
+      this.releaseIfUnused(session.id, owner);
+    }
+  }
+
   public remember(session: Pick<AuxiliarySession, "id" | "parentSessionId" | "status">, owner: object): void {
     if (owner !== this.options.getStorageOwner() || session.status !== "active"
       || !this.options.isRunPending(session.id)) return;

@@ -411,7 +411,7 @@ const mainWindowRuntime = new MainWindowRuntime({
   getLiveSessionRunOwnerSessionId: (sessionId) => auxiliaryLiveRunParents.get(sessionId)
     ?? (mainWindowRuntime.getSessionWindowBridge().getWindow(sessionId) ? sessionId : null),
   getSettingsCatalog: () => requireSettingsCatalogService(),
-  isSessionRunInFlight,
+  isSessionRunInFlight: isSessionWindowRunInFlight,
   getTerminalCloseConfirmationCount: (window) => terminalService?.countRequiringCloseConfirmation(window) ?? 0,
   cancelInFlightSessionRuns,
   waitForPendingDraftSends: async () => {
@@ -445,7 +445,7 @@ const mainWindowRuntime = new MainWindowRuntime({
     });
   },
   confirmCloseWhileRunning: async (window, sessionId, signal) => {
-    const hasRun = isSessionRunInFlight(sessionId);
+    const hasRun = isSessionWindowRunInFlight(sessionId);
     const liveTerminals = terminalService?.countLive(window) ?? 0;
     const choice = await dialog.showMessageBox(window, {
       signal,
@@ -1081,6 +1081,10 @@ function isSessionRunInFlight(sessionId: string, scope: "self" | "with-auxiliary
     return true;
   }
   return scope === "with-auxiliary" && [...auxiliaryRunParents.values()].includes(sessionId);
+}
+
+function isSessionWindowRunInFlight(sessionId: string): boolean {
+  return isSessionRunInFlight(sessionId) || auxiliaryLiveRunParents.hasPendingRunForParent(sessionId);
 }
 
 function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly string[]): Set<string> {
@@ -2268,10 +2272,12 @@ async function getQueueRuntimeSession(sessionId: string): Promise<Session | null
   return requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
 }
 
-async function resolveQueueSessionRuntime(sessionId: string): Promise<SessionRuntimeService> {
-  return await requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId)
+async function resolveQueueSessionRuntime(sessionId: string) {
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId);
+  const runtime = auxiliary
     ? requireAuxiliarySessionRuntimeService()
     : requireSessionRuntimeService();
+  return { runtime, auxiliary };
 }
 
 function requireMainSessionTurnQueueService(): SessionTurnQueueService {
@@ -2289,14 +2295,15 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
       },
       dispatch: async (receipt, onStarted) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const runtime = await resolveQueueSessionRuntime(receipt.sessionId);
-        const result = await runtime.runQueuedSessionTurn(receipt, onStarted);
+        const { runtime, auxiliary } = await resolveQueueSessionRuntime(receipt.sessionId);
+        const run = () => runtime.runQueuedSessionTurn(receipt, onStarted);
+        const result = await (auxiliary ? auxiliaryLiveRunParents.trackRun(auxiliary, owner, run) : run());
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         return result;
       },
       sendInput: async (receipt, expectedTurnId) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue input");
-        const runtime = await resolveQueueSessionRuntime(receipt.sessionId);
+        const { runtime } = await resolveQueueSessionRuntime(receipt.sessionId);
         const result = await runtime.steerQueuedSessionTurn(receipt, expectedTurnId);
         assertPersistentStoreOwnerIsActive(owner, "Queue input");
         return result;
@@ -2790,7 +2797,7 @@ function requireSessionElicitationService(): SessionElicitationService {
   if (!sessionElicitationService) {
     sessionElicitationService = new SessionElicitationService({
       sendUserMessage: async (sessionId, turnId, message, answer) => {
-        const runtime = await resolveQueueSessionRuntime(sessionId);
+        const { runtime } = await resolveQueueSessionRuntime(sessionId);
         await runtime.answerSessionQuestion(sessionId, turnId, message, answer);
       },
       notifyQuestion: (sessionId, signal) => {
