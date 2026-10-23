@@ -30,7 +30,7 @@ export function useHomePreviews(api: HomePreviewsApi) {
     try {
       const result = await api.listSessionFilePreviewWindows();
       if (!mounted.current || request !== generation.current) return;
-      setGroups(result);
+      setGroups([...result].sort((left, right) => right.previews.length - left.previews.length));
       setStatus("loaded");
     } catch (error) {
       if (!mounted.current || request !== generation.current) return;

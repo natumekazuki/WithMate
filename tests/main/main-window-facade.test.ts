@@ -110,7 +110,7 @@ test("MainWindowFacade は aux/session window service を束ねる", async () =>
 // observation_boundary = "public-boundary"
 // scope = "MainWindowFacadeのSession Window mapとPreview registryの合成"
 // lifecycle = "permanent"
-// impact = "Homeの一覧位置を保ちつつSession本体が閉じた後のPreviewも整理できる"
+// impact = "Homeの同数時の基準順を保ちつつSession本体が閉じた後のPreviewも整理できる"
 // distinction = "renderer fixtureと個別registryのtestでは2種類のWindow集合の合成を検証できず、同期投影の小さなtestで保証する"
 // @end-test-value
 test("Preview groups retain all open sessions and remaining detached previews", () => {

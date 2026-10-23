@@ -174,18 +174,20 @@ test("Previews keeps the latest refresh and recovers a failed refresh without di
 
 // @test-value v2
 // kind = "contract"
-// claim = "開いているSessionはPreview 0件でも操作可能な親行を保ち、Close AllとWindow開閉通知で最新一覧へ更新する"
+// claim = "Previewsは現在のWindow数の降順・同数は取得順に並び、開閉通知で順序と件数を更新して0件の親行と操作対象を保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "Close Allで開いている親を除く、0件でも空展開やClose Allを実行する、またはSession Windowの開閉を反映しない"
-// observable = "Close All前後の同一card、0件のdisabled disclosure、Session open引数、Window通知後のcard一覧と購読解除"
+// fault = "件数順に並ばない、同数で取得順を失う、並べ替えで展開対象が変わる、Close Allで親を除く、または0件で展開やClose Allを実行する"
+// observable = "初回・Preview追加・Close All・Session Window変更後の親順と件数、同一cardと展開状態、0件のdisabled disclosure、Session open引数と購読解除"
 // observation_boundary = "component-behavior"
-// scope = "Home Previewsの0件親表示とSession/Preview変更通知"
+// scope = "Home Previewsの件数順表示とSession/Preview変更通知、0件親表示とClose All"
 // lifecycle = "permanent"
-// impact = "Previewを整理した後も開いているSessionの位置と復帰導線を保つ"
-// distinction = "取得結果だけのtestではrendererの0件除外とWindow購読漏れを検出できず、小さなDOM testで実操作を確認する"
+// impact = "Previewが多いSessionを先に見つけられ、件数変化で移動しても展開・Close All・復帰の対象を取り違えない"
+// distinction = "型checkやMain投影のtestでは通知後の表示順と操作対象を検出できず、一つの小さなDOM testで継続的に確認する"
 // @end-test-value
 test("Previews retains open sessions after Close All and reacts to Session Window changes", async () => {
-  let groups = [group("open"), { ...group("empty"), previews: [] }, group("detached")];
+  const detached = group("detached");
+  detached.previews.push({ token: "detached-second", title: "notes.md", path: "C:/work/detached/notes.md" });
+  let groups = [group("open"), { ...group("empty"), previews: [] }, detached];
   let emitPreviews = () => {};
   let emitSessions = (_ids: string[]) => {};
   let previewUnsubscribed = false;
@@ -208,17 +210,31 @@ test("Previews retains open sessions after Close All and reacts to Session Windo
     openSession: async (owner) => { opened.push(owner); },
   };
   await withPreviews(api, async (doc) => {
-    const titles = () => [...doc.querySelectorAll(".home-previews-session")].map((button) => button.getAttribute("title"));
-    assert.deepEqual(titles(), ["open", "empty", "detached"]);
-    const card = doc.querySelector<HTMLElement>(".home-monitor-card")!;
+    const displayed = () => [...doc.querySelectorAll(".home-monitor-card")].map((card) => [
+      card.querySelector(".home-previews-session")!.getAttribute("title"),
+      card.querySelector(".home-monitor-status-icon-count")!.textContent,
+    ]);
+    assert.deepEqual(displayed(), [["detached", "2"], ["open", "1"], ["empty", "0"]]);
+    const card = doc.querySelector('[title="open"]')!.closest<HTMLElement>(".home-monitor-card")!;
     const parent = card.querySelector<HTMLButtonElement>(".home-previews-session")!;
     const disclosure = card.querySelector<HTMLButtonElement>(".home-previews-disclosure")!;
     await act(async () => disclosure.click());
     assert.equal(disclosure.getAttribute("aria-expanded"), "true");
+    groups = groups.map((entry) => entry.ownerSessionId === "open" ? {
+      ...entry,
+      previews: [...entry.previews, { token: "open-second", title: "notes.md", path: "C:/work/open/notes.md" }],
+    } : entry);
+    await act(async () => emitPreviews());
+    assert.deepEqual(displayed(), [["open", "2"], ["detached", "2"], ["empty", "0"]]);
+    assert.equal(doc.querySelector(".home-monitor-card"), card);
+    assert.equal(disclosure.getAttribute("aria-expanded"), "true");
+    assert.equal(card.querySelector(".home-previews-children")!.hasAttribute("hidden"), false);
+    await act(async () => emitPreviews());
+    assert.deepEqual(displayed(), [["open", "2"], ["detached", "2"], ["empty", "0"]]);
     await act(async () => { parent.dispatchEvent(new doc.defaultView!.MouseEvent("contextmenu", { bubbles: true, cancelable: true })); });
     assert.deepEqual(closed, ["open"]);
-    assert.deepEqual(titles(), ["open", "empty", "detached"]);
-    assert.equal(doc.querySelector(".home-monitor-card"), card);
+    assert.deepEqual(displayed(), [["detached", "2"], ["open", "0"], ["empty", "0"]]);
+    assert.equal(doc.querySelector('[title="open"]')!.closest(".home-monitor-card"), card);
     assert.equal(disclosure.disabled, true);
     assert.equal(disclosure.getAttribute("aria-expanded"), "false");
     assert.equal(disclosure.title, "Previews: 0");
@@ -232,7 +248,7 @@ test("Previews retains open sessions after Close All and reacts to Session Windo
     assert.equal(menus, 1);
     groups = [groups[0]!, { ...group("new"), previews: [] }, groups[2]!];
     await act(async () => emitSessions(["open", "new"]));
-    assert.deepEqual(titles(), ["open", "new", "detached"]);
+    assert.deepEqual(displayed(), [["detached", "2"], ["open", "0"], ["new", "0"]]);
   });
   assert.equal(previewUnsubscribed, true);
   assert.equal(sessionUnsubscribed, true);
