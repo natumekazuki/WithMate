@@ -517,6 +517,7 @@ export function useSessionMessageListFollowing({
   const canResumeMessageListFollowingRef = useRef(false);
   const intentRevisionRef = useRef(0);
   const correctionFrameRef = useRef<number | null>(null);
+  const cancelSendEntranceRef = useRef<(() => void) | null>(null);
   const sendMotionRef = useRef<{
     startedAt: number | null;
     duration: number;
@@ -532,6 +533,7 @@ export function useSessionMessageListFollowing({
     ? savedScrollState?.isFollowing ?? true : isMessageListFollowing;
 
   const cancelCorrection = useCallback(() => {
+    cancelSendEntranceRef.current?.();
     sendMotionRef.current = null;
     if (correctionFrameRef.current !== null) {
       messageListRef.current?.ownerDocument.defaultView?.cancelAnimationFrame(correctionFrameRef.current);
@@ -861,6 +863,7 @@ export function useSessionMessageListFollowing({
       const cssDuration = element && view?.getComputedStyle(element).getPropertyValue("--session-dock-motion-duration").trim();
       const duration = cssDuration ? Number.parseFloat(cssDuration) * (cssDuration.endsWith("ms") ? 1 : 1000) : 0;
       const motionEnabled = element && view && duration > 0 && !view.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      cancelSendEntranceRef.current?.();
       if (motionEnabled) {
         if (scrollToLatestOnSend || isMessageListFollowingRef.current) {
           sendMotionRef.current = {
@@ -868,12 +871,34 @@ export function useSessionMessageListFollowing({
             remaining: Math.max(0, element.scrollHeight - element.clientHeight) - scrollTop,
           };
         }
-        for (const row of element.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
-          if (Number(row.dataset.index) >= messageCount) {
-            row.querySelector<HTMLElement>(".message-row")?.animate?.(
-              [{ opacity: 0 }, { opacity: 1 }], { duration: duration * 0.6, easing: "ease-out" },
-            );
-          }
+        // Only rows appended by this send may enter, including late virtual mounts.
+        const pendingRows = new Set<number>();
+        for (let index = messageCount; index < Number(element.dataset.messageCount); index++) pendingRows.add(index);
+        if (pendingRows.size) {
+          const stopObserving = () => {
+            observer.disconnect();
+            view.clearTimeout(timeout);
+            if (cancelSendEntranceRef.current === stopObserving) cancelSendEntranceRef.current = null;
+          };
+          const revealMountedRows = () => {
+            if (view.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+              stopObserving();
+              return;
+            }
+            for (const row of element.querySelectorAll<HTMLElement>(".session-message-virtual-row")) {
+              const index = Number(row.dataset.index);
+              const message = row.querySelector<HTMLElement>(".message-row");
+              if (!pendingRows.has(index) || !message) continue;
+              pendingRows.delete(index);
+              message.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: duration * 0.6, easing: "ease-out" });
+            }
+            if (!pendingRows.size) stopObserving();
+          };
+          const observer = new view.MutationObserver(revealMountedRows);
+          const timeout = view.setTimeout(stopObserving, duration);
+          cancelSendEntranceRef.current = stopObserving;
+          observer.observe(element, { childList: true, subtree: true });
+          revealMountedRows();
         }
       }
       if (scrollToLatestOnSend) onAccepted();

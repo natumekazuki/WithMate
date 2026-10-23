@@ -1009,12 +1009,12 @@ test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設
 
 // @test-value v2
 // kind = "contract"
-// claim = "送信時の末尾追従は既存位置から開始し、Dockによるviewport変化と新着高さを取り込み末尾へ収束する。新規行のfadeは送信ごとに一度だけで、手動scroll・owner変更・非表示で古い移動を中止し、scroll設定OFFとreduced motionを尊重する"
+// claim = "送信時の末尾追従は既存位置から開始し、Dockによるviewport変化と新着高さを取り込み末尾へ収束する。送信した新規行はhandoff中に遅れてmountしても一度だけfadeし、既存行の再mountや後続の追加は再演出しない。手動scroll・owner変更・非表示で古い移動を中止し、scroll設定OFFとreduced motionを尊重する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dockの送信handoffとmessage list follow mode" }
-// fault = "送信直後に末尾へjumpする、Dock変化後の末尾を取り逃す、同じ行を再演出する、または古いframeが手動閲覧・別会話を上書きする"
+// fault = "送信直後に末尾へjumpする、Dock変化後の末尾や遅れてmountする新規行のfadeを取り逃す、同じ行を再演出する、または古いframeが手動閲覧・別会話を上書きする"
 // observable = "実follow hookへ渡したlistのscrollTop、追従状態、新規行のanimate呼出、owner変更後の補正"
 // observation_boundary = "component-behavior"
-// scope = "useSessionMessageListFollowingの送信と制御RAF/ResizeObserver。CSS実描画の滑らかさは別途browser確認"
+// scope = "useSessionMessageListFollowingの送信、制御RAF/ResizeObserverとvirtual rowのmount。CSS実描画の滑らかさは別途browser確認"
 // lifecycle = "permanent"
 // impact = "送信時に読む位置を見失い、手動操作した本文を自動scrollで奪う"
 // distinction = "既存追従testは即時補正のみ。短い制御frame遷移で送信handoffと割込みの契約を検出する"
@@ -1029,6 +1029,14 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
   let frameId = 0;
   let reducedMotion = false;
   let resize = () => {};
+  const timers = new Map<number, { callback: () => void; delay: number | undefined }>();
+  let timerId = 0;
+  dom.window.setTimeout = (callback, delay) => {
+    assert.equal(typeof callback, "function");
+    timers.set(++timerId, { callback: callback as () => void, delay });
+    return timerId;
+  };
+  dom.window.clearTimeout = (id) => { if (id !== undefined) timers.delete(id); };
   dom.window.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
   dom.window.cancelAnimationFrame = (id) => { frames.delete(id); };
   Object.defineProperty(dom.window, "matchMedia", { value: () => ({ matches: reducedMotion }) });
@@ -1070,14 +1078,22 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
       message.className = "message-row";
       message.animate = () => { fades.push(index); return {} as Animation; };
       row.append(message); list.firstElementChild!.append(row);
+      return row;
     };
     addRow(1);
     const submitted = current.captureMessageListSend(true);
-    height += 160; addRow(2); addRow(3);
+    height += 160; list.dataset.messageCount = "4";
+    const promptRow = addRow(2);
     await act(async () => submitted());
     assert.equal(list.scrollTop, 1200, "送信DOMの追加直後に読む位置を飛ばさない");
-    assert.deepEqual(fades, [2, 3], "送信文と応答枠を同じ入口で現す");
+    assert.deepEqual(fades, [2], "既にmountされた送信文は直ちにfadeする");
     await frame(0);
+    await act(async () => {
+      addRow(0); promptRow.remove(); addRow(2);
+      addRow(3);
+      addRow(4);
+    });
+    assert.deepEqual(fades, [2, 3], "後からmountする応答枠も一度だけfadeし、既存行の再mountや後続の追加は対象にしない");
     viewport += 100; height += 20;
     await act(async () => resize());
     await frame(150);
@@ -1088,9 +1104,10 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
     await frame(400);
     assert.deepEqual(fades, [2, 3], "受付/保存の追加補正で入場を再実行しない");
 
+    list.querySelector('[data-index="4"]')!.remove();
     list.dataset.messageCount = "4";
     const interrupted = current.captureMessageListSend(true);
-    height += 200;
+    height += 200; list.dataset.messageCount = "6";
     await act(async () => interrupted());
     await frame(500); await frame(600);
     await act(async () => list.dispatchEvent(new dom.window.WheelEvent("wheel", { deltaY: -100, bubbles: true })));
@@ -1099,6 +1116,8 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
     await act(async () => resize()); await frame(1000);
     assert.equal(current.isMessageListFollowing, false);
     assert.equal(list.scrollTop, readingTop, "新着やDockが変化しても手動閲覧位置を上書きしない");
+    await act(async () => { addRow(4); addRow(5); });
+    assert.deepEqual(fades, [2, 3], "手動閲覧で中断した後のmountを古い送信の演出に巻き込まない");
     const noScroll = current.captureMessageListSend(false);
     height += 100;
     await act(async () => noScroll()); await frame(1100);
@@ -1106,7 +1125,7 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
 
     reducedMotion = true;
     const reduced = current.captureMessageListSend(true);
-    height += 100; addRow(4);
+    height += 100; list.dataset.messageCount = "7"; addRow(6);
     await act(async () => reduced());
     assert.equal(list.scrollTop, height - viewport);
     assert.deepEqual(fades, [2, 3], "reduced motionでは新しい行もfadeさせない");
@@ -1125,6 +1144,20 @@ test("送信handoffは位置をつなぎ、手動意図・owner・motion設定�
     const hiddenTop = list.scrollTop;
     await frame(1700);
     assert.equal(list.scrollTop, hiddenTop, "非表示になった会話のmotionを停止する");
+
+    await render("aux");
+    list.dataset.messageCount = "7";
+    const expires = current.captureMessageListSend(true);
+    list.dataset.messageCount = "8";
+    await act(async () => expires());
+    assert.equal(timers.size, 1);
+    assert.equal([...timers.values()][0].delay, 300, "未mount行の待機は送信handoffの期間に限る");
+    await act(async () => {
+      const pending = [...timers.values()]; timers.clear();
+      pending.forEach(({ callback }) => callback());
+      addRow(7);
+    });
+    assert.deepEqual(fades, [2, 3], "handoff終了後に初めて読む行を遅れて演出しない");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
