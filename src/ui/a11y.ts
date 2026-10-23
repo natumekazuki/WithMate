@@ -159,11 +159,13 @@ export function useDialogA11y<T extends HTMLElement>(options: {
       const initialFocus = initialFocusRef?.current;
       if (initialFocus) {
         initialFocus.focus();
-        return;
+        if (document.activeElement === initialFocus) {
+          return;
+        }
       }
 
       const [firstFocusable] = getFocusableElements(dialogRef.current);
-      firstFocusable?.focus();
+      (firstFocusable ?? dialogRef.current)?.focus();
     };
 
     const timeoutId = window.setTimeout(focusTarget, 0);

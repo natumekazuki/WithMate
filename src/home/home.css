@@ -1810,6 +1810,7 @@
 .choice-card:focus-visible,
 .composer-path-match:focus-visible,
 .diff-close:focus-visible,
+.auxiliary-launch-dialog .launch-cancel-button:focus-visible,
 .start-session-button:focus-visible,
 .restore-session-windows-button:focus-visible,
 .launch-toggle:focus-visible,
@@ -2005,6 +2006,16 @@
   grid-area: 2 / 1;
   justify-self: end;
   width: auto;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+}
+
+.auxiliary-launch-dialog .launch-cancel-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.auxiliary-launch-dialog .launch-cancel-button[aria-busy="true"] {
+  opacity: 1;
 }
 
 .auxiliary-launch-dialog .start-session-button {
