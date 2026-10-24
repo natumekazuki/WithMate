@@ -61,6 +61,7 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
   const [pageInput, setPageInput] = useState("1");
   const [labels, setLabels] = useState<string[] | null>(null);
   const [scale, setScale] = useState(1);
+  const [scaleValue, setScaleValue] = useState("page-width");
   const [rotation, setRotation] = useState(0);
   const [layout, setLayout] = useState("continuous");
   const [sidebar, setSidebar] = useState(false);
@@ -122,7 +123,9 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
     engine.eventBus.on("pagechanging", ({ pageNumber, pageLabel }: { pageNumber: number; pageLabel: string | null }) => {
       if (active) { setPage(pageNumber); setPageInput(pageLabel ?? String(pageNumber)); }
     });
-    engine.eventBus.on("scalechanging", ({ scale: next }: { scale: number }) => { if (active) setScale(next); });
+    engine.eventBus.on("scalechanging", ({ scale: next }: { scale: number }) => {
+      if (active) { setScale(next); setScaleValue(engine.viewer.currentScaleValue); }
+    });
     engine.eventBus.on("rotationchanging", ({ pagesRotation }: { pagesRotation: number }) => { if (active) setRotation(pagesRotation); });
     engine.eventBus.on("scrollmodechanged", ({ mode }: { mode: number }) => {
       if (active && mode === ScrollMode.PAGE) setLayout("single");
@@ -130,6 +133,7 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
     engine.eventBus.on("updateviewarea", ({ location }: { location: { pageNumber: number; left: number; top: number } }) => {
       position.current = { page: location.pageNumber, left: location.left, top: location.top,
         scale: engine.viewer.currentScale, rotation: engine.viewer.pagesRotation };
+      if (active) setScaleValue(engine.viewer.currentScaleValue);
     });
     engine.eventBus.on("updatefindmatchescount", ({ matchesCount }: { matchesCount: { current: number; total: number } }) => {
       if (active) setFindCount(matchesCount);
@@ -178,6 +182,12 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
       ...findOptions, highlightAll: true, findPrevious: previous });
   }, [query, findOptions]);
   useEffect(() => { if (findOpen) find(); }, [find, findOpen]);
+  const setZoom = useCallback((value: number) => {
+    const viewer = engineRef.current?.viewer;
+    if (!viewer) return;
+    viewer.currentScale = value;
+    setScaleValue(viewer.currentScaleValue);
+  }, []);
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -186,12 +196,12 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
       event.preventDefault(); event.stopPropagation();
       if (zoomWheelStep !== null && engineRef.current) {
         const viewer = engineRef.current.viewer;
-        viewer.currentScale = Math.min(8, Math.max(0.1, viewer.currentScale + (event.deltaY < 0 ? 1 : -1) * zoomWheelStep / 100));
+        setZoom(Math.min(8, Math.max(0.1, viewer.currentScale + (event.deltaY < 0 ? 1 : -1) * zoomWheelStep / 100)));
       }
     };
     container.addEventListener("wheel", wheel, { passive: false });
     return () => container.removeEventListener("wheel", wheel);
-  }, [zoomWheelStep]);
+  }, [zoomWheelStep, setZoom]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (!active || password) return;
@@ -224,7 +234,7 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
 
   const changeZoom = (change: number) => {
     const viewer = engineRef.current?.viewer;
-    if (viewer) viewer.currentScale = Math.max(0.1, Math.min(8, Math.round((viewer.currentScale + change) * 100) / 100));
+    if (viewer) setZoom(Math.max(0.1, Math.min(8, Math.round((viewer.currentScale + change) * 100) / 100)));
   };
   const goToPage = (value: string | number) => {
     if (!pdf) return;
@@ -248,10 +258,10 @@ function PdfDocumentView({ file, zoomWheelStep, findRevision, onLoaded, onError,
       </div>
       <div className="pdf-control-group" role="group" aria-label="PDF Zoom">
         <button type="button" aria-label="Zoom out" disabled={!ready || scale <= 0.1} onClick={() => changeZoom(-0.1)}>−</button>
-        <button type="button" className="pdf-zoom-value" aria-label="Reset PDF zoom to 100%" disabled={!ready} onClick={() => { if (engineRef.current) engineRef.current.viewer.currentScale = 1; }}>{Math.round(scale * 100)}%</button>
+        <button type="button" className="pdf-zoom-value" aria-label="Reset PDF zoom to 100%" disabled={!ready} onClick={() => setZoom(1)}>{Math.round(scale * 100)}%</button>
         <button type="button" aria-label="Zoom in" disabled={!ready || scale >= 8} onClick={() => changeZoom(0.1)}>＋</button>
-        <select aria-label="Fit PDF" value="" disabled={!ready} onChange={(event) => { if (engineRef.current) engineRef.current.viewer.currentScaleValue = event.currentTarget.value; }}>
-          <option value="" disabled>Fit</option><option value="page-width">Width</option><option value="page-fit">Page</option>
+        <select aria-label="PDF zoom mode" value={scaleValue === "page-width" || scaleValue === "page-fit" ? scaleValue : "custom"} disabled={!ready} onChange={(event) => { if (engineRef.current) engineRef.current.viewer.currentScaleValue = event.currentTarget.value; }}>
+          <option value="custom" disabled>Custom</option><option value="page-width">Width</option><option value="page-fit">Page</option>
         </select>
       </div>
       <button type="button" disabled={!ready} aria-label="Rotate clockwise" title="Rotate Clockwise" onClick={() => {
