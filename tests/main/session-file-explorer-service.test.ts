@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { Stats } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -121,7 +121,7 @@ test("SessionFileExplorerService は tree path actionをcurrent rootとnode kind
         return { workspacePath: currentWorkspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] };
       },
       async lstatPath(targetPath) {
-        const targetStats = await lstat(targetPath);
+        const targetStats = await lstat(targetPath, { bigint: true });
         currentWorkspacePath = replacementWorkspacePath;
         return targetStats;
       },
@@ -355,6 +355,17 @@ test("SessionFileExplorerService は root 外 file も存在確認し missing �
   assert.deepEqual(probedPaths, ["\\\\server\\share\\file.txt"]);
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "regular fileでもdirectoryでもないlocal pathはPreview対象にせず、OS openも行わない"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: resolvePreviewTarget" }
+// fault = "特殊objectをfileやdirectoryとして扱い、PreviewまたはOS openへ渡す"
+// observable = "not-previewable結果とopen呼出回数"
+// observation_boundary = "public-boundary"
+// scope = "local Preview targetのfile種別制限"
+// lifecycle = "permanent"
+// distinction = "実filesystem種別のruntime判定はrequestの型だけでは保証できない"
+// @end-test-value
 test("SessionFileExplorerService は regular file でも directory でもない path を Preview にしない", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-special-preview-"));
   const workspacePath = path.join(tempDirectory, "workspace");
@@ -374,9 +385,9 @@ test("SessionFileExplorerService は regular file でも directory でもない 
           return {
             isDirectory: () => false,
             isFile: () => false,
-          } as Stats;
+          } as BigIntStats;
         }
-        return stat(targetPath);
+        return stat(targetPath, { bigint: true });
       },
       async openResolvedPath(targetPath) {
         openCount += 1;
@@ -472,7 +483,7 @@ test("SessionFileExplorerService は root 外への symlink link を解決し列
       },
       async lstatPath(targetPath) {
         probedPaths.push(targetPath);
-        return lstat(targetPath);
+        return lstat(targetPath, { bigint: true });
       },
     });
 
@@ -754,7 +765,7 @@ test("SessionFileExplorerService は chunk read 後に同じ handle の revision
       async openFile(filePath, flags) {
         const handle = await open(filePath, flags);
         return {
-          stat: () => handle.stat(),
+          stat: (options) => handle.stat(options),
           async read(buffer, offset, length, position) {
             const result = await handle.read(buffer, offset, length, position);
             if (mutateAfterRead) {
@@ -853,11 +864,22 @@ test("SessionFileExplorerService は identity-bound directory metadata を投影
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "並列directory列挙は全要求を処理しつつprocess全体で最大4件に制限する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: MAX_CONCURRENT_DIRECTORY_LISTINGS/listDirectoryWithAdmission" }
+// fault = "待機要求を失う、または上限を超えてdirectory workerを同時実行する"
+// observable = "完了したlisting呼出数と観測した最大同時数"
+// observation_boundary = "public-boundary"
+// scope = "directory listing admissionの実行上限"
+// lifecycle = "permanent"
+// distinction = "型検査やworker単体では複数要求のadmission動作を確認できない"
+// @end-test-value
 test("SessionFileExplorerService は directory listing の process 全体同時数を固定上限に収める", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-admission-"));
   const workspacePath = path.join(basePath, "workspace");
   await mkdir(workspacePath, { recursive: true });
-  const workspaceStats = await stat(workspacePath);
+  const workspaceStats = await stat(workspacePath, { bigint: true });
   let activeListings = 0;
   let maxActiveListings = 0;
   let listingCalls = 0;
@@ -892,11 +914,22 @@ test("SessionFileExplorerService は directory listing の process 全体同時�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "directory列挙の大量要求は超過分を拒否し、認可handleを最大4件に制限して終了時に全解放する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: listDirectoryWithAdmission/listDirectory" }
+// fault = "待機要求を無制限に保持する、待機中もhandleを開く、終了後handleを漏らす"
+// observable = "超過要求の拒否、最大同時handle数、完了後のhandle数"
+// observation_boundary = "public-boundary"
+// scope = "directory listing待機制限とhandle lifecycle"
+// lifecycle = "permanent"
+// distinction = "実行同時数だけのtestでは待機中や終了後のhandle保持を検出できない"
+// @end-test-value
 test("SessionFileExplorerService は directory listing の待機数と認可 handle 数を固定上限に収める", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-queue-bound-"));
   const workspacePath = path.join(basePath, "workspace");
   await mkdir(workspacePath, { recursive: true });
-  const workspaceStats = await stat(workspacePath);
+  const workspaceStats = await stat(workspacePath, { bigint: true });
   let activeHandles = 0;
   let maxActiveHandles = 0;
   let releaseListings!: () => void;
@@ -911,7 +944,7 @@ test("SessionFileExplorerService は directory listing の待機数と認可 han
       activeHandles += 1;
       maxActiveHandles = Math.max(maxActiveHandles, activeHandles);
       return {
-        stat: () => handle.stat(),
+        stat: (options) => handle.stat(options),
         read: (buffer, offset, length, position) => handle.read(buffer, offset, length, position),
         async close() {
           activeHandles -= 1;
@@ -949,11 +982,22 @@ test("SessionFileExplorerService は directory listing の待機数と認可 han
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "別Sessionの大量列挙要求は先に待機するSessionの要求を置換せず、その完了を維持する"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: listDirectoryWithAdmission supersessionKey" }
+// fault = "別Sessionからの要求で既存Sessionの待機要求を誤ってsupersedeする"
+// observable = "victim要求の完了順と正常完了、noisy要求の超過拒否"
+// observation_boundary = "public-boundary"
+// scope = "directory admissionのSession所有境界"
+// lifecycle = "permanent"
+// distinction = "単一Sessionの上限制御testではSession間の要求置換を観測できない"
+// @end-test-value
 test("SessionFileExplorerService は別 Session の待機中 directory listing を supersede しない", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-queue-owner-"));
   const workspacePath = path.join(basePath, "workspace");
   await mkdir(workspacePath, { recursive: true });
-  const workspaceStats = await stat(workspacePath);
+  const workspaceStats = await stat(workspacePath, { bigint: true });
   let releaseListings!: () => void;
   const listingsReleased = new Promise<void>((resolve) => {
     releaseListings = resolve;
@@ -1033,7 +1077,7 @@ test("SessionFileExplorerService は directory worker timeout 後に認可 handl
     async openFile(targetPath, flags) {
       const handle = await open(targetPath, flags);
       return {
-        stat: () => handle.stat(),
+        stat: (options) => handle.stat(options),
         read: (buffer, offset, length, position) => handle.read(buffer, offset, length, position),
         async close() {
           closeCalls += 1;
@@ -1207,6 +1251,55 @@ test("SessionFileExplorerService は認可した directory と異なる実体の
 
 // @test-value v2
 // kind = "security"
+// claim = "Numberで一致する大きなdevice/inodeでも、異なるfile/directory handleを認可しない"
+// oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: openAuthorizedCandidate/confirmOpenedTarget" }
+// fault = "identityをNumberへ丸め、隣接する別device/inodeを同一視する"
+// observable = "bigint指定のstat呼出とinspectFile/listDirectoryのauthorization拒否Error"
+// observation_boundary = "public-boundary"
+// scope = "file/directory authorizationの整数identity精度"
+// lifecycle = "permanent"
+// impact = "別の実体のhandleを認可して内容を公開することを防ぐ"
+// distinction = "実filesystemのinode採番に依存せず、Numberでは識別できない隣接値を各OSで確実に確認する"
+// @end-test-value
+test("SessionFileExplorerService はNumberで一致する大きなidentityを区別する", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-exact-identity-"));
+  const filePath = path.join(basePath, "document.pdf");
+  await writeFile(filePath, "%PDF-1.7\nfixture");
+  const first = 2n ** 53n;
+  const second = first + 1n;
+  assert.equal(Number(first), Number(second));
+  try {
+    for (const field of ["dev", "ino"] as const) {
+      const identity = { dev: 1n, ino: 1n, [field]: first };
+      const otherIdentity = { ...identity, [field]: second };
+      const service = new SessionFileExplorerService({
+        userDataPath: path.join(basePath, "data"),
+        getSessionContext: async () => ({ workspacePath: basePath, parentSessionId: "session", allowedAdditionalDirectories: [] }),
+        async statPath(target, options) {
+          assert.deepEqual(options, { bigint: true });
+          return Object.assign(await stat(target, options), identity);
+        },
+        async openFile(target, flags) {
+          const handle = await open(target, flags);
+          return {
+            async stat(options) {
+              assert.deepEqual(options, { bigint: true });
+              return Object.assign(await handle.stat(options), otherIdentity);
+            },
+            read: (buffer, offset, length, position) => handle.read(buffer, offset, length, position),
+            close: () => handle.close(),
+          };
+        },
+      });
+      const request = { sessionId: "session", rootId: "workspace", relativePath: "document.pdf" };
+      await assert.rejects(service.inspectFile(request), /resource path changed during authorization/);
+      await assert.rejects(service.listDirectory({ ...request, relativePath: "" }), /resource path changed during authorization/);
+    }
+  } finally { await rm(basePath, { recursive: true, force: true }); }
+});
+
+// @test-value v2
+// kind = "security"
 // claim = "認可したdirectory identityと異なるworker結果を返さない"
 // oracle = { type = "contract", ref = "src-electron/files/session-file-explorer-service.ts: listDirectory" }
 // fault = "workerが別directoryのdevice/inodeを返しても認可済みlistingとして受け入れる"
@@ -1223,7 +1316,7 @@ test("SessionFileExplorerService は認可した directory identity と異なる
   const outsideDirectory = path.join(basePath, "outside");
   await mkdir(workspacePath, { recursive: true });
   await mkdir(outsideDirectory, { recursive: true });
-  const outsideStats = await stat(outsideDirectory);
+  const outsideStats = await stat(outsideDirectory, { bigint: true });
   const service = new SessionFileExplorerService({
     userDataPath: path.join(basePath, "user-data"),
     getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
@@ -1314,13 +1407,14 @@ test("SessionFileExplorerService は同じ inode / size / mtime へ偽装した�
   const targetPath = path.join(workspacePath, "mutable.txt");
   await mkdir(workspacePath, { recursive: true });
   await writeFile(targetPath, "original");
-  const originalStats = await stat(targetPath);
+  const originalStats = await stat(targetPath, { bigint: true });
   const ctimeChangedStats = Object.assign(
-    Object.create(Object.getPrototypeOf(originalStats)) as Stats,
+    Object.create(Object.getPrototypeOf(originalStats)) as BigIntStats,
     originalStats,
     {
-      ctimeMs: originalStats.ctimeMs + 1,
-      ctime: new Date(originalStats.ctimeMs + 1),
+      ctimeMs: originalStats.ctimeMs + 1n,
+      ctimeNs: originalStats.ctimeNs + 1_000_000n,
+      ctime: new Date(Number(originalStats.ctimeMs + 1n)),
     },
   );
   let exposeChangedCtime = false;
@@ -1393,7 +1487,7 @@ test("SessionFileExplorerService は inspection read 中の file 変更を descr
     async openFile(filePath, flags) {
       const handle = await open(filePath, flags);
       return {
-        stat: () => handle.stat(),
+        stat: (options) => handle.stat(options),
         async read(buffer, offset, length, position) {
           const result = await handle.read(buffer, offset, length, position);
           await writeFile(targetPath, "modified");

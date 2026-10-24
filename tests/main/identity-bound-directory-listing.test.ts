@@ -6,6 +6,18 @@ import test from "node:test";
 
 import { listIdentityBoundDirectory } from "../../src-electron/files/identity-bound-directory-listing.js";
 
+// @test-value v2
+// kind = "security"
+// claim = "directory workerはbindしたcwdのidentityを精度を保って返し、path差替後も元directoryの一覧だけを返す"
+// oracle = { type = "contract", ref = "src-electron/files/identity-bound-directory-listing.ts: IdentityBoundDirectorySnapshot" }
+// fault = "workerのidentityをNumber経由で丸める、またはpath差替で別directoryのentriesを返す"
+// observable = "snapshotのbigint device/inodeと元directoryのみのentry名"
+// observation_boundary = "public-boundary"
+// scope = "identity-bound directory workerのcwdとidentity transport"
+// lifecycle = "permanent"
+// impact = "認可したdirectoryとworker結果の照合を誤り、差替先の内容を返すことを防ぐ"
+// distinction = "serviceのmockでは別processのcwd固定とJSON transportの精度を検証できない"
+// @end-test-value
 test("listIdentityBoundDirectory は path が差し替えられても bound cwd の一覧だけを返す", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-"));
   const targetPath = path.join(basePath, "target");
@@ -18,7 +30,7 @@ test("listIdentityBoundDirectory は path が差し替えられても bound cwd 
   try {
     await mkdir(targetPath);
     await writeFile(path.join(targetPath, "inside.txt"), "inside");
-    const originalStats = await stat(targetPath);
+    const originalStats = await stat(targetPath, { bigint: true });
     const listing = listIdentityBoundDirectory(targetPath, {
       delayAfterReadyMs: 300,
       onIdentityBound: resolveBound,
