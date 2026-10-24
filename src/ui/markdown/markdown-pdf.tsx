@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import type { SessionFileDescriptor, SessionPdfResourceRequest } from "../../../src-shared/file-explorer/file-explorer-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
@@ -6,6 +6,7 @@ import { PdfFilePreview } from "../../file-explorer/PdfFilePreview.js";
 import { PreviewByteAccumulator, SESSION_FILE_LARGE_WARNING_BYTES, SESSION_FILE_READ_CHUNK_BYTES, formatFileByteLength } from "../../file-explorer/file-preview-utils.js";
 import { LoadingIndicator } from "../loading-indicator.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
+import { MarkdownFilePreviewFrame, type MarkdownFilePreviewProps } from "./MarkdownFilePreviewFrame.js";
 
 type PdfLoadState =
   | { status: "waiting" | "inspecting" }
@@ -14,7 +15,7 @@ type PdfLoadState =
   | { status: "ready"; descriptor: SessionFileDescriptor; bytes: Uint8Array }
   | { status: "error"; message: string };
 
-export function MarkdownPdfPreview({ target, link }: { target: string; link: ReactNode }) {
+export function MarkdownPdfPreview({ path, href, title, children }: MarkdownFilePreviewProps) {
   const { linkFileContext, onCopyText, onQuoteText } = useContext(MarkdownRenderContext);
   const shellRef = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
@@ -22,7 +23,7 @@ export function MarkdownPdfPreview({ target, link }: { target: string; link: Rea
   const [permittedRevision, setPermittedRevision] = useState<string | null>(null);
   const [state, setState] = useState<PdfLoadState>({ status: "waiting" });
   const [feedback, setFeedback] = useState("");
-  const requestKey = JSON.stringify(linkFileContext ? { ...linkFileContext, target } : null);
+  const requestKey = JSON.stringify(linkFileContext ? { ...linkFileContext, target: path } : null);
   const request = useMemo<SessionPdfResourceRequest | null>(() => JSON.parse(requestKey), [requestKey]);
   const actionGeneration = useRef(0);
 
@@ -100,17 +101,14 @@ export function MarkdownPdfPreview({ target, link }: { target: string; link: Rea
     });
   };
 
-  return <span ref={shellRef} className="message-pdf-shell">
-    <span className="message-pdf-header">
-      {link}
-      <span className="message-pdf-controls"><button type="button" onClick={() => {
-        setPermittedRevision(null); setReload((value) => value + 1);
-      }}>Reload</button></span>
-    </span>
-    <span className="message-pdf-content" aria-label="Embedded PDF">
+  const loading = state.status === "inspecting" || state.status === "loading";
+  return <MarkdownFilePreviewFrame path={path} href={href} title={title} link={children} format="PDF"
+    shellRef={shellRef} loading={loading} onReload={() => {
+      setPermittedRevision(null); setReload((value) => value + 1);
+    }}>
       {state.status === "ready" ? <PdfFilePreview key={`${reload}:${state.descriptor.revision}`} bytes={state.bytes}
         name={state.descriptor.name} onCopyText={copyText} onQuoteText={onQuoteText} onOpenLink={openLink} /> :
-        <span className="message-pdf-placeholder" role={state.status === "error" ? "alert" : "status"}>
+        <span className="message-file-preview-placeholder" role={state.status === "error" ? "alert" : "status"}>
           {state.status === "waiting" ? "PDF preview loads when visible." :
             state.status === "large-warning" ? <>
               <span>This PDF is {formatFileByteLength(state.descriptor.byteLength)}. Loading it may use significant memory.</span>
@@ -119,7 +117,6 @@ export function MarkdownPdfPreview({ target, link }: { target: string; link: Rea
               <LoadingIndicator label={state.status === "loading"
                 ? `Loading PDF: ${formatFileByteLength(state.loadedBytes)} / ${formatFileByteLength(state.descriptor.byteLength)}` : "Loading PDF"} />}
         </span>}
-      {feedback ? <span className="message-pdf-feedback" role="status">{feedback}</span> : null}
-    </span>
-  </span>;
+      {feedback ? <span className="message-file-preview-feedback" role="status">{feedback}</span> : null}
+  </MarkdownFilePreviewFrame>;
 }

@@ -464,7 +464,7 @@ test("会話列は応答元providerの構文を保存済み・live・pendingに�
       const dom = new JSDOM(html);
       try {
         const links = [...dom.window.document.querySelectorAll('a[href="/work/view.html"]')];
-        assert.deepEqual(links.map((link) => link.textContent), provider === "codex" ? ["/work/view.html"] : []);
+        assert.deepEqual(links.map((link) => link.textContent), provider === "codex" ? ["view.html"] : []);
         assert.equal(dom.window.document.querySelectorAll('a[href="/work/plain.md"]').length, state === "saved" ? 2 : 1);
       } finally { dom.window.close(); }
     }

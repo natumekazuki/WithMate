@@ -9,7 +9,7 @@
 @import "./chat/session-shell.css";
 @import "./file-explorer/files.css";
 @import "./file-explorer/pdf-file-preview.css";
-@import "./ui/markdown/markdown-pdf.css";
+@import "./ui/markdown/markdown-file-preview.css";
 @import "./chat/session.css";
 @import "./terminal/terminal.css";
 @import "./diff/diff-shell.css";
@@ -17,3 +17,4 @@
 @import "./diff/diff.css";
 @import "./styles/responsive.css";
 @import "./provider-usage/provider-quota.css";
+@import "./ui/html-preview/html-preview.css";

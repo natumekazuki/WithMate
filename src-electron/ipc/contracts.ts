@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
+import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../../src-shared/file-explorer/session-html-preview-contract.js";
 
 import type { RendererLogInput } from "../../src-shared/window/app-log-types.js";
 
@@ -523,6 +524,7 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
       request: SessionDirectoryRequest,
     ): Awaitable<SessionDirectoryEntry[]>;
     inspectSessionImage(request: SessionImageResourceRequest): Awaitable<SessionFileDescriptor>;
+    readSessionHtmlPreview(request: SessionHtmlPreviewRequest): Awaitable<SessionHtmlPreviewResult>;
     readSessionImageChunk(request: SessionImageChunkRequest): Awaitable<SessionFileChunkResult>;
     inspectSessionPdf(request: SessionPdfResourceRequest): Awaitable<SessionFileDescriptor>;
     readSessionPdfChunk(request: SessionPdfChunkRequest): Awaitable<SessionFileChunkResult>;

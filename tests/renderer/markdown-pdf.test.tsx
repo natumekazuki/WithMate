@@ -54,7 +54,8 @@ async function mount(api: Partial<WithMateWindowApi>, run: (fixture: {
         })));
       },
       click: async (label) => {
-        const button = [...dom.window.document.querySelectorAll("button")].find((entry) => entry.textContent === label);
+        const button = [...dom.window.document.querySelectorAll("button")].find((entry) => entry.textContent === label
+          || entry.getAttribute("aria-label") === (label === "Reload" ? "Reload PDF Preview" : label));
         assert.ok(button, `button ${label}`);
         await act(async () => button.click());
       },
@@ -97,7 +98,8 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     assert.equal(read.length, 1);
     const frame = document.querySelector("iframe")!;
     assert.ok(frame);
-    assert.equal(document.querySelector("p > .message-pdf-shell")?.querySelector("div"), null);
+    assert.ok(document.querySelector('p > .message-file-preview[data-format="pdf"]'));
+    assert.equal(document.querySelector('.message-file-preview')?.querySelector("div"), null);
     const sent: unknown[] = [];
     frame.contentWindow!.postMessage = (message: unknown) => sent.push(message);
     await emit("ready");
@@ -118,11 +120,11 @@ test("visualize PDFs reuse the inline reader without disrupting chat actions or 
     assert.equal(document.querySelector("iframe"), null);
     assert.equal(document.querySelector("pre")?.textContent, text);
     for (const notation of [`[file](${target.replaceAll(" ", "%20")})`, `:codex-file-citation{path="${target}"}`,
-      marker("C:/work/chart.html")]) {
-      await render(notation); assert.equal(document.querySelector(".message-pdf-shell"), null);
+      marker("C:/work/chart.xlsx")]) {
+      await render(notation); assert.equal(document.querySelector('.message-file-preview[data-format="pdf"]'), null);
     }
     for (const responseProvider of [undefined, "claude", "copilot"]) {
-      await render(marker(), { responseProvider }); assert.equal(document.querySelector(".message-pdf-shell"), null);
+      await render(marker(), { responseProvider }); assert.equal(document.querySelector('.message-file-preview[data-format="pdf"]'), null);
     }
     assert.equal(inspected.length, 1);
   });

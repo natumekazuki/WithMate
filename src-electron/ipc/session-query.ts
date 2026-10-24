@@ -1,4 +1,6 @@
 import path from "node:path";
+import { READ_SESSION_HTML_PREVIEW } from "../../src-shared/window/html-preview.js";
+import type { SessionHtmlPreviewRequest } from "../../src-shared/file-explorer/session-html-preview-contract.js";
 
 import type { SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
 
@@ -421,6 +423,17 @@ export function registerSessionQueryHandlers(
     await assertLinkedFileSender(event, request);
     if (deps.resolveEventWindow(event) !== window) {
       throw new Error("Local image sender changed while inspecting the image.");
+    }
+    return result;
+  });
+  ipcMain.handle(READ_SESSION_HTML_PREVIEW, async (event, request: SessionHtmlPreviewRequest) => {
+    if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error("HTML preview requires the main application frame.");
+    await assertLinkedFileSender(event, request);
+    const owner = deps.resolveEventWindow(event);
+    const result = await deps.readSessionHtmlPreview(request);
+    await assertLinkedFileSender(event, request);
+    if (deps.resolveEventWindow(event) !== owner || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("HTML preview sender changed while reading the file.");
     }
     return result;
   });

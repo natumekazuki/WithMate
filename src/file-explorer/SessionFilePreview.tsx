@@ -14,6 +14,7 @@ import {
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { PdfFilePreview, type PdfFilePreviewHandle } from "./PdfFilePreview.js";
 import { MermaidDiagram } from "../ui/markdown/markdown-code.js";
+import { HtmlPreview } from "../ui/html-preview/HtmlPreview.js";
 import { useMarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { AppNotification, type AppNotificationState } from "../ui/app-notification.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
@@ -707,8 +708,11 @@ export function SessionFilePreview({
     ? "binary"
     : descriptor?.kind === "text" && descriptor.name.toLocaleLowerCase("en-US").endsWith(".mmd")
       ? "mermaid"
-      : descriptor?.kind;
+      : descriptor?.kind === "text" && /\.html?$/i.test(descriptor.name)
+        ? "html"
+        : descriptor?.kind;
   const isRichPreview = previewKind === "markdown" || previewKind === "mermaid";
+  const isDocumentPreview = isRichPreview || previewKind === "html";
   const decodedText = useMemo(() => {
     if (!loaded || (loaded.descriptor.kind !== "text" && loaded.descriptor.kind !== "markdown")) {
       return "";
@@ -869,15 +873,21 @@ export function SessionFilePreview({
   }, [loaded]);
 
   useShortcutScope("file-preview");
+  const openFind = () => {
+    if (previewKind === "html") {
+      setMarkdownMode("source");
+    }
+    setFindOpen(true);
+    setFeedback("");
+  };
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
     if (previewKind === "pdf") {
       pdfPreviewRef.current?.find();
       setFeedback("");
-    } else if (previewKind === "text" || isRichPreview) {
-      setFindOpen(true);
-      setFeedback("");
+    } else if (previewKind === "text" || isDocumentPreview) {
+      openFind();
     } else {
-      setFeedback("Find is available for text, Markdown, Mermaid, and Git diff previews.");
+      setFeedback("Find is available for text, Markdown, Mermaid, HTML source, and Git diff previews.");
     }
     return true;
   });
@@ -1145,7 +1155,7 @@ export function SessionFilePreview({
           {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
         </div>
         <div className="session-file-preview-actions">
-          {descriptor && (previewKind === "text" || isRichPreview) ? (
+          {descriptor && (previewKind === "text" || isDocumentPreview) ? (
             <select
               aria-label="Text encoding"
               value={encoding}
@@ -1154,9 +1164,14 @@ export function SessionFilePreview({
               {ENCODING_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           ) : null}
-          {isRichPreview ? (
-            <div className="session-file-preview-segmented" role="group" aria-label={`${previewKind === "mermaid" ? "Mermaid" : "Markdown"} display mode`}>
-              <button type="button" className={markdownMode === "preview" ? "is-active" : ""} onClick={() => setMarkdownMode("preview")}>Preview</button>
+          {isDocumentPreview ? (
+            <div className="session-file-preview-segmented" role="group" aria-label={`${previewKind === "html" ? "HTML" : previewKind === "mermaid" ? "Mermaid" : "Markdown"} display mode`}>
+              <button type="button" className={markdownMode === "preview" ? "is-active" : ""} onClick={() => {
+                if (previewKind === "html") {
+                  setFindOpen(false);
+                }
+                setMarkdownMode("preview");
+              }}>Preview</button>
               <button type="button" className={markdownMode === "source" ? "is-active" : ""} onClick={() => setMarkdownMode("source")}>Source</button>
             </div>
           ) : null}
@@ -1215,10 +1230,10 @@ export function SessionFilePreview({
               <ButtonContent busy={busyAction === "copy-file"} busyLabel="Copying file">Copy File</ButtonContent>
             </button>
           ) : null}
-          {previewKind === "text" || isRichPreview ? (
+          {previewKind === "text" || isDocumentPreview ? (
             <button
               type="button"
-              onClick={() => setFindOpen(true)}
+              onClick={openFind}
               title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
             >
               Find
@@ -1281,7 +1296,7 @@ export function SessionFilePreview({
         </div>
       ) : null}
 
-      {findOpen && descriptor && (previewKind === "text" || isRichPreview) ? (
+      {findOpen && descriptor && (previewKind === "text" || isDocumentPreview) ? (
         <SessionContentFindBar
           open
           query={findQuery}
@@ -1384,33 +1399,43 @@ export function SessionFilePreview({
           syntaxTokens={displayedSyntaxTokens}
         />
       ) : null}
-      {loadState.status === "ready" && loaded && isRichPreview ? (
+      {loadState.status === "ready" && loaded && isDocumentPreview ? (
         markdownMode === "preview" ? (
-          <SelectionTextActionSurface
-            className="session-file-markdown-scroll"
-            onCopyText={onCopyText}
-            onQuoteText={onQuoteText}
-            surfaceRef={markdownSurfaceRef}
-          >
-            {previewKind === "mermaid" ? (
-              <div className="session-file-markdown session-file-mermaid">
-                <MermaidDiagram
-                  source={decodedText}
+          previewKind === "html" ? (
+            <HtmlPreview
+              key={reloadRevision}
+              html={decodedText}
+              title={descriptor?.name ?? "HTML Preview"}
+              className="session-file-html"
+              onFind={openFind}
+            />
+          ) : (
+            <SelectionTextActionSurface
+              className="session-file-markdown-scroll"
+              onCopyText={onCopyText}
+              onQuoteText={onQuoteText}
+              surfaceRef={markdownSurfaceRef}
+            >
+              {previewKind === "mermaid" ? (
+                <div className="session-file-markdown session-file-mermaid">
+                  <MermaidDiagram
+                    source={decodedText}
+                    onOpenPath={handleOpenMarkdownPath}
+                    resolveImageSource={resolveMarkdownImageSource}
+                  />
+                </div>
+              ) : (
+                <MessageRichText
+                  text={decodedText}
+                  className="session-file-markdown"
                   onOpenPath={handleOpenMarkdownPath}
                   resolveImageSource={resolveMarkdownImageSource}
+                  markdownLinkFileContext={markdownLinkFileContext}
+                  markdownImageContext={imageContext}
                 />
-              </div>
-            ) : (
-              <MessageRichText
-                text={decodedText}
-                className="session-file-markdown"
-                onOpenPath={handleOpenMarkdownPath}
-                resolveImageSource={resolveMarkdownImageSource}
-                markdownLinkFileContext={markdownLinkFileContext}
-                markdownImageContext={imageContext}
-              />
-            )}
-          </SelectionTextActionSurface>
+              )}
+            </SelectionTextActionSurface>
+          )
         ) : (
           <VirtualizedTextContent
             text={decodedText}
