@@ -9,7 +9,7 @@ import { MarkdownFilePreviewFrame, type MarkdownFilePreviewProps } from "./Markd
 type PreviewState = { key: string; html?: string; fileName?: string; error?: string };
 
 export function MarkdownHtmlPreview({ path, href, title, children }: MarkdownFilePreviewProps) {
-  const { linkFileContext } = useContext(MarkdownRenderContext);
+  const { linkFileContext, onFind } = useContext(MarkdownRenderContext);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<PreviewState | null>(null);
   const contextKey = JSON.stringify(linkFileContext);
@@ -50,7 +50,7 @@ export function MarkdownHtmlPreview({ path, href, title, children }: MarkdownFil
     <MarkdownFilePreviewFrame path={path} href={href} title={title} link={children} format="HTML"
       loading={loading} onReload={unavailable ? undefined : () => setRevision((value) => value + 1)}>
       {error ? <span className="message-file-preview-placeholder" role="alert">{error}</span>
-        : current?.html !== undefined ? <HtmlPreview html={current.html} title={title || current.fileName || path} />
+        : current?.html !== undefined ? <HtmlPreview html={current.html} title={title || current.fileName || path} onFind={onFind} />
         : <span className="message-file-preview-placeholder"><LoadingIndicator label="Loading HTML preview" /></span>}
     </MarkdownFilePreviewFrame>
   );

@@ -21,6 +21,7 @@ export type MarkdownRenderContextValue = {
   onOpenPath?: (target: string) => void;
   onCopyText?: (text: string) => void;
   onQuoteText?: (text: string) => void;
+  onFind?: () => void;
   resolveImageSource?: MarkdownImageResolver;
 };
 
