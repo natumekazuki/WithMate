@@ -10,13 +10,11 @@ export type GraphWindow = {
 type Entry<W> = { window: W; owner: SessionGraphOwner; generation: object | string; payload: SessionGraphWindowPayload; title: string };
 export class SessionGraphWindowService<W extends GraphWindow> {
   private readonly entries = new Map<string, Entry<W>>();
-  private readonly pendingNavigation = new Map<string, { owner: SessionGraphOwner; generation: object | string; state: SessionGraphViewState }>();
   constructor(private readonly deps: {
     application: SessionGraphApplicationService;
     createWindow(): W; load(window: W, token: string): Promise<void>; token(): string;
     changed(): void; notify(window: W, sessionId: string): void;
     title?(window: W, title: string): void;
-    openInSession(sessionId: string, state: SessionGraphViewState, guard: () => Promise<void>): Promise<void>;
   }) {}
   async open(sessionId: string, state: SessionGraphViewState, guard: () => boolean, expected?: { owner: SessionGraphOwner; generation: object | string }) {
     const resolved = await this.deps.application.resolveSession(sessionId);
@@ -63,28 +61,6 @@ export class SessionGraphWindowService<W extends GraphWindow> {
     entry.payload.state = structuredClone(state);
     if (titleChanged) await this.refreshTitle(window, token);
   }
-  async openInSession(window: W, token: string, state: SessionGraphViewState) {
-    const entry = await this.authorize(window, token);
-    const pending = { owner: entry.owner, generation: entry.generation, state: structuredClone(state) };
-    this.pendingNavigation.set(entry.owner.sessionId, pending);
-    try {
-      await this.deps.openInSession(entry.owner.sessionId, state, async () => { await this.authorize(window, token); });
-      await this.authorize(window, token);
-    } catch (error) {
-      if (this.pendingNavigation.get(entry.owner.sessionId) === pending) this.pendingNavigation.delete(entry.owner.sessionId);
-      throw error;
-    }
-  }
-  async takeNavigation(sessionId: string, guard: () => boolean) {
-    const pending = this.pendingNavigation.get(sessionId);
-    if (!pending) return null;
-    const current = await this.deps.application.resolveSession(sessionId);
-    if (!guard()) throw new Error("Session Graph navigation sender changed.");
-    if (this.pendingNavigation.get(sessionId) !== pending) return null;
-    this.pendingNavigation.delete(sessionId);
-    if (!current || current.generation !== pending.generation || !sameSessionGraphOwner(current.owner, pending.owner)) return null;
-    return { sessionId, state: structuredClone(pending.state) };
-  }
   async notify(sessionId: string) {
     for (const [token, entry] of this.entries) {
       if (entry.owner.sessionId !== sessionId) continue;
@@ -125,6 +101,6 @@ export class SessionGraphWindowService<W extends GraphWindow> {
   list() { return [...this.entries].map(([token, entry]) => ({ token, title: entry.title, ownerSessionId: entry.owner.sessionId, state: entry.payload.state })); }
   focus(token: string) { const w = this.entries.get(token)?.window; if (w && !w.isDestroyed()) { if(w.isMinimized()) w.restore(); w.show(); w.focus(); } }
   close(token: string) { const entry = this.entries.get(token); this.entries.delete(token); if (entry && !entry.window.isDestroyed()) entry.window.close(); this.deps.changed(); }
-  closeOwner(sessionId: string) { this.pendingNavigation.delete(sessionId); for (const [token, entry] of this.entries) if (entry.owner.sessionId === sessionId) this.close(token); }
-  closeAll() { this.pendingNavigation.clear(); for (const token of this.entries.keys()) this.close(token); }
+  closeOwner(sessionId: string) { for (const [token, entry] of this.entries) if (entry.owner.sessionId === sessionId) this.close(token); }
+  closeAll() { for (const token of this.entries.keys()) this.close(token); }
 }

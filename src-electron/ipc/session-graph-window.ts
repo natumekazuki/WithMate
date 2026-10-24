@@ -30,20 +30,12 @@ export function registerSessionGraphWindowHandlers(ipc: IpcHandleRegistrar, deps
     return window;
   };
   const token = (value: unknown): string => { if (typeof value !== "string" || !value) throw new TypeError("Invalid Graph token."); return value; };
-  ipc.handle(channels.WITHMATE_TAKE_SESSION_GRAPH_NAVIGATION_CHANNEL, (event, value) => {
-    const sessionId = token(value);
-    const window = sender(event);
-    const guard = () => deps.sessionWindow(sessionId) === window && !window.isDestroyed();
-    if (!guard()) throw new Error("Only the owning Session can receive Graph navigation.");
-    return deps.service.takeNavigation(sessionId, guard);
-  });
   ipc.handle(channels.WITHMATE_GET_SESSION_GRAPH_WINDOW_PAYLOAD_CHANNEL, (event, value) => deps.service.payload(sender(event), token(value)));
   ipc.handle(channels.WITHMATE_READ_SESSION_GRAPH_WINDOW_CHANNEL, (event, value, operation, request) => {
     if (typeof operation !== "string" || operation === "apply" || !Object.hasOwn(sessionGraphOperationRequestSchemas, operation)) throw new TypeError("Invalid Graph read operation.");
     return deps.service.read(sender(event), token(value), operation as SessionGraphReadOperation, request);
   });
   ipc.handle(channels.WITHMATE_UPDATE_SESSION_GRAPH_WINDOW_STATE_CHANNEL, (event, value, state) => deps.service.update(sender(event), token(value), sessionGraphViewStateSchema.parse(state)));
-  ipc.handle(channels.WITHMATE_OPEN_SESSION_GRAPH_IN_SESSION_CHANNEL, (event, value, state) => deps.service.openInSession(sender(event), token(value), sessionGraphViewStateSchema.parse(state)));
   ipc.handle(channels.WITHMATE_OPEN_SESSION_GRAPH_WINDOW_REFERENCE_CHANNEL, async (event, value, target) => {
     const window = sender(event); const id = token(value);
     if (typeof target !== "string" || !target || target.length > 8192) throw new TypeError("Invalid Graph reference.");

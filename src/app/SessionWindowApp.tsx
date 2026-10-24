@@ -567,7 +567,6 @@ export default function AgentSessionWindowApp() {
   const [isSessionGraphOpen, setIsSessionGraphOpen] = useState(false);
   const graphStateRef = useRef<SessionGraphViewState>(defaultSessionGraphViewState);
   const graphMemoryRef = useRef<SessionGraphPreviewMemory | null>(null);
-  const [graphNavigationRevision, setGraphNavigationRevision] = useState(0);
   const [graphWindowOpening, setGraphWindowOpening] = useState(false);
   const [graphWindowError, setGraphWindowError] = useState("");
   const graphTriggerRefs = useRef(new Set<HTMLButtonElement>());
@@ -612,35 +611,6 @@ export default function AgentSessionWindowApp() {
     isPromptTemplateWorkspaceOpen,
   ]);
   prepareCentralSurfaceOpenRef.current = prepareCentralSurfaceOpen;
-  const graphNavigationRef = useRef<{ selectedSessionId: string | undefined; open(): boolean }>({ selectedSessionId: selectedSession?.id, open: () => false });
-  graphNavigationRef.current = { selectedSessionId: selectedSession?.id, open: () => {
-    if (!prepareCentralSurfaceOpen()) return false;
-    closeFilePreviews();
-    setIsSessionGraphOpen(true);
-    return true;
-  } };
-  useEffect(() => {
-    const sessionId = selectedSession?.id;
-    if (!withmateApi || !sessionId) return;
-    let active = true;
-    const takeNavigation = async () => {
-      try {
-        const navigation = await withmateApi.takeSessionGraphNavigation(sessionId);
-        if (!navigation || navigation.sessionId !== graphNavigationRef.current.selectedSessionId) return;
-        if (!graphNavigationRef.current.open()) return;
-        graphStateRef.current = navigation.state;
-        graphMemoryRef.current = null;
-        setGraphNavigationRevision((current) => current + 1);
-      } catch (cause) {
-        if (active) setGraphWindowError(cause instanceof Error ? cause.message : String(cause));
-      }
-    };
-    const unsubscribe = withmateApi.subscribeSessionGraphNavigation((navigation) => {
-      if (navigation.sessionId === sessionId) void takeNavigation();
-    });
-    void takeNavigation();
-    return () => { active = false; unsubscribe(); };
-  }, [withmateApi, selectedSession?.id]);
   const openGraphWindow = async (state = graphStateRef.current) => {
     if (!withmateApi || !selectedSession || graphWindowOpening) return;
     setGraphWindowOpening(true);
@@ -2067,7 +2037,7 @@ export default function AgentSessionWindowApp() {
         ? "New Messages"
         : "";
   const filePreviewContent = isSessionGraphOpen && withmateApi ? (
-    <SessionGraphPreview key={`${selectedSession.id}:${graphNavigationRevision}`} api={withmateApi} sessionId={selectedSession.id}
+    <SessionGraphPreview key={selectedSession.id} api={withmateApi} sessionId={selectedSession.id}
       initialState={graphStateRef.current} onStateChange={(state) => { graphStateRef.current = state; }}
       initialMemory={graphMemoryRef.current} onMemoryChange={(memory) => { graphMemoryRef.current = memory; }}
       onOpenWindow={(state) => void openGraphWindow(state)}
@@ -2088,7 +2058,10 @@ export default function AgentSessionWindowApp() {
   const graphHeaderActions = <div className="session-window-control-group session-graph-entry" role="group" aria-label="Session Graph">
     <button ref={(element) => { if (element) graphTriggerRefs.current.add(element); return () => { if (element) graphTriggerRefs.current.delete(element); }; }} type="button" className="drawer-toggle compact secondary" onClick={(event) => {
       if (event.ctrlKey || event.metaKey) { void openGraphWindow(); return; }
-      if (!isSessionGraphOpen) graphNavigationRef.current.open();
+      if (!isSessionGraphOpen && prepareCentralSurfaceOpen()) {
+        closeFilePreviews();
+        setIsSessionGraphOpen(true);
+      }
     }}>Graph</button>
     <button type="button" className="drawer-toggle compact secondary session-header-icon-button" title="Open Graph In New Window" aria-label="Open Graph In New Window" disabled={graphWindowOpening} aria-busy={graphWindowOpening || undefined} onClick={() => void openGraphWindow()}><ButtonContent busy={graphWindowOpening}>↗</ButtonContent></button>
     {graphWindowError ? <span role="alert" className="session-graph-entry-error">{graphWindowError}</span> : null}

@@ -16,10 +16,12 @@ import type {
 } from "../../src-shared/session-graph/session-graph-contract.js";
 import { CloseButton } from "../ui/close-button.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
-import type { ReactNode, MouseEvent } from "react";
+import type { ReactNode, MouseEvent, Dispatch, SetStateAction } from "react";
 import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
+import { IMAGE_ZOOM_MIN, IMAGE_ZOOM_MAX, IMAGE_ZOOM_STEP, useCtrlWheelZoom, type ImageZoom } from "../ui/image-viewport.js";
+import { useViewportPan } from "../ui/viewport-pan.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { layoutSessionGraph, sessionGraphEdgePath } from "./graph-layout.js";
 
@@ -98,7 +100,7 @@ function Identity({
           name: identity?.character?.name ?? name ?? "?",
           iconPath: identity?.character?.icon ?? "",
         }}
-        size="tiny"
+        size="small"
       />
       <span className="session-graph-identity-tooltip" role="tooltip">
         {text}
@@ -151,7 +153,6 @@ export function SessionGraphPreview({
   const workspaceRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const topicSelectRef = useRef<HTMLSelectElement>(null);
-  const recordSelectRef = useRef<HTMLSelectElement>(null);
   const nodesRef = useRef(new Map<string, HTMLButtonElement>());
   const pendingScroll = useRef<SessionGraphViewState | null>(initialState);
   const focusDetail = useRef(false);
@@ -162,6 +163,15 @@ export function SessionGraphPreview({
   const windowTargetTrigger = useRef<HTMLElement | null>(null);
   const windowMenuRef = useRef<HTMLButtonElement>(null);
   const stateRef = useRef(initialState);
+  const pan = useViewportPan(`${sessionId}:${topicId}:${selectedId ?? ""}`);
+  const suppressPanClick = useRef(false);
+  const setViewportZoom = useCallback<Dispatch<SetStateAction<ImageZoom>>>((action) => {
+    setZoom((current) => {
+      const next = typeof action === "function" ? action(Math.round(current * 100)) : action;
+      return next === "fit" ? 1 : next / 100;
+    });
+  }, []);
+  useCtrlWheelZoom(viewportRef, 100, setViewportZoom);
   const snapshot = (): SessionGraphViewState => ({ topicId: topicId || null, selectedId, zoom,
     scrollLeft: viewportRef.current?.scrollLeft ?? stateRef.current.scrollLeft,
     scrollTop: viewportRef.current?.scrollTop ?? stateRef.current.scrollTop });
@@ -375,7 +385,7 @@ export function SessionGraphPreview({
     }
     publishState();
     if (!selectedId && restoreNodeFocus.current) {
-      (nodesRef.current.get(restoreNodeFocus.current) ?? recordSelectRef.current ?? viewportRef.current)?.focus();
+      (nodesRef.current.get(restoreNodeFocus.current) ?? viewportRef.current)?.focus();
       restoreNodeFocus.current = null;
     }
     if (focusSelector.current && topics.length) {
@@ -478,7 +488,21 @@ export function SessionGraphPreview({
           <div
             ref={viewportRef}
             onScroll={publishState}
-            className="session-graph-viewport"
+            className={`session-graph-viewport${pan.isPanning ? " is-panning" : ""}`}
+            onPointerDown={(event) => {
+              pan.startPan(event);
+              suppressPanClick.current = event.defaultPrevented;
+            }}
+            onPointerMove={pan.movePan}
+            onPointerUp={pan.stopPan}
+            onPointerCancel={(event) => { pan.stopPan(event); suppressPanClick.current = false; }}
+            onLostPointerCapture={pan.handlePanCaptureLoss}
+            onClickCapture={(event) => {
+              const suppress = suppressPanClick.current;
+              suppressPanClick.current = false;
+              if (suppress && event.detail !== 0) { event.preventDefault(); event.stopPropagation(); }
+            }}
+            title="Ctrl + left-drag to pan"
             tabIndex={0}
             aria-label="Graph Canvas"
           >
@@ -582,28 +606,11 @@ export function SessionGraphPreview({
           </div>
           <footer className="session-graph-navigation">
             {view && (view.hasMore || view.incomplete) ? <span className="session-graph-partial">{view.items.length.toLocaleString("en-US")} / {view.total.toLocaleString("en-US")} Records · Partial Graph {view.hasMore ? <button type="button" disabled={loading} onClick={() => void load(true)}>Load More</button> : null}</span> : null}
-            {records.length ? (
-              <select
-                ref={recordSelectRef}
-                aria-label="Find Graph Record"
-                value={selectedId ?? ""}
-                onChange={(event) => {
-                  if (event.target.value) chooseRecord(event.target.value);
-                }}
-              >
-                <option value="">Select Record</option>
-                {records.map((record) => (
-                  <option value={record.id} key={record.id}>
-                    {record.title}
-                  </option>
-                ))}
-              </select>
-            ) : null}
             <button
               type="button"
               aria-label="Zoom Out"
-              disabled={zoom <= 0.6}
-              onClick={() => setZoom((value) => Math.max(0.6, value - 0.1))}
+              disabled={zoom * 100 <= IMAGE_ZOOM_MIN}
+              onClick={() => setZoom((value) => Math.max(IMAGE_ZOOM_MIN, Math.round(value * 100) - IMAGE_ZOOM_STEP) / 100)}
             >
               −
             </button>
@@ -613,8 +620,8 @@ export function SessionGraphPreview({
             <button
               type="button"
               aria-label="Zoom In"
-              disabled={zoom >= 1.6}
-              onClick={() => setZoom((value) => Math.min(1.6, value + 0.1))}
+              disabled={zoom * 100 >= IMAGE_ZOOM_MAX}
+              onClick={() => setZoom((value) => Math.min(IMAGE_ZOOM_MAX, Math.round(value * 100) + IMAGE_ZOOM_STEP) / 100)}
             >
               +
             </button>

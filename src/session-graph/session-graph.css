@@ -80,6 +80,11 @@
   background-image: radial-gradient(var(--line) 1px, transparent 1px);
   background-size: 24px 24px;
 }
+.session-graph-viewport.is-panning {
+  cursor: grabbing;
+  user-select: none;
+}
+.session-graph-viewport.is-panning .session-graph-node { cursor: grabbing; }
 .session-graph-space {
   position: relative;
 }
@@ -120,8 +125,8 @@
   justify-content: space-between;
   width: 240px;
   height: 150px;
-  padding: 16px;
-  gap: 12px;
+  padding: 12px;
+  gap: 8px;
   border: 1px solid var(--muted);
   border-radius: 9px;
   background: var(--surface-strong);
@@ -142,7 +147,7 @@
   overflow: hidden;
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 .session-graph-node-footer {
   display: flex;
@@ -191,11 +196,6 @@
   align-items: center;
   padding: 10px 14px;
   border-top: 1px solid var(--line);
-}
-.session-graph-navigation select {
-  max-width: calc(100% - 130px);
-  min-width: 0;
-  margin-right: auto;
 }
 .session-graph-navigation button,
 .session-graph-load-status button,
@@ -316,9 +316,6 @@
 .session-graph-entry-error { position: absolute; top: 100%; right: 0; z-index: 40; width: max-content; max-width: 320px; padding: 10px; background: var(--surface-strong); color: var(--ink); border: 1px solid var(--line); font-size: 12px; }
 .session-collapsed-header-actions { grid-area: top-split; z-index: 2; justify-self: end; align-self: center; margin-right: 12px; }
 .session-chat-layout:has(> .session-collapsed-header-actions) { grid-template-rows: var(--session-header-dock-row-height) 36px minmax(0, 1fr) var(--session-dock-splitter-size) var(--session-action-dock-row-height); }
-.session-graph-window-menu { position: relative; }
-.session-graph-window-menu > summary { cursor: pointer; list-style: none; padding: 6px 10px; }
-.session-graph-window-menu > button { position: absolute; z-index: 5; right: 0; top: 100%; white-space: nowrap; padding: 10px; background: var(--surface-strong); border: 1px solid var(--line); }
 @media (max-width: 800px) {
   .session-graph-toolbar {
     flex-wrap: wrap;

@@ -209,7 +209,4 @@ export const WITHMATE_OPEN_SESSION_GRAPH_WINDOW_CHANNEL = "withmate:open-session
 export const WITHMATE_GET_SESSION_GRAPH_WINDOW_PAYLOAD_CHANNEL = "withmate:get-session-graph-window-payload";
 export const WITHMATE_READ_SESSION_GRAPH_WINDOW_CHANNEL = "withmate:read-session-graph-window";
 export const WITHMATE_UPDATE_SESSION_GRAPH_WINDOW_STATE_CHANNEL = "withmate:update-session-graph-window-state";
-export const WITHMATE_OPEN_SESSION_GRAPH_IN_SESSION_CHANNEL = "withmate:open-session-graph-in-session";
-export const WITHMATE_SESSION_GRAPH_NAVIGATION_EVENT = "withmate:session-graph-navigation";
-export const WITHMATE_TAKE_SESSION_GRAPH_NAVIGATION_CHANNEL = "withmate:take-session-graph-navigation";
 export const WITHMATE_OPEN_SESSION_GRAPH_WINDOW_REFERENCE_CHANNEL = "withmate:open-session-graph-window-reference";

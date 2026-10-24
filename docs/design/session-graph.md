@@ -23,7 +23,7 @@ Topicはstable IDと表示名を持つ。Recordは親Graph内で一意のstable 
 
 状態は省略できる。context選択ではissueの省略をopen、activityの省略をplannedとして扱うが、UIで確認済みの状態を創作しない。全kindに任意のvalidity `superseded` / `withdrawn`を持たせ、未指定を現行とする。活動の完了、結果の成功、論点の解消、判断の採用は別々の情報である。
 
-actorは同じ親Graphに属するMain/AuxiliaryのSession ID、またはユーザー等を示すlabelで指定する。記録者`recordedBy`とCharacter snapshotはWithMateが信頼済みSessionから付与し、入力では受け付けない。初回の記録者・作成時刻と、同じactorのsnapshotは更新でも保持する。他Auxiliaryによる更新やCharacterの後の変更で初回帰属を付け替えない。snapshotのiconは既存Character資産への参照であり、画像fileの複製・永久保存はしない。
+actorは同じ親Graphに属するMain/AuxiliaryのSession ID、またはユーザー等を示すlabelで指定する。`User`等のlabelは要求者・判断者といった内容上の主体であり、その人がGraphへ直接書き込んだことを示さない。ユーザー向けの書込UIは設けず、agentがMCPから記録する。記録者`recordedBy`とCharacter snapshotはWithMateが信頼済みSessionから付与し、入力では受け付けない。初回の記録者・作成時刻と、同じactorのsnapshotは更新でも保持する。他Auxiliaryによる更新やCharacterの後の変更で初回帰属を付け替えない。snapshotのiconは既存Character資産への参照であり、画像fileの複製・永久保存はしない。
 
 任意のtargetは対象revision、実施条件、観測日時をまとめて保持する。これはサーバーが付ける作成・更新日時と区別する。referencesは`evidence` / `artifact` / `handoff`の役割、表示名、参照先を持ち、全recordへ一律のSource欄を要求しない。
 
@@ -68,7 +68,7 @@ applyはtopic/record/relationのupsertとrelation解除を1transactionで処理�
 
 Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ戻る。展開・折畳みのどちらでも入口を保ち、再度Graphを押しても閉じない。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
 
-中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。中央の会話復帰では入力と最後のGraph位置を保持し、file/Templateとの切替は既存の離脱確認を通す。独立Windowの`Open In Session`は親Sessionの中央へ現在の話題・記録を開き、独立Windowを残す。Main/Auxiliaryの選択や送信先は変えない。
+中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。中央の会話復帰では入力と最後のGraph位置を保持し、file/Templateとの切替は既存の離脱確認を通す。Main/Auxiliaryの選択や送信先は変えない。
 
 関連記録を辿った場合だけ、詳細内の`Back To <記録名>`から元の話題・記録・倍率・scrollへ戻れる。直接の話題・記録選択と詳細dismissでこの戻り先をリセットする。詳細の×と詳細内のEscapeは選択を解除し、元のnodeへfocusを戻す。狭幅では詳細を図の作業面に重ね、その間は背面の図を操作対象から外す。ComposerやSession全体をmodalにはしない。
 
@@ -76,6 +76,8 @@ Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ�
 
 中央のreadはowning parent Windowを認可し、独立WindowはMainが発行したtokenにWindow、親Main ID/incarnation、storage generationを結び付けて認可する。独立Windowから親IDを自己申告してGraphを読むことや、apply・provider権限への拡張は許さない。非同期read完了時にも失効を確認する。明示した参照リンクだけ既存のfile/link resolverへ親Sessionの認可で渡す。保存成功の通知は同じownerの中央と独立ビューへ届け、pollingや表示のたびのAI呼出しは使わない。
 
-話題選択、自然なscrollとzoom、record選択時の近傍図、関連recordへの移動を使う。recordと関連リンクは修飾clickやkeyboardで開ける対象menuから別窓にも開ける。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。大量recordは追加pageで取得し、部分取得時だけ範囲とLoad Moreを示す。未取得範囲と取得失敗は正常な空と区別する。
+話題を選び、図のnodeからrecordを選択して近傍図と関連recordを読む。recordの重複した選択一覧は置かず、nodeへのTab/Enterと詳細の関連リンクでも移動できる。recordと関連リンクはkeyboardでも開ける対象menuから別窓にも開ける。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。大量recordは追加pageで取得し、部分取得時だけ範囲とLoad Moreを示す。未取得範囲と取得失敗は正常な空と区別する。
+
+図領域のCtrl＋左dragでpanし、Ctrl＋wheelで対象だけを拡縮する。画像・mmd previewと共通の処理を使い、wheelはSettingsの`Preview Wheel Zoom Step`（既定5ポイント）、buttonは10ポイント刻み、倍率範囲は10%〜800%とする。設定変更は次のwheel操作へ反映し、現在倍率と位置を変えない。通常wheelとkeyboardのnative scrollを保ち、Ctrl操作をWindow全体のzoomへ渡さず、pan後のclickでrecord選択や別窓を誤発火させない。
 
 図は要点・意味の異なる状態・主体icon・関係を中心にし、本文、適用範囲、target、自由項目、具体的な参照は選択後に表示する。Main/Auxiliaryの区分・会話名はiconのhover/focusで読め、記録者が内容上の主体と違う場合だけ記録者を補足する。関係はkeyboardからも辿れる。Markdown内の埋込み画像や図を自動取得・実行せず、参照は利用者の明示操作から既存の認可済みlink/file経路へ渡す。

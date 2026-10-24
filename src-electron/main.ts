@@ -246,7 +246,7 @@ import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from
 import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
 import { SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
 import { registerSessionGraphWindowHandlers } from "./ipc/session-graph-window.js";
-import { WITHMATE_SESSION_GRAPH_NAVIGATION_EVENT, WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../src-shared/ipc/withmate-ipc-channels.js";
+import { WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { MainStoreContext } from "./app/main-store-context.js";
 import {
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -794,12 +794,6 @@ const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
   },
   notify: (window, sessionId) => {
     if (!window.webContents.isDestroyed() && !window.webContents.isCrashed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
-  },
-  openInSession: async (sessionId, state, guard) => {
-    await guard();
-    const window = await requireMainWindowFacade().openSessionWindow(sessionId);
-    await guard();
-    window.webContents.send(WITHMATE_SESSION_GRAPH_NAVIGATION_EVENT, { sessionId, state });
   },
 });
 const sessionGraphRuntimeService = new SessionGraphRuntimeService({

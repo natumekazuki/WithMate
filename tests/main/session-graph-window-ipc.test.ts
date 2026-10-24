@@ -41,35 +41,3 @@ test("Graph IPC validates main-frame ownership and excludes apply", async () => 
   assert.deepEqual(await invoke(channels.WITHMATE_OPEN_SESSION_GRAPH_WINDOW_CHANNEL, event, { sessionId: "owner", state }), { token: "token" });
   assert.equal(opens, 1);
 });
-
-// @test-value v2
-// kind = "invariant"
-// claim = "pending Graph navigationはowning Session main frameだけが取得できる"
-// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "別Windowまたはsubframeがpending navigationを消費する"
-// observable = "IPC拒否と正規senderだけが到達するtake呼出数"
-// observation_boundary = "public-boundary"
-// scope = "Graph navigation handoff IPC"
-// lifecycle = "permanent"
-// impact = "正規Sessionへの遷移が盗み取られ、別Windowへ記録IDが漏洩する"
-// distinction = "service testはElectron mainFrameとowning Session Window照合を通らない。単一registrar testで認可を維持する"
-// @end-test-value
-test("Only the owning Session main frame can consume Graph navigation", async () => {
-  const handlers = new Map<string, Parameters<IpcHandleRegistrar["handle"]>[1]>();
-  const window = { isDestroyed: () => false } as BrowserWindow;
-  const other = { isDestroyed: () => false } as BrowserWindow;
-  let activeWindow = window;
-  let takes = 0;
-  const frame = {};
-  const event = { sender: { mainFrame: frame }, senderFrame: frame } as unknown as IpcMainInvokeEvent;
-  registerSessionGraphWindowHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, {
-    service: { takeNavigation: async (_id: string, guard: () => boolean) => { assert.equal(guard(), true); takes++; return null; } } as unknown as SessionGraphWindowService<BrowserWindow>,
-    resolveWindow: () => activeWindow, sessionWindow: (id) => id === "owner" ? window : null, openReference: async () => {},
-  });
-  const take = async (sender: IpcMainInvokeEvent) => handlers.get(channels.WITHMATE_TAKE_SESSION_GRAPH_NAVIGATION_CHANNEL)!(sender, "owner");
-  activeWindow = other; await assert.rejects(take(event));
-  activeWindow = window;
-  await assert.rejects(take({ ...event, senderFrame: {} } as IpcMainInvokeEvent));
-  assert.equal(takes, 0);
-  assert.equal(await take(event), null); assert.equal(takes, 1);
-});

@@ -11,14 +11,10 @@ export const sessionGraphWindowOpenSchema = z.object({
 }).strict().refine((value) => Boolean(value.sessionId) !== Boolean(value.fromToken));
 export type SessionGraphWindowOpenRequest = z.infer<typeof sessionGraphWindowOpenSchema>;
 export type SessionGraphWindowPayload = { token: string; ownerSessionId: string; windowTitle: string; state: SessionGraphViewState };
-export type SessionGraphNavigation = { sessionId: string; state: SessionGraphViewState };
 export type SessionGraphWindowApi = {
   openSessionGraphWindow(request: SessionGraphWindowOpenRequest): Promise<{ token: string }>;
   getSessionGraphWindowPayload(token: string): Promise<SessionGraphWindowPayload | null>;
   readSessionGraphWindow<K extends Exclude<SessionGraphOperation, "apply">>(token: string, operation: K, request: SessionGraphRequest<K>): Promise<SessionGraphOperationResult<K>>;
   updateSessionGraphWindowState(token: string, state: SessionGraphViewState): Promise<void>;
-  openSessionGraphInSession(token: string, state: SessionGraphViewState): Promise<void>;
-  takeSessionGraphNavigation(sessionId: string): Promise<SessionGraphNavigation | null>;
   openSessionGraphWindowReference(token: string, target: string): Promise<import("../file-explorer/file-explorer-contract.js").SessionFilePreviewWindowOpenResult>;
-  subscribeSessionGraphNavigation(listener: (payload: SessionGraphNavigation) => void): () => void;
 };

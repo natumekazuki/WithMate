@@ -11,6 +11,7 @@ import { SessionGraphPreview, type SessionGraphPreviewMemory } from "../../src/s
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
+import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
 
 function record(id: string): SessionGraphRecord {
   return {
@@ -141,10 +142,10 @@ test("graph detail markdown represents embedded media as text while keeping deli
 
 // @test-value v2
 // kind = "contract"
-// claim = "Graphは通知更新・再表示と関連する別話題からの復帰で選択と位置を保ち、明示的な別窓操作は元ビューを変えない"
+// claim = "Graphは設定刻みのCtrl＋wheelとCtrl＋左dragで対象だけを操作し、通知・再表示・関連往復で選択と位置を保ち、別窓操作は元ビューを変えない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "通知で詳細選択と読む位置を失うかfalse値を落とすか跨話題の往復で元状態を失うか別窓操作が元ビューを変える"
-// observable = "選択詳細、scrollTop、自由項目、参照open引数、遷移先話題、復帰・再表示の選択と倍率と位置と追加取得範囲、別窓state、詳細開閉のfocus"
+// fault = "Ctrl＋wheelが全体zoomへ伝播するか設定刻みを無視し、通常dragでも移動するかpan後に選択・別窓を誤発火し、通知や関連往復で元状態やfalse値を失う"
+// observable = "wheelのcancelと伝播、倍率、pointer操作後のscrollと選択、自由項目、参照open引数、復帰・再表示の位置と追加取得範囲、別窓state、詳細開閉のfocus"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-preview-navigation"
 // lifecycle = "permanent"
@@ -272,7 +273,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
   try {
     await act(async () => {
       root.render(
-        <SessionGraphPreview
+        <PreviewWheelZoomStepContext.Provider value={7}><SessionGraphPreview
           api={api}
           sessionId="main"
           onClose={() => {}}
@@ -280,12 +281,53 @@ test("graph preview preserves selection on notifications and navigates cross-top
           onOpenWindow={(state) => windows.push(state)}
           onStateChange={(state) => { latestState = state; }}
           onMemoryChange={(memory) => { latestMemory = memory; }}
-        />,
+        /></PreviewWheelZoomStepContext.Provider>,
       );
     });
     assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Graph Topic");
     await click([...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Load More") ?? null);
-    assert.equal(dom.window.document.querySelectorAll("select[aria-label='Find Graph Record'] option").length, 3);
+    assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 2);
+    const viewport = dom.window.document.querySelector<HTMLDivElement>(".session-graph-viewport")!;
+    let parentWheels = 0;
+    dom.window.document.getElementById("root")!.addEventListener("wheel", () => parentWheels++);
+    const wheel = async (deltaY: number, ctrlKey: boolean) => {
+      const event = new dom.window.WheelEvent("wheel", { deltaY, ctrlKey, bubbles: true, cancelable: true });
+      await act(async () => { viewport.dispatchEvent(event); });
+      return event;
+    };
+    assert.equal((await wheel(-100, true)).defaultPrevented, true);
+    assert.match(dom.window.document.querySelector(".session-graph-navigation")!.textContent!, /107%/);
+    assert.equal(parentWheels, 0);
+    await wheel(100, true);
+    assert.match(dom.window.document.querySelector(".session-graph-navigation")!.textContent!, /100%/);
+    assert.equal((await wheel(100, false)).defaultPrevented, false);
+    assert.equal(parentWheels, 1);
+    Object.defineProperties(viewport, { scrollWidth: { value: 1200 }, scrollHeight: { value: 900 }, clientWidth: { value: 400 }, clientHeight: { value: 300 } });
+    let captured: number | null = null;
+    viewport.setPointerCapture = (id) => { captured = id; };
+    viewport.hasPointerCapture = (id) => captured === id;
+    viewport.releasePointerCapture = () => { captured = null; };
+    viewport.scrollLeft = 80;
+    viewport.scrollTop = 120;
+    const pointer = async (target: Element, type: string, x: number, y: number, ctrlKey: boolean) => {
+      const event = new dom.window.MouseEvent(type, { button: 0, ctrlKey, clientX: x, clientY: y, bubbles: true, cancelable: true });
+      Object.defineProperty(event, "pointerId", { value: 7 });
+      await act(async () => { target.dispatchEvent(event); });
+      return event;
+    };
+    assert.equal((await pointer(viewport, "pointerdown", 200, 180, false)).defaultPrevented, false);
+    await pointer(viewport, "pointermove", 150, 130, false);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [80, 120]);
+    const firstNode = dom.window.document.querySelector(".session-graph-node")!;
+    assert.equal((await pointer(firstNode, "pointerdown", 200, 180, true)).defaultPrevented, true);
+    await pointer(viewport, "pointermove", 150, 130, true);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [130, 170]);
+    await pointer(viewport, "pointerup", 150, 130, true);
+    await pointer(viewport, "pointermove", 100, 80, true);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [130, 170]);
+    await act(async () => { firstNode.dispatchEvent(new dom.window.MouseEvent("click", { ctrlKey: true, detail: 1, bubbles: true, cancelable: true })); });
+    assert.equal(windows.length, 0);
+    assert.equal(dom.window.document.querySelector(".session-graph-details"), null);
     await click(dom.window.document.querySelector(".session-graph-node"));
     const details = dom.window.document.querySelector<HTMLElement>(
       ".session-graph-details",
@@ -372,7 +414,8 @@ test("graph preview preserves selection on notifications and navigates cross-top
     await act(async () => {
       root.render(<SessionGraphPreview key="reopened-pages" api={api} sessionId="main" initialState={loadedState} initialMemory={loadedMemory} onClose={() => {}} onOpenPath={() => {}} />);
     });
-    assert.equal(dom.window.document.querySelectorAll("select[aria-label='Find Graph Record'] option").length, 3);
+    await click(dom.window.document.querySelector("button[aria-label='Close Record Details']"));
+    assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 2);
   } finally {
     await act(async () => root.unmount());
     for (const [key, descriptor] of [

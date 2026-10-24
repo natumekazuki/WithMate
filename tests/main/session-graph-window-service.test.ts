@@ -16,13 +16,12 @@ const state = { topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollT
 function setup() {
   let incarnation = "one"; let available = true; let sequence = 0;
   let pending: (() => Promise<void>) | undefined;
-  let openInSession = async () => {};
   const generation = {};
   const store: SessionGraphStore = { execute: async <K extends SessionGraphOperation>() => { await pending?.(); return { status: "ok" as const, revision: 1, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [] } as unknown as SessionGraphOperationResult<K>; } };
   const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: async (id) => available ? ({ owner: { sessionId: id, incarnationId: incarnation }, identity: { sessionId: id, sessionTitle: id, role: "main" as const }, providerId: "codex", generation }) : null });
   const windows: Window[] = []; const notifications: Window[] = [];
-  const service = new SessionGraphWindowService({ application, createWindow: () => { const w = new Window(); windows.push(w); return w; }, load: async () => {}, token: () => String(++sequence), changed: () => {}, notify: (w) => notifications.push(w), openInSession: () => openInSession() });
-  return { service, windows, notifications, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; }, onOpenInSession: (value: () => Promise<void>) => { openInSession = value; } };
+  const service = new SessionGraphWindowService({ application, createWindow: () => { const w = new Window(); windows.push(w); return w; }, load: async () => {}, token: () => String(++sequence), changed: () => {}, notify: (w) => notifications.push(w) });
+  return { service, windows, notifications, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; } };
 }
 
 // @test-value v2
@@ -88,42 +87,4 @@ test("Graph views remain independent and owner operations are isolated", async (
   assert.equal((await s.service.payload(s.windows[1]!, b.token)).state.zoom, 1);
   await s.service.notify("owner"); assert.deepEqual(s.notifications, s.windows.slice(0, 2));
   s.service.closeOwner("owner"); assert.deepEqual(s.service.list().map((entry) => entry.ownerSessionId), ["other"]);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "親renderer準備より先のOpen In Sessionを一回取得でき、削除/reset/incarnation変更では失効する"
-// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "親Window生成時のeventだけに依存して遷移を失うか、削除後に古い遷移を適用する"
-// observable = "遅延takeNavigationのstate、一回取得後とowner失効後のnull"
-// observation_boundary = "public-boundary"
-// scope = "Graph navigation handoff"
-// lifecycle = "permanent"
-// impact = "親を閉じていると指定記録へ移動できず、再作成後の別ownerへ古い表示要求が混入する"
-// distinction = "load完了とrenderer準備の順序は型検査では保証できない。timerなしの明示promise境界で一回受渡しと失効を検査する"
-// @end-test-value
-test("Graph navigation waits for a one-time receiver and expires with its owner", async () => {
-  const s = setup(); const { token } = await s.service.open("owner", state, () => true);
-  let release!: () => void;
-  let entered!: () => void;
-  const opening = new Promise<void>((resolve) => { entered = resolve; });
-  s.onOpenInSession(() => { entered(); return new Promise<void>((resolve) => { release = resolve; }); });
-  const target = { ...state, topicId: "topic", selectedId: "record", zoom: 2 };
-  const request = s.service.openInSession(s.windows[0]!, token, target);
-  await opening;
-  release(); await request;
-  assert.deepEqual(await s.service.takeNavigation("owner", () => true), { sessionId: "owner", state: target });
-  assert.equal(await s.service.takeNavigation("owner", () => true), null);
-  s.onOpenInSession(async () => {});
-  await s.service.openInSession(s.windows[0]!, token, target);
-  s.incarnation("replacement");
-  assert.equal(await s.service.takeNavigation("owner", () => true), null);
-  s.incarnation("one");
-  await s.service.openInSession(s.windows[0]!, token, target);
-  s.service.closeOwner("owner");
-  assert.equal(await s.service.takeNavigation("owner", () => true), null);
-  const next = await s.service.open("owner", state, () => true);
-  await s.service.openInSession(s.windows[1]!, next.token, target);
-  s.service.closeAll();
-  assert.equal(await s.service.takeNavigation("owner", () => true), null);
 });
