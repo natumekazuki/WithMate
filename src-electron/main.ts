@@ -2270,10 +2270,12 @@ async function getQueueRuntimeSession(sessionId: string): Promise<Session | null
   return requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
 }
 
-async function resolveQueueSessionRuntime(sessionId: string): Promise<SessionRuntimeService> {
-  return await requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId)
+async function resolveQueueSessionRuntime(sessionId: string) {
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId);
+  const runtime = auxiliary
     ? requireAuxiliarySessionRuntimeService()
     : requireSessionRuntimeService();
+  return { runtime, auxiliary };
 }
 
 function requireMainSessionTurnQueueService(): SessionTurnQueueService {
@@ -2291,18 +2293,16 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
       },
       dispatch: async (receipt, onStarted) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(receipt.sessionId);
+        const { runtime, auxiliary } = await resolveQueueSessionRuntime(receipt.sessionId);
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
-        const result = await (auxiliary
-          ? auxiliaryLiveRunParents.trackRun(auxiliary, owner, () =>
-            requireAuxiliarySessionRuntimeService().runQueuedSessionTurn(receipt, onStarted))
-          : requireSessionRuntimeService().runQueuedSessionTurn(receipt, onStarted));
+        const run = () => runtime.runQueuedSessionTurn(receipt, onStarted);
+        const result = await (auxiliary ? auxiliaryLiveRunParents.trackRun(auxiliary, owner, run) : run());
         assertPersistentStoreOwnerIsActive(owner, "Queue dispatch");
         return result;
       },
       sendInput: async (receipt, expectedTurnId) => {
         assertPersistentStoreOwnerIsActive(owner, "Queue input");
-        const runtime = await resolveQueueSessionRuntime(receipt.sessionId);
+        const { runtime } = await resolveQueueSessionRuntime(receipt.sessionId);
         const result = await runtime.steerQueuedSessionTurn(receipt, expectedTurnId);
         assertPersistentStoreOwnerIsActive(owner, "Queue input");
         return result;
@@ -2797,7 +2797,7 @@ function requireSessionElicitationService(): SessionElicitationService {
   if (!sessionElicitationService) {
     sessionElicitationService = new SessionElicitationService({
       sendUserMessage: async (sessionId, turnId, message, answer) => {
-        const runtime = await resolveQueueSessionRuntime(sessionId);
+        const { runtime } = await resolveQueueSessionRuntime(sessionId);
         await runtime.answerSessionQuestion(sessionId, turnId, message, answer);
       },
       notifyQuestion: (sessionId, signal) => {

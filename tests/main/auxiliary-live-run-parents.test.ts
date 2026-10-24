@@ -102,6 +102,52 @@ function fixture() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "親SessionのClose判定は同じstorage ownerに属する全Auxiliaryの実guardを参照し、保持liveだけや別の親と旧ownerを実行中にしない"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close; GitHub Issue #877" }
+// fault = "先頭Auxiliaryだけを調べる、保持liveを実行中とする、または親IDとstorage ownerを無視する"
+// observable = "子のguard解放とowner交換前後のhasPendingRunForParentの戻り値"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-parent-close-running-state"
+// lifecycle = "permanent"
+// impact = "非表示Auxiliaryの実行中警告が漏れるか、実行なしで不要な警告を出す"
+// distinction = "既存の配送testは親IDの逆引きしか確認せず、親配下の実行有無と保持liveの区別を検出しない"
+// @end-test-value
+test("親配下の全Auxiliaryの実guardをowner付きで判定する", () => {
+  let owner: object | null = {};
+  const pending = new Set(["selected-idle", "background", "other-parent"]);
+  const parents = new AuxiliaryLiveRunParents({
+    getStorageOwner: () => owner,
+    isRunPending: (id) => pending.has(id),
+    hasLiveSessionRun: () => true,
+    broadcastLiveSessionRun() {},
+  });
+  parents.remember(auxiliary("selected-idle"), owner);
+  parents.remember(auxiliary("background"), owner);
+  parents.remember(auxiliary("other-parent", "parent-b"), owner);
+  pending.delete("selected-idle");
+  parents.releaseIfUnused("selected-idle", owner);
+  assert.equal(parents.get("selected-idle"), "parent-a");
+  assert.equal(parents.hasPendingRunForParent("parent-a"), true);
+  assert.equal(parents.hasPendingRunForParent("parent-b"), true);
+  assert.equal(parents.hasPendingRunForParent("unrelated"), false);
+
+  pending.delete("background");
+  parents.releaseIfUnused("background", owner);
+  assert.equal(parents.get("background"), "parent-a");
+  assert.equal(parents.hasPendingRunForParent("parent-a"), false);
+  assert.equal(parents.hasPendingRunForParent("parent-b"), true);
+
+  owner = {};
+  assert.equal(parents.hasPendingRunForParent("parent-b"), false);
+  parents.remember(auxiliary("other-parent", "parent-c"), owner);
+  assert.equal(parents.hasPendingRunForParent("parent-b"), false);
+  assert.equal(parents.hasPendingRunForParent("parent-c"), true);
+  owner = null;
+  assert.equal(parents.hasPendingRunForParent("parent-c"), false);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Auxiliaryの取消終了待ちとretained liveを親Windowへ配送し、最後のnullを届けてから親関連を解除する"
 // oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#live-run-delivery" }
 // fault = "run呼出し収束で親関連を失う、保持live中に解除する、または終端nullの前に解除する"

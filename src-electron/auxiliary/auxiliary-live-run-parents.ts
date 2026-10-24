@@ -23,8 +23,9 @@ export class AuxiliaryLiveRunParents {
   }
 
   public hasPendingRunForParent(parentSessionId: string): boolean {
+    const owner = this.options.getStorageOwner();
     for (const [sessionId, entry] of this.parents) {
-      if (entry.owner === this.options.getStorageOwner() && entry.parentSessionId === parentSessionId
+      if (entry.owner === owner && entry.parentSessionId === parentSessionId
         && this.options.isRunPending(sessionId)) return true;
     }
     return false;
