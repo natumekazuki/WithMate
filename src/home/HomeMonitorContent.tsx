@@ -12,6 +12,7 @@ import type {
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
+import { ButtonContent } from "../ui/button-content.js";
 import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
@@ -22,6 +23,7 @@ export type HomeMonitorContentProps = {
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
   auxiliaryDataState?: HomeMonitorAuxiliaryDataState;
+  auxiliaryRefreshing?: boolean;
   sessionWindowsDataState?: "loading" | "loaded" | "error";
   runningEmptyMessage?: string;
   nonRunningEmptyMessage?: string;
@@ -138,6 +140,7 @@ export function HomeMonitorContent({
   runningEntries,
   nonRunningEntries,
   auxiliaryDataState = "ready",
+  auxiliaryRefreshing = false,
   sessionWindowsDataState = "loaded",
   runningEmptyMessage = "",
   nonRunningEmptyMessage = "",
@@ -371,6 +374,7 @@ export function HomeMonitorContent({
   });
 
   const isLoading = sessionWindowsDataState === "loading" || auxiliaryDataState === "loading";
+  const isBusy = isLoading || auxiliaryRefreshing;
   const loadingMessage = sessionWindowsDataState === "loading"
     ? "Loading open sessions…"
     : "Loading Auxiliary sessions…";
@@ -395,7 +399,7 @@ export function HomeMonitorContent({
   return (
     <div
       className="home-monitor-body"
-      aria-busy={isLoading}
+      aria-busy={isBusy}
     >
       {providerQuota ? (
         <div className="home-monitor-quota">
@@ -407,13 +411,13 @@ export function HomeMonitorContent({
         </div>
       ) : null}
       {statusFeedback ? hasReadError ? (
-        <LoadError message={statusFeedback} onRetry={onRetry} retryDisabled={isLoading} className="home-session-list-feedback" />
+        <LoadError message={statusFeedback} onRetry={onRetry} retryBusy={isBusy} className="home-session-list-feedback" />
       ) : (
         <div className="home-session-list-feedback">
           <p className="settings-feedback" role="status" aria-live="polite">{statusFeedback}</p>
           {onRetry ? (
-            <button className="launch-toggle home-session-retry-button" type="button" disabled={isLoading} onClick={onRetry}>
-              Retry
+            <button className="launch-toggle home-session-retry-button" type="button" disabled={isBusy} aria-busy={isBusy || undefined} onClick={onRetry}>
+              <ButtonContent busy={isBusy} busyLabel="Retrying">Retry</ButtonContent>
             </button>
           ) : null}
         </div>

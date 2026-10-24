@@ -1183,7 +1183,7 @@ export function FileRootGitHistoryPane({
             <div className="workspace-changes-loading">
               <LoadingIndicator label="Loading Git comparison" />
             </div>
-          ) : comparison && comparisonRootChange && comparisonRootChange.status !== "empty" ? (
+          ) : comparison && comparisonRootChange ? (
             <>
               <div
                 className="file-history-comparison-result-header"
@@ -1193,8 +1193,8 @@ export function FileRootGitHistoryPane({
                 <div>
                   <strong>
                     {filteredComparisonEntries.length === comparisonEntries.length
-                      ? `${comparisonEntries.length}ChangedFiles`
-                      : `${filteredComparisonEntries.length}MatchingFiles`}
+                      ? `${comparisonEntries.length} Changed Files`
+                      : `${filteredComparisonEntries.length} Matching Files`}
                   </strong>
                   <span>{HISTORY_COMPARISON_MODE_LABELS[comparison.mode]}</span>
                 </div>
@@ -1221,7 +1221,7 @@ export function FileRootGitHistoryPane({
                   <button
                     className="file-history-open-changes"
                     type="button"
-                    disabled={!!loadingDiffKey}
+                    disabled={!!loadingDiffKey || comparisonEntries.length === 0}
                     onClick={(event) => void openComparisonDiff(null, event.ctrlKey || event.metaKey)}
                   >
                     Open All Changes

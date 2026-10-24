@@ -36,8 +36,11 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
   const [snapshot, setSnapshot] = useState<HomeSessionMonitorSnapshot>({ entries: [], auxiliarySessions: [] });
   const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [feedback, setFeedback] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const refreshRef = useRef<() => void>(() => {});
   const refresh = useCallback(() => refreshRef.current(), []);
+  const retryRef = useRef<() => void>(() => {});
+  const retry = useCallback(() => retryRef.current(), []);
 
   useEffect(() => {
     if (!enabled) return;
@@ -55,8 +58,9 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
       const requestGeneration = ++generation;
       if (inFlight) return;
       inFlight = true;
+      setRefreshing(true);
       const isCurrent = () => active && generation === requestGeneration;
-      if (!hasLoaded) setStatus("loading");
+      if (!hasLoaded) setStatus((current) => current === "error" ? current : "loading");
       try {
         const next = await fetchHomeSessionMonitorSnapshot(api, isCurrent);
         if (!isCurrent()) return;
@@ -70,10 +74,15 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
         setFeedback(error instanceof Error ? error.message : "Could not load Session Monitor.");
       } finally {
         inFlight = false;
-        if (active && generation !== requestGeneration) void load();
+        if (active && generation !== requestGeneration) {
+          void load();
+        } else if (active) {
+          setRefreshing(false);
+        }
       }
     };
     refreshRef.current = () => { void load(); };
+    retryRef.current = () => { if (!inFlight) void load(); };
     const liveStates = new Map<string, LiveSessionRunStatus>();
     const unsubscribeLive = api.subscribeLiveSessionRunStatus((sessionId, state) => {
       const next = { runState: state?.runState, cancellationState: state?.cancellationState, approvalPending: state?.approvalPending };
@@ -89,6 +98,7 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
     return () => {
       active = false;
       refreshRef.current = () => {};
+      retryRef.current = () => {};
       unsubscribeLive();
       unsubscribeSession();
       window.removeEventListener("focus", refresh);
@@ -100,5 +110,5 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
     if (enabled) refresh();
   }, [enabled, openIdsKey, refresh]);
 
-  return { ...snapshot, status, feedback, refresh };
+  return { ...snapshot, status, feedback, refreshing, refresh, retry };
 }

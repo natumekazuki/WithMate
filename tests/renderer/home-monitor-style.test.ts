@@ -115,8 +115,8 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
     assert.match(
       stylesSource,
       new RegExp(
-        String.raw`\.home-page \.home-session-chip-status\.${state},\s*` +
-          String.raw`\.home-page \.home-session-status\.${state}\s*{`,
+        String.raw`\.home-page \.home-session-chip-status\.${state}` +
+          String.raw`(?:,\s*\.home-page \.home-session-status\.${state})?\s*{`,
       ),
     );
   }

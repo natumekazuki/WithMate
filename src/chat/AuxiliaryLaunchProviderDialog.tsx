@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
@@ -17,6 +17,7 @@ type AuxiliaryLaunchProviderDialogProps = {
   feedback: string;
   starting: boolean;
   creationInFlight?: boolean;
+  checkingCreationResult?: boolean;
   cancelling?: boolean;
   canCancelCreation?: boolean;
   onClose: () => void;
@@ -34,6 +35,7 @@ export function AuxiliaryLaunchProviderDialog({
   feedback,
   starting,
   creationInFlight = false,
+  checkingCreationResult = false,
   cancelling = false,
   canCancelCreation = false,
   onClose,
@@ -47,6 +49,17 @@ export function AuxiliaryLaunchProviderDialog({
     onClose,
     initialFocusRef: startButtonRef,
   });
+  const creationBusy = starting || creationInFlight || cancelling;
+  const showCancelCreation = canCancelCreation || cancelling;
+
+  useEffect(() => {
+    if (!open) return;
+    const dialog = dialogRef.current;
+    const active = document.activeElement;
+    if (dialog && (active === document.body || (active && dialog.contains(active) && active.matches(":disabled")))) {
+      dialog.focus();
+    }
+  }, [open, creationBusy, cancelling, showCancelCreation, providerLoadStatus, dialogRef]);
 
   if (!open) {
     return null;
@@ -64,21 +77,25 @@ export function AuxiliaryLaunchProviderDialog({
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
       ariaLabel="Start Auxiliary"
-      dialogClassName="auxiliary-provider-dialog"
+      dialogClassName="auxiliary-provider-dialog auxiliary-launch-dialog"
+      dialogTabIndex={-1}
       showDismissControl={false}
       footer={
         <LaunchDialogFooter
           feedback={visibleFeedback}
+          reserveFeedbackSpace
           startButtonLabel="Start Auxiliary"
-          startButtonDisabled={!resolvedSelectedProviderId || !providerLoadReady || starting || creationInFlight}
-          startButtonAriaDisabled={!resolvedSelectedProviderId || !providerLoadReady || starting || creationInFlight}
-          startButtonBusy={starting || creationInFlight}
-          startButtonLoadingText="Starting Auxiliary"
+          startButtonDisabled={!resolvedSelectedProviderId || !providerLoadReady || creationBusy}
+          startButtonAriaDisabled={!resolvedSelectedProviderId || !providerLoadReady || creationBusy}
+          startButtonBusy={creationBusy && !cancelling}
+          startButtonLoadingText={checkingCreationResult ? "Checking Auxiliary Creation Result" : "Starting Auxiliary"}
           onStart={onStart}
           startButtonRef={startButtonRef}
-          cancelButtonLabel={canCancelCreation ? "Cancel Creation" : undefined}
-          onCancel={canCancelCreation ? onCancelCreation : undefined}
+          cancelButtonLabel={showCancelCreation ? "Cancel Creation" : undefined}
+          onCancel={showCancelCreation ? onCancelCreation : undefined}
           cancelButtonDisabled={cancelling}
+          cancelButtonBusy={cancelling}
+          cancelButtonLoadingText="Canceling Auxiliary Creation"
         />
       }
     >
@@ -93,6 +110,7 @@ export function AuxiliaryLaunchProviderDialog({
           onSelectProvider={onSelectProvider}
           loadStatus={providerLoadStatus}
           loadError={providerLoadError}
+          disabled={creationBusy}
         />
       </div>
     </LaunchDialogShell>

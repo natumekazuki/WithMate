@@ -346,6 +346,14 @@
   width: 100%;
 }
 
+.home-page .home-character-load-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  min-height: 24px;
+}
+
 .home-page .home-monitor-body {
   display: flex;
   flex: 1 1 auto;
@@ -706,6 +714,19 @@
 
 .home-page .home-monitor-disclosure .home-monitor-status-cluster {
   padding: 0;
+}
+
+.home-page .home-previews-disclosure > .button-content {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.home-page .home-previews-disclosure .button-content-label {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 8px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
 }
 
 .home-page .home-monitor-disclosure:hover {
@@ -1697,8 +1718,44 @@
   padding: 10px 14px;
 }
 
-.launch-provider-list .choice-chip {
-  min-width: 160px;
+.launch-provider-picker {
+  container-type: inline-size;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.launch-provider-options {
+  display: grid;
+  min-block-size: calc(1lh + 18px);
+}
+
+.launch-provider-options > * {
+  grid-area: 1 / 1;
+}
+
+.launch-provider-options > .loading-indicator {
+  justify-self: center;
+  align-self: center;
+  pointer-events: none;
+}
+
+.launch-provider-options[data-loading="true"] > .launch-provider-list {
+  opacity: 0.35;
+}
+
+.choice-list.launch-provider-list {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.launch-provider-picker .launch-provider-list .choice-chip {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: inherit;
+  line-height: inherit;
+  overflow-wrap: anywhere;
   border-color: rgba(203, 213, 225, 0.14);
   background: rgba(255, 255, 255, 0.05);
   text-align: center;
@@ -1712,7 +1769,7 @@
     box-shadow 140ms ease;
 }
 
-.launch-provider-list .choice-chip:hover:not(.active) {
+.launch-provider-list .choice-chip:hover:not(.active):not(:disabled) {
   border-color: rgba(111, 140, 255, 0.28);
   background: rgba(111, 140, 255, 0.12);
 }
@@ -1724,10 +1781,29 @@
   box-shadow: 0 0 0 3px rgba(111, 140, 255, 0.12);
 }
 
+.launch-provider-empty {
+  align-self: center;
+  margin: 0;
+  color: var(--muted);
+}
+
+.launch-provider-error {
+  margin: 8px 0 0;
+  color: #fca5a5;
+  overflow-wrap: anywhere;
+}
+
+@container (max-width: 36em) {
+  .launch-provider-options {
+    min-block-size: calc(2lh + 18px);
+  }
+}
+
 .choice-chip:focus-visible,
 .choice-card:focus-visible,
 .composer-path-match:focus-visible,
 .diff-close:focus-visible,
+.auxiliary-launch-dialog .launch-cancel-button:focus-visible,
 .start-session-button:focus-visible,
 .restore-session-windows-button:focus-visible,
 .launch-toggle:focus-visible,
@@ -1901,6 +1977,57 @@
 
 .auxiliary-provider-dialog {
   width: min(560px, 100%);
+}
+
+.auxiliary-launch-dialog {
+  container-type: inline-size;
+}
+
+.auxiliary-launch-dialog > .launch-dialog-foot {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.auxiliary-launch-dialog .launch-feedback {
+  grid-area: 1 / 1 / auto / -1;
+  min-block-size: 2lh;
+  overflow-wrap: anywhere;
+}
+
+.auxiliary-launch-dialog .launch-cancel-button {
+  grid-area: 2 / 1;
+  justify-self: end;
+  width: auto;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+}
+
+.auxiliary-launch-dialog .launch-cancel-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.auxiliary-launch-dialog .launch-cancel-button[aria-busy="true"] {
+  opacity: 1;
+}
+
+.auxiliary-launch-dialog .start-session-button {
+  grid-area: 2 / 2;
+}
+
+@container (max-width: 26rem) {
+  .auxiliary-launch-dialog > .launch-dialog-foot {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(calc(1rem + 28px), auto) auto;
+  }
+
+  .auxiliary-launch-dialog .launch-cancel-button {
+    width: 100%;
+  }
+
+  .auxiliary-launch-dialog .start-session-button {
+    grid-area: 3 / 1;
+  }
 }
 
 .launch-dialog .diff-close {

@@ -39,6 +39,7 @@ export type HomeRightPanePropsInput = {
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   auxiliaryDataState: HomeMonitorAuxiliaryDataState;
+  auxiliaryRefreshing?: boolean;
   sessionWindowsDataState?: "loading" | "loaded" | "error";
   monitorRunningEmptyMessage?: string;
   monitorNonRunningEmptyMessage?: string;
@@ -68,6 +69,7 @@ export function buildHomeRightPaneProps({
   runningMonitorEntries,
   nonRunningMonitorEntries,
   auxiliaryDataState,
+  auxiliaryRefreshing,
   sessionWindowsDataState,
   monitorRunningEmptyMessage,
   monitorNonRunningEmptyMessage,
@@ -100,6 +102,7 @@ export function buildHomeRightPaneProps({
     runningMonitorEntries,
     nonRunningMonitorEntries,
     auxiliaryDataState,
+    auxiliaryRefreshing,
     sessionWindowsDataState,
     monitorRunningEmptyMessage,
     monitorNonRunningEmptyMessage,

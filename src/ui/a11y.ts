@@ -122,13 +122,13 @@ function trapDialogTabKey(root: HTMLElement | null, event: ReactKeyboardEvent<HT
   const last = focusable[focusable.length - 1];
   const activeElement = typeof document === "undefined" ? null : document.activeElement;
 
-  if (event.shiftKey && activeElement === first) {
+  if (event.shiftKey && (activeElement === first || activeElement === root)) {
     event.preventDefault();
     last?.focus();
     return true;
   }
 
-  if (!event.shiftKey && activeElement === last) {
+  if (!event.shiftKey && (activeElement === last || activeElement === root)) {
     event.preventDefault();
     first?.focus();
     return true;
@@ -159,11 +159,13 @@ export function useDialogA11y<T extends HTMLElement>(options: {
       const initialFocus = initialFocusRef?.current;
       if (initialFocus) {
         initialFocus.focus();
-        return;
+        if (document.activeElement === initialFocus) {
+          return;
+        }
       }
 
       const [firstFocusable] = getFocusableElements(dialogRef.current);
-      firstFocusable?.focus();
+      (firstFocusable ?? dialogRef.current)?.focus();
     };
 
     const timeoutId = window.setTimeout(focusTarget, 0);

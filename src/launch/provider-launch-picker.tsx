@@ -17,6 +17,7 @@ export type ProviderLaunchPickerProps = {
   ariaLabel?: string;
   loadStatus?: ProviderLaunchLoadStatus;
   loadError?: string;
+  disabled?: boolean;
 };
 
 export function ProviderLaunchPicker({
@@ -27,58 +28,51 @@ export function ProviderLaunchPicker({
   ariaLabel = "Coding Provider",
   loadStatus = "loaded",
   loadError = "",
+  disabled = false,
 }: ProviderLaunchPickerProps) {
-  if (loadStatus === "loading") {
-    return (
-      <div
-        id={id}
-        className="chat-skill-picker-state"
-      >
-        <LoadingIndicator label="Loading coding providers" />
-      </div>
-    );
-  }
-
-  if (loadStatus === "error") {
-    return (
-      <p id={id} className="chat-skill-picker-state error" role="alert" aria-live="assertive">
-        {loadError || "Could not load coding providers."}
-      </p>
-    );
-  }
-
-  if (providers.length === 0) {
-    return (
-      <article className="empty-list-card compact">
-        <p>{LAUNCH_EMPTY_PROVIDER_MESSAGE}</p>
-      </article>
-    );
-  }
-
+  const loading = loadStatus === "loading";
+  const selectionDisabled = disabled || loadStatus !== "loaded";
   return (
-    <div
-      id={id}
-      className="choice-list launch-provider-list"
-      role="listbox"
-      aria-label={ariaLabel}
-      aria-orientation="horizontal"
-      onKeyDown={(event) => {
-        focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-      }}
-    >
-      {providers.map((provider) => (
-        <button
-          key={provider.id}
-          className={`choice-chip${provider.id === selectedProviderId ? " active" : ""}`}
-          type="button"
-          role="option"
-          aria-selected={provider.id === selectedProviderId}
-          tabIndex={provider.id === selectedProviderId ? 0 : -1}
-          onClick={() => onSelectProvider(provider.id)}
+    <div className="launch-provider-picker">
+      <div className="launch-provider-options" data-loading={loading || undefined}>
+        <div
+          id={id}
+          className="choice-list launch-provider-list"
+          role="listbox"
+          aria-label={ariaLabel}
+          aria-orientation="horizontal"
+          aria-disabled={selectionDisabled || undefined}
+          onKeyDown={(event) => {
+            if (!selectionDisabled) {
+              focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+            }
+          }}
         >
-          {provider.label}
-        </button>
-      ))}
+          {providers.map((provider) => (
+            <button
+              key={provider.id}
+              className={`choice-chip${provider.id === selectedProviderId ? " active" : ""}`}
+              type="button"
+              role="option"
+              aria-selected={provider.id === selectedProviderId}
+              tabIndex={!selectionDisabled && provider.id === selectedProviderId ? 0 : -1}
+              disabled={selectionDisabled}
+              onClick={() => onSelectProvider(provider.id)}
+            >
+              {provider.label}
+            </button>
+          ))}
+        </div>
+        {loading ? <LoadingIndicator label="Loading coding providers" inline /> : null}
+        {loadStatus === "loaded" && providers.length === 0 ? (
+          <p className="launch-provider-empty">{LAUNCH_EMPTY_PROVIDER_MESSAGE}</p>
+        ) : null}
+      </div>
+      {loadStatus === "error" ? (
+        <p className="launch-provider-error" role="alert" aria-live="assertive">
+          {loadError || "Could not load coding providers."}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -95,6 +89,7 @@ export function ProviderLaunchField({
   ariaLabel,
   loadStatus,
   loadError,
+  disabled,
 }: ProviderLaunchFieldProps) {
   return (
     <section className="launch-section minimal">
@@ -110,6 +105,7 @@ export function ProviderLaunchField({
           ariaLabel={ariaLabel}
           loadStatus={loadStatus}
           loadError={loadError}
+          disabled={disabled}
         />
       </div>
     </section>
