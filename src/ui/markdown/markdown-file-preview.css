@@ -33,6 +33,8 @@
 
 .message-file-preview-controls { flex: none; }
 
+.message-file-preview-auxiliary { user-select: none; }
+
 .message-file-preview-controls button,
 .message-file-preview-placeholder > button {
   display: inline-flex;
