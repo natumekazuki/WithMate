@@ -136,8 +136,10 @@ export function codexFileReferencesFromMarkdown(): FromMarkdownExtension {
         if (parsed !== null) {
           const { path } = parsed;
           const url = /^file:/iu.test(path) ? path : encodeURI(path).replace(/#/gu, "%23").replace(/\?/gu, "%3F");
+          const displayPath = parsed.visualize && /^file:/iu.test(path) ? decodeURIComponent(new URL(path).pathname) : path;
+          const label = parsed.visualize ? displayPath.split(/[\\/]/u).pop() || path : path;
           this.enter({
-            type: "link", url, children: [{ type: "text", value: path }],
+            type: "link", url, children: [{ type: "text", value: label }],
             ...(parsed.visualize ? { data: { hProperties: {
               "data-codex-visualize-path": path,
               ...(parsed.visualize.title === undefined ? {} : { "data-codex-visualize-title": parsed.visualize.title }),

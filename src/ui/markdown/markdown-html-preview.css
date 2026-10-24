@@ -18,17 +18,34 @@
 }
 
 .message-html-preview-header a {
+  flex: 1;
+  display: block;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.message-html-preview-header > .message-html-preview-auxiliary {
+  flex: 0 0 auto;
 }
 
 .message-html-preview-header button {
-  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface-strong);
   color: var(--ink);
-  font-size: 0.8rem;
+  font-size: 18px;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .message-html-preview-header button:hover:not(:disabled) {

@@ -28,9 +28,9 @@ function visualize(path: string): string {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "両file参照記法は元pathのlink nodeとsource位置を保持し、visualizeだけがtitleとmodeを保持したpreview metadataを持つ"
+// claim = "両file参照記法は元pathのlink targetとsource位置を保持し、visualizeはfile名labelとtitle・modeのpreview metadataを持つ"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
-// fault = "記法が文字列として残る、またはlabelやtargetのpathを変形する"
+// fault = "記法が文字列として残る、visualizeのlabelに長い絶対pathを表示する、またはtargetのpathを変形する"
 // observable = "public Markdown parser出力のlink URL、children、source offsets、hPropertiesとremark consumer出力"
 // observation_boundary = "consumer"
 // scope = "assistant file-reference markdown parsing"
@@ -52,7 +52,7 @@ test("file references preserve links and exact offsets with visualize preview me
     const references = links(tree);
     assert.equal(references.length, 1);
     assert.equal(decodeURIComponent(references[0].url), path);
-    assert.deepEqual(references[0].children, [{ type: "text", value: path }]);
+    assert.deepEqual(references[0].children, [{ type: "text", value: source.startsWith("visualize") ? `日本語 _[成果💡] (1).${path.split(".").pop()}` : path }]);
     assert.deepEqual(references[0].data?.hProperties, source.startsWith("visualize") ? {
       "data-codex-visualize-path": path,
       "data-codex-visualize-title": "成果物",
@@ -65,7 +65,7 @@ test("file references preserve links and exact offsets with visualize preview me
 
 // @test-value v2
 // kind = "invariant"
-// claim = "絶対local pathのWindows literal/escaped引用とJSON引用はbackslashやquoteを失わずlinkへ渡す"
+// claim = "絶対local pathのliteral/escaped引用とJSON引用は元targetを保持し、visualizeのWindows pathとfile URLは復号したfile名labelを表示する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
 // fault = "Markdownのescape処理や属性decodeにより異なるファイルpathになる"
 // observable = "public Markdown parser出力のlink URLとtext label"
@@ -83,13 +83,14 @@ test("literal and escaped local paths preserve their exact file targets", () => 
     { source: String.raw`:codex-file-citation{path="\\\\server\\share\\book.xlsx"}`, path: String.raw`\\server\share\book.xlsx` },
     { source: String.raw`:codex-file-citation{path="/work/quote\"_file.docx"}`, path: '/work/quote"_file.docx' },
     { source: ':codex-file-citation{path="file:///C:/work/a%20b.pptx"}', path: "file:///C:/work/a%20b.pptx" },
-    { source: visualize(String.raw`C:\work\new_file [1].pdf`), path: String.raw`C:\work\new_file [1].pdf` },
+    { source: visualize(String.raw`C:\work\new_file [1].pdf`), path: String.raw`C:\work\new_file [1].pdf`, label: "new_file [1].pdf" },
+    { source: visualize("file:///C:/work/a%20b.html"), path: "file:///C:/work/a%20b.html", label: "a b.html" },
   ];
-  for (const { source, path } of cases) {
+  for (const { source, path, label } of cases) {
     const references = links(parse(source));
     assert.equal(references.length, 1, source);
     assert.equal(/^file:/u.test(path) ? references[0].url : decodeURIComponent(references[0].url), path);
-    assert.deepEqual(references[0].children, [{ type: "text", value: path }]);
+    assert.deepEqual(references[0].children, [{ type: "text", value: label ?? path }]);
   }
 });
 
@@ -156,7 +157,7 @@ test("ordinary brackets and unresolved labels allow completed file references", 
       const references = links(tree);
       assert.equal(references.length, 1, wrapped);
       assert.equal(references[0].url, path);
-      assert.deepEqual(references[0].children, [{ type: "text", value: path }]);
+      assert.deepEqual(references[0].children, [{ type: "text", value: source.startsWith("visualize") ? "a.html" : path }]);
       assert.equal(wrapped.slice(references[0].position?.start.offset, references[0].position?.end.offset), source);
       assert.deepEqual(unified().use(remarkParse).use(remarkProviderResponse, "codex").parse(wrapped), tree);
     }

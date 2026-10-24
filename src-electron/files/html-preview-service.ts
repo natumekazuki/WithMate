@@ -56,6 +56,7 @@ export class HtmlPreviewService {
 
   async mount(event: Sender, request: HtmlPreviewMountRequest): Promise<void> {
     const owner = this.owner(event);
+    const ownerContents = owner.webContents;
     assertHtmlPreviewMount(request);
     const key = this.key(owner, request.id);
     if (this.previews.has(key)) throw new Error("HTML preview is already mounted.");
@@ -72,13 +73,13 @@ export class HtmlPreviewService {
     };
     const preview: Preview = { id: request.id, owner, container, view, html: request.html, url, cleanup: () => {
       owner.removeListener("closed", dispose);
-      owner.webContents.removeListener("did-start-navigation", onNavigation);
-      owner.webContents.removeListener("render-process-gone", dispose);
+      ownerContents.removeListener("did-start-navigation", onNavigation);
+      ownerContents.removeListener("render-process-gone", dispose);
     } };
     this.previews.set(key, preview);
     owner.once("closed", dispose);
-    owner.webContents.on("did-start-navigation", onNavigation);
-    owner.webContents.once("render-process-gone", dispose);
+    ownerContents.on("did-start-navigation", onNavigation);
+    ownerContents.once("render-process-gone", dispose);
     container.setVisible(false);
     container.addChildView(view);
     owner.contentView.addChildView(container);

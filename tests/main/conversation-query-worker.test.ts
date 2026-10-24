@@ -59,7 +59,7 @@ test("全履歴投影は会話ownerごとのproviderを使う", async () => {
         const navigator = await store.listConversationNavigator(id, { producerId: id, requestId: `${id}-navigator`, filter: "all" });
         assert.equal(navigator.status, "complete");
         if (navigator.status !== "complete") throw new Error("missing provider navigator result");
-        assert.equal(navigator.items[0]?.preview, isCodex ? "/work/chart.html" : text);
+        assert.equal(navigator.items[0]?.preview, isCodex ? "chart.html" : text);
       }
     } finally { await f.close(); }
   }

@@ -74,7 +74,7 @@ test("assistant reference search matches preview while source and ordinary Markd
   try {
     const projected = projectMessageRenderedSearchText(text, "codex");
     const index = createRenderedTextSearchIndex(preview.window.document.querySelector<HTMLElement>(".rich-text")!, isMessageRenderedSearchTextNode);
-    assert.equal(projected, "Start [/work/chart.html] end");
+    assert.equal(projected, "Start [chart.html] end");
     assert.equal(index.normalizedText, projected.toLocaleLowerCase());
     assert.equal(source.window.document.querySelector("pre")?.textContent, text);
     assert.equal(source.window.document.querySelector("a"), null);
@@ -112,10 +112,10 @@ test("assistant reference search matches preview while source and ordinary Markd
 
 // @test-value v2
 // kind = "contract"
-// claim = "Codex visualizeはsession所有のHTML読込を共通previewへ渡し、失敗後も元pathを開け、Reloadとstream追記では同じpreviewを保持する"
+// claim = "Codex visualizeはHTMLを共通previewへ渡し、file名linkで元pathを開け、Reloadのbusyと失敗回復を持ち、stream追記で再読込しない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
 // fault = "本文追記で読込をやり直す、失敗を通常linkとして隠す、またはtoolbar・errorが本文検索へ混入する"
-// observable = "readSessionHtmlPreviewのrequest数と対象、loading/error DOM・共通HTML preview shell、path click結果、rendered search index"
+// observable = "readSessionHtmlPreviewのrequest数と対象、file名labelと完全pathのtooltip・accessible name、Reloadのdisabled・busy・spinner、loading/error・共通preview、click結果と検索index"
 // observation_boundary = "component-behavior"
 // scope = "Codex HTML preview entryとsession readの接続・再試行"
 // lifecycle = "permanent"
@@ -149,6 +149,14 @@ test("visualize preview preserves its session read across streaming and exposes 
     await act(async () => render(text));
     assert.deepEqual(requests, [{ sessionId: "session", target: "/work/chart.html" }]);
     assert.ok(dom.window.document.querySelector('[aria-label="Loading HTML preview"]'));
+    const fileLink = dom.window.document.querySelector<HTMLAnchorElement>("a")!;
+    assert.equal(fileLink.textContent, "chart.html");
+    assert.equal(fileLink.title, "/work/chart.html");
+    assert.equal(fileLink.getAttribute("aria-label"), "Open /work/chart.html");
+    const reload = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Reload HTML Preview"]')!;
+    assert.equal(reload.disabled, true);
+    assert.equal(reload.title, "Reload HTML Preview");
+    assert.equal(reload.getAttribute("aria-busy"), null);
     const shell = dom.window.document.querySelector(".message-html-preview");
     await act(async () => render(`${text}\n\nMore text`));
     assert.equal(dom.window.document.querySelector(".message-html-preview"), shell);
@@ -162,9 +170,15 @@ test("visualize preview preserves its session read across streaming and exposes 
     assert.deepEqual(opened, ["/work/chart.html"]);
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>("button")!.click());
     assert.equal(requests.length, 2);
+    assert.equal(reload.disabled, true);
+    assert.equal(reload.getAttribute("aria-busy"), "true");
+    assert.ok(reload.querySelector(".button-content-spinner"));
     assert.equal(dom.window.document.querySelector('[role="alert"]'), null);
     await act(async () => resolveRead({ html: "<!doctype html><h1>Chart content</h1>", fileName: "chart.html" }));
     assert.ok(dom.window.document.querySelector('.html-preview[aria-label="Chart"]'));
+    assert.equal(reload.disabled, false);
+    assert.equal(reload.getAttribute("aria-busy"), null);
+    assert.equal(reload.querySelector(".button-content-spinner"), null);
     assert.equal(dom.window.document.querySelector("h1"), null);
     assert.equal(dom.window.document.querySelector(".message-html-preview"), shell);
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>("button")!.click());

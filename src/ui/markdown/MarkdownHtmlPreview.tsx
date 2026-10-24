@@ -1,14 +1,15 @@
-import { useContext, useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react";
+import { useContext, useEffect, useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import type { MarkdownLinkContextMenuRequest } from "../../../src-shared/window/markdown-link-context-menu.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { HtmlPreview } from "../html-preview/HtmlPreview.js";
 import { LoadingIndicator } from "../loading-indicator.js";
+import { ButtonContent } from "../button-content.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
 import { MarkdownLink } from "./markdown-links.js";
 
 type PreviewState = { key: string; html?: string; fileName?: string; error?: string };
 
-export function MarkdownHtmlPreview({ path, href, title }: { path: string; href: string; title?: string }) {
+export function MarkdownHtmlPreview({ path, href, title, children }: { path: string; href: string; title?: string; children: ReactNode }) {
   const { linkFileContext } = useContext(MarkdownRenderContext);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<PreviewState | null>(null);
@@ -46,12 +47,16 @@ export function MarkdownHtmlPreview({ path, href, title }: { path: string; href:
 
   const error = unavailable ?? current?.error;
   const loading = !error && current?.html === undefined;
+  const reloading = revision > 0 && loading;
   return (
     <span className="message-html-preview" aria-label={title || "HTML Preview"}>
       <span className="message-html-preview-header">
-        <MarkdownLink href={href}>{path}</MarkdownLink>
+        <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>{children}</MarkdownLink>
         {!unavailable && <span className="message-html-preview-auxiliary">
-          <button type="button" onClick={() => setRevision((value) => value + 1)} disabled={loading} aria-label="Reload HTML Preview">Reload</button>
+          <button type="button" onClick={() => setRevision((value) => value + 1)} disabled={loading}
+            aria-busy={reloading || undefined} aria-label="Reload HTML Preview" title="Reload HTML Preview">
+            <ButtonContent busy={reloading} busyLabel="Reloading HTML Preview"><span aria-hidden="true">↻</span></ButtonContent>
+          </button>
         </span>}
       </span>
       <span className="message-html-preview-auxiliary message-html-preview-content" aria-busy={loading}>
@@ -68,7 +73,7 @@ export function MarkdownAnchor(props: ComponentPropsWithoutRef<"a"> & { node?: {
   const path = properties?.["data-codex-visualize-path"];
   const title = properties?.["data-codex-visualize-title"];
   if (typeof path === "string") {
-    return <MarkdownHtmlPreview path={path} href={props.href ?? ""} title={typeof title === "string" ? title : undefined} />;
+    return <MarkdownHtmlPreview path={path} href={props.href ?? ""} title={typeof title === "string" ? title : undefined}>{props.children}</MarkdownHtmlPreview>;
   }
   return <MarkdownLink {...props} />;
 }
