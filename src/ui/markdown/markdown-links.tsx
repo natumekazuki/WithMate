@@ -17,6 +17,7 @@ import type {
 } from "../../../src-shared/window/markdown-link-context-menu.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
 import { resolveMarkdownImageTarget } from "./image-resource-source.js";
+import { MarkdownPdfPreview } from "./markdown-pdf.js";
 
 function decodeEncodedWindowsPathSeparators(target: string): string {
   return target.replace(/%5c/gi, "\\");
@@ -158,13 +159,14 @@ export function MarkdownLink({
   children,
   href,
   node,
+  "data-codex-visualize-pdf": pdfTarget,
   ...props
-}: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
+}: ComponentPropsWithoutRef<"a"> & { node?: unknown; "data-codex-visualize-pdf"?: string }) {
   const { onOpenPath, linkFileContext, onLinkContextMenuResult } = useContext(
     MarkdownRenderContext,
   );
   const target = href?.trim() ?? "";
-  return (
+  const link = (
     <a
       {...props}
       href={href}
@@ -184,4 +186,5 @@ export function MarkdownLink({
       {children}
     </a>
   );
+  return pdfTarget ? <MarkdownPdfPreview key={JSON.stringify([pdfTarget, linkFileContext])} target={pdfTarget} link={link} /> : link;
 }

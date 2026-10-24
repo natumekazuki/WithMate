@@ -101,6 +101,12 @@ export function createSessionApi(
     inspectSessionImage(request) {
       return ipcRenderer.invoke(channels.WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL, request);
     },
+    inspectSessionPdf(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_INSPECT_SESSION_PDF_CHANNEL, request);
+    },
+    readSessionPdfChunk(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL, request);
+    },
     readSessionImageChunk(request) {
       return ipcRenderer.invoke(channels.WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL, request);
     },

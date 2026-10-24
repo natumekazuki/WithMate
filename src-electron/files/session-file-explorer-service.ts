@@ -10,6 +10,8 @@ import type {
   SessionFileChunkResult,
   SessionImageResourceRequest,
   SessionImageChunkRequest,
+  SessionPdfResourceRequest,
+  SessionPdfChunkRequest,
   SessionFileDescriptor,
   SessionFileOpenRequest,
   SessionFileAbsoluteResourceRequest,
@@ -48,6 +50,13 @@ const MAX_CHUNK_BYTES = 1024 * 1024;
 const INSPECTION_BYTES = 8192;
 const MAX_CONCURRENT_DIRECTORY_LISTINGS = 4;
 const MAX_PENDING_DIRECTORY_LISTINGS = 32;
+
+function detectLocalPdfResource(bytes: Uint8Array): { kind: "pdf"; mimeType: string } {
+  if (new TextDecoder("latin1").decode(bytes.subarray(0, 5)) !== "%PDF-") {
+    throw new Error("The local PDF target is not a PDF.");
+  }
+  return { kind: "pdf", mimeType: "application/pdf" };
+}
 
 function detectLocalImageResource(bytes: Uint8Array): { kind: "image" | "svg"; mimeType: string } {
   const text = new TextDecoder("latin1").decode(bytes);
@@ -841,7 +850,7 @@ export class SessionFileExplorerService {
     return this.inspectOpenedFile(request, opened);
   }
 
-  private async openImage(request: SessionImageResourceRequest): Promise<AuthorizedOpenedFile> {
+  private async openLinkedFile(request: SessionImageResourceRequest | SessionPdfResourceRequest, kind: "image" | "PDF"): Promise<AuthorizedOpenedFile> {
     const context = await this.deps.getSessionContext(request.sessionId);
     if (!context) {
       throw new Error("The session could not be found.");
@@ -849,18 +858,18 @@ export class SessionFileExplorerService {
     const target = request.target.trim();
     const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(target)?.[1];
     if (scheme && scheme.toLowerCase() !== "file" && !/^[a-zA-Z]:[\\/]/.test(target)) {
-      throw new Error("Local image requests must use a local path or file URL.");
+      throw new Error(`Local ${kind} requests must use a local path or file URL.`);
     }
     const absoluteTarget = /^file:/i.test(target) || path.isAbsolute(target)
       || /^[a-zA-Z]:[\\/]/.test(target) || /^\/[a-zA-Z]:[\\/]/.test(target);
     let baseDirectory = context.workspacePath;
     if (request.baseResource) {
       if (request.baseResource.sessionId !== request.sessionId) {
-        throw new Error("Image base does not belong to this Session.");
+        throw new Error(`${kind} base does not belong to this Session.`);
       }
       if (!absoluteTarget) {
         if (isSessionFileGitCommitResource(request.baseResource)) {
-          throw new Error("Relative images from a Git commit file preview are not available.");
+          throw new Error(`Relative ${kind === "image" ? "images" : "PDFs"} from a Git commit file preview are not available.`);
         }
         const base = await this.openLocalFile(request.baseResource);
         try {
@@ -872,22 +881,29 @@ export class SessionFileExplorerService {
     }
     const resolved = resolveOpenPathTarget(target, { baseDirectory });
     if (resolved.type !== "local-path") {
-      throw new Error("Local image requests must use a local path or file URL.");
+      throw new Error(`Local ${kind} requests must use a local path or file URL.`);
     }
     return this.openAbsoluteFile({ sessionId: request.sessionId, absolutePath: resolved.targetPath });
   }
 
   async inspectImage(request: SessionImageResourceRequest): Promise<SessionFileDescriptor> {
-    const opened = await this.openImage(request);
+    const opened = await this.openLinkedFile(request, "image");
     return this.inspectOpenedFile(
-      { sessionId: request.sessionId, absolutePath: opened.targetRealPath }, opened, true,
+      { sessionId: request.sessionId, absolutePath: opened.targetRealPath }, opened, "image",
+    );
+  }
+
+  async inspectPdf(request: SessionPdfResourceRequest): Promise<SessionFileDescriptor> {
+    const opened = await this.openLinkedFile(request, "PDF");
+    return this.inspectOpenedFile(
+      { sessionId: request.sessionId, absolutePath: opened.targetRealPath }, opened, "pdf",
     );
   }
 
   private async inspectOpenedFile(
     request: SessionFileResourceRequest,
     opened: AuthorizedOpenedFile,
-    imageOnly = false,
+    restrictedKind?: "image" | "pdf",
   ): Promise<SessionFileDescriptor> {
     try {
       const { handle, stats: fileStats, targetRealPath } = opened;
@@ -898,7 +914,9 @@ export class SessionFileExplorerService {
       throw new Error("The file changed during inspection. Reload and try again.");
       }
       const inspectedBytes = inspection.subarray(0, bytesRead);
-      const resource = imageOnly
+      const resource = restrictedKind === "pdf"
+        ? detectLocalPdfResource(inspectedBytes)
+        : restrictedKind === "image"
         ? detectLocalImageResource(inspectedBytes)
         : detectSessionFileResourceKind(targetRealPath, inspectedBytes);
       return {
@@ -925,8 +943,14 @@ export class SessionFileExplorerService {
 
   async readImageChunk(request: SessionImageChunkRequest): Promise<SessionFileChunkResult> {
     this.validateChunkRequest(request);
-    const opened = await this.openImage(request);
-    return this.readOpenedFileChunk(request, opened, true);
+    const opened = await this.openLinkedFile(request, "image");
+    return this.readOpenedFileChunk(request, opened, "image");
+  }
+
+  async readPdfChunk(request: SessionPdfChunkRequest): Promise<SessionFileChunkResult> {
+    this.validateChunkRequest(request);
+    const opened = await this.openLinkedFile(request, "PDF");
+    return this.readOpenedFileChunk(request, opened, "pdf");
   }
 
   private validateChunkRequest(request: Pick<SessionFileChunkRequest, "offset" | "length">): void {
@@ -941,7 +965,7 @@ export class SessionFileExplorerService {
   private async readOpenedFileChunk(
     request: Pick<SessionFileChunkRequest, "offset" | "length" | "expectedRevision">,
     opened: AuthorizedOpenedFile,
-    imageOnly = false,
+    restrictedKind?: "image" | "pdf",
   ): Promise<SessionFileChunkResult> {
     try {
       const { handle, stats: fileStats } = opened;
@@ -949,10 +973,12 @@ export class SessionFileExplorerService {
       if (request.expectedRevision !== revision) {
       throw new Error("The file changed while it was being read. Reload and try again.");
       }
-      if (imageOnly) {
+      if (restrictedKind) {
         const header = new Uint8Array(Math.min(INSPECTION_BYTES, fileStats.size));
         const inspection = await handle.read(header, 0, header.byteLength, 0);
-        detectLocalImageResource(header.subarray(0, inspection.bytesRead));
+        const inspectedBytes = header.subarray(0, inspection.bytesRead);
+        if (restrictedKind === "pdf") detectLocalPdfResource(inspectedBytes);
+        else detectLocalImageResource(inspectedBytes);
       }
       const bytes = new Uint8Array(Math.min(request.length, Math.max(0, fileStats.size - request.offset)));
       const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, request.offset);

@@ -130,10 +130,15 @@ export function codexFileReferencesFromMarkdown(): FromMarkdownExtension {
           this.enter({ type: "text", value: this.sliceSerialize(token) }, token);
           return;
         }
-        const path = referencePath(this.sliceSerialize(token));
+        const source = this.sliceSerialize(token);
+        const path = referencePath(source);
         if (path !== null) {
           const url = /^file:/iu.test(path) ? path : encodeURI(path).replace(/#/gu, "%23").replace(/\?/gu, "%3F");
-          this.enter({ type: "link", url, children: [{ type: "text", value: path }] }, token);
+          const pathname = /^file:/iu.test(path) ? new URL(path).pathname : path;
+          this.enter({ type: "link", url, children: [{ type: "text", value: path }],
+            ...(source.startsWith(visualizePrefix) && /\.pdf$/iu.test(pathname)
+              ? { data: { hProperties: { "data-codex-visualize-pdf": path } } } : {}),
+          }, token);
         }
       },
     },

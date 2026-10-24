@@ -479,6 +479,8 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL,
   WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL,
+  WITHMATE_INSPECT_SESSION_PDF_CHANNEL,
+  WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
@@ -586,6 +588,67 @@ test("image IPC authorizes owner and current preview base without broadening gen
   changeBaseDuringRead = true;
   await assert.rejects(() => handlers.get(WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL)?.({}, chunkRequest) as Promise<unknown>, /current Preview resource as its base/);
   assert.equal(calls, 4);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "PDF IPCはownerとcurrent preview baseのみ許可し、読込中のowner・base変更を返却前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/shared.ts: assertSessionFileLinkSender" }
+// fault = "別windowやstale previewへのPDF読込を許可する、または非同期読込後にownerを再確認しない"
+// observable = "PDF IPCの返却値・拒否Errorとservice呼出数"
+// observation_boundary = "public-boundary"
+// scope = "registered inspect/read PDF IPC sender lifecycle"
+// lifecycle = "permanent"
+// impact = "PDF自動読込がwindow/session権限を逸脱する"
+// distinction = "service testと型検査はIPC sender lifecycleを検証できず、既存stubで低コストに確認する"
+// @end-test-value
+test("PDF IPC rechecks owner and preview base before returning bytes", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  let ownerSessionId: string | null = "session-1";
+  let currentBase = { sessionId: "aux-1", absolutePath: "/outside/source.md" };
+  let changeDuringRead: "base" | "owner" | "window" | null = null;
+  let calls = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async () => ownerSessionId,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => window === previewWindow && sessionId === "aux-1" ? currentBase : null,
+    inspectSessionPdf: async () => { calls++; return { mimeType: "application/pdf" }; },
+    readSessionPdfChunk: async () => {
+      calls++;
+      if (changeDuringRead === "base") currentBase = { ...currentBase, absolutePath: "/outside/other.md" };
+      if (changeDuringRead === "owner") ownerSessionId = null;
+      if (changeDuringRead === "window") currentWindow = otherWindow;
+      return { data: new ArrayBuffer(1) };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", target: "/outside/result.pdf" };
+  const inspect = (input: unknown = request) => handlers.get(WITHMATE_INSPECT_SESSION_PDF_CHANNEL)?.({}, input) as Promise<unknown>;
+  const read = (input: unknown) => handlers.get(WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL)?.({}, input) as Promise<unknown>;
+  assert.deepEqual(await inspect(), { mimeType: "application/pdf" });
+  currentWindow = otherWindow;
+  await assert.rejects(inspect, /current Preview resource as its base/);
+  currentWindow = previewWindow;
+  await assert.rejects(inspect, /current Preview resource as its base/);
+  assert.equal(calls, 1);
+  const based = { ...request, baseResource: currentBase };
+  assert.deepEqual(await inspect(based), { mimeType: "application/pdf" });
+  const chunk = { ...based, offset: 0, length: 1, expectedRevision: "revision" };
+  assert.equal((await read(chunk) as { data: ArrayBuffer }).data.byteLength, 1);
+  changeDuringRead = "base";
+  await assert.rejects(() => read(chunk), /current Preview resource as its base/);
+  currentWindow = ownerWindow;
+  changeDuringRead = "owner";
+  await assert.rejects(() => read({ ...request, offset: 0, length: 1, expectedRevision: "revision" }));
+  ownerSessionId = "session-1";
+  changeDuringRead = "window";
+  await assert.rejects(() => read({ ...request, offset: 0, length: 1, expectedRevision: "revision" }));
+  assert.equal(calls, 6);
 });
 
 function createIpcMainStub() {

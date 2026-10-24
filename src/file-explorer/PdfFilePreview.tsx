@@ -29,7 +29,7 @@ function readThemeTokens(element: HTMLElement): PdfReaderThemeTokens {
 }
 
 export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOpenLink }: PdfFilePreviewProps) {
-  const hostRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLSpanElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const openLinkButtonRef = useRef<HTMLButtonElement>(null);
   const [instanceId] = useState(() => crypto.randomUUID());
@@ -103,28 +103,28 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
   }, [bytes, instanceId, name]);
 
   return (
-    <div ref={hostRef} className="session-pdf-preview" aria-label="PDF Reader" aria-busy={state === "loading" || undefined}>
+    <span ref={hostRef} className="session-pdf-preview" aria-label="PDF Reader" aria-busy={state === "loading" || undefined}>
       {selection.trim() ? (
-        <div className="session-pdf-selection-actions" role="group" aria-label="Selected PDF Text">
+        <span className="session-pdf-selection-actions" role="group" aria-label="Selected PDF Text">
           <button type="button" onClick={() => callbacksRef.current.onCopyText(selection)}>Copy</button>
           {onQuoteText ? <button type="button" onClick={() => callbacksRef.current.onQuoteText?.(selection)}>Quote</button> : null}
-        </div>
+        </span>
       ) : null}
       {pendingLink !== null ? (
-        <div className="session-pdf-link-confirmation" role="region" aria-label="Open PDF Link" onKeyDown={(event) => {
+        <span className="session-pdf-link-confirmation" role="region" aria-label="Open PDF Link" onKeyDown={(event) => {
           if (event.key === "Escape") { event.stopPropagation(); cancelLink(); }
         }}>
           <span>Open Link</span>
           <bdi className="session-pdf-link-target">{pendingLink}</bdi>
           <button ref={openLinkButtonRef} type="button" onClick={() => { const target = pendingLink; cancelLink(); callbacksRef.current.onOpenLink(target); }}>Open</button>
           <button type="button" onClick={cancelLink}>Cancel</button>
-        </div>
+        </span>
       ) : null}
-      {state === "loading" ? <div className="session-pdf-loading"><LoadingIndicator label="Loading PDF" /></div> : null}
-      {state === "error" ? <div className="session-file-preview-error" role="alert">{error}</div> : null}
+      {state === "loading" ? <span className="session-pdf-loading"><LoadingIndicator label="Loading PDF" /></span> : null}
+      {state === "error" ? <span className="session-file-preview-error" role="alert">{error}</span> : null}
       <iframe ref={frameRef} className="session-pdf-frame" title={`PDF Reader: ${name}`}
         src={`${PDF_READER_URL}#${new URLSearchParams({ instanceId, hostOrigin: window.location.protocol === "file:" ? "null" : window.location.origin })}`} sandbox="allow-scripts allow-same-origin"
         referrerPolicy="no-referrer" hidden={state === "error"} />
-    </div>
+    </span>
   );
 }

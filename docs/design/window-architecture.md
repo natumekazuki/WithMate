@@ -16,7 +16,7 @@ Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編�
 
 ## PDF readerの隔離境界
 
-中央・独立File Previewの`SessionFilePreview`は、認可済みのPDF bytesを`PdfFilePreview`から別originの`withmate-pdf://reader/index.html` iframeへ渡す。iframeは`allow-scripts allow-same-origin`のsandboxで動作し、preloadとWithMate APIを持たない。Mainの`pdf-reader-protocol.ts`と`pdf-reader-assets.ts`は専用buildの同梱assetだけを配信し、CSPで通信・workerを同originへ限定し、frame navigationとform送信・入れ子frame・objectを制限する。PDF.jsのscripting managerは使用せず、文書内JavaScriptやLaunch、フォーム送信を有効化しない。
+中央・独立File Previewの`SessionFilePreview`と、Codexの`visualize` PDFを表示する本文の`MarkdownPdfPreview`は、認可済みのPDF bytesを共通の`PdfFilePreview`から別originの`withmate-pdf://reader/index.html` iframeへ渡す。本文用の読込はPDF専用の`inspectSessionPdf`／`readSessionPdfChunk`を使い、local画像と同じlink解決・Session／base resource認可を維持してPDF headerとrevisionを検査する。iframeは`allow-scripts allow-same-origin`のsandboxで動作し、preloadとWithMate APIを持たない。Mainの`pdf-reader-protocol.ts`と`pdf-reader-assets.ts`は専用buildの同梱assetだけを配信し、CSPで通信・workerを同originへ限定し、frame navigationとform送信・入れ子frame・objectを制限する。PDF.jsのscripting managerは使用せず、文書内JavaScriptやLaunch、フォーム送信を有効化しない。
 
 ホストとreaderの通信契約は`src-shared/file-explorer/pdf-reader-contract.ts`に置く。両側で送信元window、origin、frame instance IDを照合し、ready後に一度だけ転送用bytesをコピーして渡す。テーマとwheel刻みの更新、Find commandは文書の再転送とは分離する。resource切替・Reloadではiframeを作り直し、旧frameのmessageを無視する。reader内の文書とworker・描画資源の破棄はreaderが所有する。
 

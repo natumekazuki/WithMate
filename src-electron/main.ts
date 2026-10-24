@@ -1411,6 +1411,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
                 inspectSessionImage: (request) => createSessionFileExplorerService().inspectImage(request),
                 readSessionImageChunk: (request) => createSessionFileExplorerService().readImageChunk(request),
+                inspectSessionPdf: (request) => createSessionFileExplorerService().inspectPdf(request),
+                readSessionPdfChunk: (request) => createSessionFileExplorerService().readPdfChunk(request),
                 inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
                   ? createFileRootGitChangesService().inspectHistoryFile(request)
                   : createSessionFileExplorerService().inspectFile(request),

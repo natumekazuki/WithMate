@@ -354,6 +354,18 @@ export type SessionImageChunkRequest = SessionImageResourceRequest & {
   expectedRevision: string;
 };
 
+export type SessionPdfResourceRequest = {
+  sessionId: string;
+  target: string;
+  baseResource?: SessionFilePreviewResourceRequest;
+};
+
+export type SessionPdfChunkRequest = SessionPdfResourceRequest & {
+  offset: number;
+  length: number;
+  expectedRevision: string;
+};
+
 export type FileRootGitDiffScope = "working-tree" | "staged";
 export type FileRootGitChangeScope = FileRootGitDiffScope | "commit";
 export type FileRootGitChangeKind =

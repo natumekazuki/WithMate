@@ -90,6 +90,8 @@ import type {
   SessionFileChunkRequest,
   SessionImageResourceRequest,
   SessionImageChunkRequest,
+  SessionPdfResourceRequest,
+  SessionPdfChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFilePreviewImageActionRequest,
@@ -522,6 +524,8 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     ): Awaitable<SessionDirectoryEntry[]>;
     inspectSessionImage(request: SessionImageResourceRequest): Awaitable<SessionFileDescriptor>;
     readSessionImageChunk(request: SessionImageChunkRequest): Awaitable<SessionFileChunkResult>;
+    inspectSessionPdf(request: SessionPdfResourceRequest): Awaitable<SessionFileDescriptor>;
+    readSessionPdfChunk(request: SessionPdfChunkRequest): Awaitable<SessionFileChunkResult>;
     inspectSessionFile(
       request: SessionFilePreviewResourceRequest,
     ): Awaitable<SessionFileDescriptor>;

@@ -239,6 +239,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       inspectSessionImage: async () => {
         throw new Error("unused session query fixture method");
       },
+      inspectSessionPdf: async () => { throw new Error("unused session query fixture method"); },
+      readSessionPdfChunk: async () => { throw new Error("unused session query fixture method"); },
       readSessionImageChunk: async () => {
         throw new Error("unused session query fixture method");
       },

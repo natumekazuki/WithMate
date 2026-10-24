@@ -12,6 +12,26 @@ type Listener = (...args: unknown[]) => void;
 
 // @test-value v2
 // kind = "contract"
+// claim = "PDF preloadはtarget・baseResource・revisionとchunk範囲を専用IPCへ伝達する"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts: inspectSessionPdf/readSessionPdfChunk" }
+// fault = "PDF要求を別channelへ送る、またはlink基準・revision・chunk範囲を欠落させる"
+// observable = "invokeのchannelとargs"
+// observation_boundary = "public-boundary"
+// scope = "PDF preload API"
+// lifecycle = "permanent"
+// distinction = "型検査と公開key集合ではruntimeのIPC伝達を保証できない"
+// @end-test-value
+test("PDF preload forwards link and revision-bound chunk requests", async () => {
+  const { ipcRenderer } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const request = { sessionId: "session", target: "result.pdf", baseResource: { sessionId: "session", absolutePath: "/outside/source.md" } };
+  assert.deepEqual(await api.inspectSessionPdf(request), { channel: "withmate:inspect-session-pdf", args: [request] });
+  const chunk = { ...request, offset: 10, length: 20, expectedRevision: "revision" };
+  assert.deepEqual(await api.readSessionPdfChunk(chunk), { channel: "withmate:read-session-pdf-chunk", args: [chunk] });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Preview menu preloadはscopeと座標を専用IPCへ渡しclose選択・取消結果を返す"
 // oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts showSessionFilePreviewContextMenu" }
 // fault = "別channelへ送る、scopeや座標を落とす、menu選択を実close成功へ変換する"
@@ -852,6 +872,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "previewComposerInput",
     "inspectSessionFile",
     "inspectSessionImage",
+    "inspectSessionPdf",
     "isSessionFileObjectCopyAvailable",
     "listSessionDirectory",
     "listSessionFileRoots",
@@ -860,6 +881,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "unpinSessionFile",
     "readSessionFileChunk",
     "readSessionImageChunk",
+    "readSessionPdfChunk",
     "reportRendererLog",
     "releaseTerminal",
     "resizeTerminal",

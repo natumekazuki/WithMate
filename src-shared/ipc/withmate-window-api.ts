@@ -79,6 +79,8 @@ import type {
   SessionFileChunkRequest,
   SessionImageResourceRequest,
   SessionImageChunkRequest,
+  SessionPdfResourceRequest,
+  SessionPdfChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFilePreviewImageActionRequest,
@@ -195,6 +197,8 @@ export type WithMateWindowSessionApi = {
   inspectSessionFile(request: SessionFilePreviewResourceRequest): Promise<SessionFileDescriptor>;
   inspectSessionImage(request: SessionImageResourceRequest): Promise<SessionFileDescriptor>;
   readSessionImageChunk(request: SessionImageChunkRequest): Promise<SessionFileChunkResult>;
+  inspectSessionPdf(request: SessionPdfResourceRequest): Promise<SessionFileDescriptor>;
+  readSessionPdfChunk(request: SessionPdfChunkRequest): Promise<SessionFileChunkResult>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
   getSessionFilePreviewWindowPayload(token: string): Promise<SessionFilePreviewWindowPayload | null>;
