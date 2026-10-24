@@ -497,7 +497,7 @@ export function InlineResponseContent({ text, records = [], requests = [], rende
     const content = inlineContent && !contentInserted && Math.min(inlineContent.position, text.length) <= end
       ? { ...inlineContent, position: Math.max(0, inlineContent.position - offset) } : undefined;
     if (content) contentInserted = true;
-    if (end > offset || content) fragments.push(renderText(text.slice(offset, end), key, offset, content));
+    if (end > offset || content) fragments.push(renderText(text.slice(offset, end), content?.key ?? key, offset, content));
   };
   for (const { record, request } of entries.sort((a, b) => (a.record.textRange?.start ?? text.length) - (b.record.textRange?.start ?? text.length))) {
     const range = record.textRange;

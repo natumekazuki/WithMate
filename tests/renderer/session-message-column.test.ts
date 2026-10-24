@@ -3273,6 +3273,94 @@ test("空本文への承認は本文到着後も詳細とfocusを保持する", 
 
 // @test-value v2
 // kind = "contract"
+// claim = "同一承認の詳細とfocusは、同じturnの質問の追加・更新・解決を通して保持され、質問回答と次の承認判断を継続できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests; docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
+// fault = "質問による本文分割の変化で承認が再mountされ、詳細やfocusが失われる、または質問と承認の応答先を取り違える"
+// observable = "承認cardと詳細toggleのDOM同一性、aria-expanded、詳細のhidden、activeElement、質問回答と許可・拒否callback、新しい承認の初期状態"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnの未投影／投影済み応答とPreview／Sourceにおける承認と質問の同時表示"
+// lifecycle = "permanent"
+// impact = "質問が届くたびに閲覧中の詳細とkeyboard操作位置を失い、承認判断の継続が妨げられる"
+// distinction = "既存の空本文・本文更新testでは質問による描画ownerの分割と結合を通らない。既存DOM fixtureで同時要求の操作継続性を検証し、型検査や静的描画では分からない再mountを検出する"
+// @end-test-value
+test("質問の追加・更新・解決でも同じ承認の詳細とfocusを保持する", async () => {
+  for (const projected of [false, true]) {
+    for (const messageViewMode of ["preview", "source"] as const) {
+      const text = "Before approval\n\nAfter approval";
+      let approval: LiveApprovalRequest | null = { ...createLiveApprovalRequest(), textPosition: "Before approval".length };
+      const question: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question" };
+      let questions: LiveElicitationRequest[] = [];
+      let records: ElicitationRecord[] = [];
+      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
+      const answers: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props, pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: approval, liveElicitationRequests: questions, liveElicitationRecords: records,
+          onResolveLiveApproval: (...args) => decisions.push(args),
+          onResolveLiveElicitation: (...args) => answers.push(args),
+        });
+      }
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages: projected ? [{ role: "assistant", text }] : [],
+        messageKeys: projected ? ["response"] : [], isRunning: true, liveRunAssistantText: text, messageViewMode,
+      });
+      try {
+        const { container, dom } = mounted;
+        const card = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
+        const toggle = card.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+        await act(async () => toggle.click());
+        toggle.focus();
+        const expectContinuity = async () => {
+          await mounted.rerender({});
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+          assert.equal(container.querySelector("[aria-label='Approval required']") === card, true);
+          assert.equal(card.querySelector("[aria-label='Hide approval details']") === toggle, true);
+          assert.equal(toggle.getAttribute("aria-expanded"), "true");
+          assert.equal(card.querySelector<HTMLElement>(".live-approval-details")?.hidden, false);
+          assert.equal(dom.window.document.activeElement === toggle, true);
+        };
+        questions = [question];
+        records = [{
+          requestId: question.requestId, kind: "question", message: question.message,
+          fields: [{ title: "Branch" }], textRange: { start: text.length, end: text.length }, status: "pending",
+        }];
+        await expectContinuity();
+        assert.equal(container.querySelectorAll(".live-elicitation-card").length, 1);
+        records = [{ ...records[0], textRange: { start: 0, end: "Before approval".length } }];
+        await expectContinuity();
+        const submit = [...container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")]
+          .find(button => button.textContent === "Submit")!;
+        await act(async () => submit.click());
+        assert.equal(answers.length, 1);
+        assert.equal(answers[0][0], question);
+        assert.equal(answers[0][1].action, "accept");
+        questions = [];
+        records = [{ ...records[0], status: "answered" }];
+        await expectContinuity();
+        assert.equal(container.querySelectorAll(".live-elicitation-card").length, 0);
+        assert.match(container.querySelector(".elicitation-record")?.textContent ?? "", /Branch/);
+        const allow = [...card.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Allow Once")!;
+        await act(async () => allow.click());
+        assert.deepEqual(decisions, [[approval, "approve"]]);
+        approval = null;
+        await mounted.rerender({});
+        assert.equal(container.querySelector("[aria-label='Approval required']"), null);
+        approval = { ...createLiveApprovalRequest(), requestId: "approval-2", textPosition: text.length };
+        await mounted.rerender({});
+        const next = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
+        assert.equal(next === card, false);
+        assert.equal(next.querySelector("[aria-expanded]")?.getAttribute("aria-expanded"), "false");
+        const reject = [...next.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Reject")!;
+        await act(async () => reject.click());
+        assert.deepEqual(decisions.at(-1), [approval, "deny"]);
+      } finally { await mounted.cleanup(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "承認はMarkdownのblockを分断せず受信位置付近へ入り、参照linkと後続本文を保ち、Sourceや縮小済み応答でも操作できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests" }
 // fault = "code fence途中へcardを挿入して本文を壊す、参照定義との分割でlinkを失う、またはSourceやcollapseで承認を隠す"
