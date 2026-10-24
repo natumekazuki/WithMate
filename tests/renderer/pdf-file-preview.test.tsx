@@ -159,3 +159,104 @@ test("PDF settings and host Find reach the existing frame without retransferring
     dom.window.close();
   }
 });
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Reader startup without an authenticated ready ends in a terminal error, while ready cancels only the startup deadline and a recreated reader is independent of old timers and messages"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: PDF startup failure, Reload and reader lifetime" }
+// fault = "Missing ready leaves Loading indefinitely, a late ready revives a failed reader, or an old startup deadline or message corrupts the replacement reader"
+// observable = "Loading and aria-busy, error text, iframe visibility, messages transferred to the reader, and state after keyed recreation or unmount"
+// observation_boundary = "component-behavior"
+// scope = "PdfFilePreview initial handshake and error lifetime"
+// lifecycle = "permanent"
+// impact = "Users can distinguish a failed viewer startup from ongoing work and explicitly retry without stale failures or a false PDF corruption diagnosis"
+// distinction = "Existing identity and settings tests deliver ready immediately; fake time detects absent or late ready and cleanup without real-time waits, which type checks and normal rendering cannot cover"
+// @end-test-value
+test("PDF startup waits finitely and a failed or removed reader cannot affect its replacement", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const dom = new JSDOM("<!doctype html><body><div id='root'></div></body>", { url: "https://withmate.test" });
+  const previous = { window: globalThis.window, document: globalThis.document, MutationObserver: globalThis.MutationObserver };
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver });
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  const bytes = Uint8Array.of(37, 80, 68, 70, 45);
+  const messages: unknown[] = [];
+  const render = async (key: string) => {
+    await act(async () => root.render(<PdfFilePreview key={key} bytes={bytes} name="report.pdf"
+      onCopyText={() => {}} onOpenLink={() => {}} />));
+    const frame = container.querySelector("iframe")!;
+    const source = frame.contentWindow;
+    const id = new URLSearchParams(new URL(frame.src).hash.slice(1)).get("instanceId")!;
+    frame.contentWindow!.postMessage = (message: unknown) => { messages.push(message); };
+    return { frame, source, id };
+  };
+  const emit = async (reader: Awaited<ReturnType<typeof render>>, type: string, extra = {},
+    origin = PDF_READER_ORIGIN, source: Window | null = reader.source, id = reader.id) => {
+    await act(async () => { dom.window.dispatchEvent(new dom.window.MessageEvent("message", {
+      origin, source, data: { channel: PDF_READER_CHANNEL, instanceId: id, type, ...extra },
+    })); });
+  };
+  const tick = async (milliseconds: number) => { await act(async () => { t.mock.timers.tick(milliseconds); }); };
+  const alert = () => container.querySelector('[role="alert"]')?.textContent;
+  const busy = () => container.querySelector('[aria-label="PDF Reader"]')?.getAttribute("aria-busy");
+  try {
+    const timedOut = await render("timeout");
+    await tick(14_999);
+    assert.equal(alert(), undefined);
+    assert.equal(busy(), "true");
+    assert.ok(container.querySelector(".session-pdf-loading"));
+    await emit(timedOut, "ready", {}, "https://attacker.test");
+    await emit(timedOut, "ready", {}, PDF_READER_ORIGIN, dom.window as unknown as Window);
+    await emit(timedOut, "ready", {}, PDF_READER_ORIGIN, timedOut.source, "obsolete");
+    await tick(1);
+    const startupError = alert();
+    assert.match(startupError ?? "", /viewer.*15 seconds.*Reload/);
+    assert.equal(busy(), null);
+    assert.equal(container.querySelector(".session-pdf-loading"), null);
+    assert.equal(timedOut.frame.hidden, true);
+    await emit(timedOut, "ready");
+    await emit(timedOut, "loaded");
+    assert.equal(alert(), startupError);
+    assert.equal(messages.length, 0);
+    assert.equal(timedOut.frame.hidden, true);
+
+    const failed = await render("reported-error");
+    await emit(failed, "error", { message: "Reader entry failed." });
+    await tick(15_000);
+    await emit(failed, "ready");
+    assert.equal(alert(), "Reader entry failed.");
+    assert.equal(busy(), null);
+    assert.equal(messages.length, 0);
+
+    const removed = await render("removed");
+    await tick(5_000);
+    await act(async () => root.render(null));
+    const replacement = await render("replacement");
+    await tick(10_000);
+    await emit(removed, "ready");
+    await emit(removed, "error", { message: "Stale reader error." });
+    await emit(timedOut, "loaded");
+    assert.equal(alert(), undefined);
+    assert.equal(busy(), "true");
+    assert.equal(messages.length, 0);
+    await emit(replacement, "ready");
+    assert.equal(messages.length, 1);
+    assert.equal(container.querySelector("iframe"), replacement.frame);
+    await tick(120_000);
+    assert.equal(alert(), undefined);
+    assert.equal(busy(), null);
+    assert.equal(replacement.frame.hidden, false);
+    await emit(replacement, "loaded");
+    assert.equal(alert(), undefined);
+
+    await act(async () => root.unmount());
+    await tick(120_000);
+    await emit(replacement, "error", { message: "Unmounted reader error." });
+    assert.equal(container.childNodes.length, 0);
+  } finally {
+    if (container.childNodes.length) await act(async () => root.unmount());
+    Object.assign(globalThis, previous);
+    dom.window.close();
+    t.mock.timers.reset();
+  }
+});

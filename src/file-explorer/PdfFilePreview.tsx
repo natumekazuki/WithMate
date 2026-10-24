@@ -59,15 +59,27 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
   useEffect(() => {
     let active = true;
     let sent = false;
+    let failed = false;
+    const fail = (message: string) => {
+      if (!active || failed) return;
+      failed = true;
+      initializedRef.current = false;
+      clearTimeout(startupTimer);
+      setError(message);
+      setState("error");
+    };
+    const startupTimer = setTimeout(() => fail(
+      "The PDF viewer did not respond within 15 seconds. Reload the preview to try again."), 15_000);
     const send = (message: PdfReaderHostMessage, transfer: Transferable[] = []) => {
       frameRef.current?.contentWindow?.postMessage(message, PDF_READER_ORIGIN, transfer);
     };
     const handleMessage = (event: MessageEvent<unknown>) => {
-      if (!active || event.source !== frameRef.current?.contentWindow || event.origin !== PDF_READER_ORIGIN
+      if (!active || failed || event.source !== frameRef.current?.contentWindow || event.origin !== PDF_READER_ORIGIN
         || !isPdfReaderFrameMessage(event.data, instanceId)) return;
       const message = event.data;
       if (message.type === "ready") {
         if (sent || !hostRef.current) return;
+        clearTimeout(startupTimer);
         sent = true;
         initializedRef.current = true;
         const copy = bytes.slice().buffer;
@@ -78,8 +90,7 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
       } else if (message.type === "loaded") {
         if (sent) setState("ready");
       } else if (message.type === "error") {
-        setError(message.message || "The PDF could not be displayed.");
-        setState("error");
+        fail(message.message || "The PDF could not be displayed.");
       } else if (message.type === "selection") {
         setSelection(message.text);
       } else if (message.type === "open-link") {
@@ -96,6 +107,7 @@ export function PdfFilePreview({ ref, bytes, name, onCopyText, onQuoteText, onOp
     }
     return () => {
       active = false;
+      clearTimeout(startupTimer);
       initializedRef.current = false;
       observer.disconnect();
       window.removeEventListener("message", handleMessage);
