@@ -36,6 +36,10 @@ export class WindowEntryLoader {
     await this.load(window, "file-preview.html", search);
   }
 
+  async loadSessionGraphEntry(window: WindowLike, token: string): Promise<void> {
+    await this.load(window, "session-graph.html", `?token=${encodeURIComponent(token)}`);
+  }
+
   async loadChatEntry(window: WindowLike, mode: ChatEntryMode): Promise<void> {
     await this.load(window, "session.html", buildChatEntrySearch(mode));
   }

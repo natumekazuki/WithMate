@@ -11,6 +11,9 @@ Fresh never deletes existing data. Copy replaces existing visual-check data.
 .PARAMETER ValidateOnly
 Validate the selected mode and build without stopping processes, preparing
 user data, or launching Electron. Dependencies may be installed.
+.PARAMETER RemoteDebuggingPort
+Enable loopback-only browser inspection for the isolated app. Use 0 to choose
+an available port. Omit this parameter for a normal visual-check launch.
 .EXAMPLE
 .\scripts\start-withmate-visual-check.ps1 -DataMode Fresh
 .EXAMPLE
@@ -26,7 +29,10 @@ param(
   [ValidateSet("Copy", "Fresh", "Reuse")]
   [string]$DataMode = "Reuse",
 
-  [switch]$ValidateOnly
+  [switch]$ValidateOnly,
+
+  [ValidateRange(0, 65535)]
+  [Nullable[int]]$RemoteDebuggingPort = $null
 )
 
 $ErrorActionPreference = "Stop"
@@ -579,9 +585,14 @@ try {
 
   $env:WITHMATE_USER_DATA_PATH = $resolvedUserDataPath
   Remove-Item Env:VITE_DEV_SERVER_URL -ErrorAction SilentlyContinue
+  $launchArguments = @($mainPath, $VisualCheckProcessMarker)
+  if ($null -ne $RemoteDebuggingPort) {
+    $launchArguments += "--remote-debugging-address=127.0.0.1"
+    $launchArguments += "--remote-debugging-port=$RemoteDebuggingPort"
+  }
   $process = Start-Process `
     -FilePath $resolvedElectronPath `
-    -ArgumentList @($mainPath, $VisualCheckProcessMarker) `
+    -ArgumentList $launchArguments `
     -WorkingDirectory $resolvedWorktreePath `
     -PassThru
 

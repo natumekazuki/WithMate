@@ -388,6 +388,7 @@ export type WithMateWindowCharacterApi = {
 };
 
 export type WithMateWindowApi =
+  & import("../session-graph/session-graph-window-contract.js").SessionGraphWindowApi
   & WithMateWindowNavigationApi
   & MemoryV6ReviewApi
   & WithMateWindowCatalogApi

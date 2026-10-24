@@ -7,8 +7,9 @@ import { JSDOM } from "jsdom";
 import type { SessionGraphRecord } from "../../src-shared/session-graph/session-graph-contract.js";
 import { layoutSessionGraph } from "../../src/session-graph/graph-layout.js";
 import { sessionGraphStatuses } from "../../src/session-graph/SessionGraphPreview.js";
-import { SessionGraphPreview } from "../../src/session-graph/SessionGraphPreview.js";
+import { SessionGraphPreview, type SessionGraphPreviewMemory } from "../../src/session-graph/SessionGraphPreview.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 
 function record(id: string): SessionGraphRecord {
@@ -140,10 +141,10 @@ test("graph detail markdown represents embedded media as text while keeping deli
 
 // @test-value v2
 // kind = "contract"
-// claim = "Graphの選択詳細と自由値を保持して通知更新でき、関係から別話題へ移動できる"
+// claim = "Graphは通知更新・再表示と関連する別話題からの復帰で選択と位置を保ち、明示的な別窓操作は元ビューを変えない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "通知で詳細選択と読む位置を失うかfalse値を落とすか跨話題の関係を開けない"
-// observable = "選択された詳細本文、scrollTop、自由項目、参照open引数、遷移先話題と詳細"
+// fault = "通知で詳細選択と読む位置を失うかfalse値を落とすか跨話題の往復で元状態を失うか別窓操作が元ビューを変える"
+// observable = "選択詳細、scrollTop、自由項目、参照open引数、遷移先話題、復帰・再表示の選択と倍率と位置と追加取得範囲、別窓state、詳細開閉のfocus"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-preview-navigation"
 // lifecycle = "permanent"
@@ -177,6 +178,9 @@ test("graph preview preserves selection on notifications and navigates cross-top
   let notify: (id: string) => void = () => {};
   let revision = 1;
   const opened: string[] = [];
+  const windows: SessionGraphViewState[] = [];
+  let latestState: SessionGraphViewState | null = null;
+  let latestMemory: SessionGraphPreviewMemory | null = null;
   const relation = {
     id: "cross",
     fromId: "alpha",
@@ -217,7 +221,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
     readSessionGraph: (async (
       _sessionId: string,
       operation: string,
-      request: { ids?: string[]; topicId?: string },
+      request: { ids?: string[]; topicId?: string; offset?: number },
     ) => {
       if (operation === "list_topics")
         return {
@@ -241,10 +245,10 @@ test("graph preview preserves selection on notifications and navigates cross-top
       return {
         status: "ok",
         revision,
-        items: [selected === "cross-topic" ? other : alpha()],
-        total: 1,
+        items: [selected === "cross-topic" ? other : operation === "get_topic_view" && request.offset ? record("second-page") : alpha()],
+        total: operation === "get_topic_view" && selected === "alpha" ? 2 : 1,
         offset: 0,
-        hasMore: false,
+        hasMore: operation === "get_topic_view" && selected === "alpha" && !request.offset,
         incomplete: false,
         relations: [relation],
         externalEndpoints: [other],
@@ -273,13 +277,20 @@ test("graph preview preserves selection on notifications and navigates cross-top
           sessionId="main"
           onClose={() => {}}
           onOpenPath={(target) => opened.push(target)}
+          onOpenWindow={(state) => windows.push(state)}
+          onStateChange={(state) => { latestState = state; }}
+          onMemoryChange={(memory) => { latestMemory = memory; }}
         />,
       );
     });
+    assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Graph Topic");
+    await click([...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Load More") ?? null);
+    assert.equal(dom.window.document.querySelectorAll("select[aria-label='Find Graph Record'] option").length, 3);
     await click(dom.window.document.querySelector(".session-graph-node"));
     const details = dom.window.document.querySelector<HTMLElement>(
       ".session-graph-details",
     )!;
+    assert.equal(dom.window.document.activeElement, details.querySelector("h2"));
     assert.match(details.textContent ?? "", /Decision At Revision 1/);
     assert.deepEqual(
       Array.from(
@@ -301,6 +312,23 @@ test("graph preview preserves selection on notifications and navigates cross-top
     assert.match(details.textContent ?? "", /Decision At Revision 2/);
     await click(details.querySelector(".session-graph-references button"));
     assert.deepEqual(opened, ["evidence.md"]);
+    await click(dom.window.document.querySelector("button[aria-label='Zoom In']"));
+    const canvas = dom.window.document.querySelector<HTMLElement>(".session-graph-viewport")!;
+    canvas.scrollLeft = 43;
+    canvas.scrollTop = 91;
+    const loadedState = latestState!;
+    const loadedMemory = latestMemory!;
+    await act(async () => {
+      details.querySelector(".session-graph-related button")!.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+    });
+    assert.equal(windows[0].selectedId, "cross-topic");
+    assert.equal(windows[0].zoom, 1.1);
+    assert.match(details.textContent ?? "", /Decision At Revision 2/);
+    await act(async () => {
+      details.querySelector(".session-graph-related button")!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true }));
+    });
+    await click(dom.window.document.querySelector(".session-graph-record-menu > button"));
+    assert.equal(windows[1].selectedId, "cross-topic");
     await click(details.querySelector(".session-graph-related button"));
     assert.equal(
       dom.window.document.querySelector<HTMLSelectElement>(
@@ -313,6 +341,38 @@ test("graph preview preserves selection on notifications and navigates cross-top
         ?.textContent ?? "",
       /Cross Topic Detail/,
     );
+    assert.match(dom.window.document.querySelector(".session-graph-back-link")?.textContent ?? "", /Back To Shared Decision/);
+    const relatedState = latestState!;
+    const relatedMemory = latestMemory!;
+    await click(dom.window.document.querySelector(".session-graph-back-link"));
+    assert.equal(dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='Graph Topic']")?.value, "topic");
+    assert.match(details.textContent ?? "", /Decision At Revision 2/);
+    assert.equal(canvas.scrollLeft, 43);
+    assert.equal(canvas.scrollTop, 91);
+    assert.equal(dom.window.document.querySelector(".session-graph-navigation")?.textContent?.includes("110%"), true);
+    const savedState = latestState!;
+    const savedMemory = latestMemory!;
+    await act(async () => {
+      details.querySelector("h2")!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    assert.equal(dom.window.document.activeElement, dom.window.document.querySelector(".session-graph-node"));
+    await act(async () => {
+      root.render(<SessionGraphPreview key="reopened" api={api} sessionId="main" initialState={savedState} initialMemory={savedMemory} onClose={() => {}} onOpenPath={() => {}} />);
+    });
+    assert.match(dom.window.document.querySelector(".session-graph-details")?.textContent ?? "", /Decision At Revision 2/);
+    const restoredCanvas = dom.window.document.querySelector<HTMLElement>(".session-graph-viewport")!;
+    assert.equal(restoredCanvas.scrollLeft, 43);
+    assert.equal(restoredCanvas.scrollTop, 91);
+    assert.equal(dom.window.document.querySelector(".session-graph-navigation")?.textContent?.includes("110%"), true);
+    await act(async () => {
+      root.render(<SessionGraphPreview key="reopened-related" api={api} sessionId="main" initialState={relatedState} initialMemory={relatedMemory} onClose={() => {}} onOpenPath={() => {}} />);
+    });
+    await click(dom.window.document.querySelector(".session-graph-back-link"));
+    assert.match(dom.window.document.querySelector(".session-graph-details")?.textContent ?? "", /Decision At Revision 2/);
+    await act(async () => {
+      root.render(<SessionGraphPreview key="reopened-pages" api={api} sessionId="main" initialState={loadedState} initialMemory={loadedMemory} onClose={() => {}} onOpenPath={() => {}} />);
+    });
+    assert.equal(dom.window.document.querySelectorAll("select[aria-label='Find Graph Record'] option").length, 3);
   } finally {
     await act(async () => root.unmount());
     for (const [key, descriptor] of [

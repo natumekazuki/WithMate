@@ -66,8 +66,16 @@ applyはtopic/record/relationのupsertとrelation解除を1transactionで処理�
 
 ## 閲覧UI
 
-Session headerの`Graph`で中央previewを開く。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。rendererはowning parent Windowに認可されたread-only IPCから同じApplication Serviceを読む。保存成功の通知で再取得し、pollingや表示のたびのAI呼出しは使わない。
+Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ戻る。展開・折畳みのどちらでも入口を保ち、再度Graphを押しても閉じない。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
 
-話題選択、自然なscrollとzoom、record選択時の近傍図、関連recordへの移動を使う。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。大量recordは追加pageで取得し、全件を読めない倍率まで縮小することを閲覧手段にしない。未取得範囲と取得失敗は正常な空と区別する。
+中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。中央の会話復帰では入力と最後のGraph位置を保持し、file/Templateとの切替は既存の離脱確認を通す。独立Windowの`Open In Session`は親Sessionの中央へ現在の話題・記録を開き、独立Windowを残す。Main/Auxiliaryの選択や送信先は変えない。
+
+関連記録を辿った場合だけ、詳細内の`Back To <記録名>`から元の話題・記録・倍率・scrollへ戻れる。直接の話題・記録選択と詳細dismissでこの戻り先をリセットする。詳細の×と詳細内のEscapeは選択を解除し、元のnodeへfocusを戻す。狭幅では詳細を図の作業面に重ね、その間は背面の図を操作対象から外す。ComposerやSession全体をmodalにはしない。
+
+独立Graph WindowはHomeの既存`Previews`へ親Main単位で集約し、Graphの種別と話題・選択記録で識別する。既存Windowのfocus、個別Close、親単位Closeは同じ一覧から操作する。独立Windowを閉じても会話やGraphデータは変更しない。親Session Windowの通常CloseやAuxiliaryのCloseでは残し、Main削除・reset・app終了で関連Windowとtokenを失効させる。再起動後の閲覧Window復元や閲覧位置の永続化は行わない。
+
+中央のreadはowning parent Windowを認可し、独立WindowはMainが発行したtokenにWindow、親Main ID/incarnation、storage generationを結び付けて認可する。独立Windowから親IDを自己申告してGraphを読むことや、apply・provider権限への拡張は許さない。非同期read完了時にも失効を確認する。明示した参照リンクだけ既存のfile/link resolverへ親Sessionの認可で渡す。保存成功の通知は同じownerの中央と独立ビューへ届け、pollingや表示のたびのAI呼出しは使わない。
+
+話題選択、自然なscrollとzoom、record選択時の近傍図、関連recordへの移動を使う。recordと関連リンクは修飾clickやkeyboardで開ける対象menuから別窓にも開ける。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。大量recordは追加pageで取得し、部分取得時だけ範囲とLoad Moreを示す。未取得範囲と取得失敗は正常な空と区別する。
 
 図は要点・意味の異なる状態・主体icon・関係を中心にし、本文、適用範囲、target、自由項目、具体的な参照は選択後に表示する。Main/Auxiliaryの区分・会話名はiconのhover/focusで読め、記録者が内容上の主体と違う場合だけ記録者を補足する。関係はkeyboardからも辿れる。Markdown内の埋込み画像や図を自動取得・実行せず、参照は利用者の明示操作から既存の認可済みlink/file経路へ渡す。

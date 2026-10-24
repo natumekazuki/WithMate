@@ -4,7 +4,8 @@ param(
   [Parameter(Mandatory = $true)][string]$DataRoot,
   [string]$Mode,
   [switch]$ValidateOnly,
-  [switch]$SeedDuringBuild
+  [switch]$SeedDuringBuild,
+  [Nullable[int]]$RemoteDebuggingPort = $null
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +68,9 @@ function Start-Sleep {
 $parameters = @{ WorktreePath = $RepositoryPath; ValidateOnly = $ValidateOnly }
 if ($Mode) {
   $parameters.DataMode = $Mode
+}
+if ($null -ne $RemoteDebuggingPort) {
+  $parameters.RemoteDebuggingPort = $RemoteDebuggingPort
 }
 try {
   $result = & $LauncherPath @parameters | Select-Object -Last 1

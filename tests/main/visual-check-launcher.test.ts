@@ -21,6 +21,32 @@ type LaunchReport = {
   launch: { arguments: string[]; userDataPath: string; workingDirectory: string } | null;
 };
 
+// @test-value v2
+// kind = "contract"
+// claim = "明示したbrowser inspectionだけをloopback指定で分離アプリへ渡し、通常起動のuserDataとmarkerを維持する"
+// oracle = { type = "contract", ref = "README.md#分離したvisual-check" }
+// fault = "検証用debug指定で通常版のuserDataを使うか、port指定を落とすか、loopback指定を欠く"
+// observable = "launcherがStart-Processへ渡す引数とuserDataPath"
+// observation_boundary = "public-boundary"
+// scope = "visual-check launcherの明示RemoteDebuggingPort起動"
+// lifecycle = "permanent"
+// impact = "実rendererの確認を分離環境内で行い、通常起動にdebug引数を持ち込まない"
+// distinction = "PowerShellの引数組立てはTypeScriptやrenderer testでは検査できない。実OSプロセスを起動せず既存fixtureで境界を確認する"
+// @end-test-value
+test("visual-check enables explicit loopback browser inspection in its isolated launch", windowsOnly, async () => {
+  const fixture = await createFixture();
+  try {
+    await mkdir(fixture.target);
+    const report = await fixture.run("Reuse", "-RemoteDebuggingPort", "0");
+    assert.equal(report.error, null);
+    assert.equal(report.launch?.userDataPath, fixture.target);
+    assert.deepEqual(report.launch?.arguments, [
+      path.join(fixture.repository, "dist-electron", "src-electron", "main.js"),
+      "--withmate-visual-check", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
+    ]);
+  } finally { await fixture.dispose(); }
+});
+
 async function createFixture() {
   const root = await mkdtemp(path.join(tmpdir(), "withmate-visual-check-"));
   const repository = path.join(root, "worktree with spaces");

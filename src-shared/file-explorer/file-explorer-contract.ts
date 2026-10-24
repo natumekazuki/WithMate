@@ -29,6 +29,13 @@ export type SessionFilePreviewWindowSummary = {
   token: string;
   title: string;
   path: string;
+  kind?: "file";
+} | {
+  token: string;
+  title: string;
+  kind: "session-graph";
+  path?: never;
+  state?: import("../session-graph/session-graph-window-contract.js").SessionGraphViewState;
 };
 
 export type SessionFilePreviewWindowGroup = {

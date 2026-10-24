@@ -27,7 +27,7 @@ Claude Agent は公式 Claude Agent SDK に付属する未改変の実行物を�
 - 共通ヘッダーからSessionとCharacterを検索し、`RecentSessions`から既存セッションを再開
 - `NewSession`でtitle、workspace、provider、Characterを選択
 - `SessionMonitor`で開いているセッションの状態を確認
-- `Previews`で独立したFile Preview WindowをSession別に一覧し、前面化、個別Close、Session単位のCloseを実行
+- `Previews`で独立したFile Preview／Graph WindowをSession別に一覧し、前面化、個別Close、Session単位のCloseを実行
 - `Characters`からCharacterの作成、編集を開始
 - Settings Windowと独立したSession Monitor Windowを開く
 
@@ -182,6 +182,8 @@ Windowsで作業branchのsmoke / 目視確認を行う場合は、対象Worktree
 全モードで現在のWorktreeをbuildします。`-ValidateOnly`は選択モードの条件確認とbuildまでを行い、検証用プロセスの停止、データの準備、Electron起動は行いません。依存関係が不足する場合は準備します。`Get-Help .\scripts\start-withmate-visual-check.ps1 -Detailed`でも選択方法を確認できます。
 
 agentが実行する場合は、選択モード、プロセスの差し替え、`Copy`では検証用データの置き換えを事前に明示します。
+
+ブラウザー用の検証手段で実rendererを確認する場合は、`-RemoteDebuggingPort 0`を明示すると分離アプリだけにloopback用のdebug portを開きます。portは検証用user dataの`DevToolsActivePort`から確認できます。通常の起動ではこの指定を付けません。検証後はdebug port付きのプロセスを終了し、継続利用用には指定なしで起動し直します。
 
 起動・終了時は次のルールを守ってください。
 

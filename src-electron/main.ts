@@ -244,6 +244,9 @@ import { getGlossaryAgentRuntimeOperations } from "../src-shared/glossary/glossa
 import { getSessionGraphAgentRuntimeOperations } from "../src-shared/session-graph/session-graph-operation-schema.js";
 import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from "./session-graph/session-graph-application-service.js";
 import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
+import { SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
+import { registerSessionGraphWindowHandlers } from "./ipc/session-graph-window.js";
+import { WITHMATE_SESSION_GRAPH_NAVIGATION_EVENT, WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { MainStoreContext } from "./app/main-store-context.js";
 import {
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -777,12 +780,43 @@ const sessionGraphApplicationService = new SessionGraphApplicationService({
 sessionGraphApplicationService.subscribe((sessionId) => {
   const window = requireSessionWindowBridge().getWindow(sessionId);
   if (window && !window.isDestroyed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
+  void sessionGraphWindowService.notify(sessionId);
+});
+const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
+  application: sessionGraphApplicationService,
+  createWindow: () => mainWindowComposition.createCursorPlacedWindow({ width: 1100, height: 780, minWidth: 600, minHeight: 480, title: "Session Graph" }),
+  load: (window, token) => requireWindowEntryLoader().loadSessionGraphEntry(window, token),
+  token: () => crypto.randomUUID(),
+  title: (window, title) => window.setTitle(title),
+  changed: () => {
+    const home = mainWindowRuntime.getAuxWindowService().getHomeWindow();
+    if (home && !home.isDestroyed() && !home.webContents.isDestroyed() && !home.webContents.isCrashed()) home.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT);
+  },
+  notify: (window, sessionId) => {
+    if (!window.webContents.isDestroyed() && !window.webContents.isCrashed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
+  },
+  openInSession: async (sessionId, state, guard) => {
+    await guard();
+    const window = await requireMainWindowFacade().openSessionWindow(sessionId);
+    await guard();
+    window.webContents.send(WITHMATE_SESSION_GRAPH_NAVIGATION_EVENT, { sessionId, state });
+  },
 });
 const sessionGraphRuntimeService = new SessionGraphRuntimeService({
   applicationService: sessionGraphApplicationService,
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
 });
+
+function listPreviewWindowsIncludingGraphs() {
+  const groups = requireMainWindowFacade().listFilePreviewWindows();
+  for (const graph of sessionGraphWindowService.list()) {
+    let group = groups.find((candidate) => candidate.ownerSessionId === graph.ownerSessionId);
+    if (!group) { group = { ownerSessionId: graph.ownerSessionId, previews: [] }; groups.push(group); }
+    group.previews.push({ token: graph.token, kind: "session-graph", title: graph.title, state: graph.state });
+  }
+  return groups;
+}
 const glossaryRuntimeService = new GlossaryRuntimeService({
   applicationService: glossaryApplicationService,
   bindingRegistry: agentRuntimeBindingRegistry,
@@ -1266,6 +1300,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             ipcMain,
             registerMainIpcHandlers: (ipc, deps) => {
               registerMainIpcHandlers(ipc, deps);
+              registerSessionGraphWindowHandlers(ipc, {
+                service: sessionGraphWindowService,
+                resolveWindow: (sender) => BrowserWindow.fromWebContents(sender),
+                sessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+                openReference: (sessionId, target, guard) => sessionFileExplorerRuntime.getPreview().open({ kind: "link", sessionId, target }, guard),
+              });
               if (!terminalService) throw new Error("Terminal service is unavailable.");
               registerTerminalHandlers(ipc, terminalService);
             },
@@ -1299,7 +1339,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openCharacterEditorWindow,
                 openDiffWindow,
                 listSessionFilePreviewWindows: async () => Promise.all(
-                  requireMainWindowFacade().listFilePreviewWindows().map(async (group) => ({
+                  listPreviewWindowsIncludingGraphs().map(async (group) => ({
                     ...group,
                     session: await getDisplaySessionSummary(group.ownerSessionId),
                   })),
@@ -1308,9 +1348,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   BrowserWindow.fromWebContents(event.sender) ?? null,
                   request,
                 ),
-                focusSessionFilePreviewWindow: (token) => requireMainWindowFacade().focusFilePreviewWindow(token),
-                closeSessionFilePreviewWindow: (token) => requireMainWindowFacade().closeFilePreviewWindow(token),
-                closeSessionFilePreviewWindows: (ownerSessionId) => requireMainWindowFacade().closeFilePreviewWindowsForOwner(ownerSessionId),
+                focusSessionFilePreviewWindow: (token) => { requireMainWindowFacade().focusFilePreviewWindow(token); sessionGraphWindowService.focus(token); },
+                closeSessionFilePreviewWindow: (token) => { requireMainWindowFacade().closeFilePreviewWindow(token); sessionGraphWindowService.close(token); },
+                closeSessionFilePreviewWindows: (ownerSessionId) => { requireMainWindowFacade().closeFilePreviewWindowsForOwner(ownerSessionId); sessionGraphWindowService.closeOwner(ownerSessionId); },
                 isFilePreviewWindow: (window, sessionId) =>
                   requireMainWindowFacade().isFilePreviewWindow(window, sessionId),
                 getFilePreviewWindowResource: (window, sessionId) =>
@@ -2659,10 +2699,12 @@ function requireSessionPersistenceService(): SessionPersistenceService {
           auxiliaryLiveRunParents.delete(sessionId, owner);
         },
         closeSessionWindow: (sessionId) => {
+          sessionGraphWindowService.closeOwner(sessionId);
           requireSessionWindowBridge().closeSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
         },
         discardSessionWindow: (sessionId) => {
+          sessionGraphWindowService.closeOwner(sessionId);
           requireSessionWindowBridge().discardSessionWindow(sessionId);
           requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
         },
@@ -3323,6 +3365,7 @@ function hasRunningSessions(): boolean {
 }
 
 function closeResetTargetWindows(): void {
+  sessionGraphWindowService.closeAll();
   requireMainWindowFacade().closeResetTargetWindows();
 }
 
@@ -3719,6 +3762,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.on("will-quit", () => {
+    sessionGraphWindowService.closeAll();
     sessionObservabilityService?.dispose();
     terminalService?.releaseAll();
     writeAppLog({

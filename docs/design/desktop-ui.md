@@ -58,7 +58,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Implementation Boundary
 
-Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開く。話題・関係を図から読み、record選択時だけ詳細を表示する閲覧専用面である。通常会話と同時に描画せず、閉じると元の会話へ戻る。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
+Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、左向きの`Back To Chat`で元の会話へ戻る。折畳み時も入口を残す。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。話題・関係を図から読み、record選択時だけ詳細を表示する閲覧専用面である。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
 
 Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。
 
@@ -163,9 +163,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Monitorと共通の親行にCharacter avatarとSession titleを置き、titleのclickでそのSession Windowを開く。右側のPreview icon・件数・展開buttonからfile一覧を開閉する。Attention／Running／Stoppedの分類は設けない
   - 開いているSessionはClose All後も同じ位置に残し、previewが0件なら件数のみ表示して展開とClose Allを無効にする。Session Windowが閉じていてpreviewも0件になった親は一覧から除く
   - 子一覧はMonitorのAuxiliaryと同じ高さ上限と枠内scroll、1行省略表示の密度を使い、件数が増えてもcardを無制限に伸ばさない。開いているpreviewの総数や取得件数は制限しない
-  - 子行はfile名だけを常設表示し、識別pathはtooltipとaccessible nameに残す。clickは既存previewを前面化し、表示内容を再navigateしない
+  - fileの子行はfile名だけを常設表示し、識別pathはtooltipとaccessible nameに残す。Graphの子行は`Graph`と現在の話題・選択記録を示し、file pathは表示しない。clickは既存previewを前面化し、表示内容を再navigateしない
   - 個別Closeは子行、Close Allは親行のnative context menuから実行する。常設のClose buttonは置かず、右クリックに加えてContext Menuキー／Shift+F10でも操作できる。親単位CloseはそのSession配下のpreviewだけを閉じ、Session本体や他Sessionへ影響させない
-  - 通常file、live Git Diff、commit file、Git履歴diffを対象とし、chat artifactのsnapshot Diffは含めない。Window数は制限せず、Close後も同じresourceを再度開ける
+  - 通常file、live Git Diff、commit file、Git履歴diff、独立Graphを対象とし、chat artifactのsnapshot Diffは含めない。Window数は制限せず、Close後も同じresourceを再度開ける。Graphは閲覧ビュー単位で、明示した新窓操作のたびに追加する
   - 開閉・再利用による一覧の変化を反映し、読込中・取得失敗・正常な0件を区別する。取得失敗には再試行を提供し、操作失敗を正常なCloseとして表示しない
 - `Characters`
   - Home共通headerのsegmented toggleで `Monitor`／`Previews` と排他的に切り替える

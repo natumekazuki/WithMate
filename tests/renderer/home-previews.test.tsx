@@ -20,6 +20,46 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "HomeはGraphビューと同名fileを表示種別で識別し、各行のtokenで意図したWindowだけを前面化する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md#閲覧UI" }
+// fault = "Graphへfile pathを表示するか、同じtitleの別種previewを誤ってfocusする"
+// observable = "Graphとfileの可視label・tooltip・accessible name、およびfocus APIのtoken列"
+// observation_boundary = "component-behavior"
+// scope = "Home Previewsの混在一覧から個別ビューへ復帰する操作"
+// lifecycle = "permanent"
+// impact = "複数Graphとfileを比較中も目的の閲覧Windowへ戻れる"
+// distinction = "型検査やregistry testはrendererの種別表示とDOMからのtoken選択を確認できない"
+// @end-test-value
+test("Previews distinguishes graph views from files with the same title", async () => {
+  const focused: string[] = [];
+  const mixed = group("owner", "file");
+  mixed.previews.push({ token: "graph", kind: "session-graph", title: "report.md" });
+  const api: HomePreviewsApi = {
+    listSessionFilePreviewWindows: async () => [mixed],
+    subscribeSessionFilePreviewWindowsChanged: () => () => {},
+    subscribeOpenSessionWindowIds: () => () => {},
+    subscribeSessionInvalidation: () => () => {},
+    focusSessionFilePreviewWindow: async (token) => { focused.push(token); },
+    closeSessionFilePreviewWindow: async () => {},
+    closeSessionFilePreviewWindows: async () => {},
+    showSessionFilePreviewContextMenu: async () => "dismissed",
+    openSession: async () => {},
+  };
+  await withPreviews(api, async (doc) => {
+    await act(async () => doc.querySelector<HTMLButtonElement>(".home-previews-disclosure")!.click());
+    const rows = [...doc.querySelectorAll<HTMLButtonElement>(".home-previews-file")];
+    assert.equal(rows[0]!.title, "C:/work/owner/report.md");
+    assert.equal(rows[1]!.title, "Graph · report.md");
+    assert.equal(rows[1]!.textContent, "Graph · report.md");
+    assert.equal(rows[1]!.getAttribute("aria-label"), "Focus preview: Graph · report.md");
+    await act(async () => { rows[1]!.click(); });
+    await act(async () => { rows[0]!.click(); });
+    assert.deepEqual(focused, ["graph", "file"]);
+  });
+});
+
 async function withPreviews(api: HomePreviewsApi, run: (doc: Document) => Promise<void>) {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   const names = ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"] as const;
