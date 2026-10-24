@@ -2337,6 +2337,8 @@ export default function AgentSessionWindowApp() {
         workspacePath={selectedSession.workspacePath}
         additionalDirectories={activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories ?? []}
         enabled={isSelectedWorkspaceAvailable}
+        visible={Boolean(chatShellSurface.isLeftPaneVisible) && !chatShellSurface.isSidePaneBudgetCollapsed}
+        relatedSessionIds={[selectedSession.id, ...auxiliaryWorkspace.summaries.map((session) => session.id)]}
         paneHost={filesPaneHost}
         previewHost={filesPreviewHost}
         composer={{ canInsertPathReference: canInsertFileTreePathReference, insertReferencePaths }}

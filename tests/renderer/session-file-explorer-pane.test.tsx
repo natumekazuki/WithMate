@@ -103,9 +103,9 @@ test("File Explorer root revisionはworkspace path変更を検出する", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Files treeはroot・directory・regular fileだけを同じpath context menu契約へ渡し、通常clickとload identityを維持し、empty/unavailable rootsをloading状態で残さない"
+// claim = "Files treeはpath menu契約と通常clickを保ち、同じownerの更新中も展開済み内容を維持し、empty/unavailable rootsをloading状態で残さない"
 // oracle = { type = "contract", ref = "accepted behavior: File Explorer tree path context menu siblings" }
-// fault = "rootまたはdirectoryでpath操作できない、対象外rowに操作が出る、context menu追加で通常clickと非同期loadが回帰する、または確定empty/unavailable rootsのpanelがbusy/loading状態で残る"
+// fault = "path操作や通常clickが壊れる、更新で展開済みtreeが消える、または確定empty/unavailable rootsのpanelがbusy/loading状態で残る"
 // observable = "path menu callback、通常click callback、tree load identity、roots panelのaria-busy/loading statusとfailure alert"
 // observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane Files tree interaction and roots state"
@@ -255,6 +255,12 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     });
     assert.equal(directoryCalls, 1);
 
+    await act(async () => {
+      directoryRequests[0]?.resolve([fileEntry("old.txt")]);
+      await directoryRequests[0]?.promise;
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("old.txt") ?? false);
+
     const refresh = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-refresh");
     assert.ok(refresh);
     await act(async () => {
@@ -262,12 +268,8 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
       await Promise.resolve();
     });
     await waitFor(() => dom.window.document.querySelector(".session-file-root-row") !== null);
-    const refreshedRoot = dom.window.document.querySelector<HTMLButtonElement>(".session-file-root-row");
-    assert.ok(refreshedRoot);
-    await act(async () => {
-      refreshedRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
-      await Promise.resolve();
-    });
+    assert.equal(dom.window.document.querySelector(".session-file-root-row"), initialRoot);
+    assert.match(dom.window.document.body.textContent ?? "", /old\.txt/);
     assert.equal(directoryCalls, 2);
 
     await act(async () => {
@@ -344,11 +346,6 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
       "Path action failed.",
     );
 
-    await act(async () => {
-      directoryRequests[0]?.resolve([fileEntry("old.txt")]);
-      await directoryRequests[0]?.promise;
-      await Promise.resolve();
-    });
     assert.match(dom.window.document.body.textContent ?? "", /new\.txt/);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old\.txt/);
 
@@ -413,7 +410,7 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
       }));
       await Promise.resolve();
     });
-    await waitFor(() => filesPanel?.querySelector(".session-file-tree-error")?.textContent === "File roots failed.");
+    await waitFor(() => filesPanel?.querySelector(".session-file-tree-error")?.textContent?.includes("File roots failed.") ?? false);
     assert.equal(filesPanel?.querySelector(".session-file-tree-error")?.getAttribute("role"), "alert");
 
     await act(async () => {

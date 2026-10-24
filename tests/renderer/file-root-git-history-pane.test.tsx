@@ -19,6 +19,7 @@ import type {
   FileRootGitHistoryRepository,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { isFileRootGitHistoryComparisonDiffRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import type { FileRootGitHistoryPaneProps } from "../../src/file-explorer/FileRootGitHistoryPane.js";
 
 type ObserverEntry = { isIntersecting: boolean };
 
@@ -1296,5 +1297,431 @@ test("History は古いfile Diff結果をBack後のcommitへ混入させない",
       await act(async () => root?.unmount());
     }
     restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Historyはvisible期間だけrefreshとpaginationを開始し、集中したrefreshを一つの後続取得へ集約し、失敗しても読む行とfocusを保つ"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "hidden状態で取得する、refresh要求ごとに並行取得する、またはrefresh中と失敗時に既読行をunmountする"
+// observable = "repository/page API呼出数、commit rowのDOM identityとactiveElement、失敗alert"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane visibility and refresh queue"
+// lifecycle = "permanent"
+// impact = "会話や他tabへ移っている間の不要な取得と、閲覧復帰時の読む位置やkeyboard focusの喪失を防ぐ"
+// distinction = "既存pagination testでは扱わないvisibilityと遅延refreshの重なりをpublic APIとDOMで検証する"
+// @end-test-value
+test("History refreshはvisibilityとqueueを守り失敗時も読む行を保持する", async () => {
+  const { dom, restore } = installDom();
+  let repositoryReads = 0;
+  const pendingRepositories: Array<(result: FileRootGitHistoryRepositoriesResult) => void> = [];
+  const pageRequests: FileRootGitHistoryCommitsRequest[] = [];
+  const api = {
+    listFileRootGitHistoryRepositories: async () => {
+      repositoryReads += 1;
+      if (repositoryReads === 1) {
+        return { status: "ok" as const, repositories: [repositoryA] };
+      }
+      return new Promise<FileRootGitHistoryRepositoriesResult>((resolve) => pendingRepositories.push(resolve));
+    },
+    listFileRootGitHistoryCommits: async (request: FileRootGitHistoryCommitsRequest) => {
+      pageRequests.push(request);
+      return { status: "ok" as const, page: { entries: [commit("a", "reading commit")], nextCursor: "100", hasMore: true } };
+    },
+    getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "unused" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
+  };
+  let root: Root | null = null;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+    const render = async (visible: boolean, refreshRevision: number) => {
+      await act(async () => root?.render(React.createElement(FileRootGitHistoryPane, {
+        api, sessionId: "session-1", enabled: true, visible, rootsRevision: "roots-1", refreshRevision,
+        onOpenDiff: async () => null,
+      })));
+      await flush();
+    };
+    await render(false, 0);
+    assert.equal(repositoryReads, 0);
+    await render(false, 1);
+    assert.equal(repositoryReads, 0);
+    await render(true, 1);
+    assert.equal(repositoryReads, 1);
+    const row = dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-row");
+    assert.ok(row);
+    row.focus();
+    await render(true, 2);
+    await render(true, 3);
+    await render(true, 4);
+    assert.equal(repositoryReads, 2);
+    assert.equal(dom.window.document.querySelector(".file-history-commit-row"), row);
+    assert.equal(dom.window.document.activeElement, row);
+    await act(async () => pendingRepositories[0]?.({ status: "ok", repositories: [repositoryA] }));
+    await flush();
+    assert.equal(repositoryReads, 3);
+    await act(async () => pendingRepositories[1]?.({ status: "failed", message: "refresh unavailable" }));
+    await flush();
+    assert.equal(repositoryReads, 3);
+    assert.equal(dom.window.document.querySelector(".file-history-commit-row"), row);
+    assert.equal(dom.window.document.activeElement, row);
+    assert.match(dom.window.document.querySelector("[role='alert']")?.textContent ?? "", /refresh unavailable/);
+    const observer = TestIntersectionObserver.instances.at(-1);
+    const pagesBeforeHide = pageRequests.length;
+    await render(false, 5);
+    await act(async () => observer?.trigger(true));
+    await flush();
+    assert.equal(repositoryReads, 3);
+    assert.equal(pageRequests.length, pagesBeforeHide);
+    await render(true, 5);
+    assert.equal(repositoryReads, 4);
+    await act(async () => pendingRepositories[2]?.({ status: "ok", repositories: [repositoryA] }));
+    await flush();
+    assert.equal(dom.window.document.querySelector("[role='alert']"), null);
+  } finally {
+    await act(async () => root?.unmount());
+    restore();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "History refreshはcommit detailと選択file、Compareのdraftと固定結果を保持し、一覧は戻った時点で更新する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "refreshでdetailやCompareを初期化し、ref移動後のcommitへ固定結果を暗黙に変更する"
+// observable = "detail/file DOM identity、focus、selected file、Compare picker値と固定OID、diff callback request、一覧API呼出数"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane immutable reading snapshots"
+// lifecycle = "permanent"
+// impact = "利用者が見ているcommitと比較対象が自動refreshで別の内容へすり替わらない"
+// distinction = "既存detailとCompareの操作testに対し、同一repositoryの外部refreshを挟んだsnapshot継続性を検証する"
+// @end-test-value
+test("History refreshはdetailとCompare snapshotを保持する", async () => {
+  const { dom, restore } = installDom();
+  const readingCommit = commit("a", "reading detail");
+  let repositoryReads = 0;
+  let pageReads = 0;
+  let detailReads = 0;
+  let comparisonReads = 0;
+  const openedDiffs: FileRootGitHistoryDiffRequest[] = [];
+  const fixedComparison = {
+    mode: "branch" as const,
+    base: { kind: "branch" as const, name: "feature/history" },
+    target: { kind: "branch" as const, name: "main" },
+    baseCommitId: "b".repeat(40), targetCommitId: "a".repeat(40), mergeBaseCommitId: "c".repeat(40),
+  };
+  const api = {
+    listFileRootGitHistoryRepositories: async () => {
+      repositoryReads += 1;
+      return { status: "ok" as const, repositories: [{ ...repositoryA, currentBranch: repositoryReads > 1 ? "feature/history" : "main" }] };
+    },
+    listFileRootGitHistoryCommits: async () => {
+      pageReads += 1;
+      return { status: "ok" as const, page: { entries: [readingCommit], nextCursor: null, hasMore: false } };
+    },
+    getFileRootGitHistoryCommitDetail: async () => {
+      detailReads += 1;
+      return { status: "ok" as const, commit: readingCommit, entries: [changedEntry("detail.ts")] };
+    },
+    getFileRootGitHistoryComparison: async () => {
+      comparisonReads += 1;
+      return { status: "ok" as const, comparison: fixedComparison, entries: [changedEntry("compared.ts")] };
+    },
+    getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+  };
+  let root: Root | null = null;
+  const onOpenDiff = async (request: FileRootGitHistoryDiffRequest) => { openedDiffs.push(request); return null; };
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+    const render = async (refreshRevision: number) => {
+      await act(async () => root?.render(React.createElement(FileRootGitHistoryPane, {
+        api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision, onOpenDiff,
+      })));
+      await flush();
+    };
+    await render(0);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
+    await flush();
+    const detail = dom.window.document.querySelector<HTMLElement>(".file-history-detail");
+    const file = dom.window.document.querySelector<HTMLButtonElement>(".workspace-change-row[title='detail.ts']");
+    assert.ok(detail && file);
+    await act(async () => file.click());
+    await flush();
+    detail.scrollTop = 120;
+    file.focus();
+    await render(1);
+    assert.equal(dom.window.document.querySelector(".file-history-detail"), detail);
+    assert.equal(detail.scrollTop, 120);
+    assert.equal(dom.window.document.activeElement, file);
+    assert.ok(file.classList.contains("is-selected"));
+    assert.equal(detailReads, 1);
+    assert.equal(pageReads, 1);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-back")?.click());
+    await flush();
+    assert.equal(pageReads, 2);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-compare-trigger")?.click());
+    await flush();
+    const pickerLabels = [...dom.window.document.querySelectorAll(".file-history-comparison-picker-trigger")].map((picker) => picker.textContent);
+    await render(2);
+    assert.deepEqual([...dom.window.document.querySelectorAll(".file-history-comparison-picker-trigger")].map((picker) => picker.textContent), pickerLabels);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-comparison-submit")?.click());
+    await flush();
+    const result = dom.window.document.querySelector<HTMLElement>(".file-history-comparison-result-header");
+    assert.ok(result);
+    await render(3);
+    assert.equal(dom.window.document.querySelector(".file-history-comparison-result-header"), result);
+    assert.equal(result.dataset.targetCommitId, fixedComparison.targetCommitId);
+    assert.equal(comparisonReads, 1);
+    assert.equal(pageReads, 2);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".workspace-change-row[title='compared.ts']")?.click());
+    await flush();
+    const request = openedDiffs.at(-1);
+    assert.ok(request && isFileRootGitHistoryComparisonDiffRequest(request));
+    assert.deepEqual(request.comparison, fixedComparison);
+  } finally {
+    await act(async () => root?.unmount());
+    restore();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Historyは既読page範囲をfresh cursorだけで一括更新し、途中page失敗では既読範囲を維持する"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "新しい先頭pageと古いoffset pageを混在させる、既読pageを捨てる、または更新失敗で部分結果を適用する"
+// observable = "public page API cursor列、commit list DOM、scrollTopとfocus"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane loaded extent refresh"
+// lifecycle = "permanent"
+// impact = "追加commitのあるrepositoryでも読みかけの履歴範囲を失わず一貫した一覧を閲覧できる"
+// distinction = "既存pagination testと異なり既読2pageのrefreshと2page目の失敗を扱い、旧offsetの混在を検出する"
+// @end-test-value
+test("History refreshは既読page範囲をatomicに置換し失敗時は保持する", async () => {
+  const { dom, restore } = installDom();
+  const cursors: Array<string | null> = [];
+  let refreshRound = 0;
+  const reading = commit("b", "reading older commit");
+  const api = {
+    listFileRootGitHistoryRepositories: async () => {
+      refreshRound += 1;
+      return { status: "ok" as const, repositories: [repositoryA] };
+    },
+    listFileRootGitHistoryCommits: async (request: FileRootGitHistoryCommitsRequest): Promise<FileRootGitHistoryCommitsResult> => {
+      cursors.push(request.cursor ?? null);
+      if (refreshRound === 3 && request.cursor !== null) {
+        return { status: "failed", message: "second page unavailable" };
+      }
+      return request.cursor === null
+        ? { status: "ok", page: { entries: refreshRound === 1
+          ? [commit("a", "old prefix")]
+          : [commit("c", "fresh prefix"), commit("a", "old prefix")], nextCursor: refreshRound === 1 ? "old-offset" : "fresh-offset", hasMore: true } }
+        : { status: "ok", page: { entries: [reading], nextCursor: null, hasMore: false } };
+    },
+    getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "unused" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
+  };
+  let root: Root | null = null;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+    const render = async (refreshRevision: number) => {
+      const props: FileRootGitHistoryPaneProps = { api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision, onOpenDiff: async () => null };
+      await act(async () => root?.render(React.createElement(FileRootGitHistoryPane, props)));
+      await flush();
+    };
+    await render(0);
+    await act(async () => TestIntersectionObserver.instances.at(-1)?.trigger(true));
+    await flush();
+    const list = dom.window.document.querySelector<HTMLElement>(".file-history-commit-list");
+    assert.ok(list);
+    const originalRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+      const rect = originalRect.call(this);
+      if (this.classList.contains("file-history-commit-row")) {
+        const index = [...list.querySelectorAll(".file-history-commit-row")].indexOf(this);
+        const top = index * 30 - list.scrollTop;
+        return { ...rect, top, bottom: top + 30 };
+      }
+      return rect;
+    };
+    list.scrollTop = 30;
+    const readingRow = [...list.querySelectorAll<HTMLButtonElement>(".file-history-commit-row")].find((row) => row.textContent?.includes("reading older commit"));
+    assert.ok(readingRow);
+    readingRow.focus();
+    await render(1);
+    assert.deepEqual(cursors, [null, "old-offset", null, "fresh-offset"]);
+    assert.equal(list.querySelectorAll(".file-history-commit-row").length, 3);
+    assert.match(list.textContent ?? "", /fresh prefix/);
+    assert.match(list.textContent ?? "", /reading older commit/);
+    assert.equal(list.scrollTop, 60);
+    assert.equal(dom.window.document.activeElement, readingRow);
+    await render(2);
+    assert.deepEqual(cursors.slice(-2), [null, "fresh-offset"]);
+    assert.match(list.textContent ?? "", /second page unavailable/);
+    assert.match(list.textContent ?? "", /fresh prefix/);
+    assert.match(list.textContent ?? "", /reading older commit/);
+    assert.equal(dom.window.document.activeElement, readingRow);
+  } finally {
+    await act(async () => root?.unmount());
+    restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Historyは初回discoveryがrepositoryなし・branchなし・detachedでも、取得中の複数通知を後続discovery一回へ集約し、通知なしでは再取得しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "page取得を開始しない初回応答で通知を捨てる、通知数だけ再取得する、または通知がないのに再取得する"
+// observable = "repositoryとcommit API呼出数、branch selectorの選択値、取得したcommit row"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane initial no-page refresh queue"
+// lifecycle = "permanent"
+// impact = "初回取得中のGit初期化やref更新を取りこぼさず、detached時の明示的なbranch選択も保つ"
+// distinction = "既存のpage取得後のqueue testでは通らない三種類のno-page初回応答を遅延させ、通知の有無を比較する"
+// @end-test-value
+test("Historyはpageのない初回discovery中の通知を後続一回へ集約する", async () => {
+  const initialRepositories: FileRootGitHistoryRepository[][] = [
+    [],
+    [{ ...repositoryA, branches: [], currentBranch: null, refs: [] }],
+    [{ ...repositoryA, currentBranch: null }],
+  ];
+  for (const repositories of initialRepositories) {
+    for (const notify of [false, true]) {
+      const { dom, restore } = installDom();
+      let repositoryReads = 0;
+      let pageReads = 0;
+      let resolveInitial: ((result: FileRootGitHistoryRepositoriesResult) => void) | undefined;
+      const api = {
+        listFileRootGitHistoryRepositories: async () => {
+          repositoryReads += 1;
+          return repositoryReads === 1
+            ? new Promise<FileRootGitHistoryRepositoriesResult>((resolve) => { resolveInitial = resolve; })
+            : { status: "ok" as const, repositories: [repositoryA] };
+        },
+        listFileRootGitHistoryCommits: async () => {
+          pageReads += 1;
+          return { status: "ok" as const, page: { entries: [commit("a", "latest discovered commit")], nextCursor: null, hasMore: false } };
+        },
+        getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "unused" }),
+        getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+        getFileRootGitHistoryComparison: unusedHistoryComparison,
+      };
+      let root: Root | null = null;
+      try {
+        const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+        root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+        const render = async (refreshRevision: number) => {
+          await act(async () => root?.render(React.createElement(FileRootGitHistoryPane, {
+            api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision,
+            onOpenDiff: async () => null,
+          })));
+          await flush();
+        };
+        await render(0);
+        if (notify) {
+          await render(1);
+          await render(2);
+        }
+        assert.equal(repositoryReads, 1);
+        assert.equal(pageReads, 0);
+        assert.ok(resolveInitial);
+        await act(async () => resolveInitial?.({ status: "ok", repositories }));
+        await flush();
+        assert.equal(repositoryReads, notify ? 2 : 1);
+        if (!notify) {
+          assert.equal(pageReads, 0);
+          continue;
+        }
+        if (repositories.length > 0) {
+          const branch = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History branch']");
+          assert.ok(branch);
+          assert.equal(branch.value, "");
+          assert.equal(pageReads, 0);
+          await act(async () => {
+            branch.value = "main";
+            branch.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+          });
+          await flush();
+        }
+        assert.equal(pageReads, 1);
+        assert.match(dom.window.document.querySelector(".file-history-commit-row")?.textContent ?? "", /latest discovered commit/);
+        assert.equal(repositoryReads, 2);
+      } finally {
+        await act(async () => root?.unmount());
+        restore();
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Historyの初回discovery中に通知があっても、非表示またはsession切替後の旧応答は後続取得を開始しない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "旧ownerのtrailing通知を新ownerへ引き継ぐ、またはhiddenのまま後続discoveryを開始する"
+// observable = "session別repository API呼出列とcommit API呼出数"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane initial no-page queue invalidation"
+// lifecycle = "permanent"
+// impact = "閲覧していないHistoryの不要取得と、別sessionへの旧通知の漏出を防ぐ"
+// distinction = "初回pageなし応答を非表示・owner切替後まで保留し、非表示からの復帰だけが新取得を開始することを確認する"
+// @end-test-value
+test("Historyは初回pageなし応答後もhiddenと旧ownerの取得を止める", async () => {
+  for (const changeOwner of [false, true]) {
+    const { dom, restore } = installDom();
+    const repositorySessions: string[] = [];
+    const pending: Array<(result: FileRootGitHistoryRepositoriesResult) => void> = [];
+    let pageReads = 0;
+    const api = {
+      listFileRootGitHistoryRepositories: async (request: { sessionId: string }) => {
+        repositorySessions.push(request.sessionId);
+        return new Promise<FileRootGitHistoryRepositoriesResult>((resolve) => pending.push(resolve));
+      },
+      listFileRootGitHistoryCommits: async () => {
+        pageReads += 1;
+        return { status: "ok" as const, page: { entries: [], nextCursor: null, hasMore: false } };
+      },
+      getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "unused" }),
+      getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "unused" }),
+      getFileRootGitHistoryComparison: unusedHistoryComparison,
+    };
+    let root: Root | null = null;
+    try {
+      const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      const render = async (sessionId: string, visible: boolean, refreshRevision: number) => {
+        await act(async () => root?.render(React.createElement(FileRootGitHistoryPane, {
+          api, sessionId, enabled: true, visible, rootsRevision: "roots-1", refreshRevision,
+          onOpenDiff: async () => null,
+        })));
+        await flush();
+      };
+      await render("session-1", true, 0);
+      await render("session-1", true, 1);
+      await render(changeOwner ? "session-2" : "session-1", changeOwner, 1);
+      assert.deepEqual(repositorySessions, changeOwner ? ["session-1", "session-2"] : ["session-1"]);
+      await act(async () => pending[0]?.({ status: "ok", repositories: [] }));
+      await flush();
+      if (changeOwner) {
+        await act(async () => pending[1]?.({ status: "ok", repositories: [] }));
+        await flush();
+        assert.deepEqual(repositorySessions, ["session-1", "session-2"]);
+      } else {
+        assert.deepEqual(repositorySessions, ["session-1"]);
+        await render("session-1", true, 1);
+        assert.deepEqual(repositorySessions, ["session-1", "session-1"]);
+        await act(async () => pending[1]?.({ status: "ok", repositories: [] }));
+        await flush();
+        assert.equal(repositorySessions.length, 2);
+      }
+      assert.equal(pageReads, 0);
+    } finally {
+      await act(async () => root?.unmount());
+      restore();
+    }
   }
 });

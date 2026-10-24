@@ -13,6 +13,7 @@ import { FileRootGitHistoryPane } from "./FileRootGitHistoryPane.js";
 import { SessionFileExplorerPane } from "./SessionFileExplorerPane.js";
 import { SessionDiffPreview, SessionFilePreview } from "./SessionFilePreview.js";
 import { useFileRootPreviewController } from "./use-file-root-preview-controller.js";
+import { useFileExplorerRefresh } from "./use-file-explorer-refresh.js";
 
 function formatGitHistoryComparisonSelector(selector: FileRootGitHistoryComparison["base"]): string {
   if (selector.kind === "head") return "HEAD";
@@ -43,15 +44,23 @@ export function useSessionFilesFeature(input: {
   workspacePath: string | null;
   additionalDirectories: readonly string[];
   enabled: boolean;
+  visible: boolean;
+  relatedSessionIds: readonly string[];
 }) {
   const controller = useFileRootPreviewController(input);
   const [activeTab, setActiveTab] = useState<"files" | "changes" | "history">("files");
-  const [changesRefreshRevision, setChangesRefreshRevision] = useState(0);
-  const [historyRefreshRevision, setHistoryRefreshRevision] = useState(0);
   const rootsRevision = buildSessionFileExplorerRootsRevision({
     sessionId: input.activeRunSessionId,
     workspacePath: input.workspacePath,
     additionalDirectories: input.additionalDirectories,
+  });
+  const refresh = useFileExplorerRefresh({
+    api: input.api,
+    ownerKey: rootsRevision,
+    relatedSessionIds: input.relatedSessionIds,
+    enabled: input.enabled,
+    visible: input.visible,
+    activeTab,
   });
   const { view, actions } = controller;
 
@@ -73,6 +82,8 @@ export function useSessionFilesFeature(input: {
         api={input.api}
         sessionId={input.activeRunSessionId}
         enabled={input.enabled}
+        visible={refresh.visible}
+        refreshRevision={refresh.revisions.files}
         rootsRevision={rootsRevision}
         selectedFile={view.selectedFilePreview}
         activeTab={activeTab}
@@ -80,8 +91,8 @@ export function useSessionFilesFeature(input: {
           if (tab !== "history") actions.clearHistoryDiffPreview();
           setActiveTab(tab);
         }}
-        onRefreshChanges={() => setChangesRefreshRevision((current) => current + 1)}
-        onRefreshHistory={() => setHistoryRefreshRevision((current) => current + 1)}
+        onRefreshChanges={() => refresh.refresh("changes")}
+        onRefreshHistory={() => refresh.refresh("history")}
         onOpenFile={(request, openInWindow) => {
           void actions.handleOpenFileRootFile(request, openInWindow).then((message) => {
             if (message) window.alert(message);
@@ -97,9 +108,10 @@ export function useSessionFilesFeature(input: {
             api={input.api}
             sessionId={input.activeRunSessionId}
             enabled={input.enabled}
+            visible={refresh.visible && activeTab === "changes"}
             roots={roots}
             rootsRevision={rootsRevision}
-            refreshRevision={changesRefreshRevision}
+            refreshRevision={refresh.revisions.changes}
             onOpenFile={actions.handleOpenFileRootFile}
             onOpenDiff={actions.handleShowFileRootDiff}
           />
@@ -109,8 +121,9 @@ export function useSessionFilesFeature(input: {
             api={input.api}
             sessionId={input.activeRunSessionId}
             enabled={input.enabled}
+            visible={refresh.visible && activeTab === "history"}
             rootsRevision={rootsRevision}
-            refreshRevision={historyRefreshRevision}
+            refreshRevision={refresh.revisions.history}
             onOpenDiff={actions.handleShowFileRootGitHistoryDiff}
             onRepositoryChange={actions.clearHistoryDiffPreview}
           />

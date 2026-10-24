@@ -358,6 +358,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
   - 未作成の既存 `Session Folder` は root の初回展開時に空ディレクトリとして作成する
   - tree row は仮想化し、file 本文は選択時に 1 件だけ chunk read する
+  - 表示中のtabは初回表示・tab／pane／Windowの復帰、関連するMain／Auxiliaryのturn終端（成功・失敗・取消）で再取得する。非表示tab・折りたたんだpane・非表示Windowでは新しい取得を開始せず、復帰時に一度最新化する。短時間の通知を集約し、取得中の追加要求は最後の1回へまとめる。定期polling・再帰watcherは持たず、見続けている間の外部編集やTerminal実行途中の即時反映は保証しない。必要な時は`Refresh`で更新できる
+  - Filesの更新はroot一覧、展開中directoryの直下、Pin状態に限定する。同一owner／rootでは取得済み内容・展開・選択・focus・scroll位置を保持し、削除されたpathは一覧から除く。Changesは許可済みGit rootを再確認してstatusを取得し、並列数を2に制限する。更新失敗は取得済み内容を保持してerrorと再試行を示し、空の正常状態へ置き換えない。owner／root変更前の遅延応答は適用しない
+  - Historyの同一repository更新では選択中branch、commit詳細、Compareと中央Diffを保持する。詳細／Compare閲覧中のcommit一覧更新は一覧へ戻るまで延期し、一覧の更新では新しい先頭pageと古いoffset cursorを混在させない。file preview本文と開いているDiffはFile Explorerの自動・手動更新では再取得せず、各previewの再読込操作で更新する
   - Filesのregular file／directoryは行末の`Pin`／`Unpin`で目印を付与・解除する。Pin状態は塗りつぶしiconとpressed stateで示し、hoverや色だけに依存しない。TabとEnter／Spaceで操作でき、通常treeはroot順序と階層を保ったまま、同じ親直下でPinを第一条件、同条件で既存のdirectory優先・名前順とする
   - `Pinned Only`はroot名と相対pathを併記するPinだけの一覧へ切り替える。未展開の祖先配下も表示し、Pin directoryの未Pin子孫は含めない。fileは既存previewへ開き、directoryは通常treeへ戻して対象まで展開・移動する。解除後は次のPin、末尾なら直前のPinへfocusを移し、最後の解除後はfilterへ戻す。Pinが0件なら本文はblankとし、filterのON/OFFと通常表示へ戻る操作は残す
   - Pinは親Session内のMain／Auxiliaryで共有し、同Workspaceの別Sessionとは共有しない。再起動後も保持し、親Session削除時に削除する。filterはWindow内の一時状態で起動時OFF。保存構造は[Database SchemaのFiles Pin](database-schema.md#files-pin)を参照する

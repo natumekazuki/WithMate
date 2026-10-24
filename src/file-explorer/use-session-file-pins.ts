@@ -22,9 +22,15 @@ export function useSessionFilePins(input: {
   api: FilePinsApi | null;
   sessionId: string | null;
   enabled: boolean;
+  active?: boolean;
+  refreshRevision?: number;
   rootsRevision: string;
 }) {
-  const { api, sessionId, enabled, rootsRevision } = input;
+  const { api, sessionId, enabled, rootsRevision, active = true, refreshRevision = 0 } = input;
+  const activeRef = useRef(active);
+  useLayoutEffect(() => { activeRef.current = active; }, [active]);
+  const refreshingRef = useRef<string | null>(null);
+  const queuedRef = useRef(false);
   const ownerKey = JSON.stringify([sessionId, rootsRevision, enabled]);
   const ownerRef = useRef(ownerKey);
   const sequenceRef = useRef(0);
@@ -33,30 +39,38 @@ export function useSessionFilePins(input: {
   useLayoutEffect(() => {
     ownerRef.current = ownerKey;
     mutationRef.current = false;
+    refreshingRef.current = null;
+    queuedRef.current = false;
     return () => { ownerRef.current = ""; };
   }, [ownerKey]);
 
   const refresh = useCallback(async () => {
-    if (!api || !sessionId || !enabled || mutationRef.current) return;
-    const sequence = ++sequenceRef.current;
-    setState((current) => ({
-      ownerKey,
-      pins: current.ownerKey === ownerKey ? current.pins : [],
-      status: "loading",
-      pending: false,
-      error: "",
-    }));
-    try {
-      const pins = await api.listSessionFilePins(sessionId);
-      if (ownerRef.current !== ownerKey || sequenceRef.current !== sequence) return;
-      setState({ ownerKey, pins, status: "ready", pending: false, error: "" });
-    } catch (error) {
-      if (ownerRef.current !== ownerKey || sequenceRef.current !== sequence) return;
-      setState((current) => ({ ...current, status: "error", error: error instanceof Error ? error.message : "Pins could not be loaded." }));
-    }
+    if (!api || !sessionId || !enabled || !activeRef.current || mutationRef.current) return;
+    if (refreshingRef.current === ownerKey) { queuedRef.current = true; return; }
+    refreshingRef.current = ownerKey;
+    do {
+      queuedRef.current = false;
+      const sequence = ++sequenceRef.current;
+      setState((current) => ({
+        ownerKey,
+        pins: current.ownerKey === ownerKey ? current.pins : [],
+        status: "loading",
+        pending: false,
+        error: "",
+      }));
+      try {
+        const pins = await api.listSessionFilePins(sessionId);
+        if (ownerRef.current !== ownerKey || sequenceRef.current !== sequence) return;
+        setState({ ownerKey, pins, status: "ready", pending: false, error: "" });
+      } catch (error) {
+        if (ownerRef.current !== ownerKey || sequenceRef.current !== sequence) return;
+        setState((current) => ({ ...current, status: "error", error: error instanceof Error ? error.message : "Pins could not be loaded." }));
+      }
+    } while (ownerRef.current === ownerKey && queuedRef.current && activeRef.current);
+    if (ownerRef.current === ownerKey) { refreshingRef.current = null; queuedRef.current = false; }
   }, [api, enabled, ownerKey, sessionId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { if (active) void refresh(); }, [refresh, active, refreshRevision]);
 
   const changePin = async (target: SessionFileRootResourceRequest | SessionFilePin, remove: boolean): Promise<boolean> => {
     if (!api || !sessionId || !enabled || mutationRef.current || state.ownerKey !== ownerKey || state.status !== "ready") return false;

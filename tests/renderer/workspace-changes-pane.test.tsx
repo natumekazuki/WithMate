@@ -15,16 +15,16 @@ import type {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Changes pane は認可済みroot枠だけを先に表示し、明示Refresh以外ではChanges取得を開始しない"
-// oracle = { type = "contract", ref = "accepted behavior: manual Changes refresh" }
-// fault = "初回表示に不要なidle説明が出るか、再描画、root集合変更、Session切替でGit statusが暗黙に実行される"
+// claim = "Changes paneは表示開始・再表示・非同期root集合変化で認可済みrootを再探索し、同内容の配列再生成や非表示中は取得を開始しない"
+// oracle = { type = "contract", ref = "Issue #875: visible Changes activation refresh" }
+// fault = "非表示中にGit I/Oが走る、非同期root到着後にstatusを取得しない、同内容の配列で再取得する、または再表示でGit root作成・削除を認識できない"
 // observable = "discoveryとChanges取得の呼び出し列および初期表示"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane refresh boundary"
 // lifecycle = "permanent"
 // distinction = "取得後のrepository別完了順ではなく、取得を開始できる操作を検証する"
 // @end-test-value
-test("FileRootChangesPane は明示RefreshだけでChangesを取得する", async () => {
+test("FileRootChangesPane は表示時に自動取得し非表示中は待機する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -49,12 +49,13 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
   const repositoryRequests: Array<{ sessionId: string; rootIds: string[] }> = [];
   const changesRequests: Array<{ sessionId: string; rootId: string }> = [];
   const pendingChanges: Array<(result: ChangesResult) => void> = [];
+  let repositoryPresent = true;
   const testApi = {
     listFileRootChangesRepositories: async (request: { sessionId: string; rootIds: string[] }) => {
       repositoryRequests.push(request);
       return {
         status: "ok" as const,
-        repositories: request.rootIds.map((rootId) => ({ rootId })),
+        repositories: repositoryPresent ? request.rootIds.map((rootId) => ({ rootId })) : [],
         failures: [],
       };
     },
@@ -86,81 +87,100 @@ test("FileRootChangesPane は明示RefreshだけでChangesを取得する", asyn
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(FileRootChangesPane, baseProps));
+      root.render(React.createElement(FileRootChangesPane, { ...baseProps, visible: false }));
+      await Promise.resolve();
+    });
+    assert.equal(repositoryRequests.length, 0);
+    assert.equal(changesRequests.length, 0);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, visible: false, refreshRevision: 1 }));
+      await Promise.resolve();
+    });
+    assert.equal(repositoryRequests.length, 0);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, baseProps));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.deepEqual(repositoryRequests, [{ sessionId: "session-1", rootIds: ["workspace"] }]);
-    assert.equal(dom.window.document.querySelectorAll(".workspace-changes-root-group").length, 1);
-    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Not loaded/);
-    assert.deepEqual(changesRequests, []);
-
-    await act(async () => {
-      dom.window.dispatchEvent(new dom.window.Event("focus"));
-      dom.window.dispatchEvent(new dom.window.Event("focus"));
-      root?.render(React.createElement(FileRootChangesPane, baseProps));
-      await Promise.resolve();
-    });
-    assert.equal(changesRequests.length, 0);
-
-    const refreshedProps = { ...baseProps, refreshRevision: 1 };
-    await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, refreshedProps));
-      await Promise.resolve();
-    });
     assert.deepEqual(changesRequests, [{ sessionId: "session-1", rootId: "workspace" }]);
     await completeRequest(0);
-
     await act(async () => {
-      root?.render(React.createElement("div"));
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, roots: [...roots] }));
+      await Promise.resolve();
+    });
+    assert.equal(repositoryRequests.length, 1);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, visible: false }));
       await Promise.resolve();
     });
     await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, refreshedProps));
+      root?.render(React.createElement(FileRootChangesPane, baseProps));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.equal(changesRequests.length, 1);
     assert.equal(repositoryRequests.length, 2);
-
-    const nextRoots: SessionFileRoot[] = [
-      { id: "additional:repo", kind: "additional", label: "Repo", displayPath: "C:/other" },
-    ];
-    await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, {
-        ...refreshedProps,
-        roots: nextRoots,
-        rootsRevision: "roots-2",
-      }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    assert.equal(changesRequests.length, 1);
-    assert.deepEqual(repositoryRequests.at(-1), { sessionId: "session-1", rootIds: ["additional:repo"] });
-    assert.equal(dom.window.document.querySelector("[data-root-id='workspace']"), null);
-    assert.ok(dom.window.document.querySelector("[data-root-id='additional:repo']"));
-
-    await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, {
-        ...refreshedProps,
-        sessionId: "session-2",
-        roots: nextRoots,
-        rootsRevision: "roots-2",
-      }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    assert.equal(changesRequests.length, 1);
-    assert.deepEqual(repositoryRequests.at(-1), { sessionId: "session-2", rootIds: ["additional:repo"] });
-
-    await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, {
-        ...refreshedProps,
-        sessionId: "session-2",
-        roots: nextRoots,
-        rootsRevision: "roots-2",
-        refreshRevision: 2,
-      }));
-      await Promise.resolve();
-    });
-    assert.deepEqual(changesRequests.at(-1), { sessionId: "session-2", rootId: "additional:repo" });
+    assert.equal(changesRequests.length, 2);
     await completeRequest(1);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-2" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.deepEqual(changesRequests.at(-1), { sessionId: "session-2", rootId: "workspace" });
+    await completeRequest(2);
+    repositoryPresent = false;
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-2", visible: false }));
+    });
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-2" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesRequests.length, 3);
+    assert.equal(dom.window.document.querySelector("[data-root-id='workspace']"), null);
+    repositoryPresent = true;
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-2", visible: false }));
+    });
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-2" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesRequests.length, 4);
+    assert.ok(dom.window.document.querySelector("[data-root-id='workspace']"));
+    await completeRequest(3);
+    const discoveryCount = repositoryRequests.length;
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-3", roots: [] }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(repositoryRequests.length, discoveryCount);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-3" }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(repositoryRequests.length, discoveryCount + 1);
+    assert.deepEqual(changesRequests.at(-1), { sessionId: "session-3", rootId: "workspace" });
+    await completeRequest(4);
+    const additionalRoot: SessionFileRoot = {
+      id: "additional:repo", kind: "additional", label: "Repo", displayPath: "C:/other",
+    };
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps, sessionId: "session-3", roots: [additionalRoot],
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(repositoryRequests.length, discoveryCount + 2);
+    assert.deepEqual(changesRequests.at(-1), { sessionId: "session-3", rootId: "additional:repo" });
+    assert.equal(dom.window.document.querySelector("[data-root-id='workspace']"), null);
+    await completeRequest(5);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps, sessionId: "session-3", roots: [{ ...additionalRoot, displayPath: "C:/moved" }],
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(repositoryRequests.length, discoveryCount + 3);
+    await completeRequest(6);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -357,10 +377,10 @@ test("FileRootChangesPane はRefreshでrepository discovery失敗から復旧す
 
 // @test-value v2
 // kind = "regression"
-// claim = "repository別groupはnon-Git結果を除外し、失敗を局所表示しながら既存の変更導線と仮想化を維持する"
+// claim = "repository別groupはnon-Git結果を除外して失敗を局所表示し、大量・同件数のentries差替えとerror行出現・消失でも閲覧anchorと操作対象を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Files / Changes; docs/adr/015-file-root-scoped-git-changes.md: root別取得失敗と独立scope" }
-// fault = "手動Refresh化に伴ってnon-Git除外、repository別failure、directory collapse、diff/file previewまたは大量表示が壊れる"
-// observable = "repository group数、failure alert表示、directory操作、diff/file request、virtual row数"
+// fault = "non-Git除外、repository別failure、directory collapse、diff/file previewや仮想化が壊れるか、前方の行追加・削除と取得失敗／回復で閲覧rowが移動しfocusを失う"
+// observable = "repository group数、failure alert表示、directory操作、diff/file request、virtual row数、60行追加・同件数差替え・削除・取得失敗／回復前後の閲覧offsetとfocus、およびanchorとは別のfocus行の次render後identity"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane repository groups"
 // lifecycle = "permanent"
@@ -459,6 +479,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     openInWindow: boolean;
   }> = [];
   let workspaceEntries = entries;
+  let workspaceFailure = false;
   const roots: SessionFileRoot[] = [
     { id: "session-folder", kind: "session-folder", label: "Session Folder", displayPath: "C:/session" },
     { id: "additional:broken", kind: "additional", label: "broken", displayPath: "C:/broken" },
@@ -475,6 +496,9 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
       requestedRootIds.push(request.rootId);
       if (request.rootId === "additional:broken") {
         return { status: "failed" as const, message: "Git status failed for broken root." };
+      }
+      if (request.rootId === "workspace" && workspaceFailure) {
+        return { status: "failed" as const, message: "Workspace status unavailable." };
       }
       return {
         status: "ok" as const,
@@ -537,7 +561,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:broken")?.style.minHeight, "78px");
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "199px");
     assert.equal(groups.find((group) => group.dataset.rootId === "workspace")?.style.maxHeight, "408px");
-    assert.deepEqual(requestedRootIds, ["additional:broken", "additional:repo", "workspace"]);
+    assert.deepEqual(requestedRootIds, ["additional:broken", "additional:repo", "workspace", "additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
     assert.match(dom.window.document.body.textContent ?? "", /Git status failed for broken root/);
     assert.equal(
@@ -643,6 +667,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     assert.ok(workspaceList);
     repoList.scrollTop = 20;
     workspaceList.scrollTop = 120;
+    repoList.focus();
     assert.equal(repoList.scrollTop, 20);
     assert.equal(workspaceList.scrollTop, 120);
     await act(async () => {
@@ -663,6 +688,93 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     assert.equal(refreshedWorkspaceList, workspaceList);
     assert.equal(refreshedRepoList?.scrollTop, 20);
     assert.equal(refreshedWorkspaceList?.scrollTop, 120);
+    assert.equal(dom.window.document.activeElement, repoList);
+
+    Object.defineProperty(workspaceList, "scrollHeight", {
+      configurable: true,
+      get: () => Number.parseFloat(workspaceList.querySelector<HTMLElement>(".workspace-changes-list-inner")?.style.height ?? "0"),
+    });
+    const rowOffset = (row: HTMLElement) => (
+      Number(row.style.transform.match(/translateY\(([-\d.]+)px\)/)?.[1]) - workspaceList.scrollTop
+    );
+    await act(async () => {
+      workspaceList.scrollTop = 540;
+      workspaceList.dispatchEvent(new dom.window.Event("scroll"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    const anchorRow = [...workspaceList.querySelectorAll<HTMLElement>(".workspace-change-virtual-row")]
+      .find((row) => row.querySelector(".workspace-change-row") && rowOffset(row) + 30 > 0);
+    assert.ok(anchorRow);
+    const anchorButton = anchorRow.querySelector<HTMLButtonElement>(".workspace-change-row");
+    assert.ok(anchorButton);
+    anchorButton.focus();
+    assert.equal(dom.window.document.activeElement, anchorButton);
+    const anchorOffset = rowOffset(anchorRow);
+    workspaceEntries = [{ ...entries[0]!, relativePath: "src/000-new.ts" }, ...entries];
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-1", refreshRevision: 21 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.equal(dom.window.document.activeElement, anchorButton);
+    assert.equal(rowOffset(anchorButton.closest<HTMLElement>(".workspace-change-virtual-row")!), anchorOffset);
+    workspaceEntries = entries;
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-1", refreshRevision: 22 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.equal(rowOffset(anchorButton.closest<HTMLElement>(".workspace-change-virtual-row")!), anchorOffset);
+
+    const refreshWorkspace = async (refreshRevision: number, focusedButton = anchorButton) => {
+      await act(async () => {
+        root?.render(React.createElement(FileRootChangesPane, { ...baseProps, sessionId: "session-1", refreshRevision }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        // JSDOMはscrollTop代入でnative scroll eventを発生させない。
+        workspaceList.dispatchEvent(new dom.window.Event("scroll"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      assert.equal(dom.window.document.activeElement, focusedButton);
+      assert.ok(anchorButton.isConnected);
+      assert.equal(rowOffset(anchorButton.closest<HTMLElement>(".workspace-change-virtual-row")!), anchorOffset);
+      assert.ok(workspaceList.querySelectorAll(".workspace-change-virtual-row").length < 100);
+    };
+    const addedEntries = Array.from({ length: 60 }, (_, index) => ({
+      ...entries[0]!, relativePath: `src/000-added-${index}.ts`,
+    }));
+    workspaceEntries = [...addedEntries, ...entries];
+    await refreshWorkspace(23);
+    // 件数と先頭・末尾のkeyが同じでも、途中の差替えでanchorは移動する。
+    workspaceEntries = [
+      ...addedEntries,
+      ...addedEntries.map((entry) => ({ ...entry, relativePath: entry.relativePath.replace("000-added", "000-before") })),
+      ...entries.slice(0, 340),
+    ];
+    await refreshWorkspace(24);
+    workspaceEntries = entries;
+    await refreshWorkspace(25);
+    workspaceFailure = true;
+    await refreshWorkspace(26);
+    workspaceFailure = false;
+    await refreshWorkspace(27);
+
+    const lowerButton = [...workspaceList.querySelectorAll<HTMLButtonElement>(".workspace-change-row")]
+      .find((button) => rowOffset(button.closest<HTMLElement>(".workspace-change-virtual-row")!) > 300);
+    assert.ok(lowerButton);
+    lowerButton.focus();
+    workspaceEntries = [...entries, ...addedEntries.map((entry, index) => ({
+      ...entry, relativePath: `${anchorButton.title}-between-${index}`,
+    }))];
+    await refreshWorkspace(28, lowerButton);
+    // anchorより後ろのfocus行がviewport外へ移っても、次の通常renderで操作対象を失わない。
+    await refreshWorkspace(28, lowerButton);
+    assert.ok(lowerButton.isConnected);
+    await act(async () => {
+      repoList.focus();
+      workspaceList.scrollTop = 100;
+      workspaceList.dispatchEvent(new dom.window.Event("scroll"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.equal(dom.window.document.activeElement, repoList);
+    assert.equal(workspaceList.scrollTop, 100);
 
     workspaceEntries = entries.slice(0, 1);
     await act(async () => {
@@ -743,7 +855,7 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, {
         ...staleReloadProps,
-        rootsRevision: "stale-1",
+        rootsRevision: "stale-2",
         refreshRevision: 2,
       }));
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -785,14 +897,14 @@ test("FileRootChangesPane はrepository別groupの既存導線と仮想化を維
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Refreshはrepositoryごとに並行開始し、完了済みgroupを即時反映しながら古いrequest結果を無視し、正常空groupを描画しない"
+// claim = "Refreshはrepositoryごとに完了を反映し、連続Refresh中も現行結果を表示し、Session切替後の結果だけを無視する"
 // oracle = { type = "contract", ref = "accepted behavior: per-repository concurrent refresh" }
-// fault = "遅いrepositoryが他groupの表示を止める、または再RefreshやSession切替後の古い結果が現行stateを上書きする"
-// observable = "repository groupの完了順表示、正常空groupのblank、およびrequest世代によるstale結果の無視"
+// fault = "遅いrepositoryや連続Refreshが完了済み結果の表示を止めるか、Session切替後の結果が現行stateを上書きする"
+// observable = "repository groupの完了順表示、連続更新・失敗後の既存listとfocus、およびSession切替後のstale結果の無視"
 // observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane repository request generation"
 // lifecycle = "permanent"
-// distinction = "明示Refreshの開始条件ではなく、複数repositoryの完了順とrequest世代を検証する"
+// distinction = "表示開始条件ではなく、複数repositoryの完了順と読み取り状態・owner境界を検証する"
 // @end-test-value
 test("FileRootChangesPane はrepositoryごとに完了を反映してstale requestを無視する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -863,13 +975,9 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
       root.render(React.createElement(FileRootChangesPane, baseProps));
       await Promise.resolve();
     });
-    assert.equal(pendingRequests.length, 0);
+    assert.equal(pendingRequests.length, 2);
     assert.equal(dom.window.document.querySelectorAll(".workspace-changes-root-group").length, 2);
 
-    await act(async () => {
-      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 1 }));
-      await Promise.resolve();
-    });
     assert.deepEqual(pendingRequests.map(({ request }) => request), [
       { sessionId: "session-1", rootId: "slow" },
       { sessionId: "session-1", rootId: "fast" },
@@ -904,6 +1012,9 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
       await Promise.resolve();
     });
     assert.equal(pendingRequests.length, 4);
+    const fastList = dom.window.document.querySelector<HTMLElement>("[data-root-id='fast'] .workspace-changes-list");
+    assert.ok(fastList);
+    fastList.focus();
 
     await act(async () => {
       pendingRequests[2]?.resolve({ status: "ok", entries: entries(7) });
@@ -911,8 +1022,10 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     assert.equal(pendingRequests.length, 6);
-    assert.equal(dom.window.document.querySelectorAll("[data-root-id='slow'] .workspace-change-row").length, 1);
-    assert.equal(dom.window.document.querySelectorAll("[data-root-id='fast'] .workspace-change-row").length, 2);
+    assert.equal(dom.window.document.querySelector("[data-root-id='fast'] .workspace-changes-list"), fastList);
+    assert.equal(dom.window.document.activeElement, fastList);
+    assert.equal(dom.window.document.querySelectorAll("[data-root-id='slow'] .workspace-change-row").length, 7);
+    assert.equal(dom.window.document.querySelectorAll("[data-root-id='fast'] .workspace-change-row").length, 8);
 
     await act(async () => {
       pendingRequests[4]?.resolve({ status: "ok", entries: [] });
@@ -922,6 +1035,9 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
     assert.equal(dom.window.document.querySelector("[data-root-id='slow']"), null);
     assert.match(dom.window.document.querySelector("[data-root-id='fast']")?.textContent ?? "", /Fast repository failed/);
     assert.equal(dom.window.document.querySelector("[data-root-id='fast']")?.getAttribute("aria-busy"), "false");
+    assert.equal(dom.window.document.querySelectorAll("[data-root-id='fast'] .workspace-change-row").length, 8);
+    assert.equal(dom.window.document.querySelector("[data-root-id='fast'] .workspace-changes-list"), fastList);
+    assert.equal(dom.window.document.activeElement, fastList);
 
     await act(async () => {
       root?.render(React.createElement(FileRootChangesPane, {
@@ -961,11 +1077,13 @@ test("FileRootChangesPane はrepositoryごとに完了を反映してstale reque
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
-// claim = "20 repositoryのRefreshと連続Refreshでもpane内のChanges要求は同時2件に制限され、最新世代だけを継続する"
+// claim = "20 repositoryの連続Refreshを一つの後続取得へまとめ、非表示中は未開始要求を保留し、表示中は同時2件を維持する"
 // oracle = { type = "contract", ref = "accepted behavior: bounded per-repository concurrent refresh" }
-// failure_mode = "一括Refreshまたは連続RefreshがMainのGit操作queueへ無制限に要求を積み、自己飽和させる"
+// fault = "連続Refreshが進行中の結果を捨て続けるか、Git操作を同時2件を超えて投入する"
+// observable = "status呼び出しのroot順と未完了件数、最終呼び出し件数"
+// observation_boundary = "component-behavior"
 // scope = "FileRootChangesPane bounded request scheduling"
 // lifecycle = "permanent"
 // distinction = "repository別の表示順ではなく、18件超と連続Refresh時のadmission上限を検証する"
@@ -1053,22 +1171,31 @@ test("FileRootChangesPane は大量repositoryと連続Refreshをbounded scheduli
     assert.equal(pendingRequests.length, 2);
 
     await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, visible: false, refreshRevision: 3 }));
+      await Promise.resolve();
+    });
+    await act(async () => {
       pendingRequests[0]?.resolve({ status: "ok", entries: [] });
       pendingRequests[1]?.resolve({ status: "ok", entries: [] });
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    assert.deepEqual(pendingRequests.slice(2).map(({ request }) => request.rootId), ["repo-0", "repo-1"]);
+    assert.equal(pendingRequests.length, 2);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 3 }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.deepEqual(pendingRequests.slice(2).map(({ request }) => request.rootId), ["repo-2", "repo-3"]);
     assert.equal(pendingRequests.filter(({ settled }) => !settled).length, 2);
 
-    for (let index = 2; index < 22; index += 1) {
+    for (let index = 2; index < 40; index += 1) {
       await act(async () => {
         pendingRequests[index]?.resolve({ status: "ok", entries: [] });
         await new Promise((resolve) => setTimeout(resolve, 0));
       });
       assert.ok(pendingRequests.filter(({ settled }) => !settled).length <= 2);
     }
-    assert.equal(pendingRequests.length, 22);
-    assert.deepEqual(pendingRequests.slice(2).map(({ request }) => request.rootId), roots.map((root) => root.id));
+    assert.equal(pendingRequests.length, 40);
+    assert.deepEqual(pendingRequests.map(({ request }) => request.rootId), [...roots, ...roots].map((root) => root.id));
   } finally {
     if (root) {
       await act(async () => root?.unmount());
