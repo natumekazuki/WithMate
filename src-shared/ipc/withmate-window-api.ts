@@ -171,6 +171,7 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
+  readSessionGraph<K extends Exclude<import("../session-graph/session-graph-contract.js").SessionGraphOperation, "apply">>(sessionId: string, operation: K, request: import("../session-graph/session-graph-contract.js").SessionGraphRequest<K>): Promise<import("../session-graph/session-graph-contract.js").SessionGraphOperationResult<K>>;
   isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
@@ -359,6 +360,7 @@ export type WithMateWindowSubscriptionApi = {
       state: SessionBackgroundActivityState | null,
     ) => void,
   ): () => void;
+  subscribeSessionGraph(listener: (sessionId: string) => void): () => void;
   subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;

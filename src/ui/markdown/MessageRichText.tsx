@@ -38,6 +38,7 @@ export type MessageViewMode = "preview" | "source";
 
 type MessageRichTextProps = {
   text: string;
+  embeddedMedia?: "allow" | "text";
   sourceStart?: number;
   className?: string;
   forceFullRender?: boolean;
@@ -84,6 +85,7 @@ function useStreamingMarkdownText(text: string, isStreaming: boolean, forceFullR
 
 function MessageMarkdownPreview({
   text,
+  embeddedMedia = "allow",
   sourceStart,
   className = "message-body",
   forceFullRender = false,
@@ -186,7 +188,11 @@ function MessageMarkdownPreview({
   );
   const markdownContent = useMemo(() => (
     <ReactMarkdown
-      components={markdownComponents}
+      components={embeddedMedia === "text" ? {
+        ...markdownComponents,
+        img: ({ alt }) => <span>{alt ? `[Image: ${alt}]` : "[Image]"}</span>,
+        pre: ({ children }) => <pre>{children}</pre>,
+      } : markdownComponents}
       rehypePlugins={rehypePlugins}
       urlTransform={markdownUrlTransform}
       remarkPlugins={remarkPlugins}
@@ -197,7 +203,7 @@ function MessageMarkdownPreview({
     >
       {renderText}
     </ReactMarkdown>
-  ), [footnotePrefix, rehypePlugins, remarkPlugins, renderText]);
+  ), [embeddedMedia, footnotePrefix, rehypePlugins, remarkPlugins, renderText]);
 
   useEffect(() => {
     if (!copyFeedback) {

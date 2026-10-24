@@ -30,6 +30,7 @@ export type ProviderAgentRuntimeBindingProjection = {
   managedMcp?: {
     memoryUrl: string;
     glossaryUrl: string;
+    sessionGraphUrl: string;
     token: string;
   };
 };

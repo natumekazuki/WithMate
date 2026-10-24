@@ -265,6 +265,7 @@ export type MainIpcPromptTemplateDepsArgs = {
 };
 
 export type MainIpcSessionQueryDepsArgs = {
+  readSessionGraph?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["readSessionGraph"];
   getConversationOwnerSessionId?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["getConversationOwnerSessionId"];
   getConversationPage?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["getConversationPage"];
   resolveConversationQueryOwner?: import("../ipc/contracts.js").MainIpcSessionQueryDeps["resolveConversationQueryOwner"];

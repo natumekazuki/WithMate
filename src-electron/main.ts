@@ -241,6 +241,9 @@ import { resolveBundledMemoryCliScriptPath } from "./platform/cli-runtime-paths.
 import { GlossarySessionProjectionService } from "./glossary/glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session/session-glossary-window-subscription.js";
 import { getGlossaryAgentRuntimeOperations } from "../src-shared/glossary/glossary-operation-schema.js";
+import { getSessionGraphAgentRuntimeOperations } from "../src-shared/session-graph/session-graph-operation-schema.js";
+import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from "./session-graph/session-graph-application-service.js";
+import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
 import { MainStoreContext } from "./app/main-store-context.js";
 import {
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -248,6 +251,7 @@ import {
   WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT,
   WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT,
   WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
+  WITHMATE_SESSION_GRAPH_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_TERMINAL_EVENT,
 } from "../src-shared/ipc/withmate-ipc-channels.js";
@@ -736,6 +740,49 @@ async function ensureSessionGlossarySubscription(sessionId: string): Promise<voi
 }
 
 const providerAgentRuntimeTurns = new ProviderAgentRuntimeTurnCoordinator();
+async function resolveSessionGraphSession(sessionId: string): Promise<ResolvedSessionGraphSession | null> {
+  const generation = mainStoreContext.storageWorker;
+  const sessions = requireSessionStorage();
+  if (!generation || databaseMaintenanceRequested || !sessions.getSessionMetadata) return null;
+  const main = await sessions.getSessionMetadata(sessionId);
+  const auxiliary = main ? null : await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
+  const parentMetadata = main ?? (auxiliary ? await sessions.getSessionMetadata(auxiliary.parentSessionId) : null);
+  if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested || !parentMetadata) return null;
+  const parent = parentMetadata.summary;
+  const subject = auxiliary ?? parent;
+  const snapshot = auxiliary?.characterRuntimeSnapshot ?? parentMetadata.characterRuntimeSnapshot;
+  return {
+    owner: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) },
+    identity: {
+      sessionId: subject.id,
+      sessionTitle: auxiliary ? auxiliary.title : parent.taskTitle,
+      role: auxiliary ? "auxiliary" : "main",
+      character: {
+        id: subject.characterId ?? parent.characterId,
+        name: snapshot?.name ?? parent.character,
+        icon: subject.characterIconPath ?? snapshot?.iconFilePath ?? parent.characterIconPath,
+      },
+    },
+    providerId: mainStoreContext.executionSelections.apply(subject).provider,
+    generation,
+  };
+}
+const sessionGraphApplicationService = new SessionGraphApplicationService({
+  getStore: () => {
+    if (!mainStoreContext.storageWorker || databaseMaintenanceRequested) throw new Error("Session Graph storage is unavailable.");
+    return mainStoreContext.storageWorker.stores.sessionGraph;
+  },
+  resolveSession: resolveSessionGraphSession,
+});
+sessionGraphApplicationService.subscribe((sessionId) => {
+  const window = requireSessionWindowBridge().getWindow(sessionId);
+  if (window && !window.isDestroyed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
+});
+const sessionGraphRuntimeService = new SessionGraphRuntimeService({
+  applicationService: sessionGraphApplicationService,
+  bindingRegistry: agentRuntimeBindingRegistry,
+  providerAgentRuntimeTurns,
+});
 const glossaryRuntimeService = new GlossaryRuntimeService({
   applicationService: glossaryApplicationService,
   bindingRegistry: agentRuntimeBindingRegistry,
@@ -790,16 +837,20 @@ async function issueProviderAgentRuntimeBinding(
   } catch {
     // Non-Git workspaces keep Memory grants but do not receive glossary authority.
   }
+  const graphSession = await resolveSessionGraphSession(session.id);
+  if (!graphSession) throw new Error("Provider runtime binding requires a current Session Graph owner.");
   const binding = agentRuntimeBindingRegistry.issueOrReuse({
     actorSessionId: session.id,
     providerId,
     authoritySnapshot: {
       ...memoryAuthority,
       sessionKind: session.sessionKind,
+      sessionGraphOwner: graphSession.owner,
       ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
     },
     operationGrants: [
       ...getMemoryV6AgentRuntimeOperations(),
+      ...getSessionGraphAgentRuntimeOperations(),
       ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
     ],
   });
@@ -839,7 +890,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       agentRuntimeBindingRegistry,
       providerAgentRuntimeTurns,
       resolveActorSession: resolveAgentRuntimeActorSession,
-      routeAgentRuntimeExtension: (request) => glossaryRuntimeService.route(request),
+      routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
     mainStoreContext.setMemoryRuntimeStatus("running");
@@ -1401,6 +1452,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 searchSessionGlossary: (sessionId, request) =>
                   glossarySessionProjectionService.search(sessionId, request),
                 ensureSessionGlossarySubscription,
+                readSessionGraph: (sessionId, operation, request) => sessionGraphApplicationService.read(sessionId, operation, request),
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionFilePins: (sessionId) => createSessionFileExplorerService().listSessionFilePins(sessionId),

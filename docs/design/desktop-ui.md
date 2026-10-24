@@ -58,6 +58,8 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Implementation Boundary
 
+Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開く。話題・関係を図から読み、record選択時だけ詳細を表示する閲覧専用面である。通常会話と同時に描画せず、閉じると元の会話へ戻る。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
+
 Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。
 
 - 画面の実装ファイルは、表示される入口ではなく役割ごとの domain に置く

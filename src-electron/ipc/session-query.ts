@@ -1,4 +1,6 @@
 import path from "node:path";
+import { sessionGraphOperationRequestSchemas } from "../../src-shared/session-graph/session-graph-operation-schema.js";
+import { WITHMATE_READ_SESSION_GRAPH_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 import type { SessionSummaryPageRequest } from "../../src-shared/session/session-state.js";
 
@@ -138,6 +140,19 @@ export function registerSessionQueryHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSessionQueryDeps,
 ): void {
+  ipcMain.handle(WITHMATE_READ_SESSION_GRAPH_CHANNEL, async (event, sessionId, operation, request) => {
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    if (typeof operation !== "string" || operation === "apply" || !Object.hasOwn(sessionGraphOperationRequestSchemas, operation)) {
+      throw new TypeError("Session Graph read operation is invalid.");
+    }
+    const readOperation = operation as Exclude<keyof typeof sessionGraphOperationRequestSchemas, "apply">;
+    const input = sessionGraphOperationRequestSchemas[readOperation].parse(request);
+    if (!deps.readSessionGraph) throw new Error("Session Graph reads are unavailable.");
+    const result = await deps.readSessionGraph(sessionId, readOperation, input);
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    return result;
+  });
   ipcMain.handle(
     WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
     (_event, request: SessionSummaryPageRequest | null | undefined) =>

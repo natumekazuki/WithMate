@@ -19,6 +19,10 @@ export const REQUIRED_V6_TABLES = [
   "sessions_v6",
   "session_messages_v6",
   "session_file_pins_v6",
+  "session_graphs_v6",
+  "session_graph_topics_v6",
+  "session_graph_records_v6",
+  "session_graph_relations_v6",
   "auxiliary_sessions",
   "auxiliary_session_messages",
   "session_turns_v6",
@@ -52,6 +56,10 @@ export const FORBIDDEN_V6_TABLES = [
 ] as const;
 
 const REQUIRED_V6_INDEXES = [
+  "idx_session_graph_records_topic",
+  "idx_session_graph_records_recent",
+  "idx_session_graph_relations_from",
+  "idx_session_graph_relations_to",
   "idx_v6_prompt_templates_name",
   "idx_v6_characters_state_updated",
   "idx_v6_project_scopes_key",
@@ -82,6 +90,10 @@ const REQUIRED_V6_INDEXES = [
 ] as const;
 
 const REQUIRED_V6_TABLE_COLUMNS = {
+  session_graphs_v6: ["session_id", "revision"],
+  session_graph_topics_v6: ["session_id", "id", "title", "created_at", "updated_at"],
+  session_graph_records_v6: ["session_id", "id", "topic_id", "kind", "payload_json", "updated_at"],
+  session_graph_relations_v6: ["session_id", "id", "from_id", "to_id", "payload_json"],
   app_settings: ["setting_key", "setting_value", "updated_at"],
   prompt_templates: ["id", "name", "prompt", "created_at", "updated_at"],
   model_catalog_revisions: ["revision", "source", "imported_at", "is_active"],
@@ -441,6 +453,11 @@ function hasForeignKey(
 
 function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
+    && hasForeignKey(db, "session_graphs_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_graph_topics_v6", "session_id", "session_graphs_v6", "session_id", "CASCADE")
+    && hasForeignKey(db, "session_graph_records_v6", "topic_id", "session_graph_topics_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_graph_relations_v6", "from_id", "session_graph_records_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_graph_relations_v6", "to_id", "session_graph_records_v6", "id", "CASCADE")
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_file_pins_v6", "session_id", "sessions_v6", "id", "CASCADE")
@@ -559,6 +576,10 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
       && !db.prepare("SELECT 1 FROM auxiliary_sessions WHERE status NOT IN ('active', 'closed') OR status IS NULL LIMIT 1").get());
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
+    && tableSql(db, "session_graphs_v6").includes("CHECK (revision >= 0)")
+    && tableSql(db, "session_graph_records_v6").includes("kind IN ('requirement', 'constraint', 'decision', 'activity', 'observation', 'issue')")
+    && tableSql(db, "session_graph_records_v6").includes("json_valid(payload_json)")
+    && tableSql(db, "session_graph_relations_v6").includes("json_valid(payload_json)")
     && filePinsSql.includes("root_kind IN ('workspace', 'session-folder', 'additional')")
     && filePinsSql.includes("kind IN ('file', 'directory')")
     && filePinsSql.includes("root_path <> ''")
@@ -752,6 +773,35 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_sessions_character
     ON sessions_v6(character_id, last_active_at DESC);
+`;
+
+export const CREATE_V6_SESSION_GRAPH_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS session_graphs_v6 (
+    session_id TEXT PRIMARY KEY REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
+  );
+  CREATE TABLE IF NOT EXISTS session_graph_topics_v6 (
+    session_id TEXT NOT NULL REFERENCES session_graphs_v6(session_id) ON DELETE CASCADE,
+    id TEXT NOT NULL, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, id)
+  );
+  CREATE TABLE IF NOT EXISTS session_graph_records_v6 (
+    session_id TEXT NOT NULL, id TEXT NOT NULL, topic_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('requirement', 'constraint', 'decision', 'activity', 'observation', 'issue')),
+    payload_json TEXT NOT NULL CHECK (json_valid(payload_json)), updated_at TEXT NOT NULL,
+    PRIMARY KEY (session_id, id),
+    FOREIGN KEY (session_id, topic_id) REFERENCES session_graph_topics_v6(session_id, id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_session_graph_records_topic ON session_graph_records_v6(session_id, topic_id, updated_at DESC, id);
+  CREATE INDEX IF NOT EXISTS idx_session_graph_records_recent ON session_graph_records_v6(session_id, updated_at DESC, id);
+  CREATE TABLE IF NOT EXISTS session_graph_relations_v6 (
+    session_id TEXT NOT NULL, id TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL CHECK (json_valid(payload_json)), PRIMARY KEY (session_id, id),
+    FOREIGN KEY (session_id, from_id) REFERENCES session_graph_records_v6(session_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id, to_id) REFERENCES session_graph_records_v6(session_id, id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_session_graph_relations_from ON session_graph_relations_v6(session_id, from_id);
+  CREATE INDEX IF NOT EXISTS idx_session_graph_relations_to ON session_graph_relations_v6(session_id, to_id);
 `;
 
 export const CREATE_V6_SESSION_FILE_PINS_TABLE_SQL = `
@@ -1320,6 +1370,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_FILE_PINS_TABLE_SQL,
+  CREATE_V6_SESSION_GRAPH_TABLES_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,

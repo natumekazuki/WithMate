@@ -6,6 +6,8 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+import { SessionGraphPreview } from "../session-graph/SessionGraphPreview.js";
+import "../session-graph/session-graph.css";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -560,11 +562,13 @@ export default function AgentSessionWindowApp() {
   const [filesPaneHost, setFilesPaneHost] = useState<HTMLDivElement | null>(null);
   const [filesPreviewHost, setFilesPreviewHost] = useState<HTMLDivElement | null>(null);
   const [isFilePreviewActive, setIsFilePreviewActive] = useState(false);
+  const [isSessionGraphOpen, setIsSessionGraphOpen] = useState(false);
   const closeFilePreviews = useCallback(() => filesFeatureRef.current?.closePreviews(), []);
   const isCentralPreviewActive = isFilePreviewActive
-    || isPromptTemplateWorkspaceOpen;
+    || isPromptTemplateWorkspaceOpen || isSessionGraphOpen;
   const closeCentralPreview = useCallback(() => {
     closeFilePreviews();
+    setIsSessionGraphOpen(false);
     setIsPromptTemplateWorkspaceOpen(false);
     closeSkillPicker();
     setPreviewChatActivity(endPreviewChatActivity());
@@ -579,6 +583,7 @@ export default function AgentSessionWindowApp() {
       isPromptTemplateWorkspaceOpen,
       canClosePromptTemplate,
       closeCentralSurface: () => {
+        setIsSessionGraphOpen(false);
         setIsPromptTemplateWorkspaceOpen(false);
         closeSkillPicker();
       },
@@ -2016,7 +2021,9 @@ export default function AgentSessionWindowApp() {
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New Messages"
         : "";
-  const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
+  const filePreviewContent = isSessionGraphOpen && withmateApi ? (
+    <SessionGraphPreview key={selectedSession.id} api={withmateApi} sessionId={selectedSession.id} onClose={closeCentralPreview} onOpenPath={(target) => void handleOpenInlinePath(target, selectedSession.id)} />
+  ) : isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
       api={withmateApi}
       canInsert={!isComposerFrozen && (activeAuxiliarySession
@@ -2029,6 +2036,10 @@ export default function AgentSessionWindowApp() {
   ) : isFilePreviewActive ? <div ref={setFilesPreviewHost} className="session-feature-host" /> : undefined;
 
   const chatHeaderFeature = sessionHeader.buildChatHeader({
+    actions: <button type="button" className="drawer-toggle compact secondary" aria-pressed={isSessionGraphOpen} onClick={() => {
+      if (isSessionGraphOpen) { closeCentralPreview(); return; }
+      if (prepareCentralSurfaceOpen()) { closeFilePreviews(); setIsSessionGraphOpen(true); }
+    }}>Graph</button>,
     isRunning: isSelectedSessionRunning,
     isReadOnly: isSelectedSessionReadOnly,
     isPinned: selectedSession.isPinned === true,

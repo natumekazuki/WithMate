@@ -41,6 +41,7 @@
 | --- | --- |
 | [Session Run Lifecycle](session-run-lifecycle.md) | 実行・取消・終了と永続化の境界 |
 | [Auxiliary Session](auxiliary-session.md) | 複数Auxiliary、一覧、共通Composer、draftの保存・consume・flush |
+| [Session Graph](session-graph.md) | Main/Auxiliary共有の構造化記録、MCP、競合、閲覧図 |
 | [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
 | [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
 | [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |

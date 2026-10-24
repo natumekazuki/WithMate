@@ -87,10 +87,10 @@ providerごとの差は次。
 
 ### Managed HTTP MCP
 
-Coding planeのMemory／CharacterとGlossaryは、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。endpointは`/mcp/memory`と`/mcp/glossary`であり、tool schemaとruntime clientは`src-electron/platform/mcp/`をstdio CLIと共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
+Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。endpointは`/mcp/memory`、`/mcp/glossary`、`/mcp/session-graph`である。tool schemaとruntime clientは`src-electron/platform/mcp/`に置き、Memory／Glossaryではstdio CLIとも共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
 
 - Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。
-- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認した`withmate-memory`／`withmate-glossary`だけを当threadで無効化し、`withmate-memory-http`／`withmate-glossary-http`を登録する。第三者MCPと永続configは変更しない。
+- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認した`withmate-memory`／`withmate-glossary`／`withmate-session-graph`だけを当threadで無効化し、`withmate-memory-http`／`withmate-glossary-http`／`withmate-session-graph-http`を登録する。第三者MCPと永続configは変更しない。
 - CopilotとClaudeは当turnのnative session／query optionsへ標準managed名のHTTP設定を渡す。既存native設定の探索と保存済みthreadのresumeは維持する。
 - tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。background planeはforeground tokenを大小文字を区別せずenvから除去する。
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。

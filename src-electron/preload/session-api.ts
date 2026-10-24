@@ -7,6 +7,9 @@ export function createSessionApi(
   platform: NodeJS.Platform,
 ): WithMateWindowSessionApi {
   return {
+    readSessionGraph(sessionId, operation, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_READ_SESSION_GRAPH_CHANNEL, sessionId, operation, request);
+    },
     isSessionFileObjectCopyAvailable() {
       return platform === "win32";
     },

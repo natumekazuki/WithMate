@@ -20,7 +20,7 @@ it("HTTP MCP tokenのenv ownershipと投影秘匿化を保つ", () => {
   const binding: ProviderAgentRuntimeBindingProjection = {
     bindingId: "binding", bindingReference: "reference", providerId: "codex",
     executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: "opaque-http-token" },
+    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
   };
   const inherited = { withmate_managed_mcp_token: "previous-turn", THIRD_PARTY_VALUE: "preserved" };
   const foreground = mergeDefinedProviderEnv(inherited, buildProviderAgentRuntimeBindingEnv(binding));

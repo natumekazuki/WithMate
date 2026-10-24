@@ -502,6 +502,7 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     getConversationPage?(sessionId: string, request?: import("../../src-shared/session/conversation-page.js").ConversationPageRequest): Awaitable<import("../../src-shared/session/conversation-page.js").ConversationPage | null>;
     resolveConversationQueryOwner?(sessionId: string): Awaitable<ConversationQueryOwner>;
     getSessionSummary(sessionId: string): Awaitable<SessionSummary | null>;
+    readSessionGraph?: import("../../src-shared/ipc/withmate-window-api.js").WithMateWindowSessionApi["readSessionGraph"];
     getSessionGlossaryProjection(
       sessionId: string,
     ): Awaitable<SessionGlossaryProjection>;

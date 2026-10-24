@@ -12,6 +12,32 @@ type Listener = (...args: unknown[]) => void;
 
 // @test-value v2
 // kind = "contract"
+// claim = "Graph readは親Sessionとoperationを専用IPCへ渡しchanged購読を解除できる"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts WithMateWindowSessionApi" }
+// fault = "Graph APIが誤channelへ送るかSessionを落としchanged購読を残す"
+// observable = "invoke channelと引数、通知callback値とunsubscribe後listener"
+// observation_boundary = "public-boundary"
+// scope = "session-graph-preload"
+// lifecycle = "permanent"
+// distinction = "型検査と公開key検査では実行時IPC接続と購読解除を保証できない"
+// @end-test-value
+test("Session Graph preload preserves read scope and disposes notifications", async () => {
+  const { ipcRenderer, listeners } = createIpcRendererStub();
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  assert.deepEqual(await api.readSessionGraph("main", "recent", { limit: 1 }), {
+    channel: "withmate:read-session-graph", args: ["main", "recent", { limit: 1 }],
+  });
+  const changed: string[] = [];
+  const dispose = api.subscribeSessionGraph((id) => changed.push(id));
+  listeners.get("withmate:session-graph-changed")?.({}, "main");
+  listeners.get("withmate:session-graph-changed")?.({}, { sessionId: "untrusted" });
+  assert.deepEqual(changed, ["main"]);
+  dispose();
+  assert.equal(listeners.has("withmate:session-graph-changed"), false);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Preview menu preloadはscopeと座標を専用IPCへ渡しclose選択・取消結果を返す"
 // oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts showSessionFilePreviewContextMenu" }
 // fault = "別channelへ送る、scopeや座標を落とす、menu選択を実close成功へ変換する"
@@ -859,6 +885,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "pinSessionFile",
     "unpinSessionFile",
     "readSessionFileChunk",
+    "readSessionGraph",
     "readSessionImageChunk",
     "reportRendererLog",
     "releaseTerminal",
@@ -903,6 +930,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionDraftFlushRelease",
     "subscribeSessionDraftFlushRequest",
     "subscribeSessionGlossary",
+    "subscribeSessionGraph",
     "subscribeTerminalEvents",
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
