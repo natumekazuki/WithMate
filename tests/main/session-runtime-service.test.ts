@@ -260,6 +260,60 @@ it("runtimeは取消・reset・終端で全approval callbackを回収する", as
 
 // @test-value v2
 // kind = "contract"
+// claim = "承認は受信時の本文位置を保持し、後続progress・重複要求・FIFOの先頭交代で挿入位置を取り直さない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests" }
+// fault = "表示時の本文長で位置を上書きし、待機中または重複した承認が後続本文の末尾へ移動する"
+// observable = "実runtimeから承認serviceを通って取得したlive snapshotのrequest IDとtextPosition、および各callbackのdecision"
+// observation_boundary = "consumer"
+// scope = "SessionRuntimeServiceの承認受信とSessionApprovalServiceのFIFO保持"
+// lifecycle = "permanent"
+// impact = "承認操作と発生時の説明の対応を利用者が読み違える"
+// distinction = "描画testの手製位置では受信時の捕捉を保証できず、既存FIFO testは本文更新を扱わない。2要求の固定列で確認する"
+// @end-test-value
+it("承認の本文位置を受信時に固定してFIFOの交代まで保持する", async () => {
+  const session = createSession();
+  const owner = new SessionObservabilityService({ onLiveSessionRunChanged() {}, onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {}, onSessionBackgroundActivityChanged() {} });
+  const approvals = new SessionApprovalService({ updateLiveSessionRun: (id, recipe) => owner.updateLiveSessionRun(id, recipe) });
+  const before = "最初の操作の説明";
+  const queuedAt = `${before}\n\n次の操作の説明`;
+  const continued = `${queuedAt}\n\n後続本文`;
+  const runtime = createProgressRuntime(session, async (input, progress) => {
+    assert.ok(progress);
+    assert.ok(input.onApprovalRequest);
+    const publish = (assistantText: string) => progress(createLiveRunState({ sessionId: session.id, assistantText }), {
+      steps: { upserts: [], removes: [] }, backgroundTasks: { upserts: [], removes: [] },
+    });
+    const request = (requestId: string): LiveApprovalRequest => ({
+      requestId, provider: "codex", kind: "tool", title: "Permission", summary: requestId, decisionMode: "direct-decision",
+    });
+    await publish(before);
+    const first = input.onApprovalRequest(request("first"));
+    await publish(queuedAt);
+    const second = input.onApprovalRequest(request("second"));
+    await publish(continued);
+    const duplicate = input.onApprovalRequest(request("first"));
+    assert.equal(owner.getLiveSessionRun(session.id)?.approvalRequest?.textPosition, before.length);
+    approvals.resolveLiveApproval(session.id, "first", "approve");
+    const next = owner.getLiveSessionRun(session.id)?.approvalRequest;
+    assert.equal(next?.requestId, "second");
+    assert.equal(next?.textPosition, queuedAt.length);
+    approvals.resolveLiveApproval(session.id, "second", "deny");
+    assert.deepEqual(await Promise.all([first, second, duplicate]), ["approve", "deny", "approve"]);
+    assert.equal(owner.getLiveSessionRun(session.id)?.approvalRequest, null);
+    return createPartialResult({ assistantText: continued });
+  }, {
+    setLiveSessionRun: (id, state) => owner.setLiveSessionRun(id, state),
+    getLiveSessionRun: (id) => owner.getLiveSessionRun(id),
+    waitForApprovalDecision: (id, request, signal) => approvals.waitForLiveApprovalDecision(id, request, signal),
+    resolvePendingApprovalRequest: (id) => approvals.cancelSession(id),
+  });
+  const result = await runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "test" });
+  assert.equal(result.runState, "idle");
+  assert.equal(result.messages.at(-1)?.text, continued);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "CodexとClaudeの正常・失敗turn終端で3秒後のquota更新を依頼し、Copilotの既存周期を維持する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
 // fault = "対象providerの終端で更新予約が欠けるかCopilotの予約周期を置き換える"

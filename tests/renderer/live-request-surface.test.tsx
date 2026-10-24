@@ -6,7 +6,7 @@ import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
-import { InlineQuestionContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
+import { InlineResponseContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
 import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../src/settings/shortcut-registry.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -537,8 +537,8 @@ test("LiveRequestSurface は共有Attachの対象を示し選択開始時の回�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求内容・操作識別を維持する"
-// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
+// claim = "Live approvalは実行したdecisionのbuttonだけにspinnerとbusyを示し、単一のstatusと要求本文・警告・折りたたみ詳細・操作識別を維持する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン と docs/design/desktop-ui.md#Approval Requests" }
 // fault = "非実行buttonもspinnerまたはbusyになるか、busy announcementまたは要求本文・操作labelを失う"
 // observable = "request領域と各buttonのaria-busy、spinnerの所属、status数、要求本文、warning/details、操作label"
 // observation_boundary = "component-behavior"
@@ -563,7 +563,8 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
     const document = new JSDOM(html).window.document;
     assert.equal(document.querySelectorAll('[role="status"]').length, 1);
     assert.equal(document.querySelector('[role="status"]')?.textContent, "Processing approval request");
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+      .filter((button) => button.textContent === "Allow Once" || button.textContent === "Reject");
     assert.deepEqual(buttons.map((button) => button.textContent), ["Allow Once", "Reject"]);
     const active = buttons[decision === "approve" ? 0 : 1];
     assert.ok(active.querySelector(".button-content-spinner[aria-hidden='true']"));
@@ -571,11 +572,80 @@ test("LiveRequestSurface はapproval解決中のbusy announcementと要求内容
     assert.deepEqual(buttons.filter((button) => button.getAttribute("aria-busy") === "true"), [active]);
     assert.equal(document.querySelectorAll(".button-content-spinner").length, 1);
     assert.ok(buttons.every((button) => button.disabled));
-    assert.match(html, /Run a command/);
-    assert.match(html, /npm test/);
-    assert.match(html, /This command can change workspace state\./);
-    assert.match(html, /The command will inspect the workspace\./);
+    const group = document.querySelector('[role="group"][aria-label="Approval required"]');
+    assert.ok(group);
+    assert.equal(group.querySelector("p")?.textContent, approvalRequest.summary);
+    assert.equal(group.querySelector('[role="alert"]')?.textContent, approvalRequest.warning);
+    const detailsToggle = group.querySelector<HTMLButtonElement>('button[aria-label="Show approval details"]');
+    assert.ok(detailsToggle);
+    assert.equal(detailsToggle.disabled, false);
+    assert.equal(detailsToggle.getAttribute("aria-expanded"), "false");
+    const details = document.getElementById(detailsToggle.getAttribute("aria-controls")!);
+    assert.ok(details);
+    assert.equal(details.hidden, true);
+    assert.equal(details.textContent, approvalRequest.details);
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "承認詳細は名前付きbuttonで開閉でき、同じ要求の更新と送信中は開閉状態を保ち、新しい要求では閉じる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#Approval Requests" }
+// fault = "詳細buttonが開閉しない、aria-expandedと表示が食い違う、同じ要求の更新で閉じる、または次の要求へ開状態を持ち越す"
+// observable = "詳細buttonのaccessible name・aria-expanded・aria-controls、対応する本文のhiddenと内容、更新前後のbutton同一性とfocus"
+// observation_boundary = "component-behavior"
+// scope = "live-approval-details-disclosure"
+// lifecycle = "permanent"
+// impact = "承認判断に必要な補足を開けないか、送信中や後続要求の表示が予期せず変わる"
+// distinction = "静的markupと型検査では利用者の開閉操作と要求更新時の状態・focusを検証できず、局所的なDOM操作testで確認する"
+// @end-test-value
+test("LiveRequestSurface は承認詳細の開閉を要求ごとに保持する", async () => {
+  const mounted = await mountElicitation(elicitationRequest);
+  const renderApproval = (request: LiveApprovalRequest, busy = false) => mounted.render(elicitationRequest, {
+    liveElicitationRequest: null,
+    liveApprovalRequest: request,
+    approvalActionRequestId: busy ? request.requestId : null,
+    approvalActionDecision: busy ? "approve" : null,
+  });
+  try {
+    await renderApproval(approvalRequest);
+    const toggle = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Show approval details"]');
+    assert.ok(toggle);
+    const details = mounted.dom.window.document.getElementById(toggle.getAttribute("aria-controls")!);
+    assert.ok(details);
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(details.hidden, true);
+    toggle.focus();
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-label"), "Hide approval details");
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(details.hidden, false);
+    assert.equal(details.textContent, approvalRequest.details);
+
+    await renderApproval({ ...approvalRequest, summary: "Run the workspace tests" }, true);
+    assert.equal(mounted.container.querySelector('[aria-label="Hide approval details"]'), toggle);
+    assert.equal(mounted.dom.window.document.activeElement, toggle);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(toggle.disabled, false);
+    assert.equal(details.hidden, false);
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-label"), "Show approval details");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(details.hidden, true);
+    await act(async () => toggle.click());
+    assert.equal(details.hidden, false);
+
+    await renderApproval({ ...approvalRequest, requestId: "approval-2", details: "Next request details" });
+    const nextToggle = mounted.container.querySelector<HTMLButtonElement>('button[aria-label="Show approval details"]');
+    assert.ok(nextToggle);
+    assert.equal(nextToggle.getAttribute("aria-expanded"), "false");
+    const nextDetails = mounted.dom.window.document.getElementById(nextToggle.getAttribute("aria-controls")!);
+    assert.ok(nextDetails);
+    assert.equal(nextDetails.hidden, true);
+    await act(async () => nextToggle.click());
+    assert.equal(nextDetails.hidden, false);
+    assert.equal(nextDetails.textContent, "Next request details");
+  } finally { await mounted.cleanup(); }
 });
 
 // @test-value v2
@@ -804,16 +874,16 @@ test("LiveRequestSurface renders question records and active forms without dupli
 // fault = "同じ文言の別箇所を置換する、後続本文より後ろへ質問が移動する、または終了時に質問本文を失う"
 // observable = "質問前後の本文・候補・フォームのDOM順序と終了後の本文"
 // observation_boundary = "component-behavior"
-// scope = "InlineQuestionContent source ranges and receipt anchors"
+// scope = "InlineResponseContent source ranges and receipt anchors"
 // lifecycle = "permanent"
 // impact = "質問と回答の文脈を読み違えるか、履歴から質問が消える"
 // distinction = "providerのID検査だけでは会話への差し替え位置と復元を保証できない"
 // @end-test-value
-test("InlineQuestionContent replaces only the source range and fixes tool questions at receipt", () => {
+test("InlineResponseContent replaces only the source range and fixes tool questions at receipt", () => {
   const text = "Same? Before Same? After";
   const request: LiveElicitationRequest = { requestId: "async", provider: "codex", kind: "question", mode: "form", message: "Question", fields: [{ type: "text", name: "q", title: "Same?", required: true }] };
   const tool: LiveElicitationRequest = { ...request, requestId: "tool", fields: [{ type: "text", name: "q", title: "Tool question", required: true }] };
-  const render = (active: boolean) => new JSDOM(renderToStaticMarkup(React.createElement(InlineQuestionContent, {
+  const render = (active: boolean) => new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
     text,
     records: [
       { requestId: "async", kind: "question", textRange: { start: 13, end: 18 }, message: "Question", fields: [{ title: "Same?" }], status: active ? "pending" : "answered" },
@@ -837,12 +907,12 @@ test("InlineQuestionContent replaces only the source range and fixes tool questi
 // fault = "live request消失時に構造化候補を捨てるか、本文にもある質問・候補を二重に追加する"
 // observable = "通常本文の保持と順序、補完候補の値、質問の出現数、解決済みフォームのcontrol数"
 // observation_boundary = "component-behavior"
-// scope = "InlineQuestionContent resolved source records"
+// scope = "InlineResponseContent resolved source records"
 // lifecycle = "permanent"
 // impact = "回答・Close・失効後に質問の選択条件を履歴から確認できなくなる"
 // distinction = "既存配置testのsource質問には候補がなく、型検査は解決後の表示欠落を検出しない。短い静的描画で既存本文との補完境界を継続検査する"
 // @end-test-value
-test("InlineQuestionContent retains structured choices when a source question resolves", () => {
+test("InlineResponseContent retains structured choices when a source question resolves", () => {
   for (const status of ["answered", "declined", "canceled", "expired", "pending"] as const) {
     for (const [source, missing] of [
       ["Which branch?", ["Main", "Feature"]],
@@ -855,7 +925,7 @@ test("InlineQuestionContent retains structured choices when a source question re
         textRange: { start: 7, end: 7 + source.length },
         fields: [{ title: "Which branch?", options: ["Main", "Feature"] }],
       };
-      const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineQuestionContent, {
+      const dom = new JSDOM(renderToStaticMarkup(React.createElement(InlineResponseContent, {
         text: `Before\n${source}\nAfter`, records: [record], requests: [],
         elicitationActionRequestId: null, onResolveLiveElicitation() {},
         renderText: (value, key) => React.createElement("p", { key, className: "body" }, value),

@@ -1175,7 +1175,10 @@ export class SessionRuntimeService {
         onApprovalRequest: (approvalRequest, requestSignal) => {
           if (terminalSettled || progressGeneration !== liveProgressGeneration) return "deny";
           const signal = requestSignal ? AbortSignal.any([runAbortController.signal, requestSignal]) : runAbortController.signal;
-          const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, signal);
+          const decision = this.deps.waitForApprovalDecision(sessionId, {
+            ...approvalRequest,
+            textPosition: this.deps.getLiveSessionRun(sessionId)?.assistantText.length ?? 0,
+          }, signal);
           return decision;
         },
         onElicitationRequest: (elicitationRequest, requestSignal) => {

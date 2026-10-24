@@ -1766,6 +1766,79 @@ test("質問前後のFindは本文の一致番号で強調・移動し解決後�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "承認の要約や詳細と本文に同じ検索語があっても、Findの件数・強調・前後移動は本文の一致だけを対象にする"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Rendering PolicyとStreaming projectionの検索契約" }
+// fault = "承認の要約または閉じた詳細がDOM検索へ混入し、本文の一致番号と強調・移動先がずれる"
+// observable = "Find件数、CSS HighlightのRange内容と所属text、前後移動時のscroll対象、詳細開閉・承認解除後の一致"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnのPreview／Sourceにおけるinline承認と本文Find"
+// lifecycle = "permanent"
+// impact = "利用者が本文の検索結果へ移動できず、非表示の承認詳細を現在位置として選んでしまう"
+// distinction = "既存の質問Findは操作面が本文DOMの外にあり、承認を含むMarkdown内の検索境界を通らない。既存DOM fixtureで2表示modeの短い操作を確認する"
+// @end-test-value
+test("承認の詳細開閉と解除を通してFindは本文の一致だけを辿る", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+    add(range: Range) { this.ranges.push(range); return this; }
+  }
+  for (const messageViewMode of ["preview", "source"] as const) {
+    const before = "Before needle\n\n";
+    const text = `${before}After needle`;
+    let request: LiveApprovalRequest | null = {
+      ...createLiveApprovalRequest(), textPosition: before.length,
+      summary: "needle command", details: "needle hidden details",
+    };
+    function Column(props: SessionMessageColumnProps) {
+      return React.createElement(SessionMessageColumn, {
+        ...props, pendingResponseMessageKey: "response", liveApprovalRequest: request,
+      });
+    }
+    const mounted = await mountSessionMessageColumn({
+      component: Column, messages: [{ role: "assistant", text }], messageKeys: ["response"],
+      isRunning: true, liveRunAssistantText: text, messageViewMode,
+    });
+    try {
+      const highlights = new Map<string, TestHighlight>();
+      Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+      Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+      let scrolledText = "";
+      mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () { scrolledText = this.textContent ?? ""; };
+      await setMessageFindQuery(mounted, "needle");
+      const assertCurrent = (ordinal: number, expectedText: RegExp) => {
+        assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, `${ordinal}/2`);
+        assert.deepEqual(highlights.get("withmate-find-match")?.ranges.map(range => range.toString()), ["needle", "needle"]);
+        const current = highlights.get("withmate-find-current")?.ranges[0];
+        assert.equal(current?.toString(), "needle");
+        assert.match(current?.startContainer.textContent ?? "", expectedText);
+        assert.match(scrolledText, expectedText);
+      };
+      assertCurrent(1, /Before needle/);
+      const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
+      const previous = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!;
+      await act(async () => next.click());
+      assertCurrent(2, /After needle/);
+      await act(async () => previous.click());
+      assertCurrent(1, /Before needle/);
+      await act(async () => next.click());
+      assertCurrent(2, /After needle/);
+      const toggle = mounted.container.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+      const details = mounted.container.querySelector<HTMLElement>(".live-approval-details")!;
+      assert.equal(details.hidden, true);
+      await act(async () => toggle.click());
+      assert.equal(details.hidden, false);
+      assertCurrent(2, /After needle/);
+      await act(async () => toggle.click());
+      assert.equal(details.hidden, true);
+      assertCurrent(2, /After needle/);
+      request = null;
+      await mounted.rerender({});
+      assertCurrent(2, /After needle/);
+    } finally { await mounted.cleanup(); }
+  }
+});
+
 test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序で数え現在位置をclampする", async () => {
   class TestHighlight {
     readonly ranges: Range[] = [];
@@ -3029,7 +3102,7 @@ test("SessionMessageColumn の Source は通常 message と pending の元 Markd
 // claim = "pending rowとlive approval/elicitationは既存messageの後、bottom anchorの前へ一度ずつ維持される"
 // oracle = { type = "contract", ref = "src/chat/conversation/session-message-column.tsx" }
 // fault = "実行中のrequest UIを既存messageの途中へ挿入するか末尾のpending/approvalを失う"
-// observable = "pending row、Approval Required、approval/elicitation custom content、既存messageとanchorのDOM順"
+// observable = "pending row、承認groupのaccessible name、approval/elicitation custom content、既存messageとanchorのDOM順"
 // observation_boundary = "component-behavior"
 // scope = "session-message-live-request-tail"
 // lifecycle = "permanent"
@@ -3045,8 +3118,9 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
   });
 
   assert.match(html, /pending-row/);
-  assert.match(html, /Approval Required/);
-  assert.match(html, /コマンド実行の承認/);
+  const approval = new JSDOM(html).window.document.querySelector('[role="group"][aria-label="Approval required"]');
+  assert.ok(approval);
+  assert.match(approval.textContent ?? "", /npm test を実行します/);
   assert.match(html, /対象ブランチを選んでね。/);
   assert.match(html, /Branch/);
   assert.ok(
@@ -3057,6 +3131,281 @@ test("SessionMessageColumn は pending と live approval\/elicitation を messag
     html.indexOf("pending-row") < html.indexOf("message-list-bottom-anchor"),
     "pending row は bottom anchor より前に描画する",
   );
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "承認要求はページング有無によらず受信時の本文位置付近で操作でき、後続本文より前に保たれ、解決・終了後は会話本文だけを保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests" }
+// fault = "承認が会話の外や後続本文の末尾へ流れる、本文更新で操作中のcardが置換される、別requestへ判断を送る、または解決・終了後も古い承認操作が残る"
+// observable = "応答行内の本文と承認cardのDOM順、許可・拒否callbackのrequestとdecision、解決・終了後の本文と操作面"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnのページングと未投影・投影済み応答における承認操作"
+// lifecycle = "permanent"
+// impact = "利用者が実行中の会話から承認を見つけられず、古い要求や別の要求へ判断する誤操作につながる"
+// distinction = "既存のcard単体testでは会話内の配置を、末尾SSR testではページングと解決時の操作遷移を検出できない。既存DOM fixtureの4組合せで確認する"
+// @end-test-value
+test("SessionMessageColumn は承認を受信時の応答位置で操作して閉じる", async () => {
+  for (const paged of [false, true]) {
+    for (const projected of [false, true]) {
+      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
+      const explanation = "操作前の説明";
+      let request: LiveApprovalRequest | null = { ...createLiveApprovalRequest(), textPosition: explanation.length };
+      const messages: Message[] = [{ role: "user", text: "依頼" }];
+      if (projected) messages.push({ role: "assistant", text: explanation });
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props,
+          conversationPaging: paged ? { loading: false, error: "", onRetry() {} } : undefined,
+          pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: request,
+          onResolveLiveApproval: (...args) => decisions.push(args),
+        });
+      }
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages, messageKeys: projected ? ["prompt", "response"] : ["prompt"],
+        isRunning: true, liveRunAssistantText: explanation,
+      });
+      try {
+        const { container, dom } = mounted;
+        const card = container.querySelector<HTMLElement>('[aria-label="Approval required"]');
+        assert.ok(card);
+        assert.equal(container.querySelectorAll('[aria-label="Approval required"]').length, 1);
+        const response = card.closest(".session-message-list .message-row.assistant");
+        assert.ok(response, "承認はメッセージ一覧内の応答に属する");
+        const body = [...response.querySelectorAll("p")].find((node) => node.textContent === explanation);
+        assert.ok(body);
+        assert.ok(body.compareDocumentPosition(card) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.match(card.textContent ?? "", /npm test を実行します/);
+        assert.match(card.textContent ?? "", /確認してね/);
+        const allow = [...card.querySelectorAll("button")].find((button) => button.textContent === "Allow Once");
+        assert.ok(allow);
+        allow.focus();
+        const continued = `${explanation}\n\n後続の説明`;
+        await mounted.rerender({
+          messages: projected ? [{ role: "user", text: "依頼" }, { role: "assistant", text: continued }] : messages,
+          liveRunAssistantText: continued,
+        });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+        const following = [...response.querySelectorAll("p")].find((node) => node.textContent === "後続の説明");
+        assert.ok(following);
+        assert.ok(card.compareDocumentPosition(following) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+        assert.equal(container.querySelector('[aria-label="Approval required"]'), card);
+        assert.equal(dom.window.document.activeElement, allow);
+        await act(async () => allow.click());
+        assert.deepEqual(decisions, [[request, "approve"]]);
+
+        request = null;
+        await mounted.rerender({});
+        assert.equal(container.querySelector('[aria-label="Approval required"]'), null);
+        assert.match(container.textContent ?? "", /操作前の説明/);
+        assert.equal(container.textContent?.includes("npm test を実行します"), false);
+
+        request = { ...createLiveApprovalRequest(), requestId: "approval-2", summary: "次の操作", textPosition: continued.length };
+        await mounted.rerender({});
+        const reject = [...container.querySelectorAll<HTMLButtonElement>('[aria-label="Approval required"] button')]
+          .find((button) => button.textContent === "Reject");
+        assert.ok(reject);
+        await act(async () => reject.click());
+        assert.deepEqual(decisions.at(-1), [request, "deny"]);
+        await mounted.rerender({ isRunning: false, messages: [{ role: "assistant", text: explanation }], messageKeys: ["response"], liveRunAssistantText: "" });
+        assert.equal(container.querySelector('[aria-label="Approval required"]'), null, "終了後はstale requestを操作面へ戻さない");
+        assert.match(container.textContent ?? "", /操作前の説明/);
+      } finally { await mounted.cleanup(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じ承認要求を空本文へ表示した後に本文が届いても、詳細の開状態とkeyboard focusを保持して同じ要求を判断できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requestsとdocs/design/ui-design-guidelines.mdの操作位置・focus維持" }
+// fault = "空本文から非空本文への遷移で承認cardが再mountされ、詳細が閉じるかfocusが外れる"
+// observable = "詳細toggleとcardのDOM同一性、aria-expanded、詳細のhidden、document.activeElement、許可callbackのrequestとdecision"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnの未投影／投影済み応答とPreview／Sourceにおける空本文からの承認操作"
+// lifecycle = "permanent"
+// impact = "詳細を読んでいる途中に内容と操作位置を失い、keyboardで承認判断を継続できなくなる"
+// distinction = "既存の承認位置testは初めから本文があり、card単体testは本文rendererの親切替を通らない。既存DOM fixtureの4条件で状態とfocusを直接確認する"
+// @end-test-value
+test("空本文への承認は本文到着後も詳細とfocusを保持する", async () => {
+  for (const projected of [false, true]) {
+    for (const messageViewMode of ["preview", "source"] as const) {
+      const request = { ...createLiveApprovalRequest(), textPosition: 0 };
+      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
+      const messages: Message[] = projected ? [{ role: "assistant", text: "" }] : [];
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props, pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: request, onResolveLiveApproval: (...args) => decisions.push(args),
+        });
+      }
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages, messageKeys: projected ? ["response"] : [],
+        isRunning: true, liveRunAssistantText: "", messageViewMode,
+      });
+      try {
+        const { container, dom } = mounted;
+        const card = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
+        const toggle = card.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+        await act(async () => toggle.click());
+        toggle.focus();
+        assert.equal(toggle.getAttribute("aria-expanded"), "true");
+        const text = "Subsequent assistant text";
+        await mounted.rerender({
+          messages: projected ? [{ role: "assistant", text }] : messages,
+          liveRunAssistantText: text,
+        });
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+        assert.equal(container.querySelector("[aria-label='Approval required']") === card, true);
+        assert.equal(card.querySelector("[aria-label='Hide approval details']") === toggle, true);
+        assert.equal(toggle.getAttribute("aria-expanded"), "true");
+        assert.equal(card.querySelector<HTMLElement>(".live-approval-details")?.hidden, false);
+        assert.equal(dom.window.document.activeElement === toggle, true);
+        assert.match(container.textContent ?? "", /Subsequent assistant text/);
+        const allow = [...card.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Allow Once")!;
+        await act(async () => allow.click());
+        assert.deepEqual(decisions, [[request, "approve"]]);
+      } finally { await mounted.cleanup(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同一承認の詳細とfocusは、同じturnの質問の追加・更新・解決を通して保持され、質問回答と次の承認判断を継続できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests; docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
+// fault = "質問による本文分割の変化で承認が再mountされ、詳細やfocusが失われる、または質問と承認の応答先を取り違える"
+// observable = "承認cardと詳細toggleのDOM同一性、aria-expanded、詳細のhidden、activeElement、質問回答と許可・拒否callback、新しい承認の初期状態"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnの未投影／投影済み応答とPreview／Sourceにおける承認と質問の同時表示"
+// lifecycle = "permanent"
+// impact = "質問が届くたびに閲覧中の詳細とkeyboard操作位置を失い、承認判断の継続が妨げられる"
+// distinction = "既存の空本文・本文更新testでは質問による描画ownerの分割と結合を通らない。既存DOM fixtureで同時要求の操作継続性を検証し、型検査や静的描画では分からない再mountを検出する"
+// @end-test-value
+test("質問の追加・更新・解決でも同じ承認の詳細とfocusを保持する", async () => {
+  for (const projected of [false, true]) {
+    for (const messageViewMode of ["preview", "source"] as const) {
+      const text = "Before approval\n\nAfter approval";
+      let approval: LiveApprovalRequest | null = { ...createLiveApprovalRequest(), textPosition: "Before approval".length };
+      const question: LiveElicitationRequest = { ...createLiveElicitationRequest(), kind: "question" };
+      let questions: LiveElicitationRequest[] = [];
+      let records: ElicitationRecord[] = [];
+      const decisions: Array<Parameters<SessionMessageColumnProps["onResolveLiveApproval"]>> = [];
+      const answers: Array<Parameters<SessionMessageColumnProps["onResolveLiveElicitation"]>> = [];
+      function Column(props: SessionMessageColumnProps) {
+        return React.createElement(SessionMessageColumn, {
+          ...props, pendingResponseMessageKey: projected ? "response" : null,
+          liveApprovalRequest: approval, liveElicitationRequests: questions, liveElicitationRecords: records,
+          onResolveLiveApproval: (...args) => decisions.push(args),
+          onResolveLiveElicitation: (...args) => answers.push(args),
+        });
+      }
+      const mounted = await mountSessionMessageColumn({
+        component: Column, messages: projected ? [{ role: "assistant", text }] : [],
+        messageKeys: projected ? ["response"] : [], isRunning: true, liveRunAssistantText: text, messageViewMode,
+      });
+      try {
+        const { container, dom } = mounted;
+        const card = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
+        const toggle = card.querySelector<HTMLButtonElement>("[aria-label='Show approval details']")!;
+        await act(async () => toggle.click());
+        toggle.focus();
+        const expectContinuity = async () => {
+          await mounted.rerender({});
+          await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+          assert.equal(container.querySelector("[aria-label='Approval required']") === card, true);
+          assert.equal(card.querySelector("[aria-label='Hide approval details']") === toggle, true);
+          assert.equal(toggle.getAttribute("aria-expanded"), "true");
+          assert.equal(card.querySelector<HTMLElement>(".live-approval-details")?.hidden, false);
+          assert.equal(dom.window.document.activeElement === toggle, true);
+        };
+        questions = [question];
+        records = [{
+          requestId: question.requestId, kind: "question", message: question.message,
+          fields: [{ title: "Branch" }], textRange: { start: text.length, end: text.length }, status: "pending",
+        }];
+        await expectContinuity();
+        assert.equal(container.querySelectorAll(".live-elicitation-card").length, 1);
+        records = [{ ...records[0], textRange: { start: 0, end: "Before approval".length } }];
+        await expectContinuity();
+        const submit = [...container.querySelectorAll<HTMLButtonElement>(".live-elicitation-card button")]
+          .find(button => button.textContent === "Submit")!;
+        await act(async () => submit.click());
+        assert.equal(answers.length, 1);
+        assert.equal(answers[0][0], question);
+        assert.equal(answers[0][1].action, "accept");
+        questions = [];
+        records = [{ ...records[0], status: "answered" }];
+        await expectContinuity();
+        assert.equal(container.querySelectorAll(".live-elicitation-card").length, 0);
+        assert.match(container.querySelector(".elicitation-record")?.textContent ?? "", /Branch/);
+        const allow = [...card.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Allow Once")!;
+        await act(async () => allow.click());
+        assert.deepEqual(decisions, [[approval, "approve"]]);
+        approval = null;
+        await mounted.rerender({});
+        assert.equal(container.querySelector("[aria-label='Approval required']"), null);
+        approval = { ...createLiveApprovalRequest(), requestId: "approval-2", textPosition: text.length };
+        await mounted.rerender({});
+        const next = container.querySelector<HTMLElement>("[aria-label='Approval required']")!;
+        assert.equal(next === card, false);
+        assert.equal(next.querySelector("[aria-expanded]")?.getAttribute("aria-expanded"), "false");
+        const reject = [...next.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Reject")!;
+        await act(async () => reject.click());
+        assert.deepEqual(decisions.at(-1), [approval, "deny"]);
+      } finally { await mounted.cleanup(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "承認はMarkdownのblockを分断せず受信位置付近へ入り、参照linkと後続本文を保ち、Sourceや縮小済み応答でも操作できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#approval-requests" }
+// fault = "code fence途中へcardを挿入して本文を壊す、参照定義との分割でlinkを失う、またはSourceやcollapseで承認を隠す"
+// observable = "code block・link・承認card・後続段落のDOM順序、元source本文と承認control"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnから実Markdown rendererへの承認挿入"
+// lifecycle = "permanent"
+// impact = "実行内容の説明を読めなくなるか、承認待ちを解消できなくなる"
+// distinction = "本文とcardの平文順序testではMarkdown構造・参照解決・表示切替を検証できない。短い1応答のPreviewとSourceで確認する"
+// @end-test-value
+test("承認はMarkdownのblock境界へ入りSourceと縮小済み応答でも操作できる", async () => {
+  const text = "事前説明\n\n```ts\nconst answer = 42;\n```\n\n[後続link][target]\n\n[target]: https://example.com";
+  const position = text.indexOf("answer");
+  const messages: Message[] = [{ role: "assistant", text }];
+  const mounted = await mountSessionMessageColumn({
+    component: (props: SessionMessageColumnProps) => React.createElement(SessionMessageColumn, {
+      ...props, liveApprovalRequest: { ...createLiveApprovalRequest(), textPosition: position },
+      pendingResponseMessageKey: "response",
+    }),
+    messages, messageKeys: ["response"], isRunning: true, liveRunAssistantText: text,
+    messageCollapseTargets: buildMessageCollapseTargets(messages, [{ kind: "session", messageIndex: 0 }], ["response"]),
+    collapsedMessageKeys: new Set(["response"]),
+  });
+  try {
+    const { container, dom } = mounted;
+    const code = container.querySelector(".message-code-block code");
+    const card = container.querySelector('[aria-label="Approval required"]');
+    const link = container.querySelector<HTMLAnchorElement>('a[href="https://example.com"]');
+    assert.ok(code && card && link);
+    assert.equal(code.textContent?.trim(), "const answer = 42;");
+    assert.ok(code.compareDocumentPosition(card) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(card.compareDocumentPosition(link) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.equal(container.querySelector(".message-collapsed-preview"), null);
+    await mounted.rerender({ messageViewMode: "source" });
+    const source = [...container.querySelectorAll(".message-source-text")];
+    assert.equal(source.map((node) => node.textContent).join(""), text);
+    const sourceCard = container.querySelector('[aria-label="Approval required"]');
+    assert.ok(sourceCard);
+    assert.ok(source[0].compareDocumentPosition(sourceCard) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    assert.ok(sourceCard.compareDocumentPosition(source[1]) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    const decisions = [...sourceCard.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((button) => button.textContent === "Allow Once" || button.textContent === "Reject");
+    assert.deepEqual(decisions.map((button) => button.textContent), ["Allow Once", "Reject"]);
+    assert.ok(decisions.every((button) => !button.disabled));
+  } finally { await mounted.cleanup(); }
 });
 
 // @test-value v2
@@ -3415,7 +3764,7 @@ test("ConversationMessageColumn は送信actionの待機表示を履歴往復と
 // scope = "Main/Auxiliary inline question integration"
 // lifecycle = "permanent"
 // impact = "会話中の質問位置と文脈が変わり、質問に回答できない"
-// distinction = "InlineQuestionContent単体の描画はconversationのowner判定とlive recordの受け渡しを通らない"
+// distinction = "InlineResponseContent単体の描画はconversationのowner判定とlive recordの受け渡しを通らない"
 // @end-test-value
 test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻す", async () => {
   for (const messageSourceKind of ["session", "auxiliary"] as const) {
@@ -3431,7 +3780,7 @@ test("Main/Auxiliaryの会話へ質問範囲を接続し回答後に本文へ戻
     try {
       const body = mounted.container.querySelector('.message-row.assistant [data-message-body]');
       assert.ok(body);
-      assert.deepEqual([...body.children].map(node => node.textContent?.trim()), ["Before", "Which branch?MainFeatureCustom AnswerCloseSubmit", "After"]);
+      assert.deepEqual([...body.children].map(node => node.textContent?.trim()), ["Before", "Which branch?MainFeatureCloseSubmit", "After"]);
       assert.equal(mounted.container.querySelectorAll('.live-elicitation-card').length, 1);
       await mounted.rerender({ liveElicitationRequest: null });
       const resolvedBody = mounted.container.querySelector('.message-row.assistant [data-message-body]');
@@ -3503,9 +3852,9 @@ test("SessionMessageColumn は built-in pending text を省略しても custom �
     pendingMessageText: "Preparing a response",
     pendingMessageTextVisible: false,
   });
-  assert.match(approvalHtml, /Approval Required/);
-  assert.match(approvalHtml, /コマンド実行の承認/);
-  assert.match(new JSDOM(approvalHtml).window.document.querySelector(".pending-row")?.textContent ?? "", /コマンド実行の承認/);
+  const approval = new JSDOM(approvalHtml).window.document.querySelector('.pending-row [role="group"][aria-label="Approval required"]');
+  assert.ok(approval);
+  assert.match(approval.textContent ?? "", /npm test を実行します/);
   assert.doesNotMatch(approvalHtml, /Preparing a response/);
 
   const errorHtml = renderSessionMessageColumn({

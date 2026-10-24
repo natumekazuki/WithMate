@@ -18,7 +18,7 @@ import type { GlossaryAnnotationMatcher } from "../../glossary/glossary-annotati
 import { approvalModeLabel, CharacterAvatar, liveRunStepStatusLabel, operationTypeLabel } from "../../ui/ui-utils.js";
 
 import { SessionContentFindBar } from "./session-content-find-bar.js";
-import { InlineQuestionContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
+import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
@@ -624,16 +624,17 @@ export function SessionMessageColumn({
   const persistedQuestionIds = new Set(messages.flatMap((message) => message.elicitationRecords?.map((record) => record.requestId) ?? []));
   const visibleLiveElicitationRecords = liveElicitationRecords?.filter((record) => !persistedQuestionIds.has(record.requestId));
   const activeQuestions = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
-  const elicitationMessageIndex = hasElicitationRequests ? pendingResponseMessageIndex : -1;
+  const hasLiveRequests = hasElicitationRequests || isRunning && liveApprovalRequest !== null;
+  const liveRequestMessageIndex = hasLiveRequests ? pendingResponseMessageIndex : -1;
   const extractMessageRange = useCallback((range: Range) => {
     const indexes = defaultRangeExtractor(range);
-    // 未送信の回答を保持するため、入力待ちの応答行はviewport外でもunmountしない。
-    if (elicitationMessageIndex >= 0 && !indexes.includes(elicitationMessageIndex)) {
-      indexes.push(elicitationMessageIndex);
+    // 判断・入力中のcontrolを保持するため、要求を持つ応答行はviewport外でもunmountしない。
+    if (liveRequestMessageIndex >= 0 && !indexes.includes(liveRequestMessageIndex)) {
+      indexes.push(liveRequestMessageIndex);
       indexes.sort((left, right) => left - right);
     }
     return indexes;
-  }, [elicitationMessageIndex]);
+  }, [liveRequestMessageIndex]);
   const messageVirtualizer = useVirtualizer({
     enabled: artifactDetailsEnabled,
     count: messages.length,
@@ -1159,25 +1160,23 @@ export function SessionMessageColumn({
     });
   };
 
+  const inlineApproval = isRunning && liveApprovalRequest ? {
+    key: `approval-${liveApprovalRequest.requestId}`,
+    position: liveApprovalRequest.textPosition ?? liveRunAssistantText.length,
+    content: <LiveRequestSurface
+      liveApprovalRequest={liveApprovalRequest}
+      approvalActionRequestId={approvalActionRequestId}
+      approvalActionDecision={approvalActionDecision}
+      liveElicitationRequest={null}
+      elicitationActionRequestId={elicitationActionRequestId}
+      onResolveLiveApproval={onResolveLiveApproval}
+      onResolveLiveElicitation={onResolveLiveElicitation}
+      onOpenPath={onOpenPath}
+    />,
+  } : undefined;
   const renderPendingContent = () => (
     <div className="pending-response-content">
-      {!conversationPaging ? <LiveRequestSurface
-        sessionId={sessionId}
-        workspacePath={workspacePath}
-        disabled={elicitationDisabled}
-        liveApprovalRequest={liveApprovalRequest}
-        approvalActionRequestId={approvalActionRequestId}
-        approvalActionDecision={approvalActionDecision}
-        liveElicitationRequest={null}
-        inputAvailable={elicitationInputAvailable}
-        drafts={elicitationDrafts}
-        elicitationActionRequestId={elicitationActionRequestId}
-        elicitationAction={elicitationAction}
-        onResolveLiveApproval={onResolveLiveApproval}
-        onResolveLiveElicitation={onResolveLiveElicitation}
-        onOpenPath={onOpenPath}
-      /> : null}
-      {pendingResponseMessageIndex < 0 ? <InlineQuestionContent
+      {pendingResponseMessageIndex < 0 ? <InlineResponseContent
         sessionId={sessionId}
         workspacePath={workspacePath}
         disabled={elicitationDisabled}
@@ -1185,13 +1184,14 @@ export function SessionMessageColumn({
         responseProvider={provider}
         records={visibleLiveElicitationRecords}
         requests={activeQuestions}
+        inlineContent={inlineApproval}
         inputAvailable={elicitationInputAvailable}
         drafts={elicitationDrafts}
         elicitationActionRequestId={elicitationActionRequestId}
         elicitationAction={elicitationAction}
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
-        renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning} responseProvider={provider}
+        renderText={(text, key, sourceStart, inlineContent) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} isStreaming={isRunning} responseProvider={provider}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
@@ -1263,22 +1263,6 @@ export function SessionMessageColumn({
           </div>
         </div>
       ) : null}
-      {conversationPaging ? <div className="conversation-live-request"><LiveRequestSurface
-        sessionId={sessionId}
-        workspacePath={workspacePath}
-        disabled={elicitationDisabled}
-        liveApprovalRequest={liveApprovalRequest}
-        approvalActionRequestId={approvalActionRequestId}
-        approvalActionDecision={approvalActionDecision}
-        liveElicitationRequest={null}
-        inputAvailable={elicitationInputAvailable}
-        drafts={elicitationDrafts}
-        elicitationActionRequestId={elicitationActionRequestId}
-        elicitationAction={elicitationAction}
-        onResolveLiveApproval={onResolveLiveApproval}
-        onResolveLiveElicitation={onResolveLiveElicitation}
-        onOpenPath={onOpenPath}
-      /></div> : null}
       {onJumpToBottom && !isMessageListFollowing ? (
         <button
           className="message-list-jump-bottom-button"
@@ -1342,7 +1326,7 @@ export function SessionMessageColumn({
             const isMessageCollapsed = !!messageCollapseTarget && collapsedMessageKeys.has(messageKey);
             const isFindMatch = findMatchMessageIndexes.has(absoluteIndex);
             const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch)
-              || (hasElicitationRequests && absoluteIndex === pendingResponseMessageIndex);
+              || (hasLiveRequests && absoluteIndex === pendingResponseMessageIndex);
             const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
             const messageCollapseLabel = isMessageCollapsed ? "Expand message" : "Collapse message";
             const isMessageBookmarked = messageCollapseTarget?.isBookmarked === true;
@@ -1458,7 +1442,7 @@ export function SessionMessageColumn({
                         data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                       >
                         {shouldRenderFullMessage ? (
-                          <InlineQuestionContent
+                          <InlineResponseContent
                             sessionId={sessionId}
                             workspacePath={workspacePath}
                             disabled={elicitationDisabled}
@@ -1466,15 +1450,17 @@ export function SessionMessageColumn({
                             responseProvider={message.role === "assistant" ? provider : undefined}
                             records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}
                             requests={absoluteIndex === pendingResponseMessageIndex ? activeQuestions : []}
+                            inlineContent={absoluteIndex === pendingResponseMessageIndex ? inlineApproval : undefined}
                             inputAvailable={elicitationInputAvailable}
                             drafts={elicitationDrafts}
                             elicitationActionRequestId={elicitationActionRequestId}
                             elicitationAction={elicitationAction}
                             onResolveLiveElicitation={onResolveLiveElicitation}
                             onOpenPath={onOpenPath}
-                            renderText={(text, key, sourceStart) => <MessageRichText
+                            renderText={(text, key, sourceStart, inlineContent) => <MessageRichText
                               key={key}
                               sourceStart={sourceStart}
+                              inlineContent={inlineContent}
                               resolveImageSource={resolveImageSource}
                               text={text}
                               responseProvider={message.role === "assistant" ? provider : undefined}

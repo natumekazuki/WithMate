@@ -4,6 +4,7 @@ import { projectMessageRenderedSearchText } from "../../../src-shared/session/me
 import { ButtonContent } from "../../ui/button-content.js";
 import { ComposerIcon } from "../composer/composer-icon.js";
 import { QuestionAnswerEditor } from "./question-answer-editor.js";
+import type { MessageInlineContent } from "../../ui/markdown/MessageRichText.js";
 
 import type {
   LiveApprovalRequest,
@@ -12,25 +13,6 @@ import type {
   LiveElicitationResponse,
   ElicitationRecord,
 } from "../../../src-shared/session/runtime-state.js";
-
-function liveApprovalKindLabel(kind: string): string {
-  switch (kind) {
-    case "shell":
-      return "Shell Command";
-    case "write":
-      return "File Change";
-    case "mcp":
-      return "MCP Tool";
-    case "custom-tool":
-      return "Custom Tool";
-    case "url":
-      return "URL Fetch";
-    case "read":
-      return "File Read";
-    default:
-      return kind;
-  }
-}
 
 type LiveElicitationFieldValue = string | number | boolean | string[];
 export type LiveElicitationDrafts = Map<string, {
@@ -525,12 +507,13 @@ export function ElicitationRecords({ records, sourceText, responseProvider }: { 
   });
 }
 
-export function InlineQuestionContent({ text, records = [], requests = [], renderText, responseProvider, ...cardProps }: {
+export function InlineResponseContent({ text, records = [], requests = [], renderText, responseProvider, inlineContent, ...cardProps }: {
   text: string;
   responseProvider?: string;
   records?: readonly ElicitationRecord[];
   requests?: readonly LiveElicitationRequest[];
-  renderText: (text: string, key: string, sourceStart: number) => ReactNode;
+  inlineContent?: MessageInlineContent;
+  renderText: (text: string, key: string, sourceStart: number, inlineContent?: MessageInlineContent) => ReactNode;
 } & Omit<LiveElicitationCardProps, "request">) {
   const entries = records.map((record) => ({ record, request: requests.find((request) => request.requestId === record.requestId) }));
   for (const request of requests) {
@@ -540,6 +523,13 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
   }
   const fragments: ReactNode[] = [];
   let offset = 0;
+  let contentInserted = false;
+  const appendText = (end: number, key: string) => {
+    const content = inlineContent && !contentInserted && Math.min(inlineContent.position, text.length) <= end
+      ? { ...inlineContent, position: Math.max(0, inlineContent.position - offset) } : undefined;
+    if (content) contentInserted = true;
+    if (end > offset || content) fragments.push(renderText(text.slice(offset, end), content?.key ?? key, offset, content));
+  };
   for (const { record, request } of entries.sort((a, b) => (a.record.textRange?.start ?? text.length) - (b.record.textRange?.start ?? text.length))) {
     const range = record.textRange;
     const valid = range && range.start >= offset && range.end >= range.start && range.end <= text.length;
@@ -547,13 +537,13 @@ export function InlineQuestionContent({ text, records = [], requests = [], rende
     const sourceText = !request && valid && range.end > range.start ? text.slice(range.start, range.end) : undefined;
     const start = valid ? (sourceText !== undefined ? range.end : range.start) : text.length;
     const end = valid ? range.end : start;
-    if (start > offset) fragments.push(renderText(text.slice(offset, start), `text-${offset}-${start}-${record.requestId}`, offset));
+    appendText(start, `text-${offset}-${start}-${record.requestId}`);
     fragments.push(<Fragment key={`${cardProps.sessionId ?? ""}:${record.requestId}`}>{request
       ? <LiveElicitationCard {...cardProps} request={request} />
       : <ElicitationRecords records={[record]} sourceText={sourceText} responseProvider={responseProvider} />}</Fragment>);
     offset = end;
   }
-  if (offset < text.length) fragments.push(renderText(text.slice(offset), `text-${offset}`, offset));
+  appendText(text.length, `text-${offset}`);
   return <>{fragments}</>;
 }
 
@@ -576,6 +566,76 @@ export type LiveRequestSurfaceProps = {
   onOpenPath?: (target: string) => void;
 };
 
+function LiveApprovalCard({
+  request,
+  approvalActionRequestId,
+  approvalActionDecision,
+  onResolveLiveApproval,
+}: { request: LiveApprovalRequest } & Pick<LiveRequestSurfaceProps,
+  "approvalActionRequestId" | "approvalActionDecision" | "onResolveLiveApproval">) {
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const detailsId = useId();
+  const isApprovalSubmitting = approvalActionRequestId === request.requestId;
+  const approvalDecision = isApprovalSubmitting ? approvalActionDecision : null;
+  const resolveApproval = (decision: "approve" | "deny") => {
+    if (isApprovalSubmitting) return;
+    onResolveLiveApproval(request, decision);
+  };
+
+  return (
+    <section
+      className="live-approval-card"
+      role="group"
+      aria-label="Approval required"
+      aria-busy={isApprovalSubmitting || undefined}
+    >
+      <div className="live-approval-summary-row">
+        <p className="live-approval-summary">{request.summary}</p>
+        {request.details ? (
+          <button
+            className="artifact-toggle artifact-toggle-icon live-approval-details-toggle"
+            type="button"
+            onClick={() => setDetailsExpanded((expanded) => !expanded)}
+            aria-expanded={detailsExpanded}
+            aria-controls={detailsId}
+            aria-label={detailsExpanded ? "Hide approval details" : "Show approval details"}
+            title={detailsExpanded ? "Hide details" : "Details"}
+          >
+            <span aria-hidden="true">{detailsExpanded ? "−" : "i"}</span>
+          </button>
+        ) : null}
+      </div>
+      {request.warning ? (
+        <p className="live-approval-warning" role="alert">{request.warning}</p>
+      ) : null}
+      {request.details ? (
+        <pre id={detailsId} className="live-approval-details" hidden={!detailsExpanded}>{request.details}</pre>
+      ) : null}
+      <div className="live-approval-actions">
+        {isApprovalSubmitting ? <span className="visually-hidden" role="status">Processing approval request</span> : null}
+        <button
+          className="drawer-toggle live-approval-allow"
+          type="button"
+          onClick={() => resolveApproval("approve")}
+          disabled={isApprovalSubmitting}
+          aria-busy={approvalDecision === "approve" || undefined}
+        >
+          <ButtonContent busy={approvalDecision === "approve"}>Allow Once</ButtonContent>
+        </button>
+        <button
+          className="drawer-toggle secondary"
+          type="button"
+          onClick={() => resolveApproval("deny")}
+          disabled={isApprovalSubmitting}
+          aria-busy={approvalDecision === "deny" || undefined}
+        >
+          <ButtonContent busy={approvalDecision === "deny"}>Reject</ButtonContent>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function LiveRequestSurface({
   sessionId,
   workspacePath,
@@ -596,62 +656,17 @@ export function LiveRequestSurface({
 }: LiveRequestSurfaceProps) {
   const requests = liveElicitationRequests ?? (liveElicitationRequest ? [liveElicitationRequest] : []);
   const visibleRecords = elicitationRecords?.filter((record) => !requests.some((request) => request.requestId === record.requestId));
-  const isApprovalSubmitting = liveApprovalRequest
-    ? approvalActionRequestId === liveApprovalRequest.requestId
-    : false;
-  const approvalDecision = isApprovalSubmitting ? approvalActionDecision : null;
-  const resolveApproval = (decision: "approve" | "deny") => {
-    if (!liveApprovalRequest || isApprovalSubmitting) return;
-    onResolveLiveApproval(liveApprovalRequest, decision);
-  };
 
   return (
     <>
       {liveApprovalRequest ? (
-        <section
-          className="live-approval-card"
-          role="group"
-          aria-label="Approval required"
-          aria-busy={isApprovalSubmitting || undefined}
-        >
-          <div className="live-approval-head">
-            <div className="live-approval-copy">
-              <span className="live-approval-badge">Approval Required</span>
-              <p className="live-approval-title">{liveApprovalRequest.title}</p>
-            </div>
-            <span className="live-approval-kind">{liveApprovalKindLabel(liveApprovalRequest.kind)}</span>
-          </div>
-          <pre className="live-approval-summary">{liveApprovalRequest.summary}</pre>
-          {liveApprovalRequest.warning ? (
-            <p className="live-approval-warning" role="alert">{liveApprovalRequest.warning}</p>
-          ) : null}
-          {liveApprovalRequest.details ? (
-            <details className="live-approval-details">
-              <summary>Details</summary>
-              <pre>{liveApprovalRequest.details}</pre>
-            </details>
-          ) : null}
-          <div className="live-approval-actions">
-            {isApprovalSubmitting ? <span className="visually-hidden" role="status">Processing approval request</span> : null}
-            <button
-              type="button"
-              onClick={() => resolveApproval("approve")}
-              disabled={isApprovalSubmitting}
-              aria-busy={approvalDecision === "approve" || undefined}
-            >
-              <ButtonContent busy={approvalDecision === "approve"}>Allow Once</ButtonContent>
-            </button>
-            <button
-              className="drawer-toggle secondary"
-              type="button"
-              onClick={() => resolveApproval("deny")}
-              disabled={isApprovalSubmitting}
-              aria-busy={approvalDecision === "deny" || undefined}
-            >
-              <ButtonContent busy={approvalDecision === "deny"}>Reject</ButtonContent>
-            </button>
-          </div>
-        </section>
+        <LiveApprovalCard
+          key={liveApprovalRequest.requestId}
+          request={liveApprovalRequest}
+          approvalActionRequestId={approvalActionRequestId}
+          approvalActionDecision={approvalActionDecision}
+          onResolveLiveApproval={onResolveLiveApproval}
+        />
       ) : null}
       <ElicitationRecords records={visibleRecords} />
       {requests.map((request) => (
