@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Stats } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -10,6 +10,8 @@ import type {
   SessionFileChunkResult,
   SessionImageResourceRequest,
   SessionImageChunkRequest,
+  SessionPdfResourceRequest,
+  SessionPdfChunkRequest,
   SessionFileDescriptor,
   SessionFileOpenRequest,
   SessionFileAbsoluteResourceRequest,
@@ -48,6 +50,13 @@ const MAX_CHUNK_BYTES = 1024 * 1024;
 const INSPECTION_BYTES = 8192;
 const MAX_CONCURRENT_DIRECTORY_LISTINGS = 4;
 const MAX_PENDING_DIRECTORY_LISTINGS = 32;
+
+function detectLocalPdfResource(bytes: Uint8Array): { kind: "pdf"; mimeType: string } {
+  if (new TextDecoder("latin1").decode(bytes.subarray(0, 5)) !== "%PDF-") {
+    throw new Error("The local PDF target is not a PDF.");
+  }
+  return { kind: "pdf", mimeType: "application/pdf" };
+}
 
 function detectLocalImageResource(bytes: Uint8Array): { kind: "image" | "svg"; mimeType: string } {
   const text = new TextDecoder("latin1").decode(bytes);
@@ -147,7 +156,7 @@ export type SessionFileExplorerContext = {
 };
 
 type ReadableFileHandle = {
-  stat(): Promise<Stats>;
+  stat(options: { bigint: true }): Promise<BigIntStats>;
   read(buffer: Uint8Array, offset: number, length: number, position: number): Promise<{ bytesRead: number }>;
   close(): Promise<void>;
 };
@@ -156,8 +165,8 @@ export type SessionFileExplorerServiceDeps = {
   userDataPath: string;
   getSessionContext(sessionId: string): Promise<SessionFileExplorerContext | null>;
   getPinStorage?(): SessionFilePinStorage;
-  statPath?(targetPath: string): Promise<Stats>;
-  lstatPath?(targetPath: string): Promise<Stats>;
+  statPath?(targetPath: string, options: { bigint: true }): Promise<BigIntStats>;
+  lstatPath?(targetPath: string, options: { bigint: true }): Promise<BigIntStats>;
   openFile?(targetPath: string, flags: "r"): Promise<ReadableFileHandle>;
   listDirectory?(targetPath: string): Promise<IdentityBoundDirectorySnapshot>;
   openResolvedPath?(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
@@ -185,7 +194,7 @@ type ResolvedPathActionCandidate = {
 type AuthorizedOpenedFile = {
   candidate: ResolvedTargetCandidate;
   handle: ReadableFileHandle;
-  stats: Stats;
+  stats: BigIntStats;
   targetRealPath: string;
 };
 
@@ -271,7 +280,7 @@ function isPathInside(rootPath: string, targetPath: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-function isSameFileIdentity(left: Stats, right: Stats): boolean {
+function isSameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
@@ -282,8 +291,8 @@ function isMissingPathError(error: unknown): boolean {
   return code === "ENOENT" || code === "ENOTDIR";
 }
 
-function makeFileRevision(stats: Stats): string {
-  return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
+function makeFileRevision(stats: BigIntStats): string {
+  return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`;
 }
 
 export class SessionFileExplorerService {
@@ -329,13 +338,13 @@ export class SessionFileExplorerService {
 
   private async inspectPinTarget(request: SessionFileRootResourceRequest): Promise<"file" | "directory"> {
     const candidate = await this.resolveTargetCandidate(request, false);
-    const targetStats = await (this.deps.lstatPath ?? lstat)(candidate.unresolvedTargetPath);
+    const targetStats = await (this.deps.lstatPath ?? lstat)(candidate.unresolvedTargetPath, { bigint: true });
     const kind = targetStats.isFile() ? "file" : targetStats.isDirectory() ? "directory" : null;
     if (!kind) throw new Error("Only regular files and directories can be pinned.");
     const targetRealPath = await realpath(candidate.unresolvedTargetPath);
     if (!isPathInside(candidate.rootRealPath, targetRealPath)) throw new Error("The pinned path is outside the authorized root.");
     const confirmed = await this.resolveTargetCandidate(request, false);
-    const confirmedStats = await (this.deps.lstatPath ?? lstat)(confirmed.unresolvedTargetPath);
+    const confirmedStats = await (this.deps.lstatPath ?? lstat)(confirmed.unresolvedTargetPath, { bigint: true });
     const confirmedTargetRealPath = await realpath(confirmed.unresolvedTargetPath);
     if (pathKey(candidate.rootAbsolutePath) !== pathKey(confirmed.rootAbsolutePath)
       || pathKey(candidate.rootRealPath) !== pathKey(confirmed.rootRealPath)
@@ -459,8 +468,8 @@ export class SessionFileExplorerService {
   ): Promise<void> {
     try {
       const targetStats = nodeKind === "root"
-        ? await (this.deps.statPath ?? stat)(candidate.unresolvedTargetPath)
-        : await (this.deps.lstatPath ?? lstat)(candidate.unresolvedTargetPath);
+        ? await (this.deps.statPath ?? stat)(candidate.unresolvedTargetPath, { bigint: true })
+        : await (this.deps.lstatPath ?? lstat)(candidate.unresolvedTargetPath, { bigint: true });
       const kindMatches = nodeKind === "file" ? targetStats.isFile() : targetStats.isDirectory();
       if (!kindMatches) {
         throw new Error("File tree path action node kind does not match the current target.");
@@ -557,15 +566,15 @@ export class SessionFileExplorerService {
       additional: 2,
     };
     const lstatPath = this.deps.lstatPath ?? lstat;
-    let targetStats: Stats | null = null;
+    let targetStats: BigIntStats | null = null;
     let targetRealPath = "";
     let selectedTargetPath = "";
     for (const candidatePath of lexicalCandidates) {
       const absoluteCandidate = path.resolve(candidatePath);
       try {
-        await lstatPath(absoluteCandidate);
+        await lstatPath(absoluteCandidate, { bigint: true });
         targetRealPath = await realpath(absoluteCandidate);
-        targetStats = await (this.deps.statPath ?? stat)(targetRealPath);
+        targetStats = await (this.deps.statPath ?? stat)(targetRealPath, { bigint: true });
         selectedTargetPath = absoluteCandidate;
         break;
       } catch (error) {
@@ -658,7 +667,7 @@ export class SessionFileExplorerService {
   ): Promise<AuthorizedOpenedFile> {
     const handle = await (this.deps.openFile ?? open)(candidate.unresolvedTargetPath, "r");
     try {
-      const openedStats = await handle.stat();
+      const openedStats = await handle.stat({ bigint: true });
       if (expectedKind === "file" ? !openedStats.isFile() : !openedStats.isDirectory()) {
         throw new Error(`The specified path is not a ${expectedKind}.`);
       }
@@ -680,15 +689,15 @@ export class SessionFileExplorerService {
     const absolutePath = validateAbsoluteFileResource(request);
     const handle = await (this.deps.openFile ?? open)(absolutePath, "r");
     try {
-      const openedStats = await handle.stat();
+      const openedStats = await handle.stat({ bigint: true });
       if (!openedStats.isFile()) {
         throw new Error("The specified path is not a file.");
       }
       const targetRealPath = await realpath(absolutePath);
       const statPath = this.deps.statPath ?? stat;
-      const targetStats = await statPath(targetRealPath);
+      const targetStats = await statPath(targetRealPath, { bigint: true });
       const confirmedTargetRealPath = await realpath(absolutePath);
-      const confirmedTargetStats = await statPath(confirmedTargetRealPath);
+      const confirmedTargetStats = await statPath(confirmedTargetRealPath, { bigint: true });
       if (
         pathKey(confirmedTargetRealPath) !== pathKey(targetRealPath)
         || !isSameFileIdentity(openedStats, targetStats)
@@ -722,16 +731,16 @@ export class SessionFileExplorerService {
     throw new TypeError("File resource is invalid.");
   }
 
-  private async confirmOpenedTarget(candidate: ResolvedTargetCandidate, openedStats: Stats): Promise<string> {
+  private async confirmOpenedTarget(candidate: ResolvedTargetCandidate, openedStats: BigIntStats): Promise<string> {
     const targetRealPath = await realpath(candidate.unresolvedTargetPath);
     if (!isPathInside(candidate.rootRealPath, targetRealPath)) {
       throw new Error("The specified path is outside the file root.");
     }
     const statPath = this.deps.statPath ?? stat;
-    const targetStats = await statPath(targetRealPath);
+    const targetStats = await statPath(targetRealPath, { bigint: true });
     const confirmedRootRealPath = await realpath(candidate.rootAbsolutePath);
     const confirmedTargetRealPath = await realpath(candidate.unresolvedTargetPath);
-    const confirmedTargetStats = await statPath(confirmedTargetRealPath);
+    const confirmedTargetStats = await statPath(confirmedTargetRealPath, { bigint: true });
     if (
       pathKey(confirmedRootRealPath) !== pathKey(candidate.rootRealPath) ||
       pathKey(confirmedTargetRealPath) !== pathKey(targetRealPath) ||
@@ -809,20 +818,20 @@ export class SessionFileExplorerService {
   ): Promise<AuthorizedSessionFileOperationResult<T>> {
     const candidate = await this.resolveTargetCandidate(request, false);
     const lstatPath = this.deps.lstatPath ?? lstat;
-    const lexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+    const lexicalStats = await lstatPath(candidate.unresolvedTargetPath, { bigint: true });
     if (!lexicalStats.isFile()) {
       throw new Error("File tree target is not a regular file.");
     }
     const opened = await this.openAuthorizedCandidate(candidate, "file");
     try {
-      const confirmedLexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+      const confirmedLexicalStats = await lstatPath(candidate.unresolvedTargetPath, { bigint: true });
       if (!confirmedLexicalStats.isFile() || !isSameFileIdentity(opened.stats, confirmedLexicalStats)) {
         throw new Error("File tree target changed during authorization.");
       }
       const result = await operation(opened.targetRealPath);
       let targetStillCurrent = false;
       try {
-        const finalLexicalStats = await lstatPath(candidate.unresolvedTargetPath);
+        const finalLexicalStats = await lstatPath(candidate.unresolvedTargetPath, { bigint: true });
         const confirmedTargetRealPath = await this.confirmOpenedTarget(candidate, opened.stats);
         targetStillCurrent = finalLexicalStats.isFile()
           && isSameFileIdentity(opened.stats, finalLexicalStats)
@@ -841,7 +850,7 @@ export class SessionFileExplorerService {
     return this.inspectOpenedFile(request, opened);
   }
 
-  private async openImage(request: SessionImageResourceRequest): Promise<AuthorizedOpenedFile> {
+  private async openLinkedFile(request: SessionImageResourceRequest | SessionPdfResourceRequest, kind: "image" | "PDF"): Promise<AuthorizedOpenedFile> {
     const context = await this.deps.getSessionContext(request.sessionId);
     if (!context) {
       throw new Error("The session could not be found.");
@@ -849,18 +858,18 @@ export class SessionFileExplorerService {
     const target = request.target.trim();
     const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(target)?.[1];
     if (scheme && scheme.toLowerCase() !== "file" && !/^[a-zA-Z]:[\\/]/.test(target)) {
-      throw new Error("Local image requests must use a local path or file URL.");
+      throw new Error(`Local ${kind} requests must use a local path or file URL.`);
     }
     const absoluteTarget = /^file:/i.test(target) || path.isAbsolute(target)
       || /^[a-zA-Z]:[\\/]/.test(target) || /^\/[a-zA-Z]:[\\/]/.test(target);
     let baseDirectory = context.workspacePath;
     if (request.baseResource) {
       if (request.baseResource.sessionId !== request.sessionId) {
-        throw new Error("Image base does not belong to this Session.");
+        throw new Error(`${kind} base does not belong to this Session.`);
       }
       if (!absoluteTarget) {
         if (isSessionFileGitCommitResource(request.baseResource)) {
-          throw new Error("Relative images from a Git commit file preview are not available.");
+          throw new Error(`Relative ${kind === "image" ? "images" : "PDFs"} from a Git commit file preview are not available.`);
         }
         const base = await this.openLocalFile(request.baseResource);
         try {
@@ -872,33 +881,42 @@ export class SessionFileExplorerService {
     }
     const resolved = resolveOpenPathTarget(target, { baseDirectory });
     if (resolved.type !== "local-path") {
-      throw new Error("Local image requests must use a local path or file URL.");
+      throw new Error(`Local ${kind} requests must use a local path or file URL.`);
     }
     return this.openAbsoluteFile({ sessionId: request.sessionId, absolutePath: resolved.targetPath });
   }
 
   async inspectImage(request: SessionImageResourceRequest): Promise<SessionFileDescriptor> {
-    const opened = await this.openImage(request);
+    const opened = await this.openLinkedFile(request, "image");
     return this.inspectOpenedFile(
-      { sessionId: request.sessionId, absolutePath: opened.targetRealPath }, opened, true,
+      { sessionId: request.sessionId, absolutePath: opened.targetRealPath }, opened, "image",
+    );
+  }
+
+  async inspectPdf(request: SessionPdfResourceRequest): Promise<SessionFileDescriptor> {
+    const opened = await this.openLinkedFile(request, "PDF");
+    return this.inspectOpenedFile(
+      { sessionId: request.sessionId, absolutePath: opened.targetRealPath }, opened, "pdf",
     );
   }
 
   private async inspectOpenedFile(
     request: SessionFileResourceRequest,
     opened: AuthorizedOpenedFile,
-    imageOnly = false,
+    restrictedKind?: "image" | "pdf",
   ): Promise<SessionFileDescriptor> {
     try {
       const { handle, stats: fileStats, targetRealPath } = opened;
-      const inspection = new Uint8Array(Math.min(INSPECTION_BYTES, fileStats.size));
+      const inspection = new Uint8Array(Math.min(INSPECTION_BYTES, Number(fileStats.size)));
       const { bytesRead } = await handle.read(inspection, 0, inspection.byteLength, 0);
-      const fileStatsAfterInspection = await handle.stat();
+      const fileStatsAfterInspection = await handle.stat({ bigint: true });
       if (makeFileRevision(fileStatsAfterInspection) !== makeFileRevision(fileStats)) {
       throw new Error("The file changed during inspection. Reload and try again.");
       }
       const inspectedBytes = inspection.subarray(0, bytesRead);
-      const resource = imageOnly
+      const resource = restrictedKind === "pdf"
+        ? detectLocalPdfResource(inspectedBytes)
+        : restrictedKind === "image"
         ? detectLocalImageResource(inspectedBytes)
         : detectSessionFileResourceKind(targetRealPath, inspectedBytes);
       return {
@@ -906,7 +924,7 @@ export class SessionFileExplorerService {
         absoluteFilePath: targetRealPath,
         name: path.basename(targetRealPath),
         kind: resource.kind,
-        byteLength: fileStats.size,
+        byteLength: Number(fileStats.size),
         modifiedAt: fileStats.mtime.toISOString(),
         mimeType: resource.mimeType,
         suggestedEncoding: detectSessionFileEncoding(inspectedBytes),
@@ -925,8 +943,14 @@ export class SessionFileExplorerService {
 
   async readImageChunk(request: SessionImageChunkRequest): Promise<SessionFileChunkResult> {
     this.validateChunkRequest(request);
-    const opened = await this.openImage(request);
-    return this.readOpenedFileChunk(request, opened, true);
+    const opened = await this.openLinkedFile(request, "image");
+    return this.readOpenedFileChunk(request, opened, "image");
+  }
+
+  async readPdfChunk(request: SessionPdfChunkRequest): Promise<SessionFileChunkResult> {
+    this.validateChunkRequest(request);
+    const opened = await this.openLinkedFile(request, "PDF");
+    return this.readOpenedFileChunk(request, opened, "pdf");
   }
 
   private validateChunkRequest(request: Pick<SessionFileChunkRequest, "offset" | "length">): void {
@@ -941,7 +965,7 @@ export class SessionFileExplorerService {
   private async readOpenedFileChunk(
     request: Pick<SessionFileChunkRequest, "offset" | "length" | "expectedRevision">,
     opened: AuthorizedOpenedFile,
-    imageOnly = false,
+    restrictedKind?: "image" | "pdf",
   ): Promise<SessionFileChunkResult> {
     try {
       const { handle, stats: fileStats } = opened;
@@ -949,14 +973,17 @@ export class SessionFileExplorerService {
       if (request.expectedRevision !== revision) {
       throw new Error("The file changed while it was being read. Reload and try again.");
       }
-      if (imageOnly) {
-        const header = new Uint8Array(Math.min(INSPECTION_BYTES, fileStats.size));
+      if (restrictedKind) {
+        const header = new Uint8Array(Math.min(INSPECTION_BYTES, Number(fileStats.size)));
         const inspection = await handle.read(header, 0, header.byteLength, 0);
-        detectLocalImageResource(header.subarray(0, inspection.bytesRead));
+        const inspectedBytes = header.subarray(0, inspection.bytesRead);
+        if (restrictedKind === "pdf") detectLocalPdfResource(inspectedBytes);
+        else detectLocalImageResource(inspectedBytes);
       }
-      const bytes = new Uint8Array(Math.min(request.length, Math.max(0, fileStats.size - request.offset)));
+      const byteLength = Number(fileStats.size);
+      const bytes = new Uint8Array(Math.min(request.length, Math.max(0, byteLength - request.offset)));
       const { bytesRead } = await handle.read(bytes, 0, bytes.byteLength, request.offset);
-      const fileStatsAfterRead = await handle.stat();
+      const fileStatsAfterRead = await handle.stat({ bigint: true });
       const revisionAfterRead = makeFileRevision(fileStatsAfterRead);
       if (revisionAfterRead !== revision) {
       throw new Error("The file changed while it was being read. Reload and try again.");
@@ -967,8 +994,8 @@ export class SessionFileExplorerService {
         data,
         offset: request.offset,
         nextOffset,
-        totalBytes: fileStats.size,
-        done: nextOffset >= fileStats.size,
+        totalBytes: byteLength,
+        done: nextOffset >= byteLength,
         revision,
       };
     } finally {

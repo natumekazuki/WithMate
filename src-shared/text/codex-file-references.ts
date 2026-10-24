@@ -57,7 +57,9 @@ function citationAttributes(source: string): Map<string, string> | null {
   return attributes;
 }
 
-function referencePath(source: string): string | null {
+type FileReference = { path: string; visualize?: { title?: string; mode?: "wide" } };
+
+function reference(source: string): FileReference | null {
   if (source.startsWith(visualizePrefix)) {
     try {
       const value: unknown = JSON.parse(source.slice(visualizePrefix.length, -1));
@@ -66,14 +68,14 @@ function referencePath(source: string): string | null {
       return isLocalPath(object.path)
         && (object.mode === undefined || object.mode === "wide")
         && (object.title === undefined || typeof object.title === "string")
-        ? object.path : null;
+        ? { path: object.path, visualize: { title: object.title as string | undefined, mode: object.mode as "wide" | undefined } } : null;
     } catch {
       return null;
     }
   }
   const attributes = citationAttributes(source.slice(citationPrefix.length, -1));
   const path = attributes?.get("path");
-  return isLocalPath(path) && attributes?.get("mode") !== "live" ? path : null;
+  return isLocalPath(path) && attributes?.get("mode") !== "live" ? { path } : null;
 }
 
 const tokenizeReference: Tokenizer = function (effects, ok, nok) {
@@ -109,7 +111,7 @@ const tokenizeReference: Tokenizer = function (effects, ok, nok) {
     if ((prefix === visualizePrefix && code === 0xe201)
       || (prefix === citationPrefix && code === 125 && !quoted)) {
       effects.exit("fileReference");
-      return referencePath(context.sliceSerialize(token)) === null ? nok : ok;
+      return reference(context.sliceSerialize(token)) === null ? nok : ok;
     }
     return body;
   }
@@ -130,10 +132,20 @@ export function codexFileReferencesFromMarkdown(): FromMarkdownExtension {
           this.enter({ type: "text", value: this.sliceSerialize(token) }, token);
           return;
         }
-        const path = referencePath(this.sliceSerialize(token));
-        if (path !== null) {
+        const parsed = reference(this.sliceSerialize(token));
+        if (parsed !== null) {
+          const { path } = parsed;
           const url = /^file:/iu.test(path) ? path : encodeURI(path).replace(/#/gu, "%23").replace(/\?/gu, "%3F");
-          this.enter({ type: "link", url, children: [{ type: "text", value: path }] }, token);
+          const displayPath = parsed.visualize && /^file:/iu.test(path) ? decodeURIComponent(new URL(path).pathname) : path;
+          const label = parsed.visualize ? displayPath.split(/[\\/]/u).pop() || path : path;
+          this.enter({
+            type: "link", url, children: [{ type: "text", value: label }],
+            ...(parsed.visualize ? { data: { hProperties: {
+              "data-codex-visualize-path": path,
+              ...(parsed.visualize.title === undefined ? {} : { "data-codex-visualize-title": parsed.visualize.title }),
+              ...(parsed.visualize.mode === undefined ? {} : { "data-codex-visualize-mode": parsed.visualize.mode }),
+            } } } : {}),
+          }, token);
         }
       },
     },

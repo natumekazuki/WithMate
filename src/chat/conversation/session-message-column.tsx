@@ -1193,6 +1193,7 @@ export function SessionMessageColumn({
         onOpenPath={onOpenPath}
         renderText={(text, key, sourceStart, inlineContent) => <MessageRichText key={key} text={text} sourceStart={sourceStart} inlineContent={inlineContent} isStreaming={isRunning} responseProvider={provider}
           resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
+          onCopyText={onCopyMessageText} onQuoteText={onQuoteMessageText}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
       /> : null}
@@ -1210,6 +1211,8 @@ export function SessionMessageColumn({
             forceFullRender={findOpen && hasFindQuery}
             displayMode={messageViewMode}
             onOpenPath={onOpenPath}
+            onCopyText={onCopyMessageText}
+            onQuoteText={onQuoteMessageText}
             markdownLinkFileContext={markdownLinkFileContext}
             markdownImageContext={markdownLinkFileContext}
             glossaryAnnotationMatcher={glossaryAnnotationMatcher}
@@ -1469,6 +1472,8 @@ export function SessionMessageColumn({
                               forceFullRender={findOpen && hasFindQuery}
                               displayMode={messageViewMode}
                               onOpenPath={onOpenPath}
+                              onCopyText={onCopyMessageText}
+                              onQuoteText={onQuoteMessageText}
                               markdownLinkFileContext={markdownLinkFileContext}
                               markdownImageContext={markdownLinkFileContext}
                               glossaryAnnotationMatcher={glossaryAnnotationMatcher}
@@ -1561,6 +1566,8 @@ export function SessionMessageColumn({
                                                   text={operation.summary}
                                                   responseProvider={provider}
                                                   onOpenPath={onOpenPath}
+                                                  onCopyText={onCopyMessageText}
+                                                  onQuoteText={onQuoteMessageText}
                                                   markdownLinkFileContext={markdownLinkFileContext}
                                                   markdownImageContext={markdownLinkFileContext}
                                                 />

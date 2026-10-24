@@ -1,3 +1,10 @@
+.session-file-html {
+  grid-area: content;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .session-file-text-scroll,
 .session-file-markdown-scroll,
 .session-file-image-scroll {

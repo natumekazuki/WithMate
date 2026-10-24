@@ -1,12 +1,16 @@
 import type { WithMateWindowSessionApi } from "../../src-shared/ipc/withmate-window-api.js";
 import * as channels from "../../src-shared/ipc/withmate-ipc-channels.js";
 import type { IpcRendererLike } from "./ipc.js";
+import { READ_SESSION_HTML_PREVIEW } from "../../src-shared/window/html-preview.js";
 
 export function createSessionApi(
   ipcRenderer: IpcRendererLike,
   platform: NodeJS.Platform,
 ): WithMateWindowSessionApi {
   return {
+    readSessionHtmlPreview(request) {
+      return ipcRenderer.invoke(READ_SESSION_HTML_PREVIEW, request);
+    },
     isSessionFileObjectCopyAvailable() {
       return platform === "win32";
     },
@@ -103,6 +107,12 @@ export function createSessionApi(
     },
     inspectSessionImage(request) {
       return ipcRenderer.invoke(channels.WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL, request);
+    },
+    inspectSessionPdf(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_INSPECT_SESSION_PDF_CHANNEL, request);
+    },
+    readSessionPdfChunk(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL, request);
     },
     readSessionImageChunk(request) {
       return ipcRenderer.invoke(channels.WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL, request);

@@ -36,6 +36,7 @@ export function createMessageRenderedSearchTextProjection(provider?: string) {
 const MESSAGE_RENDERED_SEARCH_EXCLUDED_SELECTOR = [
   ".message-inline-content",
   ".message-image-shell",
+  ".message-file-preview-auxiliary",
   ".message-mermaid",
   ".katex",
   "[data-footnote-ref]",

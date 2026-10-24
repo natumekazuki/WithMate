@@ -15,11 +15,11 @@ function toKind(entry) {
 }
 
 (async () => {
-  const directoryStats = await stat(".");
+  const directoryStats = await stat(".", { bigint: true });
   process.stdout.write(JSON.stringify({
     type: "ready",
-    device: directoryStats.dev,
-    inode: directoryStats.ino,
+    device: directoryStats.dev.toString(),
+    inode: directoryStats.ino.toString(),
   }) + "\n");
   const delayMs = Number(process.env.WITHMATE_IDENTITY_DIRECTORY_DELAY_MS || 0);
   if (delayMs > 0) {
@@ -76,8 +76,8 @@ function toKind(entry) {
 `;
 
 export type IdentityBoundDirectorySnapshot = {
-  device: number;
-  inode: number;
+  device: bigint;
+  inode: bigint;
   entries: Array<Pick<SessionDirectoryEntry, "name" | "kind" | "byteLength" | "modifiedAt">>;
   maxConcurrentStats: number;
 };
@@ -94,7 +94,7 @@ type IdentityBoundDirectoryListingOptions = {
 const DEFAULT_WORKER_TIMEOUT_MS = 30_000;
 
 type WorkerMessage =
-  | { type: "ready"; device: number; inode: number }
+  | { type: "ready"; device: bigint; inode: bigint }
   | {
       type: "result";
       entries: IdentityBoundDirectorySnapshot["entries"];
@@ -107,10 +107,11 @@ function parseWorkerMessage(line: string): WorkerMessage {
     throw new Error("The directory listing response is invalid.");
   }
   if (value.type === "ready" && "device" in value && "inode" in value) {
-    if (typeof value.device !== "number" || typeof value.inode !== "number") {
+    if (typeof value.device !== "string" || !/^\d+$/.test(value.device)
+      || typeof value.inode !== "string" || !/^\d+$/.test(value.inode)) {
       throw new Error("The directory listing identity is invalid.");
     }
-    return { type: "ready", device: value.device, inode: value.inode };
+    return { type: "ready", device: BigInt(value.device), inode: BigInt(value.inode) };
   }
   if (
     value.type === "result" &&

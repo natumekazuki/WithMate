@@ -51,7 +51,11 @@ Session WindowのFile Explorerには次のタブがあります。
 - `Changes`: Gitの作業ツリー差分を表示
 - `History`: repositoryのcommit履歴とcommit時点のファイル、差分を表示
 
-ファイルは中央の作業面または独立したFile Preview Windowで開けます。テキスト、Markdown、Mermaid（`.mmd`）、JSON、JSONC、YAML、画像、SVGに対応し、バイナリファイルは内容を展開せずに表示します。Git差分はSplitとInlineを切り替えられます。
+ファイルは中央の作業面または独立したFile Preview Windowで開けます。テキスト、Markdown、Mermaid（`.mmd`）、JSON、JSONC、YAML、画像、SVG、HTML（`.html`／`.htm`）、PDFに対応し、未対応のバイナリファイルは内容を展開せずに表示します。PDFは閲覧専用で、ページ移動、連続・単ページ・見開き、倍率・回転、全文検索、文字選択、目次・サムネイル・レイヤー・添付文書・文書情報を扱います。パスワード付きPDFは入力して開けますが、パスワードは保存しません。編集・保存・印刷・OCR・電子署名の検証は行わず、XFAフォームを含むPDFは対応していない理由を表示します。Git差分はSplitとInlineを切り替えられます。
+
+Codexの応答に`visualize`で指定されたローカルHTML／PDFは、会話本文内でも同じ隔離されたプレビューで閲覧できます。元ファイルのリンクから通常のFile Previewへ開くこともできます。通常リンク・file citation・未対応形式の成果物はリンクとして表示します。
+
+HTMLは自己完結したCSS／JavaScriptを隔離して表示し、Sourceへ切り替えられます。外部スクリプトや相対ファイルの読込、WithMate APIは利用できません。通信の完全遮断を保証する機能ではありません。公式visualize runtimeとの互換機能ではありません。
 
 ### Repository Glossary
 
@@ -106,6 +110,8 @@ npm run electron:dev
 ```
 
 `electron:dev`はElectron mainとMemory CLIをbuildしてから、開発用Electronを起動します。
+
+PDF readerは開発時も専用buildを使います。`electron:dev`は起動前に`build:pdf-reader`を実行し、`build:renderer`は通常rendererとPDF readerの両方をbuildします。`src/pdf-reader/`の変更はHMRでは反映されないため、`npm run build:pdf-reader`で再buildし、File Previewの`Reload`で読み直してください。
 
 Windowsで作業branchのsmoke / 目視確認を行う場合は、下記の[分離したvisual check](#分離したvisual-check)の起動手順を使用してください。
 

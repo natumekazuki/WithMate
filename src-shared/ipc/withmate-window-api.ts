@@ -81,6 +81,8 @@ import type {
   SessionFileChunkRequest,
   SessionImageResourceRequest,
   SessionImageChunkRequest,
+  SessionPdfResourceRequest,
+  SessionPdfChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFilePreviewImageActionRequest,
@@ -131,6 +133,8 @@ import type {
   SessionGlossaryProjection,
 } from "../glossary/glossary-contract.js";
 import type { SessionWindowRestoreResult } from "../window/session-window-restore.js";
+import type { WithMateHtmlPreviewApi } from "../window/html-preview.js";
+import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../file-explorer/session-html-preview-contract.js";
 
 export type WithMateWindowNavigationApi = {
   showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
@@ -173,6 +177,7 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
+  readSessionHtmlPreview(request: SessionHtmlPreviewRequest): Promise<SessionHtmlPreviewResult>;
   isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionMonitorPage(request?: SessionMonitorPageRequest | null): Promise<SessionMonitorPageResult>;
@@ -198,6 +203,8 @@ export type WithMateWindowSessionApi = {
   inspectSessionFile(request: SessionFilePreviewResourceRequest): Promise<SessionFileDescriptor>;
   inspectSessionImage(request: SessionImageResourceRequest): Promise<SessionFileDescriptor>;
   readSessionImageChunk(request: SessionImageChunkRequest): Promise<SessionFileChunkResult>;
+  inspectSessionPdf(request: SessionPdfResourceRequest): Promise<SessionFileDescriptor>;
+  readSessionPdfChunk(request: SessionPdfChunkRequest): Promise<SessionFileChunkResult>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
   getSessionFilePreviewWindowPayload(token: string): Promise<SessionFilePreviewWindowPayload | null>;
@@ -388,6 +395,7 @@ export type WithMateWindowCharacterApi = {
 };
 
 export type WithMateWindowApi =
+  & WithMateHtmlPreviewApi
   & WithMateWindowNavigationApi
   & MemoryV6ReviewApi
   & WithMateWindowCatalogApi

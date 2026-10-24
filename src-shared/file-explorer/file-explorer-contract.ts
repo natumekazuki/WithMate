@@ -109,7 +109,7 @@ export type SessionDirectoryEntry = {
   modifiedAt: string | null;
 };
 
-export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "binary";
+export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "pdf" | "binary";
 export type SessionFileEncoding = "utf-8" | "shift_jis" | "utf-16le" | "utf-16be";
 
 export type SessionFileRootResourceRequest = {
@@ -349,6 +349,18 @@ export type SessionImageResourceRequest = {
 };
 
 export type SessionImageChunkRequest = SessionImageResourceRequest & {
+  offset: number;
+  length: number;
+  expectedRevision: string;
+};
+
+export type SessionPdfResourceRequest = {
+  sessionId: string;
+  target: string;
+  baseResource?: SessionFilePreviewResourceRequest;
+};
+
+export type SessionPdfChunkRequest = SessionPdfResourceRequest & {
   offset: number;
   length: number;
   expectedRevision: string;

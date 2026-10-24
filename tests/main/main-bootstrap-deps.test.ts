@@ -193,9 +193,12 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         inspectSessionFile: async () => {
           throw new Error("unused session query fixture method");
         },
+        readSessionHtmlPreview: async () => { throw new Error("unused"); },
         inspectSessionImage: async () => {
           throw new Error("unused session query fixture method");
         },
+        inspectSessionPdf: async () => { throw new Error("unused session query fixture method"); },
+        readSessionPdfChunk: async () => { throw new Error("unused session query fixture method"); },
         readSessionImageChunk: async () => {
           throw new Error("unused session query fixture method");
         },

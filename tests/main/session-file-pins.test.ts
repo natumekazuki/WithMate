@@ -114,7 +114,7 @@ test("Files Pin は認可・owner世代・DB失敗の境界を維持する", asy
         return { workspacePath: workspace, parentSessionId: parent.id, parentIncarnationId: getSessionIncarnationId(parent), allowedAdditionalDirectories: [] };
       },
       async lstatPath(target) {
-        const stats = await lstat(target);
+        const stats = await lstat(target, { bigint: true });
         if (replaceOwner) {
           replaceOwner = false;
           storage!.deleteSession(parent.id);
@@ -211,7 +211,7 @@ test("Files Pin の参照検査は最大4項目並列で保存pathのみを扱�
         inspected.add(target);
         try {
           await new Promise((resolve) => setTimeout(resolve, 2));
-          return await lstat(target);
+          return await lstat(target, { bigint: true });
         } finally { active--; }
       },
       openFile: async () => { throw new Error("Pin must not read file contents"); },

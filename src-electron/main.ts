@@ -54,6 +54,9 @@ import {
   isSessionFileGitCommitResource,
 } from "../src-shared/file-explorer/file-explorer-contract.js";
 import { SessionTurnService } from "./session/session-turn-service.js";
+import { registerHtmlPreviewHandlers } from "./ipc/html-preview.js";
+import { registerHtmlPreviewScheme } from "./files/html-preview-service.js";
+import { readSessionHtmlPreview } from "./files/session-html-preview-reader.js";
 import type { SessionTurnRecord } from "../src-shared/session/session-turn-state.js";
 import { AppSettingsStorage } from "./app/app-settings-storage.js";
 import { PromptTemplateStorage } from "./prompt-templates/prompt-template-storage.js";
@@ -253,6 +256,7 @@ import {
   WITHMATE_TERMINAL_EVENT,
 } from "../src-shared/ipc/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./storage/database-schema-v2.js";
+import { registerPdfReaderProtocol, registerPdfReaderScheme } from "./windows/pdf-reader-protocol.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./storage/database-schema-v3.js";
 import { isValidV4Database } from "./storage/database-schema-v4.js";
 import { ensureV6Schema } from "./storage/database-schema-v6.js";
@@ -265,6 +269,8 @@ import {
 } from "./storage/sqlite-connection.js";
 
 markMainThreadAsNonStorageOwner();
+registerPdfReaderScheme();
+registerHtmlPreviewScheme();
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
@@ -1227,6 +1233,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               registerMainIpcHandlers(ipc, deps);
               if (!terminalService) throw new Error("Terminal service is unavailable.");
               registerTerminalHandlers(ipc, terminalService);
+              registerHtmlPreviewHandlers(ipc);
             },
             initializePersistentStores,
             recoverInterruptedSessions,
@@ -1424,7 +1431,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 unpinSessionFile: (request) => createSessionFileExplorerService().unpinSessionFile(request),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
                 inspectSessionImage: (request) => createSessionFileExplorerService().inspectImage(request),
+                readSessionHtmlPreview: (request) => readSessionHtmlPreview(createSessionFileExplorerService(), request),
                 readSessionImageChunk: (request) => createSessionFileExplorerService().readImageChunk(request),
+                inspectSessionPdf: (request) => createSessionFileExplorerService().inspectPdf(request),
+                readSessionPdfChunk: (request) => createSessionFileExplorerService().readPdfChunk(request),
                 inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
                   ? createFileRootGitChangesService().inspectHistoryFile(request)
                   : createSessionFileExplorerService().inspectFile(request),
@@ -3542,6 +3552,7 @@ if (!hasSingleInstanceLock) {
   });
 
   app.whenReady().then(async () => {
+    registerPdfReaderProtocol(path.join(rendererDistPath, "pdf-reader"));
     if (!isBackgroundLaunch) {
       await openBootWindow();
     }
