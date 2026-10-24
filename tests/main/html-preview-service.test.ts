@@ -8,7 +8,17 @@ class Contents extends EventEmitter {
   readonly id = 10;
   readonly mainFrame = {};
   focusedFrame: unknown = null;
+  destroyed = false;
   readonly events: Array<{ id: string; type: string; message?: string }> = [];
+  constructor() {
+    super();
+    this.on("removeListener", (name) => {
+      if (this.destroyed && (name === "console-message" || name === "before-input-event")) {
+        throw new TypeError("Object has been destroyed");
+      }
+    });
+  }
+  isDestroyed() { return this.destroyed; }
   send(_channel: string, event: { id: string; type: string; message?: string }) { this.events.push(event); }
 }
 
@@ -21,15 +31,15 @@ class Owner extends EventEmitter {
     return this.contents;
   }
   isDestroyed() { return this.destroyed; }
-  close() { this.destroyed = true; this.emit("closed"); }
+  close() { this.destroyed = true; this.contents.destroyed = true; this.emit("closed"); }
 }
 
 // @test-value v2
 // kind = "security"
-// claim = "HTML文書URLはownerのsubframeへ一度だけ配信し、subframe IPC・別window・再navigationを拒否して、終了とdisposeで本文とlistenerを解放する"
+// claim = "HTML文書URLはownerのsubframeへ一度だけ配信し、subframe IPC・別window・再navigationを拒否する。disposeはlistenerを解放し、owner終了は例外なく本文を失効させる"
 // oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#html-preview-isolation" }
-// fault = "別windowやmain frameへ本文を配信する、消費済みURLを再利用する、または終了時の破棄済みowner参照で解放を中断する"
-// observable = "requestのcancel、responseの本文/CSP/status、readyとfocus通知、終了/dispose後のURL失効とlistener数"
+// fault = "別windowやmain frameへ本文を配信する、消費済みURLを再利用する、または破棄済みWebContentsのlistener解除hookで終了時に例外を起こす"
+// observable = "requestのcancel、responseの本文/CSP/status、readyとfocus通知、dispose後のlistener数、終了時の例外と複数URLの失効"
 // observation_boundary = "public-boundary"
 // scope = "HtmlPreviewServiceの文書配信・frame event・owner lifetime"
 // lifecycle = "permanent"
@@ -110,11 +120,15 @@ test("HTML previewはowner subframe限定で配信しframe操作と終了時失�
     service.dispose(event, "disposed");
     service.dispose(event, "disposed");
     assert.equal(respond(new Request(disposedUrl)).status, 403);
-    const endedUrl = service.mount(event, { id: "ended", html: "<p>End</p>" });
+    assert.deepEqual(owner.contents.eventNames(), ["removeListener"]);
+    const endedUrls = ["ended-first", "ended-second"].map((id) => service.mount(event, { id, html: "<p>End</p>" }));
+    for (const endedUrl of endedUrls) {
+      assert.equal(request({ url: endedUrl }), false);
+      assert.equal(await respond(new Request(endedUrl)).text(), "<p>End</p>");
+    }
     assert.doesNotThrow(() => owner.close());
-    assert.equal(respond(new Request(endedUrl)).status, 403);
+    for (const endedUrl of endedUrls) assert.equal(respond(new Request(endedUrl)).status, 403);
     assert.equal(owner.listenerCount("closed"), 0);
-    assert.deepEqual(owner.contents.eventNames(), []);
   } finally {
     hooks.deregister();
     if (previous) Object.defineProperty(globalThis, "__withmateHtmlPreviewElectron", previous);

@@ -118,6 +118,8 @@ export class HtmlPreviewService {
     const preview: Preview = { id: request.id, owner, html: request.html, url, requested: false, loaded: false, cleanup: () => {
       clearTimeout(timer);
       owner.removeListener("closed", dispose);
+      // Electron listener-removal hooks can access native state after WebContents destruction.
+      if (contents.isDestroyed()) return;
       contents.removeListener("did-start-navigation", onStart);
       contents.removeListener("will-frame-navigate", onNavigate);
       contents.removeListener("did-frame-finish-load", onLoad);
