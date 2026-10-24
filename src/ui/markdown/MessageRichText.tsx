@@ -46,6 +46,7 @@ type MessageRichTextProps = {
   displayMode?: MessageViewMode;
   responseProvider?: string;
   onOpenPath?: (target: string) => void;
+  onFind?: () => void;
   resolveImageSource?: MarkdownImageResolver;
   markdownLinkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
   markdownImageContext?: MarkdownImageContext;
@@ -91,6 +92,7 @@ function MessageMarkdownPreview({
   streamingTextPresented = false,
   responseProvider,
   onOpenPath,
+  onFind,
   resolveImageSource,
   markdownLinkFileContext,
   markdownImageContext,
@@ -150,6 +152,7 @@ function MessageMarkdownPreview({
       linkFileContext: markdownLinkFileContext,
       imageContext: markdownImageContext,
       onOpenPath,
+      onFind,
       resolveImageSource,
     }),
     [
@@ -159,6 +162,7 @@ function MessageMarkdownPreview({
       markdownLinkFileContext,
       markdownImageContext,
       onOpenPath,
+      onFind,
       resolveImageSource,
       renderText,
     ],

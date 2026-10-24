@@ -10,7 +10,7 @@ import { MarkdownLink } from "./markdown-links.js";
 type PreviewState = { key: string; html?: string; fileName?: string; error?: string };
 
 export function MarkdownHtmlPreview({ path, href, title, children }: { path: string; href: string; title?: string; children: ReactNode }) {
-  const { linkFileContext } = useContext(MarkdownRenderContext);
+  const { linkFileContext, onFind } = useContext(MarkdownRenderContext);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<PreviewState | null>(null);
   const contextKey = JSON.stringify(linkFileContext);
@@ -61,7 +61,7 @@ export function MarkdownHtmlPreview({ path, href, title, children }: { path: str
       </span>
       <span className="message-html-preview-auxiliary message-html-preview-content" aria-busy={loading}>
         {error ? <span className="message-html-preview-error" role="alert">{error}</span>
-          : current?.html !== undefined ? <HtmlPreview html={current.html} title={title || current.fileName || path} />
+          : current?.html !== undefined ? <HtmlPreview html={current.html} title={title || current.fileName || path} onFind={onFind} />
           : <LoadingIndicator label="Loading HTML preview" />}
       </span>
     </span>

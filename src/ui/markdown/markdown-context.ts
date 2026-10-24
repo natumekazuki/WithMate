@@ -19,6 +19,7 @@ export type MarkdownRenderContextValue = {
   linkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
   imageContext?: MarkdownImageContext;
   onOpenPath?: (target: string) => void;
+  onFind?: () => void;
   resolveImageSource?: MarkdownImageResolver;
 };
 

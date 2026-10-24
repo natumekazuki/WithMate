@@ -36,19 +36,20 @@ class Owner extends EventEmitter {
 
 // @test-value v2
 // kind = "security"
-// claim = "HTML文書URLはownerのsubframeへ一度だけ配信し、subframe IPC・別window・再navigationを拒否する。disposeはlistenerを解放し、owner終了は例外なく本文を失効させる"
+// claim = "HTML文書URLはownerのsubframeへ一度だけ配信し、subframe IPC・別window・再navigationを拒否する。iframe停止は通知・失効後に再mountでき、disposeとowner終了も本文を失効させる"
 // oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#html-preview-isolation" }
-// fault = "別windowやmain frameへ本文を配信する、消費済みURLを再利用する、または破棄済みWebContentsのlistener解除hookで終了時に例外を起こす"
-// observable = "requestのcancel、responseの本文/CSP/status、readyとfocus通知、dispose後のlistener数、終了時の例外と複数URLの失効"
+// fault = "別windowやmain frameへ本文を配信する、消費済みURLを再利用する、iframe停止を放置する、または破棄済みWebContentsのlistener解除hookで終了時に例外を起こす"
+// observable = "requestのcancel、responseの本文/CSP/status、readyとfocusと停止error通知、停止後の再mount、dispose後のlistener数、終了時の例外と複数URLの失効"
 // observation_boundary = "public-boundary"
 // scope = "HtmlPreviewServiceの文書配信・frame event・owner lifetime"
 // lifecycle = "permanent"
-// impact = "別windowへのHTML漏えい、アプリ権限の公開、Preview Window終了時のmain process例外を防ぐ"
+// impact = "別windowへのHTML漏えい、アプリ権限の公開、停止したHTMLのready保持、Preview Window終了時のmain process例外を防ぐ"
 // distinction = "rendererや入力policyのtestではElectron request/frame/ownerの関連付けを検出できない。実iframeのsandboxと描画は別途runtimeで確認する"
 // @end-test-value
-test("HTML previewはowner subframe限定で配信しframe操作と終了時失効を維持する", async () => {
+test("HTML previewはowner subframe限定で配信しframe操作と終了時失効を維持する", async (context) => {
+  context.mock.timers.enable({ apis: ["setInterval"] });
   const owner = new Owner();
-  const frame = { url: "", isDestroyed: () => false };
+  const frame = { url: "", destroyed: false, isDestroyed() { return this.destroyed; } };
   let beforeRequest!: (details: OnBeforeRequestListenerDetails, callback: (result: { cancel: boolean }) => void) => void;
   let respond!: (request: Request) => Response;
   const previous = Object.getOwnPropertyDescriptor(globalThis, "__withmateHtmlPreviewElectron");
@@ -115,6 +116,30 @@ test("HTML previewはowner subframe限定で配信しframe操作と終了時失�
       assert.equal(request({ url: deniedUrl, ...changes }), true);
       assert.equal(respond(new Request(deniedUrl)).status, 403);
     }
+
+    const stoppedUrl = service.mount(event, { id: "stopped", html: "<p>Stop</p>" });
+    assert.equal(request({ url: stoppedUrl }), false);
+    frame.url = stoppedUrl;
+    owner.contents.emit("did-frame-finish-load", {}, false, 1, 2);
+    assert.deepEqual(owner.contents.events.at(-1), { id: "stopped", type: "ready" });
+    frame.destroyed = true;
+    context.mock.timers.tick(1_000);
+    assert.match(owner.contents.events.at(-1)?.message ?? "", /stopped responding/);
+    assert.equal(owner.contents.events.at(-1)?.type, "error");
+    assert.equal(respond(new Request(stoppedUrl)).status, 403);
+    const recoveredUrl = service.mount(event, { id: "stopped", html: "<p>Recovered</p>" });
+    assert.notEqual(recoveredUrl, stoppedUrl);
+    assert.equal(request({ url: recoveredUrl }), false);
+    frame.url = recoveredUrl;
+    frame.destroyed = false;
+    owner.contents.emit("did-frame-finish-load", {}, false, 1, 2);
+    assert.deepEqual(owner.contents.events.at(-1), { id: "stopped", type: "ready" });
+    service.dispose(event, "stopped");
+    const eventsAfterDispose = owner.contents.events.length;
+    frame.destroyed = true;
+    context.mock.timers.tick(1_000);
+    assert.equal(owner.contents.events.length, eventsAfterDispose);
+    frame.destroyed = false;
 
     const disposedUrl = service.mount(event, { id: "disposed", html: "<p>Discard</p>" });
     service.dispose(event, "disposed");

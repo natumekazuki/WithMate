@@ -72,6 +72,7 @@ export class HtmlPreviewService {
     const url = `${HTML_PREVIEW_SCHEME}://${randomUUID()}/`;
     const dispose = () => this.remove(key);
     const onStopped = () => this.fail(preview, "HTML Preview stopped responding. Reload the preview to try again.");
+    let frameTimer: ReturnType<typeof setInterval> | undefined;
     const onStart = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
       if (details.isMainFrame && !details.isSameDocument) { dispose(); return; }
       if (details.isMainFrame || details.isSameDocument) return;
@@ -93,6 +94,10 @@ export class HtmlPreviewService {
       preview.frame = frame;
       preview.loaded = true;
       clearTimeout(timer);
+      // WebContents only reports primary-main-frame crashes; WebFrameMain has no stop event.
+      frameTimer ??= setInterval(() => {
+        if (preview.frame?.isDestroyed()) onStopped();
+      }, 1_000);
       this.report(preview, { type: "ready" });
     };
     const onConsole = (details: Electron.Event<Electron.WebContentsConsoleMessageEventParams>) => {
@@ -117,6 +122,7 @@ export class HtmlPreviewService {
       "HTML Preview did not finish loading within 15 seconds. Use Source to inspect the file."), 15_000);
     const preview: Preview = { id: request.id, owner, html: request.html, url, requested: false, loaded: false, cleanup: () => {
       clearTimeout(timer);
+      clearInterval(frameTimer);
       owner.removeListener("closed", dispose);
       // Electron listener-removal hooks can access native state after WebContents destruction.
       if (contents.isDestroyed()) return;

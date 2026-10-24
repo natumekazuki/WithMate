@@ -553,10 +553,13 @@ export function SessionMessageColumn({
   );
 
   useShortcutScope("message-list", isContentActive);
+  const openFind = useCallback(() => {
+    if (isContentActive) setFindOpen(true);
+  }, [isContentActive]);
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
     () => {
-      setFindOpen(true);
+      openFind();
       return true;
     },
     isContentActive,
@@ -1181,7 +1184,7 @@ export function SessionMessageColumn({
         onResolveLiveElicitation={onResolveLiveElicitation}
         onOpenPath={onOpenPath}
         renderText={(text, key, sourceStart) => <MessageRichText key={key} text={text} sourceStart={sourceStart} isStreaming={isRunning} responseProvider={provider}
-          resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath}
+          resolveImageSource={resolveImageSource} displayMode={messageViewMode} onOpenPath={onOpenPath} onFind={openFind}
           markdownLinkFileContext={markdownLinkFileContext} markdownImageContext={markdownLinkFileContext} glossaryAnnotationMatcher={glossaryAnnotationMatcher}
           glossaryAnnotationScopeKey={`${sessionId}:pending`} onActivateGlossaryEntry={onActivateGlossaryEntry} />}
       /> : null}
@@ -1199,6 +1202,7 @@ export function SessionMessageColumn({
             forceFullRender={findOpen && hasFindQuery}
             displayMode={messageViewMode}
             onOpenPath={onOpenPath}
+            onFind={openFind}
             markdownLinkFileContext={markdownLinkFileContext}
             markdownImageContext={markdownLinkFileContext}
             glossaryAnnotationMatcher={glossaryAnnotationMatcher}
@@ -1466,6 +1470,7 @@ export function SessionMessageColumn({
                               forceFullRender={findOpen && hasFindQuery}
                               displayMode={messageViewMode}
                               onOpenPath={onOpenPath}
+                              onFind={openFind}
                               markdownLinkFileContext={markdownLinkFileContext}
                               markdownImageContext={markdownLinkFileContext}
                               glossaryAnnotationMatcher={glossaryAnnotationMatcher}
@@ -1558,6 +1563,7 @@ export function SessionMessageColumn({
                                                   text={operation.summary}
                                                   responseProvider={provider}
                                                   onOpenPath={onOpenPath}
+                                                  onFind={openFind}
                                                   markdownLinkFileContext={markdownLinkFileContext}
                                                   markdownImageContext={markdownLinkFileContext}
                                                 />

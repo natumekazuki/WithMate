@@ -23,6 +23,74 @@ import type { MarkdownImageApi } from "../../src/ui/markdown/image-resource-load
 import type { SessionFilePreviewImageActionRequest, SessionImageResourceRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
 import { SessionTurnSubmissions } from "../../src/chat/runtime/session-turn-submissions.js";
+import type { HtmlPreviewEvent } from "../../src-shared/window/html-preview.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryのHTMLプレビューFind通知は一度でactive会話の検索を開き、非active列では検索を開かない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Ctrl+Fはactiveなchatを検索する" }
+// fault = "HTML consumerがFind callbackを渡さずfocus復帰だけになる、または非active列で検索を開く"
+// observable = "実SessionMessageColumnのFind inputの有無とfocus、HTML previewのmount/通知ID"
+// observation_boundary = "consumer"
+// scope = "SessionMessageColumn→MessageRichText→MarkdownHtmlPreview→HtmlPreviewのFind接続"
+// lifecycle = "permanent"
+// impact = "HTML操作中に会話検索が使えない、または別会話の検索を意図せず開く"
+// distinction = "HtmlPreview単体のcallback testはchat consumerへの接続を通らない。2ownerの小さなDOM遷移で接続漏れを検出する"
+// @end-test-value
+test("HTML previewのFind通知はactiveなMain/Auxiliary会話の検索を開く", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = globals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
+  const values = [dom.window, dom.window.document, dom.window.HTMLElement, dom.window.Node, dom.window.navigator, true];
+  globals.forEach((key, index) => Object.defineProperty(globalThis, key, { configurable: true, value: values[index] }));
+  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { get: () => 600 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", { get: () => 800 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { value() {} });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { value() {} });
+  const intersection = installIntersectionObserver();
+  const listeners = new Set<(event: HtmlPreviewEvent) => void>();
+  let mountedId = "";
+  Object.defineProperty(dom.window, "withmate", { value: {
+    readSessionHtmlPreview: async () => ({ html: "<h1>Chart</h1>", fileName: "chart.html" }),
+    mountHtmlPreview: async ({ id }: { id: string }) => { mountedId = id; return "withmate-html-preview://test/"; },
+    disposeHtmlPreview: async () => {},
+    subscribeHtmlPreviewEvents: (listener: (event: HtmlPreviewEvent) => void) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+  } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = (id: string, active: boolean) => root.render(<SessionMessageColumn
+    {...createBaseProps(id)} key={id} provider="codex" isContentActive={active}
+    messages={[{ role: "assistant", text: 'Before visualize{"path":"/work/chart.html"} After' }]} messageKeys={["response"]}
+  />);
+  const findInput = () => dom.window.document.querySelector<HTMLInputElement>('input[aria-label="Find in current content"]');
+  try {
+    for (const owner of ["main", "aux"]) {
+      mountedId = "";
+      await act(async () => render(owner, true));
+      assert.ok(mountedId, owner);
+      assert.equal(findInput(), null, owner);
+      await act(async () => listeners.forEach((listener) => listener({ id: mountedId, type: "find" })));
+      assert.ok(findInput(), owner);
+      assert.equal(dom.window.document.activeElement, findInput(), owner);
+      await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Close find"]')!.click());
+      await act(async () => render(owner, false));
+      await act(async () => listeners.forEach((listener) => listener({ id: mountedId, type: "find" })));
+      assert.equal(findInput(), null, owner);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    intersection.restore();
+    dom.window.close();
+    globals.forEach((key, index) => {
+      if (previous[index]) Object.defineProperty(globalThis, key, previous[index]!);
+      else Reflect.deleteProperty(globalThis, key);
+    });
+  }
+});
 
 // @test-value v2
 // kind = "contract"

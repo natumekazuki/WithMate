@@ -32,6 +32,10 @@
   flex: 0 0 auto;
 }
 
+.message-html-preview-auxiliary {
+  user-select: none;
+}
+
 .message-html-preview-header button {
   display: inline-flex;
   align-items: center;
