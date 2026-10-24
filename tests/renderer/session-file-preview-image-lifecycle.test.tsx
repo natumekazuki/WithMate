@@ -631,7 +631,7 @@ test("MMD File Preview はMermaid表示経路とSourceを切り替える", async
 // scope = "SessionFilePreviewのHTML resourceからPreview/Sourceと検索への接続"
 // lifecycle = "permanent"
 // impact = "HTML成果物を表示できない、または表示失敗時に原文を調べて引用できない"
-// distinction = "native preview単体testではfile拡張子判定と既存Source・Find consumer接続を確認できない"
+// distinction = "隔離preview単体testではfile拡張子判定と既存Source・Find consumer接続を確認できない"
 // @end-test-value
 test("HTML File PreviewはReloadでviewを再生成し原文SourceとFindを保持する", async () => {
   for (const name of ["page.html", "page.HTM"]) {
@@ -655,10 +655,8 @@ test("HTML File PreviewはReloadでviewを再生成し原文SourceとFindを保�
     const mounts: Array<{ id: string; html: string }> = [];
     const disposed: string[] = [];
     const htmlApi: WithMateHtmlPreviewApi = {
-      async mountHtmlPreview(input) { mounts.push(input); },
+      async mountHtmlPreview(input) { mounts.push(input); return `withmate-html-preview://${input.id}/`; },
       async disposeHtmlPreview(id) { disposed.push(id); },
-      layoutHtmlPreview() {},
-      focusHtmlPreview() {},
       subscribeHtmlPreviewEvents() { return () => {}; },
     };
     Object.defineProperty(dom.window, "withmate", { configurable: true, value: htmlApi });

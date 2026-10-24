@@ -17,7 +17,7 @@ export class MainWindowComposition {
   public createBaseWindow(options: WindowOptions): BrowserWindow {
     const window = new BrowserWindow({
       backgroundColor: "#0e131b", autoHideMenuBar: true, show: false,
-      webPreferences: { preload: this.preloadPath, contextIsolation: true, nodeIntegration: false, sandbox: false },
+      webPreferences: { preload: this.preloadPath, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, sandbox: false },
       ...options,
     });
     this.attachLogHandlers(window);

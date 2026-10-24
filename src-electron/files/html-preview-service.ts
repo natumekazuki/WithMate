@@ -1,46 +1,50 @@
 import { randomUUID } from "node:crypto";
-import { BrowserWindow, session, View, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
-import type { HtmlPreviewEvent, HtmlPreviewLayout, HtmlPreviewMountRequest } from "../../src-shared/window/html-preview.js";
-import { HTML_PREVIEW_EVENT } from "../../src-shared/window/html-preview.js";
-import { assertHtmlPreviewMount, clipHtmlPreviewLayout, HTML_PREVIEW_CSP } from "./html-preview-policy.js";
+import { BrowserWindow, protocol, session, webFrameMain, type IpcMainInvokeEvent, type WebFrameMain } from "electron";
+import type { HtmlPreviewEvent, HtmlPreviewMountRequest } from "../../src-shared/window/html-preview.js";
+import { HTML_PREVIEW_EVENT, HTML_PREVIEW_SCHEME } from "../../src-shared/window/html-preview.js";
+import { assertHtmlPreviewMount, HTML_PREVIEW_CSP } from "./html-preview-policy.js";
 
-type Sender = IpcMainEvent | IpcMainInvokeEvent;
-type Preview = { id: string; owner: BrowserWindow; container: View; view: WebContentsView; html: string; url: string; cleanup: () => void };
+type Preview = {
+  id: string; owner: BrowserWindow; html: string; url: string;
+  frame?: WebFrameMain; requested: boolean; loaded: boolean; cleanup: () => void;
+};
 
-/** Owns untrusted HTML only; it never reads a path or exposes the application preload. */
+export function registerHtmlPreviewScheme(): void {
+  protocol.registerSchemesAsPrivileged([{ scheme: HTML_PREVIEW_SCHEME, privileges: { standard: true, secure: true } }]);
+}
+
+/** Serves authorized HTML to opaque-origin iframes, without an application preload. */
 export class HtmlPreviewService {
   private readonly previews = new Map<string, Preview>();
-  private readonly isolatedSession = session.fromPartition("withmate-html-preview", { cache: false });
 
   constructor() {
-    this.isolatedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-    this.isolatedSession.setPermissionCheckHandler(() => false);
-    this.isolatedSession.setDevicePermissionHandler(() => false);
-    this.isolatedSession.setDisplayMediaRequestHandler((_request, callback) => callback({}));
-    this.isolatedSession.on("will-download", (event, _item, contents) => {
-      event.preventDefault();
-      const preview = [...this.previews.values()].find((entry) => entry.view.webContents === contents);
-      if (preview) this.report(preview, "warning", "Downloads are blocked in HTML Preview.");
-    });
-    this.isolatedSession.webRequest.onBeforeRequest((details, callback) => {
+    const browserSession = session.defaultSession;
+    browserSession.webRequest.onBeforeRequest({ urls: [`${HTML_PREVIEW_SCHEME}://*/*`] }, (details, callback) => {
       const preview = [...this.previews.values()].find((entry) => entry.url === details.url);
-      callback({ cancel: !preview || preview.view.webContents.id !== details.webContentsId
-        || details.resourceType !== "mainFrame" || details.method !== "GET" });
+      const allowed = !!preview && !preview.owner.isDestroyed()
+        && details.webContentsId === preview.owner.webContents.id
+        && details.resourceType === "subFrame" && details.method === "GET" && !preview.requested;
+      if (allowed) preview.requested = true;
+      else if (preview && !preview.owner.isDestroyed() && details.webContentsId === preview.owner.webContents.id) {
+        this.fail(preview, "Navigation is blocked in HTML Preview. Reload the preview to return to the document.");
+      }
+      callback({ cancel: !allowed });
     });
-    this.isolatedSession.protocol.handle("https", (request) => {
+    browserSession.protocol.handle(HTML_PREVIEW_SCHEME, (request) => {
       const preview = [...this.previews.values()].find((entry) => entry.url === request.url);
-      if (!preview || request.method !== "GET") return new Response(null, { status: 403 });
+      if (!preview || !preview.requested || request.method !== "GET") return new Response(null, { status: 403 });
       return new Response(preview.html, { headers: {
         "Content-Type": "text/html; charset=utf-8",
         "Content-Security-Policy": HTML_PREVIEW_CSP,
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
+        "Permissions-Policy": "camera=(), microphone=(), geolocation=(), display-capture=(), clipboard-read=(), clipboard-write=(), usb=(), hid=(), serial=(), payment=(), fullscreen=()",
       } });
     });
   }
 
-  private owner(event: Sender): BrowserWindow {
+  private owner(event: IpcMainInvokeEvent): BrowserWindow {
     const owner = BrowserWindow.fromWebContents(event.sender);
     if (!owner || owner.isDestroyed() || owner.webContents !== event.sender
       || event.senderFrame !== event.sender.mainFrame) throw new Error("HTML preview sender is not an application window.");
@@ -49,128 +53,99 @@ export class HtmlPreviewService {
 
   private key(owner: BrowserWindow, id: string): string { return `${owner.id}:${id}`; }
 
-  private report(preview: Preview, type: "warning" | "error", message: string): void {
+  private report(preview: Preview, event: { type: "warning" | "error"; message: string } | { type: "ready" | "return-focus" | "find" }): void {
     if (!preview.owner.isDestroyed()) preview.owner.webContents.send(HTML_PREVIEW_EVENT,
-      { id: preview.id, type, message: message.slice(0, 500) } satisfies HtmlPreviewEvent);
+      { id: preview.id, ...event } satisfies HtmlPreviewEvent);
   }
 
-  async mount(event: Sender, request: HtmlPreviewMountRequest): Promise<void> {
+  private fail(preview: Preview, message: string): void {
+    this.report(preview, { type: "error", message });
+    this.remove(this.key(preview.owner, preview.id));
+  }
+
+  mount(event: IpcMainInvokeEvent, request: HtmlPreviewMountRequest): string {
     const owner = this.owner(event);
-    const ownerContents = owner.webContents;
+    const contents = owner.webContents;
     assertHtmlPreviewMount(request);
     const key = this.key(owner, request.id);
     if (this.previews.has(key)) throw new Error("HTML preview is already mounted.");
-    const container = new View();
-    const view = new WebContentsView({ webPreferences: {
-      session: this.isolatedSession, sandbox: true, nodeIntegration: false,
-      nodeIntegrationInSubFrames: false, contextIsolation: true, webSecurity: true,
-      webviewTag: false, navigateOnDragDrop: false, safeDialogs: true, autoplayPolicy: "user-gesture-required",
-    } });
-    const url = `https://preview.invalid/${randomUUID()}`;
+    const url = `${HTML_PREVIEW_SCHEME}://${randomUUID()}/`;
     const dispose = () => this.remove(key);
-    const onNavigation = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
-      if (details.isMainFrame && !details.isSameDocument) dispose();
+    const onStopped = () => this.fail(preview, "HTML Preview stopped responding. Reload the preview to try again.");
+    const onStart = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+      if (details.isMainFrame && !details.isSameDocument) { dispose(); return; }
+      if (details.isMainFrame || details.isSameDocument) return;
+      if (details.url === url && !preview.frame) preview.frame = details.frame ?? undefined;
+      else if (details.frame && details.frame === preview.frame && details.url !== url) {
+        this.fail(preview, "Navigation is blocked in HTML Preview. Reload the preview to return to the document.");
+      }
     };
-    const preview: Preview = { id: request.id, owner, container, view, html: request.html, url, cleanup: () => {
+    const onNavigate = (details: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>) => {
+      if (!details.frame || details.frame !== preview.frame) return;
+      if (details.url === url && !preview.loaded) return;
+      details.preventDefault();
+      this.report(preview, { type: "warning", message: "Navigation is blocked in HTML Preview." });
+    };
+    const onLoad = (_event: Electron.Event, isMainFrame: boolean, processId: number, routingId: number) => {
+      if (isMainFrame) return;
+      const frame = webFrameMain.fromId(processId, routingId);
+      if (!frame || frame.isDestroyed() || frame.url.split("#", 1)[0] !== url) return;
+      preview.frame = frame;
+      preview.loaded = true;
+      clearTimeout(timer);
+      this.report(preview, { type: "ready" });
+    };
+    const onConsole = (details: Electron.Event<Electron.WebContentsConsoleMessageEventParams>) => {
+      if (!details.frame.isDestroyed() && details.frame.url.split("#", 1)[0] === url && details.level === "error") {
+        this.report(preview, { type: "warning", message: `HTML content reported an error: ${details.message}`.slice(0, 500) });
+      }
+    };
+    const onFailure = (_event: Electron.Event, _code: number, description: string, failedUrl: string,
+      isMainFrame: boolean, processId: number, routingId: number) => {
+      if (!isMainFrame && (failedUrl === url || (preview.frame && webFrameMain.fromId(processId, routingId) === preview.frame))) {
+        this.fail(preview, `HTML Preview failed to load: ${description}. Use Source to inspect the file.`);
+      }
+    };
+    const onInput = (inputEvent: Electron.Event, input: Electron.Input) => {
+      if (!preview.frame || contents.focusedFrame !== preview.frame || input.type !== "keyDown") return;
+      const find = (input.control || input.meta) && input.key.toLowerCase() === "f";
+      if (input.key !== "F6" && !find) return;
+      inputEvent.preventDefault();
+      this.report(preview, { type: find ? "find" : "return-focus" });
+    };
+    const timer = setTimeout(() => this.fail(preview,
+      "HTML Preview did not finish loading within 15 seconds. Use Source to inspect the file."), 15_000);
+    const preview: Preview = { id: request.id, owner, html: request.html, url, requested: false, loaded: false, cleanup: () => {
+      clearTimeout(timer);
       owner.removeListener("closed", dispose);
-      ownerContents.removeListener("did-start-navigation", onNavigation);
-      ownerContents.removeListener("render-process-gone", dispose);
+      contents.removeListener("did-start-navigation", onStart);
+      contents.removeListener("will-frame-navigate", onNavigate);
+      contents.removeListener("did-frame-finish-load", onLoad);
+      contents.removeListener("did-fail-load", onFailure);
+      contents.removeListener("console-message", onConsole);
+      contents.removeListener("before-input-event", onInput);
+      contents.removeListener("render-process-gone", onStopped);
+      contents.removeListener("unresponsive", onStopped);
     } };
     this.previews.set(key, preview);
     owner.once("closed", dispose);
-    ownerContents.on("did-start-navigation", onNavigation);
-    ownerContents.once("render-process-gone", dispose);
-    container.setVisible(false);
-    container.addChildView(view);
-    owner.contentView.addChildView(container);
-    view.webContents.setWindowOpenHandler(() => {
-      this.report(preview, "warning", "Opening windows is blocked in HTML Preview.");
-      return { action: "deny" };
-    });
-    const blockNavigation = (event: Electron.Event) => {
-      event.preventDefault();
-      this.report(preview, "warning", "Navigation is blocked in HTML Preview.");
-    };
-    view.webContents.on("will-frame-navigate", blockNavigation);
-    view.webContents.on("will-redirect", blockNavigation);
-    view.webContents.on("will-attach-webview", blockNavigation);
-    let initialNavigationStarted = false;
-    view.webContents.on("did-start-navigation", (details) => {
-      if (!details.isMainFrame || details.isSameDocument) return;
-      if (!initialNavigationStarted && details.url === url) {
-        initialNavigationStarted = true;
-        return;
-      }
-      // Dispose unexpected document transitions even when no cancellable event fires.
-      this.report(preview, "error", "Navigation is blocked in HTML Preview. Reload the preview to return to the document.");
-      this.remove(key);
-    });
-    view.webContents.on("console-message", (details) => {
-      if (details.level === "error") this.report(preview, "warning", `HTML content reported an error: ${details.message}`);
-    });
-    view.webContents.on("render-process-gone", () => {
-      container.setVisible(false);
-      this.report(preview, "error", "HTML Preview stopped. Reload the preview to try again.");
-    });
-    view.webContents.on("unresponsive", () => {
-      this.report(preview, "error", "HTML Preview stopped responding. Reload the preview to try again.");
-      this.remove(key);
-    });
-    view.webContents.on("before-input-event", (inputEvent, input) => {
-      const find = (input.control || input.meta) && input.key.toLowerCase() === "f";
-      if (input.type !== "keyDown" || (input.key !== "F6" && !find)) return;
-      inputEvent.preventDefault();
-      owner.webContents.focus();
-      owner.webContents.send(HTML_PREVIEW_EVENT, { id: request.id, type: find ? "find" : "return-focus" } satisfies HtmlPreviewEvent);
-    });
-    let loadTimer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await Promise.race([
-        view.webContents.loadURL(url),
-        new Promise<never>((_resolve, reject) => {
-          loadTimer = setTimeout(() => reject(new Error("HTML Preview did not finish loading within 15 seconds. Use Source to inspect the file.")), 15_000);
-        }),
-      ]);
-    } catch (error) {
-      this.remove(key);
-      throw error;
-    } finally {
-      clearTimeout(loadTimer);
-    }
+    contents.on("did-start-navigation", onStart);
+    contents.on("will-frame-navigate", onNavigate);
+    contents.on("did-frame-finish-load", onLoad);
+    contents.on("did-fail-load", onFailure);
+    contents.on("console-message", onConsole);
+    contents.on("before-input-event", onInput);
+    contents.once("render-process-gone", onStopped);
+    contents.on("unresponsive", onStopped);
+    return url;
   }
 
-  layout(event: Sender, id: string, layout: HtmlPreviewLayout): void {
-    const owner = this.owner(event);
-    const preview = this.previews.get(this.key(owner, id));
-    if (!preview) return;
-    const [width, height] = owner.getContentSize();
-    const scale = owner.webContents.getZoomFactor();
-    const scaled = (rect: HtmlPreviewLayout["bounds"]) => ({ x: rect.x * scale, y: rect.y * scale, width: rect.width * scale, height: rect.height * scale });
-    const { bounds, clip, visible } = clipHtmlPreviewLayout({ ...layout, bounds: scaled(layout.bounds), clip: scaled(layout.clip) }, { width, height });
-    preview.container.setVisible(visible);
-    if (!visible) {
-      if (preview.view.webContents.isFocused()) owner.webContents.focus();
-      return;
-    }
-    preview.container.setBounds(clip);
-    preview.view.setBounds({ x: bounds.x - clip.x, y: bounds.y - clip.y, width: bounds.width, height: bounds.height });
-    preview.view.webContents.setZoomFactor(scale);
-  }
-
-  focus(event: Sender, id: string): void {
-    const owner = this.owner(event);
-    this.previews.get(this.key(owner, id))?.view.webContents.focus();
-  }
-
-  dispose(event: Sender, id: string): void { this.remove(this.key(this.owner(event), id)); }
+  dispose(event: IpcMainInvokeEvent, id: string): void { this.remove(this.key(this.owner(event), id)); }
 
   private remove(key: string): void {
     const preview = this.previews.get(key);
     if (!preview) return;
     this.previews.delete(key);
     preview.cleanup();
-    if (!preview.owner.isDestroyed()) preview.owner.contentView.removeChildView(preview.container);
-    preview.container.removeChildView(preview.view);
-    if (!preview.view.webContents.isDestroyed()) preview.view.webContents.close();
   }
 }

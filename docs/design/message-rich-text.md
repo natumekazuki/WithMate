@@ -31,6 +31,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - 両記法は単一行で終端まで揃ったものを対象とする。`visualize`はJSON objectを読み、`mode`は省略または`wide`を扱う。file citationはquoted属性を読み、`mode="live"`、URLや非local artifact参照はfile linkへ変換しない。コード例、成立したMarkdown link／image内、未完／不正記法は通常のMarkdownとして保持する。通常textの角括弧や未閉じlabelは変換の対象外にしない。User本文とMarkdown file previewにはこの変換を適用しない。
 - 保存本文・Sourceは原文を保持する。title、mode、purpose、sheet、range等の属性を保存値から削除せず、visualizeのtitleはpreviewのaccessible nameに使う。filesystem pathはURLの予約文字をencodeして既存open経路へ渡し、`file:` URLは既存のencodeを維持する。Previewの会話検索・選択Copy／Quoteには表示label（visualizeはファイル名、file citationはpath）を使い、隔離されたHTML内部や補助UIは含めない。Sourceでは元の記法を対象にする。折りたたみ見出しは既存の改行・空白を正規化したplain summaryとし、本文Previewと同じ描画を保証するものではない。
 - HTML本文は既存のSession／base resource認可を通して自動読込し、外部URLをHTMLとして取得しない。表示枠が画面に入った時に実行し、画面外やSource切替では実行環境を破棄する。再表示／Reloadは初期状態から実行し、本文追記だけで同一位置・pathのpreviewを再読込しない。HTML自身のCSS／JSで完結する内容を対象とし、公式visualize host/runtime互換は提供しない。安全境界と上限は[HTML Preview Isolation](electron-window-runtime.md#html-preview-isolation)に従う。
+- HTMLはDOM内のiframeとして既存のclipと重なり順へ参加する。Jump to latest、選択action、tooltip、通知、dialog、非対象会話のdimを覆わず、浮動操作のための専用領域や余白を追加しない。一時surfaceを表示するためにHTML全体を隠したり再実行したりしない。
 - Codex固有構文は`src-shared/text/codex-file-references.ts`へ分離する。`src-shared/text/provider-response-markdown.ts`が応答元providerに応じたparser extensionを選び、本文描画・検索・plain summaryで共有する。providerは対象会話の所有元から渡し、User本文・通常のMarkdown・未対応providerには固有解析を適用しない。Markdownとfile linkの描画・操作はprovider共通とする。
 
 ## Image Handling

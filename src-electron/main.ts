@@ -55,6 +55,7 @@ import {
 } from "../src-shared/file-explorer/file-explorer-contract.js";
 import { SessionTurnService } from "./session/session-turn-service.js";
 import { registerHtmlPreviewHandlers } from "./ipc/html-preview.js";
+import { registerHtmlPreviewScheme } from "./files/html-preview-service.js";
 import { readSessionHtmlPreview } from "./files/session-html-preview-reader.js";
 import type { SessionTurnRecord } from "../src-shared/session/session-turn-state.js";
 import { AppSettingsStorage } from "./app/app-settings-storage.js";
@@ -266,6 +267,7 @@ import {
 } from "./storage/sqlite-connection.js";
 
 markMainThreadAsNonStorageOwner();
+registerHtmlPreviewScheme();
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const preloadPath = path.resolve(currentDir, "preload.js");
