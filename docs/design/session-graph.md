@@ -84,7 +84,7 @@ Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ�
 
 通常表示は話題の俯瞰図とする。図の幅・高さから可読cardが収まる目安を計算し、取得済みrecordがそれを超える場合、同じ種類・label・方向が続く直列区間を件数付きの`Expand Path`へ集約する。入辺・出辺が各1本で、両端のrecordを取得済みの区間だけを対象とし、分岐・合流、関係の種類・label・向きの変更、循環、未取得の接続先に接するrecordは個別表示を保つ。関係取得上限に達した部分Graphでは接続の完全性を確定できないため集約しない。recordの任意切捨てや文字を潰す自動Fitは行わない。
 
-集約nodeは実recordではなく、件数と区間の先頭・末尾titleを表示する。接続は破線で描き、区間の両端を直接のrelationで結ばない。開くとその区間と取得済みの境界recordを表示し、長い場合はより短い区間へ段階的に分ける。各recordへ必ず到達でき、`Back To Overview`／`Back To Previous Range`で元の範囲と位置へ戻る。record選択時の近傍図・詳細、関連記録の往復を維持する。分岐や循環が多い図は集約だけで画面内に収まるとは限らず、native scrollとCtrl操作を残す。
+集約nodeは実recordではなく、件数と区間の先頭・末尾titleを表示する。接続は破線で描き、区間の両端を直接のrelationで結ばない。開くとその区間と取得済みの境界recordを表示し、長い場合はより短い区間へ段階的に分ける。各recordへ必ず到達でき、上部toolbarの可視label付き`Back To Overview`／`Back To Previous Range`で元の範囲・倍率・位置と展開元のfocusへ戻る。深い区間では隣の`Overview`から俯瞰へ直接戻れる。会話復帰の`Back To Chat`と区別し、展開区間の先頭・末尾titleを別の見出し行へ重ねない。狭幅ではtoolbar操作を折り返す。record選択時の近傍図・詳細、関連記録の往復を維持する。分岐や循環が多い図は集約だけで画面内に収まるとは限らず、native scrollとCtrl操作を残す。
 
 配置は無向の幅優先順で接続recordを近づけ、利用可能な幅へ詰めて複数段に置く。表示幅の変更でもcardの文字・54pxのCharacter iconを縮小せず再配置し、拡縮操作は配置を変えず表示倍率だけを変える。card1列に必要な幅を下回る領域と拡大時はnative横scrollを残す。行・列は時系列や依存方向を表さず、意味と方向は関係のlabelと矢印で示す。複数段を跨ぐ辺はcard間の余白へ通す。
 

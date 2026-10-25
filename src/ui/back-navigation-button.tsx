@@ -2,11 +2,12 @@ import { useId, type ReactNode } from "react";
 
 type BackNavigationButtonProps = {
   label: string;
+  showLabel?: boolean;
   notice?: ReactNode;
   onBack: () => void;
 };
 
-export function BackNavigationButton({ label, notice, onBack }: BackNavigationButtonProps) {
+export function BackNavigationButton({ label, showLabel = false, notice, onBack }: BackNavigationButtonProps) {
   const noticeId = useId();
 
   return (
@@ -19,6 +20,7 @@ export function BackNavigationButton({ label, notice, onBack }: BackNavigationBu
       onClick={onBack}
     >
       <span className="back-navigation-button-icon" aria-hidden="true">←</span>
+      {showLabel ? <span className="back-navigation-button-label">{label}</span> : null}
       {notice ? <span id={noticeId} className="back-navigation-button-notice">{notice}</span> : null}
     </button>
   );

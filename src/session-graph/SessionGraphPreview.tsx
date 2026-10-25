@@ -32,7 +32,7 @@ const PAGE_SIZE = 40;
 export const defaultSessionGraphViewState: SessionGraphViewState = {
   topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0,
 };
-type GraphScope = { ids: string[]; title: string; parentState: SessionGraphViewState; triggerId: string };
+type GraphScope = { ids: string[]; parentState: SessionGraphViewState; triggerId: string };
 export type SessionGraphPreviewMemory = {
   topics: SessionGraphTopic[];
   topicsMore: boolean;
@@ -479,7 +479,6 @@ export function SessionGraphPreview({
   const expandGroup = (node: GraphOverviewNode) => {
     setScopes((current) => [...current, {
       ids: node.records.map((record) => record.id),
-      title: `${node.records[0].title} — ${node.records.at(-1)!.title}`,
       parentState: snapshot(), triggerId: node.id,
     }]);
     pendingScroll.current = { ...snapshot(), scrollLeft: 0, scrollTop: 0 };
@@ -527,6 +526,21 @@ export function SessionGraphPreview({
             ) : null}
           </select>
         ) : null}
+        {scopes.length && !selectedId ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
+          <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} showLabel onBack={() => {
+            const previous = scopes.at(-1)!;
+            pendingScroll.current = previous.parentState;
+            restoreNodeFocus.current = previous.triggerId;
+            setZoom(previous.parentState.zoom);
+            setScopes((current) => current.slice(0, -1));
+          }} />
+          {scopes.length > 1 ? <button type="button" onClick={() => {
+            pendingScroll.current = scopes[0].parentState;
+            restoreNodeFocus.current = scopes[0].triggerId;
+            setZoom(scopes[0].parentState.zoom);
+            setScopes([]);
+          }}>Overview</button> : null}
+        </div> : null}
         {topicsMore ? (
           <button
             type="button"
@@ -556,22 +570,6 @@ export function SessionGraphPreview({
         className={`session-graph-workspace${selectedId ? " has-selection" : ""}${narrow ? " is-narrow" : ""}`}
       >
         <div className="session-graph-column" inert={narrow && !!selectedId} aria-hidden={narrow && !!selectedId || undefined}>
-          {scopes.length && !selectedId ? <div className="session-graph-scope-navigation">
-            <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} onBack={() => {
-              const previous = scopes.at(-1)!;
-              pendingScroll.current = previous.parentState;
-              restoreNodeFocus.current = previous.triggerId;
-              setZoom(previous.parentState.zoom);
-              setScopes((current) => current.slice(0, -1));
-            }} />
-            <span title={scopes.at(-1)!.title}>{scopes.at(-1)!.title}</span>
-            {scopes.length > 1 ? <button type="button" onClick={() => {
-              pendingScroll.current = scopes[0].parentState;
-              restoreNodeFocus.current = scopes[0].triggerId;
-              setZoom(scopes[0].parentState.zoom);
-              setScopes([]);
-            }}>Overview</button> : null}
-          </div> : null}
           <div
             ref={viewportRef}
             onScroll={publishState}

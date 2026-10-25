@@ -1672,8 +1672,12 @@
   font-size: 0.68rem;
 }
 
-.back-navigation-button:has(.back-navigation-button-notice) {
+.back-navigation-button:has(.back-navigation-button-notice, .back-navigation-button-label) {
   width: auto;
+}
+
+.back-navigation-button-label {
+  white-space: nowrap;
 }
 
 .session-file-preview-actions {

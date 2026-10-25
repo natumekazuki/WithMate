@@ -197,10 +197,10 @@ test("graph overview retains semantic boundaries, branches, cycles and unloaded 
 
 // @test-value v2
 // kind = "contract"
-// claim = "区間展開からrecord詳細へ辿れ、再表示・跨話題往復・戻る操作で追加取得した区間を保持し、label主体の名前を常時読める"
+// claim = "区間展開からrecord詳細へ辿れ、会話復帰と区別できる可視labelの範囲navigationで位置・倍率・focusへ戻り、再表示・跨話題往復で追加取得した区間とlabel主体の名前を保持する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "group操作が全経路を無条件展開するか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われるか、Userがtooltip内だけになる"
-// observable = "展開後のgroupとrecord、詳細本文と可視label、再表示・跨話題往復後のnode集合、戻り先groupのfocus、部分取得中の集約可否"
+// fault = "group操作が全経路を無条件展開するか、範囲navigationが会話復帰と見分けられず別の操作を実行するか、戻る時に位置・倍率・focusを失うか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われるか、Userがtooltip内だけになる"
+// observable = "展開後のgroupとrecord、範囲navigationの可視labelと操作結果、詳細本文と可視label、再表示・跨話題往復後のnode集合、戻り先groupのfocusとviewport位置・倍率、部分取得中の集約可否"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-overview-navigation"
 // lifecycle = "permanent"
@@ -219,6 +219,7 @@ test("graph preview retains expanded ranges and displays label actors beside a p
   let memory: SessionGraphPreviewMemory | null = null;
   let state = { topicId: "topic", selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0 } as SessionGraphViewState;
   let truncated = false;
+  let chatReturns = 0;
   const api = {
     readSessionGraph: (async (_id: string, operation: string, request: { ids?: string[]; topicId?: string; offset?: number; limit?: number }) => {
       if (operation === "list_topics") return { status: "ok", revision: 1, items: [{ id: "topic", title: "Topic" }, { id: "other", title: "Other" }], total: 2, offset: 0, hasMore: false, incomplete: false };
@@ -232,7 +233,7 @@ test("graph preview retains expanded ranges and displays label actors beside a p
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
-  const render = (key: string) => root.render(<SessionGraphPreview key={key} api={api} sessionId="main" onOpenPath={() => {}}
+  const render = (key: string) => root.render(<SessionGraphPreview key={key} api={api} sessionId="main" onOpenPath={() => {}} onClose={() => { chatReturns++; }}
     initialState={state} initialMemory={memory} onStateChange={(next) => { state = next; }} onMemoryChange={(next) => { memory = next; }} />);
   const click = async (selector: string) => {
     const target = dom.window.document.querySelector(selector);
@@ -244,8 +245,13 @@ test("graph preview retains expanded ranges and displays label actors beside a p
     await act(async () => render("initial"));
     await click(".session-graph-load-more");
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 3);
+    await click("[aria-label='Zoom In']");
+    const viewport = () => dom.window.document.querySelector<HTMLElement>(".session-graph-viewport")!;
+    viewport().scrollLeft = 46;
+    viewport().scrollTop = 82;
     await click(".session-graph-group");
-    assert.ok(dom.window.document.querySelector("[aria-label='Back To Overview']"));
+    const rangeNavigation = () => dom.window.document.querySelector("[aria-label='Graph Range Navigation']")!;
+    assert.equal(rangeNavigation().querySelector("[aria-label='Back To Overview']")?.textContent, "←Back To Overview");
     const expanded = labels();
     assert.ok(dom.window.document.querySelector(".session-graph-group"), "a long range remains progressively expandable");
     assert.ok(expanded.length < records.length, "opening a group must not render the whole long path");
@@ -264,6 +270,7 @@ test("graph preview retains expanded ranges and displays label actors beside a p
       assert.ok(steps++ < 10);
       await click(".session-graph-group");
     }
+    assert.equal(rangeNavigation().querySelector("[aria-label='Back To Previous Range']")?.textContent, "←Back To Previous Range");
     const leaf = labels();
     await click(".session-graph-node");
     const actor = dom.window.document.querySelector(".session-graph-details .session-graph-identity.is-label")!;
@@ -275,9 +282,23 @@ test("graph preview retains expanded ranges and displays label actors beside a p
     assert.ok(dom.window.document.activeElement?.classList.contains("session-graph-node"));
     while (dom.window.document.querySelector("[aria-label='Back To Previous Range']")) await click("[aria-label='Back To Previous Range']");
     assert.deepEqual(labels(), expanded);
+    await click("[aria-label='Zoom In']");
+    viewport().scrollLeft = 12;
+    viewport().scrollTop = 34;
     await click("[aria-label='Back To Overview']");
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 3);
     assert.ok(dom.window.document.activeElement?.classList.contains("session-graph-group"));
+    assert.deepEqual([viewport().scrollLeft, viewport().scrollTop, state.zoom], [46, 82, 1.1]);
+    await click(".session-graph-group");
+    await click(".session-graph-group");
+    await click("[aria-label='Zoom In']");
+    await click("[aria-label='Graph Range Navigation'] > button:last-child");
+    assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 3);
+    assert.ok(dom.window.document.activeElement?.classList.contains("session-graph-group"));
+    assert.deepEqual([viewport().scrollLeft, viewport().scrollTop, state.zoom], [46, 82, 1.1]);
+    assert.equal(chatReturns, 0);
+    await click("[aria-label='Back To Chat']");
+    assert.equal(chatReturns, 1);
     truncated = true;
     memory = null;
     await act(async () => render("truncated"));
