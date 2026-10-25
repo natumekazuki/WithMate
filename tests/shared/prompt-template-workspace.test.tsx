@@ -17,6 +17,13 @@ const FIRST_TEMPLATE: PromptTemplate = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
+const SECOND_TEMPLATE: PromptTemplate = {
+  ...FIRST_TEMPLATE,
+  id: "template-2",
+  name: "実装依頼",
+  prompt: "この機能を実装して",
+};
+
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function createApi(templates: PromptTemplate[]): WithMateWindowPromptTemplateApi {
@@ -160,6 +167,212 @@ async function renderAndFlush(root: Root, element: React.ReactElement): Promise<
     await Promise.resolve();
   });
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "一覧取得失敗は編集を開始せずRetryでき、再取得中のbusyを経て一覧とkeyboard focusへ復帰する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "取得失敗を空一覧扱いして編集を許可する、再取得できない、または回復後も操作できない"
+// observable = "取得API呼出数、error、Retry、編集buttonのdisabled、busy、optionとfocus、editorへの遷移"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace list failure and retry"
+// lifecycle = "permanent"
+// impact = "一時的な取得失敗から画面内で回復できず、未取得の一覧を空と誤認する"
+// distinction = "正常0件testや型検査では失敗から再取得への非同期遷移とfocusを検出できない"
+// @end-test-value
+test("Template一覧の取得失敗はRetryから一覧と編集導線へ復帰する", async () => {
+  const harness = createDomHarness();
+  let listCalls = 0;
+  let resolveRetry: (templates: PromptTemplate[]) => void = () => {};
+  const api: WithMateWindowPromptTemplateApi = {
+    ...createApi([]),
+    listPromptTemplates: () => {
+      listCalls += 1;
+      return listCalls === 1
+        ? Promise.reject(new Error("Template storage unavailable"))
+        : new Promise((resolve) => { resolveRetry = resolve; });
+    },
+  };
+  try {
+    await renderAndFlush(harness.root, <PromptTemplateWorkspace api={api} onBack={() => {}} onInsert={() => {}} />);
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /Template storage unavailable/);
+    const edit = harness.container.querySelector<HTMLButtonElement>('[aria-label="Edit template"]')!;
+    const retry = Array.from(harness.container.querySelectorAll("button")).find((button) => button.textContent === "Retry")!;
+    assert.ok(retry);
+    assert.equal(harness.dom.window.document.activeElement, retry);
+    assert.equal(edit.disabled, true);
+    assert.equal(harness.container.querySelector('[aria-label="New template"]'), null);
+    await act(async () => edit.click());
+    assert.equal(harness.container.querySelector("input"), null);
+
+    await act(async () => retry.click());
+    assert.equal(listCalls, 2);
+    assert.equal(harness.container.querySelector('[aria-label="Template status"]')?.getAttribute("aria-busy"), "true");
+    assert.ok(harness.container.querySelector('[aria-label="Loading templates"]'));
+    assert.equal(edit.disabled, true);
+    assert.equal(harness.dom.window.document.activeElement, harness.container.querySelector('[aria-label="Template status"]'));
+
+    await act(async () => resolveRetry([FIRST_TEMPLATE]));
+    const option = harness.container.querySelector('[role="option"]');
+    assert.equal(option?.textContent?.trim(), FIRST_TEMPLATE.name);
+    assert.equal(harness.dom.window.document.activeElement, option);
+    assert.equal(harness.container.querySelector('[role="alert"]'), null);
+    assert.equal(harness.container.querySelector('[role="listbox"]')?.getAttribute("aria-busy"), null);
+    assert.equal(edit.disabled, false);
+    await act(async () => edit.click());
+    assert.equal(harness.container.querySelector<HTMLInputElement>('[aria-label="Template name"]')?.value, FIRST_TEMPLATE.name);
+  } finally {
+    await act(async () => harness.root.unmount());
+    harness.dom.window.close();
+    harness.restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "取得失敗後の購読通知は一覧を回復させ、Retry中の通知は後着の取得失敗より優先される"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "取得errorが新しい購読一覧を隠す、または遅延した取得失敗が回復済み一覧を隠す"
+// observable = "購読通知後のoption、alertの有無、編集buttonの操作可否"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace list recovery through subscription"
+// lifecycle = "permanent"
+// impact = "別Windowから受信済みのテンプレートを利用できなくなる"
+// distinction = "初期一覧成功の順序testとは異なり取得失敗状態からの回復と遅延rejectを確認する"
+// @end-test-value
+test("Template購読通知は取得失敗と遅いRetry失敗から一覧を回復する", async () => {
+  for (const retryBeforeNotification of [false, true]) {
+    const harness = createDomHarness();
+    const subscribed = createSubscribedApi([]);
+    let listCalls = 0;
+    let rejectRetry: (error: Error) => void = () => {};
+    subscribed.api.listPromptTemplates = () => {
+      listCalls += 1;
+      return listCalls === 1
+        ? Promise.reject(new Error("Load failed"))
+        : new Promise((_resolve, reject) => { rejectRetry = reject; });
+    };
+    try {
+      await renderAndFlush(harness.root, <PromptTemplateWorkspace api={subscribed.api} onBack={() => {}} onInsert={() => {}} />);
+      if (retryBeforeNotification) {
+        await act(async () => {
+          Array.from(harness.container.querySelectorAll("button")).find((button) => button.textContent === "Retry")!.click();
+        });
+      }
+      await act(async () => subscribed.emit([SECOND_TEMPLATE]));
+      await act(async () => rejectRetry(new Error("Late load failure")));
+      assert.equal(harness.container.querySelector('[role="option"]')?.textContent?.trim(), SECOND_TEMPLATE.name);
+      assert.equal(harness.container.querySelector('[role="alert"]'), null);
+      assert.equal(harness.container.querySelector<HTMLButtonElement>('[aria-label="Edit template"]')?.disabled, false);
+    } finally {
+      await act(async () => harness.root.unmount());
+      harness.dom.window.close();
+      harness.restore();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Save/Delete待ち中は編集対象と退出を固定し、成功・失敗後に操作を戻し、失敗時は入力を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "保存・削除待ち中にBやpickerへ切り替わる、遅延応答が別対象を上書きする、失敗時の入力が消える、または操作が復帰しない"
+// observable = "API対象IDと本文、一覧選択・Back・New・入力のdisabled、close guard、editor値、busy、完了後の対象切替と再入場"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace delayed save/delete success and failure"
+// lifecycle = "permanent"
+// impact = "利用者が意図した編集対象を取り違え、未保存入力を失う"
+// distinction = "既存spinner testや型検査では検出しない、対象切替・退出・応答順・失敗後の入力保護を4つの決定論的caseで確認する"
+// @end-test-value
+test("Template保存・削除は処理中の対象を固定し成功・失敗後に操作を戻す", async () => {
+  for (const action of ["save", "delete"] as const) {
+    for (const outcome of ["success", "failure"] as const) {
+      const harness = createDomHarness();
+      const closeGuard: { current: (() => boolean) | null } = { current: null };
+      let resolveMutation: (templates: PromptTemplate[]) => void = () => {};
+      let rejectMutation: (error: Error) => void = () => {};
+      let targetId: string | undefined;
+      let savedPrompt: string | undefined;
+      let confirmCalls = 0;
+      harness.dom.window.confirm = () => { confirmCalls += 1; return true; };
+      const pending = new Promise<PromptTemplate[]>((resolve, reject) => {
+        resolveMutation = resolve;
+        rejectMutation = reject;
+      });
+      const api: WithMateWindowPromptTemplateApi = {
+        ...createApi([FIRST_TEMPLATE, SECOND_TEMPLATE]),
+        updatePromptTemplate: (input) => { targetId = input.id; savedPrompt = input.prompt; return pending; },
+        deletePromptTemplate: (id) => { targetId = id; return pending; },
+      };
+      try {
+        await renderAndFlush(harness.root, <PromptTemplateWorkspace
+          api={api}
+          onRegisterCloseGuard={(guard) => { closeGuard.current = guard; }}
+          onBack={() => {}}
+          onInsert={() => {}}
+        />);
+        await act(async () => harness.container.querySelector<HTMLButtonElement>('[aria-label="Edit template"]')!.click());
+        const prompt = harness.container.querySelector<HTMLTextAreaElement>('[aria-label="Prompt"]')!;
+        const editedPrompt = `${FIRST_TEMPLATE.prompt} (edited)`;
+        await act(async () => {
+          prompt.focus();
+          Object.getOwnPropertyDescriptor(harness.dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, editedPrompt);
+          const change = new harness.dom.window.Event("propertychange", { bubbles: true });
+          Object.defineProperty(change, "propertyName", { value: "value" });
+          prompt.dispatchEvent(change);
+          prompt.dispatchEvent(new harness.dom.window.Event("input", { bubbles: true }));
+        });
+        const actionButton = harness.container.querySelector<HTMLButtonElement>(`[aria-label="${action === "save" ? "Save" : "Delete"}"]`)!;
+        await act(async () => actionButton.click());
+        assert.equal(targetId, FIRST_TEMPLATE.id);
+        if (action === "save") assert.equal(savedPrompt, editedPrompt);
+        assert.equal(actionButton.getAttribute("aria-busy"), "true");
+        assert.equal(prompt.disabled, true);
+        const back = harness.container.querySelector<HTMLButtonElement>('[aria-label="Back to template selection"]')!;
+        const create = harness.container.querySelector<HTMLButtonElement>('[aria-label="New template"]')!;
+        const second = Array.from(harness.container.querySelectorAll<HTMLButtonElement>('[aria-pressed]')).find((button) => button.textContent === SECOND_TEMPLATE.name)!;
+        assert.equal(back.disabled, true);
+        assert.equal(create.disabled, true);
+        assert.equal(second.disabled, true);
+        const confirmationsBeforeNavigation = confirmCalls;
+        await act(async () => { second.click(); back.click(); create.click(); });
+        assert.equal(closeGuard.current?.(), false);
+        assert.equal(confirmCalls, confirmationsBeforeNavigation);
+        assert.equal(harness.container.querySelector<HTMLInputElement>('[aria-label="Template name"]')?.value, FIRST_TEMPLATE.name);
+        assert.equal(prompt.value, editedPrompt);
+
+        await act(async () => {
+          if (outcome === "failure") rejectMutation(new Error(`${action} failed`));
+          else resolveMutation(action === "save" ? [{ ...FIRST_TEMPLATE, prompt: editedPrompt }, SECOND_TEMPLATE] : [SECOND_TEMPLATE]);
+        });
+        assert.equal(back.disabled, false);
+        assert.equal(create.disabled, false);
+        assert.equal(second.disabled, false);
+        assert.equal(prompt.disabled, false);
+        assert.equal(actionButton.getAttribute("aria-busy"), null);
+        const expectedName = action === "delete" && outcome === "success" ? SECOND_TEMPLATE.name : FIRST_TEMPLATE.name;
+        assert.equal(harness.container.querySelector<HTMLInputElement>('[aria-label="Template name"]')?.value, expectedName);
+        assert.equal(prompt.value, action === "delete" && outcome === "success" ? SECOND_TEMPLATE.prompt : editedPrompt);
+        if (outcome === "failure") {
+          assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, `${action} failed`);
+          assert.equal(actionButton.disabled, false);
+        }
+        assert.equal(closeGuard.current?.(), true);
+        await act(async () => second.click());
+        assert.equal(prompt.value, SECOND_TEMPLATE.prompt);
+        await act(async () => back.click());
+        assert.ok(harness.container.querySelector('[role="listbox"]'));
+        await act(async () => harness.container.querySelector<HTMLButtonElement>('[aria-label="Edit template"]')!.click());
+        assert.equal(harness.container.querySelector<HTMLInputElement>('[aria-label="Template name"]')?.value,
+          action === "delete" && outcome === "success" ? SECOND_TEMPLATE.name : FIRST_TEMPLATE.name);
+      } finally {
+        await act(async () => harness.root.unmount());
+        harness.dom.window.close();
+        harness.restore();
+      }
+    }
+  }
+});
 
 test("PromptTemplateWorkspace は初期表示を選択専用modeにする", async () => {
   const harness = createDomHarness();

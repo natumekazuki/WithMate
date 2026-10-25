@@ -45,11 +45,14 @@ export function PromptTemplateWorkspace({
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [loadError, setLoadError] = useState("");
   const [savingAction, setSavingAction] = useState<"save" | "delete" | null>(null);
   const [error, setError] = useState("");
   const templatesRef = useRef<PromptTemplate[]>([]);
   const pickerListRef = useRef<HTMLDivElement | null>(null);
   const pickerEditButtonRef = useRef<HTMLButtonElement | null>(null);
+  const pickerRetryButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorNameInputRef = useRef<HTMLInputElement | null>(null);
   const shouldFocusPickerRef = useRef(true);
   const isSaving = savingAction !== null;
@@ -59,7 +62,7 @@ export function PromptTemplateWorkspace({
     ? editor.name !== selectedTemplate.name || editor.prompt !== selectedTemplate.prompt
     : editor.name.length > 0 || editor.prompt.length > 0;
   const closeGuardRef = useRef<() => boolean>(() => true);
-  closeGuardRef.current = () => !isDirty || window.confirm("Discard unsaved changes?");
+  closeGuardRef.current = () => !isSaving && (!isDirty || window.confirm("Discard unsaved changes?"));
 
   useEffect(() => {
     if (!onRegisterCloseGuard) {
@@ -73,6 +76,8 @@ export function PromptTemplateWorkspace({
   useEffect(() => {
     let active = true;
     let receivedNotification = false;
+    setIsLoading(true);
+    setLoadError("");
     const applyTemplates = (nextTemplates: PromptTemplate[]) => {
       if (!active) {
         return;
@@ -81,6 +86,7 @@ export function PromptTemplateWorkspace({
       templatesRef.current = nextTemplates;
       setTemplates(nextTemplates);
       setIsLoading(false);
+      setLoadError("");
       setEditor((current) => {
         if (current.id) {
           const nextSelected = nextTemplates.find((template) => template.id === current.id);
@@ -108,32 +114,36 @@ export function PromptTemplateWorkspace({
     }).catch((loadError) => {
       if (active && !receivedNotification) {
         setIsLoading(false);
-        setError(errorMessage(loadError));
+        setLoadError(loadError instanceof Error ? loadError.message : "Could not load templates.");
       }
     });
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [api]);
+  }, [api, loadAttempt]);
 
   useEffect(() => {
     if (mode !== "select") {
       shouldFocusPickerRef.current = true;
       return;
     }
-    if (isLoading || !shouldFocusPickerRef.current || typeof document === "undefined") {
+    if (!shouldFocusPickerRef.current || typeof document === "undefined") {
       return;
     }
     const pickerList = pickerListRef.current;
-    if (pickerList?.contains(document.activeElement)) {
+    if (isLoading) {
+      pickerList?.focus();
+      return;
+    }
+    if (document.activeElement !== pickerList && pickerList?.contains(document.activeElement)) {
       shouldFocusPickerRef.current = false;
       return;
     }
     const firstSelectableTemplate = pickerList?.querySelector<HTMLElement>("[role=\"option\"]:not([disabled])");
-    (firstSelectableTemplate ?? pickerEditButtonRef.current)?.focus();
+    (firstSelectableTemplate ?? pickerRetryButtonRef.current ?? pickerEditButtonRef.current)?.focus();
     shouldFocusPickerRef.current = false;
-  }, [isLoading, mode]);
+  }, [isLoading, loadError, mode]);
 
   useEffect(() => {
     if (mode === "edit") {
@@ -146,7 +156,7 @@ export function PromptTemplateWorkspace({
   const defaultEditor = templates[0] ? toEditorState(templates[0]) : EMPTY_EDITOR;
 
   const openEditor = (nextEditor: EditorState = defaultEditor) => {
-    if (!confirmDiscard()) {
+    if (isLoading || loadError || !confirmDiscard()) {
       return;
     }
     setEditor(nextEditor);
@@ -231,8 +241,8 @@ export function PromptTemplateWorkspace({
   };
 
   const renderPicker = () => {
-    const hasTemplates = !isLoading && !error && templates.length > 0;
-    const pickerRole = hasTemplates ? "listbox" : isLoading || error ? "status" : "region";
+    const hasTemplates = !isLoading && !loadError && templates.length > 0;
+    const pickerRole = hasTemplates ? "listbox" : isLoading || loadError ? "status" : "region";
     return (
       <>
         <header className="prompt-template-workspace-header">
@@ -243,7 +253,7 @@ export function PromptTemplateWorkspace({
               type="button"
               className="drawer-toggle compact secondary"
               onClick={() => openEditor()}
-              disabled={isLoading}
+              disabled={isLoading || Boolean(loadError)}
               aria-label="Edit template"
             >
               Edit Templates
@@ -290,8 +300,21 @@ export function PromptTemplateWorkspace({
               <div className="prompt-template-picker-state">
                 <LoadingIndicator label="Loading templates" />
               </div>
-            ) : error ? (
-              <p className="prompt-template-picker-state error" role="alert">{error}</p>
+            ) : loadError ? (
+              <div className="prompt-template-picker-state error">
+                <p role="alert">{loadError}</p>
+                <button
+                  ref={pickerRetryButtonRef}
+                  type="button"
+                  className="drawer-toggle compact secondary"
+                  onClick={() => {
+                    shouldFocusPickerRef.current = true;
+                    setLoadAttempt((attempt) => attempt + 1);
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
             ) : templates.length > 0 ? (
               templates.map((template, index) => (
                 <button
@@ -331,7 +354,7 @@ export function PromptTemplateWorkspace({
   const renderEditor = () => (
     <>
       <header className="prompt-template-workspace-header">
-        <BackNavigationButton label="Back to template selection" onBack={returnToPicker} />
+        <BackNavigationButton label="Back to template selection" onBack={returnToPicker} disabled={isSaving} />
         <strong>Edit Templates</strong>
       </header>
 
@@ -353,6 +376,7 @@ export function PromptTemplateWorkspace({
               type="button"
               key={template.id}
               aria-pressed={editor.id === template.id}
+              disabled={isSaving}
               onClick={() => selectTemplateForEditor(template)}
             >
               {template.name}
