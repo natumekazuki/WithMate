@@ -1212,6 +1212,59 @@
   color: var(--danger, #fca5a5);
 }
 
+.file-history-detail-error {
+  padding: 8px 9px;
+  font-size: 0.76rem;
+}
+
+.file-history-detail-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.file-history-detail-error-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+}
+
+.file-history-detail-error-actions .file-history-detail-error-toggle {
+  color: var(--danger, #fca5a5);
+}
+
+.file-history-detail-error-popover {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(320px, calc(100vh - 32px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  border: 1px solid var(--line, rgba(203, 213, 225, 0.18));
+  border-radius: 12px;
+  background: rgba(12, 17, 25, 0.98);
+  color: var(--ink, #edf2f7);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+  font-size: 0.76rem;
+}
+
+.file-history-detail-error-popover .file-history-detail-error-close {
+  float: right;
+  display: inline-flex;
+  margin: 0 0 4px 8px;
+  padding: 5px;
+}
+
+.file-history-detail-error-popover p {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .file-history-detail {
   min-width: 0;
   min-height: 0;

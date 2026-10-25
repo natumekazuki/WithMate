@@ -6,8 +6,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import {
@@ -32,6 +34,7 @@ import type {
   FileRootGitHistoryRepository,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 type FileRootGitHistoryApi = Pick<
   WithMateWindowApi,
@@ -98,6 +101,111 @@ type HistoryPageIdentity = {
 };
 
 type HistoryRepositoryState = "pending" | "ready" | "unavailable" | "error";
+
+function HistoryDetailErrorPopover({ anchor, actionsId, id, label, message, onClose }: {
+  anchor: HTMLButtonElement;
+  actionsId: string;
+  id: string;
+  label: string;
+  message: string;
+  onClose: (restoreFocus: boolean) => void;
+}) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
+  const isPositioned = position.visibility !== "hidden";
+
+  useLayoutEffect(() => {
+    const updatePosition = () => {
+      const panel = panelRef.current;
+      if (!panel) {
+        return;
+      }
+      const margin = 16;
+      const gap = 8;
+      const anchorRect = anchor.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const below = anchorRect.bottom + gap;
+      const belowSpace = Math.max(0, window.innerHeight - margin - below);
+      const aboveSpace = Math.max(0, anchorRect.top - gap - margin);
+      const contentHeight = panel.scrollHeight + panel.offsetHeight - panel.clientHeight;
+      const useBelow = belowSpace >= Math.min(contentHeight, 320) || belowSpace >= aboveSpace;
+      const maxHeight = Math.min(320, useBelow ? belowSpace : aboveSpace);
+      const top = useBelow ? below : anchorRect.top - gap - Math.min(contentHeight, maxHeight);
+      const styles = window.getComputedStyle(anchor);
+      const theme = Object.fromEntries(
+        ["--ink", "--muted", "--line", "--character-sub-soft"].map((property) => [property, styles.getPropertyValue(property)]),
+      );
+      setPosition({
+        ...theme,
+        left: Math.max(margin, Math.min(anchorRect.left, window.innerWidth - panelRect.width - margin)),
+        top: Math.max(margin, top),
+        maxHeight,
+      });
+    };
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [anchor, message]);
+
+  useEffect(() => {
+    if (isPositioned) {
+      panelRef.current?.focus();
+    }
+  }, [isPositioned]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && !panelRef.current?.contains(target) && !document.getElementById(actionsId)?.contains(target)) {
+        onClose(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose(true);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [actionsId, onClose]);
+
+  return createPortal(
+    <div
+      ref={panelRef}
+      id={id}
+      className="file-history-detail-error-popover"
+      role="dialog"
+      aria-label={label}
+      tabIndex={-1}
+      style={position}
+      onKeyDown={(event) => {
+        if (event.key === "Tab" && (event.shiftKey || event.target !== event.currentTarget)) {
+          onClose(true);
+          if (event.shiftKey) {
+            event.preventDefault();
+          }
+        }
+      }}
+    >
+      <button className="session-file-explorer-refresh file-history-detail-error-close" type="button" aria-label="Close Error Details" title="Close Error Details" onClick={() => onClose(true)}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+          <path d="m6 6 12 12M18 6 6 18" />
+        </svg>
+      </button>
+      <p>{message}</p>
+    </div>,
+    document.body,
+  );
+}
 
 function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relativePath: string): string {
   return `${rootId}\u0000${scope}\u0000${relativePath}`;
@@ -410,6 +518,11 @@ export function FileRootGitHistoryPane({
   const hasMoreRef = useRef(false);
   const selectedCommitIdRef = useRef<string | null>(null);
   const detailRequestRef = useRef(0);
+  const detailBackRef = useRef<HTMLButtonElement | null>(null);
+  const detailRetryButtonRef = useRef<HTMLButtonElement | null>(null);
+  const detailErrorButtonRef = useRef<HTMLButtonElement | null>(null);
+  const detailRetryFocusRef = useRef(false);
+  const detailErrorId = useId();
   const diffRequestRef = useRef(0);
   const comparisonRequestRef = useRef(0);
   const listScrollRef = useRef<HTMLDivElement | null>(null);
@@ -432,12 +545,21 @@ export function FileRootGitHistoryPane({
   const [selectedCommit, setSelectedCommit] = useState<FileRootGitHistoryCommit | null>(null);
   const [changedEntries, setChangedEntries] = useState<FileRootGitChangeEntry[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [detailLoadMessage, setDetailLoadMessage] = useState("");
+  const [detailErrorExpanded, setDetailErrorExpanded] = useState(false);
   const [detailMessage, setDetailMessage] = useState("");
   const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
   const [loadingDiffKey, setLoadingDiffKey] = useState("");
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const [lastSelectedCommitId, setLastSelectedCommitId] = useState<string | null>(null);
   const [comparisonOpen, setComparisonOpen] = useState(false);
+  const detailErrorOpen = detailErrorExpanded && !!(detailLoadMessage || detailMessage) && visible && !comparisonOpen;
+  const closeDetailError = useCallback((restoreFocus: boolean) => {
+    setDetailErrorExpanded(false);
+    if (restoreFocus) {
+      detailErrorButtonRef.current?.focus();
+    }
+  }, []);
   const comparisonOpenRef = useRef(comparisonOpen);
   comparisonOpenRef.current = comparisonOpen;
   const listRefreshDeferredRef = useRef(false);
@@ -565,6 +687,7 @@ export function FileRootGitHistoryPane({
     cursorRef.current = null;
     hasMoreRef.current = false;
     selectedCommitIdRef.current = null;
+    detailRetryFocusRef.current = false;
     detailRequestRef.current += 1;
     diffRequestRef.current += 1;
     comparisonRequestRef.current += 1;
@@ -577,6 +700,8 @@ export function FileRootGitHistoryPane({
     setLastSelectedCommitId(null);
     setChangedEntries([]);
     setLoadingDetail(false);
+    setDetailLoadMessage("");
+    setDetailErrorExpanded(false);
     setDetailMessage("");
     setListMessage("");
     setLoadingCommits(false);
@@ -846,21 +971,26 @@ export function FileRootGitHistoryPane({
 
   const selectCommit = useCallback(async (commit: FileRootGitHistoryCommit) => {
     const repository = selectedRepositoryRef.current;
-    if (!api || !sessionId || !repository) {
+    if (!api || !sessionId || !repository || (loadingDetail && selectedCommitIdRef.current === commit.id)) {
       return;
     }
     const generation = generationRef.current;
     const requestId = detailRequestRef.current + 1;
     detailRequestRef.current = requestId;
-    diffRequestRef.current += 1;
+    const isCurrent = () => isCurrentRepository(generation, repository)
+      && detailRequestRef.current === requestId
+      && selectedCommitIdRef.current === commit.id;
+    if (selectedCommitIdRef.current !== commit.id) {
+      diffRequestRef.current += 1;
+      setLoadingDiffKey("");
+      setDetailMessage("");
+    }
     selectedCommitIdRef.current = commit.id;
     setLastSelectedCommitId(commit.id);
     setSelectedCommitId(commit.id);
     setSelectedCommit(commit);
     setChangedEntries([]);
     setLoadingDetail(true);
-    setDetailMessage("");
-    setLoadingDiffKey("");
     setSelectedEntryPath(null);
     try {
       const result: FileRootGitHistoryCommitDetailResult = await api.getFileRootGitHistoryCommitDetail({
@@ -869,46 +999,52 @@ export function FileRootGitHistoryPane({
         rootId: repository.rootId,
         commitId: commit.id,
       });
-      if (
-        generationRef.current !== generation
-        || detailRequestRef.current !== requestId
-        || selectedCommitIdRef.current !== commit.id
-        || selectedRepositoryRef.current?.repositoryId !== repository.repositoryId
-        || selectedRepositoryRef.current?.rootId !== repository.rootId
-      ) {
+      if (!isCurrent()) {
         return;
       }
       if (result.status !== "ok") {
-        setDetailMessage(result.message);
+        setDetailLoadMessage(result.message);
         return;
       }
+      setDetailLoadMessage("");
+      setDetailErrorExpanded(false);
       setSelectedCommit(result.commit);
       setChangedEntries(result.entries);
     } catch (error) {
-      if (
-        generationRef.current === generation
-        && detailRequestRef.current === requestId
-        && selectedCommitIdRef.current === commit.id
-      ) {
-        setDetailMessage(error instanceof Error ? error.message : "Commit detail could not be loaded.");
+      if (isCurrent()) {
+        setDetailLoadMessage(error instanceof Error ? error.message : "Commit detail could not be loaded.");
       }
     } finally {
-      if (
-        generationRef.current === generation
-        && detailRequestRef.current === requestId
-        && selectedCommitIdRef.current === commit.id
-      ) {
+      if (isCurrent()) {
         setLoadingDetail(false);
       }
     }
-  }, [api, sessionId]);
+  }, [api, isCurrentRepository, loadingDetail, sessionId]);
+
+  useLayoutEffect(() => {
+    if (loadingDetail || !detailRetryFocusRef.current) {
+      return;
+    }
+    detailRetryFocusRef.current = false;
+    if (document.activeElement !== document.body) {
+      return;
+    }
+    if (detailLoadMessage) {
+      detailRetryButtonRef.current?.focus();
+    } else {
+      detailBackRef.current?.focus();
+    }
+  }, [detailErrorId, detailLoadMessage, loadingDetail]);
 
   const backToHistory = useCallback(() => {
     detailRequestRef.current += 1;
     diffRequestRef.current += 1;
     selectedCommitIdRef.current = null;
+    detailRetryFocusRef.current = false;
     setSelectedCommitId(null);
     setLoadingDetail(false);
+    setDetailLoadMessage("");
+    setDetailErrorExpanded(false);
     setDetailMessage("");
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
@@ -1120,6 +1256,8 @@ export function FileRootGitHistoryPane({
       }
       if (message) {
         setDetailMessage(message);
+      } else if (!detailLoadMessage) {
+        setDetailErrorExpanded(false);
       }
       return message;
     } catch (error) {
@@ -1140,7 +1278,7 @@ export function FileRootGitHistoryPane({
         setLoadingDiffKey("");
       }
     }
-  }, [onOpenDiff, selectedCommit, sessionId]);
+  }, [detailLoadMessage, onOpenDiff, selectedCommit, sessionId]);
 
   const rootChange = useMemo<GitRootChanges | null>(() => {
     const repository = selectedRepository;
@@ -1204,6 +1342,67 @@ export function FileRootGitHistoryPane({
     : null;
   const canCompare = Boolean(api);
   const isBusy = loadingRepositories || loadingCommits || loadingMore || loadingDetail || comparisonLoading || !!loadingDiffKey;
+  const detailErrorLabel = detailLoadMessage
+    ? detailMessage ? "Commit Detail and Diff Errors" : "Commit Detail Error"
+    : "Commit Diff Error";
+  const detailErrorMessage = detailLoadMessage && detailMessage
+    ? `Commit Diff\n${detailMessage}\n\nCommit Detail\n${detailLoadMessage}`
+    : detailLoadMessage || detailMessage;
+  const detailFeedback = detailErrorMessage ? (
+    <div id={detailErrorId} className="file-history-detail-error">
+      {detailLoadMessage ? <span className="visually-hidden" role="alert">Commit detail could not be loaded.</span> : null}
+      {detailMessage ? <span className="visually-hidden" role="alert">Commit diff could not be opened.</span> : null}
+      <div className="file-history-detail-error-actions">
+        <button
+          ref={detailErrorButtonRef}
+          className="session-file-explorer-refresh file-history-detail-error-toggle"
+          type="button"
+          aria-label={`${detailErrorOpen ? "Hide" : "Show"} ${detailErrorLabel}`}
+          title={detailErrorOpen ? "Hide Error Details" : "Show Error Details"}
+          aria-expanded={detailErrorOpen}
+          aria-haspopup="dialog"
+          aria-controls={detailErrorOpen ? `${detailErrorId}-details` : undefined}
+          onClick={() => setDetailErrorExpanded((expanded) => !expanded)}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v6m0 4h.01" />
+          </svg>
+        </button>
+        {selectedCommit && detailLoadMessage ? (
+          <button
+            ref={detailRetryButtonRef}
+            className="session-file-explorer-refresh"
+            type="button"
+            aria-label="Retry Commit Detail"
+            title="Retry Commit Detail"
+            disabled={loadingDetail}
+            aria-busy={loadingDetail || undefined}
+            onClick={() => {
+              detailRetryFocusRef.current = document.getElementById(detailErrorId)?.contains(document.activeElement) ?? false;
+              void selectCommit(selectedCommit);
+            }}
+          >
+            <ButtonContent busy={loadingDetail} busyLabel="Retrying commit detail">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                <path d="M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7" />
+              </svg>
+            </ButtonContent>
+          </button>
+        ) : null}
+      </div>
+      {detailErrorOpen && detailErrorButtonRef.current ? (
+        <HistoryDetailErrorPopover
+          anchor={detailErrorButtonRef.current}
+          actionsId={detailErrorId}
+          id={`${detailErrorId}-details`}
+          label={detailErrorLabel}
+          message={detailErrorMessage}
+          onClose={closeDetailError}
+        />
+      ) : null}
+    </div>
+  ) : null;
 
   return (
     <div className="file-history-pane" aria-busy={isBusy}>
@@ -1396,8 +1595,8 @@ export function FileRootGitHistoryPane({
           ) : null}
         </div>
       ) : selectedCommitId ? (
-        <div className="file-history-detail" ref={setChangedFilesScrollElement}>
-          <button className="file-history-back" type="button" onClick={backToHistory}>
+        <div className="file-history-detail" ref={setChangedFilesScrollElement} aria-busy={loadingDetail || undefined}>
+          <button ref={detailBackRef} className="file-history-back" type="button" onClick={backToHistory}>
             ← History
           </button>
           {selectedCommit ? (
@@ -1439,11 +1638,13 @@ export function FileRootGitHistoryPane({
                   </button>
                 ) : null}
               </div>
-              {detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
+              {detailFeedback}
               {loadingDetail ? (
-                <div className="workspace-changes-loading">
-                  <LoadingIndicator label="Loading commit detail" />
-                </div>
+                !detailLoadMessage ? (
+                  <div className="workspace-changes-loading">
+                    <LoadingIndicator label="Loading commit detail" />
+                  </div>
+                ) : null
               ) : rootChange ? (
                 <div className="file-history-changed-files">
                   <FileRootChangesGroup
@@ -1467,7 +1668,7 @@ export function FileRootGitHistoryPane({
             <div className="workspace-changes-loading">
               <LoadingIndicator label="Loading commit detail" />
             </div>
-          ) : detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
+          ) : detailFeedback}
         </div>
       ) : (
         <div
