@@ -79,6 +79,9 @@ test("recovery actions はlatest turn再取得中とerrorでも既知の操作�
     }
     assert.match(html, /Loading latest execution/);
     assert.match(html, /Could not load the latest execution: Read failed/);
-    assert.match(html, /Retry<\/button>/);
+    const retryButton = document.querySelector<HTMLButtonElement>('[role="alert"] button');
+    assert.ok(retryButton);
+    assert.equal(retryButton.textContent, "Retry");
+    assert.equal(retryButton.disabled, true);
   }
 });

@@ -322,7 +322,7 @@ test("固定高のSession Headerは操作群を折り返さずタイトルを残
 // @test-value v2
 // kind = "invariant"
 // claim = "Session四辺の開閉は共通motionを使い、resize中とreduced-motionでは補間を停止する"
-// oracle = { type = "contract", ref = "session dock motion accessibility" }
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#フィードバックとmotion" }
 // fault = "resize操作中またはreduced-motion設定下でもtransitionが走り、操作追従や利用者設定を損なう"
 // observable = "session dockのtransition、resizing state、prefers-reduced-motion CSS宣言"
 // observation_boundary = "declaration"
@@ -335,7 +335,7 @@ test("Session 四辺の開閉は共通 motion を使い、resize 中と reduced-
 
   assert.match(
     stylesSource,
-    /\.session-chat-layout\s*{[\s\S]*?--session-dock-motion-duration:\s*220ms;[\s\S]*?--session-dock-motion-easing:\s*cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?transition:[\s\S]*?grid-template-rows\s+var\(--session-dock-motion-duration\)/,
+    /\.session-chat-layout\s*{[^}]*?--session-dock-motion-duration:\s*[1-9]\d*(?:\.\d+)?ms;[^}]*?--session-dock-motion-easing:\s*cubic-bezier\([^)]+\);[^}]*?transition:[^}]*?grid-template-rows\s+var\(--session-dock-motion-duration\)\s+var\(--session-dock-motion-easing\)/,
   );
   assert.match(
     stylesSource,
