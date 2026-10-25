@@ -23,7 +23,7 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 
 同一repositoryの更新では取得済み内容、選択中branch、commit詳細、Compare、中央Diffと閲覧位置を保持し、失敗は内容を残したまま理由を表示します。詳細／Compareを閲覧中のcommit list更新は一覧へ戻るまで延期します。一覧更新は取得済み件数を目安に先頭からpageを取り直し、新しい先頭と古いoffset cursorを混在させません。repositoryや認可rootの選択を変更した場合は旧表示と非同期取得を失効させ、新しい選択へ旧応答を反映しません。
 
-commit詳細の取得失敗は、エラー詳細を開閉するiconと`Retry Commit Detail`の再試行iconを表示します。診断文は初期状態では折りたたみ、エラーiconを操作すると原文を表示します。再試行中も詳細の開閉状態と操作の位置を保持し、成功後は取得した詳細へ戻ります。
+commit詳細の取得失敗は、エラー詳細を開閉するiconと`Retry Commit Detail`の再試行iconを表示します。診断文は初期状態では表示せず、エラーiconを操作すると原文を非modal popoverへ表示します。周囲の配置やRetryの位置を変えずに重ねて表示し、画面端では位置と高さを補正し、長文はpopover内でscroll・選択できます。Escape・閉じるbutton・エラーiconの再操作・外側のclickで閉じられ、Escapeや閉じるbuttonではエラーiconへfocusを戻します。再試行中も詳細の開閉状態と操作の位置を保持し、成功後は取得した詳細へ戻ります。
 
 ## Compare
 

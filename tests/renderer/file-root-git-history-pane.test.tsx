@@ -232,10 +232,10 @@ const unusedHistoryComparison = async (): Promise<FileRootGitHistoryComparisonRe
 
 // @test-value v2
 // kind = "contract"
-// claim = "commit detailの失敗はicon操作から原文の詳細を開閉でき、Retryで同じ対象へ復帰し、再失敗後も操作とfocusを保つ"
+// claim = "commit detailの失敗はiconから原文の非modal popoverを開閉でき、Retryで同じ対象へ復帰し、再失敗後も操作とfocusを保つ"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
-// fault = "詳細を開けないか原文が変わる、Retryが別対象を取得する、busy中に再実行する、または完了時に回復操作やfocusを失う"
-// observable = "詳細toggleのaria-expanded/aria-controlsと本文のhidden/原文、detail API request、RetryのDOM identity/disabled/aria-busy、activeElement、成功後のchanged file tree"
+// fault = "詳細を開閉できないか原文が変わる、popoverが操作を遮断する、Retryが別対象を取得する、busy中に再実行する、または回復操作やfocusを失う"
+// observable = "詳細toggleのaria-expanded/aria-controls、dialogの原文・portal配置・開閉とactiveElement、detail API request、RetryのDOM identity/disabled/aria-busy、成功後のchanged file tree"
 // observation_boundary = "component-behavior"
 // scope = "FileRootGitHistoryPane detail recovery"
 // lifecycle = "permanent"
@@ -277,21 +277,46 @@ test("History detailは同じ対象をRetryでき再失敗と成功後のfocus�
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
     await act(async () => pending[0]?.resolve({ status: "failed", message: "raw error: initial" }));
     const error = dom.window.document.querySelector<HTMLElement>(".file-history-detail-error");
-    const toggle = error?.querySelector<HTMLButtonElement>("button[aria-controls]");
+    const toggle = error?.querySelector<HTMLButtonElement>("button[aria-haspopup='dialog']");
     const retry = error?.querySelector<HTMLButtonElement>("button[aria-label='Retry Commit Detail']");
-    const details = error?.querySelector<HTMLParagraphElement>("p");
-    assert.ok(error && toggle && retry && details);
+    const getPanel = () => dom.window.document.querySelector<HTMLElement>("[role='dialog'][aria-label='Commit Detail Error']");
+    assert.ok(error && toggle && retry);
     assert.equal(error.querySelector("[role='alert']")?.textContent, "Commit detail could not be loaded.");
-    assert.equal(details.hidden, true);
+    assert.equal(getPanel(), null);
     assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.equal(toggle.getAttribute("aria-controls"), details.id);
     await act(async () => toggle.click());
+    const panel = getPanel();
+    assert.ok(panel);
+    assert.equal(panel.parentElement, dom.window.document.body, "popover must escape the pane's clipped/scrolling layout");
+    assert.notEqual(panel.getAttribute("aria-modal"), "true");
+    assert.equal(toggle.getAttribute("aria-controls"), panel.id);
     assert.equal(toggle.getAttribute("aria-expanded"), "true");
-    assert.equal(details.hidden, false);
-    assert.equal(details.textContent, "raw error: initial");
+    assert.equal(panel.querySelector("p")?.textContent, "raw error: initial");
+    assert.equal(dom.window.document.activeElement, panel);
+    await act(async () => panel.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.equal(getPanel(), null);
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(dom.window.document.activeElement, toggle);
     await act(async () => toggle.click());
-    assert.equal(details.hidden, true);
+    await act(async () => getPanel()?.querySelector<HTMLButtonElement>("button[aria-label='Close Error Details']")?.click());
+    assert.equal(getPanel(), null);
+    assert.equal(dom.window.document.activeElement, toggle);
     await act(async () => toggle.click());
+    await act(async () => toggle.click());
+    assert.equal(getPanel(), null);
+    await act(async () => toggle.click());
+    const back = dom.window.document.querySelector<HTMLButtonElement>(".file-history-back");
+    assert.ok(back);
+    await act(async () => {
+      back.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      back.focus();
+    });
+    assert.equal(getPanel(), null);
+    assert.equal(dom.window.document.activeElement, back, "outside dismissal must not steal focus");
+    await act(async () => toggle.click());
+    const details = getPanel()?.querySelector("p");
+    assert.ok(details);
+    await act(async () => retry.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true })));
     retry.focus();
     await act(async () => retry.click());
     retry.blur();
@@ -300,14 +325,14 @@ test("History detailは同じ対象をRetryでき再失敗と成功後のfocus�
     assert.equal(retry.getAttribute("aria-busy"), "true");
     assert.equal(dom.window.document.querySelector(".file-history-detail")?.getAttribute("aria-busy"), "true");
     assert.equal(details.textContent, "raw error: initial");
-    assert.equal(details.hidden, false);
+    assert.ok(getPanel());
     await act(async () => retry.click());
     await render(1);
     await flush();
     assert.equal(requests.length, 2, "busy Retry and header refresh must not duplicate the detail request");
     await act(async () => pending[1]?.reject(new Error("raw error: retry")));
     assert.equal(details.textContent, "raw error: retry");
-    assert.equal(details.hidden, false);
+    assert.ok(getPanel());
     assert.equal(retry.disabled, false);
     assert.equal(retry.hasAttribute("aria-busy"), false);
     assert.equal(dom.window.document.activeElement, retry);
@@ -318,6 +343,7 @@ test("History detailは同じ対象をRetryでき再失敗と成功後のfocus�
       sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, commitId: target.id,
     })));
     assert.equal(dom.window.document.querySelector(".file-history-detail [role='alert']"), null);
+    assert.equal(getPanel(), null);
     assert.equal(dom.window.document.querySelector(".file-history-detail-header h3")?.textContent, target.subject);
     assert.ok(dom.window.document.querySelector(".workspace-change-row[title='recovered.ts']"));
     assert.equal(dom.window.document.activeElement, dom.window.document.querySelector(".file-history-back"));
@@ -332,7 +358,7 @@ test("History detailは同じ対象をRetryでき再失敗と成功後のfocus�
 // claim = "Retry中にHistoryへ戻るかcommit/repositoryを切り替えた後は旧対象の成功・失敗・例外が現在の表示やbusyへ反映されない"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
 // fault = "旧Retryの遅延結果が一覧や新しいdetailを上書きし、旧errorを表示するか新requestのbusyを解除する"
-// observable = "現在の一覧/detail DOM、alert、aria-busy、changed file tree"
+// observable = "現在の一覧/detail DOM、alert、エラーdialog、aria-busy、changed file tree"
 // observation_boundary = "component-behavior"
 // scope = "FileRootGitHistoryPane retry request invalidation"
 // lifecycle = "permanent"
@@ -372,6 +398,8 @@ test("History detailのRetry結果はBackとcommitまたはrepository切替後�
       await act(async () => pending[0]?.resolve({ status: "failed", message: "initial failure" }));
       const retry = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Retry Commit Detail']");
       assert.ok(retry);
+      await act(async () => dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Show Commit Detail Error']")?.click());
+      assert.ok(dom.window.document.querySelector("[role='dialog'][aria-label='Commit Detail Error']"));
       await act(async () => retry.click());
       assert.equal(pending.length, 2);
       if (scenario === "repository") {
@@ -385,6 +413,7 @@ test("History detailのRetry結果はBackとcommitまたはrepository切替後�
         await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-back")?.click());
       }
       await flush();
+      assert.equal(dom.window.document.querySelector("[role='dialog'][aria-label='Commit Detail Error']"), null, scenario);
       if (scenario !== "back") {
         await act(async () => dom.window.document.querySelector<HTMLButtonElement>(`.file-history-commit-row[data-commit-id='${second.id}']`)?.click());
         assert.equal(pending.length, 3);
