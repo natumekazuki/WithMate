@@ -794,7 +794,7 @@ export default function HomeApp() {
     sessionCleanupCutoffDate,
     deletingOldSessions,
     onChangeSessionCleanupCutoffDate: setSessionCleanupCutoffDate,
-    onOpenMemoryV6Review: () => void openMemoryV6ReviewWindow(),
+    onOpenMemoryV6Review: openMemoryV6ReviewWindow,
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
   };

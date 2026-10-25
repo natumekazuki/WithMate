@@ -114,6 +114,21 @@ type SettingsActionKey =
   | "delete-sessions"
   | "save-settings";
 
+function settingsActionsConflict(action: SettingsActionKey, pending: SettingsActionKey): boolean {
+  // Save and catalog import can update Session runtime settings; cleanup deletes those Sessions.
+  const updatesSettingsOrSessions = (key: SettingsActionKey) =>
+    key === "save-settings" || key === "import-models" || key === "delete-sessions";
+  // Keep native file dialogs single-flight, including provider draft pickers.
+  const opensFileDialog = (key: SettingsActionKey) =>
+    key.startsWith("browse-") || key === "import-models" || key === "export-models";
+  const updatesCliShim = (key: SettingsActionKey) =>
+    key === "install-cli-shim" || key === "uninstall-cli-shim";
+  return action === pending
+    || (updatesSettingsOrSessions(action) && updatesSettingsOrSessions(pending))
+    || (opensFileDialog(action) && opensFileDialog(pending))
+    || (updatesCliShim(action) && updatesCliShim(pending));
+}
+
 type PromptContextToggleProps = {
   id: string;
   label: string;
@@ -186,31 +201,32 @@ export function HomeSettingsContent({
   onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
-  const [busyAction, setBusyAction] = useState<SettingsActionKey | null>(null);
-  const busyActionRef = useRef<SettingsActionKey | null>(null);
+  const [busyActions, setBusyActions] = useState<ReadonlySet<SettingsActionKey>>(() => new Set());
+  const busyActionsRef = useRef(new Set<SettingsActionKey>());
   const [invalidPreviewWheelZoomStep, setInvalidPreviewWheelZoomStep] = useState<string | null>(null);
   const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
   const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
   const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
   const runAction = async (action: SettingsActionKey, callback: () => void | Promise<void>) => {
-    if (busyActionRef.current) {
+    if ([...busyActionsRef.current].some((pending) => settingsActionsConflict(action, pending))) {
       return;
     }
-    busyActionRef.current = action;
-    setBusyAction(action);
+    busyActionsRef.current.add(action);
+    setBusyActions(new Set(busyActionsRef.current));
     try {
       await callback();
     } finally {
-      busyActionRef.current = null;
-      setBusyAction(null);
+      busyActionsRef.current.delete(action);
+      setBusyActions(new Set(busyActionsRef.current));
     }
   };
-  const isBusy = busyAction !== null;
-  const actionIsBusy = (action: SettingsActionKey) => busyAction === action;
+  const actionIsBusy = (action: SettingsActionKey) => busyActions.has(action);
+  const actionIsBlocked = (action: SettingsActionKey) =>
+    [...busyActions].some((pending) => settingsActionsConflict(action, pending));
 
   return (
     <>
-      <div className="settings-panel settings-panel-window" aria-busy={isBusy}>
+      <div className="settings-panel settings-panel-window">
         <div className="settings-panel-window-scroll">
           <section className="settings-section">
           {!settingsDraftLoaded ? (
@@ -404,7 +420,7 @@ export function HomeSettingsContent({
                               className="launch-toggle"
                               type="button"
                               onClick={() => void runAction(`browse-root:${provider.id}`, () => onBrowseProviderSkillRootPath(provider.id))}
-                              disabled={isBusy}
+                              disabled={actionIsBlocked(`browse-root:${provider.id}`)}
                               aria-busy={actionIsBusy(`browse-root:${provider.id}`)}
                               aria-label={actionIsBusy(`browse-root:${provider.id}`) ? `Opening provider root directory for ${provider.label}` : "Browse"}
                             >
@@ -432,7 +448,7 @@ export function HomeSettingsContent({
                               className="launch-toggle"
                               type="button"
                               onClick={() => void runAction(`browse-skill:${provider.id}`, () => onBrowseProviderSkillRelativePath(provider.id))}
-                              disabled={isBusy}
+                              disabled={actionIsBlocked(`browse-skill:${provider.id}`)}
                               aria-busy={actionIsBusy(`browse-skill:${provider.id}`)}
                               aria-label={actionIsBusy(`browse-skill:${provider.id}`) ? `Opening skill folder for ${provider.label}` : "Browse"}
                             >
@@ -460,7 +476,7 @@ export function HomeSettingsContent({
                               className="launch-toggle"
                               type="button"
                               onClick={() => void runAction(`browse-instruction:${provider.id}`, () => onBrowseProviderInstructionRelativePath(provider.id))}
-                              disabled={isBusy}
+                              disabled={actionIsBlocked(`browse-instruction:${provider.id}`)}
                               aria-busy={actionIsBusy(`browse-instruction:${provider.id}`)}
                               aria-label={actionIsBusy(`browse-instruction:${provider.id}`) ? `Opening instruction file for ${provider.label}` : "Browse"}
                             >
@@ -506,7 +522,7 @@ export function HomeSettingsContent({
                         ?? memoryV6Diagnostics.lastErrors[0]?.kind
                         ?? "None"}
                     </strong>
-                    <small>{memoryV6Diagnostics.lastErrors.length > 0 ? "Review the application log for details." : "No recorded Memory V6 errors."}</small>
+                    {memoryV6Diagnostics.lastErrors.length > 0 ? <small>Review the application log for details.</small> : null}
                   </div>
                 </div>
                 {memoryV6DiagnosticsLoadStatus === "loading" ? (
@@ -534,7 +550,7 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
-                  disabled={isBusy}
+                  disabled={actionIsBlocked("review-memory")}
                   aria-busy={actionIsBusy("review-memory")}
                   aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "Review Memory"}
                 >
@@ -549,7 +565,7 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
-                  disabled={isBusy || !memoryV6Diagnostics?.cliShim.supported}
+                  disabled={actionIsBlocked("install-cli-shim") || !memoryV6Diagnostics?.cliShim.supported}
                   aria-busy={actionIsBusy("install-cli-shim")}
                   aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "Install CLI Shim"}
                 >
@@ -564,7 +580,7 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
-                  disabled={isBusy || !canUninstallCliShim(memoryV6Diagnostics)}
+                  disabled={actionIsBlocked("uninstall-cli-shim") || !canUninstallCliShim(memoryV6Diagnostics)}
                   aria-busy={actionIsBusy("uninstall-cli-shim")}
                   aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "Uninstall CLI Shim"}
                 >
@@ -579,7 +595,7 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("open-logs", onOpenAppLogFolder)}
-                  disabled={isBusy}
+                  disabled={actionIsBlocked("open-logs")}
                   aria-busy={actionIsBusy("open-logs")}
                   aria-label={actionIsBusy("open-logs") ? "Opening application logs" : SETTINGS_OPEN_LOG_FOLDER_LABEL}
                 >
@@ -594,7 +610,7 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("open-crash-dumps", onOpenCrashDumpFolder)}
-                  disabled={isBusy}
+                  disabled={actionIsBlocked("open-crash-dumps")}
                   aria-busy={actionIsBusy("open-crash-dumps")}
                   aria-label={actionIsBusy("open-crash-dumps") ? "Opening crash dumps" : SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                 >
@@ -618,7 +634,7 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("import-models", onImportModelCatalog)}
-                  disabled={isBusy}
+                  disabled={actionIsBlocked("import-models")}
                   aria-busy={actionIsBusy("import-models")}
                   aria-label={actionIsBusy("import-models") ? "Importing models" : "Import Models"}
                 >
@@ -633,7 +649,7 @@ export function HomeSettingsContent({
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("export-models", onExportModelCatalog)}
-                  disabled={isBusy}
+                  disabled={actionIsBlocked("export-models")}
                   aria-busy={actionIsBusy("export-models")}
                   aria-label={actionIsBusy("export-models") ? "Exporting models" : "Export Models"}
                 >
@@ -695,13 +711,13 @@ export function HomeSettingsContent({
                     type="date"
                     value={sessionCleanupCutoffDate}
                     onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
-                    disabled={deletingOldSessions || isBusy}
+                    disabled={deletingOldSessions || actionIsBusy("delete-sessions")}
                   />
                   <button
                     className="launch-toggle"
                     type="button"
                     onClick={() => void runAction("delete-sessions", onDeleteSessionsLastActiveBefore)}
-                    disabled={deletingOldSessions || isBusy || !sessionCleanupCutoffDate}
+                    disabled={deletingOldSessions || actionIsBlocked("delete-sessions") || !sessionCleanupCutoffDate}
                     aria-busy={actionIsBusy("delete-sessions")}
                     aria-label={actionIsBusy("delete-sessions") ? "Deleting old sessions" : "Delete"}
                   >
@@ -736,7 +752,7 @@ export function HomeSettingsContent({
           className="launch-toggle"
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
-          disabled={!settingsDirty || previewWheelZoomStepInvalid || isBusy || appSettingsLoadStatus !== "loaded"}
+          disabled={!settingsDirty || previewWheelZoomStepInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >
