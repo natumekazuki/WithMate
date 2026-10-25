@@ -980,8 +980,9 @@ export function FileRootGitHistoryPane({
     const isCurrent = () => isCurrentRepository(generation, repository)
       && detailRequestRef.current === requestId
       && selectedCommitIdRef.current === commit.id;
-    diffRequestRef.current += 1;
     if (selectedCommitIdRef.current !== commit.id) {
+      diffRequestRef.current += 1;
+      setLoadingDiffKey("");
       setDetailMessage("");
     }
     selectedCommitIdRef.current = commit.id;
@@ -990,7 +991,6 @@ export function FileRootGitHistoryPane({
     setSelectedCommit(commit);
     setChangedEntries([]);
     setLoadingDetail(true);
-    setLoadingDiffKey("");
     setSelectedEntryPath(null);
     try {
       const result: FileRootGitHistoryCommitDetailResult = await api.getFileRootGitHistoryCommitDetail({

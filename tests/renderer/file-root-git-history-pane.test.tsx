@@ -448,6 +448,76 @@ test("History detailとDiff操作の失敗は互いを隠さず独立して回�
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "同じcommitの詳細Retryが成功しても進行中のDiffは完了までbusyを保ち、遅れて失敗した理由を原文で確認できる"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "同じcommitの詳細RetryがDiff要求を失効させ、完了前に再操作を許すか遅延した失敗を捨てる"
+// observable = "Open All ChangesのdisabledとHistory paneのaria-busy、Diff失敗のalert、エラーpopoverの診断原文、成功した詳細のchanged file tree"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane concurrent detail Retry and commit Diff"
+// lifecycle = "permanent"
+// impact = "Diff取得中の再操作と失敗理由の消失により、要求の進行と結果を正しく確認できなくなる"
+// distinction = "逐次失敗testでは検出できない、詳細Retry成功後に保留中のDiff失敗が到着する順序を単一componentで確認する"
+// @end-test-value
+test("History detailの同一commit Retryは進行中のDiffと遅延失敗を保持する", async () => {
+  const { dom, restore } = installDom();
+  const target = commit("a", "concurrent recovery");
+  let detailCalls = 0;
+  const detailCompletion: { resolve?: (result: FileRootGitHistoryCommitDetailResult) => void } = {};
+  const diffCompletion: { resolve?: (message: string | null) => void } = {};
+  const api: NonNullable<FileRootGitHistoryPaneProps["api"]> = {
+    listFileRootGitHistoryRepositories: async () => ({ status: "ok", repositories: [repositoryA] }),
+    listFileRootGitHistoryCommits: async () => ({ status: "ok", page: { entries: [target], nextCursor: null, hasMore: false } }),
+    getFileRootGitHistoryCommitDetail: async () => {
+      detailCalls += 1;
+      if (detailCalls === 1) return { status: "failed", message: "DETAIL_FAILURE: original" };
+      return new Promise((resolve) => { detailCompletion.resolve = resolve; });
+    },
+    getFileRootGitHistoryDiff: async () => ({ status: "failed", message: "unused" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
+  };
+  let root: Root | null = null;
+  const document = dom.window.document;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    await act(async () => {
+      root = createRoot(document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootGitHistoryPane, {
+        api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision: 0,
+        onOpenDiff: () => new Promise<string | null>((resolve) => { diffCompletion.resolve = resolve; }),
+      }));
+    });
+    await flush();
+    await act(async () => document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
+    const openAll = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Open All Changes");
+    const retry = document.querySelector<HTMLButtonElement>("button[aria-label='Retry Commit Detail']");
+    assert.ok(openAll);
+    assert.ok(retry);
+    await act(async () => openAll.click());
+    assert.equal(openAll.disabled, true);
+    assert.equal(document.querySelector(".file-history-pane")?.getAttribute("aria-busy"), "true");
+    assert.equal(retry.disabled, false);
+    await act(async () => retry.click());
+    assert.equal(detailCalls, 2);
+    await act(async () => detailCompletion.resolve?.({ status: "ok", commit: target, entries: [changedEntry("recovered.ts")] }));
+    assert.ok(document.querySelector(".workspace-change-row[title='recovered.ts']"));
+    assert.equal(openAll.disabled, true, "Diff must remain disabled until its own result arrives");
+    assert.equal(document.querySelector(".file-history-pane")?.getAttribute("aria-busy"), "true");
+    await act(async () => diffCompletion.resolve?.("DIFF_FAILURE: delayed output limit exceeded"));
+    assert.equal(openAll.disabled, false);
+    assert.equal(document.querySelector(".file-history-pane")?.getAttribute("aria-busy"), "false");
+    assert.deepEqual(Array.from(document.querySelectorAll("[role='alert']"), (element) => element.textContent), ["Commit diff could not be opened."]);
+    const toggle = document.querySelector<HTMLButtonElement>("button[aria-label='Show Commit Diff Error']");
+    assert.ok(toggle);
+    await act(async () => toggle.click());
+    assert.equal(document.querySelector("[role='dialog'][aria-label='Commit Diff Error'] p")?.textContent, "DIFF_FAILURE: delayed output limit exceeded");
+  } finally {
+    await act(async () => root?.unmount());
+    restore();
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Retry中にHistoryへ戻るかcommit/repositoryを切り替えた後は旧対象の成功・失敗・例外が現在の表示やbusyへ反映されない"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
