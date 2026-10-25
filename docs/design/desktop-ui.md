@@ -58,7 +58,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Implementation Boundary
 
-Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、左向きの`Back To Chat`で元の会話へ戻る。折畳み時も入口を残す。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。話題・関係を図から読み、record選択時だけ詳細を表示する閲覧専用面である。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
+Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、吹き出しiconの`Back To Chat`で元の会話へ戻る。折畳み時も入口を残す。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。話題・関係を図から読み、record選択時だけ詳細を表示する閲覧専用面である。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
 
 Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。
 

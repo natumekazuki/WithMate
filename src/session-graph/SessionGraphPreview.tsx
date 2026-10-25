@@ -29,6 +29,14 @@ import { layoutSessionGraph, sessionGraphCapacity, sessionGraphEdgePath } from "
 import { projectSessionGraph, type GraphOverviewNode } from "./graph-overview.js";
 
 const PAGE_SIZE = 40;
+function OverviewIcon() {
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="9" y="2" width="6" height="6" rx="1" />
+    <path d="M12 8v4M5 16v-4h14v4" />
+    <rect x="2" y="16" width="6" height="6" rx="1" />
+    <rect x="16" y="16" width="6" height="6" rx="1" />
+  </svg>;
+}
 export const defaultSessionGraphViewState: SessionGraphViewState = {
   topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0,
 };
@@ -501,7 +509,7 @@ export function SessionGraphPreview({
       onPointerOver={() => setTooltipsDismissed(false)}
     >
       <header className="session-graph-toolbar">
-        {onClose ? <BackNavigationButton label="Back To Chat" onBack={onClose} /> : null}
+        {onClose ? <BackNavigationButton label="Back To Chat" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>} onBack={onClose} /> : null}
         {topics.length ? (
           <select
             ref={topicSelectRef}
@@ -527,19 +535,19 @@ export function SessionGraphPreview({
           </select>
         ) : null}
         {scopes.length && !selectedId ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
-          <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} showLabel={scopes.length > 1} onBack={() => {
+          <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} icon={scopes.length === 1 ? <OverviewIcon /> : undefined} showLabel={scopes.length > 1} onBack={() => {
             const previous = scopes.at(-1)!;
             pendingScroll.current = previous.parentState;
             restoreNodeFocus.current = previous.triggerId;
             setZoom(previous.parentState.zoom);
             setScopes((current) => current.slice(0, -1));
           }} />
-          {scopes.length > 1 ? <button type="button" onClick={() => {
+          {scopes.length > 1 ? <BackNavigationButton label="Overview" icon={<OverviewIcon />} onBack={() => {
             pendingScroll.current = scopes[0].parentState;
             restoreNodeFocus.current = scopes[0].triggerId;
             setZoom(scopes[0].parentState.zoom);
             setScopes([]);
-          }}>Overview</button> : null}
+          }} /> : null}
         </div> : null}
         {topicsMore ? (
           <button
