@@ -18,7 +18,7 @@ test("Session composer は設定群だけを折り返しSendの40px領域を保�
   const css = await readStylesheet();
   assert.match(css, /\.composer-settings\s*{[^}]*flex-wrap:\s*wrap;/);
   assert.match(css, /\.composer-control-row\s*{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto;/);
-  const send = css.match(/\.composer-control-row > \.session-send-button\s*{([^}]*)}/)?.[1];
+  const send = css.match(/\.composer-send-control > \.session-send-button\s*{([^}]*)}/)?.[1];
   assert.ok(send);
   assert.match(send, /(?:^|;)\s*width:\s*40px;/);
   assert.match(send, /(?:^|;)\s*min-width:\s*40px;/);

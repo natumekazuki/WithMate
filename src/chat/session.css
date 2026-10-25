@@ -3852,6 +3852,14 @@
   cursor: pointer;
 }
 
+.composer-turn-recovery {
+  flex-wrap: wrap;
+}
+
+.composer-turn-recovery > button {
+  flex: 0 0 auto;
+}
+
 .composer-save-retry:hover:not(:disabled),
 .composer-save-retry:focus-visible {
   border-color: #fecaca;
@@ -4026,7 +4034,18 @@
   align-items: end;
 }
 
-.composer-control-row > .session-send-button {
+.composer-send-control {
+  align-self: center;
+  display: inline-flex;
+  border-radius: 999px;
+}
+
+.composer-send-control:focus-visible {
+  outline: 2px solid var(--character-main, var(--ink));
+  outline-offset: 3px;
+}
+
+.composer-send-control > .session-send-button {
   align-self: center;
   width: 40px;
   min-width: 40px;
@@ -4036,13 +4055,13 @@
   color: var(--ink);
 }
 
-.session-page .composer-control-row > .session-send-button {
+.session-page .composer-send-control > .session-send-button {
   background: var(--character-main);
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
 
-.session-page .composer-control-row > .session-send-button.danger {
+.session-page .composer-send-control > .session-send-button.danger {
   background: color-mix(in srgb, #f87171 82%, var(--character-main));
   color: #fff5f5;
   box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);

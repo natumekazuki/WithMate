@@ -10,10 +10,10 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める。Main/AuxiliaryのSendと送信shortcutは設定有効時だけ初回送信時に対象列を追従へ戻し、後続の閲覧や対象切替をACK・受付照会で巻き戻さない"
+// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。回復操作のbusyは操作と会話に対応し、成功・失敗で解除する。入力名とSend不可理由は対象切替・blank・凍結後も識別可能にする。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める。Main/AuxiliaryのSendと送信shortcutは設定有効時だけ初回送信時に対象列を追従へ戻し、後続の閲覧や対象切替をACK・受付照会で巻き戻さない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界; docs/design/desktop-ui.md: 送信時の先行表示とScroll To Latest On Send" }
 // fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの未確定受付中に重複要求を発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、ACKで後続編集を消す、拒否でdraftをconsumeする、不明結果から新規要求を自動再送する、後続編集を未保存のままflush成功にする、凍結後にpicker結果からコピーする、設定無効時に末尾へ移動する、初回送信の追従をACKまで遅延する、または後続の閲覧や対象切替をACK・受付照会で巻き戻す"
-// observable = "textarea/feedback/SendとActionDock expanded classの状態、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの初回送信・受付ACK・受付照会前後のscrollTop"
+// observable = "textareaのaccessible name、Send説明ownerのtitle・tabIndex・説明参照とfocus時のfeedback、回復操作のaria-busy・spinner・disabledとAPI呼出数、ActionDock expanded class、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの初回送信・受付ACK・受付照会前後のscrollTop"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
@@ -123,8 +123,14 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
   let rejectAdmission = false;
   let loseAdmissionReply = false;
   let receiptVisible = true;
+  let heldReceipt: Promise<void> | null = null;
+  let receiptChecks = 0;
   const receipts = new Map<string, SessionTurnQueueReceipt>();
-  api.getSessionTurnQueueReceipt = async (id, requestId) => receiptVisible ? receipts.get(`${id}:${requestId}`) ?? null : null;
+  api.getSessionTurnQueueReceipt = async (id, requestId) => {
+    receiptChecks += 1;
+    if (heldReceipt) await heldReceipt;
+    return receiptVisible ? receipts.get(`${id}:${requestId}`) ?? null : null;
+  };
   api.runAuxiliarySessionTurn = async () => { throw new Error("Normal Send must use durable queue admission."); };
   api.previewComposerInput = async (_id, text) => ({ text, attachments: [], errors: text === "invalid reference" ? ["Invalid attachment"] : [] } as Awaited<ReturnType<WithMateWindowApi["previewComposerInput"]>>);
   api.enqueueSessionTurn = async (id, request) => {
@@ -183,6 +189,34 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     const button = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button")).find((item) => item.textContent === label);
     assert.ok(button);
     await act(async () => { button.click(); });
+    assert.equal(textarea().getAttribute("aria-label"), "Message");
+  };
+  const recoveryButton = (label: string) => {
+    const button = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".composer-turn-recovery button"))
+      .find((item) => item.textContent === label);
+    assert.ok(button);
+    return button;
+  };
+  const assertRecoveryBusy = (label: string) => {
+    for (const name of ["Check Receipt", "Retry Original Turn"]) {
+      const button = recoveryButton(name);
+      assert.equal(button.disabled, true);
+      assert.equal(button.getAttribute("aria-busy"), name === label ? "true" : null);
+      assert.equal(!!button.querySelector(".button-content-spinner"), name === label);
+    }
+    assert.equal(dom.window.document.querySelector(".composer-control-row .session-send-button")?.getAttribute("aria-busy"), null);
+  };
+  const focusSendReason = async (reason: RegExp) => {
+    const owner = dom.window.document.querySelector<HTMLElement>(".composer-send-control");
+    assert.ok(owner);
+    assert.equal(owner.tabIndex, 0);
+    assert.match(owner.title, reason);
+    const description = dom.window.document.getElementById(owner.getAttribute("aria-describedby")!);
+    assert.match(description?.textContent ?? "", reason);
+    await act(async () => { owner.focus(); });
+    assert.equal(dom.window.document.activeElement, owner);
+    assert.match(dom.window.document.getElementById("composer-sendability-feedback")?.textContent ?? "", reason);
+    await act(async () => { owner.blur(); });
   };
   const readHistory = async (column: "main" | "auxiliary") => {
     const element = dom.window.document.querySelector<HTMLDivElement>(`.session-concurrent-chat-${column} .session-message-list`);
@@ -208,6 +242,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     await act(async () => { root.render(<App />); });
     assert.equal(dockExpanded(), true);
     assert.equal(textarea().disabled, false);
+    assert.equal(textarea().getAttribute("aria-label"), "Message");
     const beforeMain = summaryReads;
     for (const text of ["h", "he", "hello", "hello latest"]) await input(text);
     assert.equal(summaryReads, beforeMain, "Main typing must not reproject the Auxiliary list");
@@ -466,7 +501,36 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, true);
     assert.match(dom.window.document.querySelector("#session-auxiliary-chat-pane .pending-run-error-note")?.textContent ?? "", /acceptance could not be confirmed/);
     assert.deepEqual(alerts, []);
+    const unknownDraftSaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "new draft after unknown admission") resolve(); }; });
     await input("new draft after unknown admission");
+    let releaseReceipt!: () => void;
+    heldReceipt = new Promise<void>((resolve) => { releaseReceipt = resolve; });
+    const checksBeforeRecovery = receiptChecks;
+    await act(async () => { recoveryButton("Check Receipt").click(); });
+    assertRecoveryBusy("Check Receipt");
+    await act(async () => { recoveryButton("Check Receipt").click(); recoveryButton("Retry Original Turn").click(); });
+    assert.equal(receiptChecks, checksBeforeRecovery + 1, "busy controls must not issue another recovery request");
+    await target("Main");
+    assert.equal(dom.window.document.querySelector(".composer-turn-recovery"), null);
+    await target("Auxiliary");
+    assertRecoveryBusy("Check Receipt");
+    await act(async () => { releaseReceipt(); await heldReceipt; });
+    heldReceipt = null;
+    assert.match(alerts.pop() ?? "", /No receipt is available/);
+    assert.equal(recoveryButton("Check Receipt").disabled, false);
+    assert.equal(recoveryButton("Check Receipt").getAttribute("aria-busy"), null);
+
+    const enqueue = api.enqueueSessionTurn;
+    let releaseRetry!: () => void;
+    const retryPending = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    api.enqueueSessionTurn = async () => { await retryPending; throw new Error("Retry transport unavailable"); };
+    await act(async () => { recoveryButton("Retry Original Turn").click(); });
+    assertRecoveryBusy("Retry Original Turn");
+    await act(async () => { releaseRetry(); await retryPending; });
+    api.enqueueSessionTurn = enqueue;
+    assert.match(alerts.pop() ?? "", /Retry transport unavailable/);
+    assert.equal(recoveryButton("Retry Original Turn").disabled, false);
+    assert.equal(recoveryButton("Retry Original Turn").getAttribute("aria-busy"), null);
     receiptVisible = true;
     await act(async () => {
       const check = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Check Receipt");
@@ -477,7 +541,6 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(uncertainScroll.scrollTop, 100, "receipt recovery must preserve later browsing without repeating send following");
     assert.equal(textarea().value, "new draft after unknown admission", "recovered ACK must preserve the newer edit");
     assert.equal(dom.window.document.querySelector<HTMLButtonElement>(".composer-control-row .session-send-button")!.disabled, false);
-    const unknownDraftSaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "new draft after unknown admission") resolve(); }; });
     await act(async () => { await unknownDraftSaved; });
     assert.equal(drafts.get(previousAuxiliaryId)?.text, "new draft after unknown admission");
     alerts.length = 0;
@@ -520,6 +583,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
       await closeSaveStarted;
     });
     assert.equal(textarea().disabled, true, "close freezes editing before awaiting persistence");
+    await focusSendReason(/Input is frozen/);
     assert.equal(attach.disabled, true);
     await act(async () => { releasePicker(["/picked.txt"]); });
     assert.equal(copies, 0, "picker completion after freeze must not begin copying files");
@@ -534,6 +598,8 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.equal(textarea().value, "draft before close");
     await target("Main");
     await input("");
+    assert.equal(dom.window.document.getElementById("composer-sendability-feedback"), null, "blank draft has no constant helper text");
+    await focusSendReason(/Message is empty/);
     await act(async () => {
       textarea().focus();
       textarea().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", code: "Enter", ctrlKey: true, bubbles: true }));
