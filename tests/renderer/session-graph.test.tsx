@@ -242,7 +242,7 @@ test("graph preview retains expanded ranges and displays label actors beside a p
   const labels = () => [...dom.window.document.querySelectorAll(".session-graph-node")].map((node) => node.textContent);
   try {
     await act(async () => render("initial"));
-    await click(".session-graph-partial button");
+    await click(".session-graph-load-more");
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 3);
     await click(".session-graph-group");
     assert.ok(dom.window.document.querySelector("[aria-label='Back To Overview']"));
@@ -281,9 +281,98 @@ test("graph preview retains expanded ranges and displays label actors beside a p
     truncated = true;
     memory = null;
     await act(async () => render("truncated"));
-    await click(".session-graph-partial button");
+    await click(".session-graph-load-more");
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 55);
-    assert.match(dom.window.document.querySelector(".session-graph-partial")?.textContent ?? "", /Partial Graph/);
+    assert.match(dom.window.document.querySelector(".session-graph-record-status")?.textContent ?? "", /Some Relations May Be Missing/);
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "追加取得は次pageの件数と取得済総数を区別し、局所busy・失敗・再試行中も図とzoomを保持して最終取得後のfocusを失わない"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "追加取得数を残件全数と誤表示するか、取得中に図やzoomを止めるか、失敗を空表示にするか、完了でfocusが消える"
+// observable = "buttonの取得件数・busy・disabled、取得済件数、処理中と失敗後のnode集合、zoom、局所alertと再試行、完了時のfocus"
+// observation_boundary = "component-behavior"
+// scope = "session-graph-page-loading"
+// lifecycle = "permanent"
+// impact = "利用者が図の取得範囲を誤認し、追加取得失敗で閲覧位置やkeyboard操作の継続先を失う"
+// distinction = "型検査や配置testは非同期page取得の状態遷移を観測しない。小さいcomponent fixtureで取得範囲と失敗からの回復を継続確認する"
+// @end-test-value
+test("graph page loading keeps the graph usable through busy, retry and completion", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
+  const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const { records, relations } = chainRecords(95);
+  let finishPage: ((fail?: boolean) => void) | undefined;
+  const api = {
+    readSessionGraph: (async (_id: string, operation: string, request: { offset?: number; limit?: number }) => {
+      if (operation === "list_topics") return { status: "ok", revision: 1, items: [{ id: "topic", title: "Topic" }], total: 1, offset: 0, hasMore: false, incomplete: false };
+      const offset = request.offset ?? 0;
+      if (offset) await new Promise<void>((resolve, reject) => {
+        finishPage = (fail) => fail ? reject(new Error("Additional records could not be loaded.")) : resolve();
+      });
+      const items = records.slice(offset, offset + (request.limit ?? 40));
+      const hasMore = offset + items.length < records.length;
+      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, incomplete: hasMore || offset > 0, relations, externalEndpoints: [] };
+    }) as WithMateWindowApi["readSessionGraph"],
+    subscribeSessionGraph: () => () => {},
+  };
+  const document = dom.window.document;
+  const button = () => document.querySelector<HTMLButtonElement>(".session-graph-load-more")!;
+  const click = async (target: HTMLElement) => { await act(async () => target.click()); };
+  const nodes = () => [...document.querySelectorAll(".session-graph-node")].map((node) => node.textContent);
+  const count = () => document.querySelector(".session-graph-record-status > span")?.textContent;
+  try {
+    await act(async () => root.render(<SessionGraphPreview api={api} sessionId="main" onOpenPath={() => {}} />));
+    assert.match(count() ?? "", /40 \/ 95 Records Loaded/);
+    assert.equal(button().getAttribute("aria-label"), "Load 40 More");
+    const initialNodes = nodes();
+    await click(button());
+    assert.equal(button().getAttribute("aria-busy"), "true");
+    assert.equal(button().disabled, true);
+    assert.ok(button().querySelector(".button-content[data-busy='true'] .button-content-spinner"));
+    assert.equal(document.querySelector(".session-graph-load-status")?.getAttribute("aria-busy"), "false");
+    assert.deepEqual(nodes(), initialNodes);
+    const zoomIn = document.querySelector<HTMLButtonElement>("[aria-label='Zoom In']")!;
+    assert.equal(zoomIn.disabled, false);
+    await click(zoomIn);
+    assert.match(document.querySelector(".session-graph-zoom")?.textContent ?? "", /110%/);
+    assert.ok(finishPage);
+    await act(async () => finishPage!(true));
+    assert.deepEqual(nodes(), initialNodes);
+    assert.match(count() ?? "", /40 \/ 95 Records Loaded/);
+    const alert = document.querySelector(".session-graph-records [role='alert']")!;
+    assert.equal(alert.textContent, "Additional records could not be loaded.");
+    assert.equal(button().getAttribute("aria-describedby"), alert.id);
+    assert.equal(button().disabled, false);
+    assert.equal(button().getAttribute("aria-busy"), "false");
+    await click(button());
+    await act(async () => finishPage!());
+    assert.match(count() ?? "", /80 \/ 95 Records Loaded/);
+    assert.equal(button().getAttribute("aria-label"), "Load 15 More");
+    await act(async () => button().focus());
+    await click(button());
+    await act(async () => {
+      document.body.tabIndex = -1;
+      document.body.focus();
+      document.body.removeAttribute("tabindex");
+    });
+    assert.equal(document.activeElement?.tagName, "BODY", "a disabled control may lose focus in Chromium");
+    await act(async () => finishPage!());
+    assert.match(count() ?? "", /95 \/ 95 Records Loaded/);
+    assert.ok(document.activeElement === document.querySelector(".session-graph-record-status > span"));
+    assert.match(document.querySelector(".session-graph-zoom")?.textContent ?? "", /110%/);
   } finally {
     await act(async () => root.unmount());
     for (const [key, descriptor] of descriptors) {
@@ -507,7 +596,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
       );
     });
     assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Graph Topic");
-    await click([...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Load More") ?? null);
+    await click(dom.window.document.querySelector(".session-graph-load-more"));
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 2);
     const viewport = dom.window.document.querySelector<HTMLDivElement>(".session-graph-viewport")!;
     let parentWheels = 0;

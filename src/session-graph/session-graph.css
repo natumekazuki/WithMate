@@ -212,6 +212,7 @@
   display: none;
 }
 .session-graph-navigation {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -219,6 +220,13 @@
   padding: 10px 14px;
   border-top: 1px solid var(--line);
 }
+.session-graph-zoom { display: flex; align-items: center; gap: 8px; }
+.session-graph-records { display: flex; align-items: center; gap: 16px; margin-left: auto; font-size: 12px; color: var(--muted); }
+.session-graph-record-status { display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
+.session-graph-load-action { display: grid; flex-shrink: 0; }
+.session-graph-load-action > * { grid-area: 1 / 1; }
+.session-graph-load-reserve { visibility: hidden; padding: 5px 8px; border: 1px solid transparent; }
+.session-graph-load-error { position: absolute; z-index: 2; right: 14px; bottom: calc(100% + 8px); max-width: min(480px, calc(100% - 28px)); max-height: 12rem; overflow: auto; overflow-wrap: anywhere; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
 .session-graph-navigation button,
 .session-graph-load-status button,
 .session-graph-toolbar > button:not(.surface-close-button) {
@@ -321,7 +329,6 @@
   z-index: 2;
   border-left: 0;
 }
-.session-graph-partial { flex-basis: 100%; font-size: 12px; color: var(--muted); }
 .session-graph-back-link {
   background: transparent; border: 0; color: var(--teal) !important; padding: 0;
   text-align: left; overflow-wrap: anywhere; line-height: 1.7; margin-top: 12px;

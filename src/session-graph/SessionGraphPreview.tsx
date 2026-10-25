@@ -20,6 +20,7 @@ import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import type { ReactNode, MouseEvent, Dispatch, SetStateAction } from "react";
 import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ButtonContent } from "../ui/button-content.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { IMAGE_ZOOM_MIN, IMAGE_ZOOM_MAX, IMAGE_ZOOM_STEP, useCtrlWheelZoom, type ImageZoom } from "../ui/image-viewport.js";
 import { useViewportPan } from "../ui/viewport-pan.js";
@@ -157,6 +158,8 @@ export function SessionGraphPreview({
     initialMemory?.detailView ?? null,
   );
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState("");
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
@@ -168,6 +171,9 @@ export function SessionGraphPreview({
   const workspaceRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const topicSelectRef = useRef<HTMLSelectElement>(null);
+  const loadMoreRef = useRef<HTMLButtonElement>(null);
+  const loadedCountRef = useRef<HTMLSpanElement>(null);
+  const focusLoadedCount = useRef(false);
   const nodesRef = useRef(new Map<string, HTMLButtonElement>());
   const pendingScroll = useRef<SessionGraphViewState | null>(initialState);
   const focusDetail = useRef(false);
@@ -221,7 +227,10 @@ export function SessionGraphPreview({
   const load = useCallback(
     async (more = false, moreTopics = false) => {
       const revision = ++request.current;
+      const restoreLoadFocus = more && document.activeElement === loadMoreRef.current;
       setLoading(true);
+      setLoadingMore(more);
+      setLoadMoreError("");
       setError("");
       try {
         const topicPage = await api.readSessionGraph(sessionId, "list_topics", {
@@ -287,12 +296,17 @@ export function SessionGraphPreview({
           if (!result.items.length) break;
           combined = mergeViews(combined, result);
         }
+        if (restoreLoadFocus && !combined.hasMore &&
+          (document.activeElement === loadMoreRef.current || document.activeElement === document.body)) focusLoadedCount.current = true;
         setView(combined);
       } catch (cause) {
         if (request.current === revision)
-          setError(cause instanceof Error ? cause.message : String(cause));
+          (more ? setLoadMoreError : setError)(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        if (request.current === revision) setLoading(false);
+        if (request.current === revision) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     },
     [api, sessionId, topics.length, view],
@@ -425,6 +439,10 @@ export function SessionGraphPreview({
       pendingScroll.current = null;
     }
     publishState();
+    if (focusLoadedCount.current) {
+      focusLoadedCount.current = false;
+      loadedCountRef.current?.focus({ preventScroll: true });
+    }
     if (!selectedId && restoreNodeFocus.current) {
       const target = projection.nodes.find((node) => node.id === restoreNodeFocus.current || node.records.some((record) => record.id === restoreNodeFocus.current));
       (nodesRef.current.get(target?.id ?? "") ?? viewportRef.current)?.focus();
@@ -467,6 +485,7 @@ export function SessionGraphPreview({
     pendingScroll.current = { ...snapshot(), scrollLeft: 0, scrollTop: 0 };
     viewportRef.current?.focus();
   };
+  const loadMoreLabel = `Load ${Math.min(PAGE_SIZE, Math.max(0, (view?.total ?? 0) - (view?.items.length ?? 0))).toLocaleString("en-US")} More`;
   return (
     <section
       className={`session-graph-preview${tooltipsDismissed ? " tooltips-dismissed" : ""}`}
@@ -519,8 +538,8 @@ export function SessionGraphPreview({
         ) : null}
         {toolbarActions}
       </header>
-      <div className="session-graph-load-status" aria-busy={loading}>
-        {loading ? (
+      <div className="session-graph-load-status" aria-busy={loading && !loadingMore}>
+        {loading && !loadingMore ? (
           <LoadingIndicator label="Loading Session Graph" inline />
         ) : null}
         {error ? (
@@ -678,26 +697,51 @@ export function SessionGraphPreview({
             </div>
           </div>
           <footer className="session-graph-navigation">
-            {view && (view.hasMore || view.incomplete) ? <span className="session-graph-partial">{view.items.length.toLocaleString("en-US")} / {view.total.toLocaleString("en-US")} Records · Partial Graph {view.hasMore ? <button type="button" disabled={loading} onClick={() => void load(true)}>Load More</button> : null}</span> : null}
-            <button
-              type="button"
-              aria-label="Zoom Out"
-              disabled={zoom * 100 <= IMAGE_ZOOM_MIN}
-              onClick={() => setZoom((value) => Math.max(IMAGE_ZOOM_MIN, Math.round(value * 100) - IMAGE_ZOOM_STEP) / 100)}
-            >
-              −
-            </button>
-            <button type="button" onClick={() => setZoom(1)}>
-              {Math.round(zoom * 100)}%
-            </button>
-            <button
-              type="button"
-              aria-label="Zoom In"
-              disabled={zoom * 100 >= IMAGE_ZOOM_MAX}
-              onClick={() => setZoom((value) => Math.min(IMAGE_ZOOM_MAX, Math.round(value * 100) + IMAGE_ZOOM_STEP) / 100)}
-            >
-              +
-            </button>
+            <div className="session-graph-zoom" role="group" aria-label="Graph Zoom">
+              <button
+                type="button"
+                aria-label="Zoom Out"
+                disabled={zoom * 100 <= IMAGE_ZOOM_MIN}
+                onClick={() => setZoom((value) => Math.max(IMAGE_ZOOM_MIN, Math.round(value * 100) - IMAGE_ZOOM_STEP) / 100)}
+              >
+                −
+              </button>
+              <button type="button" onClick={() => setZoom(1)}>
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                type="button"
+                aria-label="Zoom In"
+                disabled={zoom * 100 >= IMAGE_ZOOM_MAX}
+                onClick={() => setZoom((value) => Math.min(IMAGE_ZOOM_MAX, Math.round(value * 100) + IMAGE_ZOOM_STEP) / 100)}
+              >
+                +
+              </button>
+            </div>
+            {view ? <div className="session-graph-records">
+              <div className="session-graph-record-status">
+                <span ref={loadedCountRef} tabIndex={-1}>
+                  {view.items.length.toLocaleString("en-US")} / {view.total.toLocaleString("en-US")} Records Loaded
+                </span>
+                {view.incomplete && view.relations.length >= SESSION_GRAPH_RELATION_LIMIT ? <span>Some Relations May Be Missing</span> : null}
+              </div>
+              <div className="session-graph-load-action">
+                <span className="session-graph-load-reserve" aria-hidden="true"><ButtonContent busy={false}>Load 40 More</ButtonContent></span>
+                {view.hasMore ? <button
+                  ref={loadMoreRef}
+                  type="button"
+                  className="session-graph-load-more"
+                  disabled={loading}
+                  aria-label={loadMoreLabel}
+                  aria-busy={loadingMore}
+                  aria-describedby={loadMoreError ? `${markerId}-load-error` : undefined}
+                  onClick={() => void load(true)}
+                >
+                  <ButtonContent busy={loadingMore} busyLabel="Loading More Records">{loadMoreLabel}</ButtonContent>
+                </button> : null}
+              </div>
+              {loadMoreError ? <div id={`${markerId}-load-error`} className="session-graph-load-error" role="alert" tabIndex={0}>{loadMoreError}</div> : null}
+            </div> : null}
           </footer>
         </div>
         {selectedId ? (
