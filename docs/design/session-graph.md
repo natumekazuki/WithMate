@@ -68,7 +68,7 @@ applyはtopic/record/relationのupsertとrelation解除を1transactionで処理�
 
 Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ戻る。展開・折畳みのどちらでも入口を保ち、再度Graphを押しても閉じない。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
 
-中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。中央の会話復帰では入力と最後のGraph位置を保持し、file/Templateとの切替は既存の離脱確認を通す。Main/Auxiliaryの選択や送信先は変えない。
+中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。展開区間の履歴は各ビュー内に保持し、新しいWindowは選択記録の近傍または話題の俯瞰から開く。中央の会話復帰では入力、最後のGraph位置と展開区間を保持し、file/Templateとの切替は既存の離脱確認を通す。Main/Auxiliaryの選択や送信先は変えない。
 
 関連記録を辿った場合だけ、詳細内の`Back To <記録名>`から元の話題・記録・倍率・scrollへ戻れる。直接の話題・記録選択と詳細dismissでこの戻り先をリセットする。詳細の×と詳細内のEscapeは選択を解除し、元のnodeへfocusを戻す。狭幅では詳細を図の作業面に重ね、その間は背面の図を操作対象から外す。ComposerやSession全体をmodalにはしない。
 
@@ -80,6 +80,10 @@ Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ�
 
 図領域のCtrl＋左dragでpanし、Ctrl＋wheelで対象だけを拡縮する。画像・mmd previewと共通の処理を使い、wheelはSettingsの`Preview Wheel Zoom Step`（既定5ポイント）、buttonは10ポイント刻み、倍率範囲は10%〜800%とする。設定変更は次のwheel操作へ反映し、現在倍率と位置を変えない。通常wheelとkeyboardのnative scrollを保ち、Ctrl操作をWindow全体のzoomへ渡さず、pan後のclickでrecord選択や別窓を誤発火させない。
 
-配置は接続距離ごとの層を上から下へ置き、同じ層の記録を図の利用可能な幅に収まる列へ並べる。幅を超えた層は複数段へ分け、別の連結群は下へ分離する。表示幅の変更でもcardの文字・iconを縮小せず再配置し、拡縮操作は配置を変えず表示倍率だけを変える。card1列に必要な幅を下回る領域と拡大時はnative横scrollを残す。接続距離は無向であり、時系列や依存方向を表さない。意味と方向は関係のlabelと矢印で示し、複数段を跨ぐ辺はcard間の余白へ通す。
+通常表示は話題の俯瞰図とする。図の幅・高さから可読cardが収まる目安を計算し、取得済みrecordがそれを超える場合、同じ種類・label・方向が続く直列区間を件数付きの`Expand Path`へ集約する。入辺・出辺が各1本で、両端のrecordを取得済みの区間だけを対象とし、分岐・合流、関係の種類・label・向きの変更、循環、未取得の接続先に接するrecordは個別表示を保つ。関係取得上限に達した部分Graphでは接続の完全性を確定できないため集約しない。recordの任意切捨てや文字を潰す自動Fitは行わない。
 
-図は要点・意味の異なる状態・主体icon・関係を中心にし、本文、適用範囲、target、自由項目、具体的な参照は選択後に表示する。Main/Auxiliaryの区分・会話名はiconのhover/focusで読め、記録者が内容上の主体と違う場合だけ記録者を補足する。関係はkeyboardからも辿れる。Markdown内の埋込み画像や図を自動取得・実行せず、参照は利用者の明示操作から既存の認可済みlink/file経路へ渡す。
+集約nodeは実recordではなく、件数と区間の先頭・末尾titleを表示する。接続は破線で描き、区間の両端を直接のrelationで結ばない。開くとその区間と取得済みの境界recordを表示し、長い場合はより短い区間へ段階的に分ける。各recordへ必ず到達でき、`Back To Overview`／`Back To Previous Range`で元の範囲と位置へ戻る。record選択時の近傍図・詳細、関連記録の往復を維持する。分岐や循環が多い図は集約だけで画面内に収まるとは限らず、native scrollとCtrl操作を残す。
+
+配置は無向の幅優先順で接続recordを近づけ、利用可能な幅へ詰めて複数段に置く。表示幅の変更でもcardの文字・54pxのCharacter iconを縮小せず再配置し、拡縮操作は配置を変えず表示倍率だけを変える。card1列に必要な幅を下回る領域と拡大時はnative横scrollを残す。行・列は時系列や依存方向を表さず、意味と方向は関係のlabelと矢印で示す。複数段を跨ぐ辺はcard間の余白へ通す。
+
+図は要点・意味の異なる状態・主体icon・関係を中心にし、本文、適用範囲、target、自由項目、具体的な参照は選択後に表示する。Main/Auxiliaryの区分・会話名はiconのhover/focusで読め、記録者が内容上の主体と違う場合だけ記録者を補足する。任意labelの主体は人型と名前を常設表示し、`User`を頭文字だけに短縮しない。長いlabelはnode内の表示範囲を制限し、hover/focusと詳細で全文を読める。labelから利用者本人の画像へ自動紐付けはしない。関係・区間展開はkeyboardからも辿れる。Markdown内の埋込み画像や図を自動取得・実行せず、参照は利用者の明示操作から既存の認可済みlink/file経路へ渡す。

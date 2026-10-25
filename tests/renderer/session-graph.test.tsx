@@ -6,6 +6,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import type { SessionGraphRecord } from "../../src-shared/session-graph/session-graph-contract.js";
 import { layoutSessionGraph } from "../../src/session-graph/graph-layout.js";
+import { projectSessionGraph } from "../../src/session-graph/graph-overview.js";
+import type { SessionGraphRelation } from "../../src-shared/session-graph/session-graph-contract.js";
 import { sessionGraphStatuses } from "../../src/session-graph/SessionGraphPreview.js";
 import { SessionGraphPreview, type SessionGraphPreviewMemory } from "../../src/session-graph/SessionGraphPreview.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
@@ -61,37 +63,36 @@ test("graph layout retains cyclic and disconnected records at readable nonoverla
       point.x >= 0 &&
         point.y >= 0 &&
         point.x + 240 <= layout.width &&
-        point.y + 150 <= layout.height,
+        point.y + 112 <= layout.height,
     );
     for (const other of positions.slice(index + 1))
       assert.ok(
         Math.abs(point.x - other.x) >= 240 ||
-        Math.abs(point.y - other.y) >= 150,
+        Math.abs(point.y - other.y) >= 112,
       );
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "長い連鎖は縦へ伸び、並列の記録はcard寸法を保って図の幅に収まる段へ配置される"
+// claim = "接続形状によらず図の幅を使って可読cardを複数列へ詰め、重ならずに表示する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "接続の段数に応じて横へ伸ばすか、並列数を表示幅で制限せず横へはみ出すか、折返したcardを重ねる"
-// observable = "異なる表示幅での全記録の矩形、連鎖のx座標とy座標、並列群の列数とcanvas高さ"
+// fault = "連鎖を一列に固定して表示外の領域を増やすか、幅を超えたcardや重なりを作る"
+// observable = "異なる表示幅での全記録の矩形、連鎖と並列群の列数とcanvas高さ"
 // observation_boundary = "consumer"
 // scope = "session-graph-responsive-layout"
 // lifecycle = "permanent"
 // distinction = "型検査や循環保持testは表示幅に応じた配置を判定しない。少数の座標入力で可読寸法と横scrollの主経路化を継続確認する"
 // @end-test-value
-test("graph layout grows chains downwards and wraps parallel records to the available width", () => {
+test("graph layout packs chains and parallel records into the available width", () => {
   const records = Array.from({ length: 12 }, (_, index) => record(`node-${index}`));
   const chain = layoutSessionGraph(records, records.slice(1).map((item, index) => ({
     id: `chain-${index}`, fromId: records[index].id, toId: item.id, kind: "depends_on",
   })), 960);
   const chainPoints = [...chain.positions.values()];
-  assert.equal(new Set(chainPoints.map((point) => point.x)).size, 1);
+  assert.equal(new Set(chainPoints.map((point) => point.x)).size, 3);
   assert.ok(chain.width <= 960);
-  for (let index = 1; index < chainPoints.length; index += 1)
-    assert.ok(chainPoints[index].y >= chainPoints[index - 1].y + 150);
+  assert.ok(chain.height <= 4 * 176);
 
   const branches = records.slice(1).map((item) => ({
     id: `branch-${item.id}`, fromId: records[0].id, toId: item.id, kind: "supports" as const,
@@ -104,14 +105,192 @@ test("graph layout grows chains downwards and wraps parallel records to the avai
     const points = [...layout.positions.values()];
     for (let index = 0; index < points.length; index += 1) {
       const point = points[index];
-      assert.ok(point.x >= 0 && point.x + 240 <= width && point.y + 150 <= layout.height);
+      assert.ok(point.x >= 0 && point.x + 240 <= width && point.y + 112 <= layout.height);
       for (const other of points.slice(index + 1))
-        assert.ok(Math.abs(point.x - other.x) >= 240 || Math.abs(point.y - other.y) >= 150);
+        assert.ok(Math.abs(point.x - other.x) >= 240 || Math.abs(point.y - other.y) >= 112);
     }
   }
   assert.equal(new Set([...narrow.positions.values()].map((point) => point.x)).size, 2);
   assert.equal(new Set([...wide.positions.values()].map((point) => point.x)).size, 3);
   assert.ok(wide.height < narrow.height);
+});
+
+function chainRecords(count: number) {
+  const records = Array.from({ length: count }, (_, index) => record(`node-${index}`));
+  const relations: SessionGraphRelation[] = records.slice(1).map((item, index) => ({
+    id: `edge-${index}`, fromId: records[index].id, toId: item.id, kind: "depends_on",
+  }));
+  return { records, relations };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "長い同種の経路を件数付きで俯瞰し、段階展開しても全recordへ有限回で到達でき、集約を直接edgeと混同しない"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "集約でrecordを落とすか重複させる、展開しても同じ大きさのgroupが残る、集約経路を直接relationへ書き換える"
+// observable = "投影nodeのrecord集合、group件数、展開後の大きさ、group境界edgeの向きと区別"
+// observation_boundary = "consumer"
+// scope = "session-graph-overview-reachability"
+// lifecycle = "permanent"
+// @end-test-value
+test("graph overview groups long paths and expands every record without inventing direct edges", () => {
+  const { records, relations } = chainRecords(55);
+  const overview = projectSessionGraph(records, relations, 9);
+  assert.deepEqual(overview.nodes.map((node) => node.records.length), [1, 53, 1]);
+  assert.deepEqual(overview.nodes.flatMap((node) => node.records.map((item) => item.id)).sort(), records.map((item) => item.id).sort());
+  assert.deepEqual(overview.edges.map((edge) => [edge.id, edge.fromId, edge.toId, edge.kind, edge.grouped]), [
+    ["edge-0", overview.nodes[0].id, overview.nodes[1].id, "depends_on", true],
+    ["edge-53", overview.nodes[1].id, overview.nodes[2].id, "depends_on", true],
+  ]);
+  const reached = new Set<string>();
+  const visit = (ids: string[] | null, depth: number) => {
+    assert.ok(depth < 10, "expansion must make progress");
+    const view = projectSessionGraph(records, relations, 9, ids);
+    assert.ok(view.nodes.length <= 9);
+    const expected = new Set(ids ?? records.map((item) => item.id));
+    const covered = view.nodes.flatMap((node) => node.records.map((item) => item.id)).filter((id) => expected.has(id));
+    assert.deepEqual(covered.sort(), [...expected].sort());
+    for (const node of view.nodes) {
+      if (node.records.length === 1) reached.add(node.records[0].id);
+      else {
+        if (ids) assert.ok(node.records.length < ids.length);
+        visit(node.records.map((item) => item.id), depth + 1);
+      }
+    }
+  };
+  visit(null, 0);
+  assert.deepEqual([...reached].sort(), records.map((item) => item.id).sort());
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "俯瞰の集約は分岐・合流・関係の種類やlabelや向きの変更・循環・未取得端点を隠さない"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "次数だけで集約し意味の境界や不完全な接続を一本道に見せる"
+// observable = "境界recordの個別node、循環の全recordとedge、集約内外のrecord被覆"
+// observation_boundary = "consumer"
+// scope = "session-graph-overview-boundaries"
+// lifecycle = "permanent"
+// @end-test-value
+test("graph overview retains semantic boundaries, branches, cycles and unloaded endpoints", () => {
+  const { records, relations } = chainRecords(24);
+  records.push(record("branch"));
+  relations[5].kind = "supports";
+  relations[9].label = "Condition";
+  [relations[13].fromId, relations[13].toId] = [relations[13].toId, relations[13].fromId];
+  relations.push({ id: "branch", fromId: "node-17", toId: "branch", kind: "depends_on" });
+  relations.push({ id: "unloaded", fromId: "node-21", toId: "outside", kind: "depends_on" });
+  const overview = projectSessionGraph(records, relations, 3);
+  const singles = new Set(overview.nodes.filter((node) => node.records.length === 1).map((node) => node.records[0].id));
+  for (const id of [0, 5, 6, 9, 10, 13, 14, 17, 21, 23]) assert.ok(singles.has(`node-${id}`), `boundary ${id}`);
+  assert.ok(singles.has("branch"));
+  assert.deepEqual(overview.nodes.flatMap((node) => node.records.map((item) => item.id)).sort(), records.map((item) => item.id).sort());
+  const cycle = chainRecords(8);
+  cycle.relations.push({ id: "cycle", fromId: "node-7", toId: "node-0", kind: "depends_on" });
+  for (const extra of [[], [{ id: "self", fromId: "node-0", toId: "node-0", kind: "related" as const }]]) {
+    const view = projectSessionGraph(cycle.records, [...cycle.relations, ...extra], 3);
+    assert.equal(view.nodes.length, 8);
+    assert.ok(view.nodes.every((node) => node.records.length === 1));
+    assert.equal(view.edges.length, 8 + extra.length);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "区間展開からrecord詳細へ辿れ、再表示・跨話題往復・戻る操作で追加取得した区間を保持し、label主体の名前を常時読める"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "group操作が全経路を無条件展開するか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われるか、Userがtooltip内だけになる"
+// observable = "展開後のgroupとrecord、詳細本文と可視label、再表示・跨話題往復後のnode集合、戻り先groupのfocus、部分取得中の集約可否"
+// observation_boundary = "component-behavior"
+// scope = "session-graph-overview-navigation"
+// lifecycle = "permanent"
+// @end-test-value
+test("graph preview retains expanded ranges and displays label actors beside a person icon", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
+  const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const { records, relations } = chainRecords(55);
+  const other = { ...record("other-record"), topicId: "other", title: "Other Topic Record" };
+  relations.push({ id: "cross-topic", fromId: records[0].id, toId: other.id, kind: "related" });
+  let memory: SessionGraphPreviewMemory | null = null;
+  let state = { topicId: "topic", selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0 } as SessionGraphViewState;
+  let truncated = false;
+  const api = {
+    readSessionGraph: (async (_id: string, operation: string, request: { ids?: string[]; topicId?: string; offset?: number; limit?: number }) => {
+      if (operation === "list_topics") return { status: "ok", revision: 1, items: [{ id: "topic", title: "Topic" }, { id: "other", title: "Other" }], total: 2, offset: 0, hasMore: false, incomplete: false };
+      const source = request.topicId === "other" ? [other] : records;
+      const offset = request.offset ?? 0;
+      const items = operation === "get" ? [...records, other].filter((record) => request.ids?.includes(record.id)) : source.slice(offset, offset + (request.limit ?? 40));
+      const total = operation === "get" ? items.length : source.length;
+      const hasMore = offset + items.length < total;
+      const edges = truncated ? [...relations, ...Array.from({ length: 400 - relations.length }, (_, index) => ({ id: `external-${index}`, fromId: "outside", toId: "unloaded", kind: "related" }))] : relations;
+      return { status: "ok", revision: 1, items, total, offset, hasMore, incomplete: truncated || hasMore || offset > 0, relations: edges, externalEndpoints: [other, records[0]] };
+    }) as WithMateWindowApi["readSessionGraph"],
+    subscribeSessionGraph: () => () => {},
+  };
+  const render = (key: string) => root.render(<SessionGraphPreview key={key} api={api} sessionId="main" onOpenPath={() => {}}
+    initialState={state} initialMemory={memory} onStateChange={(next) => { state = next; }} onMemoryChange={(next) => { memory = next; }} />);
+  const click = async (selector: string) => {
+    const target = dom.window.document.querySelector(selector);
+    assert.ok(target, selector);
+    await act(async () => { target.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  };
+  const labels = () => [...dom.window.document.querySelectorAll(".session-graph-node")].map((node) => node.textContent);
+  try {
+    await act(async () => render("initial"));
+    await click(".session-graph-partial button");
+    assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 3);
+    await click(".session-graph-group");
+    assert.ok(dom.window.document.querySelector("[aria-label='Back To Overview']"));
+    const expanded = labels();
+    assert.ok(dom.window.document.querySelector(".session-graph-group"), "a long range remains progressively expandable");
+    assert.ok(expanded.length < records.length, "opening a group must not render the whole long path");
+    await act(async () => render("reopen"));
+    assert.deepEqual(labels(), expanded);
+    await click(".session-graph-node:not(.session-graph-group)");
+    const crossTopicLink = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".session-graph-related button")].find((button) => button.textContent?.includes(other.title));
+    assert.ok(crossTopicLink);
+    await act(async () => crossTopicLink.click());
+    assert.equal(dom.window.document.querySelector(".session-graph-details h2")?.textContent, other.title);
+    await click(".session-graph-back-link");
+    await click("[aria-label='Close Record Details']");
+    assert.deepEqual(labels(), expanded, "cross-topic return keeps the loaded pages in the expanded range");
+    let steps = 0;
+    while (dom.window.document.querySelector(".session-graph-group")) {
+      assert.ok(steps++ < 10);
+      await click(".session-graph-group");
+    }
+    const leaf = labels();
+    await click(".session-graph-node");
+    const actor = dom.window.document.querySelector(".session-graph-details .session-graph-identity.is-label")!;
+    assert.equal(actor.querySelector(".session-graph-actor-name")?.textContent, "User");
+    assert.ok(actor.querySelector("svg[aria-hidden='true']"));
+    assert.equal(actor.getAttribute("aria-label"), "User");
+    await click("[aria-label='Close Record Details']");
+    assert.deepEqual(labels(), leaf);
+    assert.ok(dom.window.document.activeElement?.classList.contains("session-graph-node"));
+    while (dom.window.document.querySelector("[aria-label='Back To Previous Range']")) await click("[aria-label='Back To Previous Range']");
+    assert.deepEqual(labels(), expanded);
+    await click("[aria-label='Back To Overview']");
+    assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 3);
+    assert.ok(dom.window.document.activeElement?.classList.contains("session-graph-group"));
+    truncated = true;
+    memory = null;
+    await act(async () => render("truncated"));
+    await click(".session-graph-partial button");
+    assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 55);
+    assert.match(dom.window.document.querySelector(".session-graph-partial")?.textContent ?? "", /Partial Graph/);
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+    dom.window.close();
+  }
 });
 
 // @test-value v2

@@ -1,11 +1,12 @@
-import type {
-  SessionGraphRecord,
-  SessionGraphRelation,
-} from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphRelation } from "../../src-shared/session-graph/session-graph-contract.js";
 
 type Point = { x: number; y: number };
 const COLUMN_STEP = 320;
-const ROW_STEP = 230;
+const ROW_STEP = 176;
+
+export function sessionGraphCapacity(width: number, height: number) {
+  return Math.max(3, Math.max(1, Math.floor(width / COLUMN_STEP)) * Math.max(1, Math.floor(height / ROW_STEP)));
+}
 
 export function sessionGraphEdgePath(from: Point, to: Point, self: boolean) {
   if (self) {
@@ -18,9 +19,9 @@ export function sessionGraphEdgePath(from: Point, to: Point, self: boolean) {
   if (from.y === to.y) {
     const direction = to.x > from.x ? 1 : -1;
     const x1 = from.x + (direction > 0 ? 240 : 0);
-    const y1 = from.y + 75;
+    const y1 = from.y + 56;
     const x2 = to.x + (direction > 0 ? 0 : 240);
-    const y2 = to.y + 75;
+    const y2 = to.y + 56;
     if (Math.abs(to.x - from.x) > COLUMN_STEP) {
       const top = from.y - 24;
       return {
@@ -37,9 +38,9 @@ export function sessionGraphEdgePath(from: Point, to: Point, self: boolean) {
   }
   const direction = to.y > from.y ? 1 : -1;
   const x1 = from.x + 120;
-  const y1 = from.y + (direction > 0 ? 150 : 0);
+  const y1 = from.y + (direction > 0 ? 112 : 0);
   const x2 = to.x + 120;
-  const y2 = to.y + (direction > 0 ? 0 : 150);
+  const y2 = to.y + (direction > 0 ? 0 : 112);
   const middleY = (y1 + y2) / 2;
   if (Math.abs(to.y - from.y) > ROW_STEP) {
     // Use a column gutter for edges spanning wrapped rows, not intervening cards.
@@ -48,8 +49,8 @@ export function sessionGraphEdgePath(from: Point, to: Point, self: boolean) {
     const endY = y2 - direction * 32;
     return {
       path: `M${x1},${y1} V${startY} H${gutter} V${endY} H${x2} V${y2}`,
-      labelX: (gutter + x2) / 2,
-      labelY: endY - 8,
+      labelX: (x1 + gutter) / 2,
+      labelY: startY - 8,
     };
   }
   return {
@@ -59,10 +60,10 @@ export function sessionGraphEdgePath(from: Point, to: Point, self: boolean) {
   };
 }
 
-// Undirected breadth-first distance is not dependency order or a timeline.
-// Layers grow downwards; wide layers wrap without shrinking readable cards.
+// Breadth-first traversal keeps connected nodes close. Packing is spatial only:
+// relation arrows, not rows or columns, express direction and meaning.
 export function layoutSessionGraph(
-  records: SessionGraphRecord[],
+  records: { id: string }[],
   relations: SessionGraphRelation[],
   availableWidth: number,
 ) {
@@ -81,21 +82,22 @@ export function layoutSessionGraph(
   while (remaining.size) {
     let layer = [remaining.values().next().value!];
     remaining.delete(layer[0]);
+    let index = 0;
     while (layer.length) {
       const next: string[] = [];
-      layer.forEach((id, index) => {
+      layer.forEach((id) => {
         positions.set(id, {
           x: 32 + (index % columns) * COLUMN_STEP,
           y: 40 + (rowOffset + Math.floor(index / columns)) * ROW_STEP,
         });
+        index += 1;
         for (const neighbor of neighbors.get(id)!) {
           if (remaining.delete(neighbor)) next.push(neighbor);
         }
       });
-      rowOffset += Math.ceil(layer.length / columns);
       layer = next;
     }
-    rowOffset += 1;
+    rowOffset += Math.ceil(index / columns);
   }
   return {
     positions,
@@ -104,8 +106,8 @@ export function layoutSessionGraph(
       ...Array.from(positions.values(), (point) => point.x + 288),
     ),
     height: Math.max(
-      240,
-      ...Array.from(positions.values(), (point) => point.y + 190),
+      ROW_STEP,
+      ...Array.from(positions.values(), (point) => point.y + 136),
     ),
   };
 }

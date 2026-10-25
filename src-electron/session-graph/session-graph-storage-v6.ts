@@ -1,5 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphOperationResult, SessionGraphRecordInput, SessionGraphRecord, SessionGraphRelation, SessionGraphTopic, SessionGraphEndpoint } from "../../src-shared/session-graph/session-graph-contract.js";
+import { SESSION_GRAPH_RELATION_LIMIT } from "../../src-shared/session-graph/session-graph-contract.js";
 import { sessionGraphOperationRequestSchemas } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
@@ -118,9 +119,9 @@ export class SessionGraphStorageV6 {
     let relations: SessionGraphRelation[] = [], externalEndpoints: SessionGraphEndpoint[] = [], edgesTruncated = false;
     if (ids.length) {
       const placeholders = ids.map(() => "?").join(",");
-      const edges = this.db.prepare(`SELECT payload_json FROM session_graph_relations_v6 WHERE session_id = ? AND (from_id IN (${placeholders}) OR to_id IN (${placeholders})) ORDER BY id LIMIT 401`).all(owner.sessionId, ...ids, ...ids) as JsonRow[];
-      edgesTruncated = edges.length > 400;
-      relations = edges.slice(0, 400).map(decode<SessionGraphRelation>);
+      const edges = this.db.prepare(`SELECT payload_json FROM session_graph_relations_v6 WHERE session_id = ? AND (from_id IN (${placeholders}) OR to_id IN (${placeholders})) ORDER BY id LIMIT ?`).all(owner.sessionId, ...ids, ...ids, SESSION_GRAPH_RELATION_LIMIT + 1) as JsonRow[];
+      edgesTruncated = edges.length > SESSION_GRAPH_RELATION_LIMIT;
+      relations = edges.slice(0, SESSION_GRAPH_RELATION_LIMIT).map(decode<SessionGraphRelation>);
       const external = [...new Set(relations.flatMap((edge) => [edge.fromId, edge.toId]).filter((id) => !ids.includes(id)))];
       if (external.length) externalEndpoints = (this.db.prepare(`SELECT payload_json FROM session_graph_records_v6 WHERE session_id = ? AND id IN (${external.map(() => "?").join(",")}) ORDER BY id`).all(owner.sessionId, ...external) as JsonRow[]).map((row) => {
         const value = decode<SessionGraphRecord>(row);

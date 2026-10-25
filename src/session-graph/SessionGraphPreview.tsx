@@ -14,6 +14,7 @@ import type {
   SessionGraphRecord,
   SessionGraphTopic,
 } from "../../src-shared/session-graph/session-graph-contract.js";
+import { SESSION_GRAPH_RELATION_LIMIT } from "../../src-shared/session-graph/session-graph-contract.js";
 import { CloseButton } from "../ui/close-button.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import type { ReactNode, MouseEvent, Dispatch, SetStateAction } from "react";
@@ -23,19 +24,22 @@ import { CharacterAvatar } from "../ui/ui-utils.js";
 import { IMAGE_ZOOM_MIN, IMAGE_ZOOM_MAX, IMAGE_ZOOM_STEP, useCtrlWheelZoom, type ImageZoom } from "../ui/image-viewport.js";
 import { useViewportPan } from "../ui/viewport-pan.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
-import { layoutSessionGraph, sessionGraphEdgePath } from "./graph-layout.js";
+import { layoutSessionGraph, sessionGraphCapacity, sessionGraphEdgePath } from "./graph-layout.js";
+import { projectSessionGraph, type GraphOverviewNode } from "./graph-overview.js";
 
 const PAGE_SIZE = 40;
 export const defaultSessionGraphViewState: SessionGraphViewState = {
   topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0,
 };
+type GraphScope = { ids: string[]; title: string; parentState: SessionGraphViewState; triggerId: string };
 export type SessionGraphPreviewMemory = {
   topics: SessionGraphTopic[];
   topicsMore: boolean;
   view: SessionGraphReadResult | null;
   selectedRecord: SessionGraphRecord | null;
   detailView: SessionGraphReadResult | null;
-  backStack: Array<{ state: SessionGraphViewState; title: string }>;
+  backStack: Array<{ state: SessionGraphViewState; title: string; scopes: GraphScope[]; view: SessionGraphReadResult | null }>;
+  scopes: GraphScope[];
 };
 function label(value: string) {
   return value
@@ -49,6 +53,10 @@ function mergeViews(
 ): SessionGraphReadResult {
   return {
     ...next,
+    offset: 0,
+    incomplete: next.hasMore ||
+      current.incomplete && current.relations.length >= SESSION_GRAPH_RELATION_LIMIT ||
+      next.incomplete && next.relations.length >= SESSION_GRAPH_RELATION_LIMIT,
     items: [...current.items, ...next.items],
     relations: [
       ...new Map(
@@ -90,18 +98,24 @@ function Identity({
     : (name ?? "Unknown Actor");
   return (
     <span
-      className="session-graph-identity"
+      className={`session-graph-identity${!identity ? " is-label" : ""}`}
       role="img"
       tabIndex={focusable ? 0 : undefined}
       aria-label={text}
     >
-      <CharacterAvatar
+      {identity ? <CharacterAvatar
         character={{
           name: identity?.character?.name ?? name ?? "?",
           iconPath: identity?.character?.icon ?? "",
         }}
         size="small"
-      />
+      /> : <>
+        <svg className="session-graph-actor-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+          <circle cx="12" cy="7" r="4" />
+          <path d="M4 21v-3a8 8 0 0 1 16 0v3" />
+        </svg>
+        <span className="session-graph-actor-name">{text}</span>
+      </>}
       <span className="session-graph-identity-tooltip" role="tooltip">
         {text}
       </span>
@@ -149,6 +163,7 @@ export function SessionGraphPreview({
   const [refresh, setRefresh] = useState(0);
   const [zoom, setZoom] = useState(initialState.zoom);
   const [backStack, setBackStack] = useState<SessionGraphPreviewMemory["backStack"]>(initialMemory?.backStack ?? []);
+  const [scopes, setScopes] = useState<GraphScope[]>(initialMemory?.scopes ?? []);
   const viewportRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -159,7 +174,7 @@ export function SessionGraphPreview({
   const restoreNodeFocus = useRef<string | null>(null);
   const focusSelector = useRef(true);
   const [narrow, setNarrow] = useState(false);
-  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
+  const [viewportSize, setViewportSize] = useState<{ width: number; height: number } | null>(null);
   const [windowTarget, setWindowTarget] = useState<{ id: string; title: string } | null>(null);
   const windowTargetTrigger = useRef<HTMLElement | null>(null);
   const windowMenuRef = useRef<HTMLButtonElement>(null);
@@ -188,7 +203,8 @@ export function SessionGraphPreview({
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    const measure = () => setViewportWidth(viewport.clientWidth);
+    const measure = () => setViewportSize((current) => current?.width === viewport.clientWidth && current.height === viewport.clientHeight
+      ? current : { width: viewport.clientWidth, height: viewport.clientHeight });
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
@@ -314,6 +330,7 @@ export function SessionGraphPreview({
         if (record.topicId !== topicRef.current) {
           setView(null);
           setTopicId(record.topicId);
+          setScopes([]);
         }
       } catch (cause) {
         if (detailRequest.current === revision)
@@ -374,11 +391,17 @@ export function SessionGraphPreview({
     }
     return records.filter((record) => ids.has(record.id));
   }, [records, relations, selectedId]);
+  const projection = useMemo(() => projectSessionGraph(
+    focalRecords, relations,
+    selectedId || (view?.incomplete && relations.length >= SESSION_GRAPH_RELATION_LIMIT)
+      ? Number.POSITIVE_INFINITY : sessionGraphCapacity(viewportSize?.width ?? 0, viewportSize?.height ?? 0),
+    selectedId ? null : scopes.at(-1)?.ids ?? null,
+  ), [focalRecords, relations, selectedId, viewportSize, scopes, view?.incomplete]);
   const layout = useMemo(
-    () => layoutSessionGraph(focalRecords, relations, viewportWidth ?? 0),
-    [focalRecords, relations, viewportWidth],
+    () => layoutSessionGraph(projection.nodes, projection.edges, viewportSize?.width ?? 0),
+    [projection, viewportSize],
   );
-  const edgeRoutes = relations.flatMap((edge) => {
+  const edgeRoutes = projection.edges.flatMap((edge) => {
     const from = layout.positions.get(edge.fromId);
     const to = layout.positions.get(edge.toId);
     return from && to
@@ -396,14 +419,15 @@ export function SessionGraphPreview({
     setBackStack([]);
   };
   useLayoutEffect(() => {
-    if (view && viewportWidth !== null && pendingScroll.current && viewportRef.current) {
+    if (view && viewportSize !== null && pendingScroll.current && viewportRef.current) {
       viewportRef.current.scrollLeft = pendingScroll.current.scrollLeft;
       viewportRef.current.scrollTop = pendingScroll.current.scrollTop;
       pendingScroll.current = null;
     }
     publishState();
     if (!selectedId && restoreNodeFocus.current) {
-      (nodesRef.current.get(restoreNodeFocus.current) ?? viewportRef.current)?.focus();
+      const target = projection.nodes.find((node) => node.id === restoreNodeFocus.current || node.records.some((record) => record.id === restoreNodeFocus.current));
+      (nodesRef.current.get(target?.id ?? "") ?? viewportRef.current)?.focus();
       restoreNodeFocus.current = null;
     }
     if (focusSelector.current && topics.length) {
@@ -414,17 +438,17 @@ export function SessionGraphPreview({
       headingRef.current?.focus();
       focusDetail.current = false;
     }
-  }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord, viewportWidth]);
+  }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord, viewportSize, scopes, projection]);
   useLayoutEffect(() => {
-    onMemoryChange?.({ topics, topicsMore, view, selectedRecord, detailView, backStack });
-  }, [topics, topicsMore, view, selectedRecord, detailView, backStack, onMemoryChange]);
+    onMemoryChange?.({ topics, topicsMore, view, selectedRecord, detailView, backStack, scopes });
+  }, [topics, topicsMore, view, selectedRecord, detailView, backStack, scopes, onMemoryChange]);
   const chooseRecord = (id: string, related = false, event?: MouseEvent) => {
     if (event && (event.ctrlKey || event.metaKey) && onOpenWindow) {
       onOpenWindow({ ...snapshot(), selectedId: id });
       return;
     }
     setBackStack((current) => related && selectedId
-      ? [...current, { state: snapshot(), title: selectedRecord?.title ?? "Record" }] : []);
+      ? [...current, { state: snapshot(), title: selectedRecord?.title ?? "Record", scopes, view }] : []);
     focusDetail.current = true;
     setSelectedId(id);
   };
@@ -434,6 +458,15 @@ export function SessionGraphPreview({
     setWindowTarget({ id, title });
   };
   const closeRecordMenu = () => { setWindowTarget(null); windowTargetTrigger.current?.focus(); };
+  const expandGroup = (node: GraphOverviewNode) => {
+    setScopes((current) => [...current, {
+      ids: node.records.map((record) => record.id),
+      title: `${node.records[0].title} — ${node.records.at(-1)!.title}`,
+      parentState: snapshot(), triggerId: node.id,
+    }]);
+    pendingScroll.current = { ...snapshot(), scrollLeft: 0, scrollTop: 0 };
+    viewportRef.current?.focus();
+  };
   return (
     <section
       className={`session-graph-preview${tooltipsDismissed ? " tooltips-dismissed" : ""}`}
@@ -458,6 +491,7 @@ export function SessionGraphPreview({
             value={topicId}
             onChange={(event) => {
               clearSelection(false);
+              setScopes([]);
               setView(null);
               setTopicId(event.target.value);
             }}
@@ -503,6 +537,22 @@ export function SessionGraphPreview({
         className={`session-graph-workspace${selectedId ? " has-selection" : ""}${narrow ? " is-narrow" : ""}`}
       >
         <div className="session-graph-column" inert={narrow && !!selectedId} aria-hidden={narrow && !!selectedId || undefined}>
+          {scopes.length && !selectedId ? <div className="session-graph-scope-navigation">
+            <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} onBack={() => {
+              const previous = scopes.at(-1)!;
+              pendingScroll.current = previous.parentState;
+              restoreNodeFocus.current = previous.triggerId;
+              setZoom(previous.parentState.zoom);
+              setScopes((current) => current.slice(0, -1));
+            }} />
+            <span title={scopes.at(-1)!.title}>{scopes.at(-1)!.title}</span>
+            {scopes.length > 1 ? <button type="button" onClick={() => {
+              pendingScroll.current = scopes[0].parentState;
+              restoreNodeFocus.current = scopes[0].triggerId;
+              setZoom(scopes[0].parentState.zoom);
+              setScopes([]);
+            }}>Overview</button> : null}
+          </div> : null}
           <div
             ref={viewportRef}
             onScroll={publishState}
@@ -561,11 +611,7 @@ export function SessionGraphPreview({
                     return (
                       <g
                         key={edge.id}
-                        className={
-                          edge.fromId === selectedId || edge.toId === selectedId
-                            ? "is-connected"
-                            : ""
-                        }
+                        className={`${edge.fromId === `record:${selectedId}` || edge.toId === `record:${selectedId}` ? "is-connected" : ""}${edge.grouped ? " is-grouped" : ""}`}
                       >
                         <path
                           d={route.path}
@@ -580,12 +626,25 @@ export function SessionGraphPreview({
                     </text>
                   ))}
                 </svg>
-                {focalRecords.map((record) => {
-                  const point = layout.positions.get(record.id)!;
+                {projection.nodes.map((node) => {
+                  const point = layout.positions.get(node.id)!;
+                  const record = node.records[0];
+                  if (node.records.length > 1) return <button
+                    key={node.id} type="button"
+                    ref={(element) => { if (element) nodesRef.current.set(node.id, element); else nodesRef.current.delete(node.id); }}
+                    className="session-graph-node session-graph-group"
+                    style={{ left: point.x, top: point.y }}
+                    aria-label={`Expand ${node.records.length} Records: ${record.title} — ${node.records.at(-1)!.title}`}
+                    onClick={() => expandGroup(node)}
+                  >
+                    <strong>{node.records.length} Records</strong>
+                    <span className="session-graph-group-range">{record.title}<br />… {node.records.at(-1)!.title}</span>
+                    <span className="session-graph-group-action">Expand Path →</span>
+                  </button>;
                   return (
                     <button
-                      ref={(element) => { if (element) nodesRef.current.set(record.id, element); else nodesRef.current.delete(record.id); }}
-                      key={record.id}
+                      ref={(element) => { if (element) nodesRef.current.set(node.id, element); else nodesRef.current.delete(node.id); }}
+                      key={node.id}
                       type="button"
                       className={`session-graph-node${record.id === selectedId ? " is-selected" : ""}`}
                       style={{ left: point.x, top: point.y }}
@@ -600,8 +659,7 @@ export function SessionGraphPreview({
                       >
                         {record.title}
                       </span>
-                      <span className="session-graph-node-footer">
-                        <Identity
+                      <Identity
                           focusable={false}
                           identity={record.actorSnapshot}
                           name={
@@ -609,11 +667,10 @@ export function SessionGraphPreview({
                               ? record.actor.label
                               : undefined
                           }
-                        />
-                        <span>
+                      />
+                        <span className="session-graph-node-status">
                           {sessionGraphStatuses(record).map(label).join(" · ")}
                         </span>
-                      </span>
                     </button>
                   );
                 })}
@@ -677,8 +734,9 @@ export function SessionGraphPreview({
                 {backStack.length ? <button type="button" className="session-graph-back-link" onClick={() => {
                   const previous = backStack[backStack.length - 1];
                   setBackStack((current) => current.slice(0, -1));
+                  setScopes(previous.scopes);
                   pendingScroll.current = previous.state;
-                  if (previous.state.topicId !== topicId) setView(null);
+                  if (previous.state.topicId !== topicId) setView(previous.view);
                   setTopicId(previous.state.topicId ?? "");
                   setSelectedId(previous.state.selectedId);
                   setZoom(previous.state.zoom);
