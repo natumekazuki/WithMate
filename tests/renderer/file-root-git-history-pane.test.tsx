@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import type {
   FileRootGitChangeEntry,
   FileRootGitHistoryCommit,
+  FileRootGitHistoryCommitDetailRequest,
   FileRootGitHistoryCommitDetailResult,
   FileRootGitHistoryCommitsRequest,
   FileRootGitHistoryCommitsResult,
@@ -227,6 +228,178 @@ async function flush(): Promise<void> {
 const unusedHistoryComparison = async (): Promise<FileRootGitHistoryComparisonResult> => ({
   status: "failed",
   message: "unused",
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "commit detailの失敗は近接したRetryで同じ対象を再取得し、再失敗後も再試行でき、成功時は内容と操作可能なfocusへ復帰する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "Retryがない、別対象を取得する、busy中に再実行する、再失敗で回復操作を失う、または成功時にfocusが消失する"
+// observable = "detail API request、alertのraw message、RetryのDOM identity/disabled/aria-busy、activeElement、成功後のchanged file tree"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane detail recovery"
+// lifecycle = "permanent"
+// impact = "一時的な取得失敗から同じcommitへ復帰できず、keyboard利用者が操作位置を失う"
+// distinction = "既存の正常detail/refresh testでは扱わない、失敗応答・例外・再成功とRetryの継続性を遅延APIで確認する。描画寸法は別途実描画で確認する"
+// @end-test-value
+test("History detailは同じ対象をRetryでき再失敗と成功後のfocusを扱う", async () => {
+  const { dom, restore } = installDom();
+  const target = commit("a", "raw commit subject");
+  const requests: FileRootGitHistoryCommitDetailRequest[] = [];
+  const pending: Array<{
+    resolve: (result: FileRootGitHistoryCommitDetailResult) => void;
+    reject: (error: Error) => void;
+  }> = [];
+  const api: NonNullable<FileRootGitHistoryPaneProps["api"]> = {
+    listFileRootGitHistoryRepositories: async () => ({ status: "ok", repositories: [repositoryA] }),
+    listFileRootGitHistoryCommits: async () => ({
+      status: "ok", page: { entries: [target], nextCursor: null, hasMore: false },
+    }),
+    getFileRootGitHistoryCommitDetail: (request) => {
+      requests.push(request);
+      return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+    },
+    getFileRootGitHistoryDiff: async () => ({ status: "failed", message: "unused" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
+  };
+  let root: Root | null = null;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    const render = async (refreshRevision: number) => act(async () => {
+      root ??= createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootGitHistoryPane, {
+        api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision,
+        onOpenDiff: async () => null,
+      }));
+    });
+    await render(0);
+    await flush();
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
+    await act(async () => pending[0]?.resolve({ status: "failed", message: "raw error: initial" }));
+    const alert = dom.window.document.querySelector<HTMLElement>(".file-history-detail [role='alert']");
+    const retry = alert?.querySelector<HTMLButtonElement>("button");
+    assert.ok(alert && retry);
+    assert.match(alert.textContent ?? "", /raw error: initial/);
+    assert.equal(retry.textContent, "Retry");
+    retry.focus();
+    await act(async () => retry.click());
+    retry.blur();
+    assert.equal(dom.window.document.querySelector(".file-history-detail [role='alert'] button"), retry);
+    assert.equal(retry.disabled, true);
+    assert.equal(retry.getAttribute("aria-busy"), "true");
+    assert.equal(dom.window.document.querySelector(".file-history-detail")?.getAttribute("aria-busy"), "true");
+    assert.match(alert.textContent ?? "", /raw error: initial/);
+    await act(async () => retry.click());
+    await render(1);
+    await flush();
+    assert.equal(requests.length, 2, "busy Retry and header refresh must not duplicate the detail request");
+    await act(async () => pending[1]?.reject(new Error("raw error: retry")));
+    assert.match(alert.textContent ?? "", /raw error: retry/);
+    assert.equal(retry.disabled, false);
+    assert.equal(retry.hasAttribute("aria-busy"), false);
+    assert.equal(dom.window.document.activeElement, retry);
+    await act(async () => retry.click());
+    retry.blur();
+    await act(async () => pending[2]?.resolve({ status: "ok", commit: target, entries: [changedEntry("recovered.ts")] }));
+    assert.deepEqual(requests, Array.from({ length: 3 }, () => ({
+      sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, commitId: target.id,
+    })));
+    assert.equal(dom.window.document.querySelector(".file-history-detail [role='alert']"), null);
+    assert.equal(dom.window.document.querySelector(".file-history-detail-header h3")?.textContent, target.subject);
+    assert.ok(dom.window.document.querySelector(".workspace-change-row[title='recovered.ts']"));
+    assert.equal(dom.window.document.activeElement, dom.window.document.querySelector(".file-history-back"));
+  } finally {
+    await act(async () => root?.unmount());
+    restore();
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Retry中にHistoryへ戻るかcommit/repositoryを切り替えた後は旧対象の成功・失敗・例外が現在の表示やbusyへ反映されない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "旧Retryの遅延結果が一覧や新しいdetailを上書きし、旧errorを表示するか新requestのbusyを解除する"
+// observable = "現在の一覧/detail DOM、alert、aria-busy、changed file tree"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane retry request invalidation"
+// lifecycle = "permanent"
+// impact = "別repository/commitの内容や失敗を現在の対象として誤認させる"
+// distinction = "初回detailの遅延成功だけを扱う既存testに対し、失敗後のRetryを保留してBack/別commit/別repositoryと成功/失敗/例外の各分岐を確認する"
+// @end-test-value
+test("History detailのRetry結果はBackとcommitまたはrepository切替後へ混入しない", async () => {
+  for (const scenario of ["back", "commit", "repository"] as const) {
+    const { dom, restore } = installDom();
+    const first = commit("a", "first retry target");
+    const second = commit("b", "second retry target");
+    const pending: Array<{
+      resolve: (result: FileRootGitHistoryCommitDetailResult) => void;
+      reject: (error: Error) => void;
+    }> = [];
+    const api: NonNullable<FileRootGitHistoryPaneProps["api"]> = {
+      listFileRootGitHistoryRepositories: async () => ({ status: "ok", repositories: [repositoryA, repositoryB] }),
+      listFileRootGitHistoryCommits: async () => ({
+        status: "ok", page: { entries: [first, second], nextCursor: null, hasMore: false },
+      }),
+      getFileRootGitHistoryCommitDetail: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+      getFileRootGitHistoryDiff: async () => ({ status: "failed", message: "unused" }),
+      getFileRootGitHistoryComparison: unusedHistoryComparison,
+    };
+    let root: Root | null = null;
+    try {
+      const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+      await act(async () => {
+        root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+        root.render(React.createElement(FileRootGitHistoryPane, {
+          api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision: 0,
+          onOpenDiff: async () => null,
+        }));
+      });
+      await flush();
+      await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
+      await act(async () => pending[0]?.resolve({ status: "failed", message: "initial failure" }));
+      const retry = dom.window.document.querySelector<HTMLButtonElement>(".file-history-detail [role='alert'] button");
+      assert.ok(retry);
+      await act(async () => retry.click());
+      assert.equal(pending.length, 2);
+      if (scenario === "repository") {
+        const selector = dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='History repository']");
+        assert.ok(selector);
+        await act(async () => {
+          selector.value = repositoryB.repositoryId;
+          selector.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+        });
+      } else {
+        await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-back")?.click());
+      }
+      await flush();
+      if (scenario !== "back") {
+        await act(async () => dom.window.document.querySelector<HTMLButtonElement>(`.file-history-commit-row[data-commit-id='${second.id}']`)?.click());
+        assert.equal(pending.length, 3);
+      }
+      await act(async () => {
+        if (scenario === "back") {
+          pending[1]?.resolve({ status: "ok", commit: first, entries: [changedEntry("stale.ts")] });
+        } else if (scenario === "commit") {
+          pending[1]?.resolve({ status: "failed", message: "stale failure" });
+        } else {
+          pending[1]?.reject(new Error("stale exception"));
+        }
+      });
+      assert.equal(dom.window.document.querySelector("[role='alert']"), null, scenario);
+      assert.equal(dom.window.document.querySelector(".workspace-change-row[title='stale.ts']"), null);
+      if (scenario === "back") {
+        assert.ok(dom.window.document.querySelector(".file-history-commit-list"));
+      } else {
+        assert.equal(dom.window.document.querySelector(".file-history-detail-header h3")?.textContent, second.subject);
+        assert.equal(dom.window.document.querySelector(".file-history-detail")?.getAttribute("aria-busy"), "true");
+        await act(async () => pending[2]?.resolve({ status: "ok", commit: second, entries: [changedEntry("current.ts")] }));
+        assert.ok(dom.window.document.querySelector(".workspace-change-row[title='current.ts']"));
+      }
+    } finally {
+      await act(async () => root?.unmount());
+      restore();
+    }
+  }
 });
 
 // @test-value v2
