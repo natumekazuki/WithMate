@@ -28,14 +28,19 @@ const validProjection: SessionGlossaryProjection = {
 };
 
 const baseProps = {
+  projectionLoading: false,
+  projectionError: "",
   searchQuery: "",
   searchEntries: [],
   searchTotal: 0,
   searchLoading: false,
   searchError: "",
+  searchStale: false,
   selectedTerm: null,
   onSearchQueryChange() {},
   onLoadMoreSearchResults() {},
+  onRetryProjection() {},
+  onRetrySearch() {},
   onSelectTerm() {},
   onBackToList() {},
 };
@@ -64,10 +69,10 @@ test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Glossary検索の失敗は空結果表示へ置換せず、errorだけを表示する"
-// oracle = { type = "contract", ref = "Issue #731 glossary search state distinction" }
-// fault = "検索失敗時にNo matching termsを併記して失敗を空結果と誤認させる"
-// observable = "検索errorのalertと空結果メッセージの有無"
+// claim = "Glossary検索の失敗は理由とRetryを表示し、正常な空結果と区別する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "検索失敗の理由やRetryを落とす、または失敗を空結果と誤認させる"
+// observable = "検索errorのalert、Retry buttonと空結果メッセージの有無"
 // observation_boundary = "component-behavior"
 // scope = "session-glossary-search-error"
 // lifecycle = "permanent"
@@ -81,7 +86,8 @@ test("SessionGlossaryPaneは検索失敗を空結果として表示しない", (
       projection={validProjection}
     />,
   );
-  assert.match(html, /class="glossary-search-error" role="alert">Search failed/);
+  assert.match(html, /role="alert"><p>Search failed<\/p>/);
+  assert.match(html, /<span class="button-content-label">Retry<\/span>/);
   assert.doesNotMatch(html, /No matching terms/);
 });
 

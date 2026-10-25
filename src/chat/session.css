@@ -441,6 +441,17 @@
   font-size: 0.78rem;
 }
 
+.glossary-search-stale {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.glossary-load-error,
+.glossary-search-error {
+  line-height: 1.45;
+}
+
 .glossary-list-empty {
   color: color-mix(in srgb, var(--ink) 72%, var(--muted));
 }
