@@ -527,7 +527,7 @@ export function SessionGraphPreview({
           </select>
         ) : null}
         {scopes.length && !selectedId ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
-          <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} showLabel onBack={() => {
+          <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} showLabel={scopes.length > 1} onBack={() => {
             const previous = scopes.at(-1)!;
             pendingScroll.current = previous.parentState;
             restoreNodeFocus.current = previous.triggerId;

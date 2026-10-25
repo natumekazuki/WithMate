@@ -197,10 +197,10 @@ test("graph overview retains semantic boundaries, branches, cycles and unloaded 
 
 // @test-value v2
 // kind = "contract"
-// claim = "区間展開からrecord詳細へ辿れ、会話復帰と区別できる可視labelの範囲navigationで位置・倍率・focusへ戻り、再表示・跨話題往復で追加取得した区間とlabel主体の名前を保持する"
+// claim = "区間展開からrecord詳細へ辿れ、操作名を持つ範囲navigationで位置・倍率・focusへ戻り、再表示・跨話題往復で追加取得した区間とlabel主体の名前を保持する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "group操作が全経路を無条件展開するか、範囲navigationが会話復帰と見分けられず別の操作を実行するか、戻る時に位置・倍率・focusを失うか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われるか、Userがtooltip内だけになる"
-// observable = "展開後のgroupとrecord、範囲navigationの可視labelと操作結果、詳細本文と可視label、再表示・跨話題往復後のnode集合、戻り先groupのfocusとviewport位置・倍率、部分取得中の集約可否"
+// fault = "group操作が全経路を無条件展開するか、全体へ戻る矢印に操作名がなくなるか、範囲navigationが会話復帰を実行するか、戻る時に位置・倍率・focusを失うか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われるか、Userがtooltip内だけになる"
+// observable = "展開後のgroupとrecord、全体へ戻る矢印のaccessible nameとtitle・深い区間の可視labelと操作結果、詳細本文と可視label、再表示・跨話題往復後のnode集合、戻り先groupのfocusとviewport位置・倍率、部分取得中の集約可否"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-overview-navigation"
 // lifecycle = "permanent"
@@ -251,7 +251,9 @@ test("graph preview retains expanded ranges and displays label actors beside a p
     viewport().scrollTop = 82;
     await click(".session-graph-group");
     const rangeNavigation = () => dom.window.document.querySelector("[aria-label='Graph Range Navigation']")!;
-    assert.equal(rangeNavigation().querySelector("[aria-label='Back To Overview']")?.textContent, "←Back To Overview");
+    const overviewBack = rangeNavigation().querySelector("[aria-label='Back To Overview']");
+    assert.equal(overviewBack?.getAttribute("title"), "Back To Overview");
+    assert.equal(overviewBack?.querySelector("[aria-hidden='true']")?.textContent, "←");
     const expanded = labels();
     assert.ok(dom.window.document.querySelector(".session-graph-group"), "a long range remains progressively expandable");
     assert.ok(expanded.length < records.length, "opening a group must not render the whole long path");
