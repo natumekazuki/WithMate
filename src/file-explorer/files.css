@@ -1212,6 +1212,35 @@
   color: var(--danger, #fca5a5);
 }
 
+.file-history-detail-error {
+  padding: 8px 9px;
+  font-size: 0.76rem;
+}
+
+.file-history-detail-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.file-history-detail-error-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+}
+
+.file-history-detail-error-actions .file-history-detail-error-toggle,
+.file-history-detail-error p {
+  color: var(--danger, #fca5a5);
+}
+
+.file-history-detail-error p {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .file-history-detail {
   min-width: 0;
   min-height: 0;

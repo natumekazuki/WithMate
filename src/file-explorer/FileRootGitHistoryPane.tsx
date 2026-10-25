@@ -32,7 +32,7 @@ import type {
   FileRootGitHistoryRepository,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
-import { LoadError } from "../ui/load-error.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 type FileRootGitHistoryApi = Pick<
   WithMateWindowApi,
@@ -412,6 +412,7 @@ export function FileRootGitHistoryPane({
   const selectedCommitIdRef = useRef<string | null>(null);
   const detailRequestRef = useRef(0);
   const detailBackRef = useRef<HTMLButtonElement | null>(null);
+  const detailRetryButtonRef = useRef<HTMLButtonElement | null>(null);
   const detailRetryFocusRef = useRef(false);
   const detailErrorId = useId();
   const diffRequestRef = useRef(0);
@@ -437,6 +438,7 @@ export function FileRootGitHistoryPane({
   const [changedEntries, setChangedEntries] = useState<FileRootGitChangeEntry[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detailLoadMessage, setDetailLoadMessage] = useState("");
+  const [detailErrorExpanded, setDetailErrorExpanded] = useState(false);
   const [detailMessage, setDetailMessage] = useState("");
   const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
   const [loadingDiffKey, setLoadingDiffKey] = useState("");
@@ -584,6 +586,7 @@ export function FileRootGitHistoryPane({
     setChangedEntries([]);
     setLoadingDetail(false);
     setDetailLoadMessage("");
+    setDetailErrorExpanded(false);
     setDetailMessage("");
     setListMessage("");
     setLoadingCommits(false);
@@ -887,6 +890,7 @@ export function FileRootGitHistoryPane({
         return;
       }
       setDetailLoadMessage("");
+      setDetailErrorExpanded(false);
       setSelectedCommit(result.commit);
       setChangedEntries(result.entries);
     } catch (error) {
@@ -909,7 +913,7 @@ export function FileRootGitHistoryPane({
       return;
     }
     if (detailLoadMessage) {
-      document.getElementById(detailErrorId)?.querySelector<HTMLButtonElement>("button")?.focus();
+      detailRetryButtonRef.current?.focus();
     } else {
       detailBackRef.current?.focus();
     }
@@ -923,6 +927,7 @@ export function FileRootGitHistoryPane({
     setSelectedCommitId(null);
     setLoadingDetail(false);
     setDetailLoadMessage("");
+    setDetailErrorExpanded(false);
     setDetailMessage("");
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
@@ -1219,16 +1224,47 @@ export function FileRootGitHistoryPane({
   const canCompare = Boolean(api);
   const isBusy = loadingRepositories || loadingCommits || loadingMore || loadingDetail || comparisonLoading || !!loadingDiffKey;
   const detailFeedback = detailLoadMessage ? (
-    <LoadError
-      id={detailErrorId}
-      className="file-history-message"
-      message={detailLoadMessage}
-      retryBusy={loadingDetail}
-      onRetry={selectedCommit ? () => {
-        detailRetryFocusRef.current = document.getElementById(detailErrorId)?.contains(document.activeElement) ?? false;
-        void selectCommit(selectedCommit);
-      } : undefined}
-    />
+    <div id={detailErrorId} className="file-history-detail-error">
+      <span className="visually-hidden" role="alert">Commit detail could not be loaded.</span>
+      <div className="file-history-detail-error-actions">
+        <button
+          className="session-file-explorer-refresh file-history-detail-error-toggle"
+          type="button"
+          aria-label={detailErrorExpanded ? "Hide Commit Detail Error" : "Show Commit Detail Error"}
+          title={detailErrorExpanded ? "Hide Error Details" : "Show Error Details"}
+          aria-expanded={detailErrorExpanded}
+          aria-controls={`${detailErrorId}-details`}
+          onClick={() => setDetailErrorExpanded((expanded) => !expanded)}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v6m0 4h.01" />
+          </svg>
+        </button>
+        {selectedCommit ? (
+          <button
+            ref={detailRetryButtonRef}
+            className="session-file-explorer-refresh"
+            type="button"
+            aria-label="Retry Commit Detail"
+            title="Retry Commit Detail"
+            disabled={loadingDetail}
+            aria-busy={loadingDetail || undefined}
+            onClick={() => {
+              detailRetryFocusRef.current = document.getElementById(detailErrorId)?.contains(document.activeElement) ?? false;
+              void selectCommit(selectedCommit);
+            }}
+          >
+            <ButtonContent busy={loadingDetail} busyLabel="Retrying commit detail">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                <path d="M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7" />
+              </svg>
+            </ButtonContent>
+          </button>
+        ) : null}
+      </div>
+      <p id={`${detailErrorId}-details`} hidden={!detailErrorExpanded}>{detailLoadMessage}</p>
+    </div>
   ) : detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null;
 
   return (

@@ -232,10 +232,10 @@ const unusedHistoryComparison = async (): Promise<FileRootGitHistoryComparisonRe
 
 // @test-value v2
 // kind = "contract"
-// claim = "commit detailの失敗は近接したRetryで同じ対象を再取得し、再失敗後も再試行でき、成功時は内容と操作可能なfocusへ復帰する"
-// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
-// fault = "Retryがない、別対象を取得する、busy中に再実行する、再失敗で回復操作を失う、または成功時にfocusが消失する"
-// observable = "detail API request、alertのraw message、RetryのDOM identity/disabled/aria-busy、activeElement、成功後のchanged file tree"
+// claim = "commit detailの失敗はicon操作から原文の詳細を開閉でき、Retryで同じ対象へ復帰し、再失敗後も操作とfocusを保つ"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "詳細を開けないか原文が変わる、Retryが別対象を取得する、busy中に再実行する、または完了時に回復操作やfocusを失う"
+// observable = "詳細toggleのaria-expanded/aria-controlsと本文のhidden/原文、detail API request、RetryのDOM identity/disabled/aria-busy、activeElement、成功後のchanged file tree"
 // observation_boundary = "component-behavior"
 // scope = "FileRootGitHistoryPane detail recovery"
 // lifecycle = "permanent"
@@ -276,25 +276,38 @@ test("History detailは同じ対象をRetryでき再失敗と成功後のfocus�
     await flush();
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
     await act(async () => pending[0]?.resolve({ status: "failed", message: "raw error: initial" }));
-    const alert = dom.window.document.querySelector<HTMLElement>(".file-history-detail [role='alert']");
-    const retry = alert?.querySelector<HTMLButtonElement>("button");
-    assert.ok(alert && retry);
-    assert.match(alert.textContent ?? "", /raw error: initial/);
-    assert.equal(retry.textContent, "Retry");
+    const error = dom.window.document.querySelector<HTMLElement>(".file-history-detail-error");
+    const toggle = error?.querySelector<HTMLButtonElement>("button[aria-controls]");
+    const retry = error?.querySelector<HTMLButtonElement>("button[aria-label='Retry Commit Detail']");
+    const details = error?.querySelector<HTMLParagraphElement>("p");
+    assert.ok(error && toggle && retry && details);
+    assert.equal(error.querySelector("[role='alert']")?.textContent, "Commit detail could not be loaded.");
+    assert.equal(details.hidden, true);
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(toggle.getAttribute("aria-controls"), details.id);
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.equal(details.hidden, false);
+    assert.equal(details.textContent, "raw error: initial");
+    await act(async () => toggle.click());
+    assert.equal(details.hidden, true);
+    await act(async () => toggle.click());
     retry.focus();
     await act(async () => retry.click());
     retry.blur();
-    assert.equal(dom.window.document.querySelector(".file-history-detail [role='alert'] button"), retry);
+    assert.equal(dom.window.document.querySelector("button[aria-label='Retry Commit Detail']"), retry);
     assert.equal(retry.disabled, true);
     assert.equal(retry.getAttribute("aria-busy"), "true");
     assert.equal(dom.window.document.querySelector(".file-history-detail")?.getAttribute("aria-busy"), "true");
-    assert.match(alert.textContent ?? "", /raw error: initial/);
+    assert.equal(details.textContent, "raw error: initial");
+    assert.equal(details.hidden, false);
     await act(async () => retry.click());
     await render(1);
     await flush();
     assert.equal(requests.length, 2, "busy Retry and header refresh must not duplicate the detail request");
     await act(async () => pending[1]?.reject(new Error("raw error: retry")));
-    assert.match(alert.textContent ?? "", /raw error: retry/);
+    assert.equal(details.textContent, "raw error: retry");
+    assert.equal(details.hidden, false);
     assert.equal(retry.disabled, false);
     assert.equal(retry.hasAttribute("aria-busy"), false);
     assert.equal(dom.window.document.activeElement, retry);
@@ -357,7 +370,7 @@ test("History detailのRetry結果はBackとcommitまたはrepository切替後�
       await flush();
       await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
       await act(async () => pending[0]?.resolve({ status: "failed", message: "initial failure" }));
-      const retry = dom.window.document.querySelector<HTMLButtonElement>(".file-history-detail [role='alert'] button");
+      const retry = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Retry Commit Detail']");
       assert.ok(retry);
       await act(async () => retry.click());
       assert.equal(pending.length, 2);
