@@ -3152,10 +3152,87 @@ test("Git Diff検索はReloadで一致件数が減っても現在位置を有効
 
 // @test-value v2
 // kind = "contract"
-// claim = "Git DiffはSplitを既定表示し、Inline切替でdiff surfaceとactive controlを更新する"
+// claim = "文書と構造化テキストの表示モードは現在の選択だけをpressedで公開し、切替後も視覚的選択・原文表示・focusと一致する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
+// fault = "pressed属性が欠落する、複数または古いモードをpressedにする、または無効なFormattedを選択状態として公開する"
+// observable = "Markdown/Mermaid/HTML/JSON/不正YAMLのgroup内buttonのaria-pressed、active class、disabled、focusとRaw/Source本文"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview display mode accessibility"
+// lifecycle = "permanent"
+// impact = "支援技術の利用者が現在の本文表現と切替結果を識別できる"
+// distinction = "既存の本文切替testや型検査では保証しない、各consumerの動的な選択状態公開を少数fixtureで検証する"
+// @end-test-value
+test("File Previewの選択モードをpressedで公開し切替・focus・利用不可状態と一致させる", async () => {
+  for (const fixture of [
+    { name: "notes.md", source: "# Notes", group: "Markdown display mode", first: "Preview", second: "Source" },
+    { name: "diagram.mmd", source: "flowchart TD\n  A --> B", group: "Mermaid display mode", first: "Preview", second: "Source" },
+    { name: "page.html", source: "<h1>Notes</h1>", group: "HTML display mode", first: "Preview", second: "Source" },
+    { name: "settings.json", source: '{"enabled":true}', group: "Structured text display mode", first: "Formatted", second: "Raw" },
+    { name: "invalid.yaml", source: "items: [", group: "Structured text display mode", first: "Formatted", second: "Raw", invalid: true },
+  ]) {
+    const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true, url: "http://localhost/" });
+    const restoreGlobals = installDomGlobals(dom);
+    const restoreElementSize = installElementSize(dom);
+    const request: SessionFileRootResourceRequest = { sessionId: "session-1", rootId: "workspace", relativePath: fixture.name };
+    const api = createTextPreviewApi(request, fixture.name, fixture.source, "mode-r1");
+    if (fixture.name.endsWith(".md")) {
+      const inspect = api.inspectSessionFile;
+      api.inspectSessionFile = async (resource) => ({ ...await inspect(resource), kind: "markdown" });
+    }
+    const container = dom.window.document.getElementById("root")!;
+    let root: Root | null = null;
+    try {
+      root = await renderPreview(api, container, request);
+      await waitFor(() => container.querySelector(`[aria-label='${fixture.group}']`) !== null);
+      const group = container.querySelector(`[aria-label='${fixture.group}']`)!;
+      const buttons = [...group.querySelectorAll<HTMLButtonElement>("button")];
+      assert.equal(buttons.length, 2);
+      const first = buttons.find((button) => button.textContent === fixture.first)!;
+      const second = buttons.find((button) => button.textContent === fixture.second)!;
+      const assertSelection = (selected: HTMLButtonElement) => {
+        for (const button of buttons) {
+          assert.equal(button.getAttribute("aria-pressed"), String(button === selected), fixture.name);
+          assert.equal(button.classList.contains("is-active"), button === selected, fixture.name);
+        }
+      };
+      if (fixture.invalid) {
+        await waitFor(() => container.textContent?.includes("Formatted preview is unavailable") ?? false);
+        assert.equal(first.disabled, true);
+        assertSelection(second);
+      } else {
+        await waitFor(() => !first.disabled);
+        assertSelection(first);
+        second.focus();
+        await act(async () => second.click());
+        assertSelection(second);
+        assert.equal(dom.window.document.activeElement, second);
+      }
+      await waitFor(() => container.querySelector(".session-file-text-line code") !== null);
+      assert.deepEqual(
+        [...container.querySelectorAll(".session-file-text-line code")].map((line) => line.textContent),
+        fixture.source.split("\n"),
+      );
+      if (!fixture.invalid) {
+        first.focus();
+        await act(async () => first.click());
+        assertSelection(first);
+        assert.equal(dom.window.document.activeElement, first);
+      }
+    } finally {
+      if (root) await act(async () => root?.unmount());
+      restoreElementSize();
+      restoreGlobals();
+      dom.window.close();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Git DiffはSplitを既定表示し、Inline切替でdiff surface・視覚的選択・pressed stateを一致させる"
 // oracle = { type = "contract", ref = "src/file-explorer/SessionFilePreview.tsx" }
-// fault = "既定modeがInline、切替後に両方のsurfaceを表示する、またはOpen Preview callbackを失う"
-// observable = "Split/Inline surfaceの存在、active button、Open Preview callback count"
+// fault = "既定modeがInline、切替後に両方のsurfaceを表示する、pressed stateが欠落または本文とずれる、またはOpen Preview callbackを失う"
+// observable = "Split/Inline surfaceの存在、active buttonとaria-pressed、Open Preview callback count"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreview.git-diff-mode"
 // lifecycle = "permanent"
@@ -3191,6 +3268,8 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
     assert.ok(container.querySelector(".session-live-diff-split"));
     assert.equal(container.querySelector(".session-file-text-scroll"), null);
     assert.equal(container.querySelector("button.is-active")?.textContent, "Split");
+    const displayMode = container.querySelector("[aria-label='Git diff display mode']")!;
+    assert.deepEqual([...displayMode.querySelectorAll("button")].map((button) => button.getAttribute("aria-pressed")), ["true", "false"]);
 
     const openPreviewButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent === "Open Preview");
@@ -3209,6 +3288,7 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
     assert.equal(container.querySelector(".session-live-diff-split"), null);
     assert.ok(container.querySelector(".session-file-text-scroll"));
     assert.equal(container.querySelector("button.is-active")?.textContent, "Inline");
+    assert.deepEqual([...displayMode.querySelectorAll("button")].map((button) => button.getAttribute("aria-pressed")), ["false", "true"]);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

@@ -1166,13 +1166,13 @@ export function SessionFilePreview({
           ) : null}
           {isDocumentPreview ? (
             <div className="session-file-preview-segmented" role="group" aria-label={`${previewKind === "html" ? "HTML" : previewKind === "mermaid" ? "Mermaid" : "Markdown"} display mode`}>
-              <button type="button" className={markdownMode === "preview" ? "is-active" : ""} onClick={() => {
+              <button type="button" className={markdownMode === "preview" ? "is-active" : ""} aria-pressed={markdownMode === "preview"} onClick={() => {
                 if (previewKind === "html") {
                   setFindOpen(false);
                 }
                 setMarkdownMode("preview");
               }}>Preview</button>
-              <button type="button" className={markdownMode === "source" ? "is-active" : ""} onClick={() => setMarkdownMode("source")}>Source</button>
+              <button type="button" className={markdownMode === "source" ? "is-active" : ""} aria-pressed={markdownMode === "source"} onClick={() => setMarkdownMode("source")}>Source</button>
             </div>
           ) : null}
           {structuredTextFormat && structuredTextEligible ? (
@@ -1180,12 +1180,14 @@ export function SessionFilePreview({
               <button
                 type="button"
                 className={structuredTextMode === "formatted" ? "is-active" : ""}
+                aria-pressed={structuredTextMode === "formatted"}
                 disabled={!currentStructuredTextProjection}
                 onClick={() => setStructuredTextMode("formatted")}
               >Formatted</button>
               <button
                 type="button"
                 className={structuredTextMode === "raw" ? "is-active" : ""}
+                aria-pressed={structuredTextMode === "raw"}
                 onClick={() => setStructuredTextMode("raw")}
               >Raw</button>
             </div>
@@ -1639,6 +1641,7 @@ export function SessionDiffPreview({
             <button
               type="button"
               className={viewMode === "split" ? "is-active" : ""}
+              aria-pressed={viewMode === "split"}
               disabled={loading || reloadPending}
               onClick={() => setViewMode("split")}
             >
@@ -1647,6 +1650,7 @@ export function SessionDiffPreview({
             <button
               type="button"
               className={viewMode === "inline" ? "is-active" : ""}
+              aria-pressed={viewMode === "inline"}
               disabled={loading || reloadPending}
               onClick={() => setViewMode("inline")}
             >
