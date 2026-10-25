@@ -354,6 +354,100 @@ test("History detailは同じ対象をRetryでき再失敗と成功後のfocus�
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "詳細取得とDiff操作の失敗は対象別に原文を確認でき、各操作の再実行は他方の失敗状態を消さない"
+// oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }
+// fault = "詳細取得の失敗がDiffの失敗を隠す、一方の再実行で他方の診断を失う、またはDiffだけの失敗へ詳細取得Retryを表示する"
+// observable = "各失敗のalert、error入口とdialogのaccessible name・診断原文、詳細取得request、Retryの有無、成功後のchanged file tree"
+// observation_boundary = "component-behavior"
+// scope = "FileRootGitHistoryPane detail and diff failure feedback"
+// lifecycle = "permanent"
+// impact = "直前のDiff操作が失敗した理由を確認できず、無関係な詳細取得Retryへ誘導される"
+// distinction = "既存Retry testはDiff callback失敗を通らず、型検査では独立した失敗状態の描画と回復を観測できない。単一componentで両操作の失敗・再実行を確認する"
+// @end-test-value
+test("History detailとDiff操作の失敗は互いを隠さず独立して回復する", async () => {
+  const { dom, restore } = installDom();
+  const target = commit("a", "independent failures");
+  const detailRequests: FileRootGitHistoryCommitDetailRequest[] = [];
+  let completeDetail: ((result: FileRootGitHistoryCommitDetailResult) => void) | null = null;
+  const api: NonNullable<FileRootGitHistoryPaneProps["api"]> = {
+    listFileRootGitHistoryRepositories: async () => ({ status: "ok", repositories: [repositoryA] }),
+    listFileRootGitHistoryCommits: async () => ({ status: "ok", page: { entries: [target], nextCursor: null, hasMore: false } }),
+    getFileRootGitHistoryCommitDetail: async (request) => {
+      detailRequests.push(request);
+      if (detailRequests.length === 1) return { status: "failed", message: "DETAIL_FAILURE: original" };
+      return new Promise((resolve) => { completeDetail = resolve; });
+    },
+    getFileRootGitHistoryDiff: async () => ({ status: "failed", message: "unused" }),
+    getFileRootGitHistoryComparison: unusedHistoryComparison,
+  };
+  let diffCalls = 0;
+  let root: Root | null = null;
+  const document = dom.window.document;
+  const toggle = () => document.querySelector<HTMLButtonElement>(".file-history-detail-error-toggle");
+  const panel = () => document.querySelector<HTMLElement>("[role='dialog']");
+  const alerts = () => Array.from(document.querySelectorAll("[role='alert']"), (element) => element.textContent);
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    await act(async () => {
+      root = createRoot(document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootGitHistoryPane, {
+        api, sessionId: "session-1", enabled: true, rootsRevision: "roots-1", refreshRevision: 0,
+        onOpenDiff: async () => {
+          diffCalls += 1;
+          if (diffCalls === 1) return "DIFF_FAILURE: output limit exceeded";
+          if (diffCalls === 3) throw new Error("DIFF_EXCEPTION: unavailable");
+          if (diffCalls === 5) return "DIFF_FAILURE: another attempt";
+          return null;
+        },
+      }));
+    });
+    await flush();
+    await act(async () => document.querySelector<HTMLButtonElement>(".file-history-commit-row")?.click());
+    const openAll = Array.from(document.querySelectorAll("button")).find((button) => button.textContent === "Open All Changes");
+    assert.ok(openAll);
+    await act(async () => openAll.click());
+    assert.deepEqual(alerts(), ["Commit detail could not be loaded.", "Commit diff could not be opened."]);
+    assert.equal(toggle()?.getAttribute("aria-label"), "Show Commit Detail and Diff Errors");
+    await act(async () => toggle()?.click());
+    assert.equal(panel()?.getAttribute("aria-label"), "Commit Detail and Diff Errors");
+    assert.equal(panel()?.querySelector("p")?.textContent, "Commit Diff\nDIFF_FAILURE: output limit exceeded\n\nCommit Detail\nDETAIL_FAILURE: original");
+
+    await act(async () => openAll.click());
+    assert.deepEqual(alerts(), ["Commit detail could not be loaded."]);
+    assert.equal(panel()?.querySelector("p")?.textContent, "DETAIL_FAILURE: original");
+    assert.ok(document.querySelector("button[aria-label='Retry Commit Detail']"));
+    await act(async () => openAll.click());
+    assert.equal(panel()?.querySelector("p")?.textContent, "Commit Diff\nDIFF_EXCEPTION: unavailable\n\nCommit Detail\nDETAIL_FAILURE: original");
+    await act(async () => document.querySelector<HTMLButtonElement>("button[aria-label='Retry Commit Detail']")?.click());
+    assert.ok(panel()?.querySelector("p")?.textContent?.includes("DIFF_EXCEPTION: unavailable"), "detail Retry must retain the Diff failure while pending");
+    await act(async () => completeDetail?.({ status: "ok", commit: target, entries: [changedEntry("recovered.ts")] }));
+    assert.deepEqual(alerts(), ["Commit diff could not be opened."]);
+    assert.equal(document.querySelector("button[aria-label='Retry Commit Detail']"), null);
+    assert.equal(toggle()?.getAttribute("aria-label"), "Show Commit Diff Error");
+    await act(async () => toggle()?.click());
+    assert.equal(panel()?.getAttribute("aria-label"), "Commit Diff Error");
+    assert.equal(panel()?.querySelector("p")?.textContent, "DIFF_EXCEPTION: unavailable");
+    await act(async () => openAll.click());
+    assert.deepEqual(alerts(), []);
+    assert.equal(panel(), null);
+    assert.ok(document.querySelector(".workspace-change-row[title='recovered.ts']"));
+    await act(async () => openAll.click());
+    assert.equal(toggle()?.getAttribute("aria-label"), "Show Commit Diff Error");
+    assert.equal(toggle()?.getAttribute("aria-expanded"), "false");
+    await act(async () => toggle()?.click());
+    assert.equal(panel()?.querySelector("p")?.textContent, "DIFF_FAILURE: another attempt");
+    assert.equal(diffCalls, 5);
+    assert.deepEqual(detailRequests, Array.from({ length: 2 }, () => ({
+      sessionId: "session-1", repositoryId: repositoryA.repositoryId, rootId: repositoryA.rootId, commitId: target.id,
+    })));
+  } finally {
+    await act(async () => root?.unmount());
+    restore();
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Retry中にHistoryへ戻るかcommit/repositoryを切り替えた後は旧対象の成功・失敗・例外が現在の表示やbusyへ反映されない"
 // oracle = { type = "contract", ref = "docs/features/git-history-and-commit-preview.md#Historyタブ" }

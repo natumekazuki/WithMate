@@ -102,10 +102,11 @@ type HistoryPageIdentity = {
 
 type HistoryRepositoryState = "pending" | "ready" | "unavailable" | "error";
 
-function HistoryDetailErrorPopover({ anchor, actionsId, id, message, onClose }: {
+function HistoryDetailErrorPopover({ anchor, actionsId, id, label, message, onClose }: {
   anchor: HTMLButtonElement;
   actionsId: string;
   id: string;
+  label: string;
   message: string;
   onClose: (restoreFocus: boolean) => void;
 }) {
@@ -183,7 +184,7 @@ function HistoryDetailErrorPopover({ anchor, actionsId, id, message, onClose }: 
       id={id}
       className="file-history-detail-error-popover"
       role="dialog"
-      aria-label="Commit Detail Error"
+      aria-label={label}
       tabIndex={-1}
       style={position}
       onKeyDown={(event) => {
@@ -552,7 +553,7 @@ export function FileRootGitHistoryPane({
   const [selectedEntryPath, setSelectedEntryPath] = useState<string | null>(null);
   const [lastSelectedCommitId, setLastSelectedCommitId] = useState<string | null>(null);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  const detailErrorOpen = detailErrorExpanded && !!detailLoadMessage && visible && !comparisonOpen;
+  const detailErrorOpen = detailErrorExpanded && !!(detailLoadMessage || detailMessage) && visible && !comparisonOpen;
   const closeDetailError = useCallback((restoreFocus: boolean) => {
     setDetailErrorExpanded(false);
     if (restoreFocus) {
@@ -980,13 +981,15 @@ export function FileRootGitHistoryPane({
       && detailRequestRef.current === requestId
       && selectedCommitIdRef.current === commit.id;
     diffRequestRef.current += 1;
+    if (selectedCommitIdRef.current !== commit.id) {
+      setDetailMessage("");
+    }
     selectedCommitIdRef.current = commit.id;
     setLastSelectedCommitId(commit.id);
     setSelectedCommitId(commit.id);
     setSelectedCommit(commit);
     setChangedEntries([]);
     setLoadingDetail(true);
-    setDetailMessage("");
     setLoadingDiffKey("");
     setSelectedEntryPath(null);
     try {
@@ -1253,6 +1256,8 @@ export function FileRootGitHistoryPane({
       }
       if (message) {
         setDetailMessage(message);
+      } else if (!detailLoadMessage) {
+        setDetailErrorExpanded(false);
       }
       return message;
     } catch (error) {
@@ -1273,7 +1278,7 @@ export function FileRootGitHistoryPane({
         setLoadingDiffKey("");
       }
     }
-  }, [onOpenDiff, selectedCommit, sessionId]);
+  }, [detailLoadMessage, onOpenDiff, selectedCommit, sessionId]);
 
   const rootChange = useMemo<GitRootChanges | null>(() => {
     const repository = selectedRepository;
@@ -1337,15 +1342,22 @@ export function FileRootGitHistoryPane({
     : null;
   const canCompare = Boolean(api);
   const isBusy = loadingRepositories || loadingCommits || loadingMore || loadingDetail || comparisonLoading || !!loadingDiffKey;
-  const detailFeedback = detailLoadMessage ? (
+  const detailErrorLabel = detailLoadMessage
+    ? detailMessage ? "Commit Detail and Diff Errors" : "Commit Detail Error"
+    : "Commit Diff Error";
+  const detailErrorMessage = detailLoadMessage && detailMessage
+    ? `Commit Diff\n${detailMessage}\n\nCommit Detail\n${detailLoadMessage}`
+    : detailLoadMessage || detailMessage;
+  const detailFeedback = detailErrorMessage ? (
     <div id={detailErrorId} className="file-history-detail-error">
-      <span className="visually-hidden" role="alert">Commit detail could not be loaded.</span>
+      {detailLoadMessage ? <span className="visually-hidden" role="alert">Commit detail could not be loaded.</span> : null}
+      {detailMessage ? <span className="visually-hidden" role="alert">Commit diff could not be opened.</span> : null}
       <div className="file-history-detail-error-actions">
         <button
           ref={detailErrorButtonRef}
           className="session-file-explorer-refresh file-history-detail-error-toggle"
           type="button"
-          aria-label={detailErrorOpen ? "Hide Commit Detail Error" : "Show Commit Detail Error"}
+          aria-label={`${detailErrorOpen ? "Hide" : "Show"} ${detailErrorLabel}`}
           title={detailErrorOpen ? "Hide Error Details" : "Show Error Details"}
           aria-expanded={detailErrorOpen}
           aria-haspopup="dialog"
@@ -1357,7 +1369,7 @@ export function FileRootGitHistoryPane({
             <path d="M12 7v6m0 4h.01" />
           </svg>
         </button>
-        {selectedCommit ? (
+        {selectedCommit && detailLoadMessage ? (
           <button
             ref={detailRetryButtonRef}
             className="session-file-explorer-refresh"
@@ -1384,12 +1396,13 @@ export function FileRootGitHistoryPane({
           anchor={detailErrorButtonRef.current}
           actionsId={detailErrorId}
           id={`${detailErrorId}-details`}
-          message={detailLoadMessage}
+          label={detailErrorLabel}
+          message={detailErrorMessage}
           onClose={closeDetailError}
         />
       ) : null}
     </div>
-  ) : detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null;
+  ) : null;
 
   return (
     <div className="file-history-pane" aria-busy={isBusy}>

@@ -25,6 +25,8 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 
 commit詳細の取得失敗は、エラー詳細を開閉するiconと`Retry Commit Detail`の再試行iconを表示します。診断文は初期状態では表示せず、エラーiconを操作すると原文を非modal popoverへ表示します。周囲の配置やRetryの位置を変えずに重ねて表示し、画面端では位置と高さを補正し、長文はpopover内でscroll・選択できます。Escape・閉じるbutton・エラーiconの再操作・外側のclickで閉じられ、Escapeや閉じるbuttonではエラーiconへfocusを戻します。再試行中も詳細の開閉状態と操作の位置を保持し、成功後は取得した詳細へ戻ります。
 
+`Open All Changes`などのDiff操作の失敗も同じエラーiconから原文を確認できます。詳細取得とDiff操作が両方失敗している場合は、popover内で診断を対象別に区別し、一方の失敗で他方の理由を隠しません。詳細取得のRetryとDiff操作の再実行は独立して扱い、それぞれの操作で他方の失敗状態を消しません。`Retry Commit Detail`は詳細取得の失敗が残っている場合だけ表示します。
+
 ## Compare
 
 `Compare`はHistoryの同じpane内で起動し、4つ目のtabや別のdiff実装は追加しません。toolbarまたはcommit entryから開け、commit entryからはそのcommitをbaseの初期値にします。通常のtargetは表示中branchです。
