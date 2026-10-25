@@ -170,10 +170,10 @@ async function renderAndFlush(root: Root, element: React.ReactElement): Promise<
 
 // @test-value v2
 // kind = "contract"
-// claim = "一覧取得失敗は編集を開始せずRetryでき、再取得中のbusyを経て一覧とkeyboard focusへ復帰する"
-// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
-// fault = "取得失敗を空一覧扱いして編集を許可する、再取得できない、または回復後も操作できない"
-// observable = "取得API呼出数、error、Retry、編集buttonのdisabled、busy、optionとfocus、editorへの遷移"
+// claim = "一覧取得失敗は短い通知と開閉できる詳細を持ち、Retryのbusyを経て一覧とkeyboard focusへ復帰する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "詳細を常時表示する、詳細やRetryに到達できない、取得失敗を空一覧扱いする、または再取得後も操作できない"
+// observable = "失敗通知、詳細buttonの展開状態と関連本文のhidden、取得API呼出数、Retry、編集buttonのdisabled、busy、optionとfocus、editorへの遷移"
 // observation_boundary = "component-behavior"
 // scope = "PromptTemplateWorkspace list failure and retry"
 // lifecycle = "permanent"
@@ -195,9 +195,19 @@ test("Template一覧の取得失敗はRetryから一覧と編集導線へ復帰�
   };
   try {
     await renderAndFlush(harness.root, <PromptTemplateWorkspace api={api} onBack={() => {}} onInsert={() => {}} />);
-    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /Template storage unavailable/);
+    assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, "Could not load templates.");
+    const details = harness.container.querySelector<HTMLButtonElement>('[aria-label="Template load error details"]')!;
+    const message = harness.dom.window.document.getElementById(details.getAttribute("aria-controls")!)!;
+    assert.equal(message.textContent, "Template storage unavailable");
+    assert.equal(message.hidden, true);
+    assert.equal(details.getAttribute("aria-expanded"), "false");
+    await act(async () => details.click());
+    assert.equal(message.hidden, false);
+    assert.equal(details.getAttribute("aria-expanded"), "true");
+    await act(async () => details.click());
+    assert.equal(message.hidden, true);
     const edit = harness.container.querySelector<HTMLButtonElement>('[aria-label="Edit template"]')!;
-    const retry = Array.from(harness.container.querySelectorAll("button")).find((button) => button.textContent === "Retry")!;
+    const retry = harness.container.querySelector<HTMLButtonElement>('[aria-label="Retry"]')!;
     assert.ok(retry);
     assert.equal(harness.dom.window.document.activeElement, retry);
     assert.equal(edit.disabled, true);
@@ -256,7 +266,7 @@ test("Template購読通知は取得失敗と遅いRetry失敗から一覧を回�
       await renderAndFlush(harness.root, <PromptTemplateWorkspace api={subscribed.api} onBack={() => {}} onInsert={() => {}} />);
       if (retryBeforeNotification) {
         await act(async () => {
-          Array.from(harness.container.querySelectorAll("button")).find((button) => button.textContent === "Retry")!.click();
+          harness.container.querySelector<HTMLButtonElement>('[aria-label="Retry"]')!.click();
         });
       }
       await act(async () => subscribed.emit([SECOND_TEMPLATE]));
@@ -274,10 +284,10 @@ test("Template購読通知は取得失敗と遅いRetry失敗から一覧を回�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Save/Delete待ち中は編集対象と退出を固定し、成功・失敗後に操作を戻し、失敗時は入力を保持する"
+// claim = "Save/Delete待ち中は対象と退出を固定し、失敗時は入力を保持して詳細を開閉でき、完了後は操作を戻す"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
-// fault = "保存・削除待ち中にBやpickerへ切り替わる、遅延応答が別対象を上書きする、失敗時の入力が消える、または操作が復帰しない"
-// observable = "API対象IDと本文、一覧選択・Back・New・入力のdisabled、close guard、editor値、busy、完了後の対象切替と再入場"
+// fault = "保存・削除待ち中にBやpickerへ切り替わる、失敗時の入力が消える、エラー詳細へ到達できない、または操作が復帰しない"
+// observable = "API対象IDと本文、一覧選択・Back・New・入力のdisabled、close guard、editor値、busy、エラー通知と詳細の開閉、完了後の対象切替と再入場"
 // observation_boundary = "component-behavior"
 // scope = "PromptTemplateWorkspace delayed save/delete success and failure"
 // lifecycle = "permanent"
@@ -354,7 +364,15 @@ test("Template保存・削除は処理中の対象を固定し成功・失敗後
         assert.equal(harness.container.querySelector<HTMLInputElement>('[aria-label="Template name"]')?.value, expectedName);
         assert.equal(prompt.value, action === "delete" && outcome === "success" ? SECOND_TEMPLATE.prompt : editedPrompt);
         if (outcome === "failure") {
-          assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, `${action} failed`);
+          assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, "Could not update the template. Your input has been kept.");
+          const details = harness.container.querySelector<HTMLButtonElement>('[aria-label="Template update error details"]')!;
+          const message = harness.dom.window.document.getElementById(details.getAttribute("aria-controls")!)!;
+          assert.equal(message.hidden, true);
+          await act(async () => details.click());
+          assert.equal(details.getAttribute("aria-expanded"), "true");
+          assert.equal(message.hidden, false);
+          assert.equal(message.textContent, `${action} failed`);
+          assert.equal(prompt.value, editedPrompt);
           assert.equal(actionButton.disabled, false);
         }
         assert.equal(closeGuard.current?.(), true);

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { focusRovingItemByKey } from "../ui/a11y.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
@@ -32,6 +32,39 @@ function toEditorState(template: PromptTemplate): EditorState {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Could not update the template.";
+}
+
+function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
+  message: string;
+  notice: string;
+  label: string;
+  recoveryAction?: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
+  return (
+    <div className="prompt-template-error">
+      <span className="sr-only" role="alert">{notice}</span>
+      <div className="prompt-template-error-actions">
+        {recoveryAction}
+        <button
+          type="button"
+          className="drawer-toggle compact secondary prompt-template-error-icon-button prompt-template-error-toggle"
+          aria-label={label}
+          title={label}
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v6m0 3v1" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+      <p id={detailsId} className="prompt-template-error-message" hidden={!expanded} tabIndex={0}>{message}</p>
+    </div>
+  );
 }
 
 export function PromptTemplateWorkspace({
@@ -301,19 +334,30 @@ export function PromptTemplateWorkspace({
                 <LoadingIndicator label="Loading templates" />
               </div>
             ) : loadError ? (
-              <div className="prompt-template-picker-state error">
-                <p role="alert">{loadError}</p>
-                <button
-                  ref={pickerRetryButtonRef}
-                  type="button"
-                  className="drawer-toggle compact secondary"
-                  onClick={() => {
-                    shouldFocusPickerRef.current = true;
-                    setLoadAttempt((attempt) => attempt + 1);
-                  }}
-                >
-                  Retry
-                </button>
+              <div className="prompt-template-picker-state prompt-template-picker-failure">
+                <TemplateErrorDetails
+                  key={loadError}
+                  message={loadError}
+                  notice="Could not load templates."
+                  label="Template load error details"
+                  recoveryAction={(
+                    <button
+                      ref={pickerRetryButtonRef}
+                      type="button"
+                      className="drawer-toggle compact secondary prompt-template-error-icon-button"
+                      aria-label="Retry"
+                      title="Retry"
+                      onClick={() => {
+                        shouldFocusPickerRef.current = true;
+                        setLoadAttempt((attempt) => attempt + 1);
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                        <path d="M20 7v5h-5M20 12a8 8 0 1 0-2.3 5.7" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                  )}
+                />
               </div>
             ) : templates.length > 0 ? (
               templates.map((template, index) => (
@@ -406,7 +450,14 @@ export function PromptTemplateWorkspace({
               setEditor((current) => ({ ...current, prompt: value }));
             }}
           />
-          {error ? <p className="prompt-template-error" role="alert">{error}</p> : null}
+          {error ? (
+            <TemplateErrorDetails
+              key={error}
+              message={error}
+              notice="Could not update the template. Your input has been kept."
+              label="Template update error details"
+            />
+          ) : null}
           <div className="prompt-template-editor-actions">
             <button
               type="button"

@@ -1079,8 +1079,9 @@
   margin: 0;
 }
 
-.prompt-template-picker-state.error {
-  color: #fca5a5;
+.prompt-template-picker-failure {
+  align-content: start;
+  padding-top: 32px;
 }
 
 .prompt-template-picker-item {
@@ -1213,8 +1214,62 @@
 }
 
 .prompt-template-error {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
   color: #fca5a5;
   font-size: 0.78rem;
+}
+
+.prompt-template-error-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.prompt-template-editor .prompt-template-error-actions {
+  justify-content: flex-start;
+}
+
+.session-page .drawer-toggle.prompt-template-error-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 6px;
+}
+
+.session-page .drawer-toggle.prompt-template-error-toggle {
+  color: #fca5a5;
+}
+
+.prompt-template-error-icon-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.prompt-template-error-icon-button:focus-visible,
+.prompt-template-error-message:focus-visible {
+  outline: 2px solid var(--character-sub);
+  outline-offset: 2px;
+}
+
+.prompt-template-error-message {
+  max-width: 36rem;
+  max-height: 160px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(252, 165, 165, 0.24);
+  border-radius: 9px;
+  background: rgba(252, 165, 165, 0.04);
+  line-height: 1.6;
+  text-align: left;
 }
 
 .prompt-template-editor-actions {
