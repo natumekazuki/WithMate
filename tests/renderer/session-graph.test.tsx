@@ -51,7 +51,7 @@ test("graph layout retains cyclic and disconnected records at readable nonoverla
     { id: "bc", fromId: "beta", toId: "gamma", kind: "depends_on" },
     { id: "ca", fromId: "gamma", toId: "alpha", kind: "related" },
     { id: "outside", fromId: "isolated", toId: "external", kind: "related" },
-  ]);
+  ], 640);
   assert.equal(layout.positions.size, records.length);
   assert.ok(Number.isFinite(layout.width) && Number.isFinite(layout.height));
   const positions = [...layout.positions.values()];
@@ -69,6 +69,49 @@ test("graph layout retains cyclic and disconnected records at readable nonoverla
         Math.abs(point.y - other.y) >= 150,
       );
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "長い連鎖は縦へ伸び、並列の記録はcard寸法を保って図の幅に収まる段へ配置される"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "接続の段数に応じて横へ伸ばすか、並列数を表示幅で制限せず横へはみ出すか、折返したcardを重ねる"
+// observable = "異なる表示幅での全記録の矩形、連鎖のx座標とy座標、並列群の列数とcanvas高さ"
+// observation_boundary = "consumer"
+// scope = "session-graph-responsive-layout"
+// lifecycle = "permanent"
+// distinction = "型検査や循環保持testは表示幅に応じた配置を判定しない。少数の座標入力で可読寸法と横scrollの主経路化を継続確認する"
+// @end-test-value
+test("graph layout grows chains downwards and wraps parallel records to the available width", () => {
+  const records = Array.from({ length: 12 }, (_, index) => record(`node-${index}`));
+  const chain = layoutSessionGraph(records, records.slice(1).map((item, index) => ({
+    id: `chain-${index}`, fromId: records[index].id, toId: item.id, kind: "depends_on",
+  })), 960);
+  const chainPoints = [...chain.positions.values()];
+  assert.equal(new Set(chainPoints.map((point) => point.x)).size, 1);
+  assert.ok(chain.width <= 960);
+  for (let index = 1; index < chainPoints.length; index += 1)
+    assert.ok(chainPoints[index].y >= chainPoints[index - 1].y + 150);
+
+  const branches = records.slice(1).map((item) => ({
+    id: `branch-${item.id}`, fromId: records[0].id, toId: item.id, kind: "supports" as const,
+  }));
+  const narrow = layoutSessionGraph(records, branches, 640);
+  const wide = layoutSessionGraph(records, branches, 960);
+  for (const [width, layout] of [[640, narrow], [960, wide]] as const) {
+    assert.equal(layout.positions.size, records.length);
+    assert.ok(layout.width <= width);
+    const points = [...layout.positions.values()];
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index];
+      assert.ok(point.x >= 0 && point.x + 240 <= width && point.y + 150 <= layout.height);
+      for (const other of points.slice(index + 1))
+        assert.ok(Math.abs(point.x - other.x) >= 240 || Math.abs(point.y - other.y) >= 150);
+    }
+  }
+  assert.equal(new Set([...narrow.positions.values()].map((point) => point.x)).size, 2);
+  assert.equal(new Set([...wide.positions.values()].map((point) => point.x)).size, 3);
+  assert.ok(wide.height < narrow.height);
 });
 
 // @test-value v2

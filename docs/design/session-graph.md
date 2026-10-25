@@ -80,4 +80,6 @@ Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ�
 
 図領域のCtrl＋左dragでpanし、Ctrl＋wheelで対象だけを拡縮する。画像・mmd previewと共通の処理を使い、wheelはSettingsの`Preview Wheel Zoom Step`（既定5ポイント）、buttonは10ポイント刻み、倍率範囲は10%〜800%とする。設定変更は次のwheel操作へ反映し、現在倍率と位置を変えない。通常wheelとkeyboardのnative scrollを保ち、Ctrl操作をWindow全体のzoomへ渡さず、pan後のclickでrecord選択や別窓を誤発火させない。
 
+配置は接続距離ごとの層を上から下へ置き、同じ層の記録を図の利用可能な幅に収まる列へ並べる。幅を超えた層は複数段へ分け、別の連結群は下へ分離する。表示幅の変更でもcardの文字・iconを縮小せず再配置し、拡縮操作は配置を変えず表示倍率だけを変える。card1列に必要な幅を下回る領域と拡大時はnative横scrollを残す。接続距離は無向であり、時系列や依存方向を表さない。意味と方向は関係のlabelと矢印で示し、複数段を跨ぐ辺はcard間の余白へ通す。
+
 図は要点・意味の異なる状態・主体icon・関係を中心にし、本文、適用範囲、target、自由項目、具体的な参照は選択後に表示する。Main/Auxiliaryの区分・会話名はiconのhover/focusで読め、記録者が内容上の主体と違う場合だけ記録者を補足する。関係はkeyboardからも辿れる。Markdown内の埋込み画像や図を自動取得・実行せず、参照は利用者の明示操作から既存の認可済みlink/file経路へ渡す。

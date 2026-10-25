@@ -159,6 +159,7 @@ export function SessionGraphPreview({
   const restoreNodeFocus = useRef<string | null>(null);
   const focusSelector = useRef(true);
   const [narrow, setNarrow] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState<number | null>(null);
   const [windowTarget, setWindowTarget] = useState<{ id: string; title: string } | null>(null);
   const windowTargetTrigger = useRef<HTMLElement | null>(null);
   const windowMenuRef = useRef<HTMLButtonElement>(null);
@@ -184,6 +185,16 @@ export function SessionGraphPreview({
     return () => observer.disconnect();
   }, []);
   useEffect(() => { if (windowTarget) windowMenuRef.current?.focus(); }, [windowTarget]);
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const measure = () => setViewportWidth(viewport.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, []);
   const [tooltipsDismissed, setTooltipsDismissed] = useState(false);
   const request = useRef(0);
   const detailRequest = useRef(0);
@@ -364,9 +375,16 @@ export function SessionGraphPreview({
     return records.filter((record) => ids.has(record.id));
   }, [records, relations, selectedId]);
   const layout = useMemo(
-    () => layoutSessionGraph(focalRecords, relations),
-    [focalRecords, relations],
+    () => layoutSessionGraph(focalRecords, relations, viewportWidth ?? 0),
+    [focalRecords, relations, viewportWidth],
   );
+  const edgeRoutes = relations.flatMap((edge) => {
+    const from = layout.positions.get(edge.fromId);
+    const to = layout.positions.get(edge.toId);
+    return from && to
+      ? [{ edge, route: sessionGraphEdgePath(from, to, edge.fromId === edge.toId) }]
+      : [];
+  });
   const clearSelection = (restoreFocus = true) => {
     restoreNodeFocus.current = restoreFocus ? selectedId : null;
     detailRequest.current += 1;
@@ -378,7 +396,7 @@ export function SessionGraphPreview({
     setBackStack([]);
   };
   useLayoutEffect(() => {
-    if (view && pendingScroll.current && viewportRef.current) {
+    if (view && viewportWidth !== null && pendingScroll.current && viewportRef.current) {
       viewportRef.current.scrollLeft = pendingScroll.current.scrollLeft;
       viewportRef.current.scrollTop = pendingScroll.current.scrollTop;
       pendingScroll.current = null;
@@ -396,7 +414,7 @@ export function SessionGraphPreview({
       headingRef.current?.focus();
       focusDetail.current = false;
     }
-  }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord]);
+  }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord, viewportWidth]);
   useLayoutEffect(() => {
     onMemoryChange?.({ topics, topicsMore, view, selectedRecord, detailView, backStack });
   }, [topics, topicsMore, view, selectedRecord, detailView, backStack, onMemoryChange]);
@@ -539,11 +557,7 @@ export function SessionGraphPreview({
                       <path d="M0 0 L8 4 L0 8" fill="currentColor" />
                     </marker>
                   </defs>
-                  {relations.map((edge) => {
-                    const from = layout.positions.get(edge.fromId);
-                    const to = layout.positions.get(edge.toId);
-                    if (!from || !to) return null;
-                    const route = sessionGraphEdgePath(from, to, edge.fromId === edge.toId);
+                  {edgeRoutes.map(({ edge, route }) => {
                     return (
                       <g
                         key={edge.id}
@@ -557,12 +571,14 @@ export function SessionGraphPreview({
                           d={route.path}
                           markerEnd={`url(#${markerId})`}
                         />
-                        <text x={route.labelX} y={route.labelY}>
-                          {edge.label ?? label(edge.kind)}
-                        </text>
                       </g>
                     );
                   })}
+                  {edgeRoutes.map(({ edge, route }) => (
+                    <text key={edge.id} x={route.labelX} y={route.labelY}>
+                      {edge.label ?? label(edge.kind)}
+                    </text>
+                  ))}
                 </svg>
                 {focalRecords.map((record) => {
                   const point = layout.positions.get(record.id)!;
