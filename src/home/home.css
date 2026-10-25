@@ -2155,13 +2155,14 @@
 
 .memory-review-shell {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(20rem, 1fr) auto;
   gap: 16px;
   justify-self: stretch;
   width: 100%;
   min-width: 0;
   min-height: 0;
   height: 100%;
+  overflow: auto;
   padding: 0;
 }
 
@@ -2239,6 +2240,7 @@
 
 .memory-review-list,
 .memory-review-detail {
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   border: 1px solid rgba(203, 213, 225, 0.12);
@@ -2259,6 +2261,7 @@
   padding: 12px;
   font: inherit;
   cursor: pointer;
+  overflow-wrap: anywhere;
 }
 
 .memory-review-item + .memory-review-item {
@@ -2307,16 +2310,44 @@
 }
 
 .memory-review-detail {
-  display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
   color: #edf3fb;
+}
+
+.memory-review-detail-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  gap: 14px;
+}
+
+.memory-review-detail-content > * {
+  flex-shrink: 0;
+}
+
+.memory-review-forget-row,
+.memory-review-detail > .memory-review-feedback {
+  flex-shrink: 0;
+}
+
+.memory-review-forget-row {
+  flex-wrap: wrap;
 }
 
 .memory-review-detail-head {
   display: flex;
   justify-content: space-between;
   gap: 14px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.memory-review-detail-head > div {
+  min-width: 0;
 }
 
 .memory-review-detail-head > span {
@@ -2363,6 +2394,7 @@
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+  flex-wrap: wrap;
 }
 
 .memory-review-files h3 {
@@ -2410,6 +2442,7 @@
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .memory-review-files strong {
@@ -2422,7 +2455,7 @@
   flex: 0 0 auto;
   color: #aeb9cb;
   font-size: 0.78rem;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .memory-review-files p {
@@ -2433,8 +2466,7 @@
 }
 
 .memory-review-body {
-  min-height: 0;
-  overflow: auto;
+  flex: 1 0 auto;
   border: 1px solid rgba(203, 213, 225, 0.14);
   border-radius: 8px;
   background: rgba(18, 24, 35, 0.96);
@@ -2452,6 +2484,25 @@
 
 .memory-review-feedback {
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-review-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.memory-review-error p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #edf3fb;
+}
+
+.memory-review-error button {
+  flex-shrink: 0;
 }
 
 .memory-review-usage {
@@ -2589,6 +2640,9 @@
 
 .memory-review-modal {
   width: min(480px, calc(100vw - 48px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  overflow-wrap: anywhere;
   border: 1px solid rgba(203, 213, 225, 0.16);
   border-radius: 8px;
   background: rgba(17, 22, 32, 0.98);

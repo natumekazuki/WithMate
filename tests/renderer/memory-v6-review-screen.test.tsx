@@ -67,6 +67,219 @@ async function flushEffects() {
   });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "usageの先行失敗は検索とdetail成功で消えず、usage Retryはusageだけを再取得し、再取得失敗でも取得済み容量を保持する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "検索/detail成功がusage errorを消す、Retryが別APIを呼ぶ、またはusage再取得で容量を消す"
+// observable = "失敗理由とRetry button、usage容量、API呼出回数"
+// observation_boundary = "component-behavior"
+// scope = "memory-review-usage-request-isolation"
+// lifecycle = "permanent"
+// impact = "取得状況の誤認と回復不能を防ぎ、表示済み容量の参照を維持する"
+// distinction = "型検査やservice testでは検出できない非同期応答順と画面操作の組合せを確認する"
+// @end-test-value
+test("MemoryV6ReviewScreen はusage失敗を独立して保持し対象だけRetryする", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "https://withmate.local/" });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  const rootElement = dom.window.document.getElementById("root")!;
+  let root: Root | null = null;
+  const search = deferred<MemoryV6ReviewSearchResult>();
+  const usages = [deferred<MemoryFileUsageResponse>(), deferred<MemoryFileUsageResponse>(), deferred<MemoryFileUsageResponse>()];
+  const calls = { search: 0, usage: 0, detail: 0 };
+  const api: MemoryV6ReviewApi = {
+    searchMemoryV6Entries() { calls.search += 1; return search.promise; },
+    getMemoryV6FileUsage() { return usages[calls.usage++]!.promise; },
+    async getMemoryV6Entry() { calls.detail += 1; return createDetail("entry-a", "Entry A"); },
+    async exportMemoryV6EntryFiles() { return null; },
+    async runMemoryV6ProtectedObjectGc() { throw new Error("unused"); },
+    async forgetMemoryV6Entry(entryId) { return { entryId, status: "forgotten", reason: "user_request" }; },
+  };
+  const click = async (selector: string) => {
+    const button = rootElement.querySelector<HTMLButtonElement>(selector);
+    assert.ok(button);
+    await act(async () => { button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  };
+  try {
+    await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
+    await act(async () => { usages[0]!.reject(new Error("Usage unavailable")); });
+    assert.match(rootElement.textContent ?? "", /Usage unavailable/);
+    await act(async () => { search.resolve({ items: [createHit("entry-a", "Entry A")] }); });
+    await click("button.memory-review-item");
+    assert.match(rootElement.textContent ?? "", /Entry A body/);
+    assert.match(rootElement.textContent ?? "", /Usage unavailable/);
+    await click('button[aria-label="Retry Memory file usage"]');
+    assert.deepEqual(calls, { search: 1, usage: 2, detail: 1 });
+    await act(async () => { usages[1]!.resolve(createUsage()); });
+    assert.doesNotMatch(rootElement.textContent ?? "", /Usage unavailable/);
+    assert.match(rootElement.querySelector('[aria-label="Memory file usage"]')?.textContent ?? "", /1\.5 KB/);
+    await click('button[aria-label="Refresh Memory review"]');
+    assert.match(rootElement.querySelector('[aria-label="Memory file usage"]')?.textContent ?? "", /1\.5 KB/);
+    await act(async () => { usages[2]!.reject(new Error("Usage refresh failed")); });
+    assert.match(rootElement.textContent ?? "", /Usage refresh failed/);
+    assert.match(rootElement.querySelector('[aria-label="Memory file usage"]')?.textContent ?? "", /1\.5 KB/);
+    assert.match(rootElement.textContent ?? "", /Entry A body/);
+  } finally {
+    await act(async () => { root?.unmount(); });
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "検索の先行失敗はusage成功で消えず、検索とdetailのRetryは対象APIだけを呼び、同一IDのdetailを再取得中と失敗後にも保持する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "usage成功が検索errorを消す、Retryが別APIを呼ぶ、または同一IDの再取得が表示済み本文を消す"
+// observable = "検索/detail失敗理由、Retry button、本文、API呼出回数とentry ID"
+// observation_boundary = "component-behavior"
+// scope = "memory-review-search-detail-request-isolation"
+// lifecycle = "permanent"
+// impact = "失敗領域を回復可能に保ち、再取得失敗で閲覧中の本文を失わない"
+// distinction = "既存detail切替安全testとは異なり、同一IDの継続表示と独立Retryを非同期応答で確認する"
+// @end-test-value
+test("MemoryV6ReviewScreen は検索と同一entryの失敗を対象別にRetryする", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "https://withmate.local/" });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  const rootElement = dom.window.document.getElementById("root")!;
+  let root: Root | null = null;
+  const search = deferred<MemoryV6ReviewSearchResult>();
+  const usage = deferred<MemoryFileUsageResponse>();
+  const detailRefresh = deferred<MemoryV6ReviewEntryDetail>();
+  const calls = { search: 0, usage: 0, detail: [] as string[] };
+  const api: MemoryV6ReviewApi = {
+    searchMemoryV6Entries() { calls.search += 1; return calls.search === 1 ? search.promise : Promise.resolve({ items: [createHit("entry-a", "Entry A")] }); },
+    getMemoryV6FileUsage() { calls.usage += 1; return usage.promise; },
+    getMemoryV6Entry(entryId) {
+      calls.detail.push(entryId);
+      return calls.detail.length === 2 ? detailRefresh.promise : Promise.resolve(createDetail(entryId, "Entry A"));
+    },
+    async exportMemoryV6EntryFiles() { return null; },
+    async runMemoryV6ProtectedObjectGc() { throw new Error("unused"); },
+    async forgetMemoryV6Entry(entryId) { return { entryId, status: "forgotten", reason: "user_request" }; },
+  };
+  const click = async (selector: string) => {
+    const button = rootElement.querySelector<HTMLButtonElement>(selector);
+    assert.ok(button);
+    await act(async () => { button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  };
+  try {
+    await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
+    await act(async () => { search.reject(new Error("Search unavailable")); });
+    await act(async () => { usage.resolve(createUsage()); });
+    assert.match(rootElement.textContent ?? "", /Search unavailable/);
+    await click('button[aria-label="Retry Memory search"]');
+    assert.deepEqual(calls, { search: 2, usage: 1, detail: [] });
+    assert.doesNotMatch(rootElement.textContent ?? "", /Search unavailable/);
+    await click("button.memory-review-item");
+    assert.match(rootElement.textContent ?? "", /Entry A body/);
+    await click("button.memory-review-item");
+    assert.ok(rootElement.querySelector('[role="status"][aria-label="Loading Memory entry"]'));
+    assert.match(rootElement.textContent ?? "", /Entry A body/);
+    await act(async () => { detailRefresh.reject(new Error("Detail refresh failed")); });
+    assert.match(rootElement.textContent ?? "", /Detail refresh failed/);
+    assert.match(rootElement.textContent ?? "", /Entry A body/);
+    await click('button[aria-label="Retry Memory entry"]');
+    assert.deepEqual(calls, { search: 2, usage: 1, detail: ["entry-a", "entry-a", "entry-a"] });
+    assert.doesNotMatch(rootElement.textContent ?? "", /Detail refresh failed/);
+    assert.match(rootElement.textContent ?? "", /Entry A body/);
+  } finally {
+    await act(async () => { root?.unmount(); });
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "次pageの検索失敗でも既存一覧を保持し、検索Retryは失敗したcursorで次pageだけをappendする"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "append失敗で一覧を消す、Retryがfirst pageへ戻る、またはusage/detailを再取得する"
+// observable = "pending/失敗/Retry後の一覧title、検索cursor、usage/detail呼出回数"
+// observation_boundary = "component-behavior"
+// scope = "memory-review-pagination-retry"
+// lifecycle = "permanent"
+// impact = "閲覧済み一覧を維持したまま失敗した次pageへ到達できる"
+// distinction = "既存pagination成功testでは検出できない失敗requestのcursor再利用と回復操作を確認する"
+// @end-test-value
+test("MemoryV6ReviewScreen は失敗したappend cursorをRetryで再利用する", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "https://withmate.local/" });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  const rootElement = dom.window.document.getElementById("root")!;
+  let root: Root | null = null;
+  const append = deferred<MemoryV6ReviewSearchResult>();
+  const retry = deferred<MemoryV6ReviewSearchResult>();
+  const requests: MemoryV6ReviewSearchRequest[] = [];
+  let usageCalls = 0;
+  let detailCalls = 0;
+  const api: MemoryV6ReviewApi = {
+    searchMemoryV6Entries(request) {
+      requests.push(request);
+      if (requests.length === 1) return Promise.resolve({ items: [createHit("entry-a", "Entry A")], nextCursor: "cursor-a" });
+      return requests.length === 2 ? append.promise : retry.promise;
+    },
+    async getMemoryV6FileUsage() { usageCalls += 1; return createUsage(); },
+    async getMemoryV6Entry() { detailCalls += 1; return null; },
+    async exportMemoryV6EntryFiles() { return null; },
+    async runMemoryV6ProtectedObjectGc() { throw new Error("unused"); },
+    async forgetMemoryV6Entry(entryId) { return { entryId, status: "forgotten", reason: "user_request" }; },
+  };
+  const click = async (selector: string) => {
+    const button = rootElement.querySelector<HTMLButtonElement>(selector);
+    assert.ok(button);
+    await act(async () => { button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  };
+  try {
+    await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
+    await click("button.memory-review-load-more");
+    assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry A/);
+    await act(async () => { append.reject(new Error("Next page failed")); });
+    assert.match(rootElement.textContent ?? "", /Next page failed/);
+    assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry A/);
+    await click('button[aria-label="Retry Memory search"]');
+    assert.deepEqual(requests.map((request) => request.cursor), [undefined, "cursor-a", "cursor-a"]);
+    assert.equal(usageCalls, 1);
+    assert.equal(detailCalls, 0);
+    assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry A/);
+    await act(async () => { retry.resolve({ items: [createHit("entry-b", "Entry B")] }); });
+    assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry A/);
+    assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry B/);
+    assert.doesNotMatch(rootElement.textContent ?? "", /Next page failed/);
+  } finally {
+    await act(async () => { root?.unmount(); });
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+  }
+});
+
 // @test-value v2
 // kind = "invariant"
 // claim = "Memory ReviewのLoad MoreはnextCursorを使って次pageを既存項目へappendする"
