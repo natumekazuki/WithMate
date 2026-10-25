@@ -195,13 +195,11 @@ function HistoryDetailErrorPopover({ anchor, actionsId, id, message, onClose }: 
         }
       }}
     >
-      <div className="file-history-detail-error-popover-header">
-        <button className="session-file-explorer-refresh" type="button" aria-label="Close Error Details" title="Close Error Details" onClick={() => onClose(true)}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
-            <path d="m6 6 12 12M18 6 6 18" />
-          </svg>
-        </button>
-      </div>
+      <button className="session-file-explorer-refresh file-history-detail-error-close" type="button" aria-label="Close Error Details" title="Close Error Details" onClick={() => onClose(true)}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true" focusable="false">
+          <path d="m6 6 12 12M18 6 6 18" />
+        </svg>
+      </button>
       <p>{message}</p>
     </div>,
     document.body,

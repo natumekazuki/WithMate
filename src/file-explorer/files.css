@@ -1251,18 +1251,15 @@
   font-size: 0.76rem;
 }
 
-.file-history-detail-error-popover-header {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.file-history-detail-error-popover-header button {
+.file-history-detail-error-popover .file-history-detail-error-close {
+  float: right;
   display: inline-flex;
+  margin: 0 0 4px 8px;
   padding: 5px;
 }
 
 .file-history-detail-error-popover p {
-  margin: 8px 0 0;
+  margin: 0;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
