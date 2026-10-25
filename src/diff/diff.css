@@ -123,8 +123,8 @@
 
 .diff-pane-head-inner,
 .diff-pane-body-inner {
-  min-width: 100%;
-  width: 100%;
+  min-width: calc(100% + var(--diff-overflow-width, 0px));
+  width: max-content;
 }
 
 .diff-pane-head-inner,
@@ -139,7 +139,7 @@
 
 .diff-pane-body {
   min-height: 0;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
   background: var(--editor);
 }
@@ -208,9 +208,10 @@
   border-right: 1px solid var(--editor-border);
   font-size: 0.82rem;
   line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  height: calc(1.5em + 8px);
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
   overflow: visible;
 }
 
