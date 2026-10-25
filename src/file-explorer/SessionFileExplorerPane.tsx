@@ -19,6 +19,7 @@ import type {
   SessionFilePin,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import { ButtonContent } from "../ui/button-content.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { FilePinIcon } from "./FilePinIcon.js";
 import { useSessionFilePins, type FilePinsApi } from "./use-session-file-pins.js";
@@ -179,6 +180,9 @@ export function SessionFileExplorerPane({
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [revealTarget, setRevealTarget] = useState<string | null>(null);
   const filePins = useSessionFilePins({ api, sessionId, enabled, rootsRevision, active: visible && activeTab === "files", refreshRevision });
+  const filesRefreshing = activeTab === "files" && (
+    rootsLoadState === "loading" || (!!api && !!sessionId && enabled && filePins.status === "loading")
+  );
   const pinsByEntry = useMemo(() => new Map(filePins.pins.flatMap((pin) => pin.rootId
     ? [[pinEntryKey(pin.rootId, pin.relativePath, pin.rootPath), pin] as const]
     : [])), [filePins.pins]);
@@ -586,10 +590,10 @@ export function SessionFileExplorerPane({
           }}
           aria-label={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
           title={activeTab === "changes" ? "Refresh Changes" : activeTab === "history" ? "Refresh History" : "Refresh Files"}
-          disabled={activeTab === "files" && (rootsLoadState === "loading" || filePins.pending)}
-          aria-busy={activeTab === "files" && rootsLoadState === "loading"}
+          disabled={filesRefreshing || (activeTab === "files" && filePins.pending)}
+          aria-busy={filesRefreshing}
         >
-          ↻
+          <ButtonContent busy={filesRefreshing}>↻</ButtonContent>
         </button>
         </div>
       </div>
@@ -694,6 +698,7 @@ export function SessionFileExplorerPane({
                       nodeKind: "root",
                     })}
                     title={row.root.displayPath}
+                    aria-expanded={!!expandedDirectories[directoryKey(row.root.id, "")]}
                   >
                     <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`} aria-hidden="true">▸</span>
                     <span className="session-file-tree-name">{row.root.label}</span>
@@ -730,6 +735,7 @@ export function SessionFileExplorerPane({
                         });
                       }}
                       title={row.entry.relativePath}
+                      aria-expanded={isDirectory ? !!expandedDirectories[entryKey] : undefined}
                     >
                       <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`} aria-hidden="true">
                         {entryIcon(row.entry)}

@@ -103,14 +103,15 @@ test("File Explorer root revisionはworkspace path変更を検出する", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Files treeはpath menu契約と通常clickを保ち、同じownerの更新中も展開済み内容を維持し、empty/unavailable rootsをloading状態で残さない"
-// oracle = { type = "contract", ref = "accepted behavior: File Explorer tree path context menu siblings" }
-// fault = "path操作や通常clickが壊れる、更新で展開済みtreeが消える、または確定empty/unavailable rootsのpanelがbusy/loading状態で残る"
-// observable = "path menu callback、通常click callback、tree load identity、roots panelのaria-busy/loading statusとfailure alert"
+// claim = "Files treeはpath menuと通常click、root/directoryの展開状態を伝え、更新中は既存treeとRefreshのbusy表示を保ち、取得終了後はbusyを解除する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md AgentのFile Explorer; docs/design/ui-design-guidelines.md 操作とアクセシビリティ・ボタン" }
+// fault = "path操作・通常click・展開状態通知が壊れる、更新で既存treeが消える、Refreshが取得中に通常表示・操作可能へ戻る、または確定empty/unavailable rootsがloadingで残る"
+// observable = "path menu/open callback、root/directory/fileのaria-expanded、tree identity、Refreshのdisabled/aria-busy/spinner、panelのloading statusとfailure alert"
 // observation_boundary = "component-behavior"
 // scope = "SessionFileExplorerPane Files tree interaction and roots state"
 // lifecycle = "permanent"
-// distinction = "root・directory・fileの兄弟入口とsymbolic link除外に加え、確定emptyと利用不可をpanelのaria-busyがpendingから解除された状態として確認する"
+// impact = "展開階層を支援技術へ伝え、取得待ちと利用不可を区別し、更新中の重複実行を防ぐ"
+// distinction = "型検査では検出できない展開操作と遅延取得に伴うDOM状態を既存のcomponent testで観測し、Pin取得だけが残る場合も確認する"
 // @end-test-value
 test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単位に保つ", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -186,8 +187,14 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
   }];
   let rejectRoots = false;
   let directoryCalls = 0;
+  let pinListCalls = 0;
+  const pinRefresh = deferred<SessionFilePin[]>();
   const api = {
     ...emptyPinsApi,
+    async listSessionFilePins() {
+      pinListCalls += 1;
+      return pinListCalls === 2 ? pinRefresh.promise : [];
+    },
     async showSessionFileTreeContextMenu(request: unknown) {
       pathMenuRequests.push(request);
       return (request as { nodeKind?: string }).nodeKind === "file"
@@ -241,6 +248,7 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
 
     const initialRoot = dom.window.document.querySelector<HTMLButtonElement>(".session-file-root-row");
     assert.ok(initialRoot);
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "false");
     initialRoot.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
       bubbles: true,
       cancelable: true,
@@ -249,7 +257,13 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     }));
     await act(async () => {
       initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "true");
+    await act(async () => {
       initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "false");
+    await act(async () => {
       initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
@@ -263,6 +277,9 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
 
     const refresh = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-refresh");
     assert.ok(refresh);
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "true");
+    assert.equal(refresh.getAttribute("aria-busy"), "false");
+    assert.equal(refresh.querySelector(".button-content-spinner"), null);
     await act(async () => {
       refresh.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
@@ -271,6 +288,10 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     assert.equal(dom.window.document.querySelector(".session-file-root-row"), initialRoot);
     assert.match(dom.window.document.body.textContent ?? "", /old\.txt/);
     assert.equal(directoryCalls, 2);
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "true");
+    assert.equal(refresh.disabled, true);
+    assert.equal(refresh.getAttribute("aria-busy"), "true");
+    assert.ok(refresh.querySelector(".button-content[data-busy='true'] > .button-content-spinner"));
 
     await act(async () => {
       directoryRequests[1]?.resolve([
@@ -288,6 +309,19 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     assert.ok(fileRow);
     assert.ok(directoryRow);
     assert.ok(symbolicLinkRow);
+    assert.equal(directoryRow.getAttribute("aria-expanded"), "false");
+    assert.equal(fileRow.hasAttribute("aria-expanded"), false);
+    assert.equal(symbolicLinkRow.hasAttribute("aria-expanded"), false);
+    assert.equal(refresh.disabled, true);
+    assert.equal(refresh.getAttribute("aria-busy"), "true");
+    assert.ok(refresh.querySelector(".button-content-spinner"));
+    await act(async () => {
+      pinRefresh.resolve([]);
+      await pinRefresh.promise;
+    });
+    assert.equal(refresh.disabled, false);
+    assert.equal(refresh.getAttribute("aria-busy"), "false");
+    assert.equal(refresh.querySelector(".button-content-spinner"), null);
     await act(async () => {
       fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
@@ -348,6 +382,14 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
 
     assert.match(dom.window.document.body.textContent ?? "", /new\.txt/);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old\.txt/);
+    await act(async () => directoryRow.click());
+    assert.equal(directoryRow.getAttribute("aria-expanded"), "true");
+    await act(async () => {
+      directoryRequests[2]?.resolve([]);
+      await directoryRequests[2]?.promise;
+      directoryRow.click();
+    });
+    assert.equal(directoryRow.getAttribute("aria-expanded"), "false");
 
     await act(async () => {
       root?.render(React.createElement(SessionFileExplorerPane, {
@@ -412,6 +454,10 @@ test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単�
     });
     await waitFor(() => filesPanel?.querySelector(".session-file-tree-error")?.textContent?.includes("File roots failed.") ?? false);
     assert.equal(filesPanel?.querySelector(".session-file-tree-error")?.getAttribute("role"), "alert");
+    assert.equal(refresh.disabled, false);
+    assert.equal(refresh.getAttribute("aria-busy"), "false");
+    assert.equal(refresh.querySelector(".button-content-spinner"), null);
+    assert.ok(Array.from(filesPanel?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Retry Files"));
 
     await act(async () => {
       root?.render(React.createElement(SessionFileExplorerPane, {
