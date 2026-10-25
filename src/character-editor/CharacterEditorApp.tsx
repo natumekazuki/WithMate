@@ -265,8 +265,9 @@ export default function CharacterEditorApp() {
 
   useEffect(() => {
     let active = true;
+    let refreshInFlight = false;
     const handleFocus = () => {
-      if (!authoringRefreshPendingRef.current || !persistedDetail || saving || authoringStarting) {
+      if (!authoringRefreshPendingRef.current || refreshInFlight || !persistedDetail || saving || authoringStarting) {
         return;
       }
 
@@ -275,18 +276,18 @@ export default function CharacterEditorApp() {
         return;
       }
 
-      authoringRefreshPendingRef.current = false;
+      refreshInFlight = true;
       const baselineDraft = createCharacterEditorDraftFromDetail(persistedDetail);
       void api.getCharacter(persistedDetail.id).then((detail) => {
         if (!active) {
           return;
         }
         if (!detail) {
-          authoringRefreshPendingRef.current = true;
           setFeedback("Could not reload character files.");
           return;
         }
 
+        authoringRefreshPendingRef.current = false;
         const latestDraft = draftRef.current;
         const hasNewEdits = !areCharacterEditorDraftsEqual(baselineDraft, latestDraft);
         setPersistedDetail(detail);
@@ -298,8 +299,9 @@ export default function CharacterEditorApp() {
         if (!active) {
           return;
         }
-        authoringRefreshPendingRef.current = true;
         setFeedback(formatCharacterEditorError(error, "Could not reload character files."));
+      }).finally(() => {
+        refreshInFlight = false;
       });
     };
 
@@ -381,6 +383,7 @@ export default function CharacterEditorApp() {
       const savedDraft = createCharacterEditorDraftFromDetail(refreshed);
       const latestDraft = draftRef.current;
       const hasNewEdits = !areCharacterEditorDraftsEqual(latestDraft, draftAtSave);
+      authoringRefreshPendingRef.current = false;
       setPersistedDetail(refreshed);
       setDraft(reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, latestDraft));
       if (!hasNewEdits) {

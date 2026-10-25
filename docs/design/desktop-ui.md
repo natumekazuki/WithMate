@@ -257,7 +257,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - close
   - dirty draft では discard confirm を出す
 - 保存開始時の draft と保存中の追加編集を区別し、完了時に新しい編集を保存結果で上書きしない。追加編集がある場合は保存成功表示で clean に見せない
-- Authoring後のfocus再取得は、保存済み内容から変更されたローカルdraftを保持する。失敗後も入力を保持して次のfocusで再試行し、再取得中の連続focusは重複要求にしない。後続の保存・Archive・Authoring開始後に古い再取得応答を反映しない
+- Authoring後のfocus再取得は、保存済み内容から変更されたローカルdraftを保持する。失敗後も入力を保持して次のfocusで再試行し、再取得中の連続focusは重複要求にしない。後続の保存・Archive・Authoring開始後に古い再取得応答を反映しない。後続操作で中断しても、再取得または保存後の再取得が成功するまで再取得要求を保持し、操作失敗後は次のfocusで回復できる
 - Character 定義自動生成、LLM 添削、section editor、revision / rollback、Character Update Workspace は current UI に含めない
 
 ## Session Monitor Window

@@ -348,7 +348,109 @@ test("CharacterEditorApp は後続AuthoringとSave後の古い再取得応答を
     assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, savedDefinition);
     assert.equal(findButtonByText(container, "Save").disabled, true);
     assert.equal(container.querySelector("footer span[role=status]")?.textContent, "Saved");
+    await editor.focus();
+    assert.equal(reads, 5);
   } finally { await editor.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "再取得に重なったSave/Archive/Authoring開始が失敗しても、次のfocusで同じCharacterを再取得し、未保存入力と後続の取得結果を古い応答から守る"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window; docs/design/character-authoring-growth.md#product-flow" }
+// fault = "後続操作の失敗で再取得要求を消費し回復不能になる、または旧応答が後続のdraft/通知を上書きする"
+// observable = "getCharacterのID列と回数、失敗通知、definition/notes/Profile入力値、Save disabled、再取得後のstatus"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp interrupted refresh recovery after failed operations"
+// lifecycle = "permanent"
+// impact = "操作失敗後もAuthoringの保存済み更新を確認でき、未保存入力を失わずEditorを継続できる"
+// distinction = "成功する後続操作と単独の取得失敗だけでは観測できない、effect無効化と後続操作失敗の交差を少数のJSDOM/制御Promiseで検証する"
+// @end-test-value
+test("CharacterEditorApp は後続操作失敗後も再取得と入力保護を継続する", async () => {
+  const scenarios = [
+    { operation: "archive", localEdits: false },
+    { operation: "archive", localEdits: true },
+    { operation: "authoring", localEdits: false },
+    { operation: "authoring", localEdits: true },
+    { operation: "save", localEdits: true },
+  ] as const;
+  for (const { operation, localEdits } of scenarios) {
+    const original = createCharacterDetail();
+    const updated = { ...original, definitionMarkdown: `${original.definitionMarkdown}\n## Latest Agent`, notesMarkdown: "# Latest Agent Notes" };
+    const refreshes: Array<ReturnType<typeof createDeferred<CharacterDetail | null>>> = [];
+    const ids: string[] = [];
+    const operationRequest = createDeferred<never>();
+    let operationCalls = 0;
+    const editor = await mountEditor({
+      async getCharacter(id) {
+        ids.push(id);
+        if (ids.length === 1) return original;
+        const request = createDeferred<CharacterDetail | null>();
+        refreshes.push(request);
+        return request.promise;
+      },
+    });
+    const { container, dom } = editor;
+    const localDefinition = `${original.definitionMarkdown}\n## Local Edit`;
+    try {
+      await editor.startAuthoring();
+      await editor.focus();
+      const failOperation = () => { operationCalls += 1; return operationRequest.promise; };
+      const api = dom.window.withmate;
+      assert.ok(api);
+      api.archiveCharacter = failOperation;
+      api.startCharacterAuthoringSession = failOperation;
+      api.updateCharacterDefinition = failOperation;
+      dom.window.confirm = () => true;
+      if (operation === "archive") {
+        await editor.click("Archive");
+      } else if (operation === "authoring") {
+        await editor.startAuthoring();
+      } else {
+        await editor.click("character.md");
+        await editor.fill("textarea", localDefinition);
+        await editor.click("Save");
+      }
+      assert.equal(operationCalls, 1, operation);
+      await editor.focus();
+      assert.equal(ids.length, 2, "Busy operation must not start a refresh");
+      await act(async () => operationRequest.reject(new Error(`${operation} failed`)));
+      assert.match(container.querySelector('footer [role="status"]')?.textContent ?? "", new RegExp(`${operation} failed`));
+      if (operation === "authoring") {
+        const close = container.querySelector<HTMLButtonElement>('[aria-label="Close"]');
+        assert.ok(close);
+        await act(async () => close.click());
+      }
+      if (localEdits) {
+        await editor.click("Profile");
+        await editor.fill("input", "Local Muse");
+        await editor.click("character.md");
+        await editor.fill("textarea", localDefinition);
+        await editor.click("character-notes.md");
+        await editor.fill("textarea", "# Local Notes");
+      }
+      await editor.focus();
+      await editor.focus();
+      assert.deepEqual(ids, ["char-1", "char-1", "char-1"], `${operation}: next focus retries without duplication`);
+      await act(async () => refreshes[1]!.resolve(updated));
+      const feedback = container.querySelector('footer [role="status"]')?.textContent;
+      assert.equal(feedback, localEdits ? "Unsaved edits kept after reloading character files." : "Character Files Reloaded");
+      if (localEdits) {
+        await act(async () => refreshes[0]!.reject(new Error("obsolete refresh failure")));
+      } else {
+        await act(async () => refreshes[0]!.resolve(original));
+      }
+      assert.equal(container.querySelector('footer [role="status"]')?.textContent, feedback);
+      await editor.click("character.md");
+      assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, localEdits ? localDefinition : updated.definitionMarkdown);
+      await editor.click("character-notes.md");
+      assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, localEdits ? "# Local Notes" : updated.notesMarkdown);
+      await editor.click("Profile");
+      assert.equal(container.querySelector<HTMLInputElement>("input")?.value, localEdits ? "Local Muse" : "Muse");
+      assert.equal(findButtonByText(container, "Save").disabled, !localEdits);
+      await editor.focus();
+      assert.equal(ids.length, 3, "Successful refresh consumes the request");
+    } finally { await editor.cleanup(); }
+  }
 });
 
 // @test-value v2
