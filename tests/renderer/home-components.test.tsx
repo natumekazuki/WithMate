@@ -23,6 +23,8 @@ import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catal
 import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import { buildHomeProviderSettingRows } from "../../src/settings/settings-view-model.js";
 import { buildSettingsCommandHandlers } from "../../src/settings/settings-command-handlers.js";
+import { buildSettingsDraftHandlers } from "../../src/settings/settings-draft-handlers.js";
+import { useSettingsFeedback } from "../../src/settings/use-settings-feedback.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { formatTimestampLabel } from "../../src-shared/time-state.js";
 
@@ -482,9 +484,9 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "CLI shim、Logs、Memory Review、保存を並行実行でき、別要求の終了でpending状態を失わず、shim失敗と保存後も新しい編集draftを保持して再操作できる"
+  // claim = "CLI shim、Logs、Memory Review、保存を並行実行でき、別要求の完了でbusyやshimの失敗理由を失わず、保存中の新しいdraftと失敗後の再試行を維持する"
   // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ; docs/design/settings-ui.md#interaction" }
-  // fault = "独立callbackを呼ばない、別要求の終了でbusyを解除する、shim失敗でdraftを失う、保存で後続編集を巻き戻す、または失敗後の再試行を止める"
+  // fault = "独立callbackを呼ばない、別要求の終了でbusyや失敗理由を消す、保存で後続編集を巻き戻す、または失敗後の再試行を止める"
   // observable = "実command handlerを接続したcomponentのcallback回数、各buttonのbusy、error feedback、編集checkboxとUnsaved Changes、失敗後の再実行"
   // observation_boundary = "component-behavior"
   // scope = "HomeSettingsContent concurrent action lifecycle"
@@ -498,6 +500,7 @@ describe("HomeSettingsContent", () => {
       let logCalls = 0;
       let reviewCalls = 0;
       let rejectShim!: (error: Error) => void;
+      let finishShim!: () => void;
       let finishLogs!: () => void;
       let finishReview!: () => void;
       let finishSave!: () => void;
@@ -505,7 +508,10 @@ describe("HomeSettingsContent", () => {
       const api = {
         installMemoryV6CliShim: () => {
           shimCalls += 1;
-          return new Promise<MemoryV6Diagnostics>((_resolve, reject) => { rejectShim = reject; });
+          return new Promise<MemoryV6Diagnostics>((resolve, reject) => {
+            rejectShim = reject;
+            finishShim = () => resolve(shimDiagnostics);
+          });
         },
         openAppLogFolder: () => {
           logCalls += 1;
@@ -518,7 +524,7 @@ describe("HomeSettingsContent", () => {
       function Harness() {
         const [draft, setDraft] = useState(currentDraft);
         const [saved, setSaved] = useState(settingsDraft);
-        const [feedback, setFeedback] = useState("");
+        const { settingsFeedback: feedback, setSettingsFeedback: setFeedback, clearSettingsFeedback } = useSettingsFeedback();
         currentDraft = draft;
         const commands = buildSettingsCommandHandlers({
           getApi: () => api,
@@ -532,7 +538,7 @@ describe("HomeSettingsContent", () => {
         return React.cloneElement(buildSettingsContent({ settingsDraft: draft, settingsFeedback: feedback, memoryV6Diagnostics: shimDiagnostics }), {
           ...commands,
           settingsDirty: JSON.stringify(draft) !== JSON.stringify(saved),
-          onChangeLaunchAtLoginEnabled: (enabled: boolean) => setDraft((value) => ({ ...value, launchAtLoginEnabled: enabled })),
+          ...buildSettingsDraftHandlers({ setSettingsDraft: setDraft, clearSettingsFeedback }),
           onOpenMemoryV6Review: () => {
             reviewCalls += 1;
             return new Promise<void>((resolve) => { finishReview = resolve; });
@@ -553,21 +559,88 @@ describe("HomeSettingsContent", () => {
       const launch = container.querySelector<HTMLInputElement>('.settings-section-toggle input[type="checkbox"]')!;
       await act(async () => launch.click());
       assert.equal(launch.checked, false);
-      await act(async () => finishLogs());
-      assert.equal(logs.disabled, false);
-      for (const control of [install, review, save]) assert.equal(control.getAttribute("aria-busy"), "true");
       await act(async () => rejectShim(new Error("CLI shim test failure")));
       assert.equal(install.disabled, false);
       assert.equal(install.getAttribute("aria-busy"), "false");
       assert.match(container.querySelector(".settings-feedback")!.textContent!, /CLI shim test failure/);
+      for (const control of [logs, review, save]) assert.equal(control.getAttribute("aria-busy"), "true");
+      await act(async () => finishLogs());
+      assert.equal(logs.disabled, false);
+      assert.match(container.querySelector(".settings-feedback")!.textContent!, /CLI shim test failure/);
+      for (const control of [review, save]) assert.equal(control.getAttribute("aria-busy"), "true");
       assert.equal(launch.checked, false);
       await act(async () => { finishReview(); finishSave(); });
       assert.equal(launch.checked, false);
       assert.ok(container.querySelector(".settings-dirty-state"));
       assert.equal(save.disabled, false);
+      assert.match(container.querySelector(".settings-feedback")!.textContent!, /CLI shim test failure/);
       await act(async () => install.click());
       assert.equal(shimCalls, 2);
       await act(async () => rejectShim(new Error("CLI shim retry failure")));
+      assert.match(container.querySelector(".settings-feedback")!.textContent!, /CLI shim retry failure/);
+      await act(async () => install.click());
+      await act(async () => finishShim());
+      assert.equal(container.querySelector(".settings-feedback")!.textContent, "Installed the withmate-memory CLI shim.");
+    });
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "並行するSettings操作の失敗理由をそれぞれ保持し、無関係な成功では消さず、再試行結果を対象操作だけへ反映し、ユーザーのdraft編集では通知をクリアする"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#interaction; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+  // fault = "保存またはshimの失敗を別操作の完了で消す、一方の再試行成功で両方の失敗を解除する、またはdraft編集で結果通知をクリアできない"
+  // observable = "実hookとcommand/draft handlerを接続したSettings footerの保存・shim失敗理由、再試行後の残存理由と成功feedback、編集checkbox"
+  // observation_boundary = "component-behavior"
+  // scope = "HomeSettingsContent operation-owned failure feedback"
+  // lifecycle = "permanent"
+  // impact = "並行操作で発生した失敗の理由と回復に必要な情報を利用者が確認できる"
+  // distinction = "型や単独handlerの文字列testでは代替できない、複数要求の失敗保持と既存draft編集/再試行の接続を一つのscenarioで確認する"
+  // @end-test-value
+  it("並行操作の失敗を個別に保持し、再試行した操作だけを解消する", async () => {
+    await withSettingsDom(async (container, root) => {
+      let rejectSave!: (error: Error) => void;
+      let rejectShim!: (error: Error) => void;
+      let retry = false;
+      const api = {
+        updateAppSettings: (value: typeof settingsDraft) => retry ? Promise.resolve(value)
+          : new Promise<typeof settingsDraft>((_resolve, reject) => { rejectSave = reject; }),
+        installMemoryV6CliShim: () => retry ? Promise.resolve(shimDiagnostics)
+          : new Promise<MemoryV6Diagnostics>((_resolve, reject) => { rejectShim = reject; }),
+        openAppLogFolder: async () => undefined,
+      } as WithMateWindowApi;
+      function Harness() {
+        const [draft, setDraft] = useState({ ...settingsDraft, launchAtLoginEnabled: true });
+        const { settingsFeedback, setSettingsFeedback, clearSettingsFeedback } = useSettingsFeedback();
+        const commands = buildSettingsCommandHandlers({
+          getApi: () => api, persistedSettingsDraft: draft, setAppSettings: noOp,
+          setSettingsDraft: setDraft, setSettingsFeedback, setMemoryV6Diagnostics: noOp,
+        });
+        return React.cloneElement(buildSettingsContent({ settingsDraft: draft, settingsFeedback, memoryV6Diagnostics: shimDiagnostics }), {
+          ...commands, ...buildSettingsDraftHandlers({ setSettingsDraft: setDraft, clearSettingsFeedback }), settingsDirty: true,
+        });
+      }
+      await act(async () => root.render(<Harness />));
+      const button = (name: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)!;
+      const save = button("Save Settings");
+      const install = button("Install CLI Shim");
+      const feedback = () => container.querySelector(".settings-feedback")!.textContent;
+      const expectBothErrors = () => assert.deepEqual(
+        new Set(feedback()!.split("\n")), new Set(["Settings save failed", "CLI shim failed"]),
+      );
+      await act(async () => { save.click(); install.click(); });
+      await act(async () => { rejectSave(new Error("Settings save failed")); rejectShim(new Error("CLI shim failed")); });
+      expectBothErrors();
+      await act(async () => button("Open Logs").click());
+      expectBothErrors();
+      retry = true;
+      await act(async () => save.click());
+      assert.equal(feedback(), "CLI shim failed");
+      await act(async () => install.click());
+      assert.equal(feedback(), "Installed the withmate-memory CLI shim.");
+      const launch = container.querySelector<HTMLInputElement>('.settings-section-toggle input[type="checkbox"]')!;
+      await act(async () => launch.click());
+      assert.equal(launch.checked, false);
+      assert.equal(container.querySelector(".settings-feedback"), null);
     });
   });
 

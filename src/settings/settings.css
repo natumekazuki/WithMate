@@ -318,6 +318,7 @@
 .settings-feedback-inline {
   margin: 0;
   flex: 1 1 auto;
+  white-space: pre-line;
 }
 
 .settings-provider-list {
