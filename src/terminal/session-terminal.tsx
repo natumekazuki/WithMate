@@ -12,6 +12,7 @@ import type { WithMateWindowNavigationApi, WithMateWindowTerminalApi } from "../
 import { TERMINAL_MAX_DIMENSION } from "../../src-shared/terminal/terminal-contract.js";
 import { resolveOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import { detectShortcutPlatform, getShortcutDispatcher } from "../settings/shortcut-registry.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 type TerminalApi = WithMateWindowTerminalApi & Pick<WithMateWindowNavigationApi, "openPath">;
 
@@ -46,7 +47,10 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
   statusCallback.current = onStatus;
   focusTabsCallback.current = onFocusTabs;
 
-  useImperativeHandle(ref, () => ({ focus: () => terminalRef.current?.focus() }), []);
+  useImperativeHandle(ref, () => ({ focus: () => {
+    if (terminalRef.current) terminalRef.current.focus();
+    else containerRef.current?.focus();
+  } }), []);
 
   useEffect(() => {
     let disposed = false;
@@ -204,8 +208,6 @@ function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
   useLayoutEffect(() => {
     if (active) {
       fitRef.current?.();
-      terminalRef.current?.focus();
-      if (!terminalRef.current) containerRef.current?.focus();
     } else {
       terminalRef.current?.blur();
     }
@@ -249,12 +251,21 @@ export function SessionTerminal({ api, expanded, onEmpty, ref }: {
   const closePending = useRef(false);
   const panes = useRef(new Map<string, TerminalPaneHandle>());
   const tabButtons = useRef(new Map<string, HTMLButtonElement>());
+  const focusTabsOnSelection = useRef(false);
   const stateRef = useRef({ tabs, selectedId });
   stateRef.current = { tabs, selectedId };
   const focusSelected = () => {
     if (expanded && selectedId) panes.current.get(selectedId)?.focus();
   };
   useImperativeHandle(ref, () => ({ focus: focusSelected }), [expanded, selectedId]);
+
+  useLayoutEffect(() => {
+    const focusTabs = focusTabsOnSelection.current;
+    focusTabsOnSelection.current = false;
+    if (!expanded || !selectedId) return;
+    if (focusTabs) tabButtons.current.get(selectedId)?.focus();
+    else panes.current.get(selectedId)?.focus();
+  }, [expanded, selectedId]);
 
   const addTerminal = useCallback(() => {
     const id = crypto.randomUUID();
@@ -325,7 +336,12 @@ export function SessionTerminal({ api, expanded, onEmpty, ref }: {
                   if (event.key === "ArrowLeft") next = tabs[(index + tabs.length - 1) % tabs.length];
                   if (event.key === "Home") next = tabs[0];
                   if (event.key === "End") next = tabs[tabs.length - 1];
-                  if (next) { event.preventDefault(); setSelectedId(next.id); }
+                  if (next) {
+                    event.preventDefault();
+                    focusTabsOnSelection.current = next.id !== selectedId;
+                    tabButtons.current.get(next.id)?.focus();
+                    setSelectedId(next.id);
+                  }
                 }}
               >
                 {tab.shellName} {tab.number}
@@ -336,9 +352,10 @@ export function SessionTerminal({ api, expanded, onEmpty, ref }: {
                 className="terminal-close"
                 aria-label={`Close Terminal ${tab.number}`}
                 title="Close Terminal"
+                aria-busy={closingIds.has(tab.id)}
                 disabled={closingIds.size > 0}
                 onClick={() => void closeTerminal(tab.id)}
-              >×</button>
+              ><ButtonContent busy={closingIds.has(tab.id)}>×</ButtonContent></button>
             </div>
           ))}
         </div>
