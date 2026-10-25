@@ -182,10 +182,10 @@ test("注釈matcherは内容とownerへ結び付きactivationは現在のscope�
 
 // @test-value v2
 // kind = "contract"
-// claim = "初回取得失敗は必要時に理由を開閉でき、同じ会話でRetryでき、処理中は二重取得を防いで成功後に一覧へ復帰する"
+// claim = "初回取得失敗は理由へのnative popup入口を提供し、同じ会話でRetryでき、処理中は二重取得を防いで成功後に一覧へ復帰する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "失敗を待機か0件へ隠す、Retryで会話選び直しを要求する、または二重取得する"
-// observable = "詳細buttonのaria-controls/expandedと理由のhidden、Retryのaccessible name/disabled/aria-busy、取得session IDと回数、成功後の用語行"
+// observable = "詳細buttonのpopovertarget/aria-controlsとdialogのpopover属性・理由、Retryのaccessible name/disabled/aria-busy、取得session IDと回数、成功後の用語行"
 // observation_boundary = "component-behavior"
 // scope = "Glossary初回取得からRetry成功までのhookと実pane"
 // lifecycle = "permanent"
@@ -207,15 +207,13 @@ test("Glossary初回取得は同じ会話で理由を保持して一度だけRet
     await act(async () => requests[0]!.pending.reject(new Error("Projection offline")));
     assert.equal(view.document.querySelector('[role="alert"]')!.textContent, "Glossary Load Failed");
     const details = view.document.querySelector<HTMLButtonElement>('button[aria-label="Glossary Load Failed: Details"]')!;
-    const detail = view.document.getElementById(details.getAttribute("aria-controls")!)!;
-    assert.equal(detail.hidden, true);
-    assert.equal(details.getAttribute("aria-expanded"), "false");
-    await act(async () => details.click());
-    assert.equal(details.getAttribute("aria-expanded"), "true");
-    assert.equal(detail.hidden, false);
+    const popup = view.document.getElementById(details.getAttribute("popovertarget")!)!;
+    assert.equal(details.getAttribute("aria-controls"), popup.id);
+    assert.equal(popup.getAttribute("popover"), "auto");
+    assert.equal(popup.getAttribute("role"), "dialog");
+    assert.ok(popup.querySelector('button[aria-label="Close Error Details"]'));
+    const detail = popup.querySelector(".glossary-error-detail")!;
     assert.equal(detail.textContent, "Projection offline");
-    await act(async () => details.click());
-    assert.equal(detail.hidden, true);
     const retry = view.document.querySelector<HTMLButtonElement>('button[aria-label="Retry"]')!;
     await act(async () => {
       retry.click();

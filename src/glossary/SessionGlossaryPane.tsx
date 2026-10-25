@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import type {
   GlossaryEntry,
@@ -7,6 +7,7 @@ import type {
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
+import { CloseButton } from "../ui/close-button.js";
 
 export type SessionGlossaryPaneProps = {
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
@@ -60,8 +61,14 @@ function GlossaryFailure({ label, detail, onRetry, busy = false }: {
   onRetry?: () => void;
   busy?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<CSSProperties>({});
+  useLayoutEffect(() => {
+    const dismiss = () => popoverRef.current?.hidePopover();
+    window.addEventListener("resize", dismiss);
+    return () => window.removeEventListener("resize", dismiss);
+  }, []);
   return (
     <div className="glossary-error" role="group" aria-label={label}>
       <span className="sr-only" role="alert">{label}</span>
@@ -71,9 +78,23 @@ function GlossaryFailure({ label, detail, onRetry, busy = false }: {
           type="button"
           aria-label={`${label}: Details`}
           title={`${label}: Details`}
-          aria-expanded={expanded}
+          popoverTarget={detailsId}
+          aria-haspopup="dialog"
           aria-controls={detailsId}
-          onClick={() => setExpanded((current) => !current)}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const width = Math.min(320, window.innerWidth - 24);
+            const above = rect.top - 20;
+            const below = window.innerHeight - rect.bottom - 20;
+            setPosition({
+              width,
+              left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+              maxHeight: Math.min(280, Math.max(above, below)),
+              ...(above > below
+                ? { bottom: window.innerHeight - rect.top + 8, top: "auto" }
+                : { top: rect.bottom + 8, bottom: "auto" }),
+            });
+          }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
             <path d="M12 3 2 21h20L12 3Z" />
@@ -96,7 +117,13 @@ function GlossaryFailure({ label, detail, onRetry, busy = false }: {
           </button>
         ) : null}
       </div>
-      <p id={detailsId} className="glossary-error-detail" hidden={!expanded}>{detail}</p>
+      <div id={detailsId} ref={popoverRef} popover="auto" className="glossary-error-popover" role="dialog" aria-label={`${label}: Details`} style={position}>
+        <div className="glossary-error-popover-head">
+          <strong>{label}</strong>
+          <CloseButton ariaLabel="Close Error Details" onClose={() => popoverRef.current?.hidePopover()} />
+        </div>
+        <p className="glossary-error-detail">{detail}</p>
+      </div>
     </div>
   );
 }

@@ -439,6 +439,28 @@
   color: var(--danger, #fca5a5);
 }
 
+.glossary-error-popover {
+  position: fixed;
+  margin: 0;
+  padding: 12px;
+  max-width: calc(100vw - 24px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-deep);
+  color: var(--ink);
+  box-shadow: 0 8px 28px #0006;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.glossary-error-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .glossary-error-detail {
   margin: 8px 0 0;
   color: var(--muted);
