@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, type RefObject } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import type {
   GlossaryEntry,
@@ -6,7 +6,7 @@ import type {
 } from "../../src-shared/glossary/glossary-contract.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
-import { LoadError } from "../ui/load-error.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 export type SessionGlossaryPaneProps = {
   scrollContainerRef?: RefObject<HTMLDivElement | null>;
@@ -52,6 +52,53 @@ function stateMessage(projection: SessionGlossaryProjection): { title: string; d
     case "valid":
       return null;
   }
+}
+
+function GlossaryFailure({ label, detail, onRetry, busy = false }: {
+  label: string;
+  detail: string;
+  onRetry?: () => void;
+  busy?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = useId();
+  return (
+    <div className="glossary-error" role="group" aria-label={label}>
+      <span className="sr-only" role="alert">{label}</span>
+      <div className="glossary-error-actions">
+        <button
+          className="artifact-toggle artifact-toggle-icon glossary-error-details"
+          type="button"
+          aria-label={`${label}: Details`}
+          title={`${label}: Details`}
+          aria-expanded={expanded}
+          aria-controls={detailsId}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+            <path d="M12 3 2 21h20L12 3Z" />
+            <path d="M12 9v5m0 3v.1" />
+          </svg>
+        </button>
+        {onRetry ? (
+          <button
+            className="artifact-toggle artifact-toggle-icon"
+            type="button"
+            title="Retry"
+            aria-label="Retry"
+            disabled={busy}
+            aria-busy={busy || undefined}
+            onClick={onRetry}
+          >
+            <ButtonContent busy={busy} busyLabel="Retrying">
+              <span aria-hidden="true">↻</span>
+            </ButtonContent>
+          </button>
+        ) : null}
+      </div>
+      <p id={detailsId} className="glossary-error-detail" hidden={!expanded}>{detail}</p>
+    </div>
+  );
 }
 
 export function SessionGlossaryPane({
@@ -112,7 +159,7 @@ export function SessionGlossaryPane({
     if (projectionError) {
       return (
         <div ref={recoveryRef}>
-          <LoadError className="glossary-load-error" message={`Could not load the glossary: ${projectionError}`} onRetry={() => retry(onRetryProjection)} retryBusy={projectionLoading} />
+          <GlossaryFailure label="Glossary Load Failed" detail={projectionError} onRetry={() => retry(onRetryProjection)} busy={projectionLoading} />
         </div>
       );
     }
@@ -152,7 +199,7 @@ export function SessionGlossaryPane({
               </label>
               {searchError ? (
                 <div ref={recoveryRef}>
-                  <LoadError className="glossary-search-error" message={searchError} onRetry={() => retry(onRetrySearch)} retryBusy={searchLoading} />
+                  <GlossaryFailure label="Glossary Search Failed" detail={searchError} onRetry={() => retry(onRetrySearch)} busy={searchLoading} />
                 </div>
               ) : null}
             </>
@@ -160,16 +207,18 @@ export function SessionGlossaryPane({
         </div>
       )}
 
-      {projectionError ? <LoadError className="glossary-load-error" message={`Could not refresh the glossary: ${projectionError}`} onRetry={onRetryProjection} retryBusy={projectionLoading} /> : null}
+      {projectionError ? <GlossaryFailure label="Glossary Refresh Failed" detail={projectionError} onRetry={onRetryProjection} busy={projectionLoading} /> : null}
       {searchStale ? <p className="glossary-search-stale" role="status">Showing previous search results.</p> : null}
 
       {projection.state.status === "missing" || isNotApplicable ? null : unavailable ? (
-        projection.state.status === "watch-error" ? (projectionError ? null : (
-          <LoadError className="glossary-load-error" message={`${unavailable.title}: ${unavailable.detail}`} onRetry={onRetryProjection} retryBusy={projectionLoading} />
-        )) : <div className={`glossary-pane-status ${projection.state.status}`} role={projection.state.status === "invalid" ? "alert" : "status"}>
-          <strong>{unavailable.title}</strong>
-          {unavailable.detail ? <p>{unavailable.detail}</p> : null}
-        </div>
+        projection.state.status === "watch-error" && projectionError ? null : (
+          <GlossaryFailure
+            label={unavailable.title}
+            detail={unavailable.detail ?? unavailable.title}
+            onRetry={projection.state.status === "watch-error" ? onRetryProjection : undefined}
+            busy={projectionLoading}
+          />
+        )
       ) : selectedEntry ? (
         <article className="glossary-entry-detail">
           <BackNavigationButton label="Back To Entries" onBack={onBackToList} />

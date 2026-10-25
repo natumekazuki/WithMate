@@ -182,10 +182,10 @@ test("注釈matcherは内容とownerへ結び付きactivationは現在のscope�
 
 // @test-value v2
 // kind = "contract"
-// claim = "初回取得失敗は理由を表示し、同じ会話でRetryでき、処理中は二重取得を防いで成功後に一覧へ復帰する"
+// claim = "初回取得失敗は必要時に理由を開閉でき、同じ会話でRetryでき、処理中は二重取得を防いで成功後に一覧へ復帰する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "失敗を待機か0件へ隠す、Retryで会話選び直しを要求する、または二重取得する"
-// observable = "hookとpaneのerror、Retryのdisabled/aria-busy、取得session IDと回数、成功後の用語行"
+// observable = "詳細buttonのaria-controls/expandedと理由のhidden、Retryのaccessible name/disabled/aria-busy、取得session IDと回数、成功後の用語行"
 // observation_boundary = "component-behavior"
 // scope = "Glossary初回取得からRetry成功までのhookと実pane"
 // lifecycle = "permanent"
@@ -205,14 +205,28 @@ test("Glossary初回取得は同じ会話で理由を保持して一度だけRet
   try {
     await view.render();
     await act(async () => requests[0]!.pending.reject(new Error("Projection offline")));
-    assert.match(view.document.querySelector('[role="alert"]')!.textContent!, /Projection offline/);
-    const retry = view.document.querySelector("button")!;
-    await act(async () => { retry.click(); view.current.actions.onRetryProjection(); });
+    assert.equal(view.document.querySelector('[role="alert"]')!.textContent, "Glossary Load Failed");
+    const details = view.document.querySelector<HTMLButtonElement>('button[aria-label="Glossary Load Failed: Details"]')!;
+    const detail = view.document.getElementById(details.getAttribute("aria-controls")!)!;
+    assert.equal(detail.hidden, true);
+    assert.equal(details.getAttribute("aria-expanded"), "false");
+    await act(async () => details.click());
+    assert.equal(details.getAttribute("aria-expanded"), "true");
+    assert.equal(detail.hidden, false);
+    assert.equal(detail.textContent, "Projection offline");
+    await act(async () => details.click());
+    assert.equal(detail.hidden, true);
+    const retry = view.document.querySelector<HTMLButtonElement>('button[aria-label="Retry"]')!;
+    await act(async () => {
+      retry.click();
+      assert.equal(requests.length, 2);
+      view.current.actions.onRetryProjection();
+    });
     assert.deepEqual(requests.map((request) => request.id), ["session-1", "session-1"]);
     assert.equal(retry.disabled, true);
     assert.equal(retry.getAttribute("aria-busy"), "true");
-    assert.match(retry.textContent!, /Retry/);
-    assert.match(view.document.querySelector('[role="alert"]')!.textContent!, /Projection offline/);
+    assert.equal(retry.getAttribute("aria-label"), "Retry");
+    assert.equal(detail.textContent, "Projection offline");
     await act(async () => requests[1]!.pending.resolve(projection("1")));
     assert.equal(view.current.view.projectionError, "");
     assert.equal(view.current.view.projectionLoading, false);
@@ -303,7 +317,7 @@ test("Glossaryは同queryの再取得失敗中も結果を保持しRetryとowner
     assert.equal(requests.length, 3);
     assert.equal(requests[2]!.query, "Old");
     assert.equal(view.current.view.searchLoading, true);
-    assert.equal(view.document.querySelector<HTMLButtonElement>('[role="alert"] button')!.disabled, true);
+    assert.equal(view.document.querySelector<HTMLButtonElement>('.glossary-error-actions button[aria-label="Retry"]')!.disabled, true);
     await act(async () => requests[2]!.pending.resolve(searchResult("2", [])));
     assert.deepEqual(view.current.view.searchEntries, []);
     assert.equal(view.current.view.searchTotal, 0);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
+import { JSDOM } from "jsdom";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SessionGlossaryPane } from "../../src/glossary/SessionGlossaryPane.js";
@@ -69,13 +70,15 @@ test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Glossary検索の失敗は理由とRetryを表示し、正常な空結果と区別する"
+// claim = "Glossary検索失敗はaccessibleな失敗通知・詳細入口・Retryを提供し、理由は初期状態で閉じて正常な空結果と区別する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
-// fault = "検索失敗の理由やRetryを落とす、または失敗を空結果と誤認させる"
-// observable = "検索errorのalert、Retry buttonと空結果メッセージの有無"
+// fault = "詳細入口と理由の関連またはRetryを落とす、初期状態で理由を展開する、または失敗を空結果と誤認させる"
+// observable = "失敗alert、詳細buttonのaria-controls/expanded、理由のhidden、Retryのaccessible name"
 // observation_boundary = "component-behavior"
 // scope = "session-glossary-search-error"
 // lifecycle = "permanent"
+// impact = "障害詳細が一覧を押し下げるか、理由や回復操作へ到達できなくなる"
+// distinction = "ユーザー指定の必要時開示と回復経路をSSRのDOMで確認する。型検査はhiddenとaria-controlsの実値を確認しない"
 // @end-test-value
 test("SessionGlossaryPaneは検索失敗を空結果として表示しない", () => {
   const html = renderToStaticMarkup(
@@ -86,8 +89,14 @@ test("SessionGlossaryPaneは検索失敗を空結果として表示しない", (
       projection={validProjection}
     />,
   );
-  assert.match(html, /role="alert"><p>Search failed<\/p>/);
-  assert.match(html, /<span class="button-content-label">Retry<\/span>/);
+  const document = new JSDOM(html).window.document;
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, "Glossary Search Failed");
+  const details = document.querySelector('button[aria-label="Glossary Search Failed: Details"]')!;
+  assert.equal(details.getAttribute("aria-expanded"), "false");
+  const reason = document.getElementById(details.getAttribute("aria-controls")!)!;
+  assert.equal(reason.hidden, true);
+  assert.equal(reason.textContent, "Search failed");
+  assert.ok(document.querySelector('button[aria-label="Retry"]'));
   assert.doesNotMatch(html, /No matching terms/);
 });
 
@@ -114,10 +123,10 @@ test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完
 
 // @test-value v2
 // kind = "security"
-// claim = "Glossary invalid stateはlast valid entriesを再表示せず、failure stateとdiagnostic messageを表示する"
+// claim = "Glossary invalid stateはlast valid entriesを再表示せず、失敗を通知して診断詳細への入口を提供する"
 // oracle = { type = "contract", ref = "src/glossary/SessionGlossaryPane.tsx: invalid projection view" }
 // fault = "invalid dataのとき古いtermを表示して現在のGlossary状態を誤認させる"
-// observable = "Could not load the glossary、issue message、古いRuntime termの不在"
+// observable = "失敗alert、詳細buttonと関連付いたissue message、古いRuntime termの不在"
 // observation_boundary = "component-behavior"
 // scope = "session-glossary-invalid-state"
 // lifecycle = "permanent"
@@ -138,7 +147,11 @@ test("SessionGlossaryPaneはinvalid時にlast valid entriesを表示しない", 
       }}
     />,
   );
-  assert.match(html, /Could not load the glossary/);
-  assert.match(html, /Invalid YAML/);
+  const document = new JSDOM(html).window.document;
+  assert.equal(document.querySelector('[role="alert"]')?.textContent, "Could not load the glossary");
+  const details = document.querySelector('button[aria-label="Could not load the glossary: Details"]')!;
+  const reason = document.getElementById(details.getAttribute("aria-controls")!)!;
+  assert.equal(reason.hidden, true);
+  assert.equal(reason.textContent, "Invalid YAML");
   assert.doesNotMatch(html, />Runtime</);
 });
