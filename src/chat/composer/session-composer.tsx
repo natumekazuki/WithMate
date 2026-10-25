@@ -309,24 +309,19 @@ export function SessionComposerExpanded({
     keyboardShortcuts,
   );
   const sendReasonId = useId();
-  const sendReasonOwnerRef = useRef<HTMLSpanElement | null>(null);
   const [isSendReasonFocused, setIsSendReasonFocused] = useState(false);
-  const showFocusedSendReason = sendDisabled && isSendReasonFocused;
+  const hasVisibleSendReason = !composerFrozen && (!!onCheckTurnReceipt || composerSaveFailed
+    || (displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds));
+  const showFocusedSendReason = sendDisabled && isSendReasonFocused && !hasVisibleSendReason;
   const composerDescriptionIds = [
     externalErrorDescriptionIds,
     composerSaveFailed ? "composer-save-feedback" : undefined,
-    (showFocusedSendReason || (displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds))
+    displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds
       ? "composer-sendability-feedback"
       : undefined,
   ].filter(Boolean).join(" ") || undefined;
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
-
-  useEffect(() => {
-    if (showFocusedSendReason) {
-      sendReasonOwnerRef.current?.scrollIntoView({ block: "nearest" });
-    }
-  }, [showFocusedSendReason, sendDisabledReason]);
 
   useEffect(() => {
     if (!showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
@@ -672,12 +667,12 @@ export function SessionComposerExpanded({
               {displayedComposerSendability.busyReason}
             </span>
           ) : null}
-          {showFocusedSendReason || (displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds) ? (
+          {displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
             <div
               id="composer-sendability-feedback"
               className={`composer-sendability-feedback ${displayedComposerSendability.feedbackTone ?? "helper"}`}
             >
-              {showFocusedSendReason ? <p>{sendDisabledReason}</p> : displayedComposerSendability.primaryFeedback ? <p>{displayedComposerSendability.primaryFeedback}</p> : null}
+              {displayedComposerSendability.primaryFeedback ? <p>{displayedComposerSendability.primaryFeedback}</p> : null}
               {displayedComposerSendability.secondaryFeedback.length > 0 ? (
                 <ul>
                   {displayedComposerSendability.secondaryFeedback.map((feedback) => (
@@ -774,7 +769,6 @@ export function SessionComposerExpanded({
         </div>
 
         <span
-          ref={sendReasonOwnerRef}
           className="composer-send-control"
           title={sendTitle}
           tabIndex={sendDisabled ? 0 : undefined}
@@ -783,6 +777,13 @@ export function SessionComposerExpanded({
           aria-describedby={sendDisabled ? sendReasonId : undefined}
           onFocus={(event) => setIsSendReasonFocused(event.target === event.currentTarget)}
           onBlur={() => setIsSendReasonFocused(false)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && showFocusedSendReason) {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsSendReasonFocused(false);
+            }
+          }}
         >
           <button
             className={`session-send-button composer-icon-button${showBusySendState ? " loading" : ""}`}
@@ -795,7 +796,15 @@ export function SessionComposerExpanded({
           >
             <ButtonContent busy={showBusySendState}><ComposerIcon name="send" /><span className="visually-hidden">Send</span></ButtonContent>
           </button>
-          {sendDisabled ? <span id={sendReasonId} className="visually-hidden">{sendDisabledReason}</span> : null}
+          {sendDisabled ? (
+            <span
+              id={sendReasonId}
+              role={showFocusedSendReason ? "tooltip" : undefined}
+              className={showFocusedSendReason ? "composer-send-reason" : "visually-hidden"}
+            >
+              {sendDisabledReason}
+            </span>
+          ) : null}
         </span>
       </div>
     </div>

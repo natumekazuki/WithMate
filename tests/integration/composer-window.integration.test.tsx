@@ -13,7 +13,7 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 // claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。回復操作のbusyは操作と会話に対応し、成功・失敗で解除する。入力名とSend不可理由は対象切替・blank・凍結後も識別可能にする。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める。Main/AuxiliaryのSendと送信shortcutは設定有効時だけ初回送信時に対象列を追従へ戻し、後続の閲覧や対象切替をACK・受付照会で巻き戻さない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界; docs/design/desktop-ui.md: 送信時の先行表示とScroll To Latest On Send" }
 // fault = "入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの未確定受付中に重複要求を発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、ACKで後続編集を消す、拒否でdraftをconsumeする、不明結果から新規要求を自動再送する、後続編集を未保存のままflush成功にする、凍結後にpicker結果からコピーする、設定無効時に末尾へ移動する、初回送信の追従をACKまで遅延する、または後続の閲覧や対象切替をACK・受付照会で巻き戻す"
-// observable = "textareaのaccessible name、Send説明ownerのtitle・tabIndex・説明参照とfocus時のfeedback、回復操作のaria-busy・spinner・disabledとAPI呼出数、ActionDock expanded class、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの初回送信・受付ACK・受付照会前後のscrollTop"
+// observable = "textareaのaccessible name、Send説明ownerのtitle・tabIndex・説明参照、focus時の理由overlay・Escape後のfocus保持、回復操作のaria-busy・spinner・disabledとAPI呼出数、ActionDock expanded class、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの初回送信・受付ACK・受付照会前後のscrollTop"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
@@ -215,7 +215,13 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.match(description?.textContent ?? "", reason);
     await act(async () => { owner.focus(); });
     assert.equal(dom.window.document.activeElement, owner);
-    assert.match(dom.window.document.getElementById("composer-sendability-feedback")?.textContent ?? "", reason);
+    assert.equal(description?.getAttribute("role"), "tooltip");
+    assert.match(description?.textContent ?? "", reason);
+    await act(async () => {
+      owner.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    assert.equal(description?.getAttribute("role"), null);
+    assert.equal(dom.window.document.activeElement, owner, "dismissing the reason must keep keyboard focus");
     await act(async () => { owner.blur(); });
   };
   const readHistory = async (column: "main" | "auxiliary") => {

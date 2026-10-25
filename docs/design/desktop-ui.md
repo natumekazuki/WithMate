@@ -507,6 +507,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Send disabled 条件は submit button / `Ctrl+Enter` / `Cmd+Enter` guard で一致させ、blank / whitespace-only draft の no-op 送信を通さない
 - blank / whitespace-only draft は通常時は helper 文言を常時出さないが、blocked 送信ショートカットを押した時だけ inline reason を見せる
 - send button の `title` には current blocked reason を載せ、hover でも送信不可理由を確認できるようにする
+- disabledなSendの説明要素へTabで到達できるようにし、操作名と現在の理由への説明参照を保つ。理由・回復操作が既に表示されている場合はその案内を使い、それ以外はSend近傍のoverlayで理由を示す。overlayはEscapeまたはfocusを外すと閉じる。focus時の理由表示はComposerの高さやscroll位置を変えず、上段toolbarとSendを押し出さない
 - `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
 - `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ
 - `Ctrl+Enter` / `Cmd+Enter` 送信

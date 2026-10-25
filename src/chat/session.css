@@ -4028,6 +4028,7 @@
 }
 
 .composer-control-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
@@ -4043,6 +4044,26 @@
 .composer-send-control:focus-visible {
   outline: 2px solid var(--character-main, var(--ink));
   outline-offset: 3px;
+}
+
+.composer-send-reason {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: calc(100% + 8px);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 64px));
+  padding: 10px 12px;
+  border: 1px solid rgba(203, 213, 225, 0.24);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  pointer-events: none;
 }
 
 .composer-send-control > .session-send-button {
