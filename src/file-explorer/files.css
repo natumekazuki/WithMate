@@ -1253,10 +1253,7 @@
 
 .file-history-detail-error-popover-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: var(--muted, #98a2b3);
+  justify-content: flex-end;
 }
 
 .file-history-detail-error-popover-header button {
