@@ -3,7 +3,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 
 import CharacterEditorApp from "../../src/character-editor/CharacterEditorApp.js";
 import type { StartCharacterAuthoringSessionInput } from "../../src-shared/character/character-authoring.js";
@@ -79,6 +79,278 @@ function createDeferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function createEditorRoot(container: HTMLElement) {
+  const { createRoot } = await import("react-dom/client");
+  return createRoot(container);
+}
+
+async function mountEditor(api: Partial<WithMateWindowApi>, characterId: string | null = "char-1") {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', {
+    url: `https://withmate.local/character-editor.html${characterId ? `?characterId=${characterId}` : ""}`,
+  });
+  const previous = Object.fromEntries(["window", "document", "navigator", "HTMLElement"].map((key) =>
+    [key, Object.getOwnPropertyDescriptor(globalThis, key)]
+  ));
+  for (const key of Object.keys(previous)) {
+    Object.defineProperty(globalThis, key, { value: Reflect.get(dom.window, key), configurable: true });
+  }
+  dom.window.withmate = {
+    async getModelCatalog() { return createModelCatalog(); },
+    async getAppSettings() { return createDefaultAppSettings(); },
+    async startCharacterAuthoringSession() {
+      return {
+        session: buildNewSession({
+          taskTitle: "Improve Muse", workspaceLabel: "Authoring", workspacePath: "C:/tmp/authoring", branch: "main",
+          characterId: "char-1", character: "Muse", characterIconPath: "", characterThemeColors: DEFAULT_CHARACTER_THEME,
+          approvalMode: "on-request",
+        }),
+        workspacePath: "C:/tmp/authoring",
+        runId: "authoring-run",
+      };
+    },
+    ...api,
+  } as WithMateWindowApi;
+  const container = dom.window.document.getElementById("root")!;
+  const root = await createEditorRoot(container);
+  await act(async () => root.render(<CharacterEditorApp />));
+  const click = async (label: string) => {
+    await act(async () => findButtonByText(container, label).click());
+  };
+  return {
+    dom, container, click,
+    async focus() { await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus"))); },
+    async startAuthoring() { await click("Improve With Agent"); await click("Start"); },
+    async fill(selector: string, value: string) {
+      const input = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
+      assert.ok(input, selector);
+      await act(async () => {
+        const prototype = input.tagName === "TEXTAREA" ? dom.window.HTMLTextAreaElement.prototype : dom.window.HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+      });
+    },
+    async cleanup() {
+      await act(async () => root.unmount());
+      dom.window.close();
+      for (const [key, descriptor] of Object.entries(previous)) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+    },
+  };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "既存Characterの未取得・失敗・not foundは編集/保存を許可せず、同じIDのRetry成功後だけ対象draftを操作できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+// fault = "未取得の既存IDを新規作成として保存する、失敗を通知しない、またはRetryで別対象を開く"
+// observable = "loading status/busy、error alert、見出し・編集入力・Save/Archive/Improve disabled、getCharacterのID列、書込API呼出数"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp initial read and retry"
+// lifecycle = "permanent"
+// impact = "既存Characterの取得障害による別Characterの誤作成を防ぎ、同一対象への復帰経路を守る"
+// distinction = "型検査やstate helperでは判定できない取得Promiseと表示・操作gateの接続を少数の制御Promiseで検証する"
+// @end-test-value
+test("CharacterEditorApp は既存IDの取得失敗から同じ対象へRetryする", async () => {
+  const requests: Array<ReturnType<typeof createDeferred<CharacterDetail | null>>> = [];
+  const ids: string[] = [];
+  let writes = 0;
+  const editor = await mountEditor({
+    getCharacter: async (id) => {
+      ids.push(id);
+      const request = createDeferred<CharacterDetail | null>();
+      requests.push(request);
+      return request.promise;
+    },
+    async createCharacter() { writes += 1; return createCharacterDetail(); },
+    async updateCharacterDefinition() { writes += 1; return createCharacterDetail(); },
+    async archiveCharacter() { writes += 1; return createCharacterDetail(); },
+  });
+  const { container, dom } = editor;
+  const assertBlocked = async () => {
+    assert.equal(container.querySelector("h1")?.textContent, "Character Editor");
+    assert.equal(container.querySelector("main input, main textarea"), null);
+    for (const label of ["Save", "Archive", "Improve With Agent"]) {
+      assert.equal(findButtonByText(container, label).disabled, true);
+      await editor.click(label);
+    }
+    const close = new dom.window.Event("beforeunload", { cancelable: true });
+    await act(async () => dom.window.dispatchEvent(close));
+    assert.equal(close.defaultPrevented, false);
+    assert.equal(writes, 0);
+  };
+  try {
+    await assertBlocked();
+    assert.equal(container.querySelector("main")?.getAttribute("aria-busy"), "true");
+    assert.ok(container.querySelector('[role="status"][aria-label="Loading character"]'));
+    await act(async () => requests[0]!.reject(new Error("Could not load character: access denied.")));
+    await assertBlocked();
+    assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /access denied/);
+    await editor.click("Retry");
+    await assertBlocked();
+    assert.equal(container.querySelector("main")?.getAttribute("aria-busy"), "true");
+    await act(async () => requests[1]!.resolve(null));
+    await assertBlocked();
+    assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /Character not found/);
+    await editor.click("Retry");
+    await act(async () => requests[2]!.resolve(createCharacterDetail()));
+    assert.deepEqual(ids, ["char-1", "char-1", "char-1"]);
+    assert.equal(container.querySelector("h1")?.textContent, "Muse");
+    assert.equal(container.querySelector<HTMLInputElement>("input")?.value, "Muse");
+    assert.equal(findButtonByText(container, "Save").disabled, true);
+    assert.equal(findButtonByText(container, "Improve With Agent").disabled, false);
+    assert.equal(container.querySelector("main")?.getAttribute("aria-busy"), null);
+  } finally { await editor.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "IDなしの新規作成では編集内容をcreate APIへ渡し、保存されたCharacterを同じEditorで継続する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+// fault = "既存IDの取得gateが新規作成を止める、または作成成功後もcreate modeで再保存する"
+// observable = "createCharacter入力・呼出数、Name入力、SaveとImproveのdisabled state"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp create mode"
+// lifecycle = "permanent"
+// impact = "Character新規作成の主要経路と保存後の同一対象継続を維持する"
+// distinction = "draft生成unit testが観測しないcreate APIとの接続と成功後の操作可否を1回の保存で確認する"
+// @end-test-value
+test("CharacterEditorApp は新規Characterを作成して編集を継続する", async () => {
+  const inputs: unknown[] = [];
+  const editor = await mountEditor({
+    async createCharacter(input) {
+      inputs.push(input);
+      return { ...createCharacterDetail(), ...input, theme: { ...DEFAULT_CHARACTER_THEME, ...input.theme } };
+    },
+  }, null);
+  try {
+    await editor.fill("input", "New Muse");
+    assert.equal(editor.container.querySelector("h1")?.textContent, "New Muse");
+    await editor.click("Save");
+    assert.equal(inputs.length, 1);
+    assert.equal((inputs[0] as { name: string }).name, "New Muse");
+    assert.equal(findButtonByText(editor.container, "Save").disabled, true);
+    assert.equal(findButtonByText(editor.container, "Improve With Agent").disabled, false);
+  } finally { await editor.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Authoring後の再取得中にProfileと本文を編集してもdraftを保持し、失敗とnot found後のfocus再試行でも入力を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+// fault = "再取得の応答が新しい入力を置換する、連続focusで重複要求する、または失敗後の再取得が入力を失う"
+// observable = "Name・Description・definition・notes入力値、未保存badge、Save disabled、再取得回数とstatus通知"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp authoring refresh and draft preservation"
+// lifecycle = "permanent"
+// impact = "未保存のCharacter定義とProfile入力の消失を防ぐ"
+// distinction = "reconciliation unit testだけでは観測しないfocus event・非同期API・controlled inputの接続を制御Promiseで確認する"
+// @end-test-value
+test("CharacterEditorApp はAuthoring再取得中のProfileと本文編集を保護する", async () => {
+  let current = createCharacterDetail();
+  let refresh = createDeferred<CharacterDetail | null>();
+  let reads = 0;
+  const editor = await mountEditor({
+    async getCharacter() { reads += 1; return reads === 1 ? current : refresh.promise; },
+  });
+  const { container } = editor;
+  const localDefinition = `${current.definitionMarkdown}\n## Local edit`;
+  try {
+    await editor.startAuthoring();
+    await editor.focus();
+    await editor.focus();
+    assert.equal(reads, 2);
+    await editor.fill("input", "Local Muse");
+    await editor.fill(".settings-character-form-grid > label:nth-child(2) input", "Local description");
+    await editor.click("character.md");
+    await editor.fill("textarea", localDefinition);
+    await editor.click("character-notes.md");
+    await editor.fill("textarea", "# Local Notes");
+    await act(async () => refresh.reject(new Error("reload failed")));
+    assert.match(container.querySelector('footer [role="status"]')?.textContent ?? "", /reload failed/);
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "# Local Notes");
+    refresh = createDeferred<CharacterDetail | null>();
+    await editor.focus();
+    await act(async () => refresh.resolve(null));
+    assert.match(container.textContent ?? "", /Could not reload character files/);
+    refresh = createDeferred<CharacterDetail | null>();
+    await editor.focus();
+    current = { ...current, definitionMarkdown: `${current.definitionMarkdown}\n## Agent edit`, notesMarkdown: "# Agent Notes" };
+    await act(async () => refresh.resolve(current));
+    assert.equal(reads, 4);
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "# Local Notes");
+    assert.match(container.querySelector('footer [role="status"]')?.textContent ?? "", /Unsaved edits kept/);
+    assert.equal(findButtonByText(container, "Save").disabled, false);
+    assert.equal(container.querySelector(".settings-character-badge")?.textContent, "Unsaved");
+    await editor.click("character.md");
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, localDefinition);
+    await editor.click("Profile");
+    assert.equal(container.querySelector<HTMLInputElement>("input")?.value, "Local Muse");
+    assert.equal(container.querySelector<HTMLInputElement>(".settings-character-form-grid > label:nth-child(2) input")?.value, "Local description");
+  } finally { await editor.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "後続Authoringの再取得とSaveが完了した後は、古い再取得の成功/失敗でdraft・保存状態・feedbackを上書きしない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
+// fault = "古い再取得応答が後続の取得内容や保存した本文を巻き戻す、または過去の失敗を現在の通知にする"
+// observable = "definition本文、Save disabled、再取得回数、footer feedback"
+// observation_boundary = "component-behavior"
+// scope = "CharacterEditorApp stale authoring refresh responses"
+// lifecycle = "permanent"
+// impact = "後続操作の確定した内容を古い応答から保護する"
+// distinction = "helperの比較testでは検出できないrequest lifetimeと後続操作の競合を、API応答順序を逆転して確認する"
+// @end-test-value
+test("CharacterEditorApp は後続AuthoringとSave後の古い再取得応答を無視する", async () => {
+  let current = createCharacterDetail();
+  let nextRead: Promise<CharacterDetail | null> | null = null;
+  let reads = 0;
+  const editor = await mountEditor({
+    async getCharacter() { reads += 1; return nextRead ?? current; },
+    async updateCharacterDefinition(input) {
+      current = { ...current, definitionMarkdown: input.definitionMarkdown, notesMarkdown: input.notesMarkdown ?? "" };
+      return current;
+    },
+    async updateCharacterMetadata() { return current; },
+  });
+  const { container } = editor;
+  try {
+    await editor.startAuthoring();
+    const old = createDeferred<CharacterDetail | null>();
+    nextRead = old.promise;
+    await editor.focus();
+    await editor.startAuthoring();
+    const newer = createDeferred<CharacterDetail | null>();
+    nextRead = newer.promise;
+    await editor.focus();
+    current = { ...current, definitionMarkdown: `${current.definitionMarkdown}\n## Latest Agent` };
+    await act(async () => newer.resolve(current));
+    await act(async () => old.reject(new Error("obsolete failure")));
+    await editor.click("character.md");
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, current.definitionMarkdown);
+    assert.equal(container.querySelector("footer span[role=status]")?.textContent, "Character Files Reloaded");
+    await editor.focus();
+    assert.equal(reads, 3);
+
+    await editor.startAuthoring();
+    const beforeSave = createDeferred<CharacterDetail | null>();
+    const obsoleteDetail = current;
+    nextRead = beforeSave.promise;
+    await editor.focus();
+    const savedDefinition = `${current.definitionMarkdown}\n## Saved local edit`;
+    await editor.fill("textarea", savedDefinition);
+    nextRead = null;
+    await editor.click("Save");
+    assert.equal(findButtonByText(container, "Save").disabled, true);
+    await act(async () => beforeSave.resolve(obsoleteDetail));
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, savedDefinition);
+    assert.equal(findButtonByText(container, "Save").disabled, true);
+    assert.equal(container.querySelector("footer span[role=status]")?.textContent, "Saved");
+  } finally { await editor.cleanup(); }
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "Character Editorは実行したSaveまたはArchiveだけをbusyとして通知し、失敗後にdraftを保持して再試行でき、保存中の追加編集を上書きせず、現在の編集面を通知する"
@@ -102,7 +374,7 @@ test("CharacterEditorApp は操作別busyと編集状態を成功・失敗後も
     Object.defineProperty(globalThis, key, { value: Reflect.get(dom.window, key), configurable: true });
   }
   const container = dom.window.document.getElementById("root")!;
-  const root = createRoot(container);
+  const root = await createEditorRoot(container);
   let currentCharacter = createCharacterDetail();
   let saveRequest = createDeferred<void>();
   let archiveRequest = createDeferred<CharacterDetail>();
@@ -247,7 +519,7 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
 
   try {
     await act(async () => {
-      root = createRoot(rootElement);
+      root = await createEditorRoot(rootElement);
       root.render(<CharacterEditorApp />);
     });
     const editorBody = rootElement.querySelector("main.character-editor-window-body");
@@ -427,7 +699,7 @@ test("CharacterEditorApp は Improve with Agent 押下で authoring session を�
 
   try {
     await act(async () => {
-      root = createRoot(rootElement);
+      root = await createEditorRoot(rootElement);
       root.render(<CharacterEditorApp />);
     });
     await act(async () => {
@@ -623,7 +895,7 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
 
   try {
     await act(async () => {
-      root = createRoot(rootElement);
+      root = await createEditorRoot(rootElement);
       root.render(<CharacterEditorApp />);
     });
     await act(async () => {
@@ -703,7 +975,7 @@ test("CharacterEditorApp は新規作成中のnative closeで破棄確認を表�
 
   try {
     await act(async () => {
-      root = createRoot(rootElement);
+      root = await createEditorRoot(rootElement);
       root.render(<CharacterEditorApp />);
     });
     await act(async () => {
