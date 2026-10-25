@@ -229,7 +229,7 @@ test("graph preview retains expanded ranges and displays label actors beside a p
       const total = operation === "get" ? items.length : source.length;
       const hasMore = offset + items.length < total;
       const edges = truncated ? [...relations, ...Array.from({ length: 400 - relations.length }, (_, index) => ({ id: `external-${index}`, fromId: "outside", toId: "unloaded", kind: "related" }))] : relations;
-      return { status: "ok", revision: 1, items, total, offset, hasMore, incomplete: truncated || hasMore || offset > 0, relations: edges, externalEndpoints: [other, records[0]] };
+      return { status: "ok", revision: 1, items, total, offset, hasMore, incomplete: truncated || hasMore || offset > 0, relations: edges, externalEndpoints: [other, records[0]], relationsTruncated: truncated };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
@@ -318,6 +318,75 @@ test("graph preview retains expanded ranges and displays label actors beside a p
 
 // @test-value v2
 // kind = "contract"
+// claim = "大量直列Graphは全page取得後も集約でき、途中pageで関係が欠落した場合だけ警告と非集約表示を保持する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "累積関係数400以上を欠落と誤認して集約を解除するか、後続pageが途中の関係欠落を消して不完全な図を集約する"
+// observable = "最終取得後の集約node数と個別node数、件数表示、関係欠落警告、保持memoryの関係数と完全性"
+// observation_boundary = "component-behavior"
+// scope = "SessionGraphPreviewのpage結合と集約投影"
+// lifecycle = "permanent"
+// impact = "大量Graphの探索性と不完全な接続を完全と誤認しない閲覧契約を守る"
+// distinction = "型や投影単体testでは観測できない複数page応答の結合状態をcomponent経由で確認する"
+// @end-test-value
+test("graph preview retains overview beyond the per-page relation limit and remembers truncated pages", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
+  const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const { records, relations } = chainRecords(500);
+  let memory: SessionGraphPreviewMemory | null = null;
+  let truncatedOffset: number | null = null;
+  const api = {
+    readSessionGraph: (async (_id: string, operation: string, request: { offset?: number; limit?: number }) => {
+      if (operation === "list_topics") return { status: "ok", revision: 1, items: [{ id: "topic", title: "Topic" }], total: 1, offset: 0, hasMore: false, incomplete: false };
+      const offset = request.offset ?? 0;
+      const items = records.slice(offset, offset + (request.limit ?? 40));
+      const ids = new Set(items.map((item) => item.id));
+      const hasMore = offset + items.length < records.length;
+      const relationsTruncated = offset === truncatedOffset;
+      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore,
+        incomplete: hasMore || offset > 0 || relationsTruncated, relationsTruncated,
+        relations: relations.filter((edge) => ids.has(edge.fromId) || ids.has(edge.toId)), externalEndpoints: [] };
+    }) as WithMateWindowApi["readSessionGraph"],
+    subscribeSessionGraph: () => () => {},
+  };
+  try {
+    for (truncatedOffset of [null, 0, 40]) {
+      await act(async () => root.render(<SessionGraphPreview key={String(truncatedOffset)} api={api} sessionId="main" onOpenPath={() => {}} onMemoryChange={(value) => { memory = value; }} />));
+      while (dom.window.document.querySelector(".session-graph-load-more")) {
+        await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".session-graph-load-more")!.click());
+      }
+      const view: SessionGraphPreviewMemory["view"] = (memory as SessionGraphPreviewMemory | null)?.view ?? null;
+      assert.ok(view);
+      assert.equal(view.items.length, 500);
+      assert.equal(view.relations.length, 499);
+      assert.equal(view.hasMore, false);
+      assert.equal(view.incomplete, truncatedOffset !== null);
+      assert.equal(view.relationsTruncated, truncatedOffset !== null);
+      assert.match(dom.window.document.querySelector(".session-graph-record-status")?.textContent ?? "", /500 \/ 500 Records Loaded/);
+      assert.equal(dom.window.document.body.textContent!.includes("Some Relations May Be Missing"), truncatedOffset !== null);
+      if (truncatedOffset === null) {
+        assert.ok(dom.window.document.querySelector(".session-graph-group"));
+        assert.ok(dom.window.document.querySelectorAll(".session-graph-node").length < 500);
+      } else {
+        assert.equal(dom.window.document.querySelectorAll(".session-graph-group").length, 0);
+        assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 500);
+      }
+    }
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "追加取得は次pageの件数と取得済総数を区別し、局所busy・失敗・再試行中も図とzoomを保持して最終取得後のfocusを失わない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
 // fault = "追加取得数を残件全数と誤表示するか、取得中に図やzoomを止めるか、失敗を空表示にするか、完了でfocusが消える"
@@ -347,7 +416,7 @@ test("graph page loading keeps the graph usable through busy, retry and completi
       });
       const items = records.slice(offset, offset + (request.limit ?? 40));
       const hasMore = offset + items.length < records.length;
-      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, incomplete: hasMore || offset > 0, relations, externalEndpoints: [] };
+      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, incomplete: hasMore || offset > 0, relations, externalEndpoints: [], relationsTruncated: false };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
@@ -478,7 +547,7 @@ test("graph detail markdown represents embedded media as text while keeping deli
 // kind = "contract"
 // claim = "Graphは設定刻みのCtrl＋wheelとCtrl＋左dragで対象だけを操作し、通知・再表示・関連往復で選択と位置を保ち、別窓操作は元ビューを変えない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "Ctrl＋wheelが全体zoomへ伝播するか設定刻みを無視し、通常dragでも移動するかpan後に選択・別窓を誤発火し、通知や関連往復で元状態やfalse値を失う"
+// fault = "Ctrl＋wheelが全体zoomへ伝播するか設定刻みを無視し、通常dragでも移動するか無移動Ctrl clickを抑止し、pan後に選択・別窓を誤発火し、通知や関連往復で元状態やfalse値を失う"
 // observable = "wheelのcancelと伝播、倍率、pointer操作後のscrollと選択、自由項目、参照open引数、復帰・再表示の位置と追加取得範囲、別窓state、詳細開閉のfocus"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-preview-navigation"
@@ -587,6 +656,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
         incomplete: false,
         relations: [relation],
         externalEndpoints: [other],
+        relationsTruncated: false,
       };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: (listener) => {
@@ -653,9 +723,21 @@ test("graph preview preserves selection on notifications and navigates cross-top
     await pointer(viewport, "pointermove", 150, 130, false);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [80, 120]);
     const firstNode = dom.window.document.querySelector(".session-graph-node")!;
-    assert.equal((await pointer(firstNode, "pointerdown", 200, 180, true)).defaultPrevented, true);
+    assert.equal((await pointer(firstNode, "pointerdown", 200, 180, true)).defaultPrevented, false);
+    await pointer(firstNode, "pointermove", 200, 180, true);
+    assert.equal(captured, null, "stationary Ctrl click must retain the node as its pointer target");
+    await pointer(firstNode, "pointerup", 200, 180, true);
+    await act(async () => { firstNode.dispatchEvent(new dom.window.MouseEvent("click", { ctrlKey: true, detail: 1, bubbles: true, cancelable: true })); });
+    assert.equal(windows.pop()?.selectedId, "alpha");
+    assert.equal(dom.window.document.querySelector(".session-graph-details"), null);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [80, 120]);
+    await pointer(firstNode, "pointerdown", 200, 180, true);
     await pointer(viewport, "pointermove", 150, 130, true);
+    assert.equal(captured, 7);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [130, 170]);
+    await pointer(viewport, "pointermove", 200, 180, true);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [80, 120]);
+    await pointer(viewport, "pointermove", 150, 130, true);
     await pointer(viewport, "pointerup", 150, 130, true);
     await pointer(viewport, "pointermove", 100, 80, true);
     assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [130, 170]);

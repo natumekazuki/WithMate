@@ -68,6 +68,47 @@ test("Session Graph batches are atomic and preserve attribution", async () => {
 
 // @test-value v2
 // kind = "contract"
+// claim = "record読取はページ内で関係を切り詰めた場合だけrelationsTruncatedを返し、400件丁度の完全な関係と区別する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "400件丁度を欠落扱いするか401件目の切捨てを完全な接続として返す"
+// observable = "実SQLite get結果の関係件数・relationsTruncated・incomplete"
+// observation_boundary = "public-boundary"
+// scope = "SessionGraphStorageV6の関係読取上限"
+// lifecycle = "permanent"
+// impact = "rendererとagentが不完全な接続を完全と判断することを防ぐ"
+// distinction = "型検査とrendererのmockでは保証できないSQL LIMITと返却flagの境界を確認する"
+// @end-test-value
+test("Session Graph reads distinguish exact relation capacity from truncation", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-graph-relations-"));
+  const sessions = new SessionStorageV6(path.join(temporary, "withmate-v6.db"));
+  let graph: SessionGraphStorageV6 | null = null;
+  try {
+    const session = sessions.insertSession(newSession("main", temporary));
+    const owner = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
+    graph = new SessionGraphStorageV6(path.join(temporary, "withmate-v6.db"));
+    const records = [record("hub"), ...Array.from({ length: 401 }, (_, index) => record(`leaf-${index}`))];
+    let revision = 0;
+    for (let offset = 0; offset < records.length; offset += 200) graph.execute(owner, "apply", {
+      expectedRevision: revision++, topics: [{ id: "topic", title: "Topic" }], records: records.slice(offset, offset + 200),
+    }, identity);
+    const relations = Array.from({ length: 401 }, (_, index) => ({ id: `edge-${index}`, fromId: "hub", toId: `leaf-${index}`, kind: "depends_on" as const }));
+    graph.execute(owner, "apply", { expectedRevision: revision++, relations: relations.slice(0, 400) }, identity);
+    const complete = graph.execute(owner, "get", { ids: ["hub"] });
+    assert.equal(complete.status, "ok");
+    if (complete.status === "ok") {
+      assert.equal(complete.relations.length, 400); assert.equal(complete.relationsTruncated, false); assert.equal(complete.incomplete, false);
+    }
+    graph.execute(owner, "apply", { expectedRevision: revision, relations: relations.slice(400) }, identity);
+    const partial = graph.execute(owner, "get", { ids: ["hub"] });
+    assert.equal(partial.status, "ok");
+    if (partial.status === "ok") {
+      assert.equal(partial.relations.length, 400); assert.equal(partial.relationsTruncated, true); assert.equal(partial.incomplete, true);
+    }
+  } finally { graph?.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "実Workerは失効turnのGraph保存を拒否しreadに更新順・context選別・cross-topic endpointとrevision付きpageを返す"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
 // fault = "失効turnを保存するかWorker command未接続、contextから現行要求が欠落、cross-topic依存喪失、変更後のcontinuationを成功にする"
@@ -106,7 +147,7 @@ test("Session Graph Worker reads preserve context, pagination and current orderi
     if (context.status === "ok") assert.deepEqual(context.items.map((item) => item.id).sort(), ["evidence", "req"]);
     const view = await graph.execute(owner, "get_topic_view", { topicId: "topic", limit: 1 });
     assert.equal(view.status, "ok");
-    if (view.status === "ok") { assert.equal(view.hasMore, true); assert.equal(view.incomplete, true); }
+    if (view.status === "ok") { assert.equal(view.hasMore, true); assert.equal(view.incomplete, true); assert.equal(view.relationsTruncated, false); }
     await new Promise((resolve) => setTimeout(resolve, 5));
     await graph.execute(owner, "apply", { expectedRevision: 1, records: [{ ...record("req"), title: "Most recent" }] }, identity);
     assert.deepEqual(await graph.execute(owner, "recent", { offset: 1, expectedRevision: 1 }), { status: "conflict", revision: 2 });

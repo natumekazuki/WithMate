@@ -19,7 +19,7 @@ export type SessionGraphEndpoint = Pick<SessionGraphRecord, "id" | "topicId" | "
 export type SessionGraphConflict = { status: "conflict"; revision: number };
 export type SessionGraphPage<T> = { status: "ok"; revision: number; items: T[]; total: number; offset: number; hasMore: boolean; incomplete: boolean };
 export type SessionGraphReadResult = SessionGraphPage<SessionGraphRecord> & {
-  relations: SessionGraphRelation[]; externalEndpoints: SessionGraphEndpoint[];
+  relations: SessionGraphRelation[]; externalEndpoints: SessionGraphEndpoint[]; relationsTruncated: boolean;
 };
 export type SessionGraphApplyResult = { status: "ok"; revision: number } | SessionGraphConflict;
 export type SessionGraphOperation = keyof typeof sessionGraphOperationRequestSchemas;

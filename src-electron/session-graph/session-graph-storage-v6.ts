@@ -129,6 +129,6 @@ export class SessionGraphStorageV6 {
       });
     }
     const hasMore = offset + items.length < total;
-    return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0 || edgesTruncated, relations, externalEndpoints };
+    return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0 || edgesTruncated, relations, externalEndpoints, relationsTruncated: edgesTruncated };
   }
 }

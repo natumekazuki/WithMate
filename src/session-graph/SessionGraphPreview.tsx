@@ -14,7 +14,6 @@ import type {
   SessionGraphRecord,
   SessionGraphTopic,
 } from "../../src-shared/session-graph/session-graph-contract.js";
-import { SESSION_GRAPH_RELATION_LIMIT } from "../../src-shared/session-graph/session-graph-contract.js";
 import { CloseButton } from "../ui/close-button.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import type { ReactNode, MouseEvent, Dispatch, SetStateAction } from "react";
@@ -63,9 +62,8 @@ function mergeViews(
   return {
     ...next,
     offset: 0,
-    incomplete: next.hasMore ||
-      current.incomplete && current.relations.length >= SESSION_GRAPH_RELATION_LIMIT ||
-      next.incomplete && next.relations.length >= SESSION_GRAPH_RELATION_LIMIT,
+    incomplete: next.hasMore || current.relationsTruncated || next.relationsTruncated,
+    relationsTruncated: current.relationsTruncated || next.relationsTruncated,
     items: [...current.items, ...next.items],
     relations: [
       ...new Map(
@@ -193,7 +191,7 @@ export function SessionGraphPreview({
   const windowTargetTrigger = useRef<HTMLElement | null>(null);
   const windowMenuRef = useRef<HTMLButtonElement>(null);
   const stateRef = useRef(initialState);
-  const pan = useViewportPan(`${sessionId}:${topicId}:${selectedId ?? ""}`);
+  const pan = useViewportPan(`${sessionId}:${topicId}:${selectedId ?? ""}`, { captureOnMove: true });
   const suppressPanClick = useRef(false);
   const setViewportZoom = useCallback<Dispatch<SetStateAction<ImageZoom>>>((action) => {
     setZoom((current) => {
@@ -415,10 +413,10 @@ export function SessionGraphPreview({
   }, [records, relations, selectedId]);
   const projection = useMemo(() => projectSessionGraph(
     focalRecords, relations,
-    selectedId || (view?.incomplete && relations.length >= SESSION_GRAPH_RELATION_LIMIT)
+    selectedId || view?.relationsTruncated
       ? Number.POSITIVE_INFINITY : sessionGraphCapacity(viewportSize?.width ?? 0, viewportSize?.height ?? 0),
     selectedId ? null : scopes.at(-1)?.ids ?? null,
-  ), [focalRecords, relations, selectedId, viewportSize, scopes, view?.incomplete]);
+  ), [focalRecords, relations, selectedId, viewportSize, scopes, view?.relationsTruncated]);
   const layout = useMemo(
     () => layoutSessionGraph(projection.nodes, projection.edges, viewportSize?.width ?? 0),
     [projection, viewportSize],
@@ -584,9 +582,9 @@ export function SessionGraphPreview({
             className={`session-graph-viewport${pan.isPanning ? " is-panning" : ""}`}
             onPointerDown={(event) => {
               pan.startPan(event);
-              suppressPanClick.current = event.defaultPrevented;
+              suppressPanClick.current = false;
             }}
-            onPointerMove={pan.movePan}
+            onPointerMove={(event) => { if (pan.movePan(event)) suppressPanClick.current = true; }}
             onPointerUp={pan.stopPan}
             onPointerCancel={(event) => { pan.stopPan(event); suppressPanClick.current = false; }}
             onLostPointerCapture={pan.handlePanCaptureLoss}
@@ -729,7 +727,7 @@ export function SessionGraphPreview({
                 <span ref={loadedCountRef} tabIndex={-1}>
                   {view.items.length.toLocaleString("en-US")} / {view.total.toLocaleString("en-US")} Records Loaded
                 </span>
-                {view.incomplete && view.relations.length >= SESSION_GRAPH_RELATION_LIMIT ? <span>Some Relations May Be Missing</span> : null}
+                {view.relationsTruncated ? <span>Some Relations May Be Missing</span> : null}
               </div>
               <div className="session-graph-load-action">
                 <span className="session-graph-load-reserve" aria-hidden="true"><ButtonContent busy={false}>Load 40 More</ButtonContent></span>
