@@ -122,6 +122,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - `Delete Files…`は条件と削除概要だけの確認を開く。`Cancel`またはEscapeでは何も削除せず、`Permanently Delete`で実行する。正常0件と計算失敗を区別し、未計算・0件・処理中は削除へ進めない。
 - 実行結果は削除件数・容量を表示する。除外・失敗は発生時だけ件数を表示し、失敗原因は操作横の詳細入口から確認する。計算中・削除中は操作button内のspinnerとaccessible busy stateを使う。
 - 条件編集と実行後は計算結果を失効させ、再計算を必要とする。Settingsの古いSession削除とは同時実行しない。実際の対象保護と削除境界は[Session Local Files](session-local-files.md#sessionを残すファイル掃除)に従う。
+- 削除失敗・部分失敗後は同じ`Delete Files…`から再操作できる。再計算した対象の概要を確認し、再び`Permanently Delete`を選ぶまで削除しない。再計算失敗も同じbutton横の詳細入口に表示し、対象が0件なら確認を開かない。
 
 ### Settings Runtime
 

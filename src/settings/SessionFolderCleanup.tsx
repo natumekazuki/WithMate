@@ -78,7 +78,7 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
   const [minimumSize, setMinimumSize] = useState("0");
   const [scan, setScan] = useState<SessionFolderCleanupScan | null>(null);
   const [result, setResult] = useState<SessionFolderCleanupResult | null>(null);
-  const [phase, setPhase] = useState<"idle" | "scanning" | "deleting">("idle");
+  const [phase, setPhase] = useState<"idle" | "scanning" | "retrying" | "deleting">("idle");
   const [confirming, setConfirming] = useState(false);
   const [validation, setValidation] = useState("");
   const [scanError, setScanError] = useState("");
@@ -87,6 +87,8 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
   const inFlight = useRef(false);
   const deleteButton = useRef<HTMLDivElement>(null);
   const busy = phase !== "idle";
+  const deleteFailure = deleteError || (result ? issueText(result.issues) : "");
+  const preparingDeletion = phase === "retrying";
 
   useEffect(() => () => { operation.current += 1; }, []);
   useEffect(() => {
@@ -102,7 +104,7 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
     setScanError("");
     setDeleteError("");
   };
-  const calculate = async () => {
+  const calculate = async (confirmDeletion = false) => {
     if (!api || inFlight.current || disabled) return;
     let request: SessionFolderCleanupRequest;
     try {
@@ -119,7 +121,7 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
     }
     const token = ++operation.current;
     inFlight.current = true;
-    setPhase("scanning");
+    setPhase(confirmDeletion ? "retrying" : "scanning");
     setScan(null);
     setResult(null);
     setValidation("");
@@ -127,9 +129,16 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
     setDeleteError("");
     try {
       const next = await api.scanSessionFolderCleanup(request);
-      if (token === operation.current) setScan(next);
+      if (token === operation.current) {
+        setScan(next);
+        if (confirmDeletion && next.matchedFileCount > 0) setConfirming(true);
+      }
     } catch (error) {
-      if (token === operation.current) setScanError(error instanceof Error ? error.message : String(error));
+      if (token === operation.current) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (confirmDeletion) setDeleteError(message);
+        else setScanError(message);
+      }
     } finally {
       if (token === operation.current) { inFlight.current = false; setPhase("idle"); }
     }
@@ -192,7 +201,6 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
       </fieldset>
       <div className="session-folder-cleanup-feedback" aria-live="polite" aria-atomic="true">
         {validation ? <p className="session-folder-cleanup-error" role="alert">{validation}</p> : null}
-        {scanError ? <p className="session-folder-cleanup-error">Calculation Failed</p> : null}
         {scan ? <>
           <dl className="session-folder-cleanup-summary">
             <div><dt>Session Folders</dt><dd>{numberFormat.format(scan.sessionCount)}</dd></div>
@@ -205,17 +213,17 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
         {result ? <>
           <p>{numberFormat.format(result.deletedFileCount)} Files Deleted · {formatCleanupBytes(result.deletedBytes)}</p>
           {result.skippedFileCount ? <p className="session-folder-cleanup-secondary">{numberFormat.format(result.skippedFileCount)} Files Skipped</p> : null}
-          {result.failedFileCount ? <p className="session-folder-cleanup-error">{numberFormat.format(result.failedFileCount)} Files Failed</p>
-            : result.issues.some((issue) => issue.kind === "failed") ? <p className="session-folder-cleanup-error">Cleanup Incomplete</p> : null}
+          {result.failedFileCount ? <p className="session-folder-cleanup-error">{numberFormat.format(result.failedFileCount)} Files Failed</p> : null}
         </> : null}
-        {deleteError ? <p className="session-folder-cleanup-error">Deletion Failed · Calculate Again</p> : null}
       </div>
       <div ref={deleteButton} className="session-folder-cleanup-actions">
-        <SettingsActionButton actionLabel="Delete Session Files" failure={deleteError || (result ? issueText(result.issues) : "")}
+        <SettingsActionButton actionLabel="Delete Session Files" failure={deleteFailure}
           className="launch-toggle session-folder-cleanup-delete" type="button"
-          disabled={busy || disabled || !scan || scan.matchedFileCount === 0}
-          aria-busy={phase === "deleting"} onClick={() => setConfirming(true)}>
-          <ButtonContent busy={phase === "deleting"} busyLabel="Deleting session files.">Delete Files…</ButtonContent>
+          disabled={busy || disabled || !api || (!scan && !deleteFailure) || scan?.matchedFileCount === 0}
+          aria-busy={preparingDeletion || phase === "deleting"}
+          onClick={() => { if (scan) setConfirming(true); else void calculate(true); }}>
+          <ButtonContent busy={preparingDeletion || phase === "deleting"}
+            busyLabel={preparingDeletion ? "Recalculating session files for deletion." : "Deleting session files."}>Delete Files…</ButtonContent>
         </SettingsActionButton>
       </div>
       {confirming && scan ? <CleanupConfirmation scan={scan}
