@@ -15,6 +15,90 @@ import type { SessionGraphViewState } from "../../src-shared/session-graph/sessi
 import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "Topicの並び替え更新後も全Topicへpage取得で到達でき、取得済範囲を同じrevisionで再構成して選択record・zoomを保持する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
+// fault = "旧revisionのTopic集合件数を新revisionのoffsetに使い未読Topicを飛ばすか、再取得で選択やGraph表示状態を消す"
+// observable = "202 Topicのoption ID集合と順序、list_topicsのoffset/expectedRevision、More Topics、選択record詳細・topic・zoom"
+// observation_boundary = "component-behavior"
+// scope = "SessionGraphPreviewの更新通知・Topic追加取得・取得済範囲再検証"
+// lifecycle = "permanent"
+// impact = "保存済みTopicへの一覧経由の到達と更新中の閲覧文脈を保護する"
+// distinction = "型・Storage順序test・record paging testではrendererが異なるrevisionを混ぜたoffsetを検出できない"
+// @end-test-value
+test("graph topic paging rebuilds the loaded revision after renames without losing selection", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
+  const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const topics = Array.from({ length: 202 }, (_, i) => ({ id: `t${String(i).padStart(3, "0")}`, title: `A${String(i).padStart(3, "0")}` }));
+  let revision = 1;
+  let notify = (_owner: string) => {};
+  const requests: Array<{ offset: number; expectedRevision?: number }> = [];
+  let state: SessionGraphViewState | null = null;
+  const sorted = () => [...topics].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+  const api = {
+    readSessionGraph: (async (_id: string, operation: string, request: { topicId?: string; offset?: number; limit?: number; expectedRevision?: number }) => {
+      const offset = request.offset ?? 0;
+      if (operation === "list_topics") {
+        requests.push({ offset, expectedRevision: request.expectedRevision });
+        if (request.expectedRevision !== undefined && request.expectedRevision !== revision) return { status: "conflict", revision };
+        const items = sorted().slice(offset, offset + (request.limit ?? 200));
+        return { status: "ok", revision, items, total: topics.length, offset, hasMore: offset + items.length < topics.length, incomplete: offset > 0 || offset + items.length < topics.length };
+      }
+      return { status: "ok", revision, items: [{ ...record("record"), topicId: request.topicId ?? "t000", title: "Selected Record", detail: "Retained Detail" }],
+        total: 1, offset: 0, hasMore: false, incomplete: false, relationsTruncated: false, relations: [], externalEndpoints: [] };
+    }) as WithMateWindowApi["readSessionGraph"],
+    subscribeSessionGraph: (listener: (owner: string) => void) => { notify = listener; return () => {}; },
+  };
+  const doc = dom.window.document;
+  const select = () => doc.querySelector<HTMLSelectElement>("select[aria-label='Graph Topic']")!;
+  const more = () => [...doc.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "More Topics");
+  const click = async (element: Element | null | undefined) => { assert.ok(element); await act(async () => { (element as HTMLElement).click(); }); };
+  try {
+    await act(async () => root.render(<SessionGraphPreview api={api} sessionId="main" onOpenPath={() => {}} onStateChange={(value) => { state = value; }} />));
+    assert.equal(select().options.length, 200);
+    await click(doc.querySelector("button[aria-label='Zoom In']"));
+    await click(doc.querySelector(".session-graph-node"));
+    topics[0].title = "Z000"; revision = 2;
+    await act(async () => notify("main"));
+    assert.equal(select().value, "t000");
+    assert.match(doc.querySelector(".session-graph-details")?.textContent ?? "", /Retained Detail/);
+    await click(more());
+    assert.equal(select().options.length, 202);
+    assert.deepEqual([...select().options].map((option) => option.value), sorted().map((topic) => topic.id));
+    assert.deepEqual(requests.at(-1), { offset: 200, expectedRevision: 2 });
+    assert.equal(more(), undefined);
+    assert.equal(select().value, "t000");
+    assert.equal((state as SessionGraphViewState | null)?.selectedId, "record");
+    assert.equal((state as SessionGraphViewState | null)?.zoom, 1.1);
+
+    // A refresh revalidates all already loaded pages at one revision, including equal-title ID order.
+    topics[1].title = "Z001"; topics[2].title = "Shared"; topics[3].title = "Shared"; revision = 3;
+    const beforeRefresh = requests.length;
+    await act(async () => notify("main"));
+    assert.deepEqual(requests.slice(beforeRefresh), [{ offset: 0, expectedRevision: undefined }, { offset: 200, expectedRevision: 3 }]);
+    assert.deepEqual([...select().options].map((option) => option.value), sorted().map((topic) => topic.id));
+    assert.equal(select().value, "t000");
+    assert.equal((state as SessionGraphViewState | null)?.selectedId, "record");
+    assert.equal((state as SessionGraphViewState | null)?.zoom, 1.1);
+    assert.match(doc.querySelector(".session-graph-details")?.textContent ?? "", /Retained Detail/);
+
+    await act(async () => root.render(<SessionGraphPreview key="normal" api={api} sessionId="main" onOpenPath={() => {}} />));
+    assert.equal(select().options.length, 200);
+    await click(more());
+    assert.equal(select().options.length, 202);
+    assert.deepEqual([...select().options].map((option) => option.value), sorted().map((topic) => topic.id));
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
 function record(id: string): SessionGraphRecord {
   return {
     id,

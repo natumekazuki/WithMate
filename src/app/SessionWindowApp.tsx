@@ -2236,6 +2236,7 @@ export default function AgentSessionWindowApp() {
     glossaryAnnotationMatcher,
     onActivateGlossaryEntry: handleActivateGlossaryEntry,
   });
+  const inlinePathFeedbackOwnerSessionId = isSessionGraphOpen ? selectedSession.id : renderedSession.id;
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
     recovery: {
       retryBanner: activeAuxiliarySession ? null : retryBanner,
@@ -2265,12 +2266,12 @@ export default function AgentSessionWindowApp() {
     onRecheckWorkspaceAvailability: () => {
       setWorkspaceAvailabilityCheckRevision((current) => current + 1);
     },
-    inlinePathFeedback: inlinePathError?.ownerSessionId === renderedSession.id
+    inlinePathFeedback: inlinePathError?.ownerSessionId === inlinePathFeedbackOwnerSessionId
       ? inlinePathError.message
       : "",
     onDismissInlinePathFeedback: () => {
       inlinePathOperationRevisionRef.current.advance();
-      setInlinePathError((current) => current?.ownerSessionId === renderedSession.id ? null : current);
+      setInlinePathError((current) => current?.ownerSessionId === inlinePathFeedbackOwnerSessionId ? null : current);
     },
     executionOptionsFeedback: executionOptionsFeedback?.ownerId === renderedSession.id
       ? executionOptionsFeedback.message : "",

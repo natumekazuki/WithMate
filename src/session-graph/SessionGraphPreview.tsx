@@ -239,7 +239,7 @@ export function SessionGraphPreview({
       setLoadMoreError("");
       setError("");
       try {
-        const topicPage = await api.readSessionGraph(sessionId, "list_topics", {
+        let topicPage = await api.readSessionGraph(sessionId, "list_topics", {
           limit: 200,
           offset: moreTopics ? topics.length : 0,
           expectedRevision: moreTopics ? topicsRevision.current : undefined,
@@ -249,19 +249,21 @@ export function SessionGraphPreview({
           throw new Error(
             "The graph changed. Retry to load its current state.",
           );
+        const nextTopics = moreTopics ? [...topics, ...topicPage.items] : [...topicPage.items];
+        while (!moreTopics && topicPage.hasMore && nextTopics.length < topics.length) {
+          topicPage = await api.readSessionGraph(sessionId, "list_topics", {
+            limit: 200, offset: nextTopics.length, expectedRevision: topicPage.revision,
+          });
+          if (request.current !== revision) return;
+          if (topicPage.status !== "ok") throw new Error("The graph changed. Retry to load its current state.");
+          if (!topicPage.items.length) break;
+          nextTopics.push(...topicPage.items);
+        }
         topicsRevision.current = topicPage.revision;
-        setTopics((current) => [
-          ...new Map(
-            [...current, ...topicPage.items].map((topic) => [topic.id, topic]),
-          ).values(),
-        ]);
-        setTopicsMore(
-          moreTopics
-            ? topicPage.hasMore
-            : topicPage.total > Math.max(topics.length, topicPage.items.length),
-        );
+        setTopics(nextTopics);
+        setTopicsMore(topicPage.hasMore);
         if (moreTopics) return;
-        const nextTopic = topicRef.current || topicPage.items[0]?.id;
+        const nextTopic = topicRef.current || nextTopics[0]?.id;
         if (!nextTopic) {
           setView(null);
           return;
