@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import type {
   GlossaryEntry,
@@ -29,7 +29,7 @@ export type SessionGlossaryPaneProps = {
   onBackToList: () => void;
 };
 
-function stateMessage(projection: SessionGlossaryProjection): { title: string; detail?: string } | null {
+function stateMessage(projection: SessionGlossaryProjection): { title: string; detail?: string; guidance?: string } | null {
   switch (projection.state.status) {
     case "missing":
       return null;
@@ -37,11 +37,13 @@ function stateMessage(projection: SessionGlossaryProjection): { title: string; d
       return {
         title: "Could not load the glossary",
         detail: projection.state.issues[0]?.message ?? "Check the glossary.yaml file contents.",
+        guidance: "Fix .withmate/glossary.yaml to load the glossary.",
       };
     case "unsupported":
       return {
         title: "Unsupported format",
         detail: `schemaVersion ${String(projection.state.schemaVersion ?? "unknown")}`,
+        guidance: "Use a supported schemaVersion in .withmate/glossary.yaml.",
       };
     case "watch-error":
       return {
@@ -55,25 +57,53 @@ function stateMessage(projection: SessionGlossaryProjection): { title: string; d
   }
 }
 
-function GlossaryFailure({ label, detail, onRetry, busy = false }: {
+function GlossaryFailure({ label, detail, guidance, onRetry, busy = false }: {
   label: string;
   detail: string;
+  guidance?: string;
   onRetry?: () => void;
   busy?: boolean;
 }) {
   const detailsId = useId();
+  const anchorRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<CSSProperties>({});
+  const [expanded, setExpanded] = useState(false);
+  const updatePosition = useCallback(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(320, window.innerWidth - 24);
+    const above = rect.top - 20;
+    const below = window.innerHeight - rect.bottom - 20;
+    setPosition({
+      width,
+      left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+      maxHeight: Math.min(280, Math.max(above, below)),
+      ...(above > below
+        ? { bottom: window.innerHeight - rect.top + 8, top: "auto" }
+        : { top: rect.bottom + 8, bottom: "auto" }),
+    });
+  }, []);
   useLayoutEffect(() => {
     const dismiss = () => popoverRef.current?.hidePopover();
+    const onScroll = (event: Event) => {
+      const popup = popoverRef.current;
+      if (popup?.matches(":popover-open") && !popup.contains(event.target as Node)) updatePosition();
+    };
     window.addEventListener("resize", dismiss);
-    return () => window.removeEventListener("resize", dismiss);
-  }, []);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [updatePosition]);
   return (
     <div className="glossary-error" role="group" aria-label={label}>
       <span className="sr-only" role="alert">{label}</span>
       <div className="glossary-error-actions">
         <button
+          ref={anchorRef}
           className="artifact-toggle artifact-toggle-icon glossary-error-details"
           type="button"
           aria-label={`${label}: Details`}
@@ -81,20 +111,8 @@ function GlossaryFailure({ label, detail, onRetry, busy = false }: {
           popoverTarget={detailsId}
           aria-haspopup="dialog"
           aria-controls={detailsId}
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect();
-            const width = Math.min(320, window.innerWidth - 24);
-            const above = rect.top - 20;
-            const below = window.innerHeight - rect.bottom - 20;
-            setPosition({
-              width,
-              left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
-              maxHeight: Math.min(280, Math.max(above, below)),
-              ...(above > below
-                ? { bottom: window.innerHeight - rect.top + 8, top: "auto" }
-                : { top: rect.bottom + 8, bottom: "auto" }),
-            });
-          }}
+          aria-expanded={expanded}
+          onClick={updatePosition}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
             <path d="M12 3 2 21h20L12 3Z" />
@@ -117,11 +135,10 @@ function GlossaryFailure({ label, detail, onRetry, busy = false }: {
           </button>
         ) : null}
       </div>
-      <div id={detailsId} ref={popoverRef} popover="auto" className="glossary-error-popover" role="dialog" aria-label={`${label}: Details`} style={position}>
-        <div className="glossary-error-popover-head">
-          <strong>{label}</strong>
-          <CloseButton ariaLabel="Close Error Details" onClose={() => popoverRef.current?.hidePopover()} />
-        </div>
+      {guidance ? <p className="glossary-error-guidance">{guidance}</p> : null}
+      <div id={detailsId} ref={popoverRef} popover="auto" className="glossary-error-popover" role="dialog" aria-label={`${label}: Details`} style={position}
+        onToggle={(event) => setExpanded(event.currentTarget.matches(":popover-open"))}>
+        <CloseButton ariaLabel="Close Error Details" onClose={() => popoverRef.current?.hidePopover()} />
         <p className="glossary-error-detail">{detail}</p>
       </div>
     </div>
@@ -242,6 +259,7 @@ export function SessionGlossaryPane({
           <GlossaryFailure
             label={unavailable.title}
             detail={unavailable.detail ?? unavailable.title}
+            guidance={unavailable.guidance}
             onRetry={projection.state.status === "watch-error" ? onRetryProjection : undefined}
             busy={projectionLoading}
           />
