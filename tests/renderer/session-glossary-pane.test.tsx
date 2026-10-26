@@ -129,16 +129,16 @@ test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完
 });
 
 // @test-value v2
-// kind = "security"
-// claim = "Glossary invalid/unsupported stateは旧用語を出さず、修正対象の案内を常時表示し診断原文はpopupへ関連付ける"
-// oracle = { type = "contract", ref = "src/glossary/SessionGlossaryPane.tsx: invalid projection view" }
-// fault = "不正・未対応formatを旧用語で表示する、または修正対象の案内を診断popup内に隠す"
-// observable = "失敗alert、popup外の修正案内、詳細buttonのpopovertargetと診断原文、旧Runtime termの不在"
+// kind = "contract"
+// claim = "Glossary invalid/unsupportedの単一描画で失敗状態と修正案内を表示し、診断原文を詳細popupへ関連付ける"
+// oracle = { type = "contract", ref = "docs/features/repository-glossary.md#sessionでの表示; docs/runbooks/repository-glossary.md#session-ui; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "invalid/unsupportedを正常な空状態として扱う、修正案内をpopup内へ隠す、または診断原文と詳細入口の関連を失う"
+// observable = "単一SSRの失敗alert、popup外の修正案内、詳細buttonのpopovertargetと診断原文"
 // observation_boundary = "component-behavior"
 // scope = "session-glossary-invalid-state"
 // lifecycle = "permanent"
 // @end-test-value
-test("SessionGlossaryPaneはinvalid/unsupported時に修正案内を残し旧用語を表示しない", () => {
+test("SessionGlossaryPaneはinvalid/unsupportedの単一描画で失敗と修正案内を表示し診断popupへ接続する", () => {
   for (const state of [
     {
       status: "invalid",
