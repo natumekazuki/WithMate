@@ -2,7 +2,6 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import {
-  GLOSSARY_RELATIVE_PATH,
   type GlossaryEntry,
   type SessionGlossaryProjection,
 } from "../../src-shared/glossary/glossary-contract.js";
@@ -25,11 +24,14 @@ export type SessionGlossarySelection = {
 
 export type SessionGlossaryView = {
   projection: SessionGlossaryProjection | null;
+  projectionLoading: boolean;
+  projectionError: string;
   searchQuery: string;
   searchEntries: GlossaryEntry[];
   searchTotal: number;
   searchLoading: boolean;
   searchError: string;
+  searchStale: boolean;
   selectedTerm: string | null;
 };
 
@@ -43,22 +45,34 @@ export function useSessionGlossary({
   onActivatePane: () => void;
 }) {
   const [projection, setProjection] = useState<SessionGlossaryProjection | null>(null);
+  const [projectionLoading, setProjectionLoading] = useState(false);
+  const [projectionError, setProjectionError] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchEntries, setSearchEntries] = useState<GlossaryEntry[]>([]);
-  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchResult, setSearchResult] = useState<{
+    api: SessionGlossaryApi;
+    sessionId: string;
+    scopeRevision: string;
+    query: string;
+    revision: string;
+    entries: GlossaryEntry[];
+    total: number;
+  } | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [selectedTerm, setSelectedTerm] = useState<string | null>(null);
-  const searchRequestIdRef = useRef(0);
+  const retryProjectionRef = useRef<(() => void) | null>(null);
+  const retrySearchRef = useRef<(() => void) | null>(null);
+  const loadMoreRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let active = true;
     let highestSequence = 0;
+    let receivedProjection = 0;
+    let pending = false;
     setProjection(null);
+    setProjectionError("");
+    setProjectionLoading(false);
     setSearchQuery("");
-    setSearchEntries([]);
-    setSearchTotal(0);
-    setSearchError("");
     setSelectedTerm(null);
 
     if (!api || !selectedSession) {
@@ -72,46 +86,46 @@ export function useSessionGlossary({
         return;
       }
       highestSequence = nextProjection.sequence;
+      receivedProjection += 1;
       setProjection(nextProjection);
+      setProjectionError("");
     };
     const unsubscribe = api.subscribeSessionGlossary(applyProjection);
-    void api.getSessionGlossaryProjection(selectedSession.id)
-      .then(applyProjection)
-      .catch((error) => {
-        if (!active) {
-          return;
+    const loadProjection = async () => {
+      if (!active || pending) return;
+      pending = true;
+      const receivedAtStart = receivedProjection;
+      setProjectionLoading(true);
+      try {
+        applyProjection(await api.getSessionGlossaryProjection(selectedSession.id));
+      } catch (error) {
+        if (active && receivedProjection === receivedAtStart) {
+          setProjectionError(error instanceof Error ? error.message : "Could not load the glossary.");
         }
-        setProjection({
-          sessionId: selectedSession.id,
-          scopeRevision: "renderer-load-error",
-          sequence: highestSequence + 1,
-          checkout: {
-            repositoryName: selectedSession.workspaceLabel || "Repository",
-            branch: selectedSession.branch || "unavailable",
-            pathLabel: selectedSession.workspaceLabel || "Repository",
-          },
-          state: {
-            status: "watch-error",
-            relativePath: GLOSSARY_RELATIVE_PATH,
-            revision: null,
-            message: error instanceof Error ? error.message : "Could not load the glossary.",
-          },
-        });
-      });
+      } finally {
+        pending = false;
+        if (active) setProjectionLoading(false);
+      }
+    };
+    retryProjectionRef.current = () => { void loadProjection(); };
+    void loadProjection();
 
     return () => {
       active = false;
+      retryProjectionRef.current = null;
       unsubscribe();
     };
   }, [api, selectedSession?.id]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     let active = true;
-    const requestId = ++searchRequestIdRef.current;
+    let pending = false;
+    let loadedCount = 0;
+    let total = 0;
+    let retryOffset = 0;
     const query = searchQuery.trim();
-    if (!api || !selectedSession || projection?.state.status !== "valid" || !query) {
-      setSearchEntries([]);
-      setSearchTotal(0);
+    if (!api || !selectedSession || projection?.sessionId !== selectedSession.id || projection.state.status !== "valid" || !query) {
+      setSearchResult(null);
       setSearchLoading(false);
       setSearchError("");
       return () => {
@@ -119,42 +133,75 @@ export function useSessionGlossary({
       };
     }
 
-    setSearchLoading(true);
+    setSearchResult((current) => current?.api === api
+      && current.sessionId === selectedSession.id
+      && current.scopeRevision === projection.scopeRevision
+      && current.query === query ? current : null);
     setSearchError("");
-    setSearchEntries([]);
-    setSearchTotal(0);
-    void api.searchSessionGlossary(selectedSession.id, { query, offset: 0, pageSize: 100 }).then((result) => {
-      if (!active || searchRequestIdRef.current !== requestId) {
-        return;
+    const revision = projection.state.revision;
+    const loadSearch = async (offset: number) => {
+      if (!active || pending) return;
+      pending = true;
+      retryOffset = offset;
+      setSearchLoading(true);
+      try {
+        const result = await api.searchSessionGlossary(selectedSession.id, { query, offset, pageSize: 100 });
+        if (!active) return;
+        if (!result.ok) {
+          setSearchError(result.message);
+        } else if (!isGlossarySearchRevisionCurrent(result.revision, projection.state.revision)) {
+          setSearchError("The glossary changed during the search. Retry to load current results.");
+        } else {
+          loadedCount = offset + result.entries.length;
+          total = result.total;
+          setSearchResult((current) => ({
+            api,
+            sessionId: selectedSession.id,
+            scopeRevision: projection.scopeRevision,
+            query,
+            revision,
+            entries: offset === 0 ? result.entries : [...(current?.entries ?? []), ...result.entries],
+            total: result.total,
+          }));
+          setSearchError("");
+        }
+      } catch (error) {
+        if (active) setSearchError(error instanceof Error ? error.message : "Could not search the glossary.");
+      } finally {
+        pending = false;
+        if (active) setSearchLoading(false);
       }
-      if (!result.ok) {
-        setSearchEntries([]);
-        setSearchTotal(0);
-        setSearchError(result.message);
-      } else if (isGlossarySearchRevisionCurrent(result.revision, projection.state.revision)) {
-        setSearchEntries(result.entries);
-        setSearchTotal(result.total);
-      }
-      setSearchLoading(false);
-    }).catch((error) => {
-      if (active && searchRequestIdRef.current === requestId) {
-        setSearchEntries([]);
-        setSearchTotal(0);
-        setSearchError(error instanceof Error ? error.message : "Could not search the glossary.");
-        setSearchLoading(false);
-      }
-    });
+    };
+    retrySearchRef.current = () => { void loadSearch(retryOffset); };
+    loadMoreRef.current = () => {
+      if (loadedCount < total) void loadSearch(loadedCount);
+    };
+    void loadSearch(0);
 
     return () => {
       active = false;
+      retrySearchRef.current = null;
+      loadMoreRef.current = null;
     };
-  }, [api, projection?.state.revision, projection?.state.status, searchQuery, selectedSession?.id]);
+  }, [api, projection?.scopeRevision, projection?.state.revision, projection?.state.status, searchQuery.trim(), selectedSession?.id]);
+
+  const applicableSearch = searchResult?.api === api
+    && searchResult?.sessionId === selectedSession?.id
+    && searchResult?.scopeRevision === projection?.scopeRevision
+    && searchResult?.query === searchQuery.trim()
+    && projection?.state.status === "valid"
+    ? searchResult : null;
+  const searchEntries = applicableSearch?.entries ?? [];
+  const searchTotal = applicableSearch?.total ?? 0;
+  const searchStale = applicableSearch !== null && applicableSearch.revision !== projection?.state.revision;
 
   useEffect(() => {
-    if (selectedTerm && projection?.state.status === "valid" && !projection.state.entries.some((entry) => entry.term === selectedTerm)) {
+    if (selectedTerm && projection?.state.status === "valid"
+      && !projection.state.entries.some((entry) => entry.term === selectedTerm)
+      && !searchEntries.some((entry) => entry.term === selectedTerm)) {
       setSelectedTerm(null);
     }
-  }, [projection, selectedTerm]);
+  }, [projection, searchEntries, selectedTerm]);
 
   const annotationState = projection?.sessionId === selectedSession?.id && projection?.state.status === "valid"
     ? projection.state : undefined;
@@ -188,48 +235,25 @@ export function useSessionGlossary({
     current.onActivatePane();
   }, [annotationScope, selectedSession?.id]);
 
-  const onLoadMoreSearchResults = useCallback(() => {
-    const query = searchQuery.trim();
-    if (!api || !selectedSession || !query || searchLoading || searchEntries.length >= searchTotal) {
-      return;
-    }
-    setSearchLoading(true);
-    setSearchError("");
-    const requestId = ++searchRequestIdRef.current;
-    void api.searchSessionGlossary(selectedSession.id, {
-      query,
-      offset: searchEntries.length,
-      pageSize: 100,
-    }).then((result) => {
-      if (searchRequestIdRef.current !== requestId) {
-        return;
-      }
-      if (!result.ok) {
-        setSearchError(result.message);
-      } else if (isGlossarySearchRevisionCurrent(result.revision, projection?.state.revision)) {
-        setSearchEntries((current) => [...current, ...result.entries]);
-        setSearchTotal(result.total);
-      }
-      setSearchLoading(false);
-    }).catch((error) => {
-      if (searchRequestIdRef.current !== requestId) {
-        return;
-      }
-      setSearchError(error instanceof Error ? error.message : "Could not search the glossary.");
-      setSearchLoading(false);
-    });
-  }, [api, projection?.state.revision, searchEntries.length, searchLoading, searchQuery, searchTotal, selectedSession]);
+  const onRetryProjection = useCallback(() => retryProjectionRef.current?.(), []);
+  const onRetrySearch = useCallback(() => retrySearchRef.current?.(), []);
+  const onLoadMoreSearchResults = useCallback(() => loadMoreRef.current?.(), []);
 
   const paneProps = {
     projection,
+    projectionLoading,
+    projectionError,
     searchQuery,
     searchEntries,
     searchTotal,
     searchLoading,
     searchError,
+    searchStale,
     selectedTerm,
     onSearchQueryChange: setSearchQuery,
     onLoadMoreSearchResults,
+    onRetryProjection,
+    onRetrySearch,
     onSelectTerm: setSelectedTerm,
     onBackToList: () => setSelectedTerm(null),
   } satisfies SessionGlossaryPaneProps;
@@ -238,16 +262,21 @@ export function useSessionGlossary({
     paneProps,
     view: {
       projection,
+      projectionLoading,
+      projectionError,
       searchQuery,
       searchEntries,
       searchTotal,
       searchLoading,
       searchError,
+      searchStale,
       selectedTerm,
     } satisfies SessionGlossaryView,
     actions: {
       onSearchQueryChange: setSearchQuery,
       onLoadMoreSearchResults,
+      onRetryProjection,
+      onRetrySearch,
       onSelectTerm: setSelectedTerm,
       onBackToList: () => setSelectedTerm(null),
       onActivateGlossaryEntry,
