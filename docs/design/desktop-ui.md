@@ -398,6 +398,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Ctrl+F は active な chat / Text / Markdown / Mermaid / HTML Source / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、Mermaid、HTML Source、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する。rich previewのCopy／Quoteはブラウザーが選択した本文を使い、倍率toolbarなど選択不可の操作表示を含めない
   - file、live Git Diff、Template workspace から chat へ戻る操作は、左向き icon-only control と具体的な accessible name を持つ同じ navigation primitive を使う。run、approval、elicitation の状態は preview 中も確認できる
   - Template workspaceのSave / Delete処理中は入力を固定し、成功・失敗後に操作を戻す。本文・template IDを表示文言の変更で書き換えない
+  - Template workspaceの診断エラーはアイコンで示し、詳細アイコンから非modal popoverで原文を開く。本文と回復操作の配置を保ち、画面端で位置・高さを補正する。重複見出しは置かず、本文右上のClose、Escape、入口の再操作、関連領域外のclickで閉じる。CloseとEscapeでは入口へfocusを戻し、外側で移ったfocusは奪わない。取得失敗にはRetryアイコンを併置し、短い失敗通知・操作名・開閉状態を支援技術へ伝える。名前や本文の入力不備・名前の重複は修正に必要な短い説明を表示し、失敗時の編集値は保持する
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける
 - detached file preview
   - File Explorer は通常 click で中央 preview、Ctrl+click / Cmd+click で detached preview を開く。Changes は通常 click で中央 live Git Diff（untracked は中央 file preview）、Ctrl+click / Cmd+click で detached live Git Diff（untracked は detached file preview）を開く。Session message の local-file link は detached preview を開く
