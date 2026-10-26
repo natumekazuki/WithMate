@@ -2155,7 +2155,7 @@
 
 .memory-review-shell {
   display: grid;
-  grid-template-rows: auto auto minmax(20rem, 1fr) auto;
+  grid-template-rows: auto auto minmax(20rem, 3fr) minmax(12rem, 1fr);
   gap: 16px;
   justify-self: stretch;
   width: 100%;
@@ -2552,6 +2552,9 @@
 
 .memory-review-usage {
   display: grid;
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
   gap: 12px;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 8px;

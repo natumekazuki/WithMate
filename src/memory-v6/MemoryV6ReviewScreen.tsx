@@ -547,7 +547,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             </section>
           </div>
 
-          <section className="memory-review-usage" aria-label="Memory file usage" aria-busy={usageLoading}>
+          <section className="memory-review-usage" aria-label="Memory file usage" aria-busy={usageLoading} tabIndex={0}>
             {usageError ? (
               <MemoryReviewError label="Memory File Usage Error" {...usageError}>
                 <button type="button" className="launch-toggle" aria-label="Retry Memory file usage" aria-busy={usageLoading} disabled={usageLoading} onClick={() => void loadFileUsage()}>
