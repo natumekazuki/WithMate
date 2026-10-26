@@ -101,3 +101,56 @@ test("OpenCode authenticates, serializes bootstrap and preserves cleanup confirm
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "子processの起動失敗と起動通知前終了をstartのrejectで伝え、owned cleanupを完了し、未処理rejectをMainへ漏らさない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "起動失敗を握り潰す、所有processを解放しない、または別の未処理rejectを発生させる"
+// observable = "startの拒否理由、terminate/release回数、whenClosed解決、unhandledRejectionの件数"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode transport startup failure and owned cleanup"
+// lifecycle = "permanent"
+// impact = "通常のprovider起動失敗がMainのfatal障害として重複記録され診断を誤らせる"
+// distinction = "成功起動の既存testや型検査では複数Promiseの非同期rejectを観測できない。実CLIなしの2故障ケースで境界を保護する"
+// @end-test-value
+test("OpenCode startup failures are handled and release owned processes", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-opencode-start-failure-"));
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    for (const event of ["error", "exit"] as const) {
+      const failure = new Error(`Provider failed before ready: ${event}`);
+      let terminated = 0;
+      let released = 0;
+      const transport = new OpenCodeTransport({ executable: process.execPath, cwd: directory,
+        databasePath: path.join(directory, `${event}.sqlite`), closeTimeoutMs: 500 }, {
+        spawnOwnedProcess: () => {
+          const child = new ChildProcess() as ChildProcessWithoutNullStreams;
+          Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+          const ready = new Promise<void>((_resolve, reject) => { child.once(event, () => reject(failure)); });
+          queueMicrotask(() => {
+            if (event === "error") child.emit("error", failure);
+            child.emit("exit", 1, null);
+            child.emit("close", 1, null);
+          });
+          return { child, ready, terminate: () => { terminated++; }, release: () => { released++; } };
+        },
+      });
+      try {
+        await assert.rejects(transport.start(), (error) => error === failure);
+        await transport.whenClosed();
+        await new Promise<void>(resolve => setImmediate(resolve));
+        assert.equal(terminated, 1);
+        assert.equal(released, 1);
+        assert.deepEqual(unhandled, []);
+      } finally {
+        await transport.close();
+      }
+    }
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -104,8 +104,7 @@ export class OpenCodeTransport {
         child.once("exit", () => reject(new Error("OpenCode process exited before startup completed.")));
       });
       const client = await bounded((async () => {
-        await owner.ready;
-        const baseUrl = await announcement;
+        const [, baseUrl] = await Promise.all([owner.ready, announcement]);
         const client = OpenCode.make({ baseUrl, headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` } });
         const info = await client.server.info({ signal });
         if (info.version !== OPENCODE_VERSION) throw new Error("OpenCode CLI version does not match the bundled client.");
