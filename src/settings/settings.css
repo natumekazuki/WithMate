@@ -252,6 +252,66 @@
   gap: 10px;
 }
 
+.settings-action-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-action-error-slot {
+  display: inline-flex;
+  width: 26px;
+  flex: 0 0 26px;
+}
+
+.settings-action-error-trigger {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--orange);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-action-error-trigger:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.settings-action-error-popover {
+  position: fixed;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 14px 44px 14px 16px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.settings-action-error-popover p {
+  margin: 0;
+}
+
+.settings-action-error-popover .surface-close-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
 .settings-diagnostics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -318,6 +378,7 @@
 .settings-feedback-inline {
   margin: 0;
   flex: 1 1 auto;
+  white-space: pre-line;
 }
 
 .settings-provider-list {

@@ -27,7 +27,9 @@
 3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
 4. 結果は window 内の短いフィードバックで返す
 
-設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。失敗時はエラーをフィードバック領域に残す。
+設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。
+
+操作結果は操作ごとに扱い、並行した別操作の成功で未解消の失敗理由を消さない。再操作の結果はその操作の失敗理由だけを更新・解消する。失敗は元の操作buttonの横のiconで示し、そのbuttonから再操作できる。診断原文はiconから非modal popoverで開き、元の操作を覆わずに画面内へ配置する。長文は内部scroll・選択でき、Escape・閉じるbuttonでは入口へfocusを戻し、入口の再操作・外側clickでも閉じる。入力修正が必要な案内はフィードバック領域へ直接表示する。未解消の失敗がある間は通常の結果通知を出さない。ユーザーによるdraft編集では結果通知をクリアする。
 
 Memory Review は検索・pagination・detail取得の応答順を識別し、古い応答で現在の一覧やdetailを上書きしない。detail切替中は旧detailのForget / Export操作を表示せず、Forget / GCの対象と削除影響を確認できる表示を維持する。
 

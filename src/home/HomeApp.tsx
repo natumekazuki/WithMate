@@ -73,6 +73,7 @@ import {
 } from "../settings/home-settings-content-props.js";
 import { buildSettingsDraftHandlers } from "../settings/settings-draft-handlers.js";
 import { buildSettingsCommandHandlers } from "../settings/settings-command-handlers.js";
+import { useSettingsFeedback } from "../settings/use-settings-feedback.js";
 import { ProviderQuotaOverview } from "../provider-usage/provider-quota.js";
 import { getWithMateApi, isDesktopRuntime, withWithMateApi } from "../app/renderer-withmate-api.js";
 import {
@@ -133,7 +134,7 @@ export default function HomeApp() {
     [openSessionWindowIds, openSessionWindowIdsState.status, sessionWindowRestoreIds],
   );
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
-  const [settingsFeedback, setSettingsFeedback] = useState("");
+  const { settingsFeedback, settingsErrors, setSettingsFeedback, clearSettingsFeedback } = useSettingsFeedback();
   const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
   const [deletingOldSessions, setDeletingOldSessions] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
@@ -714,7 +715,7 @@ export default function HomeApp() {
 
   const settingsDraftHandlers = buildSettingsDraftHandlers({
     setSettingsDraft,
-    clearSettingsFeedback: () => setSettingsFeedback(""),
+    clearSettingsFeedback,
   });
 
   const providerSettingRows = useMemo<HomeProviderSettingRow[]>(
@@ -791,10 +792,11 @@ export default function HomeApp() {
     },
     settingsDirty,
     settingsFeedback,
+    settingsErrors,
     sessionCleanupCutoffDate,
     deletingOldSessions,
     onChangeSessionCleanupCutoffDate: setSessionCleanupCutoffDate,
-    onOpenMemoryV6Review: () => void openMemoryV6ReviewWindow(),
+    onOpenMemoryV6Review: openMemoryV6ReviewWindow,
     ...settingsDraftHandlers,
     ...settingsCommandHandlers,
   };
