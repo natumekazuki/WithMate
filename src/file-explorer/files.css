@@ -1609,3 +1609,58 @@
   align-self: start;
   padding: 10px 12px;
 }
+
+.session-files-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.session-files-error-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+}
+
+.session-files-error-actions .session-files-error-toggle {
+  color: var(--danger, #fca5a5);
+}
+
+.session-files-error-hint {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.session-files-error-popover {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(320px, calc(100vh - 32px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  border: 1px solid var(--line, rgba(203, 213, 225, 0.18));
+  border-radius: 12px;
+  background: var(--surface-strong);
+  color: var(--ink, #edf2f7);
+  box-shadow: var(--shadow);
+  font-size: 0.76rem;
+}
+
+.session-files-error-popover .session-files-error-close {
+  float: right;
+  display: inline-flex;
+  margin: 0 0 4px 8px;
+  padding: 5px;
+}
+
+.session-files-error-popover p {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

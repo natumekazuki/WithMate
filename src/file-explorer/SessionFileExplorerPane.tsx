@@ -22,6 +22,7 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 import { ButtonContent } from "../ui/button-content.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { FilePinIcon } from "./FilePinIcon.js";
+import { FilesErrorNotice } from "./FilesErrorNotice.js";
 import { useSessionFilePins, type FilePinsApi } from "./use-session-file-pins.js";
 
 type FileExplorerApi = FilePinsApi & Pick<
@@ -171,6 +172,7 @@ export function SessionFileExplorerPane({
   const [errorMessage, setErrorMessage] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const errorsRef = useRef<HTMLDivElement | null>(null);
   const captureReadingContextRef = useRef<() => void>(() => {});
   const readingContextRef = useRef<{
     anchor: string;
@@ -607,12 +609,14 @@ export function SessionFileExplorerPane({
         aria-busy={rootsLoadState === "loading" || (!!api && !!sessionId && enabled && filePins.status === "loading")}
         hidden={activeTab !== "files"}
       >
-        {errorMessage ? <><p className="session-file-tree-error" role="alert">{errorMessage}</p><button type="button" onClick={() => void reloadRoots()}>Retry Files</button></> : null}
-        {filePins.error ? (
-          <div className="session-file-tree-error session-file-pins-error" role="alert">
-            {filePins.error} <button type="button" onClick={() => void filePins.refresh()}>Retry Pins</button>
-          </div>
-        ) : null}
+        <div ref={errorsRef}>
+          {errorMessage && activeTab === "files" && visible ? (
+            <FilesErrorNotice key={`${tabOwnerKey}:files:${errorMessage}`} target="Files" label="Files could not be loaded." message={errorMessage} onRetry={() => void reloadRoots()} boundaryRef={errorsRef} />
+          ) : null}
+          {filePins.error && activeTab === "files" && visible ? (
+            <FilesErrorNotice key={`${tabOwnerKey}:pins:${filePins.error}`} target="Pins" label="Pins could not be updated." message={filePins.error} onRetry={() => void filePins.refresh()} recoveryHint="Reload pins before making changes." boundaryRef={errorsRef} />
+          ) : null}
+        </div>
         {enabled && api && sessionId && filePins.status === "loading" && filePins.pins.length === 0 && roots.length === 0 ? (
           <p className="session-file-tree-status"><LoadingIndicator inline label="Loading pins" /></p>
         ) : null}
