@@ -77,12 +77,32 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+async function openErrorDetails(dom: JSDOM, name: string, message: string) {
+  const { document } = dom.window;
+  assert.equal(document.querySelector(`[role="dialog"][aria-label="${name}"]`), null);
+  assert.ok(!document.body.textContent?.includes(message));
+  const trigger = document.querySelector<HTMLButtonElement>(`button[aria-label="Show ${name}"]`);
+  assert.ok(trigger);
+  assert.equal(trigger.getAttribute("aria-expanded"), "false");
+  assert.equal(trigger.getAttribute("aria-haspopup"), "dialog");
+  trigger.focus();
+  await act(async () => { trigger.click(); });
+  const dialog = document.querySelector<HTMLElement>(`[role="dialog"][aria-label="${name}"]`);
+  assert.ok(dialog);
+  assert.equal(trigger.getAttribute("aria-label"), `Hide ${name}`);
+  assert.equal(trigger.getAttribute("aria-expanded"), "true");
+  assert.equal(trigger.getAttribute("aria-controls"), dialog.id);
+  assert.ok(dialog.textContent?.includes(message));
+  assert.notEqual(dialog.getAttribute("aria-modal"), "true");
+  return { dialog, trigger };
+}
+
 // @test-value v2
 // kind = "contract"
-// claim = "usageの先行失敗は検索とdetail成功で消えず、usage Retryはusageだけを再取得し、再取得失敗でも取得済み容量を保持する"
+// claim = "usage失敗の原文へaccessibleな詳細入口から到達でき、詳細を閉じても失敗は独立して残り、対象Retryと再取得失敗でも取得済み容量を保持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "検索/detail成功がusage errorを消す、Retryが別APIを呼ぶ、またはusage再取得で容量を消す"
-// observable = "失敗理由とRetry button、usage容量、API呼出回数"
+// observable = "詳細入口のaccessible属性、popoverの原文、閉じた後のfocus、Retry button、usage容量、API呼出回数"
 // observation_boundary = "component-behavior"
 // scope = "memory-review-usage-request-isolation"
 // lifecycle = "permanent"
@@ -118,20 +138,37 @@ test("MemoryV6ReviewScreen はusage失敗を独立して保持し対象だけRet
   try {
     await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
     await act(async () => { usages[0]!.reject(new Error("Usage unavailable")); });
-    assert.match(rootElement.textContent ?? "", /Usage unavailable/);
+    const { dialog, trigger } = await openErrorDetails(dom, "Memory File Usage Error", "Usage unavailable");
+    assert.equal(rootElement.contains(dialog), false);
+    await act(async () => { dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    assert.equal(dom.window.document.activeElement, trigger);
+    assert.equal(trigger.getAttribute("aria-expanded"), "false");
     await act(async () => { search.resolve({ items: [createHit("entry-a", "Entry A")] }); });
     await click("button.memory-review-item");
     assert.match(rootElement.textContent ?? "", /Entry A body/);
-    assert.match(rootElement.textContent ?? "", /Usage unavailable/);
+    const reopened = await openErrorDetails(dom, "Memory File Usage Error", "Usage unavailable");
+    const closeButton = reopened.dialog.querySelector<HTMLButtonElement>('button[aria-label="Close Error Details"]');
+    assert.ok(closeButton);
+    await act(async () => { closeButton.click(); });
+    assert.equal(dom.window.document.activeElement, trigger);
+    await openErrorDetails(dom, "Memory File Usage Error", "Usage unavailable");
+    const refreshButton = rootElement.querySelector<HTMLButtonElement>('button[aria-label="Refresh Memory review"]');
+    assert.ok(refreshButton);
+    refreshButton.focus();
+    await act(async () => { refreshButton.dispatchEvent(new dom.window.MouseEvent("pointerdown", { bubbles: true })); });
+    assert.equal(dom.window.document.activeElement, refreshButton);
+    assert.equal(trigger.getAttribute("aria-expanded"), "false");
+    await openErrorDetails(dom, "Memory File Usage Error", "Usage unavailable");
     await click('button[aria-label="Retry Memory file usage"]');
     assert.deepEqual(calls, { search: 1, usage: 2, detail: 1 });
     await act(async () => { usages[1]!.resolve(createUsage()); });
-    assert.doesNotMatch(rootElement.textContent ?? "", /Usage unavailable/);
+    assert.equal(dom.window.document.querySelector('[role="dialog"][aria-label="Memory File Usage Error"]'), null);
+    assert.equal(rootElement.querySelector('button[aria-label="Show Memory File Usage Error"]'), null);
     assert.match(rootElement.querySelector('[aria-label="Memory file usage"]')?.textContent ?? "", /1\.5 KB/);
     await click('button[aria-label="Refresh Memory review"]');
     assert.match(rootElement.querySelector('[aria-label="Memory file usage"]')?.textContent ?? "", /1\.5 KB/);
     await act(async () => { usages[2]!.reject(new Error("Usage refresh failed")); });
-    assert.match(rootElement.textContent ?? "", /Usage refresh failed/);
+    await openErrorDetails(dom, "Memory File Usage Error", "Usage refresh failed");
     assert.match(rootElement.querySelector('[aria-label="Memory file usage"]')?.textContent ?? "", /1\.5 KB/);
     assert.match(rootElement.textContent ?? "", /Entry A body/);
   } finally {
@@ -144,10 +181,10 @@ test("MemoryV6ReviewScreen はusage失敗を独立して保持し対象だけRet
 
 // @test-value v2
 // kind = "contract"
-// claim = "検索の先行失敗はusage成功で消えず、検索とdetailのRetryは対象APIだけを呼び、同一IDのdetailを再取得中と失敗後にも保持する"
+// claim = "検索の先行失敗はusage成功で消えず、検索とdetailの診断原文を詳細から参照でき、Retryは対象APIだけを呼び同一IDの取得済み本文を保持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "usage成功が検索errorを消す、Retryが別APIを呼ぶ、または同一IDの再取得が表示済み本文を消す"
-// observable = "検索/detail失敗理由、Retry button、本文、API呼出回数とentry ID"
+// observable = "検索/detailの詳細入口とpopover原文、Retry button、本文、API呼出回数とentry ID"
 // observation_boundary = "component-behavior"
 // scope = "memory-review-search-detail-request-isolation"
 // lifecycle = "permanent"
@@ -188,21 +225,23 @@ test("MemoryV6ReviewScreen は検索と同一entryの失敗を対象別にRetry�
     await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
     await act(async () => { search.reject(new Error("Search unavailable")); });
     await act(async () => { usage.resolve(createUsage()); });
-    assert.match(rootElement.textContent ?? "", /Search unavailable/);
+    await openErrorDetails(dom, "Memory Search Error", "Search unavailable");
     await click('button[aria-label="Retry Memory search"]');
     assert.deepEqual(calls, { search: 2, usage: 1, detail: [] });
-    assert.doesNotMatch(rootElement.textContent ?? "", /Search unavailable/);
+    assert.equal(dom.window.document.querySelector('[role="dialog"][aria-label="Memory Search Error"]'), null);
+    assert.equal(rootElement.querySelector('button[aria-label="Show Memory Search Error"]'), null);
     await click("button.memory-review-item");
     assert.match(rootElement.textContent ?? "", /Entry A body/);
     await click("button.memory-review-item");
     assert.ok(rootElement.querySelector('[role="status"][aria-label="Loading Memory entry"]'));
     assert.match(rootElement.textContent ?? "", /Entry A body/);
     await act(async () => { detailRefresh.reject(new Error("Detail refresh failed")); });
-    assert.match(rootElement.textContent ?? "", /Detail refresh failed/);
+    await openErrorDetails(dom, "Memory Entry Error", "Detail refresh failed");
     assert.match(rootElement.textContent ?? "", /Entry A body/);
     await click('button[aria-label="Retry Memory entry"]');
     assert.deepEqual(calls, { search: 2, usage: 1, detail: ["entry-a", "entry-a", "entry-a"] });
-    assert.doesNotMatch(rootElement.textContent ?? "", /Detail refresh failed/);
+    assert.equal(dom.window.document.querySelector('[role="dialog"][aria-label="Memory Entry Error"]'), null);
+    assert.equal(rootElement.querySelector('button[aria-label="Show Memory Entry Error"]'), null);
     assert.match(rootElement.textContent ?? "", /Entry A body/);
   } finally {
     await act(async () => { root?.unmount(); });
@@ -214,10 +253,10 @@ test("MemoryV6ReviewScreen は検索と同一entryの失敗を対象別にRetry�
 
 // @test-value v2
 // kind = "contract"
-// claim = "次pageの検索失敗でも既存一覧を保持し、検索Retryは失敗したcursorで次pageだけをappendする"
+// claim = "次pageの検索失敗は詳細入口から原文を確認でき、既存一覧を保持したままRetryが失敗したcursorで次pageだけをappendする"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "append失敗で一覧を消す、Retryがfirst pageへ戻る、またはusage/detailを再取得する"
-// observable = "pending/失敗/Retry後の一覧title、検索cursor、usage/detail呼出回数"
+// observable = "診断popover原文、pending/失敗/Retry後の一覧title、検索cursor、usage/detail呼出回数"
 // observation_boundary = "component-behavior"
 // scope = "memory-review-pagination-retry"
 // lifecycle = "permanent"
@@ -261,7 +300,7 @@ test("MemoryV6ReviewScreen は失敗したappend cursorをRetryで再利用す�
     await click("button.memory-review-load-more");
     assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry A/);
     await act(async () => { append.reject(new Error("Next page failed")); });
-    assert.match(rootElement.textContent ?? "", /Next page failed/);
+    await openErrorDetails(dom, "Memory Search Error", "Next page failed");
     assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry A/);
     await click('button[aria-label="Retry Memory search"]');
     assert.deepEqual(requests.map((request) => request.cursor), [undefined, "cursor-a", "cursor-a"]);
@@ -271,7 +310,85 @@ test("MemoryV6ReviewScreen は失敗したappend cursorをRetryで再利用す�
     await act(async () => { retry.resolve({ items: [createHit("entry-b", "Entry B")] }); });
     assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry A/);
     assert.match(rootElement.querySelector('[aria-label="Memory entries"]')?.textContent ?? "", /Entry B/);
-    assert.doesNotMatch(rootElement.textContent ?? "", /Next page failed/);
+    assert.equal(dom.window.document.querySelector('[role="dialog"][aria-label="Memory Search Error"]'), null);
+    assert.equal(rootElement.querySelector('button[aria-label="Show Memory Search Error"]'), null);
+  } finally {
+    await act(async () => { root?.unmount(); });
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "export・GC・forgetの診断原文を詳細から参照でき、forget詳細のEscapeは親の確認dialogを閉じず、再実行で回復できる"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "操作診断を参照できない、forget診断が親modalの外へportalされる、または詳細のEscapeが削除確認まで閉じる"
+// observable = "各操作の診断popover原文、親dialog内のpopover、Escape後の親dialogとfocus、再実行後のforget結果"
+// observation_boundary = "component-behavior"
+// scope = "memory-review-operation-error-details"
+// lifecycle = "permanent"
+// impact = "操作失敗の原因を調べた後も削除対象の確認と再実行を維持し、keyboard利用者が確認contextを失わない"
+// distinction = "既存の操作成功testや型検査では検出できない診断portalと親modalのevent伝播を一つのcomponent操作列で確認する"
+// @end-test-value
+test("MemoryV6ReviewScreen は操作エラーの詳細を開きForget確認を維持して回復する", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "https://withmate.local/" });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  const rootElement = dom.window.document.getElementById("root")!;
+  let root: Root | null = null;
+  const forgetRequests: string[] = [];
+  const detail = createDetail("entry-a", "Entry A", {
+    files: [{ role: "artifact", mediaKind: "text", contentType: "text/plain", displayName: "note.txt", summary: "File", originalBytes: 12 }],
+  });
+  const api: MemoryV6ReviewApi = {
+    async searchMemoryV6Entries() { return { items: [createHit("entry-a", "Entry A")] }; },
+    async getMemoryV6FileUsage() { return createUsage(); },
+    async getMemoryV6Entry() { return detail; },
+    async exportMemoryV6EntryFiles() { throw new Error("Export destination unavailable"); },
+    async runMemoryV6ProtectedObjectGc() { throw new Error("GC storage unavailable"); },
+    async forgetMemoryV6Entry(entryId) {
+      forgetRequests.push(entryId);
+      if (forgetRequests.length === 1) throw new Error("Forget storage unavailable");
+      return { entryId, status: "forgotten", reason: "user_request" };
+    },
+  };
+  const click = async (container: ParentNode, selector: string) => {
+    const button = container.querySelector<HTMLButtonElement>(selector);
+    assert.ok(button);
+    await act(async () => { button.click(); });
+  };
+  try {
+    await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
+    await click(rootElement, "button.memory-review-item");
+    await click(rootElement, 'button[aria-label="Export Memory files"]');
+    const exported = await openErrorDetails(dom, "Memory File Export Error", "Export destination unavailable");
+    assert.equal(rootElement.contains(exported.dialog), false);
+    await click(exported.dialog, 'button[aria-label="Close Error Details"]');
+    const gcButton = Array.from(rootElement.querySelectorAll("button")).find((button) => button.textContent?.trim() === "GC Dry Run");
+    assert.ok(gcButton);
+    await act(async () => { gcButton.click(); });
+    const gc = await openErrorDetails(dom, "Memory File GC Error", "GC storage unavailable");
+    await click(gc.dialog, 'button[aria-label="Close Error Details"]');
+    await click(rootElement, 'button[aria-label="Forget Memory entry"]');
+    const confirm = dom.window.document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
+    assert.ok(confirm);
+    await click(confirm, 'button[aria-label="Forget Memory entry"]');
+    const forgotten = await openErrorDetails(dom, "Memory Forget Error", "Forget storage unavailable");
+    assert.ok(confirm.contains(forgotten.dialog));
+    await act(async () => { forgotten.dialog.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    assert.ok(confirm.isConnected);
+    assert.equal(dom.window.document.querySelector('[role="dialog"][aria-label="Memory Forget Error"]'), null);
+    assert.equal(dom.window.document.activeElement, forgotten.trigger);
+    await click(confirm, 'button[aria-label="Forget Memory entry"]');
+    assert.deepEqual(forgetRequests, ["entry-a", "entry-a"]);
+    assert.equal(confirm.isConnected, false);
+    assert.match(rootElement.textContent ?? "", /Forget result: forgotten/);
   } finally {
     await act(async () => { root?.unmount(); });
     Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
@@ -761,7 +878,7 @@ test("MemoryV6ReviewScreen はentry detailからprotected filesをexportでき�
 // claim = "Memory Reviewでdetail選択を切り替える間は旧detailとforget/export操作を消し、遅延または失敗した新entryを旧対象として操作できない"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
 // fault = "selectedEntryIdだけを先に更新して旧detailを表示し、旧本文に対する操作を新entry IDへ送る"
-// observable = "切替中のLoading表示、旧本文とForget/Export buttonの不在、失敗feedback、forget/export API call数"
+// observable = "切替中のLoading表示、旧本文とForget/Export buttonの不在、診断popoverの原文、forget/export API call数"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-detail-selection-safety"
 // lifecycle = "permanent"
@@ -857,8 +974,8 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
 
     rejectB?.(new Error("Entry B failed"));
     await flushEffects();
+    await openErrorDetails(dom, "Memory Entry Error", "Entry B failed");
     text = rootElement.textContent ?? "";
-    assert.match(text, /Entry B failed/);
     assert.doesNotMatch(text, /Entry A body/);
     assert.equal(Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Forget Entry"), false);
     assert.equal(rootElement.querySelector('button[aria-label="Export Memory files"]'), null);
