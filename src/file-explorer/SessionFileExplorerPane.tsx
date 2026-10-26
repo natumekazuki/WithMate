@@ -19,8 +19,10 @@ import type {
   SessionFilePin,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import { ButtonContent } from "../ui/button-content.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { FilePinIcon } from "./FilePinIcon.js";
+import { FilesErrorNotice } from "./FilesErrorNotice.js";
 import { useSessionFilePins, type FilePinsApi } from "./use-session-file-pins.js";
 
 type FileExplorerApi = FilePinsApi & Pick<
@@ -170,6 +172,7 @@ export function SessionFileExplorerPane({
   const [errorMessage, setErrorMessage] = useState("");
   const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const errorsRef = useRef<HTMLDivElement | null>(null);
   const captureReadingContextRef = useRef<() => void>(() => {});
   const readingContextRef = useRef<{
     anchor: string;
@@ -179,6 +182,9 @@ export function SessionFileExplorerPane({
   const [pinnedOnly, setPinnedOnly] = useState(false);
   const [revealTarget, setRevealTarget] = useState<string | null>(null);
   const filePins = useSessionFilePins({ api, sessionId, enabled, rootsRevision, active: visible && activeTab === "files", refreshRevision });
+  const filesRefreshing = activeTab === "files" && (
+    rootsLoadState === "loading" || (!!api && !!sessionId && enabled && filePins.status === "loading")
+  );
   const pinsByEntry = useMemo(() => new Map(filePins.pins.flatMap((pin) => pin.rootId
     ? [[pinEntryKey(pin.rootId, pin.relativePath, pin.rootPath), pin] as const]
     : [])), [filePins.pins]);
@@ -586,10 +592,10 @@ export function SessionFileExplorerPane({
           }}
           aria-label={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
           title={activeTab === "changes" ? "Refresh Changes" : activeTab === "history" ? "Refresh History" : "Refresh Files"}
-          disabled={activeTab === "files" && (rootsLoadState === "loading" || filePins.pending)}
-          aria-busy={activeTab === "files" && rootsLoadState === "loading"}
+          disabled={filesRefreshing || (activeTab === "files" && filePins.pending)}
+          aria-busy={filesRefreshing}
         >
-          ↻
+          <ButtonContent busy={filesRefreshing}>↻</ButtonContent>
         </button>
         </div>
       </div>
@@ -603,12 +609,14 @@ export function SessionFileExplorerPane({
         aria-busy={rootsLoadState === "loading" || (!!api && !!sessionId && enabled && filePins.status === "loading")}
         hidden={activeTab !== "files"}
       >
-        {errorMessage ? <><p className="session-file-tree-error" role="alert">{errorMessage}</p><button type="button" onClick={() => void reloadRoots()}>Retry Files</button></> : null}
-        {filePins.error ? (
-          <div className="session-file-tree-error session-file-pins-error" role="alert">
-            {filePins.error} <button type="button" onClick={() => void filePins.refresh()}>Retry Pins</button>
-          </div>
-        ) : null}
+        <div ref={errorsRef}>
+          {errorMessage && activeTab === "files" && visible ? (
+            <FilesErrorNotice key={`${tabOwnerKey}:files:${errorMessage}`} target="Files" label="Files could not be loaded." message={errorMessage} onRetry={() => void reloadRoots()} boundaryRef={errorsRef} />
+          ) : null}
+          {filePins.error && activeTab === "files" && visible ? (
+            <FilesErrorNotice key={`${tabOwnerKey}:pins:${filePins.error}`} target="Pins" label="Pins could not be updated." message={filePins.error} onRetry={() => void filePins.refresh()} recoveryHint="Reload pins before making changes." boundaryRef={errorsRef} />
+          ) : null}
+        </div>
         {enabled && api && sessionId && filePins.status === "loading" && filePins.pins.length === 0 && roots.length === 0 ? (
           <p className="session-file-tree-status"><LoadingIndicator inline label="Loading pins" /></p>
         ) : null}
@@ -694,6 +702,7 @@ export function SessionFileExplorerPane({
                       nodeKind: "root",
                     })}
                     title={row.root.displayPath}
+                    aria-expanded={!!expandedDirectories[directoryKey(row.root.id, "")]}
                   >
                     <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`} aria-hidden="true">▸</span>
                     <span className="session-file-tree-name">{row.root.label}</span>
@@ -730,6 +739,7 @@ export function SessionFileExplorerPane({
                         });
                       }}
                       title={row.entry.relativePath}
+                      aria-expanded={isDirectory ? !!expandedDirectories[entryKey] : undefined}
                     >
                       <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`} aria-hidden="true">
                         {entryIcon(row.entry)}

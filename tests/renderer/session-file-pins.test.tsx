@@ -23,6 +23,11 @@ async function withPane(api: NonNullable<PaneProps["api"]>, run: (harness: {
   opened: string[];
 }) => Promise<void>, initialOptions: RefreshOptions = {}) {
   const dom = new JSDOM("<html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
+  Object.defineProperty(dom.window, "ResizeObserver", { value: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } });
   const replacements = {
     window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
     Element: dom.window.Element, Node: dom.window.Node, navigator: dom.window.navigator,
@@ -126,7 +131,9 @@ test("Filesの更新は展開と読む位置を保ち削除と取得失敗を区
     assert.deepEqual(reads, ["", "folder", "", "folder"]);
     phase = 2;
     await render("session-a", "session-a", { refreshRevision: 2 });
-    await until(() => document.querySelector("[role='alert']")?.textContent === "Refresh failed.");
+    await until(() => !!document.querySelector("[role='alert']"));
+    await click("Files Error Details");
+    assert.equal(document.querySelector("[role='dialog'] p")?.textContent, "Refresh failed.");
     assert.ok(document.querySelector("[title='folder/latest.txt']"));
     phase = 3;
     await click("Retry Files");
@@ -464,7 +471,10 @@ test("Pin directoryの取得失敗を表示して停止し再選択で回復す�
   await withPane(api, async ({ document, click, until }) => {
     await click("Pinned only");
     await click("Workspace: closed/deep");
-    await until(() => document.querySelector("[role='alert']")?.textContent === "Directory read failed.");
+    await until(() => !!document.querySelector("[role='alert']"));
+    await click("Files Error Details");
+    assert.equal(document.querySelector("[role='dialog'] p")?.textContent, "Directory read failed.");
+    await click("Close Error Details");
     assert.deepEqual(reads, ["", "closed"]);
     assert.equal(document.querySelector("[title='closed/deep']"), null);
     fail = false;
@@ -548,7 +558,9 @@ test("利用不可Pinの解除失敗を保持し再取得後に解除できる",
     await until(() => document.querySelectorAll(".session-file-pinned-row").length === 1);
     assert.equal(document.querySelector<HTMLButtonElement>(".session-file-pinned-row")?.disabled, true);
     await click("Unpin deleted.md");
-    assert.match(document.querySelector("[role='alert']")?.textContent ?? "", /Pin save failed/);
+    assert.ok(document.querySelector("[role='alert']"));
+    await click("Pins Error Details");
+    assert.equal(document.querySelector("[role='dialog'] p")?.textContent, "Pin save failed.");
     assert.equal(document.querySelectorAll(".session-file-pinned-row").length, 1);
     assert.equal(document.querySelector<HTMLButtonElement>("[aria-label='Unpin deleted.md']")?.disabled, true);
     fail = false;
