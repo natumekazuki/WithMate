@@ -1,0 +1,40 @@
+.session-file-format-error {
+  display: inline-flex;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.session-file-format-error > button {
+  color: var(--danger, #fca5a5);
+}
+
+.session-file-format-error-details {
+  position: fixed;
+  inset: auto;
+  position-area: top span-right;
+  position-try-fallbacks: flip-inline, flip-block, flip-block flip-inline;
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(320px, calc(100vh - 32px));
+  margin: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  border: 1px solid var(--line, rgba(203, 213, 225, 0.18));
+  border-radius: 12px;
+  background: var(--surface-strong, #0c1119);
+  color: var(--ink, #edf2f7);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+
+.session-file-format-error-details > button {
+  float: right;
+  margin: 0 0 4px 8px;
+}
+
+.session-file-format-error-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

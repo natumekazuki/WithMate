@@ -8,6 +8,7 @@
 @import "./settings/settings.css";
 @import "./chat/session-shell.css";
 @import "./file-explorer/files.css";
+@import "./file-explorer/structured-text-error-notice.css";
 @import "./file-explorer/pdf-file-preview.css";
 @import "./ui/markdown/markdown-file-preview.css";
 @import "./chat/session.css";
