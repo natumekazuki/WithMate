@@ -24,8 +24,13 @@ test("DiffViewer は現在の表示方式を同期して通知する", async () 
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const previousResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
   Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    value: class { observe() {} disconnect() {} },
+    configurable: true,
+  });
   dom.window.HTMLElement.prototype.scrollTo = () => {};
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
@@ -53,5 +58,7 @@ test("DiffViewer は現在の表示方式を同期して通知する", async () 
     else Reflect.deleteProperty(globalThis, "window");
     if (previousDocument) Object.defineProperty(globalThis, "document", previousDocument);
     else Reflect.deleteProperty(globalThis, "document");
+    if (previousResizeObserver) Object.defineProperty(globalThis, "ResizeObserver", previousResizeObserver);
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
   }
 });

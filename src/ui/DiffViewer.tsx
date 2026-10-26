@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 
 import type { ChangedFile } from "../../src-shared/session/runtime-state.js";
 
@@ -30,6 +30,7 @@ function scrollElementToTop(element: HTMLDivElement | null): void {
 export function DiffViewer({ file }: DiffViewerProps) {
   const [viewMode, setViewMode] = useState<DiffViewMode>("split");
   const [activeChangeIndex, setActiveChangeIndex] = useState(0);
+  const splitViewRef = useRef<HTMLDivElement | null>(null);
   const beforeHeadRef = useRef<HTMLDivElement | null>(null);
   const afterHeadRef = useRef<HTMLDivElement | null>(null);
   const beforeBodyRef = useRef<HTMLDivElement | null>(null);
@@ -105,6 +106,39 @@ export function DiffViewer({ file }: DiffViewerProps) {
     scrollElementToTop(afterBodyRef.current);
     scrollElementToTop(inlineBodyRef.current);
   }, [file.path]);
+
+  useLayoutEffect(() => {
+    const splitView = splitViewRef.current;
+    const beforeBody = beforeBodyRef.current;
+    const afterBody = afterBodyRef.current;
+    const beforeHead = beforeHeadRef.current;
+    const afterHead = afterHeadRef.current;
+    if (!splitView || !beforeBody || !afterBody || !beforeHead || !afterHead) {
+      return;
+    }
+
+    const updateScrollRange = () => {
+      const scrollLeft = beforeBody.scrollLeft;
+      // Measure intrinsic overflow before extending every pane by the same amount.
+      splitView.style.removeProperty("--diff-overflow-width");
+      const overflowWidth = Math.max(
+        beforeBody.scrollWidth - beforeBody.clientWidth,
+        afterBody.scrollWidth - afterBody.clientWidth,
+      );
+      splitView.style.setProperty("--diff-overflow-width", `${overflowWidth}px`);
+      for (const pane of [beforeBody, afterBody, beforeHead, afterHead]) {
+        pane.scrollLeft = scrollLeft;
+      }
+    };
+
+    updateScrollRange();
+    const observer = new ResizeObserver(updateScrollRange);
+    for (const body of [beforeBody, afterBody]) {
+      observer.observe(body);
+      observer.observe(body.firstElementChild!);
+    }
+    return () => observer.disconnect();
+  }, [file, viewMode]);
 
   useEffect(() => {
     const beforeBody = beforeBodyRef.current;
@@ -309,7 +343,7 @@ export function DiffViewer({ file }: DiffViewerProps) {
         </div>
       </div>
       {viewMode === "split" ? (
-        <div className="diff-split-view">
+        <div className="diff-split-view" ref={splitViewRef}>
           {renderSplitPane("before", beforeHeadRef, beforeBodyRef)}
           {renderSplitPane("after", afterHeadRef, afterBodyRef)}
         </div>
