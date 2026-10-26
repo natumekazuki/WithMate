@@ -223,7 +223,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 - Home の `Characters` panel から create / edit mode で開く
 - 1 Character に集中して編集する独立 window とする
-- 既存Characterの未取得中・取得失敗・not foundでは新規作成draftを表示せず、編集・保存・Archive・Authoringを無効にする。読込中は対象領域のbusy/status、失敗はalertと同じCharacterを取得する`Retry`を表示する
+- 既存Characterの未取得中・取得失敗・not foundでは新規作成draftを表示せず、編集・保存・Archive・Authoringを無効にする。読込中は対象領域のbusy/status、失敗は対象を示すalertと詳細icon、同じCharacterを取得する`Retry`を表示する。not foundは短い理由を表示し、診断の原文は非modal popoverで開く。popoverは本文・回復操作を押し下げず、長文のscroll/選択、Escape・閉じるbutton・入口再操作・外側clickによる閉鎖と適切なfocus復帰を維持する
 - header
   - avatar / name / description
   - create / edit / archived の mode
@@ -257,7 +257,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - close
   - dirty draft では discard confirm を出す
 - 保存開始時の draft と保存中の追加編集を区別し、完了時に新しい編集を保存結果で上書きしない。追加編集がある場合は保存成功表示で clean に見せない
-- Authoring後のfocus再取得は、保存済み内容から変更されたローカルdraftを保持する。失敗後も入力を保持して次のfocusで再試行し、再取得中の連続focusは重複要求にしない。後続の保存・Archive・Authoring開始後に古い再取得応答を反映しない。後続操作で中断しても、再取得または保存後の再取得が成功するまで再取得要求を保持し、操作失敗後は次のfocusで回復できる
+- Authoring後のfocus再取得は、保存済み内容から変更されたローカルdraftを保持する。失敗後も入力を保持し、次のfocusまたはfooterの`Retry`で同じCharacterを再取得する。失敗の診断原文は初回取得と同じ非modal popoverで開き、再取得busyは`Retry`内へ限定する。再取得中の連続focusやRetryは重複要求にしない。後続の保存・Archive・Authoring開始後に古い再取得応答を反映しない。後続操作で中断しても、再取得または保存後の再取得が成功するまで再取得要求を保持し、操作失敗後は次のfocusで回復できる
 - Character 定義自動生成、LLM 添削、section editor、revision / rollback、Character Update Workspace は current UI に含めない
 
 ## Session Monitor Window

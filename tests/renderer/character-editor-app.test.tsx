@@ -142,10 +142,10 @@ async function mountEditor(api: Partial<WithMateWindowApi>, characterId: string 
 
 // @test-value v2
 // kind = "contract"
-// claim = "既存Characterの未取得・失敗・not foundは編集/保存を許可せず、同じIDのRetry成功後だけ対象draftを操作できる"
+// claim = "既存Characterの未取得・失敗・not foundは編集/保存を許可せず、失敗概要と原文の詳細入口を提供し、同じIDのRetry成功後だけ対象draftを操作できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
-// fault = "未取得の既存IDを新規作成として保存する、失敗を通知しない、またはRetryで別対象を開く"
-// observable = "loading status/busy、error alert、見出し・編集入力・Save/Archive/Improve disabled、getCharacterのID列、書込API呼出数"
+// fault = "未取得の既存IDを新規作成として保存する、失敗や診断原文への入口を失う、またはRetryで別対象を開く"
+// observable = "loading status/busy、error alert、詳細buttonのaccessible name/expanded/controlsと非modal popoverの診断原文、見出し・編集入力・Save/Archive/Improve disabled、getCharacterのID列、書込API呼出数"
 // observation_boundary = "component-behavior"
 // scope = "CharacterEditorApp initial read and retry"
 // lifecycle = "permanent"
@@ -186,13 +186,22 @@ test("CharacterEditorApp は既存IDの取得失敗から同じ対象へRetryす
     assert.ok(container.querySelector('[role="status"][aria-label="Loading character"]'));
     await act(async () => requests[0]!.reject(new Error("Could not load character: access denied.")));
     await assertBlocked();
-    assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /access denied/);
+    assert.equal(container.querySelector('[role="alert"]')?.textContent, "Character could not be loaded.");
+    const detailsButton = container.querySelector<HTMLButtonElement>('[aria-label="Show Character Load Error Details"]');
+    assert.ok(detailsButton);
+    assert.equal(detailsButton.getAttribute("aria-expanded"), "false");
+    const details = dom.window.document.getElementById(detailsButton.getAttribute("aria-controls")!);
+    assert.ok(details);
+    assert.equal(details.getAttribute("popover"), "auto");
+    assert.equal(details.getAttribute("aria-modal"), null);
+    assert.equal(details.querySelector("pre")?.textContent, "Could not load character: access denied.");
     await editor.click("Retry");
     await assertBlocked();
     assert.equal(container.querySelector("main")?.getAttribute("aria-busy"), "true");
     await act(async () => requests[1]!.resolve(null));
     await assertBlocked();
-    assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /Character not found/);
+    assert.equal(container.querySelector('[role="alert"]')?.textContent, "Character Not Found");
+    assert.equal(container.querySelector('[popover] pre')?.textContent, "Character not found.");
     await editor.click("Retry");
     await act(async () => requests[2]!.resolve(createCharacterDetail()));
     assert.deepEqual(ids, ["char-1", "char-1", "char-1"]);
@@ -237,10 +246,10 @@ test("CharacterEditorApp は新規Characterを作成して編集を継続する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "Authoring後の再取得中にProfileと本文を編集してもdraftを保持し、失敗とnot found後のfocus再試行でも入力を保持する"
+// claim = "Authoring後の再取得中にProfileと本文を編集してもdraftを保持し、失敗とnot found後のfocus/Retry再試行でも入力と診断詳細へのアクセスを保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#character-editor-window" }
-// fault = "再取得の応答が新しい入力を置換する、連続focusで重複要求する、または失敗後の再取得が入力を失う"
-// observable = "Name・Description・definition・notes入力値、未保存badge、Save disabled、再取得回数とstatus通知"
+// fault = "再取得の応答が新しい入力を置換する、focus/Retryで重複要求する、または失敗後の入力や診断詳細/回復操作を失う"
+// observable = "Name・Description・definition・notes入力値、未保存badge、Save disabled、Retry busy/disabled、再取得回数、alert概要とpopover診断原文、成功status"
 // observation_boundary = "component-behavior"
 // scope = "CharacterEditorApp authoring refresh and draft preservation"
 // lifecycle = "permanent"
@@ -268,12 +277,20 @@ test("CharacterEditorApp はAuthoring再取得中のProfileと本文編集を保
     await editor.click("character-notes.md");
     await editor.fill("textarea", "# Local Notes");
     await act(async () => refresh.reject(new Error("reload failed")));
-    assert.match(container.querySelector('footer [role="status"]')?.textContent ?? "", /reload failed/);
+    assert.equal(container.querySelector('footer [role="alert"]')?.textContent, "Character files could not be reloaded.");
+    assert.equal(container.querySelector('footer [popover] pre')?.textContent, "reload failed");
+    assert.ok(container.querySelector('[aria-label="Show Character Reload Error Details"]'));
     assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "# Local Notes");
     refresh = createDeferred<CharacterDetail | null>();
+    const retry = findButtonByText(container, "Retry");
+    await editor.click("Retry");
+    assert.equal(retry.disabled, true);
+    assert.equal(retry.getAttribute("aria-busy"), "true");
     await editor.focus();
+    assert.equal(reads, 3);
     await act(async () => refresh.resolve(null));
-    assert.match(container.textContent ?? "", /Could not reload character files/);
+    assert.equal(container.querySelector('footer [popover] pre')?.textContent, "The character could not be found while reloading its files.");
+    assert.equal(findButtonByText(container, "Retry").disabled, false);
     refresh = createDeferred<CharacterDetail | null>();
     await editor.focus();
     current = { ...current, definitionMarkdown: `${current.definitionMarkdown}\n## Agent edit`, notesMarkdown: "# Agent Notes" };

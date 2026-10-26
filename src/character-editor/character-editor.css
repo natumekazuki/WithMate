@@ -50,6 +50,7 @@
 }
 
 .character-editor-window-footer {
+  anchor-name: --character-editor-footer;
   border-top: 1px solid var(--line);
   border-bottom: 0;
   background: rgba(18, 22, 30, 0.98);
@@ -169,6 +170,75 @@
   gap: 10px;
   min-height: 120px;
   color: var(--muted);
+}
+
+.character-editor-read-error {
+  display: flex;
+  align-items: center;
+  align-self: start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.character-editor-read-error-actions {
+  anchor-name: --character-editor-read-error;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.character-editor-read-error .launch-toggle {
+  width: auto;
+}
+
+.character-editor-read-error .launch-toggle.compact.character-editor-error-toggle {
+  flex: 0 0 38px;
+  width: 38px;
+  padding: 8px;
+  color: var(--ink);
+}
+
+.character-editor-error-popover {
+  position-anchor: --character-editor-read-error;
+  position: fixed;
+  inset: auto;
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+  box-sizing: border-box;
+  margin: 8px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(320px, calc(100vh - 32px));
+  overflow: auto;
+  padding: 16px 48px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #151a23;
+  color: var(--ink);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.character-editor-window-footer .character-editor-error-popover {
+  position-anchor: --character-editor-footer;
+  position-area: top span-right;
+}
+
+.character-editor-error-popover pre {
+  margin: 0;
+  font: inherit;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.character-editor-error-popover .launch-toggle.compact.character-editor-error-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  min-height: 28px;
+  padding: 4px;
 }
 
 .character-editor-card {
