@@ -1,10 +1,12 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type Ref,
 } from "react";
 import type { Terminal } from "@xterm/xterm";
@@ -13,6 +15,7 @@ import { TERMINAL_MAX_DIMENSION } from "../../src-shared/terminal/terminal-contr
 import { resolveOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import { detectShortcutPlatform, getShortcutDispatcher } from "../settings/shortcut-registry.js";
 import { ButtonContent } from "../ui/button-content.js";
+import { CloseButton } from "../ui/close-button.js";
 
 type TerminalApi = WithMateWindowTerminalApi & Pick<WithMateWindowNavigationApi, "openPath">;
 
@@ -26,6 +29,85 @@ type TerminalTab = {
 
 type TerminalPaneHandle = { focus(): void };
 export type SessionTerminalHandle = { focus(): void };
+
+type TerminalCloseFailure = { terminalId: string; number: number; message: string };
+
+function TerminalCloseError({ error, onRetry }: { error: TerminalCloseFailure; onRetry(): void }) {
+  const popoverId = useId();
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<CSSProperties>({});
+  const placePopover = useCallback(() => {
+    if (!actionsRef.current || !triggerRef.current) return;
+    const actions = actionsRef.current.getBoundingClientRect();
+    const trigger = triggerRef.current.getBoundingClientRect();
+    const margin = 16;
+    const gap = 8;
+    const width = Math.min(360, window.innerWidth - margin * 2);
+    const above = actions.top - margin - gap;
+    const below = window.innerHeight - actions.bottom - margin - gap;
+    const showAbove = above > below;
+    setPosition({
+      width,
+      left: Math.max(margin, Math.min(trigger.left, window.innerWidth - width - margin)),
+      maxHeight: Math.max(0, Math.min(320, showAbove ? above : below)),
+      ...(showAbove
+        ? { top: "auto", bottom: window.innerHeight - actions.top + gap }
+        : { top: actions.bottom + gap, bottom: "auto" }),
+    });
+  }, []);
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener("resize", placePopover);
+    window.addEventListener("scroll", placePopover, true);
+    return () => {
+      window.removeEventListener("resize", placePopover);
+      window.removeEventListener("scroll", placePopover, true);
+    };
+  }, [open, placePopover]);
+
+  return (
+    <div className="terminal-close-error" ref={actionsRef}>
+      <span role="alert"><span aria-hidden="true">⚠</span> Terminal {error.number} could not be closed.</span>
+      <div className="terminal-close-error-actions">
+        <button className="drawer-toggle compact secondary" type="button" aria-label={`Retry Close Terminal ${error.number}`} onClick={onRetry}>Retry</button>
+        <button
+          type="button"
+          className="drawer-toggle compact secondary"
+          ref={triggerRef}
+          popoverTarget={popoverId}
+          aria-label={`Terminal ${error.number} Close Error Details`}
+          aria-expanded={open}
+          aria-controls={popoverId}
+          onClick={placePopover}
+        >Details</button>
+      </div>
+      <div
+        id={popoverId}
+        ref={popoverRef}
+        popover="auto"
+        role="dialog"
+        aria-label={`Terminal ${error.number} Close Error Details`}
+        tabIndex={-1}
+        className="terminal-close-error-popover"
+        style={position}
+        onToggle={(event) => {
+          const isOpen = event.newState === "open";
+          setOpen(isOpen);
+          if (isOpen) event.currentTarget.focus();
+        }}
+      >
+        <CloseButton ariaLabel="Close Error Details" onClose={() => {
+          popoverRef.current?.hidePopover();
+          triggerRef.current?.focus();
+        }} />
+        <div className="terminal-close-error-message">{error.message}</div>
+      </div>
+    </div>
+  );
+}
 
 /** Each mounted pane owns its xterm, subscriptions and PTY, including while hidden. */
 function TerminalPane({ api, tab, active, onStatus, onFocusTabs, ref }: {
@@ -246,7 +328,7 @@ export function SessionTerminal({ api, expanded, onEmpty, ref }: {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [closingIds, setClosingIds] = useState<Set<string>>(() => new Set());
-  const [closeError, setCloseError] = useState("");
+  const [closeError, setCloseError] = useState<TerminalCloseFailure | null>(null);
   const counter = useRef(0);
   const closePending = useRef(false);
   const panes = useRef(new Map<string, TerminalPaneHandle>());
@@ -290,9 +372,11 @@ export function SessionTerminal({ api, expanded, onEmpty, ref }: {
 
   const closeTerminal = async (id: string) => {
     if (closePending.current) return;
+    const target = stateRef.current.tabs.find((tab) => tab.id === id);
+    if (!target) return;
     closePending.current = true;
     setClosingIds((current) => new Set(current).add(id));
-    setCloseError("");
+    setCloseError(null);
     try {
       if (!await api.closeTerminal(id)) return;
       const current = stateRef.current;
@@ -304,7 +388,7 @@ export function SessionTerminal({ api, expanded, onEmpty, ref }: {
       }
       if (remaining.length === 0) onEmpty();
     } catch (error) {
-      setCloseError(`Terminal could not be closed: ${String(error)}`);
+      setCloseError({ terminalId: id, number: target.number, message: `Terminal could not be closed: ${String(error)}` });
     } finally {
       closePending.current = false;
       setClosingIds((current) => {
@@ -361,7 +445,10 @@ export function SessionTerminal({ api, expanded, onEmpty, ref }: {
         </div>
         <button className="terminal-new" type="button" aria-label="New Terminal" title="New Terminal" onClick={addTerminal}>＋</button>
       </div>
-      {closeError ? <div className="terminal-result" role="alert">{closeError}</div> : null}
+      {expanded && closeError ? <TerminalCloseError error={closeError} onRetry={() => {
+        focusSelected();
+        void closeTerminal(closeError.terminalId);
+      }} /> : null}
       <div className="terminal-panes">
         {tabs.map((tab) => (
           <TerminalPane
