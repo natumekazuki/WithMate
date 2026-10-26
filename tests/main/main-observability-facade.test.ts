@@ -17,6 +17,78 @@ function createService() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "OpenCodeのquotaは有効化から周期取得し、キー変更・無効化で旧取得をabortし、失敗後は前回値と再試行間隔を保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
+// fault = "OpenCodeをpoll対象から除外する、Window読取で再取得する、キー変更の旧応答を適用する、または失敗を成功値へ変える"
+// observable = "OpenCode adapterへの取得回数・signal、cacheのstatusと使用率、キー変更後と周期後の値"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode quota facade lifecycle"
+// lifecycle = "permanent"
+// impact = "未更新または別認証先の残量を表示し利用者のprovider選択を誤らせる"
+// distinction = "provider固有の登録、設定変更とcache serviceの接続を通し、HTTP adapter単体では確認できない"
+// @end-test-value
+test("OpenCode quotaは既存の設定・周期・失敗cache lifecycleを使う", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 });
+  const service = createService();
+  t.after(() => service.dispose());
+  const settings = createDefaultAppSettings();
+  settings.codingProviderSettings.codex.enabled = false;
+  settings.codingProviderSettings.opencode = { enabled: true, apiKey: "first-fixture", skillRootPath: "" };
+  const calls: Array<{ key: string; signal: AbortSignal | undefined }> = [];
+  let pending!: (value: null) => void;
+  let fail = false;
+  const facade = new MainObservabilityFacade({
+    getSessionObservabilityService: () => service,
+    getAppSettings: () => settings,
+    providerQuotaStaleTtlMs: 1,
+    getProviderCodingAdapter: () => ({
+      async getProviderQuotaTelemetry(input: Parameters<ProviderCodingAdapter["getProviderQuotaTelemetry"]>[0]) {
+        calls.push({ key: input.appSettings.codingProviderSettings.opencode.apiKey, signal: input.signal });
+        if (calls.length === 1) return new Promise<null>((resolve) => { pending = resolve; });
+        if (fail) throw new Error("fixture failure");
+        return { provider: "opencode", updatedAt: new Date().toISOString(), snapshots: [], status: "ready" as const,
+          rateLimits: [{ quotaKey: "monthly", label: "1 month", usedPercentage: 25 }] };
+      },
+    } as ProviderCodingAdapter),
+  });
+  const flush = async () => { for (let index = 0; index < 20; index++) await Promise.resolve(); };
+  facade.configureProviderQuotaPolling(settings);
+  t.mock.timers.tick(1); await flush();
+  assert.equal(calls.length, 1);
+  assert.equal(service.getProviderQuotaTelemetry("opencode")?.status, "loading");
+  assert.equal(await facade.getOrRefreshProviderQuotaTelemetry("opencode"), service.getProviderQuotaTelemetry("opencode"));
+  assert.equal(calls.length, 1);
+  settings.codingProviderSettings.opencode.apiKey = "second-fixture";
+  facade.configureProviderQuotaPolling(settings);
+  assert.equal(calls[0]?.signal?.aborted, true);
+  pending(null);
+  t.mock.timers.tick(1); await flush();
+  assert.deepEqual(calls.map(({ key }) => key), ["first-fixture", "second-fixture"]);
+  const ready = service.getProviderQuotaTelemetry("opencode");
+  assert.equal(ready?.status, "ready");
+  facade.scheduleProviderQuotaTelemetryRefresh("opencode", [3000]);
+  t.mock.timers.tick(59999); await flush();
+  assert.equal(calls.length, 2);
+  fail = true;
+  t.mock.timers.tick(1); await flush();
+  assert.equal(calls.length, 3);
+  assert.deepEqual(service.getProviderQuotaTelemetry("opencode"), { ...ready, status: "error" });
+  facade.scheduleProviderQuotaTelemetryRefresh("opencode", [3000]);
+  t.mock.timers.tick(3000); await flush();
+  assert.equal(calls.length, 3);
+  fail = false;
+  t.mock.timers.tick(597000); await flush();
+  assert.equal(service.getProviderQuotaTelemetry("opencode")?.status, "ready");
+  settings.codingProviderSettings.opencode.enabled = false;
+  facade.configureProviderQuotaPolling(settings);
+  const count = calls.length;
+  t.mock.timers.tick(600000); await flush();
+  assert.equal(calls.length, count);
+  assert.equal(await facade.getOrRefreshProviderQuotaTelemetry("opencode"), null);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "共通残量UIのcacheOnly読取はCopilotもremote取得せず、既存の通常読取はstale時に更新できる"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
 // fault = "cacheOnlyを無視してWindow追加でprovider取得を増やすか、通常のCopilot読取までcacheOnlyにする"

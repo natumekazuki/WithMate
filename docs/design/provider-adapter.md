@@ -91,7 +91,7 @@ providerごとの差は次。
   - event接続を確認してからpromptを1回だけ送る。admissionを完了とせず、当該入力の配送、root execution終端とmessageのidle outcomeを照合する。text deltaは確定messageで補正し、tool・usageはnative IDで重複を除く。失敗・取消では取得済み本文・操作・threadをpartial resultとして返す
   - catalogの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
   - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
-  - token／contextは実取得値を投影し、quotaは`null`とする。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
+  - token／contextは実取得値を投影し、Go契約quotaはモデルを実行しないusage HTTP APIから独立取得する。5時間・7日・請求月の残量を共通Monitor／Action Dockへ表示し、Mainの非永続cacheと既存の更新・失敗処理を使う。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
   - backgroundは別owned processからstatelessな`generate.text()`を呼ぶ。Session・foreground MCP・agent toolsを使わず、専用config directoryとproject／Claude設定の無効化を適用する。返却text全体をJSON parseし、共有validatorでschemaを検証する`validated_json`であり、未知schema制約も拒否する。`threadId`／`usage`は`null`。既存post-turn Affectのtrigger・schema・settlementを維持し、通常Memoryの背景抽出は追加しない
 
 ## Plane Separation

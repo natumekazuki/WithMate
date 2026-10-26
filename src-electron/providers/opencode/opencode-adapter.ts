@@ -9,17 +9,19 @@ import { composeProviderPrompt } from "../provider-prompt.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv } from "../provider-agent-runtime-binding.js";
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
-import { ProviderTurnError, resolveRunWorkspacePath, type ProviderBackgroundAdapter, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
+import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderBackgroundAdapter, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import { OpenCodeTransport, type OpenCodeTransportOptions } from "./opencode-transport.js";
 import { resolveOpenCodeModelRef, validateOpenCodeModel } from "./opencode-model.js";
 import { OpenCodeTurnProjection } from "./opencode-events.js";
 import { buildOpenCodeElicitation } from "./opencode-interactions.js";
+import { fetchOpenCodeQuotaTelemetry } from "./opencode-quota-telemetry.js";
 
 const require = createRequire(import.meta.url);
 type Transport = Pick<OpenCodeTransport, "start" | "close" | "whenClosed"> & { readonly secrets?: readonly string[] };
 export type OpenCodeAdapterOptions = {
   databasePath?: string;
   executable?: string;
+  fetch?: typeof fetch;
   createTransport?: (options: OpenCodeTransportOptions) => Transport;
   backgroundAdapter?: ProviderBackgroundAdapter & { dispose?(): Promise<void>; assertCleanupComplete?(workspacePath: string): void };
   log?: (input: { level: "warn" | "error"; kind: string; message: string; data?: unknown }) => void;
@@ -97,7 +99,11 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
   private readonly pendingCleanups = new Map<string, { workspace: string; threadId: string; completion: Promise<void> }>();
   constructor(private readonly options: OpenCodeAdapterOptions = {}) {}
   composePrompt(input: RunSessionTurnInput) { return composeProviderPrompt(input); }
-  async getProviderQuotaTelemetry() { return null; }
+  async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput) {
+    const apiKey = getProviderAppSettings(input.appSettings, "opencode").apiKey.trim() || process.env.OPENCODE_API_KEY?.trim() || "";
+    if (!apiKey) return null;
+    return fetchOpenCodeQuotaTelemetry(apiKey, input.signal, this.options.fetch);
+  }
   getBackgroundStructuredPromptPolicy() { return this.background().getBackgroundStructuredPromptPolicy(); }
   async extractSessionMemoryDelta(input: Parameters<ProviderBackgroundAdapter["extractSessionMemoryDelta"]>[0]) {
     this.assertCleanupComplete(input.session.workspacePath, input.session.id, input.session.threadId);

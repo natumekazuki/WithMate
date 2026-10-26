@@ -19,7 +19,7 @@ export class MainObservabilityFacade {
 
   configureProviderQuotaPolling(settings: AppSettings): void {
     const service = this.deps.getSessionObservabilityService();
-    for (const providerId of ["codex", "claude"]) {
+    for (const providerId of ["codex", "claude", "opencode"]) {
       const next = getProviderAppSettings(settings, providerId);
       const previous = this.quotaSettings.get(providerId);
       if (!previous || previous.enabled !== next.enabled || previous.apiKey !== next.apiKey) {
@@ -73,7 +73,7 @@ export class MainObservabilityFacade {
   }
 
   async getOrRefreshProviderQuotaTelemetry(providerId: string, options?: { cacheOnly?: boolean }): Promise<ProviderQuotaTelemetry | null> {
-    if (options?.cacheOnly || providerId === "codex" || providerId === "claude") return this.getProviderQuotaTelemetry(providerId);
+    if (options?.cacheOnly || providerId === "codex" || providerId === "claude" || providerId === "opencode") return this.getProviderQuotaTelemetry(providerId);
     return this.deps.getSessionObservabilityService().getOrRefreshProviderQuotaTelemetry(
       providerId,
       this.deps.providerQuotaStaleTtlMs,

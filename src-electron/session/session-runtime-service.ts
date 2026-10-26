@@ -1488,7 +1488,7 @@ export class SessionRuntimeService {
       }
       if (runningSession.provider === "copilot") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
-      } else if (runningSession.provider === "codex" || runningSession.provider === "claude") {
+      } else if (runningSession.provider === "codex" || runningSession.provider === "claude" || runningSession.provider === "opencode") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [3000]);
       }
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");

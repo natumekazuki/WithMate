@@ -314,7 +314,7 @@ it("承認の本文位置を受信時に固定してFIFOの交代まで保持す
 
 // @test-value v2
 // kind = "contract"
-// claim = "CodexとClaudeの正常・失敗turn終端で3秒後のquota更新を依頼し、Copilotの既存周期を維持する"
+// claim = "Codex・Claude・OpenCodeの正常・失敗turn終端で3秒後のquota更新を依頼し、Copilotの既存周期を維持する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
 // fault = "対象providerの終端で更新予約が欠けるかCopilotの予約周期を置き換える"
 // observable = "provider実行後にMainへ渡されるprovider IDとdelay配列"
@@ -325,7 +325,7 @@ it("承認の本文位置を受信時に固定してFIFOの交代まで保持す
 // distinction = "cache単体testはturn終端を通らず、この少数のfake turnでruntime接続を検査する"
 // @end-test-value
 it("turn終端でprovider別のquota更新を予約する", async () => {
-  for (const provider of ["codex", "claude", "copilot"]) {
+  for (const provider of ["codex", "claude", "opencode", "copilot"]) {
     for (const fails of [false, true]) {
       const session = createSession({ provider, approvalMode: "on-request" });
       const calls: Array<[string, number[]]> = [];
