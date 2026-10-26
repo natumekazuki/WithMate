@@ -27,7 +27,7 @@ export function observeSessionResultRead(input: {
     const row = list.querySelector<HTMLElement>(`.session-message-virtual-row[data-index="${index}"]`);
     const body = row?.querySelector<HTMLElement>('[data-message-body="true"]:not([data-pending-message-body])');
     if (!body || body.querySelector(":scope > .message-collapsed-preview")) return;
-    const content = body.hasChildNodes() ? body : row?.querySelector<HTMLElement>(".session-run-failure");
+    const content = body.hasChildNodes() ? body : row?.querySelector<HTMLElement>('.session-run-failure, [data-result-details-ready="true"]');
     if (!content) return;
     const bounds = content.getBoundingClientRect();
     const viewport = list.getBoundingClientRect();
@@ -58,7 +58,7 @@ export function observeSessionResultRead(input: {
   };
   const unsubscribe = api.onSessionTurnUpdated((id) => { if (id === sessionId) refresh(); });
   const mutation = new window.MutationObserver(schedule);
-  mutation.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "hidden", "data-index"] });
+  mutation.observe(list, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "hidden", "data-index", "data-result-details-ready"] });
   const resize = new window.ResizeObserver(schedule);
   resize.observe(list);
   list.addEventListener("scroll", schedule, { passive: true });
