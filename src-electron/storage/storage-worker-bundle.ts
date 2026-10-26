@@ -2,6 +2,9 @@ import { AuxiliarySessionStorage, type AuxiliarySessionStorage as AuxiliarySessi
 import type { WorkerOptions } from "node:worker_threads";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
+import { SessionGraphStorageV6 } from "../session-graph/session-graph-storage-v6.js";
+import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphOperationResult } from "../../src-shared/session-graph/session-graph-contract.js";
+import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import { CharacterAffectTurnSettlementStorage } from "../character/character-affect-turn-settlement-storage.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
@@ -34,6 +37,7 @@ type AsyncStore<T extends object> = {
 };
 
 const STORE_METHODS = {
+  sessionGraph: ["execute"],
   session: [
     "getSessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
@@ -124,6 +128,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const session = new SessionStorageV6(data.dbPath, changed);
   const turn = new SessionTurnStorageV6(data.dbPath);
   const queue = new SessionTurnQueueStorageV6(data.dbPath);
+  const sessionGraph = new SessionGraphStorageV6(data.dbPath);
   const auxiliary = new AuxiliarySessionStorage(data.dbPath, changed);
   conversationQueries = new ConversationQueryCoordinator(data.generationId, { session_messages_v6: session, auxiliary_session_messages: auxiliary });
   const queries = conversationQueries;
@@ -133,7 +138,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
   const settlement = new CharacterAffectTurnSettlementStorage(data.dbPath);
-  instances = { session, turn, queue, auxiliary, character, settings, catalog, mate, prompt, settlement };
+  instances = { session, turn, queue, sessionGraph, auxiliary, character, settings, catalog, mate, prompt, settlement };
   const currentInstances = instances;
   catalog.ensureSeeded();
 
@@ -158,7 +163,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
     },
     "store.call": (payload: unknown) => {
       if (!payload || typeof payload !== "object") throw new Error("Storage worker payload is invalid.");
-      const input = payload as { store?: string; method?: string; args?: unknown[] };
+      const input = payload as { store?: string; method?: string; args?: unknown[]; runtimeTurnAdmissionState?: SharedArrayBuffer };
       if (!(input.store && input.method && Array.isArray(input.args)) || !Object.prototype.hasOwnProperty.call(STORE_METHODS, input.store)) {
         throw new Error("Storage worker store command is invalid.");
       }
@@ -168,6 +173,10 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
+      if (input.store === "sessionGraph" && input.runtimeTurnAdmissionState !== undefined) {
+        if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Session Graph turn admission state is invalid.");
+        return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
+      }
       return method.apply(store, input.args);
     },
   };
@@ -220,12 +229,17 @@ export function createV6StorageWorkerBundle(options: {
     new Proxy({}, {
       get: (_target, property: string) => {
         if (!methods.includes(property as never)) return undefined;
-        return (...args: unknown[]) => client.call(property === "cancelConversationQuery" ? "conversation.cancel"
-          : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
-          property === "cancelConversationQuery" ? args[0] : { store, method: property, args }, {
-          mutation: MUTATIONS.has(property),
-          operation: `${store}.${property}`,
-        });
+        return (...args: unknown[]) => {
+          const graphMutation = store === "sessionGraph" && args[1] === "apply";
+          if (graphMutation) assertRuntimeTurnAdmission();
+          const runtimeTurnAdmissionState = graphMutation ? currentRuntimeTurnAdmissionState() : undefined;
+          return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
+            : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
+            property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmissionState ? { runtimeTurnAdmissionState } : {}) }, {
+            mutation: store === "sessionGraph" ? args[1] === "apply" : MUTATIONS.has(property),
+            operation: `${store}.${property}`,
+          });
+        };
       },
     }),
   ])) as V6StorageWorkerBundle["stores"];
@@ -242,6 +256,9 @@ export type V6StorageWorkerBundle = {
   initialize(): Promise<unknown>;
   truncateWal(): Promise<boolean>;
   stores: {
+    sessionGraph: {
+      execute<K extends SessionGraphOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[]): Promise<SessionGraphOperationResult<K>>;
+    };
     session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;
     queue: AsyncStore<SessionTurnQueueStorageV6>;

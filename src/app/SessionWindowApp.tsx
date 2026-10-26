@@ -6,6 +6,10 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
+import { SessionGraphPreview, defaultSessionGraphViewState, type SessionGraphPreviewMemory } from "../session-graph/SessionGraphPreview.js";
+import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
+import { ButtonContent } from "../ui/button-content.js";
+import "../session-graph/session-graph.css";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -562,11 +566,18 @@ export default function AgentSessionWindowApp() {
   const [filesPaneHost, setFilesPaneHost] = useState<HTMLDivElement | null>(null);
   const [filesPreviewHost, setFilesPreviewHost] = useState<HTMLDivElement | null>(null);
   const [isFilePreviewActive, setIsFilePreviewActive] = useState(false);
+  const [isSessionGraphOpen, setIsSessionGraphOpen] = useState(false);
+  const graphStateRef = useRef<SessionGraphViewState>(defaultSessionGraphViewState);
+  const graphMemoryRef = useRef<SessionGraphPreviewMemory | null>(null);
+  const [graphWindowOpening, setGraphWindowOpening] = useState(false);
+  const [graphWindowError, setGraphWindowError] = useState("");
+  const graphTriggerRefs = useRef(new Set<HTMLButtonElement>());
   const closeFilePreviews = useCallback(() => filesFeatureRef.current?.closePreviews(), []);
   const isCentralPreviewActive = isFilePreviewActive
-    || isPromptTemplateWorkspaceOpen;
+    || isPromptTemplateWorkspaceOpen || isSessionGraphOpen;
   const closeCentralPreview = useCallback(() => {
     closeFilePreviews();
+    setIsSessionGraphOpen(false);
     setIsPromptTemplateWorkspaceOpen(false);
     closeSkillPicker();
     setPreviewChatActivity(endPreviewChatActivity());
@@ -581,6 +592,7 @@ export default function AgentSessionWindowApp() {
       isPromptTemplateWorkspaceOpen,
       canClosePromptTemplate,
       closeCentralSurface: () => {
+        setIsSessionGraphOpen(false);
         setIsPromptTemplateWorkspaceOpen(false);
         closeSkillPicker();
       },
@@ -601,6 +613,14 @@ export default function AgentSessionWindowApp() {
     isPromptTemplateWorkspaceOpen,
   ]);
   prepareCentralSurfaceOpenRef.current = prepareCentralSurfaceOpen;
+  const openGraphWindow = async (state = graphStateRef.current) => {
+    if (!withmateApi || !selectedSession || graphWindowOpening) return;
+    setGraphWindowOpening(true);
+    setGraphWindowError("");
+    try { await withmateApi.openSessionGraphWindow({ sessionId: selectedSession.id, state }); }
+    catch (cause) { setGraphWindowError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setGraphWindowOpening(false); }
+  };
   const requestCentralSurfaceClose = useCallback(
     () => applyCentralSurfaceOpenCommand({
       isPromptTemplateWorkspaceOpen,
@@ -1983,7 +2003,14 @@ export default function AgentSessionWindowApp() {
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New Messages"
         : "";
-  const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
+  const filePreviewContent = isSessionGraphOpen && withmateApi ? (
+    <SessionGraphPreview key={selectedSession.id} api={withmateApi} sessionId={selectedSession.id}
+      initialState={graphStateRef.current} onStateChange={(state) => { graphStateRef.current = state; }}
+      initialMemory={graphMemoryRef.current} onMemoryChange={(memory) => { graphMemoryRef.current = memory; }}
+      onOpenWindow={(state) => void openGraphWindow(state)}
+      onClose={() => { closeCentralPreview(); requestAnimationFrame(() => [...graphTriggerRefs.current].find((element) => element.offsetParent !== null)?.focus()); }}
+      onOpenPath={(target) => void handleOpenInlinePath(target, selectedSession.id)} />
+  ) : isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
       api={withmateApi}
       canInsert={!isComposerFrozen && (activeAuxiliarySession
@@ -1995,7 +2022,19 @@ export default function AgentSessionWindowApp() {
     />
   ) : isFilePreviewActive ? <div ref={setFilesPreviewHost} className="session-feature-host" /> : undefined;
 
+  const graphHeaderActions = <div className="session-window-control-group session-graph-entry" role="group" aria-label="Session Graph">
+    <button ref={(element) => { if (element) graphTriggerRefs.current.add(element); return () => { if (element) graphTriggerRefs.current.delete(element); }; }} type="button" className="drawer-toggle compact secondary" onClick={(event) => {
+      if (event.ctrlKey || event.metaKey) { void openGraphWindow(); return; }
+      if (!isSessionGraphOpen && prepareCentralSurfaceOpen()) {
+        closeFilePreviews();
+        setIsSessionGraphOpen(true);
+      }
+    }}>Graph</button>
+    <button type="button" className="drawer-toggle compact secondary session-header-icon-button" title="Open Graph In New Window" aria-label="Open Graph In New Window" disabled={graphWindowOpening} aria-busy={graphWindowOpening || undefined} onClick={() => void openGraphWindow()}><ButtonContent busy={graphWindowOpening}>↗</ButtonContent></button>
+    {graphWindowError ? <span role="alert" className="session-graph-entry-error">{graphWindowError}</span> : null}
+  </div>;
   const chatHeaderFeature = sessionHeader.buildChatHeader({
+    actions: graphHeaderActions,
     isRunning: isSelectedSessionRunning,
     isReadOnly: isSelectedSessionReadOnly,
     isPinned: selectedSession.isPinned === true,
@@ -2159,6 +2198,7 @@ export default function AgentSessionWindowApp() {
     glossaryAnnotationMatcher,
     onActivateGlossaryEntry: handleActivateGlossaryEntry,
   });
+  const inlinePathFeedbackOwnerSessionId = isSessionGraphOpen ? selectedSession.id : renderedSession.id;
   const chatRuntimeFeature = buildSessionChatRuntimeFeature({
     recovery: {
       retryState,
@@ -2190,12 +2230,12 @@ export default function AgentSessionWindowApp() {
     onRecheckWorkspaceAvailability: () => {
       setWorkspaceAvailabilityCheckRevision((current) => current + 1);
     },
-    inlinePathFeedback: inlinePathError?.ownerSessionId === renderedSession.id
+    inlinePathFeedback: inlinePathError?.ownerSessionId === inlinePathFeedbackOwnerSessionId
       ? inlinePathError.message
       : "",
     onDismissInlinePathFeedback: () => {
       inlinePathOperationRevisionRef.current.advance();
-      setInlinePathError((current) => current?.ownerSessionId === renderedSession.id ? null : current);
+      setInlinePathError((current) => current?.ownerSessionId === inlinePathFeedbackOwnerSessionId ? null : current);
     },
     executionOptionsFeedback: executionOptionsFeedback?.ownerId === renderedSession.id
       ? executionOptionsFeedback.message : "",
@@ -2289,6 +2329,7 @@ export default function AgentSessionWindowApp() {
       <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
       <ChatWindow
         {...chatWindowProps}
+        collapsedHeaderActions={graphHeaderActions}
         errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
         composerProps={{
           ...chatWindowProps.composerProps,

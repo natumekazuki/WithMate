@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React, { act } from "react";
@@ -169,7 +170,10 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
   };
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");
-  const { default: App } = await import("../../src/app/SessionWindowApp.js");
+  const cssImports = registerHooks({ load(url, context, next) {
+    return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
+  } });
+  const { default: App } = await import("../../src/app/SessionWindowApp.js").finally(() => cssImports.deregister());
   const root = createRoot(dom.window.document.getElementById("root")!);
   const textarea = () => {
     const value = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]');

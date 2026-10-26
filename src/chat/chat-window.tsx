@@ -446,6 +446,7 @@ export function ChatAdditionalDirectoryList({
 export function ChatWindow({
   isHeaderExpanded,
   headerProps,
+  collapsedHeaderActions,
   messageColumnProps,
   errorNotices = [],
   recoveryActions,
@@ -653,6 +654,7 @@ export function ChatWindow({
       ) : screenProps.rightPane}
       header={<SessionHeader {...resolvedHeaderProps} />}
       isHeaderVisible={isHeaderExpanded}
+      collapsedHeaderActions={collapsedHeaderActions}
       isActionDockExpanded={isActionDockExpanded}
       errorSurface={renderedErrorNotices.length > 0 ? (
         <div className="chat-error-surface" role="region" aria-label="Chat error">

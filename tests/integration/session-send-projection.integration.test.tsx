@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React, { act, useState } from "react";
@@ -378,7 +379,10 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
   dom.window.alert = (message) => { alerts.push(String(message)); };
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");
-  const { default: App } = await import("../../src/app/SessionWindowApp.js");
+  const cssImports = registerHooks({ load(url, context, next) {
+    return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
+  } });
+  const { default: App } = await import("../../src/app/SessionWindowApp.js").finally(() => cssImports.deregister());
   const root = createRoot(dom.window.document.getElementById("root")!);
   const textarea = () => {
     const element = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[data-shortcut-scope="composer"]');

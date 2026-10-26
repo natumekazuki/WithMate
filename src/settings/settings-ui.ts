@@ -98,6 +98,7 @@ export function buildDeleteOldSessionsConfirmMessage(cutoffDate: string): string
   return [
     `Delete sessions last active before ${cutoffDate}.`,
     "Running sessions will be kept.",
+    "Aux conversations and Session Graphs of deleted sessions will also be deleted.",
     "Continue?",
   ].join("\n\n");
 }

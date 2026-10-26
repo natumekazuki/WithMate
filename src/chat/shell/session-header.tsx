@@ -247,6 +247,7 @@ export type SessionChatScreenProps = {
   style?: CSSProperties;
   header: ReactNode;
   headerSplitter: ReactNode;
+  collapsedHeaderActions?: ReactNode;
   isHeaderVisible: boolean;
   isSidePaneBudgetCollapsed?: boolean;
   messageColumn: ReactNode;
@@ -283,6 +284,7 @@ export function SessionChatScreen({
   style,
   header,
   headerSplitter,
+  collapsedHeaderActions,
   isHeaderVisible,
   isSidePaneBudgetCollapsed = false,
   messageColumn,
@@ -470,11 +472,13 @@ export function SessionChatScreen({
         ref={headerDockRef}
         className={`session-header-dock-slot${isHeaderVisible ? "" : " is-hidden"}`}
         aria-hidden={!isHeaderVisible}
+        inert={!isHeaderVisible}
       >
         {header}
       </div>
 
       {headerSplitter}
+      {!isHeaderVisible && collapsedHeaderActions ? <div className="session-collapsed-header-actions">{collapsedHeaderActions}</div> : null}
 
       <div
         id={SESSION_LEFT_PANE_ID}

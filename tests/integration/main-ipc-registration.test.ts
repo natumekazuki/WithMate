@@ -7,6 +7,42 @@ import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-c
 import { SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
 
 // @test-value v2
+// kind = "security"
+// claim = "Graph IPCはowning parent Windowだけへreadを返し、mutationと偽装scopeをdispatch前に拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "非ownerへGraphを開示するかrendererからapplyやscope上書きを通す"
+// observable = "IPC応答、拒否、read依存呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "session-graph-ipc"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "applicationやpreloadのtestはElectron senderのownerを検証できない"
+// @end-test-value
+test("Session Graph IPC authorizes the parent window and read-only requests", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=main");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  let calls = 0;
+  let afterRead = () => {};
+  const result = { status: "ok", revision: 0, items: [], total: 0, offset: 0, hasMore: false, incomplete: false };
+  const { deps } = createDeps({ resolveEventWindow: () => sender, resolveSessionWindow: (id: string) => id === "main" ? owner : null,
+    readSessionGraph: async () => { calls++; afterRead(); return result; } });
+  registerMainIpcHandlers(ipcMain, deps);
+  const invoke = (operation = "list_topics", request: unknown = {}) => Promise.resolve(handlers.get("withmate:read-session-graph")!({}, "main", operation, request));
+  assert.deepEqual(await invoke(), result);
+  await assert.rejects(invoke("apply", { expectedRevision: 0 }), /read operation/);
+  await assert.rejects(invoke("recent", { ownerSessionId: "other" }), /Unrecognized key/);
+  sender = other;
+  await assert.rejects(invoke(), /target Session window/);
+  assert.equal(calls, 1);
+  sender = owner;
+  afterRead = () => { sender = other; };
+  await assert.rejects(invoke(), /target Session window/);
+  assert.equal(calls, 2);
+});
+
+// @test-value v2
 // kind = "contract"
 // claim = "enqueue IPCは専用preflight rejectだけをstructured未受付replyにしgeneric保存errorを伝播する"
 // oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts enqueue known reject handling" }

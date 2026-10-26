@@ -178,6 +178,7 @@ export type WithMateWindowCatalogApi = {
 
 export type WithMateWindowSessionApi = {
   readSessionHtmlPreview(request: SessionHtmlPreviewRequest): Promise<SessionHtmlPreviewResult>;
+  readSessionGraph<K extends Exclude<import("../session-graph/session-graph-contract.js").SessionGraphOperation, "apply">>(sessionId: string, operation: K, request: import("../session-graph/session-graph-contract.js").SessionGraphRequest<K>): Promise<import("../session-graph/session-graph-contract.js").SessionGraphOperationResult<K>>;
   isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionMonitorPage(request?: SessionMonitorPageRequest | null): Promise<SessionMonitorPageResult>;
@@ -368,6 +369,7 @@ export type WithMateWindowSubscriptionApi = {
       state: SessionBackgroundActivityState | null,
     ) => void,
   ): () => void;
+  subscribeSessionGraph(listener: (sessionId: string) => void): () => void;
   subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
@@ -396,6 +398,7 @@ export type WithMateWindowCharacterApi = {
 
 export type WithMateWindowApi =
   & WithMateHtmlPreviewApi
+  & import("../session-graph/session-graph-window-contract.js").SessionGraphWindowApi
   & WithMateWindowNavigationApi
   & MemoryV6ReviewApi
   & WithMateWindowCatalogApi

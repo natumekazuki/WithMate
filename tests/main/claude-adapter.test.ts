@@ -343,7 +343,7 @@ it("Claude Bash commandはsecretを秘匿してからpreviewを生成する", as
       const request = input("", controller.signal);
       request.agentRuntimeBinding = { bindingId: "fixture", bindingReference: secrets[0], turnCapability: secrets[1],
         providerId: "claude", executionGeneration: "fixture", transport: "env", expiresAt: null,
-        managedMcp: { memoryUrl: "http://localhost/mcp/memory", glossaryUrl: "http://localhost/mcp/glossary", token: secrets[2] } };
+        managedMcp: { memoryUrl: "http://localhost/mcp/memory", glossaryUrl: "http://localhost/mcp/glossary", sessionGraphUrl: "http://localhost/mcp/session-graph", token: secrets[2] } };
       const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1) + secret + " tail".repeat(100);
       const prefix = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - secret.length + 1);
       const expected = `${(prefix + PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER).slice(0, PROVIDER_TEXT_PREVIEW_LIMIT)}\n...[truncated ${command.length - PROVIDER_TEXT_PREVIEW_LIMIT} chars; originalLength=${command.length}]`;
@@ -442,14 +442,14 @@ it("Claudeの長い本文をprogressと成功結果に保持する", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude foregroundは当turnのHTTP MCP設定をSDKへ渡し、native設定探索とresumeを維持し、SDK応答中のtokenを保存用結果から除去する"
+// claim = "Claude foregroundは当turnのMemory・Glossary・Graph HTTP MCP設定をSDKへ渡し、native設定探索とresumeを維持し、SDK応答中のtokenを保存用結果から除去する"
 // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md; docs/design/provider-adapter.md#Thread Management" }
 // fault = "HTTP接続設定を欠落させる、第三者MCPをstrict設定で隠す、resumeを落とす、またはtokenを結果へ漏らす"
 // observable = "queryのoptionsとprompt、runSessionTurnの確定結果"
 // observation_boundary = "consumer"
 // scope = "Claude foreground managed HTTP MCP injection and projection"
 // lifecycle = "permanent"
-// impact = "MemoryとGlossaryが使えない、既存第三者設定の探索や会話継続が失われる、またはtokenが監査へ保存される"
+// impact = "Memory・Glossary・Graphが使えない、既存第三者設定の探索や会話継続が失われる、またはtokenが監査へ保存される"
 // distinction = "設定型検査では実行時queryへ渡す値やSDK応答のredactionを保証できない。fake SDKで通信せずadapter境界を確認する"
 // risk_tags = ["privacy"]
 // @end-test-value
@@ -458,7 +458,7 @@ it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
   request.agentRuntimeBinding = {
     bindingId: "binding", bindingReference: "reference", providerId: "claude",
     executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: "opaque-http-token" },
+    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
   };
   let seen: Options | undefined;
   let submittedPrompt: unknown;
@@ -471,6 +471,7 @@ it("Claude foregroundのHTTP MCP設定とtoken秘匿化を保つ", async () => {
   assert.deepEqual(seen?.mcpServers, {
     "withmate-memory": { type: "http", url: "http://127.0.0.1:47891/memory", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
     "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
+    "withmate-session-graph": { type: "http", url: "http://127.0.0.1:47891/session-graph", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
   });
   assert.deepEqual(seen?.settingSources, ["user", "project", "local"]);
   assert.notEqual(seen?.strictMcpConfig, true);
@@ -1093,7 +1094,7 @@ it("ClaudeのBash previewは切断境界のsecret prefixを秘匿する", async 
       request.agentRuntimeBinding = {
         bindingId: "binding", bindingReference: secrets[0], turnCapability: secrets[1], providerId: "claude",
         executionGeneration: "generation", transport: "env", expiresAt: null,
-        managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: secrets[2] },
+        managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: secrets[2] },
       };
       const command = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10) + secret + " tail";
       const expected = "x".repeat(PROVIDER_TEXT_PREVIEW_LIMIT - 10)

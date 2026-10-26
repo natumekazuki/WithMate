@@ -510,7 +510,7 @@ it("Codex MCPの取得結果をliveと成功・失敗・取消artifactへ保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "CodexはHTTP credentialをprocess envだけへ渡し、存在する既知managed設定だけをturnで無効化し、第三者設定とpromptを維持してWorker出力からtokenを除去する"
+// claim = "CodexはMemory・Glossary・GraphのHTTP設定を渡しcredentialをprocess envだけへ置き、存在する既知managed設定だけを無効化し第三者設定とpromptを維持してWorker出力からtokenを除去する"
 // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
 // fault = "tokenをargvやthread設定へ埋める、存在しないserverを無効化する、第三者serverを無効化する、またはWorker投影からtokenを漏らす"
 // observable = "transport作成envとargv、config/readとthread/startの送信params、runSessionTurnの確定結果"
@@ -526,7 +526,7 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
   input.agentRuntimeBinding = {
     bindingId: "binding", bindingReference: "reference", providerId: "codex",
     executionGeneration: "generation", transport: "env", expiresAt: null,
-    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", token: "opaque-http-token" },
+    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
   };
   const transport = new FakeTransport();
   const request = transport.request.bind(transport);
@@ -545,6 +545,7 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
   const argumentsText = options!.arguments!.join("\n");
   assert.match(argumentsText, /mcp_servers.withmate-memory-http=.*env_http_headers/);
   assert.match(argumentsText, /mcp_servers.withmate-glossary-http=.*env_http_headers/);
+  assert.match(argumentsText, /mcp_servers.withmate-session-graph-http=.*env_http_headers/);
   assert.doesNotMatch(argumentsText, /opaque-http-token/);
   assert.deepEqual(transport.calls.find((call) => call.method === "config/read")?.params, { cwd: directory, includeLayers: false });
   const thread = transport.calls.find((call) => call.method === "thread/start")!.params as { config: { mcp_servers: unknown } };
@@ -552,6 +553,7 @@ it("CodexのHTTP MCP credentialと既存native設定の境界を保つ", async (
     "withmate-memory": { enabled: false },
     "withmate-memory-http": { url: "http://127.0.0.1:47891/memory", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
     "withmate-glossary-http": { url: "http://127.0.0.1:47891/glossary", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
+    "withmate-session-graph-http": { url: "http://127.0.0.1:47891/session-graph", env_http_headers: { "x-withmate-mcp-token": "WITHMATE_MANAGED_MCP_TOKEN" } },
   });
   assert.doesNotMatch(JSON.stringify(transport.calls), /opaque-http-token/);
   assert.match(output.assistantText, /WITHMATE_BINDING_REFERENCE_REDACTED/);

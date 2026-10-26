@@ -11,6 +11,9 @@ export function createSessionApi(
     readSessionHtmlPreview(request) {
       return ipcRenderer.invoke(READ_SESSION_HTML_PREVIEW, request);
     },
+    readSessionGraph(sessionId, operation, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_READ_SESSION_GRAPH_CHANNEL, sessionId, operation, request);
+    },
     isSessionFileObjectCopyAvailable() {
       return platform === "win32";
     },

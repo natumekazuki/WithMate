@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEventHandler } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEventHandler, type ReactNode } from "react";
 
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
@@ -19,6 +19,7 @@ export type SessionHeaderOperations = {
   saveTitle(): Promise<void>;
   deleteSession(): Promise<void>;
   buildChatHeader(input: {
+    actions?: ReactNode;
     isRunning: boolean;
     isReadOnly: boolean;
     isPinned: boolean;
@@ -105,7 +106,7 @@ export function useSessionHeaderOperations(input: {
   const deleteSession = useCallback(async () => {
     const session = input.selectedSession;
     if (!input.api || !session || input.runState === "running") return;
-    if (!window.confirm(`Delete session "${session.taskTitle}"?`)) return;
+    if (!window.confirm(`Delete session "${session.taskTitle}"?\n\nIts Aux conversations and Session Graph will also be deleted.`)) return;
     await input.api.deleteSession(session.id);
     input.closeWindow();
   }, [input]);
@@ -117,6 +118,7 @@ export function useSessionHeaderOperations(input: {
     }
 
     return buildLiveSessionHeaderProps({
+      actions: view.actions,
       taskTitle: session.taskTitle,
       isEditingTitle,
       titleDraft,

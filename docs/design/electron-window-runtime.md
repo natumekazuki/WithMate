@@ -52,7 +52,8 @@ flowchart LR
 - `Session Window` は `sessionId` ごとに 1 つまで生成する
 - `Session Monitor Window` と `Settings Window` は単一 window として再利用する
 - `Diff Window` は一時 token で preview payload を引く popout とする
-- 同じ対象を再度開く要求が来たら、応答可能な既存 window を再表示・フォーカスする。Session WindowのRenderer終了・応答不能時の再生成は[Session Window Close](session-run-lifecycle.md#session-window-close)の契約に従う
+- `Session Graph Window`は閲覧ビューごとのtokenで同じ親Graphを読む独立Windowとし、`session-graph.html`をloadする。Windowとowner/incarnation/storage generationの読取認可は`SessionGraphWindowService`とGraph専用IPCが所有する
+- Session Graphの明示的な新窓操作を除き、同じ対象を再度開く要求が来たら、応答可能な既存 window を再表示・フォーカスする。Session WindowのRenderer終了・応答不能時の再生成は[Session Window Close](session-run-lifecycle.md#session-window-close)の契約に従う
 - renderer は `window.withmate` を前提に動作し、browser 単体起動はサポートしない
 
 ## Main Process Responsibilities

@@ -18,6 +18,7 @@ import {
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import { createTerminalApi } from "./terminal-api.js";
 import { createHtmlPreviewApi } from "./html-preview-api.js";
+import { createSessionGraphWindowApi } from "./session-graph-window-api.js";
 
 export function createWithMateWindowApi(
   ipcRenderer: IpcRendererLike,
@@ -39,5 +40,6 @@ export function createWithMateWindowApi(
     ...createCharacterApi(ipcRenderer),
     ...createTerminalApi(ipcRenderer),
     ...createHtmlPreviewApi(ipcRenderer),
+    ...createSessionGraphWindowApi(ipcRenderer),
   };
 }
