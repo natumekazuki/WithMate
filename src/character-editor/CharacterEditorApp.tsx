@@ -32,7 +32,8 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
-import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadingIndicator, type ReadStatus } from "../ui/loading-indicator.js";
+import { CharacterEditorReadError } from "./character-editor-read-error.js";
 import { ButtonContent } from "../ui/button-content.js";
 
 function getCharacterEditorCharacterIdFromLocation(): string | null {
@@ -92,17 +93,24 @@ export default function CharacterEditorApp() {
   const [authoringLaunchOpen, setAuthoringLaunchOpen] = useState(false);
   const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
   const [selectedTab, setSelectedTab] = useState<CharacterEditorTab>("profile");
-  const [loading, setLoading] = useState(Boolean(initialCharacterId));
+  const [loadStatus, setLoadStatus] = useState<ReadStatus>(initialCharacterId ? "loading" : "ready");
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const loading = loadStatus === "loading";
+  const editorReady = loadStatus === "ready";
   const [savingAction, setSavingAction] = useState<"save" | "archive" | null>(null);
   const saving = savingAction !== null;
   const [authoringStarting, setAuthoringStarting] = useState(false);
-  const [feedback, setFeedback] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [{ message: feedback, details: feedbackDetails }, setFeedbackState] = useState({ message: "", details: "" });
+  const setFeedback = (message: string, details = "") => setFeedbackState({ message, details });
   const draftRef = useRef(draft);
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
   const notesImportInputRef = useRef<HTMLInputElement | null>(null);
   const authoringStartButtonRef = useRef<HTMLButtonElement | null>(null);
   const closeConfirmationCancelButtonRef = useRef<HTMLButtonElement | null>(null);
   const authoringRefreshPendingRef = useRef(false);
+  const retryCharacterReadRef = useRef<(() => void) | null>(null);
   const confirmedCloseRef = useRef(false);
 
   draftRef.current = draft;
@@ -112,7 +120,7 @@ export default function CharacterEditorApp() {
     () => getCharacterIconDraftValidationMessage(draft.iconFilePath, persistedDetail?.iconFilePath),
     [draft.iconFilePath, persistedDetail?.iconFilePath],
   );
-  const dirty = isCharacterEditorDraftDirty(draft, persistedDetail);
+  const dirty = editorReady && isCharacterEditorDraftDirty(draft, persistedDetail);
   const archived = draft.state === "archived";
   const enabledAuthoringProviders = useMemo(
     () => listEnabledAuthoringProviders(modelCatalog, appSettings),
@@ -160,38 +168,42 @@ export default function CharacterEditorApp() {
   useEffect(() => {
     let active = true;
     const api = getWithMateApi();
-    if (!api || !initialCharacterId) {
-      setLoading(false);
+    if (!initialCharacterId) {
       return () => {
         active = false;
       };
     }
+    if (!api) {
+      setLoadStatus("error");
+      setLoadError("Open Character Editor in Electron.");
+      return;
+    }
 
-    setLoading(true);
+    setLoadStatus("loading");
+    setLoadError("");
     void api.getCharacter(initialCharacterId).then((detail) => {
       if (!active) {
         return;
       }
-      setPersistedDetail(detail);
       if (detail) {
+        setPersistedDetail(detail);
         setDraft(createCharacterEditorDraftFromDetail(detail));
+        setLoadStatus("ready");
       } else {
-        setFeedback("Character not found.");
+        setLoadError("Character not found.");
+        setLoadStatus("error");
       }
     }).catch((error) => {
       if (active) {
-        setFeedback(formatCharacterEditorError(error, "Could not load character."));
-      }
-    }).finally(() => {
-      if (active) {
-        setLoading(false);
+        setLoadError(formatCharacterEditorError(error, "Could not load character."));
+        setLoadStatus("error");
       }
     });
 
     return () => {
       active = false;
     };
-  }, [initialCharacterId]);
+  }, [initialCharacterId, loadAttempt]);
 
   useEffect(() => {
     let active = true;
@@ -255,8 +267,11 @@ export default function CharacterEditorApp() {
   }, [dirty, saving]);
 
   useEffect(() => {
+    let active = true;
+    let refreshInFlight = false;
+    setRefreshing(false);
     const handleFocus = () => {
-      if (!authoringRefreshPendingRef.current || !draft.characterId) {
+      if (!authoringRefreshPendingRef.current || refreshInFlight || !persistedDetail || saving || authoringStarting) {
         return;
       }
 
@@ -265,25 +280,45 @@ export default function CharacterEditorApp() {
         return;
       }
 
-      authoringRefreshPendingRef.current = false;
-      void api.getCharacter(draft.characterId).then((detail) => {
+      refreshInFlight = true;
+      setRefreshing(true);
+      const baselineDraft = createCharacterEditorDraftFromDetail(persistedDetail);
+      void api.getCharacter(persistedDetail.id).then((detail) => {
+        if (!active) {
+          return;
+        }
         if (!detail) {
-          setFeedback("Could not reload character files.");
+          setFeedback("Character files could not be reloaded.", "The character could not be found while reloading its files.");
           return;
         }
 
+        authoringRefreshPendingRef.current = false;
+        const latestDraft = draftRef.current;
+        const hasNewEdits = !areCharacterEditorDraftsEqual(baselineDraft, latestDraft);
         setPersistedDetail(detail);
-        setDraft(createCharacterEditorDraftFromDetail(detail));
-        setFeedback("Character Files Reloaded");
+        setDraft(reconcileCharacterEditorDraftAfterSave(
+          createCharacterEditorDraftFromDetail(detail), baselineDraft, latestDraft,
+        ));
+        setFeedback(hasNewEdits ? "Unsaved edits kept after reloading character files." : "Character Files Reloaded");
       }).catch((error) => {
-        authoringRefreshPendingRef.current = true;
-        setFeedback(formatCharacterEditorError(error, "Could not reload character files."));
+        if (!active) {
+          return;
+        }
+        setFeedback("Character files could not be reloaded.", formatCharacterEditorError(error, "Could not reload character files."));
+      }).finally(() => {
+        refreshInFlight = false;
+        if (active) setRefreshing(false);
       });
     };
 
+    retryCharacterReadRef.current = handleFocus;
     window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, [draft.characterId]);
+    return () => {
+      active = false;
+      retryCharacterReadRef.current = null;
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [persistedDetail, saving, authoringStarting]);
 
   const updateDraft = (patch: Partial<CharacterEditorDraft>) => {
     setDraft((current) => updateCharacterEditorDraft(current, patch));
@@ -291,7 +326,7 @@ export default function CharacterEditorApp() {
   };
 
   const saveCharacter = async () => {
-    if (saving) {
+    if (!editorReady || saving) {
       return;
     }
     const api = getWithMateApi();
@@ -356,6 +391,7 @@ export default function CharacterEditorApp() {
       const savedDraft = createCharacterEditorDraftFromDetail(refreshed);
       const latestDraft = draftRef.current;
       const hasNewEdits = !areCharacterEditorDraftsEqual(latestDraft, draftAtSave);
+      authoringRefreshPendingRef.current = false;
       setPersistedDetail(refreshed);
       setDraft(reconcileCharacterEditorDraftAfterSave(savedDraft, draftAtSave, latestDraft));
       if (!hasNewEdits) {
@@ -370,7 +406,7 @@ export default function CharacterEditorApp() {
 
   const archiveCharacter = async () => {
     const api = getWithMateApi();
-    if (!api || !draft.characterId || archived || saving) {
+    if (!editorReady || !api || !draft.characterId || archived || saving) {
       return;
     }
     if (!window.confirm("Archive this character?\n\nIt will be removed from the Home list and New Session selector.")) {
@@ -562,10 +598,10 @@ export default function CharacterEditorApp() {
       <section className="character-editor-window">
         <header className="character-editor-window-header">
           <div className="character-editor-heading">
-            <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
+            {editorReady ? <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" /> : null}
             <div>
-              <h1>{draft.name || "New Character"}</h1>
-              {draft.description ? <p>{draft.description}</p> : null}
+              <h1>{editorReady ? draft.name || "New Character" : "Character Editor"}</h1>
+              {editorReady && draft.description ? <p>{draft.description}</p> : null}
             </div>
           </div>
           <div className="character-editor-header-actions">
@@ -583,6 +619,7 @@ export default function CharacterEditorApp() {
               key={tab}
               className={`character-editor-tab ${selectedTab === tab ? "active" : ""}`.trim()}
               type="button"
+              disabled={!editorReady}
               aria-pressed={selectedTab === tab}
               onClick={() => setSelectedTab(tab)}
             >
@@ -606,7 +643,20 @@ export default function CharacterEditorApp() {
               <LoadingIndicator label="Loading character" />
             </div>
           ) : null}
-          {!loading && selectedTab === "profile" ? (
+          {loadStatus === "error" ? (
+            <CharacterEditorReadError
+              key={loadError}
+              subject="Character Load"
+              summary="Character could not be loaded."
+              details={loadError}
+              notice={loadError === "Character not found." ? "Character Not Found" : undefined}
+              onRetry={() => {
+                setLoadStatus("loading");
+                setLoadAttempt((current) => current + 1);
+              }}
+            />
+          ) : null}
+          {editorReady && selectedTab === "profile" ? (
             <section className="character-editor-profile-card">
               <div className="settings-character-form-grid">
                 <label className="settings-provider-input">
@@ -658,7 +708,7 @@ export default function CharacterEditorApp() {
             </section>
           ) : null}
 
-          {!loading && selectedTab === "definition" ? (
+          {editorReady && selectedTab === "definition" ? (
             <section className="character-editor-markdown-card">
               <div className="settings-section-head-row">
                 <button
@@ -696,7 +746,7 @@ export default function CharacterEditorApp() {
             </section>
           ) : null}
 
-          {!loading && selectedTab === "notes" ? (
+          {editorReady && selectedTab === "notes" ? (
             <section className="character-editor-markdown-card">
               <div className="settings-section-head-row">
                 <button
@@ -734,7 +784,7 @@ export default function CharacterEditorApp() {
             </section>
           ) : null}
 
-          {!loading && selectedTab === "preview" ? (
+          {editorReady && selectedTab === "preview" ? (
             <section className="character-editor-preview-grid">
               <div className="character-editor-preview-profile">
                 <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
@@ -823,30 +873,39 @@ export default function CharacterEditorApp() {
             className="launch-toggle danger-button"
             type="button"
             onClick={archiveCharacter}
-            disabled={saving || authoringStarting || archived || draft.mode !== "edit"}
+            disabled={!editorReady || saving || authoringStarting || archived || draft.mode !== "edit"}
             aria-busy={savingAction === "archive" || undefined}
             aria-label={savingAction === "archive" ? "Archiving character" : "Archive"}
           >
             <ButtonContent busy={savingAction === "archive"}>Archive</ButtonContent>
           </button>
-          <span>{feedback}</span>
+          {feedbackDetails ? (
+            <CharacterEditorReadError
+              key={feedbackDetails}
+              subject="Character Reload"
+              summary={feedback}
+              details={feedbackDetails}
+              retryBusy={refreshing}
+              onRetry={() => retryCharacterReadRef.current?.()}
+            />
+          ) : <span role="status">{feedback}</span>}
           <button
             className="launch-toggle"
             type="button"
             onClick={openAuthoringLauncher}
-            disabled={saving || authoringStarting || archived || loading || !draft.characterId}
+            disabled={!editorReady || saving || authoringStarting || archived || !draft.characterId}
             aria-busy={authoringStarting || undefined}
             aria-label={authoringStarting ? "Starting authoring session" : undefined}
           >
             <ButtonContent busy={authoringStarting}>
-              {draft.mode === "edit" ? "Improve With Agent" : "Author With Agent"}
+              {initialCharacterId || draft.mode === "edit" ? "Improve With Agent" : "Author With Agent"}
             </ButtonContent>
           </button>
           <button
             className="launch-toggle start-session-button"
             type="button"
             onClick={saveCharacter}
-            disabled={saving || authoringStarting || archived || !dirty}
+            disabled={!editorReady || saving || authoringStarting || archived || !dirty}
             aria-busy={savingAction === "save" || undefined}
             aria-label={savingAction === "save" ? "Saving character" : "Save"}
           >
