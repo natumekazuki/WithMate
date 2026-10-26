@@ -24,7 +24,7 @@ function input(threadId = ""): RunSessionTurnInput {
 
 function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; createBackground?: (client: OpenCodeClient) => OpenCodeBackgroundAdapter } = {}) {
+function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void>; createBackground?: (client: OpenCodeClient) => OpenCodeBackgroundAdapter } = {}) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
@@ -50,7 +50,7 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
       prompt: async (value: SessionPromptInput) => { calls.push("prompt"); prompt = value; return { id: value.id, sessionID: "root", type: "user", payload: { text: value.text }, delivery: "queue" }; },
       interrupt: async () => { calls.push("interrupt"); }, form: { reply: async ({ answer }: { answer: unknown }) => { calls.push(`form:${JSON.stringify(answer)}`); formDone(); }, cancel: async () => { calls.push("form:cancel"); formDone(); } },
     },
-    message: { list: async () => { calls.push("snapshot"); return { data: messages(), cursor: {} }; } },
+    message: { list: async () => { calls.push("snapshot"); await options.holdSnapshot?.(); return { data: messages(), cursor: {} }; } },
     mcp: { add: async (registration: typeof mcpRegistrations[number]) => { mcpRegistrations.push(registration); }, list: async () => ({ data: mcpRegistrations.map((entry) => ({ name: entry.server, status: { status: "connected" } })) }) },
     permission: { reply: async ({ decision }: { decision: string }) => { calls.push(`permission:${decision}`); permissionDone(); } },
     event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {
@@ -64,6 +64,8 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
         yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
         await formReply;
       }
+      if (options.lateInteraction === "permission") yield event("permission.asked", { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
+      if (options.lateInteraction === "form") yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
       yield event("session.text.delta", { sessionID: "root", assistantMessageID: "assistant", ordinal: 0, delta: "partial" });
       if (options.disconnect) return;
       yield event("session.execution.succeeded", { sessionID: "child" });
@@ -293,6 +295,36 @@ it("OpenCode routes child permissions and typed forms without permanent grants",
     assert.equal(approvals, mode === "never" ? 0 : 1);
     assert.ok(run.calls.includes(mode === "never" ? "permission:once" : "permission:reject"));
     assert.ok(run.calls.includes('form:{"answer":"yes"}'));
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeはroot終端イベント受信後に解決した承認・form回答をnativeへ送らず最終snapshotの正常結果を維持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
+// fault = "最終snapshot取得完了まで回答受付を開いたままにして終了済みturnの承認・回答を送る、または受付停止で結果取得まで止める"
+// observable = "root終端後に解決したcallbackに対するnative permission/form reply・cancelの有無と結果本文"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode interaction closure at root completion"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "終了済みturnの承認がnativeへ届く権限付与と、その拒否による成功結果の失敗化を防ぐ"
+// distinction = "子interaction往復testは終端前に回答が完了し、終端と回答の競合を通らない"
+// @end-test-value
+it("OpenCode ignores interaction answers resolved after root completion", async () => {
+  for (const lateInteraction of ["permission", "form"] as const) {
+    const turn = input();
+    let resolveRequest: (() => void) | undefined;
+    turn.onApprovalRequest = () => new Promise((resolve) => { resolveRequest = () => resolve("approve"); });
+    turn.onElicitationRequest = () => new Promise((resolve) => { resolveRequest = () => resolve({ action: "accept", content: { answer: "yes" } }); });
+    const run = fixture(turn, { lateInteraction, holdSnapshot: async () => {
+      assert.ok(resolveRequest, `the ${lateInteraction} request is pending when the root completes`);
+      resolveRequest();
+      await new Promise((resolve) => setImmediate(resolve));
+    } });
+    const result = await run.adapter.runSessionTurn(turn);
+    assert.equal(result.assistantText, "final");
+    assert.deepEqual(run.calls.filter((call) => call.startsWith("permission:") || call.startsWith("form:")), []);
   }
 });
 

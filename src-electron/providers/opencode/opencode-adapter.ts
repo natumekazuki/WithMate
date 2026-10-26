@@ -173,7 +173,12 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     let dispatched = false;
     let interactionFailure: unknown;
     let interactionTail = Promise.resolve();
+    let interactionsClosed = false;
     const interactionControllers = new Map<string, AbortController>();
+    const closeInteractions = () => {
+      interactionsClosed = true;
+      for (const pending of interactionControllers.values()) pending.abort();
+    };
     const result = (): RunSessionTurnResult => ({ threadId: rootID || null, assistantText: redactor.sanitizeText(projection.assistantText), usage: projection.tokenUsage,
       artifact: redactor.sanitize({ title: "OpenCode", activitySummary: [], operationTimeline: [...projection.steps.values()], changedFiles: [], runChecks: [] }) });
     const publish = async () => {
@@ -234,8 +239,8 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
         signal.addEventListener("abort", abortPending, { once: true });
         interactionControllers.set(id, pending);
         interactionTail = interactionTail.then(async () => {
-          if (!pending.signal.aborted && !terminal) await action(pending.signal);
-        }).catch((error: unknown) => { if (!pending.signal.aborted && !terminal) { interactionFailure = error; controller.abort(); } }).finally(() => {
+          if (!pending.signal.aborted && !interactionsClosed) await action(pending.signal);
+        }).catch((error: unknown) => { if (!pending.signal.aborted && !interactionsClosed) { interactionFailure = error; controller.abort(); } }).finally(() => {
           signal.removeEventListener("abort", abortPending); interactionControllers.delete(id);
         });
       };
@@ -261,7 +266,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
           }
           enqueue(`permission:${request.id}`, async (pendingSignal) => {
             const decision = request.action === "opencode_session_move" ? "deny" : input.executionOptions.approvalMode === "never" ? "approve" : await withSignal(Promise.resolve(input.onApprovalRequest?.(redactor.sanitize({ requestId: randomUUID(), provider: "opencode", kind: request.action, title: "OpenCode permission", summary: request.message ?? request.resources.join("\n"), details: JSON.stringify(request.metadata), decisionMode: "direct-decision" }), pendingSignal) ?? "deny"), pendingSignal);
-            if (!pendingSignal.aborted && !terminal) await native.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: decision === "approve" ? "once" : "reject" }, { signal: pendingSignal });
+            if (!pendingSignal.aborted && !interactionsClosed) await native.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: decision === "approve" ? "once" : "reject" }, { signal: pendingSignal });
           });
           continue;
         }
@@ -276,7 +281,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
           catch (error) { await native.session.form.cancel({ sessionID: form.sessionID, formID: form.id }, { signal }); throw error; }
           enqueue(`form:${form.id}`, async (pendingSignal) => {
             const response = await withSignal(Promise.resolve(input.onElicitationRequest?.(request, pendingSignal) ?? { action: "cancel" as const }), pendingSignal);
-            if (pendingSignal.aborted || terminal) return;
+            if (pendingSignal.aborted || interactionsClosed) return;
             if (response.action === "accept") await native.session.form.reply({ sessionID: form.sessionID, formID: form.id, answer: response.content ?? {} }, { signal: pendingSignal });
             else await native.session.form.cancel({ sessionID: form.sessionID, formID: form.id }, { signal: pendingSignal });
           });
@@ -287,6 +292,8 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
         if (delivered) { projection.apply(event); await publish(); }
         if (event.data.sessionID !== rootID || !delivered) continue;
         if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" || event.type === "session.execution.interrupted") {
+          // The root turn has ended; late answers must not reach native while the final snapshot is read.
+          closeInteractions();
           const messages = await readCurrentMessages(native, rootID, requestID, signal);
           projection.replaceMessages(messages);
           const idle = [...messages].reverse().find((message) => message.type === "idle");
@@ -321,10 +328,9 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       const reason = canceled ? "canceled" : /auth|unauthori[sz]ed|api.?key|credential/i.test(message) ? "auth" : /quota|rate.?limit|usage.?limit|insufficient/i.test(message) ? "usage_limit" : /unavailable|model|variant|executable|version/i.test(message) ? "provider_unavailable" : /network|disconnect|fetch|ECONN/i.test(message) ? "network" : "unknown";
       throw new ProviderTurnError(message, result(), canceled, reason);
     } finally {
-      terminal = true;
+      closeInteractions();
       controller.abort();
       input.signal?.removeEventListener("abort", abort);
-      for (const pending of interactionControllers.values()) pending.abort();
       void iterator?.return?.().catch(() => undefined);
       await interactionTail;
       try { await transport.close(); this.active.delete(input.session.id); }

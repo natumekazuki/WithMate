@@ -45,7 +45,14 @@ test("OpenCode background uses stateless model and validated Affect JSON", async
     assert.ok(request.prompt.includes(JSON.stringify(CHARACTER_AFFECT_TURN_OUTPUT_SCHEMA)));
     return { text: '{"candidates":[]}' };
   });
-  const result = await run.adapter.runBackgroundStructuredPrompt(input());
+  const previousTurnCapability = process.env.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY;
+  process.env.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY = "parent-turn-capability";
+  let result;
+  try { result = await run.adapter.runBackgroundStructuredPrompt(input()); }
+  finally {
+    if (previousTurnCapability === undefined) delete process.env.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY;
+    else process.env.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY = previousTurnCapability;
+  }
   assert.deepEqual(result.output, { candidates: [] });
   assert.equal(result.threadId, null);
   assert.equal(result.usage, null);
