@@ -243,6 +243,10 @@
     width: 100%;
   }
 
+  .settings-actions > .settings-action-control {
+    width: 100%;
+  }
+
   .artifact-toolbar,
   .check-item,
   .diff-titlebar,

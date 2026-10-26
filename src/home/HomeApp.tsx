@@ -134,7 +134,7 @@ export default function HomeApp() {
     [openSessionWindowIds, openSessionWindowIdsState.status, sessionWindowRestoreIds],
   );
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
-  const { settingsFeedback, setSettingsFeedback, clearSettingsFeedback } = useSettingsFeedback();
+  const { settingsFeedback, settingsErrors, setSettingsFeedback, clearSettingsFeedback } = useSettingsFeedback();
   const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
   const [deletingOldSessions, setDeletingOldSessions] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
@@ -792,6 +792,7 @@ export default function HomeApp() {
     },
     settingsDirty,
     settingsFeedback,
+    settingsErrors,
     sessionCleanupCutoffDate,
     deletingOldSessions,
     onChangeSessionCleanupCutoffDate: setSessionCleanupCutoffDate,

@@ -47,6 +47,7 @@ import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { LoadError } from "../ui/load-error.js";
+import { SettingsActionButton } from "./SettingsActionButton.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -65,6 +66,7 @@ export type HomeSettingsContentProps = {
   onRetryModelCatalog: () => void;
   settingsDirty: boolean;
   settingsFeedback: string;
+  settingsErrors: ReadonlyMap<string, string>;
   sessionCleanupCutoffDate: string;
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
@@ -167,6 +169,7 @@ export function HomeSettingsContent({
   onRetryModelCatalog,
   settingsDirty,
   settingsFeedback,
+  settingsErrors,
   sessionCleanupCutoffDate,
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
@@ -416,7 +419,9 @@ export function HomeSettingsContent({
                               autoComplete="off"
                               spellCheck={false}
                             />
-                            <button
+                            <SettingsActionButton
+                              failure={settingsErrors.get(`browse-root:${provider.id}`)}
+                              actionLabel={`Choose Root Directory for ${provider.label}`}
                               className="launch-toggle"
                               type="button"
                               onClick={() => void runAction(`browse-root:${provider.id}`, () => onBrowseProviderSkillRootPath(provider.id))}
@@ -430,7 +435,7 @@ export function HomeSettingsContent({
                               >
                                 Browse
                               </ButtonContent>
-                            </button>
+                            </SettingsActionButton>
                           </div>
                         </label>
                         <label className="settings-provider-input">
@@ -444,7 +449,9 @@ export function HomeSettingsContent({
                               autoComplete="off"
                               spellCheck={false}
                             />
-                            <button
+                            <SettingsActionButton
+                              failure={settingsErrors.get(`browse-skill:${provider.id}`)}
+                              actionLabel={`Choose Skill Folder for ${provider.label}`}
                               className="launch-toggle"
                               type="button"
                               onClick={() => void runAction(`browse-skill:${provider.id}`, () => onBrowseProviderSkillRelativePath(provider.id))}
@@ -458,7 +465,7 @@ export function HomeSettingsContent({
                               >
                                 Browse
                               </ButtonContent>
-                            </button>
+                            </SettingsActionButton>
                           </div>
                         </label>
                         <label className="settings-provider-input">
@@ -472,7 +479,9 @@ export function HomeSettingsContent({
                               autoComplete="off"
                               spellCheck={false}
                             />
-                            <button
+                            <SettingsActionButton
+                              failure={settingsErrors.get(`browse-instruction:${provider.id}`)}
+                              actionLabel={`Choose Instruction File for ${provider.label}`}
                               className="launch-toggle"
                               type="button"
                               onClick={() => void runAction(`browse-instruction:${provider.id}`, () => onBrowseProviderInstructionRelativePath(provider.id))}
@@ -486,7 +495,7 @@ export function HomeSettingsContent({
                               >
                                 Browse
                               </ButtonContent>
-                            </button>
+                            </SettingsActionButton>
                           </div>
                         </label>
                       </div>
@@ -561,7 +570,9 @@ export function HomeSettingsContent({
                     Review Memory
                   </ButtonContent>
                 </button>
-                <button
+                <SettingsActionButton
+                  failure={settingsErrors.get("install-cli-shim")}
+                  actionLabel="Install CLI Shim"
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
@@ -575,8 +586,10 @@ export function HomeSettingsContent({
                   >
                     Install CLI Shim
                   </ButtonContent>
-                </button>
-                <button
+                </SettingsActionButton>
+                <SettingsActionButton
+                  failure={settingsErrors.get("uninstall-cli-shim")}
+                  actionLabel="Uninstall CLI Shim"
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
@@ -590,8 +603,10 @@ export function HomeSettingsContent({
                   >
                     Uninstall CLI Shim
                   </ButtonContent>
-                </button>
-                <button
+                </SettingsActionButton>
+                <SettingsActionButton
+                  failure={settingsErrors.get("open-logs")}
+                  actionLabel="Open Logs"
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("open-logs", onOpenAppLogFolder)}
@@ -605,8 +620,10 @@ export function HomeSettingsContent({
                   >
                     {SETTINGS_OPEN_LOG_FOLDER_LABEL}
                   </ButtonContent>
-                </button>
-                <button
+                </SettingsActionButton>
+                <SettingsActionButton
+                  failure={settingsErrors.get("open-crash-dumps")}
+                  actionLabel="Open Crash Dumps"
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("open-crash-dumps", onOpenCrashDumpFolder)}
@@ -620,7 +637,7 @@ export function HomeSettingsContent({
                   >
                     {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                   </ButtonContent>
-                </button>
+                </SettingsActionButton>
               </div>
             </div>
           </section>
@@ -630,7 +647,9 @@ export function HomeSettingsContent({
               <strong>Model Catalog</strong>
               <p className="settings-help">ActiveRevision: {modelCatalogRevisionLabel}</p>
               <div className="settings-actions">
-                <button
+                <SettingsActionButton
+                  failure={settingsErrors.get("import-models")}
+                  actionLabel="Import Models"
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("import-models", onImportModelCatalog)}
@@ -644,8 +663,10 @@ export function HomeSettingsContent({
                   >
                     Import Models
                   </ButtonContent>
-                </button>
-                <button
+                </SettingsActionButton>
+                <SettingsActionButton
+                  failure={settingsErrors.get("export-models")}
+                  actionLabel="Export Models"
                   className="launch-toggle"
                   type="button"
                   onClick={() => void runAction("export-models", onExportModelCatalog)}
@@ -659,7 +680,7 @@ export function HomeSettingsContent({
                   >
                     Export Models
                   </ButtonContent>
-                </button>
+                </SettingsActionButton>
               </div>
             </div>
           </section>
@@ -713,7 +734,9 @@ export function HomeSettingsContent({
                     onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
                     disabled={deletingOldSessions || actionIsBusy("delete-sessions")}
                   />
-                  <button
+                  <SettingsActionButton
+                    failure={settingsErrors.get("delete-sessions")}
+                    actionLabel="Delete Old Sessions"
                     className="launch-toggle"
                     type="button"
                     onClick={() => void runAction("delete-sessions", onDeleteSessionsLastActiveBefore)}
@@ -727,7 +750,7 @@ export function HomeSettingsContent({
                     >
                       Delete
                     </ButtonContent>
-                  </button>
+                  </SettingsActionButton>
                 </div>
                 <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
               </label>
@@ -748,7 +771,9 @@ export function HomeSettingsContent({
           {settingsDirty || previewWheelZoomStepInvalid ? <span className="settings-dirty-state">Unsaved Changes</span> : null}
           {settingsFeedback ? <p className="settings-feedback settings-feedback-inline" role="status">{settingsFeedback}</p> : null}
         </div>
-        <button
+        <SettingsActionButton
+          failure={settingsErrors.get("save-settings")}
+          actionLabel="Save Settings"
           className="launch-toggle"
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
@@ -762,7 +787,7 @@ export function HomeSettingsContent({
           >
             Save Settings
           </ButtonContent>
-        </button>
+        </SettingsActionButton>
       </div>
     </>
   );

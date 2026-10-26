@@ -55,14 +55,15 @@ export function buildSettingsCommandHandlers({
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
   const withApi = async (
     action: string,
-    callback: (api: WithMateWindowApi, setFeedback: (message: string, error?: boolean) => void) => Promise<void>,
+    callback: (api: WithMateWindowApi, setFeedback: (message: string, error?: boolean, requiresInput?: boolean) => void) => Promise<void>,
   ): Promise<void> => {
     const api = getApi();
     if (!api) {
       return;
     }
 
-    await callback(api, (message, error = false) => reportSettingsFeedback(message, { action, error }));
+    await callback(api, (message, error = false, requiresInput = false) =>
+      reportSettingsFeedback(message, { action, error, requiresInput }));
   };
   const getCurrentPersistedSettingsDraft = () => getPersistedSettingsDraft?.() ?? persistedSettingsDraft;
   const updateProviderSettings = (
@@ -87,13 +88,13 @@ export function buildSettingsCommandHandlers({
     providerId: string,
     selectedPath: string,
     fieldLabel: string,
-    setFeedback: (message: string, error?: boolean) => void,
+    setFeedback: (message: string, error?: boolean, requiresInput?: boolean) => void,
   ): string | null => {
     const currentProviderSettings = getProviderAppSettings(getCurrentPersistedSettingsDraft(), providerId);
     const rootDirectory = currentProviderSettings.skillRootPath.trim();
     const relativePath = resolveProviderRelativePathFromSelection(rootDirectory, selectedPath);
     if (relativePath === null) {
-      setFeedback(`Choose a ${fieldLabel.toLowerCase()} inside the root directory.`, true);
+      setFeedback(`Choose a ${fieldLabel.toLowerCase()} inside the root directory.`, true, true);
       return null;
     }
 
@@ -169,7 +170,7 @@ export function buildSettingsCommandHandlers({
         const currentProviderSettings = getProviderAppSettings(getCurrentPersistedSettingsDraft(), providerId);
         const rootDirectory = currentProviderSettings.skillRootPath.trim();
         if (!rootDirectory) {
-          setSettingsFeedback("Set a root directory before choosing a skill folder.", true);
+          setSettingsFeedback("Set a root directory before choosing a skill folder.", true, true);
           return;
         }
 
@@ -195,7 +196,7 @@ export function buildSettingsCommandHandlers({
         const currentProviderSettings = getProviderAppSettings(getCurrentPersistedSettingsDraft(), providerId);
         const rootDirectory = currentProviderSettings.skillRootPath.trim();
         if (!rootDirectory) {
-          setSettingsFeedback("Set a root directory before choosing an instruction file.", true);
+          setSettingsFeedback("Set a root directory before choosing an instruction file.", true, true);
           return;
         }
 
@@ -248,7 +249,7 @@ export function buildSettingsCommandHandlers({
           await refreshSessionSummaries?.();
           setSettingsFeedback(result.feedback);
         } else if (result.kind === "noop") {
-          setSettingsFeedback(result.feedback, true);
+          setSettingsFeedback(result.feedback, true, true);
         }
       } catch (error) {
         setSettingsFeedback(error instanceof Error ? error.message : "Could not delete old sessions.", true);
