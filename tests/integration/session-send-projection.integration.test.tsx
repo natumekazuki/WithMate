@@ -304,7 +304,7 @@ test("Main runtimeの旧rejectは同じComposer ownerの新入力を上書きし
 // claim = "Main/Auxiliary共通durable受付は旧rejectで新入力を上書きせず、Auxiliaryの未確定受付では送信本文を先行表示し、不明・拒否では本文と理由を保持する。受付後のcanonical失敗は送信済みuser・partialを保持し、理由を応答側の共通エラー欄へ一度表示する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: 送信受付の共通反映" }
 // fault = "Appが旧受付rejectで新入力を上書きする、先行表示した送信本文を不明・拒否で消すか理由を示さない、またはcanonical失敗更新を未受付と混同して入力と本文を巻き戻す"
-// observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文数と内容、応答側のエラー理由と出現数、不明時の診断、rejectのalert"
+// observable = "実SessionWindowAppのtextarea値、送信APIの対象IDと本文、要求待機中とsettle後の対象会話のuser/assistant本文数と内容、応答側のエラー理由と出現数、不明時の診断、reject後の会話側理由とmodal alertが発生しないこと"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp common durable admission and canonical Provider failure"
 // lifecycle = "permanent"
@@ -374,9 +374,8 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
     return () => { invalidationListeners.delete(registration); };
   };
   const notifyMain = () => invalidationListeners.forEach(({ listener }) => listener({ scope: "ids", sessionIds: [main.id] }));
-  let reportedError = deferred<string>();
   const alerts: string[] = [];
-  dom.window.alert = (message) => { alerts.push(String(message)); reportedError.resolve(String(message)); };
+  dom.window.alert = (message) => { alerts.push(String(message)); };
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");
   const { default: App } = await import("../../src/app/SessionWindowApp.js");
@@ -461,10 +460,9 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
           assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1, "uncertain admission retains the submitted bubble");
           assert.match(dom.window.document.querySelector(`${pane} .pending-run-error-note`)?.textContent ?? "", /acceptance could not be confirmed/);
           api.enqueueSessionTurn = async () => ({ state: "rejected", reason: "Original turn was not accepted." });
-          reportedError = deferred<string>();
           await act(async () => {
             const retry = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent === "Retry Original Turn");
-            assert.ok(retry); retry.click(); await reportedError.promise;
+            assert.ok(retry); retry.click();
           });
           assert.equal(textarea().value, newInput);
           assert.equal(messageTexts(pane, "user").filter((text) => text === prompt).length, 1, "explicit rejection retains the submitted bubble without duplication");
@@ -502,7 +500,7 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
         }
       }
     }
-    assert.deepEqual(alerts, ["Original turn was not accepted."]);
+    assert.deepEqual(alerts, [], "explicit rejection is reported in the affected conversation without a modal alert");
   } finally {
     await act(async () => { root.unmount(); });
     dom.window.close();

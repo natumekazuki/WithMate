@@ -2053,14 +2053,8 @@ export default function AgentSessionWindowApp() {
         cancelAuxiliary: handleCancelAuxiliaryRun,
         input: handleSendInput,
         queue: handleSend,
-        checkReceipt: async () => {
-          try { await mainSessionRuntime.checkTurnReceipt(renderedSession.id); }
-          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not check the receipt.")); }
-        },
-        retryOriginal: async () => {
-          try { await mainSessionRuntime.retryOriginalTurn(renderedSession.id); }
-          catch (error) { window.alert(resolveSessionRunErrorMessage(error, "Could not retry the original turn.")); }
-        },
+        checkReceipt: () => mainSessionRuntime.checkTurnReceipt(renderedSession.id),
+        retryOriginal: () => mainSessionRuntime.retryOriginalTurn(renderedSession.id),
       },
       runtimeOptions: {
         runMain: async (option) => {

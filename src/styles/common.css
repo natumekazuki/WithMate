@@ -160,7 +160,7 @@
 .artifact-toggle,
 .diff-button,
 .diff-close,
-.composer-control-row > .session-send-button,
+.composer-send-control > .session-send-button,
 .session-action-dock-cancel-slot > .session-send-button,
 .session-action-dock-compact-actions button {
   border: 0;

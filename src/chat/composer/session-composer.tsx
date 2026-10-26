@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ClipboardEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useRef, useState, type ClipboardEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 
@@ -17,6 +17,7 @@ import { ComposerAttachmentMenu } from "../../chat/composer-attachment-menu.js";
 import { AdditionalDirectoryPathControl } from "./additional-directory-path-control.js";
 import type { WorkspaceDirectoryValidationResult } from "../../../src-shared/window/workspace-directory-validation.js";
 import { ComposerIcon } from "./composer-icon.js";
+import { ComposerErrorDetails } from "./composer-error-details.js";
 import { ComposerSettingSelect } from "./composer-setting-select.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
 import {
@@ -68,6 +69,8 @@ export type SessionComposerExpandedProps = {
   onSendInput?: () => void;
   onQueueTurn?: () => void;
   queueTurnBusy?: boolean;
+  turnRecoveryAction?: "check" | "retry";
+  turnRecoveryError?: string;
   onCheckTurnReceipt?: () => void;
   onRetryOriginalTurn?: () => void;
   submissionError?: string;
@@ -161,6 +164,8 @@ export function SessionComposerExpanded({
   onSendInput,
   onQueueTurn,
   queueTurnBusy = false,
+  turnRecoveryAction,
+  turnRecoveryError,
   onCheckTurnReceipt,
   onRetryOriginalTurn,
   submissionError,
@@ -244,6 +249,7 @@ export function SessionComposerExpanded({
   onChangeReasoningEffort,
   onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
+  const keyboardShortcuts = useShortcutSettings();
   const controllerOwner = composerController?.owner ?? { kind: "main" as const, id: "__legacy__" };
   const composerControllerState = useComposerController(
     controllerOwner,
@@ -255,12 +261,14 @@ export function SessionComposerExpanded({
   const composerSaveFailed = composerControllerState.saveState === "error";
   const canQueueTurn = isRunning && !!onQueueTurn;
   const composerControlsDisabled = composerBlocked || composerFrozen || (isRunning && !canQueueTurn);
+  const turnRecoveryBusyReason = turnRecoveryAction === "check" ? "Checking turn acceptance."
+    : turnRecoveryAction === "retry" ? "Retrying the original turn." : "";
   const projectedComposerSendability = composerController
     ? resolveComposerSendabilityState({
         runState: isRunning ? "running" : "idle",
         canSendInput: !canQueueTurn && canSendInput && !isCanceling,
         canQueueTurn,
-        busyReason: queueTurnBusy ? "Message submission is in progress." : composerSendability.busyReason,
+        busyReason: turnRecoveryBusyReason || (queueTurnBusy ? "Message submission is in progress." : composerSendability.busyReason),
         blockedReason: composerBlocked ? (composerSendability.primaryFeedback ?? "") : "",
         inputErrors: composerControllerState.preview.errors,
         draftText: displayedDraft,
@@ -268,9 +276,8 @@ export function SessionComposerExpanded({
       })
     : null;
   const resolvedComposerSendability = projectedComposerSendability ?? composerSendability;
-  const displayedComposerSendability = submissionError && !resolvedComposerSendability.primaryFeedback
-    ? { ...resolvedComposerSendability, primaryFeedback: submissionError, feedbackTone: "blocked" as const, shouldShowFeedback: true }
-    : resolvedComposerSendability;
+  const displayedComposerSendability = resolvedComposerSendability;
+  const errorOwnerKey = `${controllerOwner.kind}:${controllerOwner.id}`;
   const displayedIsSendDisabled = composerController
     ? isComposerDisabled || projectedComposerSendability!.isSendDisabled || composerSaveFailed || !!onCheckTurnReceipt
     : isComposerDisabled || isSendDisabled || composerSaveFailed || !!onCheckTurnReceipt;
@@ -279,17 +286,46 @@ export function SessionComposerExpanded({
     : projectedComposerSendability
       ? getComposerSendButtonTitle(projectedComposerSendability)
       : sendButtonTitle;
-  const showBusySendState = queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true);
+  const showBusySendState = !turnRecoveryAction && (queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true));
+  const sendDisabled = (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
+    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction;
+  const sendDisabledReason = composerFrozen
+    ? "Input is frozen while the window is closing."
+    : turnRecoveryAction === "check"
+      ? "Checking turn acceptance."
+      : turnRecoveryAction === "retry"
+        ? "Retrying the original turn."
+        : onCheckTurnReceipt
+          ? "Turn acceptance is unknown. Check Receipt or Retry Original Turn before sending."
+          : (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
+            ? "Cannot send while a run is active."
+            : queueTurnBusy
+              ? displayedComposerSendability.busyReason || "Message submission is in progress."
+              : composerBlocked || isComposerDisabled
+                ? displayedComposerSendability.primaryFeedback || "Message cannot be sent in this conversation."
+                : displayedSendButtonTitle || displayedComposerSendability.busyReason || "Message cannot be sent.";
+  const sendTitle = appendShortcutLabel(
+    sendDisabled ? sendDisabledReason : displayedSendButtonTitle || "Send",
+    SHORTCUT_COMMAND_IDS.composerSubmit,
+    undefined,
+    keyboardShortcuts,
+  );
+  const sendReasonId = useId();
+  const submissionErrorId = useId();
+  const [isSendReasonFocused, setIsSendReasonFocused] = useState(false);
+  const hasVisibleSendReason = !composerFrozen && (!!onCheckTurnReceipt || composerSaveFailed
+    || (displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds));
+  const showFocusedSendReason = sendDisabled && isSendReasonFocused && !hasVisibleSendReason;
   const composerDescriptionIds = [
     externalErrorDescriptionIds,
     composerSaveFailed ? "composer-save-feedback" : undefined,
+    submissionError && !onCheckTurnReceipt ? submissionErrorId : undefined,
     displayedComposerSendability.shouldShowFeedback && !externalErrorDescriptionIds
       ? "composer-sendability-feedback"
       : undefined,
   ].filter(Boolean).join(" ") || undefined;
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
-  const keyboardShortcuts = useShortcutSettings();
 
   useEffect(() => {
     if (!showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
@@ -588,6 +624,7 @@ export function SessionComposerExpanded({
         <div className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
             ref={composerTextareaRef}
+            aria-label="Message"
             data-shortcut-scope="composer"
             value={displayedDraft}
             placeholder={placeholder}
@@ -601,11 +638,12 @@ export function SessionComposerExpanded({
             disabled={isComposerDisabled || composerFrozen}
             aria-busy={displayedComposerSendability.isBusy || undefined}
             aria-describedby={composerDescriptionIds}
-            aria-invalid={displayedComposerSendability.feedbackTone === "blocked" || composerSaveFailed ? true : undefined}
+            aria-invalid={displayedComposerSendability.feedbackTone === "blocked" || composerSaveFailed || !!submissionError ? true : undefined}
           />
           {composerControllerState.saveState === "error" ? (
             <div id="composer-save-feedback" className="composer-save-feedback">
-              <span>{composerControllerState.saveError ?? "Draft could not be saved."}</span>
+              <span role="status">Draft could not be saved. Retry before sending.</span>
+              <ComposerErrorDetails key={`${errorOwnerKey}:save:${composerControllerState.saveError}`} label="Draft Save Error Details" message={composerControllerState.saveError ?? "Draft could not be saved."} />
               {onRetryComposerSave ? (
                 <button
                   className="composer-save-retry"
@@ -619,10 +657,23 @@ export function SessionComposerExpanded({
             </div>
           ) : null}
           {onCheckTurnReceipt ? (
-            <div className="composer-save-feedback">
+            <div className="composer-save-feedback composer-turn-recovery">
               <span>Turn acceptance is unknown. Your draft is preserved.</span>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={queueTurnBusy}>Check Receipt</button>
-              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={queueTurnBusy}>Retry Original Turn</button>
+              <span className="composer-turn-recovery-details" inert={!turnRecoveryError} aria-hidden={!turnRecoveryError}>
+                <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} label="Turn Recovery Error Details" message={turnRecoveryError ?? ""} />
+              </span>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={queueTurnBusy || !!turnRecoveryAction} aria-busy={turnRecoveryAction === "check" || undefined}>
+                <ButtonContent busy={turnRecoveryAction === "check"}>Check Receipt</ButtonContent>
+              </button>
+              <button type="button" className="drawer-toggle compact secondary" onClick={onRetryOriginalTurn} disabled={queueTurnBusy || !!turnRecoveryAction || composerFrozen || !onRetryOriginalTurn} aria-busy={turnRecoveryAction === "retry" || undefined}>
+                <ButtonContent busy={turnRecoveryAction === "retry"}>Retry Original Turn</ButtonContent>
+              </button>
+            </div>
+          ) : null}
+          {submissionError && !onCheckTurnReceipt ? (
+            <div id={submissionErrorId} className="composer-save-feedback">
+              <span role="status">Message could not be sent.</span>
+              <ComposerErrorDetails key={`${errorOwnerKey}:submission:${submissionError}`} label="Message Submission Error Details" message={submissionError} />
             </div>
           ) : null}
           {displayedComposerSendability.isBusy && displayedComposerSendability.busyReason ? (
@@ -731,27 +782,44 @@ export function SessionComposerExpanded({
           ) : null}
         </div>
 
-        <button
-          className={`session-send-button composer-icon-button${showBusySendState ? " loading" : ""}`}
-          type="button"
-          onClick={canQueueTurn ? onQueueTurn : canSendInput ? onSendInput : onSendOrCancel}
-          disabled={(isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn) || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy}
-          aria-busy={showBusySendState || undefined}
-          title={
-            showBusySendState
-              ? undefined
-              : isRunning && !canSendInput && !canQueueTurn
-              ? "Cannot send while a run is active"
-              : appendShortcutLabel(
-                  displayedSendButtonTitle || "Send",
-                  SHORTCUT_COMMAND_IDS.composerSubmit,
-                  undefined,
-                  keyboardShortcuts,
-                )
-          }
+        <span
+          className="composer-send-control"
+          title={sendTitle}
+          tabIndex={sendDisabled ? 0 : undefined}
+          role={sendDisabled ? "group" : undefined}
+          aria-label={sendDisabled ? "Send unavailable" : undefined}
+          aria-describedby={sendDisabled ? sendReasonId : undefined}
+          onFocus={(event) => setIsSendReasonFocused(event.target === event.currentTarget)}
+          onBlur={() => setIsSendReasonFocused(false)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && showFocusedSendReason) {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsSendReasonFocused(false);
+            }
+          }}
         >
-          <ButtonContent busy={showBusySendState}><ComposerIcon name="send" /><span className="visually-hidden">Send</span></ButtonContent>
-        </button>
+          <button
+            className={`session-send-button composer-icon-button${showBusySendState ? " loading" : ""}`}
+            type="button"
+            onClick={canQueueTurn ? onQueueTurn : canSendInput ? onSendInput : onSendOrCancel}
+            disabled={sendDisabled}
+            aria-describedby={sendDisabled ? sendReasonId : undefined}
+            aria-busy={showBusySendState || undefined}
+            title={sendTitle}
+          >
+            <ButtonContent busy={showBusySendState}><ComposerIcon name="send" /><span className="visually-hidden">Send</span></ButtonContent>
+          </button>
+          {sendDisabled ? (
+            <span
+              id={sendReasonId}
+              role={showFocusedSendReason ? "tooltip" : undefined}
+              className={showFocusedSendReason ? "composer-send-reason" : "visually-hidden"}
+            >
+              {sendDisabledReason}
+            </span>
+          ) : null}
+        </span>
       </div>
     </div>
   );

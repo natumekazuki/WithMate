@@ -3826,6 +3826,7 @@
 
 .composer-save-feedback {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -3850,6 +3851,71 @@
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+}
+
+.composer-turn-recovery {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.composer-error-details-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-error-details-trigger .composer-icon {
+  width: 18px;
+  height: 18px;
+  color: #fca5a5;
+}
+
+.composer-error-details-popover {
+  position: fixed;
+  z-index: 120;
+  box-sizing: border-box;
+  width: min(480px, calc(100vw - 32px));
+  overflow: auto;
+  padding: 12px 48px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.composer-error-details-popover p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.composer-error-details-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+}
+
+.composer-turn-recovery > button,
+.composer-turn-recovery-details {
+  flex: 0 0 auto;
+}
+
+.composer-turn-recovery-details[inert] {
+  visibility: hidden;
 }
 
 .composer-save-retry:hover:not(:disabled),
@@ -4020,13 +4086,45 @@
 }
 
 .composer-control-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 14px;
   align-items: end;
 }
 
-.composer-control-row > .session-send-button {
+.composer-send-control {
+  align-self: center;
+  display: inline-flex;
+  border-radius: 999px;
+}
+
+.composer-send-control:focus-visible {
+  outline: 2px solid var(--character-main, var(--ink));
+  outline-offset: 3px;
+}
+
+.composer-send-reason {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: calc(100% + 8px);
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 64px));
+  padding: 10px 12px;
+  border: 1px solid rgba(203, 213, 225, 0.24);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
+.composer-send-control > .session-send-button {
   align-self: center;
   width: 40px;
   min-width: 40px;
@@ -4036,13 +4134,13 @@
   color: var(--ink);
 }
 
-.session-page .composer-control-row > .session-send-button {
+.session-page .composer-send-control > .session-send-button {
   background: var(--character-main);
   color: var(--character-main-ink);
   box-shadow: 0 10px 22px color-mix(in srgb, var(--character-main) 28%, transparent);
 }
 
-.session-page .composer-control-row > .session-send-button.danger {
+.session-page .composer-send-control > .session-send-button.danger {
   background: color-mix(in srgb, #f87171 82%, var(--character-main));
   color: #fff5f5;
   box-shadow: 0 10px 22px rgba(248, 113, 113, 0.24);

@@ -3989,7 +3989,7 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 // claim = "SessionComposerExpandedのidle DOMはattachment/view操作、closedなattachment menu、Add Directory/Add Directory By Path/Dirs、target dock、Cancel予約slot、settingsとSendの構成を維持し、Hide/reopen導線を置かず、Cancel slotを非activeで保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock / Add Directory By Path" }
 // fault = "idle表示でattachment/view action・closedなattachment menu・Add Directory/Add Directory By Path/Dirs・target dock・Cancel slot・SendのDOM配置が崩れる、Hide/reopen導線が混入する、Cancel slotがactiveまたはbuttonを持つ、Sendがsettings group内へ移動する"
-// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Add Directory By Path/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row直下のsettings groupとSend button"
+// observable = "parsed SessionComposerExpandedのidle DOMにおけるattachment toolbar、closedなattachment menu、Skill直後のAdd Directory/Add Directory By Path/Dirs、composer-toolbar-view-actions、Hide/reopen導線の不在、target/Cancel slot、composer-control-row内のsettings groupとその外側のSend button"
 // observation_boundary = "component-behavior"
 // scope = "expanded ActionDock idle layout and Cancel slot"
 // lifecycle = "permanent"
@@ -4091,7 +4091,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   const composerInputRow = renderedDocument.querySelector(".composer-input-row");
   const controlRow = renderedDocument.querySelector(".composer-control-row");
   const settingsGroup = controlRow?.querySelector(":scope > .composer-settings");
-  const sendButton = controlRow?.querySelector<HTMLButtonElement>(":scope > button.session-send-button");
+  const sendButton = controlRow?.querySelector<HTMLButtonElement>(":scope > .composer-send-control > button.session-send-button");
   assert.ok(composer);
   assert.ok(attachmentToolbar);
   assert.ok(attachmentMenu);
@@ -4148,7 +4148,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.equal(previewButton.getAttribute("aria-pressed"), "false");
   assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
   assert.equal(controlRow.firstElementChild, settingsGroup);
-  assert.equal(settingsGroup.nextElementSibling, sendButton);
+  assert.equal(settingsGroup.nextElementSibling, sendButton.parentElement);
   assert.equal(settingsGroup.contains(sendButton), false);
   assert.equal(sendButton.textContent, "Send");
   assert.equal(sendButton.disabled, true);
@@ -4251,7 +4251,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   const cancelButton = cancelSlot?.querySelector<HTMLButtonElement>(":scope > button.session-send-button.danger");
   const targetSlot = viewActions?.querySelector(":scope > .composer-target-dock-slot");
   const controlRow = renderedDocument.querySelector(".composer-control-row");
-  const sendButton = controlRow?.querySelector<HTMLButtonElement>(":scope > button.session-send-button");
+  const sendButton = controlRow?.querySelector<HTMLButtonElement>(":scope > .composer-send-control > button.session-send-button");
   assert.ok(toolbar);
   assert.ok(viewActions);
   assert.ok(cancelSlot);
@@ -4270,7 +4270,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.equal(sendButton.disabled, true);
   assert.ok(sendButton.getAttribute("title"), "running中のSendはblocked reason titleを持つ");
   assert.equal(sendButton.classList.contains("danger"), false);
-  assert.equal(controlRow.querySelectorAll(":scope > button.session-send-button").length, 1);
+  assert.equal(controlRow.querySelectorAll(":scope > .composer-send-control > button.session-send-button").length, 1);
   const runningSelect = (className: string) => controlRow.querySelector<HTMLSelectElement>(`.${className} select`);
   assert.equal(runningSelect("composer-setting-approval")?.disabled, true);
   assert.equal(runningSelect("composer-setting-sandbox")?.disabled, true);
@@ -4283,7 +4283,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   const idleCancelSlot = idleViewActions?.querySelector(":scope > .session-action-dock-cancel-slot");
   const idleTargetSlot = idleViewActions?.querySelector(":scope > .composer-target-dock-slot");
   const idleControlRow = idleDocument.querySelector(".composer-control-row");
-  const idleSendButton = idleControlRow?.querySelector<HTMLButtonElement>(":scope > button.session-send-button");
+  const idleSendButton = idleControlRow?.querySelector<HTMLButtonElement>(":scope > .composer-send-control > button.session-send-button");
   assert.ok(idleViewActions);
   assert.ok(idleCancelSlot);
   assert.ok(idleTargetSlot);
@@ -4305,8 +4305,8 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 // @test-value v2
 // kind = "contract"
 // claim = "SessionComposerExpandedのbusy送信buttonはbusy reasonを可視文言へ昇格せず、spinnerとaria-busyを主表示にして送信を抑止する"
-// oracle = { type = "contract", ref = "src/chat/composer/session-composer.tsx" }
-// fault = "busy中のSendが通常titleやhelper feedbackを表示する、spinnerまたはaria-busyが欠ける、または送信を許可する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Send disabled理由とtitle; docs/design/ui-design-guidelines.md: ボタン" }
+// fault = "busy中のSendが理由と異なるtitleや常設helper feedbackを表示する、spinnerまたはaria-busyが欠ける、または送信を許可する"
 // observable = "Send buttonのdisabled・aria-busy・title・spinner、textareaのaria-busy、status announcement、feedback DOM"
 // observation_boundary = "component-behavior"
 // scope = "expanded composer busy send action"
@@ -4334,7 +4334,7 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
 
   const renderedDocument = new JSDOM(html).window.document;
   const sendButton = renderedDocument.querySelector<HTMLButtonElement>(
-    ".composer-control-row > button.session-send-button",
+    ".composer-control-row .composer-send-control > button.session-send-button",
   );
   const textarea = renderedDocument.querySelector<HTMLTextAreaElement>(".composer-input-row textarea");
   const status = renderedDocument.querySelector('[role="status"]');
@@ -4343,7 +4343,7 @@ test("SessionComposerExpanded は busy 中の Send を spinner と status にす
   assert.ok(status);
   assert.equal(sendButton.disabled, true);
   assert.equal(sendButton.getAttribute("aria-busy"), "true");
-  assert.equal(sendButton.getAttribute("title"), null);
+  assert.ok(sendButton.getAttribute("title")?.startsWith(busyReason));
   assert.ok(sendButton.querySelector(".loading-indicator-spinner[aria-hidden='true']"));
   assert.equal(sendButton.textContent, "Send");
   assert.equal(textarea.getAttribute("aria-busy"), "true");
