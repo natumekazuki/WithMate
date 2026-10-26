@@ -137,6 +137,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行を表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
+  - Main／Auxiliaryの新しい終了結果は、未読の間だけMain title、Aux状態集約、対象Auxiliary previewを青で示す。実行状態とは分け、件数ラベル・未読dot・未読による並べ替えは追加しない。成功・失敗・取消の結果を対象とし、OS通知の設定や配送とは独立する
+  - 対象Session Windowがfocus中で、その会話の保存済み最新結果が表示領域内に見えていると自動で既読にする。Windowの単なる表示・最前面固定、過去履歴・別会話の閲覧、Auxiliary一覧の展開だけでは既読にしない。Main／Auxiliaryを独立に扱い、古い結果の既読要求で新しい結果を既読にしない
+  - 既読・未読はMain Processのメモリだけで共有し、アプリ再起動やDB切替・初期化でリセットする。過去の結果から未読を復元せず、新たに保存された終了結果から追跡する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
   - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Attention`とする。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
   - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する

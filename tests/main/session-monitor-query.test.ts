@@ -30,6 +30,7 @@ test("監視対象をbounded pageで取得し閉じた親のMain/Auxiliary状態
   };
   let canceling = true;
   const deps = {
+    hasUnreadResult: () => false,
     listMonitorSessionIds: () => ids,
     readSummaries: async (sessionIds: string[]) => {
       readIds.push(sessionIds);

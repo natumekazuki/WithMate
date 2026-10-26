@@ -159,6 +159,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
           throw new Error("unused session query fixture method");
         },
         getLatestSessionTurn: () => null,
+        getUnreadSessionResult: () => null,
+        markSessionResultRead: () => false,
         async listSessionSkills() { return []; },
         async listSessionCustomAgents() { return []; },
         async listWorkspaceSkills() { return []; },

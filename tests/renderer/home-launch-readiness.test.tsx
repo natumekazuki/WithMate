@@ -97,6 +97,7 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
       if (usageFailed) throw new Error("Usage unavailable");
       return usage.promise;
     },
+    onSessionTurnUpdated: () => () => {},
     subscribeSessionInvalidation: (listener) => {
       invalidationListeners.add(listener);
       return () => { invalidationListeners.delete(listener); };

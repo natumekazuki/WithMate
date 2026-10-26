@@ -487,6 +487,8 @@ export type MainIpcSessionQueryDeps = MainIpcEventWindowDeps &
     listSessionMonitorPage(request: { cursor: string | null; limit: number }): Awaitable<SessionMonitorPageResult>;
     listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
     getLatestSessionTurn(sessionId: string): Awaitable<import("../../src-shared/session/session-turn-state.js").SessionTurnRecord | null>;
+    getUnreadSessionResult(sessionId: string): import("../../src-shared/session/session-turn-state.js").UnreadSessionResult | null;
+    markSessionResultRead(sessionId: string, turnId: number): boolean;
     listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
     listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
     listWorkspaceSkills(

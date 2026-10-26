@@ -23,3 +23,8 @@ export type SessionTurnRecord = {
 };
 
 export type SessionTurnInput = Omit<SessionTurnRecord, "id">;
+
+export type UnreadSessionResult = {
+  turnId: number;
+  assistantMessageSeq: number;
+};

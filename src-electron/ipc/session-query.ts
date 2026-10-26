@@ -39,6 +39,8 @@ import { parseSessionSummaryPageRequest } from "../session/session-summary-query
 import {
   WITHMATE_GET_DIFF_PREVIEW_CHANNEL,
   WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
+  WITHMATE_GET_UNREAD_SESSION_RESULT_CHANNEL,
+  WITHMATE_MARK_SESSION_RESULT_READ_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
   WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
   WITHMATE_SEARCH_CONVERSATION_CHANNEL,
@@ -201,6 +203,18 @@ export function registerSessionQueryHandlers(
     const turn = await deps.getLatestSessionTurn(sessionId);
     await authorizeConversation(event, sessionId);
     return turn;
+  });
+  ipcMain.handle(WITHMATE_GET_UNREAD_SESSION_RESULT_CHANNEL, async (event, sessionId: string) => {
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error("Result read IPC requires the main application frame.");
+    await authorizeConversation(event, sessionId);
+    return deps.getUnreadSessionResult(sessionId);
+  });
+  ipcMain.handle(WITHMATE_MARK_SESSION_RESULT_READ_CHANNEL, async (event, sessionId: string, turnId: number) => {
+    if (event.senderFrame !== event.sender.mainFrame) throw new Error("Result read IPC requires the main application frame.");
+    if (!Number.isSafeInteger(turnId) || turnId <= 0) throw new TypeError("Turn ID is invalid.");
+    await authorizeConversation(event, sessionId);
+    if (!deps.resolveEventWindow(event)?.isFocused()) return false;
+    return deps.markSessionResultRead(sessionId, turnId);
   });
   ipcMain.handle(WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, async (event, sessionId, request) => {
     await authorizeConversation(event, sessionId);

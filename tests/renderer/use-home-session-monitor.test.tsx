@@ -87,10 +87,12 @@ test("Monitor hookは更新を集約し、stale応答と同状態streamingを除
   let query = async () => page("latest");
   const live = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
   const invalidations = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
+  const turns = new Set<Parameters<WithMateWindowApi["onSessionTurnUpdated"]>[0]>();
   dom.window.withmate = {
     listSessionMonitorPage: async () => ++calls === 1 ? stale.promise : query(),
     subscribeLiveSessionRunStatus: (listener) => { live.add(listener); return () => { live.delete(listener); }; },
     subscribeSessionInvalidation: (listener) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; },
+    onSessionTurnUpdated: (listener) => { turns.add(listener); return () => { turns.delete(listener); }; },
   } as Partial<WithMateWindowApi> as WithMateWindowApi;
   let state!: ReturnType<typeof useHomeSessionMonitor>;
   function Probe({ ids }: { ids: string[] }) {
@@ -133,6 +135,7 @@ test("Monitor hookは更新を集約し、stale応答と同状態streamingを除
     await act(async () => root.unmount());
     assert.equal(live.size, 0);
     assert.equal(invalidations.size, 0);
+    assert.equal(turns.size, 0);
     await act(async () => late.resolve(page("after-unmount")));
   } finally {
     await act(async () => root.unmount());

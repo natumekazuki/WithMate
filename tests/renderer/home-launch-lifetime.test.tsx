@@ -69,6 +69,7 @@ test("閉じた開始試行の完了を次のNew Sessionから分離する", asy
     listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
     listSessionCharacterUsage: async () => [],
     subscribeSessionInvalidation: () => () => {},
+    onSessionTurnUpdated: () => () => {},
     listOpenSessionWindowIds: async () => [],
     subscribeOpenSessionWindowIds: () => () => {},
     getSessionWindowRestoreSet: async () => [],

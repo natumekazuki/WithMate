@@ -201,6 +201,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
       listSessionCharacterUsage: () => [],
         getLatestSessionTurn: () => null,
+      getUnreadSessionResult: () => null,
+      markSessionResultRead: () => false,
       async listSessionSkills() { return []; },
       async listSessionCustomAgents() { return []; },
       async listWorkspaceSkills() { return []; },

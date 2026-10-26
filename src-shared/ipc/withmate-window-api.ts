@@ -265,6 +265,8 @@ export type WithMateWindowSessionApi = {
   steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelSessionRun(sessionId: string): Promise<void>;
   getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null>;
+  getUnreadSessionResult(sessionId: string): Promise<import("../session/session-turn-state.js").UnreadSessionResult | null>;
+  markSessionResultRead(sessionId: string, turnId: number): Promise<boolean>;
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;

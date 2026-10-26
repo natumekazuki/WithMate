@@ -82,6 +82,7 @@ type Harness = {
   liveSubscriptionCount: () => number;
   characterQueryCount: () => number;
   emitInvalidation: (payload: SessionSummaryInvalidation) => Promise<void>;
+  emitTurn: (sessionId: string) => Promise<void>;
   emitOpenIds: (ids: string[]) => Promise<void>;
   opened: Array<[string, string | undefined]>;
   focus: () => Promise<void>;
@@ -112,6 +113,7 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
   };
   const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
   const invalidationListeners = new Set<(payload: SessionSummaryInvalidation) => void>();
+  const turnListeners = new Set<(sessionId: string) => void>();
   const openIdListeners = new Set<(ids: string[]) => void>();
   const opened: Array<[string, string | undefined]> = [];
   let usage = async () => [{ characterId: "used", sessionKind: "default" as const }];
@@ -156,6 +158,10 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     subscribeSessionInvalidation: (listener) => {
       invalidationListeners.add(listener);
       return () => { invalidationListeners.delete(listener); };
+    },
+    onSessionTurnUpdated: (listener) => {
+      turnListeners.add(listener);
+      return () => { turnListeners.delete(listener); };
     },
     listOpenSessionWindowIds: async () => initial?.openIds ?? ["open"],
     subscribeOpenSessionWindowIds: (listener) => {
@@ -236,12 +242,63 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
     emitInvalidation: async (payload) => {
       await act(async () => { for (const listener of invalidationListeners) listener(payload); });
     },
+    emitTurn: async (sessionId) => {
+      await act(async () => { for (const listener of turnListeners) listener(sessionId); });
+    },
     emitOpenIds: async (ids) => {
       await act(async () => { for (const listener of openIdListeners) listener(ids); });
     },
     focus, settle, launch, close,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "Homeと独立Monitorは結果更新eventでMainとAuxの未読を独立表示し、既読へ戻しても行順・実行状態と操作先を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "既読更新が反映されない、親子が一緒に既読になる、または既読化でerrorや行順を変える"
+// observable = "描画されたMain/Auxの未読class・accessible name、状態icon、行順、開くAPIの対象ID"
+// observation_boundary = "component-behavior"
+// scope = "Home/Monitorのsnapshot購読と既読表示"
+// lifecycle = "permanent"
+// impact = "複数セッションの未確認結果と確認済み結果を識別できない"
+// distinction = "service/observer単体では最終consumerの更新配線とMain/Aux領域の独立性を検証できない"
+// @end-test-value
+test("HomeとMonitorは結果更新でMain/Auxを独立に既読表示する", async () => {
+  for (const monitor of [false, true]) {
+    const h = await mountHome({ monitor });
+    try {
+      let mainUnread = true;
+      let auxUnread = true;
+      h.setMonitorEntries(async () => [{ ...session("open"), runState: "error", hasUnreadResult: mainUnread }, session("other")]);
+      h.setAuxiliaryQuery(async () => [{ ...auxiliary("aux"), hasUnreadResult: auxUnread }]);
+      await h.emitTurn("open");
+      const card = () => h.element.querySelector<HTMLElement>(".home-monitor-card")!;
+      const main = () => card().querySelector<HTMLButtonElement>(".home-monitor-parent-button")!;
+      const disclosure = () => card().querySelector<HTMLButtonElement>(".home-monitor-disclosure")!;
+      const child = () => card().querySelector<HTMLButtonElement>(".home-monitor-auxiliary-row")!;
+      assert.ok(main().classList.contains("has-unread-result"));
+      assert.match(main().getAttribute("aria-label")!, /Unread Result/);
+      assert.ok(disclosure().classList.contains("has-unread-result"));
+      await act(async () => disclosure().click());
+      assert.ok(child().classList.contains("has-unread-result"));
+      assert.deepEqual(h.opened, []);
+      mainUnread = false;
+      await h.emitTurn("open");
+      assert.equal(main().classList.contains("has-unread-result"), false);
+      assert.ok(disclosure().classList.contains("has-unread-result"));
+      assert.ok(child().classList.contains("has-unread-result"));
+      auxUnread = false;
+      await h.emitTurn("aux");
+      assert.equal(disclosure().classList.contains("has-unread-result"), false);
+      assert.equal(child().classList.contains("has-unread-result"), false);
+      assert.ok(card().querySelector('.home-monitor-parent-identity [aria-label="Main Error"]'));
+      assert.deepEqual([...h.element.querySelectorAll(".home-monitor-parent-title")].map((title) => title.textContent), ["open", "other"]);
+      await act(async () => { main().click(); child().click(); });
+      assert.deepEqual(h.opened, [["open", undefined], ["open", "aux"]]);
+    } finally { await h.close(); }
+  }
+});
 
 // @test-value v2
 // kind = "contract"

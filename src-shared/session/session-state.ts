@@ -127,6 +127,7 @@ export type HomeSessionSummary = {
   runState: string;
   cancellationState?: "requested" | "terminating";
   approvalPending?: boolean;
+  hasUnreadResult?: boolean;
 };
 
 export const SESSION_SUMMARY_PAGE_SCOPES = ["recent", "pinned", "open"] as const;
