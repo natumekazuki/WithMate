@@ -10,10 +10,15 @@ export type RuntimeSelectOption<T extends string = string> = {
 const COPILOT_APPROVAL_VALUES = new Set<ApprovalMode>(["never", "on-request", "untrusted"]);
 
 export function getDefaultApprovalModeForProvider(providerId: string | null | undefined): ApprovalMode {
-  return providerId === "claude" ? "on-request" : DEFAULT_APPROVAL_MODE;
+  return providerId === "claude" || providerId === "opencode" ? "on-request" : DEFAULT_APPROVAL_MODE;
 }
 
 export function getApprovalOptionsForProvider(providerId: string | null | undefined): RuntimeSelectOption<ApprovalMode>[] {
+  if (providerId === "opencode") {
+    return approvalModeOptions
+      .filter((option) => option.id === "on-request" || option.id === "never")
+      .map((option) => ({ value: option.id, label: option.label }));
+  }
   if (providerId === "claude") {
     return approvalModeOptions
       .filter((option) => option.id === "on-request")

@@ -11,7 +11,7 @@ describe("ModelCatalogStorage", () => {
   // kind = "contract"
   // claim = "resetToBundledは同梱catalogのprovider一式へ戻し、Codexの既定model definitionを維持する"
   // oracle = { type = "contract", ref = "public/model-catalog.json#providers; docs/design/model-catalog.md#seed-policy" }
-  // fault = "reset時に登録済みClaudeを除外するか、Codexのreasoning effort定義を失う"
+  // fault = "reset時に登録済みproviderを除外するか、Codexのreasoning effort定義を失う"
   // observable = "reset後にexportしたprovider ID集合とCodex GPT-5.6 SolのreasoningEfforts"
   // observation_boundary = "public-boundary"
   // scope = "model-catalog-reset-to-bundled"
@@ -52,7 +52,7 @@ describe("ModelCatalogStorage", () => {
 
       assert.equal(reset.revision, 1);
       assert.deepEqual(exported, seededDocument);
-      assert.deepEqual(new Set(exported?.providers.map((provider) => provider.id)), new Set(["codex", "claude", "copilot"]));
+      assert.deepEqual(new Set(exported?.providers.map((provider) => provider.id)), new Set(["codex", "claude", "copilot", "opencode"]));
       assert.deepEqual(
         exported?.providers
           .find((provider) => provider.id === "codex")
@@ -67,9 +67,9 @@ describe("ModelCatalogStorage", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "active catalogへのbundled provider補完はClaudeを追加し、既存Codex・Copilotの定義と履歴revisionを保持する"
+  // claim = "active catalogへのbundled provider補完は不足providerを追加し、既存Codex・Copilotの定義と履歴revisionを保持する"
   // oracle = { type = "contract", ref = "accepted behavior: additive bundled provider seeding preserves active catalog entries; docs/design/model-catalog.md#seed-policy" }
-  // fault = "Claude追加時にcatalogをresetして利用者のCodex・Copilot設定を上書きするか、既存revisionを失う"
+  // fault = "provider追加時にcatalogをresetして利用者のCodex・Copilot設定を上書きするか、既存revisionを失う"
   // observable = "ensureSeeded後のprovider定義、revision番号、および前revisionの取得結果"
   // observation_boundary = "public-boundary"
   // scope = "model-catalog-additive-seeding"
@@ -121,12 +121,19 @@ describe("ModelCatalogStorage", () => {
 
       assert.deepEqual(
         ensured.providers.map((provider) => provider.id).sort(),
-        ["claude", "codex", "copilot"],
+        ["claude", "codex", "copilot", "opencode"],
       );
       assert.ok(ensured.revision > imported.revision);
       assert.deepEqual(ensured.providers.find((provider) => provider.id === "codex"), imported.providers.find((provider) => provider.id === "codex"));
       assert.deepEqual(ensured.providers.find((provider) => provider.id === "copilot"), imported.providers.find((provider) => provider.id === "copilot"));
       assert.deepEqual(previousRevision, imported);
+      const opencode = ensured.providers.find((provider) => provider.id === "opencode");
+      assert.equal(opencode?.defaultModelId, "opencode-go/glm-5.3");
+      assert.equal(opencode?.defaultReasoningEffort, "high");
+      assert.deepEqual(opencode?.models.map((model) => [model.id, model.reasoningEfforts]), [
+        ["opencode-go/glm-5.3", ["low", "high", "max"]],
+        ["opencode-go/glm-5.3-flash", ["low", "high", "max"]],
+      ]);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }

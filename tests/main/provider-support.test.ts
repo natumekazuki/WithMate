@@ -62,7 +62,7 @@ test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", (
 
 // @test-value v2
 // kind = "contract"
-// claim = "coding/backgroundはCodex・Copilot・Claudeを区別して返し、未知IDはcapabilityと一致して拒否する"
+// claim = "coding/backgroundはCodex・Copilot・Claude・OpenCodeを区別して返し、未知IDはcapabilityと一致して拒否する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
 // fault = "provider adapterを取り違え、別providerの実行経路を呼び出す"
 // observable = "coding/background adapter identity、未知IDの例外とproviderSupported"
@@ -92,6 +92,7 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
   const codexAdapter = createStubAdapter();
   const copilotAdapter = createStubAdapter();
   const claudeAdapter = createStubAdapter();
+  const opencodeAdapter = createStubAdapter();
 
   assert.equal(
     resolveProviderCodingAdapter({
@@ -99,6 +100,7 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
       codexAdapter,
       copilotAdapter,
       claudeAdapter,
+      opencodeAdapter,
     }),
     codexAdapter,
   );
@@ -108,6 +110,7 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
       codexAdapter,
       copilotAdapter,
       claudeAdapter,
+      opencodeAdapter,
     }),
     copilotAdapter,
   );
@@ -117,6 +120,7 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
       codexAdapter,
       copilotAdapter,
       claudeAdapter,
+      opencodeAdapter,
     }),
     codexAdapter,
   );
@@ -126,21 +130,24 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
       codexAdapter,
       copilotAdapter,
       claudeAdapter,
+      opencodeAdapter,
     }),
     copilotAdapter,
   );
-  assert.equal(resolveProviderCodingAdapter({ providerId: "claude", codexAdapter, copilotAdapter, claudeAdapter }), claudeAdapter);
-  assert.equal(resolveProviderBackgroundAdapter({ providerId: "claude", codexAdapter, copilotAdapter, claudeAdapter }), claudeAdapter);
+  assert.equal(resolveProviderCodingAdapter({ providerId: "claude", codexAdapter, copilotAdapter, claudeAdapter, opencodeAdapter }), claudeAdapter);
+  assert.equal(resolveProviderBackgroundAdapter({ providerId: "claude", codexAdapter, copilotAdapter, claudeAdapter, opencodeAdapter }), claudeAdapter);
+  assert.equal(resolveProviderCodingAdapter({ providerId: "opencode", codexAdapter, copilotAdapter, claudeAdapter, opencodeAdapter }), opencodeAdapter);
+  assert.equal(resolveProviderBackgroundAdapter({ providerId: "opencode", codexAdapter, copilotAdapter, claudeAdapter, opencodeAdapter }), opencodeAdapter);
 
   for (const resolve of [resolveProviderCodingAdapter, resolveProviderBackgroundAdapter]) {
     for (const providerId of [null, undefined]) {
-      assert.equal(resolve({ providerId, codexAdapter, copilotAdapter, claudeAdapter }), codexAdapter);
+      assert.equal(resolve({ providerId, codexAdapter, copilotAdapter, claudeAdapter, opencodeAdapter }), codexAdapter);
     }
     for (const providerId of ["unknown", "custom", "", " codex ", "__proto__", "constructor"]) {
       assert.equal(getProviderRuntimeCapabilities({ providerId }).providerSupported, false);
-      assert.throws(() => resolve({ providerId, codexAdapter, copilotAdapter, claudeAdapter }), /Unsupported provider:/);
+      assert.throws(() => resolve({ providerId, codexAdapter, copilotAdapter, claudeAdapter, opencodeAdapter }), /Unsupported provider:/);
     }
-    for (const providerId of ["codex", "copilot", "claude"]) {
+    for (const providerId of ["codex", "copilot", "claude", "opencode"]) {
       assert.equal(getProviderRuntimeCapabilities({ providerId }).providerSupported, true);
     }
   }
@@ -240,18 +247,18 @@ test("getProviderRuntimeCapabilities は MVP 対象外 provider の support flag
 
 // @test-value v2
 // kind = "contract"
-// claim = "登録済みCodex・Copilot・Claudeはagent runtime binding capabilityをenv transportとして公開する"
+// claim = "登録済みproviderはagent runtime binding capabilityをenv transportとして公開する"
 // oracle = { type = "contract", ref = "src-electron/providers/provider-agent-runtime-binding.ts#getProviderAgentRuntimeBindingCapability" }
-// fault = "登録Claudeのruntime bindingをunsupportedと報告し、agent機能のcontextを渡さない"
+// fault = "登録providerのruntime bindingをunsupportedと報告し、agent機能のcontextを渡さない"
 // observable = "providerごとのagentRuntimeBindingSupportedとagentRuntimeBindingTransport"
 // observation_boundary = "public-boundary"
 // scope = "provider-agent-runtime-binding-capabilities"
 // lifecycle = "permanent"
-// impact = "Claude Agent sessionでagent runtime bindingを利用できず、session contextに基づく機能が失われる"
+// impact = "登録providerのsessionでagent runtime bindingを利用できず、session contextに基づく機能が失われる"
 // distinction = "Provider ID型はruntime transport mappingを表現せず、adapter routing testではcapability出力を検出しない"
 // @end-test-value
 test("getProviderRuntimeCapabilities は確認済みproviderへruntime binding capabilityを公開する", () => {
-  for (const providerId of ["codex", "copilot", "claude"]) {
+  for (const providerId of ["codex", "copilot", "claude", "opencode"]) {
     const capabilities = getProviderRuntimeCapabilities({ providerId });
     assert.equal(capabilities.agentRuntimeBindingSupported, true);
     assert.equal(capabilities.agentRuntimeBindingTransport, "env");

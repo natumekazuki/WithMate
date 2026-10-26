@@ -39,6 +39,8 @@
     "@github/copilot-sdk": "^1.0.11",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@openai/codex": "0.159.0",
+    "@opencode/cli": "2.1.4",
+    "@opencode/client": "2.1.4",
     "@shikijs/core": "^4.4.3",
     "@shikijs/engine-javascript": "^4.4.3",
     "@shikijs/langs": "^4.4.3",
@@ -109,7 +111,8 @@
       "!node_modules/@github/copilot-linux-*/**",
       "!node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**",
       "!node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**",
-      "!node_modules/@anthropic-ai/claude-agent-sdk-linux-*/**"
+      "!node_modules/@anthropic-ai/claude-agent-sdk-linux-*/**",
+      "!node_modules/@opencode/cli-*/**"
     ],
     "asar": true,
     "beforePack": "./scripts/build/before-pack.mjs",

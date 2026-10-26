@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import path from "node:path";
 import { TextDecoder } from "node:util";
-import { spawnOwnedCodexProcess, OwnedCodexProcessAcquisitionError, type OwnedCodexProcessCleanupOwner } from "./owned-process.js";
+import { spawnOwnedProviderProcess as spawnOwnedCodexProcess, OwnedProviderProcessAcquisitionError as OwnedCodexProcessAcquisitionError, type OwnedProviderProcessCleanupOwner as OwnedCodexProcessCleanupOwner } from "../owned-process.js";
 
 export const CODEX_APP_SERVER_ARGUMENTS = ["app-server", "--listen", "stdio://"] as const;
 export type CodexRequestOptions = { signal?: AbortSignal; timeoutMs?: number };

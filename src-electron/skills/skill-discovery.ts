@@ -26,6 +26,7 @@ const WORKSPACE_SKILL_ROOT_CANDIDATES = [
   ".copilot/skills",
   ".codex/skills",
   ".claude/skills",
+  ".opencode/skills",
 ] as const;
 
 const skillRootCache = new Map<string, CachedSkillRoot>();

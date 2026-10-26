@@ -20,11 +20,12 @@ WithMate では provider 実行境界を Main Process に置く。
 
 ## Current Runtime
 
-runtimeはshared contractの上に次の3 adapterを持つ。
+runtimeはshared contractの上に次の4 adapterを持つ。
 
 - `CodexAdapter`
 - `CopilotAdapter`
 - `ClaudeAdapter`
+- `OpenCodeAdapter`
 
 対応ProviderとAdapterの対応表は`src-electron/providers/provider-support.ts`を正本とし、capability、Coding / Backgroundの解決、Session launchで共有する。未知のProvider IDは実行前に明示的に拒否し、Codexへ置き換えない。実行用catalogは指定Providerとの完全一致で解決し、未登録の場合も別Providerへfallbackしない。Adapter・実行用catalogのProvider指定を省略した場合だけCodexを既定とする。
 
@@ -83,6 +84,16 @@ providerごとの差は次。
   - background planeは別の非永続sessionで構造化JSONを要求し、tools / MCP / hooksを無効化する。`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合、実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
   - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。quotaはモデルを実行しないcontrol APIで取得し、Mainの非永続cacheへ保持する。token / cache usageはturn単位で扱う。API換算USDは実請求額として表示しない。backgroundの補助処理も解決された認証先の利用枠を消費する。同じ契約枠になる条件は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
 
+- `OpenCodeAdapter`
+  - 公式CLI／`@opencode/client`を`2.1.4`へexact pinし、turnごとに`serve --stdio --hostname 127.0.0.1 --port 0`を起動する。stdioの起動通知でloopback URLを検証し、Mainが生成したpasswordによるHTTP認証後にCLI版を照合する。Codexと共通の`providers/owned-process.ts`がWindows Job Object／POSIX process groupを所有し、cleanup未確認中は同一Session・workspace・threadの再実行を止める
+  - `OPENCODE_DB`は`<userData>/providers/opencode/<build channel>/opencode.db`へ固定し、Main内でnative DB bootstrapを直列化する。DBの所有者はOpenCodeであり、adapterから直接SQLを実行しない。foregroundはPATH／HOMEとnative global／project設定、AGENTS、skills、第三者MCPの読込を維持する
+  - 共通promptの`logicalPrompt.composedText`を毎turn送る。保存済みの明示thread IDを取得し、root・workspace・既存incarnation由来のownerを照合する。未配送inboxは同ownerとrequest IDを確認できる旧入力だけをcancelし、未知ownerや取消未確認はエラーにする。入力の自動再送やstale threadの自動resetはしない
+  - event接続を確認してからpromptを1回だけ送る。admissionを完了とせず、当該入力の配送、root execution終端とmessageのidle outcomeを照合する。text deltaは確定messageで補正し、tool・usageはnative IDで重複を除く。失敗・取消では取得済み本文・操作・threadをpartial resultとして返す
+  - catalogの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
+  - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
+  - token／contextは実取得値を投影し、quotaは`null`とする。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
+  - backgroundは別owned processからstatelessな`generate.text()`を呼ぶ。Session・foreground MCP・agent toolsを使わず、専用config directoryとproject／Claude設定の無効化を適用する。返却text全体をJSON parseし、共有validatorでschemaを検証する`validated_json`であり、未知schema制約も拒否する。`threadId`／`usage`は`null`。既存post-turn Affectのtrigger・schema・settlementを維持し、通常Memoryの背景抽出は追加しない
+
 ## Plane Separation
 
 ### Managed HTTP MCP
@@ -92,6 +103,7 @@ Coding planeのMemory／CharacterとGlossaryは、Mainが所有する1つのloca
 - Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。
 - Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認した`withmate-memory`／`withmate-glossary`だけを当threadで無効化し、`withmate-memory-http`／`withmate-glossary-http`を登録する。第三者MCPと永続configは変更しない。
 - CopilotとClaudeは当turnのnative session／query optionsへ標準managed名のHTTP設定を渡す。既存native設定の探索と保存済みthreadのresumeは維持する。
+- OpenCodeは確定workspaceのlocationへ`mcp.add`で当turnのHTTP設定を登録し、必要なmanaged MCPの接続を`mcp.list`で確認してからpromptを送る。第三者MCPと永続設定は変更しない。
 - tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。background planeはforeground tokenを大小文字を区別せずenvから除去する。
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
 - HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。operator CLIとadmission付きagent CLI fallbackは別経路で維持する。
@@ -135,6 +147,7 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
    - `CodexAdapter`: file / folderのworkspace外accessはsession metadata `allowedAdditionalDirectories`からsandbox policyの`writableRoots`へ変換し、画像は`localImage` inputとして`turn/start`へ渡す。model、effort、approval、sandbox、service tier、reviewerは送信時の検証済み値を使う
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時は診断ログに必要なerror metadataを残す
    - `ClaudeAdapter`: 共通prompt、検証済み添付、実行optionをSDK `query()`へ渡す。`resume`は保存済みの明示session IDだけを使い、承認・質問を共通pending UIへ返す
+   - `OpenCodeAdapter`: 共通promptとfile URI、検証済みmodel／variantをnative Sessionへ渡す。明示threadと所有metadataを照合し、承認・formを共通pending UIへ返す
 8. provider ownerがstream eventからsanitized live stateとprovider telemetryを組み立て、Main ProcessがIPCでSession Windowへ中継する。Codexのprojectionは共有Workerが所有し、transportと制御requestはMain Processに残す
    - live state には `approvalRequest` と `elicitationRequest` を含められる
    - quota telemetry は provider 単位、context telemetry は session 単位で memory cache する
@@ -155,6 +168,8 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
   - `CopilotAdapter` はfile / folderに加えてimageも`file` attachmentとして扱う
 - `Claude`
   - file / folderは検証済みpathを入力へ渡し、imageはSDKの画像入力へ変換する
+- `OpenCode`
+  - file / folder / imageをfile URIへ変換する。image／PDF／textの入力modalityをnative model能力と照合し、非対応添付を拒否する
 
 workspace 外 path の access control は provider 任せにせず、WithMate が session metadata `allowedAdditionalDirectories` を正本にして先に判定する。
 
@@ -166,13 +181,14 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 
 ## Thread Management
 
-- sessionごとにprovider固有の会話IDを保持する。Codexはturnごとの新しいApp Serverで保存済み`threadId`を`thread/resume`へ渡し、未作成時は`thread/start`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う
+- sessionごとにprovider固有の会話IDを保持する。Codexはturnごとの新しいApp Serverで保存済み`threadId`を`thread/resume`へ渡し、未作成時は`thread/start`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う。OpenCodeは明示IDの`session.get()`、未作成時は`session.create()`を使う
 - Codexの`thread/resume`には`excludeTurns: true`を指定し、WithMateが利用しない過去turnの一括返送を省く。Codex側の会話履歴と保存済みIDは維持し、再開後の通知を処理する。新規`thread/start`には指定しない
 - 実行後にproviderが返した会話IDをsession storeへ保存する
 - model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は送信された runtime parameter で既存 thread / session の resume を試す
 - Codexは毎turnの`thread/start` / `thread/resume`と`turn/start`へ送信時の実行optionを渡す
 - Codex / Copilotのcoding credentialは`AppSettings.codingProviderSettings[providerId].apiKey`から解決する。Codexは設定値を優先し、未設定時は継承した`CODEX_API_KEY`を使う。キーがある場合だけApp Serverを`cli_auth_credentials_store="ephemeral"`で起動し、initialize後の`account/login/start`へ渡す。認証はprocess内に限定し、保存済みCLI認証を変更しない。キーがなければ既存CLI認証を使う。CopilotはSDK clientへ渡す。Claudeは既存CLI認証をSDKに任せ、WithMateのcredential設定へ取り込まない
 - coding credential が変わった provider では既存 thread / adapter cache を再利用しないため、対象 session の `threadId` を空に戻す
+- OpenCodeのGo用keyは`codingProviderSettings.opencode.apiKey`を優先し、未設定時は継承した`OPENCODE_API_KEY`を使う。子processのenvだけへ投影し、global `process.env`は書き換えない
 
 理由:
 - provider prompt は過去の `session.messages` を毎 turn 再送せず、会話継続は provider 側の `threadId` に依存するため、model / reasoning depth 変更だけで `threadId` を消すと履歴が途切れる
@@ -212,6 +228,7 @@ approval mode は WithMate が対応する Codex policy 値を正本にする。
 - CodexAdapterは`approvalMode`をApp Serverの`approvalPolicy`へそのまま渡す
 - CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` を Session UI の approval card 中継として扱う
 - ClaudeAdapterは`on-request`だけを選択可能にし、SDKのdefault permissionと共通approval / elicitation UIで処理する
+- OpenCodeAdapterは`on-request`（既定）と`never`だけを選択可能にし、native askへそれぞれ共通UIの判断／今回だけ許可を返す。nativeの明示denyを上書きしない
 - UIはpolicy値をそのまま表示せず、`Auto Run` / `Provider Controlled` / `Safety Focused`のdisplay labelへ変換する。保存・API・adapter境界ではpolicy値をrawのまま保持し、providerごとに出すchoicesを分ける
 
 session作成、永続化、最小turn、artifact表示、resume復元ではpolicy値を追跡し、providerごとの差異はprovider-specific choicesとadapter実装で吸収する。
@@ -318,7 +335,7 @@ runの解放は先行commandの後に配送し、Workerのowner削除応答かWo
 
 - provider 実行失敗時は Main Process が session を `runState=error` へ更新する
 - Renderer に raw stack trace は出さず、UI 向けの失敗メッセージへ整形する
-- Codexの失敗時は保存済み`threadId`を保持し、resume拒否を新threadの成功へ置き換えない。他providerのstale session回復は各adapterの契約に従う
+- Codex／OpenCodeの失敗時は保存済み`threadId`を保持し、resume拒否を新threadの成功へ置き換えない。他providerのstale session回復は各adapterの契約に従う
 - ユーザーキャンセル時は最小turnに `phase=canceled` を記録する
 - setup 中の cancel intent も保持し、setup dependency または provider が abort 後に settle しない場合は cancel grace 後に呼び出しを収束させる。元処理が実際に終了するまでは同一 session の再送を拒否する
 - Main は取消受付を live run の `cancellationState = requested`、cancel grace 後も未終了の処理を `terminating` として投影する。terminal Session の保存が `idle` を返しても取消待ちを解除せず、元処理と終端保存が終了して admission guard が解放された時に live 取消状態を解除・通知する。重複取消は同一 turn の要求として扱う
@@ -348,13 +365,14 @@ runの解放は先行commandの後に配送し、Workerのowner削除応答かWo
 
 - skill 探索元は次を使う
   - `codingProviderSettings[providerId].skillRootPath` と任意の `skillRelativePath` から解決した provider skill root
-  - workspace 標準 skill roots (`skills`, `.github/skills`, `.copilot/skills`, `.codex/skills`, `.claude/skills`)
+  - workspace 標準 skill roots (`skills`, `.github/skills`, `.copilot/skills`, `.codex/skills`, `.claude/skills`, `.opencode/skills`)
 - `codingProviderSettings[providerId].instructionRelativePath` は provider ごとの instruction file 設定として保持するが、skill 探索やprompt compositionでは参照しない
 - 同名 skill は workspace 優先で dedupe する
 - adapter は選択済み skill を provider ごとの prompt / option へ変換する
   - Codex: `$skill-name` mention
   - Copilot: explicit skill directive を prompt へ付加
   - Claude: 選択済みskillのpathを明示するdirectiveをpromptへ付加する。設定したskill root全体をSDKのnative Skill探索元として追加しない
+  - OpenCode: skill名のdirectiveをpromptへ付加する。nativeのSkill探索はOpenCodeの設定に従い、任意同期先を自動登録しない
 - `agent` は provider 専用 command とする
   - Codex: 未対応
   - Copilot: custom agent selection を session metadata に保存し、送信時に固定した選択値と `~/.copilot/agents`・workspace `.github/agents` から探索した agent catalog を adapter が `customAgents` / `agent` に変換する

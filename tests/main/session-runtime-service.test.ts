@@ -1715,6 +1715,7 @@ describe("SessionRuntimeService", () => {
       codexAdapter: adapter,
       copilotAdapter: adapter,
       claudeAdapter: adapter,
+      opencodeAdapter: adapter,
       getModelCatalog: () => catalog,
       ensureModelCatalogSeeded: () => catalog,
     });
@@ -4275,105 +4276,108 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "not_foundを返したCodex turnは一回のerror Sessionとして返り、thread invalidationを一回依頼する"
+  // claim = "not_foundを返したCodex/OpenCode turnは再送せず、既知threadを保持したerror Sessionとして返る"
   // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal catch / invalidateProviderSessionThreadBestEffort; docs/design/provider-adapter.md: Error Handling" }
-  // fault = "Codexの汎用not_found errorを自動再実行する、error Sessionを保存しない、またはthread invalidationを省く"
-  // observable = "Codex adapter呼出数、返却SessionのrunState/runFailure、Session保存数とinvalidation対象"
+  // fault = "汎用not_found errorで入力を自動再送する、既知threadを消す、またはerror Session保存やinvalidationを省く"
+  // observable = "adapter呼出数、返却SessionのthreadId/runState/runFailure、Session保存数とinvalidation対象"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService provider error classification"
   // lifecycle = "permanent"
   // @end-test-value
   it("not_found 単独 code の provider error では internal retry しない", async () => {
-    const session = createSession({ provider: "codex", threadId: "thread-stale" });
-    const storedSessions: Session[] = [];
-    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    let attempt = 0;
+    for (const providerId of ["codex", "opencode"]) {
+      const session = createSession({ provider: providerId, threadId: "thread-stale" });
+      const storedSessions: Session[] = [];
+      const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+      let attempt = 0;
 
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        attempt += 1;
-        const error = new ProviderTurnError("resource not found", createPartialResult(), false) as ProviderTurnError & { code?: string };
-        error.code = "not_found";
-        throw error;
-      },
-    };
+      const adapter: ProviderCodingAdapter = {
+        composePrompt() {
+          return {
+            systemBodyText: "system",
+            inputBodyText: "input",
+            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+            imagePaths: [],
+            additionalDirectories: [],
+          };
+        },
+        async getProviderQuotaTelemetry() {
+          return null;
+        },
+        async invalidateSessionThread() {},
+        async invalidateAllSessionThreads() {},
+        async runSessionTurn() {
+          attempt += 1;
+          const error = new ProviderTurnError("resource not found", createPartialResult(), false) as ProviderTurnError & { code?: string };
+          error.code = "not_found";
+          throw error;
+        },
+      };
 
-    const service = createTestRuntime({
-      getSession() {
-        return session;
-      },
-      upsertSession(next) {
-        storedSessions.push(next);
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createSessionTurn(input) {
-        return createSessionTurnBase(input);
-      },
-      updateSessionTurn() {},
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      invalidateProviderSessionThread(providerId, retrySessionId) {
-        invalidated.push({ providerId, sessionId: retrySessionId });
-      },
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
+      const service = createTestRuntime({
+        getSession() {
+          return session;
+        },
+        upsertSession(next) {
+          storedSessions.push(next);
+          return next;
+        },
+        async resolveComposerPreview() {
+          return { attachments: [], errors: [] };
+        },
+        async resolveSessionCharacter() {
+          return createCharacter();
+        },
+        getAppSettings() {
+          return normalizeAppSettings({ codingProviderSettings: { [providerId]: { enabled: true } } });
+        },
+        resolveProviderCatalog() {
+          return { snapshot: { revision: 1, providers: [createProviderCatalog(providerId)] }, provider: createProviderCatalog(providerId) };
+        },
+        getProviderCodingAdapter() {
+          return adapter;
+        },
+        getSessionMemory(current) {
+          return createSessionMemory(current.id);
+        },
+        resolveProjectMemoryEntriesForPrompt() {
+          return [];
+        },
+        createSessionTurn(input) {
+          return createSessionTurnBase(input);
+        },
+        updateSessionTurn() {},
+        setLiveSessionRun() {},
+        getLiveSessionRun() {
+          return null;
+        },
+        async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+          return "approve" as const;
+        },
+        async waitForElicitationResponse() {
+          return { action: "cancel" } as const;
+        },
+        setProviderQuotaTelemetry() {},
+        setSessionContextTelemetry() {},
+        invalidateProviderSessionThread(providerId, retrySessionId) {
+          invalidated.push({ providerId, sessionId: retrySessionId });
+        },
+        scheduleProviderQuotaTelemetryRefresh() {},
+        broadcastLiveSessionRun() {},
+        resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest() {},
+        currentTimestampLabel,
+      });
 
-    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
+      const result = await service.runSessionTurn(session.id, { executionOptions: { ...TEST_EXECUTION_OPTIONS, approvalMode: "on-request" }, userMessage: "お願いします" });
 
-    assert.equal(attempt, 1);
-    assert.equal(result.runState, "error");
-    assert.equal(result.messages.at(-1)?.runFailure, "resource not found");
-    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
-    assert.equal(storedSessions.length, 2);
+      assert.equal(attempt, 1);
+      assert.equal(result.runState, "error");
+      assert.equal(result.messages.at(-1)?.runFailure, "resource not found");
+      assert.equal(result.threadId, "thread-stale");
+      assert.deepEqual(invalidated, [{ providerId, sessionId: session.id }]);
+      assert.equal(storedSessions.length, 2);
+    }
   });
 
   // @test-value v2

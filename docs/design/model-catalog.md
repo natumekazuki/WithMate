@@ -106,6 +106,7 @@ SQLite では次の 4 テーブルで保持する。
 - app 起動時に active catalog が無ければ、`public/model-catalog.json` を import する
 - seed で作られた revision は `source = bundled`
 - ユーザー import で作られた revision は `source = imported`
+- active catalogに不足する同梱providerだけを補完し、既存providerのユーザー編集は保持する。OpenCodeのprovider IDは`opencode`とし、初期modelは`opencode-go/glm-5.3`／`opencode-go/glm-5.3-flash`、Depthは`low / high / max`、既定はGLM-5.3／`high`とする
 
 ## UI Policy
 
@@ -132,6 +133,8 @@ adapter 実行時は Send が捕捉した `executionOptions.catalogRevision` と
 - model が見つからなければそのままエラーにする
 - depth が model catalog の定義に無ければそのままエラーにする
 - 実 provider 側でさらに拒否された場合も、そのまま実行エラーとして扱う
+- OpenCodeはmodel IDの最初の`/`でnative provider／modelを分け、残りの`/`はmodel IDに保持する。Depthは同名のnative variantへ渡し、`#variant`をmodel IDへ保存しない。foreground／backgroundともnative model一覧で有効性とvariantを検証し、foregroundでは添付のinput modalityも検証する。別modelやDepthへfallbackしない
+- OpenCode Goの両modelはWindows x64・CLI／client `2.1.4`のnative一覧でenabledと`low / high / max`を確認し、生成は`high`の通常turn／背景Affectで確認している。`low / max`の生成は未確認であり、同梱値を全利用環境の保証とはしない。利用環境のnative一覧と実際の生成で拒否され得る
 
 ## Import / Export Policy
 
@@ -146,7 +149,7 @@ adapter 実行時は Send が捕捉した `executionOptions.catalogRevision` と
 
 - SDK / CLI から model catalog を自動取得すること
 - remote catalog 配信を前提にすること
-- provider ごとの capability probe を runtime で行うこと
+- 全provider共通のcapability探索・catalog自動同期基盤をruntimeへ追加すること。OpenCodeの選択済みmodel／variant／添付能力の実行前検証は行うが、catalogの選択肢を書き換えない
 
 ## References
 

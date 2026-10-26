@@ -86,6 +86,8 @@ import {
 import { CodexAdapter } from "./providers/codex/codex-adapter.js";
 import { CopilotAdapter } from "./providers/copilot/copilot-adapter.js";
 import { ClaudeAdapter } from "./providers/claude/claude-adapter.js";
+import { OpenCodeAdapter } from "./providers/opencode/opencode-adapter.js";
+import { OpenCodeBackgroundAdapter } from "./providers/opencode/opencode-background.js";
 import { assertCapturedComposerAttachmentsAvailable, resolveComposerPreview } from "./files/composer-attachments.js";
 import { areDirectoryPathsEquivalent } from "./files/additional-directories.js";
 import { ModelCatalogStorage } from "./settings/model-catalog-storage.js";
@@ -375,6 +377,15 @@ const claudeAdapter = new ClaudeAdapter({
     kind: "provider",
     process: "main",
   }),
+});
+const opencodeDatabasePath = path.join(fixedUserDataPath, "providers", "opencode", runtimeBuildChannel, "opencode.db");
+const opencodeAdapter = new OpenCodeAdapter({
+  databasePath: opencodeDatabasePath,
+  backgroundAdapter: new OpenCodeBackgroundAdapter({
+    databasePath: opencodeDatabasePath,
+    log: (input) => writeAppLog({ ...input, kind: "provider", process: "main" }),
+  }),
+  log: (input) => writeAppLog({ ...input, kind: "provider", process: "main" }),
 });
 const mainLogComposition = new MainLogComposition(
   writeAppLog,
@@ -1815,6 +1826,7 @@ function requireMainProviderFacade(): MainProviderFacade {
       codexAdapter,
       copilotAdapter,
       claudeAdapter,
+      opencodeAdapter,
       revokeProviderExecution: (sessionId, providerId) =>
         agentRuntimeBindingRegistry.revokeProviderExecution(sessionId, providerId),
       revokeAllProviderExecutions: () => agentRuntimeBindingRegistry.revokeAll(),

@@ -1159,6 +1159,11 @@ export class SessionRuntimeService {
         allowedAdditionalDirectories: [...capturedAdditionalDirectories] };
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
+        runtimeOwner: {
+          kind: await this.deps.isAuxiliarySession?.(sessionId) ? "auxiliary" : "main",
+          id: sessionId,
+          incarnationId: getSessionIncarnationId(turnSession),
+        },
         executionOptions,
         sessionFolderPath: await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
         sessionMemory,
@@ -1268,7 +1273,7 @@ export class SessionRuntimeService {
         } catch (error) {
           const providerTurnError = error instanceof ProviderTurnError ? error : null;
           const shouldRetry =
-            activeRunningSession.provider !== "codex" &&
+            activeRunningSession.provider !== "codex" && activeRunningSession.provider !== "opencode" &&
             !didInternalRetry &&
             !isCanceledRunError(error) &&
             !(await this.deps.isAuxiliarySession?.(sessionId)) &&
@@ -1409,13 +1414,13 @@ export class SessionRuntimeService {
         this.deps.getLiveSessionRun(sessionId)?.threadId,
         activeRunningSession.threadId,
       );
-      const shouldResetFailedThread = activeRunningSession.provider !== "codex" && shouldResetFailedSessionThread(
+      const shouldResetFailedThread = activeRunningSession.provider !== "codex" && activeRunningSession.provider !== "opencode" && shouldResetFailedSessionThread(
         error,
         activeRunningSession.threadId,
         partialResult,
         canceled,
       );
-      const nextSessionThreadId = activeRunningSession.provider === "codex" && activeRunningSession.threadId
+      const nextSessionThreadId = (activeRunningSession.provider === "codex" || activeRunningSession.provider === "opencode") && activeRunningSession.threadId
         ? activeRunningSession.threadId
         : shouldResetFailedThread ? "" : failedTurnThreadId;
       const completedAt = new Date().toISOString();

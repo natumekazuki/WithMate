@@ -129,7 +129,7 @@ export function getProviderAgentRuntimeBindingCapability(
 ): ProviderAgentRuntimeBindingCapability {
   return {
     providerId,
-    transport: providerId === "codex" || providerId === "copilot" || providerId === "claude" ? "env" : "unsupported",
+    transport: providerId === "codex" || providerId === "copilot" || providerId === "claude" || providerId === "opencode" ? "env" : "unsupported",
   };
 }
 

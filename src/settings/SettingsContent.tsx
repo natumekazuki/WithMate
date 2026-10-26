@@ -83,6 +83,7 @@ export type HomeSettingsContentProps = {
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
+  onChangeProviderApiKey: (providerId: string, apiKey: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
   onChangeProviderInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
@@ -170,6 +171,7 @@ export function HomeSettingsContent({
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeProviderEnabled,
+  onChangeProviderApiKey,
   onChangeProviderSkillRootPath,
   onChangeProviderSkillRelativePath,
   onChangeProviderInstructionRelativePath,
@@ -384,10 +386,25 @@ export function HomeSettingsContent({
                           Uses local Claude Code authentication and billing settings. Sign in with the official CLI before starting a session.
                         </p>
                       ) : null}
+                      {provider.id === "opencode" ? (
+                        <label className="settings-provider-input">
+                          <span>OpenCode Go API Key</span>
+                          <input
+                            type="password"
+                            value={settings.apiKey}
+                            onChange={(event) => onChangeProviderApiKey(provider.id, event.target.value)}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </label>
+                      ) : null}
                       <div className="settings-provider-file-settings">
                         <div>
                           <strong>{SETTINGS_PROVIDER_FILE_SETTINGS_LABEL}</strong>
                           <p className="settings-help">{SETTINGS_PROVIDER_FILE_SETTINGS_HELP}</p>
+                          {provider.id === "opencode" ? (
+                            <p className="settings-help">Use the OpenCode config root with AGENTS.md and skills/&lt;name&gt;/SKILL.md. Custom paths are not registered with OpenCode automatically.</p>
+                          ) : null}
                         </div>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL}</span>

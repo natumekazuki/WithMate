@@ -26,6 +26,23 @@ test("Claude は承認待ちのみを選択でき、新規Sessionの既定値も
   assert.equal(getDefaultApprovalModeForProvider("codex"), "untrusted");
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeの承認選択肢はon-requestとneverで、既定値はon-requestになる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
+// fault = "native API非対応のmodeを選べるか、未承認で自動実行を既定にする"
+// observable = "approval option value一覧とprovider既定mode"
+// observation_boundary = "public-boundary"
+// scope = "opencode-approval-options"
+// lifecycle = "permanent"
+// impact = "承認の意味がnative runtimeと一致せず、意図しない自動実行または実行失敗になる"
+// distinction = "共通approval型は全providerのmodeを許すためprovider固有の許可集合を検出できない"
+// @end-test-value
+test("OpenCode はProvider ControlledとAuto Runを提供し承認待ちを既定にする", () => {
+  assert.deepEqual(getApprovalOptionsForProvider("opencode").map((option) => option.value), ["never", "on-request"]);
+  assert.equal(getDefaultApprovalModeForProvider("opencode"), "on-request");
+});
+
 test("getSandboxOptionsForProvider は Codex provider に Sandbox 選択肢を返す", () => {
   const codexOptions = getSandboxOptionsForProvider("codex");
 

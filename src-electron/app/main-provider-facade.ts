@@ -15,6 +15,7 @@ type MainProviderFacadeDeps = {
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
   claudeAdapter: ProviderTurnAdapter;
+  opencodeAdapter: ProviderTurnAdapter;
   revokeProviderExecution?(sessionId: string, providerId: string): void;
   revokeAllProviderExecutions?(): void;
 };
@@ -44,6 +45,7 @@ export class MainProviderFacade {
       codexAdapter: this.deps.codexAdapter,
       copilotAdapter: this.deps.copilotAdapter,
       claudeAdapter: this.deps.claudeAdapter,
+      opencodeAdapter: this.deps.opencodeAdapter,
     });
   }
 
@@ -53,6 +55,7 @@ export class MainProviderFacade {
       codexAdapter: this.deps.codexAdapter,
       copilotAdapter: this.deps.copilotAdapter,
       claudeAdapter: this.deps.claudeAdapter,
+      opencodeAdapter: this.deps.opencodeAdapter,
     });
   }
 
@@ -78,6 +81,7 @@ export class MainProviderFacade {
       this.deps.codexAdapter.invalidateAllSessionThreads(),
       this.deps.copilotAdapter.invalidateAllSessionThreads(),
       this.deps.claudeAdapter.invalidateAllSessionThreads(),
+      this.deps.opencodeAdapter.invalidateAllSessionThreads(),
     ]);
   }
 }

@@ -16,7 +16,7 @@
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` はfieldsetの内外でsection間の余白を24pxに揃え、直前の入力欄やfocus枠と区切り線を離す。内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - `Session Turn Notification`はturn完了・失敗とCodexの構造化質問通知に共通で適用する。`Notification Response Preview`は成功したturnの完了通知だけを対象とし、質問文や入力値は表示しない。通知の条件と復帰先は[Desktop UI](desktop-ui.md#windows-session-notifications)を参照する
-- `Session Approval Notification`はMain／AuxiliaryのCodex・Copilot・Claudeの承認待ち通知を独立して切り替える。既定値は有効で、通知内容はSession名と承認待ちだけとし、承認内容やwarning、pathは表示しない
+- `Session Approval Notification`はMain／AuxiliaryのCodex・Copilot・Claude・OpenCodeの承認待ち通知を独立して切り替える。既定値は有効で、通知内容はSession名と承認待ちだけとし、承認内容やwarning、pathは表示しない
 - file picker / save dialog は Main Process 側で開く
 - current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
 
@@ -53,6 +53,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
     - `Tool Call Presence`
   - `Coding Agent Providers`
     - provider 名を左、enable checkbox を右に置く
+    - OpenCodeの`OpenCode Go API Key`をpassword inputで編集する
     - provider ごとの `Provider File Settings`
       - `Root Directory`
       - `Skill Relative Path`
@@ -87,13 +88,15 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - `Conversation Timing` は Copilot の system session cache を変えず、system 側の3項目は合成された system message の変更として扱う
 - `Launch At Login` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
-- Claude Agentは初期状態で無効とし、有効化した場合だけ新規Sessionのprovider候補に出す。Codexは既定のproviderとして維持する
+- Claude AgentとOpenCodeは初期状態で無効とし、有効化した場合だけ新規Sessionのprovider候補に出す。Codexは既定のproviderとして維持する
+- OpenCodeのGo用keyは`codingProviderSettings.opencode.apiKey`へ保存し、未設定時は実行環境の`OPENCODE_API_KEY`を使う。入力は既存の設定draft／保存・provider変更通知・実行中判定・thread invalidationを利用し、catalogや履歴へは含めない。独自OAuthやaccount選択は提供しない
 - coding provider ごとの `Provider File Settings`
   - `Root Directory` は provider ごとの file 設定の基準 directory として保持される
   - `Skill Relative Path` がある場合は root 配下の相対 path として解決される
   - `Instruction Relative Path` は root 配下の instruction file 設定として保持される
   - runtimeのskill探索にはskill folderを使い、instruction fileは設定値として保持する
   - Claude Agentで設定したskill folderも既存のWithMate探索へ使うが、SDKのnative Skill探索元として自動登録しない。選択したskillだけをpathのdirectiveでturnへ渡す。Claude CLIの本人ログイン・native設定・repositoryの`CLAUDE.md`と`.claude/skills`はSDKが読み込み、Settingsはcredentialや独自OAuthを提供しない
+  - OpenCodeではnative config rootの`AGENTS.md`と`skills/<name>/SKILL.md`を読込先として案内する。任意の同期先をOpenCode設定へ自動登録せず、foregroundのnative設定読込を維持する。Memory用Skill／固定指示は同期しない
 - Diagnostics の folder open
 - Diagnostics の Memory V6 read-only summary
   - runtime API は `running` / `stopped` / `failed` と、application instance、runtime generation、build channel、discovery publish状態を表示する

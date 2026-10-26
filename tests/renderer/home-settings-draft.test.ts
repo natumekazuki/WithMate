@@ -409,6 +409,29 @@ describe("home-settings-draft", () => {
     assert.equal(next.memoryFileQuotaBytes, 2048 * 1024 * 1024);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "OpenCodeのenableとGo key編集handlerは同じdraftへ累積し他providerの設定を保持する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
+  // fault = "API keyを別providerへ保存するかenableや既存設定を巻き戻す"
+  // observable = "Settings画面向けhandler適用後のcodingProviderSettings"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-opencode-credentials-draft"
+  // lifecycle = "permanent"
+  // impact = "credentialが誤ったproviderへ渡るかOpenCode有効化と認証設定が保存できない"
+  // distinction = "pure updaterでは画面handlerから適切なproviderと最新draftへ接続されることを確認できない"
+  // @end-test-value
+  it("OpenCodeを有効化しGo keyを他provider設定と独立して編集できる", () => {
+    const initialDraft = createDefaultAppSettings();
+    const state = createDraftTracker(initialDraft);
+    const handlers = buildSettingsDraftHandlers({ setSettingsDraft: state.setSettingsDraft });
+    handlers.onChangeProviderEnabled("opencode", true);
+    handlers.onChangeProviderApiKey("opencode", "go-key-fixture");
+    assert.equal(state.draft.codingProviderSettings.opencode?.enabled, true);
+    assert.equal(state.draft.codingProviderSettings.opencode?.apiKey, "go-key-fixture");
+    assert.deepEqual(state.draft.codingProviderSettings.codex, initialDraft.codingProviderSettings.codex);
+  });
+
   it("glossary proactive create limitは0から100へ収め、空入力を無効値として保持する", () => {
     const draft = createDefaultAppSettings();
 

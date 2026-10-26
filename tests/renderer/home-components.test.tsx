@@ -100,6 +100,7 @@ describe("HomeSettingsContent", () => {
       onChangeGlossaryProactiveCreateLimit={noOp}
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
+      onChangeProviderApiKey={noOp}
       onChangeProviderSkillRootPath={noOp}
       onChangeProviderSkillRelativePath={noOp}
       onChangeProviderInstructionRelativePath={noOp}
@@ -298,6 +299,39 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Root Directory"));
     assert.ok(html.includes("Skill Relative Path"));
     assert.ok(html.includes("Instruction Relative Path"));
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "OpenCodeのprovider cardは保存済みGo keyをpassword入力で編集しnative file設定先を案内する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
+  // fault = "Go key入力がない、平文入力になる、または別providerのkeyを表示する"
+  // observable = "OpenCode cardのlabel、input type/value、native path案内"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-opencode-provider-card"
+  // lifecycle = "permanent"
+  // impact = "Go keyを設定できずOpenCodeを開始できないか、画面で資格情報が露出する"
+  // distinction = "設定型とdraft単体testでは実際のprovider cardのinput属性・表示を確認できない"
+  // @end-test-value
+  it("OpenCodeのGo keyとnative読込先をprovider cardに表示する", () => {
+    const draft = createDefaultAppSettings();
+    draft.codingProviderSettings.opencode = { enabled: true, apiKey: "go-key-fixture", skillRootPath: "" };
+    const catalog: ModelCatalogSnapshot = {
+      revision: 2,
+      providers: [{ id: "opencode", label: "OpenCode", defaultModelId: "opencode-go/glm-5.3", defaultReasoningEffort: "high", models: [{ id: "opencode-go/glm-5.3", label: "GLM-5.3", reasoningEfforts: ["low", "high", "max"] }] }],
+    };
+    const html = renderSettings({ settingsDraft: draft, providerSettingRows: buildHomeProviderSettingRows(catalog, draft) });
+    const dom = new JSDOM(html);
+    try {
+      const card = dom.window.document.querySelector(".settings-provider-card")!;
+      const label = [...card.querySelectorAll("label")].find((element) => element.textContent?.includes("OpenCode Go API Key"));
+      const input = label?.querySelector("input");
+      assert.equal(input?.type, "password");
+      assert.equal(input?.value, "go-key-fixture");
+      assert.match(card.textContent ?? "", /OpenCode config root with AGENTS\.md and skills\/<name>\/SKILL\.md/);
+    } finally {
+      dom.window.close();
+    }
   });
 
   // @test-value v2

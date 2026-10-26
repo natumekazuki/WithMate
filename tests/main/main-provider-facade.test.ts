@@ -52,6 +52,10 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
     claudeAdapter: claudeAdapter as never,
+    opencodeAdapter: {
+      invalidateSessionThread: async (sessionId: string) => { calls.push(`opencode:${sessionId}`); },
+      invalidateAllSessionThreads: async () => { calls.push("opencode:all"); },
+    } as never,
     revokeProviderExecution(sessionId, providerId) {
       calls.push(`binding:${providerId}:${sessionId}`);
     },
@@ -87,6 +91,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
   await facade.invalidateProviderSessionThread("claude", "s-claude");
   await facade.resetProviderSessionThread("codex", "s-retry");
   await facade.invalidateProviderSessionThread("codex", "s-2");
+  await facade.invalidateProviderSessionThread("opencode", "s-opencode");
   await facade.invalidateAllProviderSessionThreads();
 
   assert.equal(resolved.provider.id, "copilot");
@@ -94,12 +99,14 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
   assert.deepEqual(calls.slice(2, 4), ["binding:claude:s-claude", "claude:s-claude"]);
   assert.deepEqual(calls.slice(4, 5), ["codex:s-retry"]);
   assert.deepEqual(calls.slice(5, 7), ["binding:codex:s-2", "codex:s-2"]);
+  assert.deepEqual(calls.slice(7, 9), ["binding:opencode:s-opencode", "opencode:s-opencode"]);
   const callIndex = (value: string) => (calls as string[]).indexOf(value);
   const revokeAllIndex = callIndex("binding:all");
   assert.ok(revokeAllIndex >= 0);
   assert.ok(revokeAllIndex < callIndex("codex:all"));
   assert.ok(revokeAllIndex < callIndex("copilot:all"));
   assert.ok(revokeAllIndex < callIndex("claude:all"));
+  assert.ok(revokeAllIndex < callIndex("opencode:all"));
 });
 
 // @test-value v2
@@ -122,6 +129,7 @@ test("MainProviderFacade の reset は adapter の reject を伝播する", asyn
     codexAdapter: { invalidateSessionThread: async () => { throw error; } } as never,
     copilotAdapter: { invalidateSessionThread: async () => undefined } as never,
     claudeAdapter: { invalidateSessionThread: async () => undefined } as never,
+    opencodeAdapter: { invalidateSessionThread: async () => undefined } as never,
   });
 
   await assert.rejects(() => facade.resetProviderSessionThread("codex", "s-retry"), (actual) => actual === error);
@@ -170,6 +178,7 @@ test("MainProviderFacade は未対応 provider の runtime capability を codex 
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
     claudeAdapter: { getBackgroundStructuredPromptPolicy: () => ({}) } as never,
+    opencodeAdapter: { getBackgroundStructuredPromptPolicy: () => ({}) } as never,
   });
 
   const capabilities = facade.getProviderRuntimeCapabilities("custom");

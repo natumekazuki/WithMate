@@ -22,6 +22,11 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
+  runtimeOwner?: {
+    kind: "main" | "auxiliary";
+    id: string;
+    incarnationId: string;
+  };
   executionOptions: SessionExecutionOptions;
   executionWorkspacePath?: string;
   sessionFolderPath?: string;
@@ -200,7 +205,7 @@ export type ProviderBackgroundStructuredPromptPolicy = {
   allowsShellWrite: boolean;
   allowsToolPermissionRequests: boolean;
   structuredOutputOnly: boolean;
-  structuredOutputMode: "provider_schema" | "schema_submit_tool";
+  structuredOutputMode: "provider_schema" | "schema_submit_tool" | "validated_json";
 };
 
 export const PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
@@ -221,5 +226,13 @@ export const SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBac
 
 export const BACKGROUND_STRUCTURED_PROMPT_POLICY =
   PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY;
+
+export const VALIDATED_JSON_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
+  allowsFileWrite: false,
+  allowsShellWrite: false,
+  allowsToolPermissionRequests: false,
+  structuredOutputOnly: true,
+  structuredOutputMode: "validated_json",
+};
 
 export type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
