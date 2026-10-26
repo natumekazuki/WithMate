@@ -173,7 +173,7 @@ async function renderAndFlush(root: Root, element: React.ReactElement): Promise<
 // claim = "一覧取得失敗は短い通知と開閉できる詳細を持ち、Retryのbusyを経て一覧とkeyboard focusへ復帰する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
 // fault = "詳細を常時表示する、詳細やRetryに到達できない、取得失敗を空一覧扱いする、または再取得後も操作できない"
-// observable = "失敗通知、詳細buttonの展開状態と関連本文のhidden、取得API呼出数、Retry、編集buttonのdisabled、busy、optionとfocus、editorへの遷移"
+// observable = "失敗通知、詳細buttonの開閉状態と関連dialogの原文、取得API呼出数、Retry、編集buttonのdisabled、busy、optionとfocus、editorへの遷移"
 // observation_boundary = "component-behavior"
 // scope = "PromptTemplateWorkspace list failure and retry"
 // lifecycle = "permanent"
@@ -196,20 +196,20 @@ test("Template一覧の取得失敗はRetryから一覧と編集導線へ復帰�
   try {
     await renderAndFlush(harness.root, <PromptTemplateWorkspace api={api} onBack={() => {}} onInsert={() => {}} />);
     assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, "Could not load templates.");
+    const retry = harness.container.querySelector<HTMLButtonElement>('[aria-label="Retry"]')!;
+    assert.equal(harness.dom.window.document.activeElement, retry);
     const details = harness.container.querySelector<HTMLButtonElement>('[aria-label="Template load error details"]')!;
-    const message = harness.dom.window.document.getElementById(details.getAttribute("aria-controls")!)!;
-    assert.equal(message.textContent, "Template storage unavailable");
-    assert.equal(message.hidden, true);
+    assert.equal(harness.dom.window.document.querySelector('[role="dialog"]'), null);
     assert.equal(details.getAttribute("aria-expanded"), "false");
     await act(async () => details.click());
-    assert.equal(message.hidden, false);
+    const panel = harness.dom.window.document.getElementById(details.getAttribute("aria-controls")!)!;
+    assert.equal(panel.getAttribute("role"), "dialog");
+    assert.equal(panel.querySelector("p")?.textContent, "Template storage unavailable");
     assert.equal(details.getAttribute("aria-expanded"), "true");
     await act(async () => details.click());
-    assert.equal(message.hidden, true);
+    assert.equal(harness.dom.window.document.querySelector('[role="dialog"]'), null);
     const edit = harness.container.querySelector<HTMLButtonElement>('[aria-label="Edit template"]')!;
-    const retry = harness.container.querySelector<HTMLButtonElement>('[aria-label="Retry"]')!;
     assert.ok(retry);
-    assert.equal(harness.dom.window.document.activeElement, retry);
     assert.equal(edit.disabled, true);
     assert.equal(harness.container.querySelector('[aria-label="New template"]'), null);
     await act(async () => edit.click());
@@ -366,12 +366,11 @@ test("Template保存・削除は処理中の対象を固定し成功・失敗後
         if (outcome === "failure") {
           assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, "Could not update the template. Your input has been kept.");
           const details = harness.container.querySelector<HTMLButtonElement>('[aria-label="Template update error details"]')!;
-          const message = harness.dom.window.document.getElementById(details.getAttribute("aria-controls")!)!;
-          assert.equal(message.hidden, true);
+          assert.equal(harness.dom.window.document.querySelector('[role="dialog"]'), null);
           await act(async () => details.click());
           assert.equal(details.getAttribute("aria-expanded"), "true");
-          assert.equal(message.hidden, false);
-          assert.equal(message.textContent, `${action} failed`);
+          const panel = harness.dom.window.document.getElementById(details.getAttribute("aria-controls")!)!;
+          assert.equal(panel.querySelector("p")?.textContent, `${action} failed`);
           assert.equal(prompt.value, editedPrompt);
           assert.equal(actionButton.disabled, false);
         }
@@ -388,6 +387,116 @@ test("Template保存・削除は処理中の対象を固定し成功・失敗後
         harness.dom.window.close();
         harness.restore();
       }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Template診断popoverはClose・Escape・入口の再操作・外側clickで閉じ、Close/Escapeだけ入口へfocusを戻す"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "popoverを閉じられない、Escapeがworkspaceまで閉じる、または外側へ移ったfocusを奪う"
+// observable = "dialogの有無、入口のaria-expanded/controls、activeElement、workspaceのonBack呼出数"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace diagnostic popover dismissal and focus"
+// lifecycle = "permanent"
+// impact = "診断確認から編集・回復操作に戻れない、または意図せず画面を閉じる"
+// distinction = "型検査や取得回復testはdocument上のEscape/外clickとfocusの戻し先を検出しない"
+// @end-test-value
+test("Template診断popoverの閉じ方とfocus復帰は操作に対応する", async () => {
+  const harness = createDomHarness();
+  const outside = harness.dom.window.document.createElement("button");
+  outside.textContent = "Outside action";
+  harness.dom.window.document.body.append(outside);
+  let backCount = 0;
+  const api = { ...createApi([]), listPromptTemplates: async () => { throw new Error("Storage unavailable"); } };
+  try {
+    await renderAndFlush(harness.root, <PromptTemplateWorkspace api={api} onBack={() => { backCount += 1; }} onInsert={() => {}} />);
+    const details = harness.container.querySelector<HTMLButtonElement>('[aria-label="Template load error details"]')!;
+    const dialog = () => harness.dom.window.document.querySelector<HTMLElement>('[role="dialog"]');
+    await act(async () => details.click());
+    assert.equal(dialog()?.getAttribute("aria-label"), "Template load error details");
+    assert.equal(harness.dom.window.document.activeElement, dialog());
+    await act(async () => dialog()!.querySelector<HTMLButtonElement>('[aria-label="Close error details"]')!.click());
+    assert.equal(dialog(), null);
+    assert.equal(details.getAttribute("aria-expanded"), "false");
+    assert.equal(harness.dom.window.document.activeElement, details);
+
+    await act(async () => details.click());
+    await act(async () => dialog()!.dispatchEvent(new harness.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.equal(dialog(), null);
+    assert.equal(harness.dom.window.document.activeElement, details);
+    assert.equal(backCount, 0);
+
+    await act(async () => details.click());
+    await act(async () => { details.focus(); details.click(); });
+    assert.equal(dialog(), null);
+    assert.equal(harness.dom.window.document.activeElement, details);
+
+    await act(async () => details.click());
+    await act(async () => {
+      outside.dispatchEvent(new harness.dom.window.MouseEvent("pointerdown", { bubbles: true }));
+      outside.focus();
+    });
+    assert.equal(dialog(), null);
+    assert.equal(harness.dom.window.document.activeElement, outside);
+  } finally {
+    await act(async () => harness.root.unmount());
+    outside.remove();
+    harness.dom.window.close();
+    harness.restore();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Templateの入力不足と名前重複は修正案内をその場に表示し、入力値を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-window" }
+// fault = "入力の修正案内が診断popoverに隠れる、入力欄との説明の関連がない、または失敗入力を失う"
+// observable = "alert本文とhidden、入力のaria-describedbyと値、保存API呼出数"
+// observation_boundary = "component-behavior"
+// scope = "PromptTemplateWorkspace actionable input errors"
+// lifecycle = "permanent"
+// impact = "利用者が何を直せば保存できるか分からず、作業を継続できない"
+// distinction = "shared入力検証testはrendererの案内表示と入力保持、IPC経由の重複名エラーの扱いを検証しない"
+// @end-test-value
+test("Templateの入力修正案内はpopoverへ隠さず入力と関連づける", async () => {
+  const cases = [
+    { field: "Template name", value: "", message: "Enter a template name.", apiCalls: 0 },
+    { field: "Prompt", value: " ", message: "Enter a prompt.", apiCalls: 0 },
+    { field: "Template name", value: "Duplicate", message: "A template with the same name already exists.", apiCalls: 1 },
+  ];
+  for (const entry of cases) {
+    const harness = createDomHarness();
+    let apiCalls = 0;
+    const api = {
+      ...createApi([FIRST_TEMPLATE]),
+      updatePromptTemplate: async () => { apiCalls += 1; throw new Error("Error invoking remote method: Error: A template with the same name already exists."); },
+    };
+    try {
+      await renderAndFlush(harness.root, <PromptTemplateWorkspace api={api} onBack={() => {}} onInsert={() => {}} />);
+      await act(async () => harness.container.querySelector<HTMLButtonElement>('[aria-label="Edit template"]')!.click());
+      const field = harness.container.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[aria-label="${entry.field}"]`)!;
+      await act(async () => {
+        field.focus();
+        const prototype = entry.field === "Prompt" ? harness.dom.window.HTMLTextAreaElement.prototype : harness.dom.window.HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(field, entry.value);
+        const change = new harness.dom.window.Event("propertychange", { bubbles: true });
+        Object.defineProperty(change, "propertyName", { value: "value" });
+        field.dispatchEvent(change);
+        field.dispatchEvent(new harness.dom.window.Event("input", { bubbles: true }));
+      });
+      await act(async () => harness.container.querySelector<HTMLButtonElement>('[aria-label="Save"]')!.click());
+      const alert = harness.container.querySelector<HTMLElement>('[role="alert"]')!;
+      assert.equal(alert.textContent, entry.message);
+      assert.equal(alert.hidden, false);
+      assert.equal(field.getAttribute("aria-describedby"), alert.id);
+      assert.equal(field.value, entry.value);
+      assert.equal(apiCalls, entry.apiCalls);
+    } finally {
+      await act(async () => harness.root.unmount());
+      harness.dom.window.close();
+      harness.restore();
     }
   }
 });

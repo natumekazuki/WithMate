@@ -1,11 +1,12 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { focusRovingItemByKey } from "../ui/a11y.js";
 import { BackNavigationButton } from "../ui/back-navigation-button.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { CloseButton } from "../ui/close-button.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
-import type { PromptTemplate } from "../../src-shared/prompt-template.js";
+import { parseCreatePromptTemplateInput, type PromptTemplate } from "../../src-shared/prompt-template.js";
 import type { WithMateWindowPromptTemplateApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 type PromptTemplateWorkspaceProps = {
@@ -42,18 +43,80 @@ function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
 }) {
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!expanded) return;
+    const positionPanel = () => {
+      const anchor = triggerRef.current!;
+      const panel = panelRef.current!;
+      const rect = anchor.getBoundingClientRect();
+      const margin = 12;
+      const gap = 8;
+      const belowSpace = Math.max(0, window.innerHeight - rect.bottom - gap - margin);
+      const aboveSpace = Math.max(0, rect.top - gap - margin);
+      const useBelow = belowSpace >= 320 || belowSpace >= aboveSpace;
+      const maxHeight = Math.min(320, useBelow ? belowSpace : aboveSpace);
+      panel.style.maxHeight = `${maxHeight}px`;
+      panel.style.setProperty("--template-error-height", `${maxHeight}px`);
+      const anchorStyle = window.getComputedStyle(anchor);
+      for (const property of ["--ink", "--muted", "--character-main", "--character-sub"]) {
+        panel.style.setProperty(property, anchorStyle.getPropertyValue(property));
+      }
+      const panelRect = panel.getBoundingClientRect();
+      panel.style.left = `${Math.max(margin, Math.min(rect.left, window.innerWidth - panelRect.width - margin))}px`;
+      panel.style.top = `${useBelow ? rect.bottom + gap : Math.max(margin, rect.top - gap - panelRect.height)}px`;
+    };
+    positionPanel();
+    panelRef.current!.focus();
+    window.addEventListener("resize", positionPanel);
+    window.addEventListener("scroll", positionPanel, true);
+    return () => {
+      window.removeEventListener("resize", positionPanel);
+      window.removeEventListener("scroll", positionPanel, true);
+    };
+  }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!actionsRef.current!.contains(target) && !panelRef.current!.contains(target)) {
+        setExpanded(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setExpanded(false);
+        triggerRef.current!.focus();
+      }
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [expanded]);
+
   return (
     <div className="prompt-template-error">
       <span className="sr-only" role="alert">{notice}</span>
-      <div className="prompt-template-error-actions">
+      <div ref={actionsRef} className="prompt-template-error-actions">
         {recoveryAction}
         <button
+          ref={triggerRef}
           type="button"
           className="drawer-toggle compact secondary prompt-template-error-icon-button prompt-template-error-toggle"
           aria-label={label}
           title={label}
           aria-expanded={expanded}
-          aria-controls={detailsId}
+          aria-controls={expanded ? detailsId : undefined}
+          aria-haspopup="dialog"
           onClick={() => setExpanded((current) => !current)}
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
@@ -62,7 +125,19 @@ function TemplateErrorDetails({ message, notice, label, recoveryAction }: {
           </svg>
         </button>
       </div>
-      <p id={detailsId} className="prompt-template-error-message" hidden={!expanded} tabIndex={0}>{message}</p>
+      {expanded ? createPortal(
+        <div ref={panelRef} id={detailsId} className="prompt-template-error-popover" role="dialog" aria-label={label} tabIndex={-1}>
+          <p className="prompt-template-error-message" tabIndex={0}>{message}</p>
+          <CloseButton
+            ariaLabel="Close error details"
+            onClose={() => {
+              setExpanded(false);
+              triggerRef.current!.focus();
+            }}
+          />
+        </div>,
+        document.body,
+      ) : null}
     </div>
   );
 }
@@ -81,7 +156,8 @@ export function PromptTemplateWorkspace({
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [loadError, setLoadError] = useState("");
   const [savingAction, setSavingAction] = useState<"save" | "delete" | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ message: string; isInput: boolean } | null>(null);
+  const inputErrorId = useId();
   const templatesRef = useRef<PromptTemplate[]>([]);
   const pickerListRef = useRef<HTMLDivElement | null>(null);
   const pickerEditButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -194,7 +270,7 @@ export function PromptTemplateWorkspace({
     }
     setEditor(nextEditor);
     setMode("edit");
-    setError("");
+    setError(null);
   };
 
   const returnToPicker = () => {
@@ -205,7 +281,7 @@ export function PromptTemplateWorkspace({
       setEditor(selectedTemplate ? toEditorState(selectedTemplate) : defaultEditor);
     }
     setMode("select");
-    setError("");
+    setError(null);
   };
 
   const selectTemplateForEditor = (template: PromptTemplate) => {
@@ -213,7 +289,7 @@ export function PromptTemplateWorkspace({
       return;
     }
     setEditor(toEditorState(template));
-    setError("");
+    setError(null);
   };
 
   const createNew = () => {
@@ -221,12 +297,18 @@ export function PromptTemplateWorkspace({
       return;
     }
     setEditor(EMPTY_EDITOR);
-    setError("");
+    setError(null);
   };
 
   const save = async (): Promise<boolean> => {
+    setError(null);
+    try {
+      parseCreatePromptTemplateInput(editor);
+    } catch (inputError) {
+      setError({ message: errorMessage(inputError), isInput: true });
+      return false;
+    }
     setSavingAction("save");
-    setError("");
     try {
       const nextTemplates = editor.id
         ? await api.updatePromptTemplate({ id: editor.id, name: editor.name, prompt: editor.prompt })
@@ -241,7 +323,10 @@ export function PromptTemplateWorkspace({
       }
       return true;
     } catch (saveError) {
-      setError(errorMessage(saveError));
+      const message = errorMessage(saveError);
+      const duplicateName = "A template with the same name already exists.";
+      const isDuplicateName = message.endsWith(duplicateName);
+      setError({ message: isDuplicateName ? duplicateName : message, isInput: isDuplicateName });
       return false;
     } finally {
       setSavingAction(null);
@@ -253,14 +338,14 @@ export function PromptTemplateWorkspace({
       return;
     }
     setSavingAction("delete");
-    setError("");
+    setError(null);
     try {
       const nextTemplates = await api.deletePromptTemplate(editor.id);
       templatesRef.current = nextTemplates;
       setTemplates(nextTemplates);
       setEditor(nextTemplates[0] ? toEditorState(nextTemplates[0]) : EMPTY_EDITOR);
     } catch (deleteError) {
-      setError(errorMessage(deleteError));
+      setError({ message: errorMessage(deleteError), isInput: false });
     } finally {
       setSavingAction(null);
     }
@@ -432,6 +517,7 @@ export function PromptTemplateWorkspace({
           <input
             ref={editorNameInputRef}
             aria-label="Template name"
+            aria-describedby={error?.isInput ? inputErrorId : undefined}
             value={editor.name}
             maxLength={120}
             disabled={isSaving}
@@ -443,6 +529,7 @@ export function PromptTemplateWorkspace({
           <textarea
             className="prompt-template-prompt-field"
             aria-label="Prompt"
+            aria-describedby={error?.isInput ? inputErrorId : undefined}
             value={editor.prompt}
             disabled={isSaving}
             onChange={(event) => {
@@ -450,10 +537,10 @@ export function PromptTemplateWorkspace({
               setEditor((current) => ({ ...current, prompt: value }));
             }}
           />
-          {error ? (
+          {error?.isInput ? <p id={inputErrorId} className="prompt-template-input-error" role="alert">{error.message}</p> : error ? (
             <TemplateErrorDetails
-              key={error}
-              message={error}
+              key={error.message}
+              message={error.message}
               notice="Could not update the template. Your input has been kept."
               label="Template update error details"
             />

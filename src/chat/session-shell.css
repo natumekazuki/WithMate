@@ -1252,24 +1252,50 @@
 }
 
 .prompt-template-error-icon-button:focus-visible,
+.prompt-template-error-popover:focus-visible,
 .prompt-template-error-message:focus-visible {
   outline: 2px solid var(--character-sub);
   outline-offset: 2px;
 }
 
+.prompt-template-error-popover {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: min(440px, calc(100vw - 24px));
+  padding: 12px;
+  overflow: hidden;
+  color: #fca5a5;
+  border: 1px solid rgba(252, 165, 165, 0.24);
+  border-radius: 9px;
+  background: #151a22;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  font-size: 0.78rem;
+}
+
 .prompt-template-error-message {
-  max-width: 36rem;
-  max-height: 160px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  max-height: calc(var(--template-error-height) - 26px);
   overflow: auto;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(252, 165, 165, 0.24);
-  border-radius: 9px;
-  background: rgba(252, 165, 165, 0.04);
   line-height: 1.6;
   text-align: left;
+}
+
+.prompt-template-error-popover .surface-close-button {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.prompt-template-input-error {
+  color: #fca5a5;
+  font-size: 0.78rem;
 }
 
 .prompt-template-editor-actions {
