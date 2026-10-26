@@ -3909,8 +3909,13 @@
   color: inherit;
 }
 
-.composer-turn-recovery > button {
+.composer-turn-recovery > button,
+.composer-turn-recovery-details {
   flex: 0 0 auto;
+}
+
+.composer-turn-recovery-details[inert] {
+  visibility: hidden;
 }
 
 .composer-save-retry:hover:not(:disabled),

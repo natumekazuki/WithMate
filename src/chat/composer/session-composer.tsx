@@ -659,7 +659,9 @@ export function SessionComposerExpanded({
           {onCheckTurnReceipt ? (
             <div className="composer-save-feedback composer-turn-recovery">
               <span>Turn acceptance is unknown. Your draft is preserved.</span>
-              {turnRecoveryError ? <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} label="Turn Recovery Error Details" message={turnRecoveryError} /> : null}
+              <span className="composer-turn-recovery-details" inert={!turnRecoveryError} aria-hidden={!turnRecoveryError}>
+                <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} label="Turn Recovery Error Details" message={turnRecoveryError ?? ""} />
+              </span>
               <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={queueTurnBusy || !!turnRecoveryAction} aria-busy={turnRecoveryAction === "check" || undefined}>
                 <ButtonContent busy={turnRecoveryAction === "check"}>Check Receipt</ButtonContent>
               </button>

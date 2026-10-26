@@ -10,10 +10,10 @@ import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-t
 
 // @test-value v2
 // kind = "contract"
-// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。回復操作のbusyは操作と会話に対応し、成功・失敗で解除する。保存・回復失敗は非modal詳細から確認でき、各閉鎖操作とfocus復帰を維持する。入力名とSend不可理由は対象切替・blank・凍結後も識別可能にする。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める。Main/AuxiliaryのSendと送信shortcutは設定有効時だけ初回送信時に対象列を追従へ戻し、後続の閲覧や対象切替をACK・受付照会で巻き戻さない"
-// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界; docs/design/desktop-ui.md: 送信時の先行表示とScroll To Latest On Send" }
-// fault = "診断詳細に到達できないか閉鎖時にfocusを失う、入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの未確定受付中に重複要求を発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、ACKで後続編集を消す、拒否でdraftをconsumeする、不明結果から新規要求を自動再送する、後続編集を未保存のままflush成功にする、凍結後にpicker結果からコピーする、設定無効時に末尾へ移動する、初回送信の追従をACKまで遅延する、または後続の閲覧や対象切替をACK・受付照会で巻き戻す"
-// observable = "診断詳細の原文・expanded・dialog・focusとEscape／閉じる／入口再操作／外側click後の状態、textareaのaccessible name、Send説明ownerのtitle・tabIndex・説明参照、focus時の理由overlay・Escape後のfocus保持、回復操作のaria-busy・spinner・disabledとAPI呼出数、ActionDock expanded class、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの初回送信・受付ACK・受付照会前後のscrollTop"
+// claim = "実Session Windowは入力と送信revisionをowner別に保ち、複数Auxiliaryのdurable受付を相互にbusy扱いせず、同一Auxiliaryの未確定受付中の重複送信を抑止する。送信時のActionDockはMain/Auxiliaryとも設定を守り、保存待機中の手動開閉を遅い送信で巻き戻さない。受付ACKはcaptured revisionだけを消し、拒否・不明では入力を保持する。不明結果の正本照会で再送せず後続編集を守る。回復操作のbusyは操作と会話に対応し、成功・失敗で解除する。保存・回復失敗は非modal詳細から確認でき、各閉鎖操作とfocus復帰を維持する。回復Detailsの領域は保持し、診断なしでは操作・読み上げの対象から外す。入力名とSend不可理由は対象切替・blank・凍結後も識別可能にする。quitでは未確定受付と後続編集の保存後にACKし、保存失敗では終了を拒否してRetryを保持する。通常closeは受付完了を待たず、凍結後の送信前保存からの受付と添付を止める。Main/AuxiliaryのSendと送信shortcutは設定有効時だけ初回送信時に対象列を追従へ戻し、後続の閲覧や対象切替をACK・受付照会で巻き戻さない"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: Composer の更新・保存境界; docs/design/desktop-ui.md: Composer診断Details・送信時の先行表示とScroll To Latest On Send" }
+// fault = "診断詳細に到達できないか閉鎖時にfocusを失う、診断のない予約領域に操作・読み上げが到達する、入力のたびにAuxiliary一覧summaryのアイコン参照を全件評価する、古いowner/revisionを送信する、別Auxiliaryの送信までbusy扱いする、同一ownerの未確定受付中に重複要求を発行する、設定無効でもActionDockを縮小する、保存待機後に新しい手動開閉を上書きする、ACKで後続編集を消す、拒否でdraftをconsumeする、不明結果から新規要求を自動再送する、後続編集を未保存のままflush成功にする、凍結後にpicker結果からコピーする、設定無効時に末尾へ移動する、初回送信の追従をACKまで遅延する、または後続の閲覧や対象切替をACK・受付照会で巻き戻す"
+// observable = "Details予約領域の存続・inert・aria-hidden、診断詳細の原文・expanded・dialog・focusとEscape／閉じる／入口再操作／外側click後の状態、textareaのaccessible name、Send説明ownerのtitle・tabIndex・説明参照、focus時の理由overlay・Escape後のfocus保持、回復操作のaria-busy・spinner・disabledとAPI呼出数、ActionDock expanded class、summaryアイコン参照回数、A/B別の送信対象と同一ownerの送信数、保存要求・永続draft・flush ACK、picker後のコピー回数、Main/Auxiliaryの初回送信・受付ACK・受付照会前後のscrollTop"
 // observation_boundary = "component-behavior"
 // scope = "composer-window-input-wiring"
 // lifecycle = "permanent"
@@ -540,11 +540,20 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     assert.deepEqual(alerts, []);
     const unknownDraftSaved = new Promise<void>((resolve) => { notifySaved = (text) => { if (text === "new draft after unknown admission") resolve(); }; });
     await input("new draft after unknown admission");
+    const assertRecoveryDetailsSlot = (available: boolean) => {
+      const slot = dom.window.document.querySelector(".composer-turn-recovery-details")!;
+      assert.ok(slot, "recovery keeps a Details slot across pending and failure");
+      assert.equal(slot.hasAttribute("inert"), !available);
+      assert.equal(slot.getAttribute("aria-hidden"), String(!available));
+      assert.ok(slot.querySelector('button[aria-label="Turn Recovery Error Details"]'));
+    };
+    assertRecoveryDetailsSlot(false);
     let releaseReceipt!: () => void;
     heldReceipt = new Promise<void>((resolve) => { releaseReceipt = resolve; });
     const checksBeforeRecovery = receiptChecks;
     await act(async () => { recoveryButton("Check Receipt").click(); });
     assertRecoveryBusy("Check Receipt");
+    assertRecoveryDetailsSlot(false);
     await act(async () => { recoveryButton("Check Receipt").click(); recoveryButton("Retry Original Turn").click(); });
     assert.equal(receiptChecks, checksBeforeRecovery + 1, "busy controls must not issue another recovery request");
     await target("Main");
@@ -554,6 +563,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     await act(async () => { releaseReceipt(); await heldReceipt; });
     heldReceipt = null;
     assert.deepEqual(alerts, [], "recovery errors stay in the affected Composer instead of a modal alert");
+    assertRecoveryDetailsSlot(true);
     await inspectErrorDetails("Turn Recovery Error Details", /No receipt is available/);
     await target("Main");
     assert.equal(dom.window.document.querySelector('button[aria-label="Turn Recovery Error Details"]'), null);
@@ -567,9 +577,11 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     api.enqueueSessionTurn = async () => { await retryPending; throw new Error("Retry transport unavailable"); };
     await act(async () => { recoveryButton("Retry Original Turn").click(); });
     assertRecoveryBusy("Retry Original Turn");
+    assertRecoveryDetailsSlot(false);
     await act(async () => { releaseRetry(); await retryPending; });
     api.enqueueSessionTurn = enqueue;
     assert.deepEqual(alerts, []);
+    assertRecoveryDetailsSlot(true);
     await inspectErrorDetails("Turn Recovery Error Details", /Retry transport unavailable/);
     assert.equal(recoveryButton("Retry Original Turn").disabled, false);
     assert.equal(recoveryButton("Retry Original Turn").getAttribute("aria-busy"), null);
