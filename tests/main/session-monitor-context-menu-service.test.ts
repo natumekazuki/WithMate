@@ -34,6 +34,7 @@ test("閉じた監視対象のCloseは無効でもSession IDをコピーでき�
   const copied: string[] = [];
   const service = new SessionMonitorContextMenuService({
     isSessionWindowOpen: () => false,
+    readSessionTitle: async () => { throw new Error("ID copy must not read the title"); },
     requestCloseSessionWindow: async () => { throw new Error("Window is not open"); },
     writeText: (value) => { copied.push(value); },
     buildMenu: harness.buildMenu,
@@ -96,6 +97,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
     const closedTargets: string[] = [];
     const deps: SessionMonitorContextMenuServiceDeps = {
       isSessionWindowOpen: () => true,
+      readSessionTitle: async () => { throw new Error("Close must not read the title"); },
       requestCloseSessionWindow(sessionId) {
         closedTargets.push(`agent:${sessionId}`);
         return Promise.resolve(true);
@@ -126,6 +128,7 @@ test("Session Monitor context menu は対象kindへ閉じる操作を送り、�
       return Promise.resolve(true);
     },
     isSessionWindowOpen: () => true,
+    readSessionTitle: async () => { throw new Error("Dismiss must not read the title"); },
     writeText() {},
     buildMenu: harness.buildMenu,
   });
@@ -154,6 +157,7 @@ test("Session Monitor context menu はclose delegateの取消をclosedとして�
   const harness = createMenuHarness();
   const service = new SessionMonitorContextMenuService({
     requestCloseSessionWindow: async () => false,
+    readSessionTitle: async () => { throw new Error("Close must not read the title"); },
     isSessionWindowOpen: () => true,
     writeText() {},
     buildMenu: harness.buildMenu,
@@ -194,6 +198,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
         return Promise.resolve(true);
       },
       isSessionWindowOpen: () => true,
+      readSessionTitle: async () => { throw new Error("ID copy must not read the title"); },
       writeText(value) {
         copiedTexts.push(value);
       },
@@ -219,6 +224,7 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
         return Promise.resolve(true);
       },
       isSessionWindowOpen: () => true,
+      readSessionTitle: async () => { throw new Error("ID copy must not read the title"); },
       writeText() {
         copyAttempts += 1;
         throw new Error("clipboard unavailable");
@@ -239,6 +245,80 @@ test("Session Monitor context menuのSession IDをコピーは対象IDだけをc
     } satisfies SessionMonitorContextMenuResult);
     assert.equal(copyAttempts, 1);
     assert.deepEqual(closedTargets, []);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "タイトルコピーはメニュー選択時に対象Sessionの現在の全文を取得し、Windowを閉じずに一度だけコピーする"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "表示用に省略された値や古いタイトル・別Sessionをコピーする、取得中のmenu終了を取消にする、または二重実行する"
+// observable = "タイトル取得先、clipboard writerへ渡す全文、close呼出し回数、menu result"
+// observation_boundary = "public-boundary"
+// scope = "Session Monitor title copy selection"
+// lifecycle = "permanent"
+// impact = "長いタイトルや更新したタイトルを正確に共有できる"
+// distinction = "IDコピーやrenderer event testでは観測しない、選択時の非同期タイトル取得とclipboard effectを検証する"
+// @end-test-value
+test("Session Monitorは選択時の更新済みタイトル全文を一度だけコピーする", async () => {
+  const harness = createMenuHarness();
+  let title = "Before Rename";
+  const reads: string[] = [];
+  const copied: string[] = [];
+  let closeCalls = 0;
+  const service = new SessionMonitorContextMenuService({
+    isSessionWindowOpen: () => false,
+    requestCloseSessionWindow: async () => { closeCalls += 1; return true; },
+    readSessionTitle: async (sessionId) => { reads.push(sessionId); return title; },
+    writeText: (value) => { copied.push(value); },
+    buildMenu: harness.buildMenu,
+  });
+  const result = service.showContextMenu({} as BrowserWindow, {
+    kind: "agent", sessionId: "title-target", point: { x: 12, y: 34 },
+  });
+  assert.deepEqual(reads, []);
+  title = `更新済みタイトル ${"省略されても全文をコピー / ".repeat(30)}末尾`;
+  const copyItem = harness.getTemplate().find((item) => item.label === "Copy Session Title");
+  assert.ok(copyItem);
+  invokeMenuItem(copyItem);
+  harness.getPopupOptions()?.callback?.();
+  invokeMenuItem(copyItem);
+  assert.deepEqual(await result, { status: "copied" });
+  assert.deepEqual(reads, ["title-target"]);
+  assert.deepEqual(copied, [title]);
+  assert.equal(closeCalls, 0);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "タイトルの取得不能・対象消失・clipboard書込失敗はcopiedではなくタイトルコピーの失敗になる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "取得失敗時にIDや空文字を代用してclipboardを上書きする、または失敗をcopiedとして返す"
+// observable = "menu resultとclipboard writerへ渡された値"
+// observation_boundary = "public-boundary"
+// scope = "Session Monitor title copy failure"
+// lifecycle = "permanent"
+// @end-test-value
+test("Session Monitorはタイトル取得とコピーの失敗を成功扱いしない", async () => {
+  for (const failure of ["missing", "read", "write"] as const) {
+    const harness = createMenuHarness();
+    const written: string[] = [];
+    const service = new SessionMonitorContextMenuService({
+      isSessionWindowOpen: () => true,
+      requestCloseSessionWindow: async () => { throw new Error("Copy must not close"); },
+      readSessionTitle: async () => {
+        if (failure === "read") throw new Error("storage unavailable");
+        return failure === "missing" ? null : "Current Title";
+      },
+      writeText: (value) => { written.push(value); throw new Error("clipboard unavailable"); },
+      buildMenu: harness.buildMenu,
+    });
+    const result = service.showContextMenu({} as BrowserWindow, {
+      kind: "agent", sessionId: "failed-title", point: { x: 0, y: 0 },
+    });
+    invokeMenuItem(harness.getTemplate().find((item) => item.label === "Copy Session Title")!);
+    assert.deepEqual(await result, { status: "failed", message: "Session title could not be copied." });
+    assert.deepEqual(written, failure === "write" ? ["Current Title"] : []);
   }
 });
 

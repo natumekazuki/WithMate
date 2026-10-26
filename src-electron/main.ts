@@ -342,6 +342,7 @@ const sessionFileTreeContextMenuService = new SessionFileTreeContextMenuService(
 const sessionMonitorContextMenuService = new SessionMonitorContextMenuService({
   isSessionWindowOpen: (sessionId) => requireSessionWindowBridge().getWindow(sessionId) !== null,
   requestCloseSessionWindow: (sessionId) => requireMainWindowFacade().requestCloseSessionWindow(sessionId),
+  readSessionTitle: async (sessionId) => (await getDisplaySessionSummary(sessionId))?.taskTitle ?? null,
   writeText: (value) => clipboard.writeText(value),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });

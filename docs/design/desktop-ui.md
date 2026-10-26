@@ -137,6 +137,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行を表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
   - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
+  - 親行の右クリック、またはfocus中のShift+F10／Context Menu keyで共通のnative menuを開く。`Copy Session ID`は親Session ID、`Copy Session Title`は選択時に取得した現在のタイトル全文をコピーする。表示の省略はコピー内容へ適用せず、取得・コピー失敗はMonitor内へ表示する。Homeと独立Monitorで同じ操作を使い、`Close`は対象Windowが開いている場合だけ有効とする
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
   - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Attention`とする。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
   - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する

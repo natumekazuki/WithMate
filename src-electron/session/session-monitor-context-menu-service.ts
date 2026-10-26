@@ -10,12 +10,12 @@ type SessionMonitorContextMenu = Pick<Menu, "popup">;
 export type SessionMonitorContextMenuServiceDeps = {
   isSessionWindowOpen(sessionId: string): boolean;
   requestCloseSessionWindow(sessionId: string): Promise<boolean>;
+  readSessionTitle(sessionId: string): Promise<string | null>;
   writeText(value: string): void;
   buildMenu(template: MenuItemConstructorOptions[]): SessionMonitorContextMenu;
 };
 
 const MENU_FAILED_MESSAGE = "Session Monitor menu could not be opened.";
-const COPY_FAILED_MESSAGE = "Session ID could not be copied.";
 
 export class SessionMonitorContextMenuService {
   constructor(private readonly deps: SessionMonitorContextMenuServiceDeps) {}
@@ -39,16 +39,21 @@ export class SessionMonitorContextMenuService {
         resolve(result);
       };
       const closeTarget = (): Promise<boolean> => this.deps.requestCloseSessionWindow(request.sessionId);
-      const copySessionId = () => {
+      const copyText = async (readText: () => string | Promise<string | null>, failureMessage: string) => {
         if (settled || selectionStarted) {
           return;
         }
         selectionStarted = true;
         try {
-          this.deps.writeText(request.sessionId);
+          const text = await readText();
+          if (text === null) {
+            settle({ status: "failed", message: failureMessage });
+            return;
+          }
+          this.deps.writeText(text);
           settle({ status: "copied" });
         } catch {
-          settle({ status: "failed", message: COPY_FAILED_MESSAGE });
+          settle({ status: "failed", message: failureMessage });
         }
       };
       const template: MenuItemConstructorOptions[] = [{
@@ -68,7 +73,12 @@ export class SessionMonitorContextMenuService {
         },
       }, { type: "separator" }, {
         label: "Copy Session ID",
-        click: copySessionId,
+        click: () => { void copyText(() => request.sessionId, "Session ID could not be copied."); },
+      }, {
+        label: "Copy Session Title",
+        click: () => {
+          void copyText(() => this.deps.readSessionTitle(request.sessionId), "Session title could not be copied.");
+        },
       }];
 
       try {
