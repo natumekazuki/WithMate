@@ -56,7 +56,7 @@ function CleanupConfirmation({ scan, onCancel, onConfirm, onRestoreFocus }: {
         {numberFormat.format(scan.matchedFileCount)} Files · {formatCleanupBytes(scan.matchedBytes)}
       </p>
       <p className="session-folder-cleanup-secondary">
-        {periodLabel(scan.request)} · ≥ {numberFormat.format(scan.request.minimumFileSizeMiB)} MiB
+        {periodLabel(scan.request)} · ≥ {scan.request.minimumFileSizeMiB} MiB
       </p>
       <footer>
         <button className="launch-toggle secondary" type="button" autoFocus onClick={onCancel}>Cancel</button>
