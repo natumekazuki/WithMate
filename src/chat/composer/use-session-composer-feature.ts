@@ -29,6 +29,7 @@ import type {
   ComposerSaveState,
 } from "../composer-controller.js";
 import { useSessionDraftFlushLifecycle } from "../runtime/use-session-draft-flush-lifecycle.js";
+import { resolveSessionRunErrorMessage } from "../runtime/session-live-run-state.js";
 import {
   buildAuxiliaryAwareRuntimeOptionChangeHandler,
 } from "../auxiliary-runtime-option-routing.js";
@@ -215,6 +216,7 @@ export function useSessionComposerFeature(input: {
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [turnRecoveryActions, setTurnRecoveryActions] = useState<Record<string, "check" | "retry">>({});
+  const [turnRecoveryErrors, setTurnRecoveryErrors] = useState<Record<string, string>>({});
 
   composerOwnerRef.current = input.activeRunSessionId;
   const composerSnapshot = input.composerRegistry.get(input.composerOwner, input.composerDraft);
@@ -261,8 +263,12 @@ export function useSessionComposerFeature(input: {
       const ownerId = bridge.session.id;
       if (turnRecoveryActions[ownerId]) return;
       setTurnRecoveryActions((current) => ({ ...current, [ownerId]: action }));
+      setTurnRecoveryErrors((current) => ({ ...current, [ownerId]: "" }));
       try {
         await (action === "check" ? bridge.operations.send.checkReceipt?.() : bridge.operations.send.retryOriginal?.());
+      } catch (error) {
+        const message = resolveSessionRunErrorMessage(error, action === "check" ? "Could not check the receipt." : "Could not retry the original turn.");
+        setTurnRecoveryErrors((current) => ({ ...current, [ownerId]: message }));
       } finally {
         setTurnRecoveryActions((current) => {
           const next = { ...current };
@@ -536,6 +542,7 @@ export function useSessionComposerFeature(input: {
       onQueueTurn: bridge.operations.send.queue ? () => void bridge.operations.send.queue?.() : undefined,
       queueTurnBusy: bridge.runtime.queueTurnBusy || !!bridge.runtime.busyReason,
       turnRecoveryAction: turnRecoveryActions[bridge.session.id],
+      turnRecoveryError: turnRecoveryErrors[bridge.session.id],
       onCheckTurnReceipt: bridge.runtime.hasUncertainTurn ? () => void recoverTurn("check") : undefined,
       onRetryOriginalTurn: bridge.runtime.hasUncertainTurn ? () => void recoverTurn("retry") : undefined,
       composerBlocked: bridge.runtime.isReadOnly || !!bridge.runtime.blockedReason,

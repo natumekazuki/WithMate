@@ -3826,6 +3826,7 @@
 
 .composer-save-feedback {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -3853,7 +3854,59 @@
 }
 
 .composer-turn-recovery {
-  flex-wrap: wrap;
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.composer-error-details-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-error-details-trigger .composer-icon {
+  width: 18px;
+  height: 18px;
+  color: #fca5a5;
+}
+
+.composer-error-details-popover {
+  position: fixed;
+  z-index: 120;
+  box-sizing: border-box;
+  width: min(480px, calc(100vw - 32px));
+  overflow: auto;
+  padding: 12px 48px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.composer-error-details-popover p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.composer-error-details-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
 }
 
 .composer-turn-recovery > button {
