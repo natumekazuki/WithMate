@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -128,6 +129,43 @@ type FileLoadState =
   | { status: "error"; message: string };
 
 type PreviewAction = "open" | "reveal" | "copy-file" | "copy-image" | "context-menu" | "open-path" | "open-diff" | "load";
+
+function StructuredTextErrorDetails({ message }: { message: string }) {
+  const id = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="session-file-format-error" onKeyDown={(event) => {
+      if (open && event.key === "Escape") event.stopPropagation();
+    }}>
+      <button
+        ref={trigger}
+        className="session-file-explorer-refresh"
+        type="button"
+        popoverTarget={id}
+        aria-label={`${open ? "Hide" : "Show"} Formatting Error Details`}
+        title={`${open ? "Hide" : "Show"} Formatting Error Details`}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-controls={id}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3v1" />
+        </svg>
+      </button>
+      <span id={id} popover="auto" role="dialog" aria-label="Formatting Error Details"
+        className="session-file-format-error-details" onToggle={(event) => setOpen(event.newState === "open")}>
+        <button className="session-file-explorer-refresh" type="button" popoverTarget={id} popoverTargetAction="hide"
+          aria-label="Close Formatting Error Details" title="Close Formatting Error Details" onClick={() => trigger.current?.focus()}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" focusable="false">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+        <span className="session-file-format-error-message">{message}</span>
+      </span>
+    </span>
+  );
+}
 
 type StructuredTextProjectionState =
   | { status: "idle" | "loading" }
@@ -747,7 +785,7 @@ export function SessionFilePreview({
       }
     }).catch(async (error) => {
       const message = error instanceof Error
-        ? error.message.split(/\r?\n/, 1)[0] ?? "Structured text could not be formatted."
+        ? error.message
         : "Structured text could not be formatted.";
       let rawTokens: PreviewSyntaxToken[][] | null = null;
       try {
@@ -1129,7 +1167,7 @@ export function SessionFilePreview({
   }, [beginAction, busyAction, finishAction, onOpenDiff]);
 
   const structuredTextFeedback = currentStructuredTextError
-    ? `Formatted preview is unavailable: ${currentStructuredTextError.message} Showing raw content.`
+    ? "Formatted preview is unavailable. Showing raw content."
     : loaded && structuredTextFormat && loaded.bytes.byteLength > STRUCTURED_TEXT_PREVIEW_MAX_BYTES
       ? `Formatted preview is skipped for files larger than ${formatFileByteLength(STRUCTURED_TEXT_PREVIEW_MAX_BYTES)}.`
       : "";
@@ -1469,6 +1507,7 @@ export function SessionFilePreview({
               {message}
             </span>
           ))}
+          {currentStructuredTextError ? <StructuredTextErrorDetails message={currentStructuredTextError.message} /> : null}
         </p>
       ) : null}
     </section>

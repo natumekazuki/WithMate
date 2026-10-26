@@ -2108,6 +2108,18 @@ test("JSON preview は Formatted と原文を保持した Raw を切り替える
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "不正YAMLはRawを維持して短い失敗説明を表示し、整形診断の複数行原文を非modal詳細入口から提供する"
+// oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "Rawを失う、診断を1行へ切り詰める、詳細入口とpopoverの関連を失う、またはtoggle通知後も開閉状態を誤って公開する"
+// observable = "Raw本文とFormatted disabled、短い説明、popover原文とrole、詳細buttonのtarget/aria-expanded/操作名"
+// observation_boundary = "component-behavior"
+// scope = "SessionFilePreview structured text formatting failure"
+// lifecycle = "permanent"
+// impact = "診断で本文を圧迫せず、支援技術の利用者も必要時に失敗原因へ到達できる"
+// distinction = "既存Raw切替testや型検査で保証しない診断原文と詳細入口のDOM接続を検証する。native dismissal・位置・実keyboardはbrowser確認で扱う"
+// @end-test-value
 test("不正な YAML preview は parse error を示して Raw へ fallback する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -2135,7 +2147,28 @@ test("不正な YAML preview は parse error を示して Raw へ fallback す�
       .find((button) => button.textContent === "Raw");
     assert.equal(formattedButton?.disabled, true);
     assert.ok(rawButton?.classList.contains("is-active"));
-    assert.match(container.textContent ?? "", /root: \[/);
+    assert.deepEqual([...container.querySelectorAll(".session-file-text-line code")].map((line) => line.textContent), [raw]);
+    const trigger = container.querySelector<HTMLButtonElement>("button[aria-label='Show Formatting Error Details']");
+    assert.ok(trigger);
+    assert.equal(trigger.getAttribute("aria-expanded"), "false");
+    assert.equal(trigger.getAttribute("aria-haspopup"), "dialog");
+    const details = dom.window.document.getElementById(trigger.getAttribute("popovertarget")!);
+    assert.ok(details);
+    assert.equal(details.getAttribute("popover"), "auto");
+    assert.equal(details.getAttribute("role"), "dialog");
+    assert.equal(trigger.getAttribute("aria-controls"), details.id);
+    assert.equal(container.querySelector(".session-file-preview-feedback")?.firstElementChild?.textContent,
+      "Formatted preview is unavailable. Showing raw content.");
+    const diagnostic = details.querySelector(".session-file-format-error-message")?.textContent ?? "";
+    assert.match(diagnostic, /\n/);
+    assert.match(diagnostic, /root: \[/);
+    for (const newState of ["open", "closed"]) {
+      await act(async () => {
+        details.dispatchEvent(Object.assign(new dom.window.Event("toggle"), { newState }));
+      });
+      assert.equal(trigger.getAttribute("aria-expanded"), String(newState === "open"));
+      assert.equal(trigger.getAttribute("aria-label"), `${newState === "open" ? "Hide" : "Show"} Formatting Error Details`);
+    }
   } finally {
     if (root) {
       await act(async () => root?.unmount());
