@@ -19,3 +19,13 @@ textareaへの画像pasteはPNG、JPEG、GIF、WebP、BMP、SVGを保存してMa
 ## 削除時の扱い
 
 外部workspaceを使うSessionの削除では、そのSession IDのmanaged directoryをbest-effortで片付ける。managed directory自身をworkspaceとするSessionは、recordを削除してもdirectoryと内容を保持する。期間指定の一括削除でも、未読込Sessionのworkspace種別をstorage summaryで判定する。実装上のAPIとcleanupは`src-electron/files/session-files.ts`を正本とする。
+
+## Sessionを残すファイル掃除
+
+Settingsの`Clean Session Files`は保存済みSessionのmanaged folder内だけを対象とし、Session本体・会話履歴・Pinを更新しない。Sessionの最終利用日とファイルサイズで容量を計算し、最終確認後に対象ファイルを完全削除する。容量は通常ファイルの論理サイズの合計であり、ボリュームの空き容量増加量とは区別する。
+
+実行中のMain／Auxiliaryを持つSession、いずれかのSessionのWorkspaceと重なるfolder、孤立folder、シンボリックリンク・junctionとそのリンク先は掃除対象にしない。Mainが解決したmanaged pathだけを使い、rendererから削除pathや全ファイル一覧を受け取らない。
+
+計算時の対象はMainの最新一件の一時snapshotに保持する。実行ではSession incarnation、最終利用日時、storage owner、実行状態、Workspace、directoryとfileのmetadataを再確認し、計算後に増えたfileを追加せず、変更・消失したfileは除外する。新しい計算と実行で前のsnapshotを失効させる。永続的な削除台帳やhashは持たない。
+
+削除はfileごとに成功・失敗・除外を返す。SessionFolderルートは必ず残し、計算した下位directoryは空の場合だけ削除する。非同期filesystem I/Oを使い、通常fileが残るdirectoryや計算後に追加されたdirectoryを再帰削除しない。実装は`src-electron/files/session-folder-cleanup-service.ts`、UIは[Settings UI](settings-ui.md#session-folder-cleanup)を正本とする。

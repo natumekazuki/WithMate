@@ -113,6 +113,12 @@ export function createSettingsApi(
         channels.WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
       );
     },
+    scanSessionFolderCleanup(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL, request);
+    },
+    runSessionFolderCleanup(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL, request);
+    },
     getMemoryV6Diagnostics() {
       return ipcRenderer.invoke(
         channels.WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,

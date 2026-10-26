@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron";
+import type { SessionFolderCleanupRequest, SessionFolderCleanupScan, SessionFolderCleanupResult } from "../../src-shared/session/session-folder-cleanup.js";
 import type { RendererLogInput } from "../../src-shared/window/app-log-types.js";
 
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
@@ -248,6 +249,8 @@ export type MainIpcSettingsDepsArgs = {
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
   getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
+  scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
+  runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;

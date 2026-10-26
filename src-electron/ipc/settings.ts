@@ -2,6 +2,8 @@ import type {
   MemoryForgetReason,
   MemoryV6ReviewSearchRequest,
 } from "../../src-shared/memory/memory-contract.js";
+import { parseSessionFolderCleanupRequest, parseSessionFolderCleanupRunRequest } from "../../src-shared/session/session-folder-cleanup.js";
+import { WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL, WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 import type { MemoryV6ProtectedObjectGcRequest } from "../../src-shared/memory/memory-review-state.js";
 
@@ -59,6 +61,14 @@ export function registerSettingsHandlers(
   ipcMain: IpcHandleRegistrar,
   deps: MainIpcSettingsDeps,
 ): void {
+  ipcMain.handle(WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL, (event, request: unknown) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.scanSessionFolderCleanup(parseSessionFolderCleanupRequest(request));
+  });
+  ipcMain.handle(WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL, (event, request: unknown) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.runSessionFolderCleanup(parseSessionFolderCleanupRunRequest(request));
+  });
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () =>
     deps.getAppSettings(),
   );

@@ -204,3 +204,5 @@ export const WITHMATE_FOCUS_SESSION_FILE_PREVIEW_WINDOW_CHANNEL = "withmate:focu
 export const WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOW_CHANNEL = "withmate:close-session-file-preview-window";
 export const WITHMATE_CLOSE_SESSION_FILE_PREVIEW_WINDOWS_CHANNEL = "withmate:close-session-file-preview-windows";
 export const WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT = "withmate:session-file-preview-windows-changed";
+export const WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL = "withmate:scan-session-folder-cleanup";
+export const WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL = "withmate:run-session-folder-cleanup";

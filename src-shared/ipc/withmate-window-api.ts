@@ -1,5 +1,6 @@
 import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
 import type { SessionTurnRecord } from "../session/session-turn-state.js";
+import type { SessionFolderCleanupRequest, SessionFolderCleanupScan, SessionFolderCleanupResult } from "../session/session-folder-cleanup.js";
 import type { AppSettings } from "../settings/provider-settings-state.js";
 import type { LiveSessionRunStatus } from "../session/live-session-run-status.js";
 import type { ConversationPage, ConversationPageRequest, ConversationSearchRequest, ConversationSearchMatch, ConversationNavigatorEntry, ConversationNavigatorRequest, ConversationQueryOutcome, ConversationQueryCancelRequest } from "../session/conversation-page.js";
@@ -308,6 +309,8 @@ export type WithMateWindowSettingsApi = {
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<void>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
+  scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
+  runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;

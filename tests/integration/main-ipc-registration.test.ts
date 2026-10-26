@@ -2950,6 +2950,65 @@ test("Memory V6 Review protected object IPC は通常 window からの呼び出�
   assert.equal(calls.includes("gc"), false);
 });
 
+// @test-value v2
+// kind = "security"
+// claim = "Session Folder cleanupのscan/runはSettings以外と不正入力をservice前に拒否し、正常なrenderer要求と結果を保持する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md" }
+// fault = "非Settings senderや不正条件でcleanup serviceを呼ぶか、preloadからscan条件とscan IDを欠落・取り違えする"
+// observable = "renderer APIの返却値、serviceに渡ったrequest、拒否Errorとservice呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "registered Session Folder cleanup IPC and preload authorization/validation"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "irreversible-data-loss"]
+// impact = "許可されていないWindowや不正入力によるfile完全削除を防ぐ"
+// distinction = "serviceのfilesystem testや型checkではrendererから登録済みIPCまでのsender認可、runtime parseとpayload伝達を検証できない"
+// @end-test-value
+test("Session Folder cleanup IPCはSettings認可とparseを通してrenderer要求を保持する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settings = createWindowStub("file:///settings.html");
+  let sender: unknown = settings;
+  const requests: Array<{ method: string; request: unknown }> = [];
+  const scanResult = { scanId: "confirmed-scan", matchedFileCount: 2, matchedBytes: 2048 };
+  const runResult = { deletedFileCount: 2, deletedBytes: 2048, skippedFileCount: 0, failedFileCount: 0, issues: [] };
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    isSettingsWindow: (window: unknown) => window === settings,
+    scanSessionFolderCleanup: async (request: unknown) => {
+      requests.push({ method: "scan", request });
+      return scanResult;
+    },
+    runSessionFolderCleanup: async (request: unknown) => {
+      requests.push({ method: "run", request });
+      return runResult;
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({
+    async invoke(channel: string, ...args: unknown[]) {
+      const handler = handlers.get(channel);
+      assert.ok(handler, `Unregistered IPC: ${channel}`);
+      return handler({}, ...args);
+    },
+    on() {}, removeListener() {}, send() {},
+  } as never);
+  const request = { fromDate: "2026-05-01", toDate: "2026-05-31", minimumFileSizeMiB: 0.1 };
+  assert.deepEqual(await api.scanSessionFolderCleanup(request), scanResult);
+  assert.deepEqual(await api.runSessionFolderCleanup({ scanId: scanResult.scanId }), runResult);
+  assert.deepEqual(requests, [{ method: "scan", request }, { method: "run", request: { scanId: scanResult.scanId } }]);
+  for (const input of [null, { ...request, fromDate: "2026-02-30" }, { ...request, minimumFileSizeMiB: -1 }]) {
+    await assert.rejects(api.scanSessionFolderCleanup(input as never), TypeError);
+  }
+  for (const input of [null, {}, { scanId: "" }]) {
+    await assert.rejects(api.runSessionFolderCleanup(input as never), TypeError);
+  }
+  for (const window of [createWindowStub("file:///home.html"), createWindowStub("file:///session.html?sessionId=main"), null]) {
+    sender = window;
+    await assert.rejects(api.scanSessionFolderCleanup(request), /Settings IPC is only available/);
+    await assert.rejects(api.runSessionFolderCleanup({ scanId: scanResult.scanId }), /Settings IPC is only available/);
+  }
+  assert.equal(requests.length, 2);
+});
+
 test("Storage Maintenance の bulk session delete IPC は Settings window からだけ呼び出せる", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");

@@ -131,6 +131,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         updateAppSettings: (settings) => settings,
         updateChatLayoutPreference: () => ({}) as never,
         getAppDatabaseDiagnostics: () => ({}) as never,
+        scanSessionFolderCleanup: async () => ({}) as never,
+        runSessionFolderCleanup: async () => ({}) as never,
         getMemoryV6Diagnostics: () => ({}) as never,
         installMemoryV6CliShim: () => ({}) as never,
         uninstallMemoryV6CliShim: () => ({}) as never,

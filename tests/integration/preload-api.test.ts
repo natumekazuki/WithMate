@@ -894,6 +894,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "releaseTerminal",
     "resizeTerminal",
     "resetAppDatabase",
+    "scanSessionFolderCleanup",
+    "runSessionFolderCleanup",
     "restoreSessionWindows",
     "resolveLiveApproval",
     "resolveLiveElicitation",

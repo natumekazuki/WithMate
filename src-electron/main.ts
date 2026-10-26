@@ -1,4 +1,5 @@
 import { readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { SessionFolderCleanupService } from "./files/session-folder-cleanup-service.js";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -1076,6 +1077,28 @@ const auxiliaryLiveRunParents = new AuxiliaryLiveRunParents({
   },
 });
 let databaseMaintenanceRequested = false;
+let sessionFolderCleanupLoadedSessions: readonly Session[] | null = null;
+const sessionFolderCleanupService = new SessionFolderCleanupService({
+  get userDataPath() { return app.getPath("userData"); },
+  readState: async () => {
+    const owner = requireActivePersistentStoreOwnerForFactory("Session Folder cleanup");
+    sessionFolderCleanupLoadedSessions = mainStoreContext.sessions;
+    const sessions = await owner.sessionStorage.listSessionSummaries();
+    assertPersistentStoreOwnerIsActive(owner, "Session Folder cleanup");
+    return { identity: owner, sessions };
+  },
+  assertCurrent: (identity) => {
+    assertPersistentStoreOwnerIsActive(identity as PersistentStoreBundle, "Session Folder cleanup");
+    if (sessionFolderCleanupLoadedSessions !== mainStoreContext.sessions) {
+      throw new Error("Session state has changed. Scan again before deleting files.");
+    }
+    if (databaseMaintenanceRequested || mainWindowRuntime.getSessionWindowBridge().isQuitPending()) {
+      throw new Error("Session Folder cleanup is unavailable during maintenance or shutdown.");
+    }
+  },
+  isRunning: (sessionId) => isSessionRunInFlight(sessionId)
+    || mainStoreContext.sessions.some((session) => session.id === sessionId && isRunningSession(session)),
+});
 function requireActivePersistentStoreOwnerForFactory(ownerName: string): PersistentStoreBundle {
   return capturePersistentStoreOwner(
     () => mainStoreContext.activePersistentStoreOwner,
@@ -1349,6 +1372,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
                 updateChatLayoutPreference,
                 getAppDatabaseDiagnostics,
+                scanSessionFolderCleanup: (request) => providerRuntimeOperationCoordinator.runExclusive(
+                  () => sessionFolderCleanupService.scan(request), "session-folder-cleanup-scan"),
+                runSessionFolderCleanup: ({ scanId }) => providerRuntimeOperationCoordinator.runExclusive(
+                  () => sessionFolderCleanupService.run(scanId), "session-folder-cleanup-run"),
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
                 uninstallMemoryV6CliShim,
