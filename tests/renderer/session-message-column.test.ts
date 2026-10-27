@@ -18,6 +18,7 @@ import { SessionComposerExpanded, type SessionComposerExpandedProps } from "../.
 import { SessionChatScreen } from "../../src/chat/shell/session-header.js";
 import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
 import { ConversationMessageColumn } from "../../src/chat/conversation-message-column.js";
+import { observeSessionResultRead } from "../../src/chat/conversation/observe-session-result-read.js";
 import { buildContextPaneProjection } from "../../src/chat/runtime/session-ui-projection.js";
 import { buildMessageCollapseTargets, type MessageCollapseTarget } from "../../src/chat/conversation/session-message-collapse.js";
 import { buildLiveAssistantProjectionKey, buildMessageListProjection, type MessageListSource } from "../../src/chat/auxiliary/auxiliary-session-message-projection.js";
@@ -672,6 +673,89 @@ test("artifactの欠落と失敗は本文更新で再取得せず再openで復�
       assert.match(mounted.container.textContent ?? "", /latest detail/);
       assert.match(mounted.container.textContent ?? "", /saved body/);
     } finally { await mounted.cleanup(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "本文なし成功結果は取得済みDetailsを展開しfocus中にviewport内で表示すると既読になり、未展開・読込中・取得失敗・画面外では未読を保つ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Monitorの自動既読とTurn Summary" }
+// fault = "本文なしの成功結果を既読にできない、またはDetailsの未取得summaryや取得失敗を結果閲覧として既読にする"
+// observable = "実SessionMessageColumnのDetails開閉・非同期取得・表示位置に対する既読API呼出の会話IDとturn ID"
+// observation_boundary = "component-behavior"
+// scope = "artifact-only resultのDetails表示と自動既読observer接続"
+// lifecycle = "permanent"
+// impact = "確認済みのツール結果がMonitorで未読のまま残る、または未閲覧の結果が既読になる"
+// distinction = "observer単体は手製DOMであり実componentの詳細取得状態との接続を検出できない。既存mount helperと3つの短い取得経路で確認する"
+// @end-test-value
+test("本文なし成功結果は取得済みDetailsを表示した時だけ既読にする", async () => {
+  for (const mode of ["loaded", "missing", "failed"] as const) {
+    const detail: MessageArtifact = { title: "Tool result", activitySummary: ["Found 3 records"], changedFiles: [], runChecks: [{ label: "Result", value: "Completed" }] };
+    const pending: Array<{ resolve: (value: MessageArtifact | null) => void; reject: (error: Error) => void }> = [];
+    const mounted = await mountSessionMessageColumn({
+      messages: [{ role: "assistant", text: "", artifact: mode === "loaded" ? detail : { ...detail, activitySummary: [], detailAvailable: true } }],
+      messageKeys: ["artifact-only"],
+      onLoadArtifactDetail: () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    });
+    let top = 20;
+    let focused = true;
+    const acknowledgements: Array<[string, number]> = [];
+    const window = mounted.dom.window;
+    const originalBounds = window.HTMLElement.prototype.getBoundingClientRect;
+    window.HTMLElement.prototype.getBoundingClientRect = function () {
+      return this.classList.contains("artifact-block")
+        ? createRect({ top, left: 0, width: 400, height: 180 }) : originalBounds.call(this);
+    };
+    Object.defineProperty(window.document, "hasFocus", { value: () => focused });
+    const list = mounted.messageListRef.current!;
+    const dispose = observeSessionResultRead({
+      sessionId: "session-1", list, assistantMessageIndexes: new Map([[8, 0]]),
+      api: {
+        getUnreadSessionResult: async () => ({ turnId: 7, assistantMessageSeq: 8 }),
+        markSessionResultRead: async (id, turnId) => { acknowledgements.push([id, turnId]); return true; },
+        onSessionTurnUpdated: () => () => {},
+      },
+    });
+    const settle = (action = () => {}) => act(async () => {
+      action();
+      await Promise.resolve();
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    });
+    try {
+      await settle();
+      assert.deepEqual(acknowledgements, []);
+      top = 800;
+      await mounted.rerender({ expandedArtifacts: { "artifact-only": true } });
+      if (mode !== "loaded") {
+        top = 20;
+        await settle();
+        assert.deepEqual(acknowledgements, []);
+        await act(async () => {
+          if (mode === "missing") pending[0].resolve(null);
+          else pending[0].reject(new Error("Details unavailable"));
+        });
+        await settle();
+        assert.ok(mounted.container.querySelector('[role="alert"]'));
+        assert.deepEqual(acknowledgements, []);
+        await mounted.rerender({ expandedArtifacts: {} });
+        await mounted.rerender({ expandedArtifacts: { "artifact-only": true } });
+        top = 800;
+        await act(async () => pending[1].resolve(detail));
+      }
+      await settle();
+      assert.match(mounted.container.textContent ?? "", /Completed/);
+      assert.deepEqual(acknowledgements, []);
+      focused = false;
+      top = 20;
+      await settle(() => { list.dispatchEvent(new window.Event("scroll")); });
+      assert.deepEqual(acknowledgements, []);
+      focused = true;
+      await settle(() => { window.dispatchEvent(new window.Event("focus")); });
+      assert.deepEqual(acknowledgements, [["session-1", 7]]);
+    } finally {
+      dispose();
+      await mounted.cleanup();
+    }
   }
 });
 

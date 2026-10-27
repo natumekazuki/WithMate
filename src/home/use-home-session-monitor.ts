@@ -94,6 +94,7 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
       refresh();
     });
     const unsubscribeSession = api.subscribeSessionInvalidation(refresh);
+    const unsubscribeTurn = api.onSessionTurnUpdated(refresh);
     window.addEventListener("focus", refresh);
     return () => {
       active = false;
@@ -101,6 +102,7 @@ export function useHomeSessionMonitor(enabled: boolean, openSessionWindowIds: re
       retryRef.current = () => {};
       unsubscribeLive();
       unsubscribeSession();
+      unsubscribeTurn();
       window.removeEventListener("focus", refresh);
     };
   }, [enabled, refresh]);

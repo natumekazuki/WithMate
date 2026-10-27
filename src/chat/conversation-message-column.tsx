@@ -22,6 +22,7 @@ import { SessionTurnSubmissions } from "./runtime/session-turn-submissions.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { MarkdownImageContext, MarkdownImageResolver } from "../ui/markdown/image-resource-loader.js";
 import { composerControllerRegistry, type ComposerControllerRegistry } from "./composer-controller.js";
+import { observeSessionResultRead } from "./conversation/observe-session-result-read.js";
 
 const CONVERSATION_WINDOW_SIZE = CONVERSATION_PAGE_SIZE * 3;
 const CONVERSATION_LOAD_MARGIN = 96;
@@ -34,6 +35,7 @@ export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Sessi
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
   "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator" | "cancelConversationQuery"
   | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput"
+  | "getUnreadSessionResult" | "markSessionResultRead" | "onSessionTurnUpdated"
 >>;
 
 export type ConversationColumnCache = {
@@ -468,6 +470,17 @@ export function useConversationMessageColumn({
     savedScrollState: isBrowsing ? { scrollTop: conversation.scrollState?.scrollTop ?? 0, isFollowing: false } : conversation.scrollState,
     onScrollStateChange: (state) => { conversation.scrollState = state; },
   });
+  const assistantMessageIndexes = useMemo(() => new Map(projection.sources.flatMap((source, index) =>
+    (source.kind === "session" || source.kind === "auxiliary") && projection.messages[index].role === "assistant"
+      ? [[source.messageIndex, index] as const] : [])), [projection.sources, projection.messages]);
+  useEffect(() => {
+    const list = following.messageListRef.current;
+    if (!enabled || baseProps.isContentActive === false || !list || !api?.getUnreadSessionResult || !api.markSessionResultRead || !api.onSessionTurnUpdated) return;
+    return observeSessionResultRead({
+      api: { getUnreadSessionResult: api.getUnreadSessionResult, markSessionResultRead: api.markSessionResultRead, onSessionTurnUpdated: api.onSessionTurnUpdated },
+      sessionId, list, assistantMessageIndexes,
+    });
+  }, [api, enabled, baseProps.isContentActive, following.messageListRef, sessionId, assistantMessageIndexes]);
   const anchorFrame = useRef<number | null>(null);
   const captureAnchor = useCallback(() => {
     const element = following.messageListRef.current;

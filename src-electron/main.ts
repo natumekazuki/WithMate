@@ -54,6 +54,7 @@ import {
   isSessionFileGitCommitResource,
 } from "../src-shared/file-explorer/file-explorer-contract.js";
 import { SessionTurnService } from "./session/session-turn-service.js";
+import { SessionResultReadService } from "./session/session-result-read-service.js";
 import { registerHtmlPreviewHandlers } from "./ipc/html-preview.js";
 import { registerHtmlPreviewScheme } from "./files/html-preview-service.js";
 import { readSessionHtmlPreview } from "./files/session-html-preview-reader.js";
@@ -554,6 +555,9 @@ let sessionObservabilityService: SessionObservabilityService | null = null;
 let sessionApprovalService: SessionApprovalService | null = null;
 let sessionElicitationService: SessionElicitationService | null = null;
 let sessionTurnService: SessionTurnService | null = null;
+const sessionResultReadService = new SessionResultReadService((sessionId) => {
+  requireWindowBroadcastService().broadcastSessionTurnUpdated(sessionId);
+});
 let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
@@ -1472,10 +1476,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   readSummaries: async (sessionIds) => (await requireMainQueryService().listSessionSummaryPage({ scope: "open", sessionIds })).entries,
                   readAuxiliarySummaries: (sessionIds) => requireAuxiliarySessionService().listAuxiliarySessionSummaries(sessionIds),
                   getLiveSessionRun,
+                  hasUnreadResult: (sessionId) => sessionResultReadService.getUnreadResult(sessionId) !== null,
                 }, request),
                 listSessionSummaryPage: (request) => listSessionSummaryPage(request),
                 listSessionCharacterUsage: () => listSessionCharacterUsage(),
                 getLatestSessionTurn: (sessionId) => getLatestSessionTurn(sessionId),
+                getUnreadSessionResult: (sessionId) => sessionResultReadService.getUnreadResult(sessionId),
+                markSessionResultRead: (sessionId, turnId) => sessionResultReadService.markRead(sessionId, turnId),
                 listSessionSkills: async (sessionId) => listSessionSkills(sessionId),
                 listSessionCustomAgents: async (sessionId) => listSessionCustomAgents(sessionId),
                 listWorkspaceSkills: async (providerId, workspacePath) =>
@@ -2476,7 +2483,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         clearCharacterAuthoringRuntimeState: (session) => requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
         appendTerminalSession: async (session, terminalCommit) => {
           const persisted = await requireMainSessionPersistenceFacade().appendTerminalSession(session, terminalCommit);
-          requireWindowBroadcastService().broadcastSessionTurnUpdated(session.id);
+          sessionResultReadService.recordResult(terminalCommit);
           return persisted;
         },
       },
@@ -2612,7 +2619,11 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         persistQueuedTurnStart: (session, count, queueId, turn) => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn),
         appendRunningInput: (session, text, turnId, queuedInput) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId, queuedInput),
-        appendTerminalSession: (session, commit, options) => requireAuxiliarySessionService().appendTerminalSession(session, commit, options),
+        appendTerminalSession: async (session, commit, options) => {
+          const persisted = await requireAuxiliarySessionService().appendTerminalSession(session, commit, options);
+          sessionResultReadService.recordResult(commit);
+          return persisted;
+        },
         checkpointRuntimeMetadata: (session, expected) => requireAuxiliarySessionService().checkpointRuntimeMetadata(session, expected),
         isAuxiliarySession: async (sessionId) => Boolean(await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId)),
       },
@@ -3042,6 +3053,7 @@ async function closePersistentStores(): Promise<void> {
   managedSkillDistributionService = null;
   memoryCliShimService = null;
   sessionTurnService = null;
+  sessionResultReadService.clear();
   auxiliarySessionService = null;
   auxiliarySessionRuntimeService = null;
   auxiliaryLiveRunParents.clear();
@@ -3113,6 +3125,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   characterService = null;
   characterAuthoringService = null;
   sessionTurnService = null;
+  sessionResultReadService.clear();
   auxiliarySessionService = null;
   auxiliarySessionRuntimeService = null;
   sessionRuntimeService = null;

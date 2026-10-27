@@ -338,6 +338,12 @@ export function createSessionApi(
     getLatestSessionTurn(sessionId) {
       return ipcRenderer.invoke(channels.WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL, sessionId);
     },
+    getUnreadSessionResult(sessionId) {
+      return ipcRenderer.invoke(channels.WITHMATE_GET_UNREAD_SESSION_RESULT_CHANNEL, sessionId);
+    },
+    markSessionResultRead(sessionId, turnId) {
+      return ipcRenderer.invoke(channels.WITHMATE_MARK_SESSION_RESULT_READ_CHANNEL, sessionId, turnId);
+    },
     getLiveSessionRun(sessionId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,

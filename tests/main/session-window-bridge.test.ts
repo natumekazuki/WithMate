@@ -108,6 +108,7 @@ it("queue準備中のAuxiliary取消はquit中止後のcloseでも親を監視�
           userMessage: "queued input", executionOptions: captureSessionExecutionOptions(parent) } },
     };
     const readMonitor = () => readSessionMonitorPage({
+      hasUnreadResult: () => false,
       listMonitorSessionIds: () => bridge.listMonitorSessionIds(),
       readSummaries: async (ids) => ids.includes(parent.id) ? [projectHomeSessionSummary(parent)] : [],
       readAuxiliarySummaries: async (ids) => ids.includes(parent.id) ? [auxiliary] : [],

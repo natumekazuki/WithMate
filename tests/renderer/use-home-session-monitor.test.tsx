@@ -67,7 +67,7 @@ test("Monitor snapshotは全pageを結合し、失効後の後続pageを止め�
 // @test-value v2
 // kind = "contract"
 // claim = "Monitor hookはlive状態変化・Session無効化・open ID変更・focusでsnapshotを更新し、通知集中時の旧応答と同状態streamingを捨て、失敗時も既存行と再試行を保持する"
-// oracle = { type = "contract", ref = "GitHub Issue #876 Monitor専用snapshotと更新契機" }
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "古い応答を適用する、通知ごとに同時取得する、同状態streamingで再取得する、または取得失敗で既存行を消す"
 // observable = "hook公開snapshot/status/feedback、API取得数、購読解除数"
 // observation_boundary = "component-behavior"
@@ -87,10 +87,12 @@ test("Monitor hookは更新を集約し、stale応答と同状態streamingを除
   let query = async () => page("latest");
   const live = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
   const invalidations = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
+  const turns = new Set<Parameters<WithMateWindowApi["onSessionTurnUpdated"]>[0]>();
   dom.window.withmate = {
     listSessionMonitorPage: async () => ++calls === 1 ? stale.promise : query(),
     subscribeLiveSessionRunStatus: (listener) => { live.add(listener); return () => { live.delete(listener); }; },
     subscribeSessionInvalidation: (listener) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; },
+    onSessionTurnUpdated: (listener) => { turns.add(listener); return () => { turns.delete(listener); }; },
   } as Partial<WithMateWindowApi> as WithMateWindowApi;
   let state!: ReturnType<typeof useHomeSessionMonitor>;
   function Probe({ ids }: { ids: string[] }) {
@@ -133,6 +135,7 @@ test("Monitor hookは更新を集約し、stale応答と同状態streamingを除
     await act(async () => root.unmount());
     assert.equal(live.size, 0);
     assert.equal(invalidations.size, 0);
+    assert.equal(turns.size, 0);
     await act(async () => late.resolve(page("after-unmount")));
   } finally {
     await act(async () => root.unmount());

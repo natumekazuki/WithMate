@@ -9,6 +9,7 @@ export async function readSessionMonitorPage(deps: {
   readSummaries(sessionIds: string[]): Promise<HomeSessionSummary[]>;
   readAuxiliarySummaries(sessionIds: string[]): Promise<AuxiliarySessionSummary[]>;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
+  hasUnreadResult(sessionId: string): boolean;
 }, request?: SessionMonitorPageRequest | null): Promise<SessionMonitorPageResult> {
   const page = buildOpenSessionWindowIdsPage(deps.listMonitorSessionIds(), request);
   const [summaries, auxiliaries] = await Promise.all([
@@ -17,7 +18,8 @@ export async function readSessionMonitorPage(deps: {
   ]);
   const withLiveStatus = <T extends { id: string }>(summary: T) => {
     const status = projectLiveSessionRunStatus(deps.getLiveSessionRun(summary.id));
-    return { ...summary, cancellationState: status?.cancellationState, approvalPending: status?.approvalPending ?? false };
+    return { ...summary, cancellationState: status?.cancellationState, approvalPending: status?.approvalPending ?? false,
+      hasUnreadResult: deps.hasUnreadResult(summary.id) };
   };
   return {
     entries: summaries.map(withLiveStatus),

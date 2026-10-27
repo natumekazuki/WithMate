@@ -779,6 +779,15 @@
 .home-page .home-monitor-parent-title {
   color: #f8fbff;
   font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.home-page .has-unread-result .home-monitor-parent-title,
+.home-page .has-unread-result .home-monitor-auxiliary-preview,
+.home-page .home-monitor-disclosure.has-unread-result > .composer-icon,
+.home-page .home-monitor-disclosure.has-unread-result .home-monitor-status-icon-count {
+  color: #93bcff;
+  font-weight: 500;
 }
 
 .home-page .home-monitor-status-cluster {

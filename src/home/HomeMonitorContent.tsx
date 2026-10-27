@@ -294,6 +294,8 @@ export function HomeMonitorContent({
     const isExpanded = expandedEntryKeys.has(entryKey);
     const canExpand = auxiliarySessions.length > 0;
     const title = entry.session.taskTitle || entry.session.id;
+    const mainUnread = entry.session.hasUnreadResult === true;
+    const auxiliaryUnread = auxiliarySessions.some((summary) => summary.hasUnreadResult);
     const openParent = () => {
       onOpenSession(entry.session.id);
     };
@@ -310,12 +312,12 @@ export function HomeMonitorContent({
               <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
             </span>
             <button
-              className="home-monitor-parent-button"
+              className={`home-monitor-parent-button${mainUnread ? " has-unread-result" : ""}`}
               type="button"
               onClick={openParent}
               onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
               aria-haspopup="menu"
-              aria-label={`Open session: ${title}`}
+              aria-label={`Open session: ${title}${mainUnread ? "; Unread Result" : ""}`}
               title={title}
             >
               <CharacterAvatar
@@ -328,9 +330,9 @@ export function HomeMonitorContent({
           </div>
           {canExpand ? (
             <button
-              className="home-monitor-disclosure"
+              className={`home-monitor-disclosure${auxiliaryUnread ? " has-unread-result" : ""}`}
               type="button"
-              aria-label={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
+              aria-label={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}${auxiliaryUnread ? "; Unread Result" : ""}`}
               title={`${isExpanded ? "Hide" : "Show"} Auxiliary sessions for ${title}`}
               aria-expanded={isExpanded}
               onClick={() => toggleEntry(entry)}
@@ -352,10 +354,10 @@ export function HomeMonitorContent({
               return (
                 <button
                   key={summary.id}
-                  className="home-monitor-auxiliary-row"
+                  className={`home-monitor-auxiliary-row${summary.hasUnreadResult ? " has-unread-result" : ""}`}
                   type="button"
                   onClick={openAuxiliary}
-                  aria-label={preview ? `Open Auxiliary: ${preview}` : `Open Auxiliary ${index + 1}`}
+                  aria-label={`${preview ? `Open Auxiliary: ${preview}` : `Open Auxiliary ${index + 1}`}${summary.hasUnreadResult ? "; Unread Result" : ""}`}
                 >
                   <CharacterAvatar
                     character={{ name: "", iconPath: summary.characterIconPath ?? "" }}

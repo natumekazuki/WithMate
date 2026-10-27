@@ -1496,7 +1496,12 @@ export function SessionMessageColumn({
                     {artifact ? (
                       <section className="artifact-shell">
                       {artifactExpanded ? (
-                        <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
+                        <div
+                          id={`artifact-panel-${artifactKey}`}
+                          className="artifact-block"
+                          data-result-details-ready={artifactDetailsEnabled && !artifactLoading && !artifactDetailError
+                            && (!message.artifact?.detailAvailable || loadedArtifactDetails.current.has(artifactKey)) ? "true" : undefined}
+                        >
                           {artifactLoading ? (
                             <div className="artifact-detail-loading">
                               <LoadingIndicator inline label="Loading details" />

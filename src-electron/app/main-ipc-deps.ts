@@ -276,6 +276,8 @@ export type MainIpcSessionQueryDepsArgs = {
   listSessionMonitorPage(request: { cursor: string | null; limit: number }): Awaitable<SessionMonitorPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   getLatestSessionTurn(sessionId: string): Awaitable<SessionTurnRecord | null>;
+  getUnreadSessionResult: import("../ipc/contracts.js").MainIpcSessionQueryDeps["getUnreadSessionResult"];
+  markSessionResultRead: import("../ipc/contracts.js").MainIpcSessionQueryDeps["markSessionResultRead"];
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
