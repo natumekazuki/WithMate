@@ -471,7 +471,6 @@ describe("database-schema-v6", () => {
         "codex_speed",
         "codex_reviewer",
         "custom_agent_name",
-        "allowed_additional_directories_json",
         "thread_id",
         "display_after_message_index",
         "closed_at",

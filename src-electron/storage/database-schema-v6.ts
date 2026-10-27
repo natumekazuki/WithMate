@@ -411,7 +411,7 @@ function hasRequiredColumns(db: DatabaseSync): boolean {
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
   const normalizedColumns = ["title", "run_state", "preview", "provider_id", "catalog_revision",
     "model_id", "reasoning_effort", "approval_mode", "codex_sandbox_mode", "codex_speed",
-    "codex_reviewer", "custom_agent_name", "allowed_additional_directories_json", "thread_id",
+    "codex_reviewer", "custom_agent_name", "thread_id",
     "display_after_message_index", "closed_at", "character_id", "character_snapshot_json",
     "character_snapshot_invalid", "character_icon_path", "client_request_id", "creation_context_json",
     "creation_request_json"];
@@ -855,7 +855,6 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     codex_speed TEXT NOT NULL DEFAULT '',
     codex_reviewer TEXT NOT NULL DEFAULT '',
     custom_agent_name TEXT NOT NULL DEFAULT '',
-    allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
     closed_at TEXT NOT NULL DEFAULT '',

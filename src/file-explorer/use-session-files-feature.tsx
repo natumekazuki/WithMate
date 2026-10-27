@@ -40,6 +40,7 @@ function formatGitHistoryDiffContext(request: FileRootGitHistoryDiffRequest): st
 export function useSessionFilesFeature(input: {
   api: WithMateWindowApi | null;
   activeRunSessionId: string | null;
+  directoryScopeLabel?: string;
   prepareCentralSurfaceOpen: () => boolean;
   workspacePath: string | null;
   additionalDirectories: readonly string[];
@@ -81,6 +82,7 @@ export function useSessionFilesFeature(input: {
       <SessionFileExplorerPane
         api={input.api}
         sessionId={input.activeRunSessionId}
+        directoryScopeLabel={input.directoryScopeLabel}
         enabled={input.enabled}
         visible={refresh.visible}
         refreshRevision={refresh.revisions.files}

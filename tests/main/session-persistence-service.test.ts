@@ -577,23 +577,25 @@ describe("SessionPersistenceService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "pin変更後のstaleなrunning/retry/terminal保存は最新のpinを保持し終端本文を保存する"
+  // claim = "pinと共通Directory変更後のstaleなrunning/retry/terminal保存は最新の設定を保持し終端本文を保存する"
   // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts upsertSessionPreservingPin/upsertTerminalSession" }
-  // fault = "並行したstale保存が最新のpinをfalseに戻すかterminal本文を失う"
-  // observable = "保存SessionのisPinned/runState/最終本文とcacheのisPinned"
+  // fault = "並行したstale保存が最新のpinまたは共通Directoryを戻すかterminal本文を失う"
+  // observable = "保存SessionのisPinned/Directory/runState/最終本文とcacheのisPinned/Directory"
   // observation_boundary = "public-boundary"
   // scope = "session persistence pin concurrency"
   // lifecycle = "permanent"
   // @end-test-value
-  it("pin変更の後にstaleなrunning・retry・terminal保存が続いても最新のpinを維持する", async () => {
+  it("pinとDirectory変更の後にstaleなrunning・retry・terminal保存が続いても最新の設定を維持する", async () => {
     const runningSession = createSession({
       id: "pin-during-run",
       status: "running",
       runState: "running",
       isPinned: false,
     });
-    let cachedSessions = [runningSession];
-    let storedSession = runningSession;
+    const directories = [path.resolve("C:/current-shared")];
+    const selectedSession = { ...runningSession, allowedAdditionalDirectories: directories };
+    let cachedSessions = [selectedSession];
+    let storedSession = selectedSession;
     const service = new SessionPersistenceService({
       getSessions: () => cachedSessions,
       setSessions: (next) => { cachedSessions = next; },
@@ -653,9 +655,11 @@ describe("SessionPersistenceService", () => {
     await Promise.all([pinWrite, staleRunningWrite, staleRetryWrite, terminalWrite]);
 
     assert.equal(storedSession.isPinned, true);
+    assert.deepEqual(storedSession.allowedAdditionalDirectories, directories);
     assert.equal(storedSession.runState, "idle");
     assert.equal(storedSession.messages.at(-1)?.text, "done");
     assert.equal(cachedSessions[0]?.isPinned, true);
+    assert.deepEqual(cachedSessions[0]?.allowedAdditionalDirectories, directories);
   });
 
   // @test-value v2

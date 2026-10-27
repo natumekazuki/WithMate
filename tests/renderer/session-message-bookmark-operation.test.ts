@@ -21,7 +21,7 @@ function setup() {
     id: "auxiliary", parentSessionId: "main", status: "active", runState: "running", title: "Auxiliary",
     provider: "codex", catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never",
     codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
-    allowedAdditionalDirectories: [], threadId: "aux-thread", composerDraft: "",
+    threadId: "aux-thread", composerDraft: "",
     messages: [{ role: "user", text: "Auxiliary saved prompt" }], displayAfterMessageIndex: null,
     createdAt: "generation-1", updatedAt: "2026-09-27", closedAt: "",
   };

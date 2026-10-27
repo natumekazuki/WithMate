@@ -1,8 +1,4 @@
 import { normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
-import {
-  addAllowedAdditionalDirectory,
-  removeAllowedAdditionalDirectory,
-} from "../settings/additional-directory-state.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
 import { normalizeCodexSpeed, type CodexSpeed } from "../settings/codex-speed.js";
 import { normalizeCodexReviewer, type CodexReviewer } from "../settings/codex-reviewer.js";
@@ -92,7 +88,6 @@ export type AuxiliarySession = {
   codexSpeed: CodexSpeed;
   codexReviewer: CodexReviewer;
   customAgentName: string;
-  allowedAdditionalDirectories: string[];
   threadId: string;
   composerDraft: string;
   messages: Message[];
@@ -214,30 +209,6 @@ export function applyAuxiliarySessionReasoningEffortChange(
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
     },
-    updatedAt,
-  );
-}
-
-export function addAuxiliarySessionAdditionalDirectory(
-  session: AuxiliarySession,
-  directoryPath: string,
-  updatedAt: string,
-): AuxiliarySession {
-  return applyAuxiliarySessionPatch(
-    session,
-    { allowedAdditionalDirectories: addAllowedAdditionalDirectory(session.allowedAdditionalDirectories, directoryPath) },
-    updatedAt,
-  );
-}
-
-export function removeAuxiliarySessionAdditionalDirectory(
-  session: AuxiliarySession,
-  directoryPath: string,
-  updatedAt: string,
-): AuxiliarySession {
-  return applyAuxiliarySessionPatch(
-    session,
-    { allowedAdditionalDirectories: removeAllowedAdditionalDirectory(session.allowedAdditionalDirectories, directoryPath) },
     updatedAt,
   );
 }
@@ -466,9 +437,6 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     codexSpeed: normalizeCodexSpeed(candidate.codexSpeed),
     codexReviewer: normalizeCodexReviewer(candidate.codexReviewer),
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName : "",
-    allowedAdditionalDirectories: Array.isArray(candidate.allowedAdditionalDirectories)
-      ? candidate.allowedAdditionalDirectories.filter((entry): entry is string => typeof entry === "string")
-      : [],
     threadId: typeof candidate.threadId === "string" ? candidate.threadId : "",
     composerDraft: typeof candidate.composerDraft === "string" ? candidate.composerDraft : "",
     messages: Array.isArray(candidate.messages)

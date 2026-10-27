@@ -36,7 +36,6 @@ function session(id: string, createdAt: string, overrides: Partial<AuxiliarySess
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: id,
     composerDraft: "",
     messages: [{ role: "assistant", text: `${id} response` }],

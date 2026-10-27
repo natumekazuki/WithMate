@@ -1355,6 +1355,20 @@
   gap: 2px;
 }
 
+.session-file-explorer-scope {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.additional-directory-scope {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .session-file-explorer-tabs button,
 .session-file-explorer-refresh,
 .session-file-pin-filter {

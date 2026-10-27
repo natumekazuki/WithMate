@@ -55,7 +55,6 @@ function createAuxiliary(overrides: Partial<AuxiliarySession> = {}): AuxiliarySe
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "aux-thread-old",
     composerDraft: "keep draft",
     messages: [{ role: "user", text: "keep auxiliary message" }],

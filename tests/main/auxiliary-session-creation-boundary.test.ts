@@ -1335,7 +1335,7 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary作成commitは同一親identityの最新speed/reviewer/directoriesを保存し、同一clientRequestIdの並行再送を一行へ収束する"
+// claim = "Auxiliary作成commitは同一親identityの最新speed/reviewerを保存し、同一clientRequestIdの並行再送を一行へ収束する"
 // oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
 // fault = "準備時の親設定を保存する、または並行再送で複数rowを作る"
 // observable = "保存済みAuxiliaryの親設定、並行結果の同一ID、clientRequestId別のrow数"
@@ -1378,7 +1378,6 @@ test("Auxiliary作成commitは最新親設定を保存し同一clientRequestId�
     currentParent = parent({
       codexSpeed: "fast",
       codexReviewer: "auto-review",
-      allowedAdditionalDirectories: ["C:/new-directory"],
     });
     releaseResolver();
     const second = service.createAuxiliarySession(request);
@@ -1388,7 +1387,6 @@ test("Auxiliary作成commitは最新親設定を保存し同一clientRequestId�
     const saved = storage.getAuxiliarySession(createdA.id);
     assert.equal(saved?.codexSpeed, "fast");
     assert.equal(saved?.codexReviewer, "auto-review");
-    assert.deepEqual(saved?.allowedAdditionalDirectories, ["C:/new-directory"]);
     assert.equal(saved?.clientRequestId, "same-request");
   } finally {
     storage.close();

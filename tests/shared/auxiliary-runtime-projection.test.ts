@@ -31,7 +31,6 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: ["C:/alpha", "C:/beta"],
     threadId: "thread-1",
     composerDraft: "",
     messages: [{ role: "assistant", text: "auxiliary response" }],
@@ -245,16 +244,16 @@ test("Auxiliary runtime projectionはCharacter snapshotの表示情報を保持�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "MainのAuxiliary表示はAuxiliary会話のruntimeと親Sessionの表示contextを投影する"
+// claim = "MainのAuxiliary表示はAuxiliary会話のruntimeと親Sessionの表示context・共通Directoryを投影する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
-// fault = "Auxiliaryを選択しても親Sessionの会話・provider・threadを表示する"
+// fault = "Auxiliaryを選択しても親Sessionの会話・provider・threadを表示するか、共有Directoryを個別値へ戻す"
 // observable = "投影SessionのID、provider、model、thread、messages、directories、status、親titleとsnapshot"
 // observation_boundary = "public-boundary"
 // scope = "Main Auxiliary runtime projection"
 // lifecycle = "permanent"
 // @end-test-value
 test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff fields", () => {
-  const parent = createSession();
+  const parent = { ...createSession(), allowedAdditionalDirectories: ["C:/shared-main"] };
   const auxiliary = createAuxiliarySession();
 
   const projection = buildMainAuxiliaryRuntimeSession(parent, auxiliary);
@@ -264,7 +263,7 @@ test("buildAuxiliaryRuntimeSessionProjection main keeps runtime projection diff 
   assert.equal(projection.model, auxiliary.model);
   assert.equal(projection.threadId, auxiliary.threadId);
   assert.deepEqual(projection.messages, auxiliary.messages);
-  assert.deepEqual(projection.allowedAdditionalDirectories, auxiliary.allowedAdditionalDirectories);
+  assert.deepEqual(projection.allowedAdditionalDirectories, ["C:/shared-main"]);
   assert.equal(projection.status, "running");
   assert.equal(projection.taskTitle, parent.taskTitle);
   assert.deepEqual(projection.characterRuntimeSnapshot, parent.characterRuntimeSnapshot);

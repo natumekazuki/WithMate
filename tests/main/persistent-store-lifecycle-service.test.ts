@@ -168,7 +168,6 @@ function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "",
     composerDraft: "",
     messages: [],

@@ -13,7 +13,6 @@ import { WorkspaceDirectoryValidationService } from "../../src-electron/files/wo
 import { WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-composer-paths.js";
 import { buildSessionWithAddedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
-import { runAddAuxiliaryAdditionalDirectoryOperationWithApi } from "../../src/chat/auxiliary/auxiliary-additional-directory-operation.js";
 
 import {
   useSessionComposerFeature,
@@ -312,6 +311,7 @@ function createComposerBridge(
 ): SessionComposerFeatureBridge {
   return {
     session: createComposerSession(options.provider, options.codexSpeed),
+    canRemoveAdditionalDirectories: (options.provider ?? "codex") === "codex",
     isCharacterAuthoringSession,
     target,
     runtime: {
@@ -378,14 +378,8 @@ function createComposerBridge(
       },
       layout: {
         beforeOpenSkillPicker: () => true,
-        addAdditionalDirectory: {
-          main: noop,
-          auxiliary: noop,
-        },
-        removeAdditionalDirectory: {
-          main: noop,
-          auxiliary: noop,
-        },
+        addAdditionalDirectory: noop,
+        removeAdditionalDirectory: noop,
         expandActionDock: noop,
         jumpToBottom: noop,
       },
@@ -489,7 +483,6 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "thread-auxiliary",
     composerDraft: "",
     messages: [],
@@ -673,18 +666,18 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
 
 // @test-value v2
 // kind = "contract"
-// claim = "Mainと異なるIDのAuxiliaryでも実composerの事前検証と追加時再検証は親WindowのSession IDを使い、追加先の会話を混線させない。別Windowからの検証は拒否する"
+// claim = "Mainと異なるIDのAuxiliaryでも実composerの事前検証・追加時再検証は親Window IDを使い、両targetの追加は共通のMain許可一覧更新へ接続する。別Windowからの検証は拒否する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Add Directory By Path; docs/design/electron-window-runtime.md MainIpcRegistration" }
-// fault = "表示中のAuxiliary IDをWindow所有者IDとしてIPCへ渡して有効pathを拒否する、追加先を親へ置換する、または別Windowを許可する"
+// fault = "Auxiliary IDをWindow所有者IDとしてIPCへ渡して有効pathを拒否する、Auxiliaryの追加を共通一覧へ接続しない、または別Windowを許可する"
 // observable = "実composerの入力・Addから実preloadと登録IPCへ届くID/path、実在directoryの検証結果、Main/Auxiliaryの許可リストと別Windowの拒否"
 // observation_boundary = "public-boundary"
-// scope = "Session composer featureから共通入力・preload・検証IPCへの所有者ID結線と対象別追加"
+// scope = "Session composer featureから共通入力・preload・検証IPCへの所有者ID結線と共通一覧への追加"
 // lifecycle = "permanent"
 // impact = "Auxiliaryでdirectoryを追加できない不具合と、会話やWindowを越える権限の混線を防ぐ"
 // distinction = "共有入力へ成功callbackを注入するtestではなく実hook/adapter/component/preload/IPC認可とfilesystem検証を通す。型では区別できない2つのstring IDの結線を少数のDOM操作で継続確認する"
 // risk_tags = ["authorization"]
 // @end-test-value
-test("session composerのMain/Auxiliaryパス検証は親Window IDを使い対象会話へ追加する", async () => {
+test("session composerのMain/Auxiliaryパス検証と追加は親Mainへ接続する", async () => {
   await withReactDom(async (root) => {
     const parentId = "main-session";
     const auxiliaryId = "auxiliary-session";
@@ -709,6 +702,7 @@ test("session composerのMain/Auxiliaryパス検証は親Window IDを使い対�
     const directoryPath = fileURLToPath(new URL("./", import.meta.url)).replace(/\\/g, "/").replace(/\/$/, "");
     let main = { ...createComposerSession("codex"), id: parentId };
     let auxiliary = createAuxiliaryRuntimeSession();
+    const additions: string[] = [];
     const log: ComposerOperationLog = {
       mainDrafts: [], auxiliaryDrafts: [], mainSkills: [], auxiliarySkills: [],
       mainSpeedChanges: [], auxiliarySpeedChanges: [], mainSends: 0, auxiliarySends: 0,
@@ -723,16 +717,11 @@ test("session composerのMain/Auxiliaryパス検証は親Window IDを使い対�
         sessionId: parentId, directoryPath, initialPath: null, api,
       });
       let addition: Promise<void> | undefined;
-      bridge.operations.layout.addAdditionalDirectory.main = (path) => addition = (async () => {
+      bridge.operations.layout.addAdditionalDirectory = (path) => addition = (async () => {
+        additions.push(target);
         const selected = await select(path);
         if (selected) main = buildSessionWithAddedAdditionalDirectory(main, selected);
       })();
-      bridge.operations.layout.addAdditionalDirectory.auxiliary = (path) => addition = runAddAuxiliaryAdditionalDirectoryOperationWithApi({
-        api: { pickDirectory: () => select(path) }, hasParentSession: true,
-        activeAuxiliarySession: auxiliary, pickerBaseDirectory: "", setPickerBaseDirectory: noop,
-        updateActiveAuxiliarySession: async (recipe) => { auxiliary = recipe(auxiliary); },
-        createTimestampLabel: () => "2026-10-17T00:00:00.000Z",
-      });
       const harness = await renderComposerHarness(root, input);
       const feature = harness.getFeature();
       assert.ok(feature);
@@ -757,8 +746,8 @@ test("session composerのMain/Auxiliaryパス検証は親Window IDを使い対�
       await act(async () => { button("Add").click(); await addition; });
       assert.ok(!document.querySelector('[role="dialog"]'));
       assert.deepEqual(main.allowedAdditionalDirectories, [directoryPath]);
-      assert.deepEqual(auxiliary.allowedAdditionalDirectories, target === "main" ? [] : [directoryPath]);
     }
+    assert.deepEqual(additions, ["main", "auxiliary"]);
     assert.deepEqual(requests, Array.from({ length: 4 }, () => ({ id: parentId, path: directoryPath })));
     await assert.rejects(api.validateSessionAdditionalDirectory(auxiliaryId, directoryPath), /target Session window/);
     eventWindow = Object.create(null) as typeof ownerWindow;

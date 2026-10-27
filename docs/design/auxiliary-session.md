@@ -89,7 +89,9 @@ MainのローカルdraftとAuxiliaryの永続draftはそれぞれのownerが保�
 
 ## Context boundary
 
-初期値としてworkspace/cwd、parentのsession files、作成時点のAdditional Directory許可、provider、model、reasoning、approval、sandbox、custom agentを受け継ぐ。作成後のMain／兄弟変更は追従しない。Auxiliaryで追加した許可は他会話へ伝播しない。
+workspace/cwdとsession filesは親Mainと共有する。Additional Directoryも親Mainと配下の全Auxiliaryで同じ一覧を使い、どちらのComposerから追加・削除しても共通一覧へ反映する。別のMain配下とは共有しない。実行中turnの捕捉済み認可は変更せず、次turnから最新一覧を適用する。
+
+provider、model、reasoning、approval、sandbox、custom agentは作成時の初期値を受け継ぎ、作成後のMain／兄弟変更は追従しない。
 
 MainとAuxiliaryはmessages、composer draft、live run、pending approval／elicitation、provider thread、実行結果を分離する。Mainのmessage listへAuxiliary全文を自動挿入せず、必要な引用は既存のCopy／Quote操作でユーザーが明示する。
 

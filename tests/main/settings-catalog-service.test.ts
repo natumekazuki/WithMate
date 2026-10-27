@@ -233,7 +233,6 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "aux-thread-1",
     composerDraft: "",
     messages: [{ role: "assistant", text: "aux result" }],

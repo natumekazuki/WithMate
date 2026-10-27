@@ -69,7 +69,6 @@ test("会話pageは全履歴seqを維持しfull保存へ流れない", async () 
       codexSpeed: session.codexSpeed,
       codexReviewer: session.codexReviewer,
       customAgentName: "",
-      allowedAdditionalDirectories: [],
       threadId: "",
       composerDraft: "",
       messages,

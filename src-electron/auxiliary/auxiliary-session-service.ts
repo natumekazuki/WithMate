@@ -861,7 +861,6 @@ export class AuxiliarySessionService {
       codexSpeed: parent.codexSpeed,
       codexReviewer: parent.codexReviewer,
       customAgentName: launchSelection.customAgentName,
-      allowedAdditionalDirectories: [...parent.allowedAdditionalDirectories],
       threadId: "",
       composerDraft: "",
       messages: [],
@@ -1298,7 +1297,6 @@ export class AuxiliarySessionService {
       codexSpeed: runtimeSession.codexSpeed,
       codexReviewer: runtimeSession.codexReviewer,
       customAgentName: runtimeSession.customAgentName,
-      allowedAdditionalDirectories: [...current.allowedAdditionalDirectories],
       threadId: runtimeSession.threadId,
       composerDraft: "",
       messages: runtimeSession.messages,
@@ -1335,7 +1333,7 @@ export class AuxiliarySessionService {
         throw new Error("A running Auxiliary Session cannot be updated.");
       }
       const updated = await storage.updateAuxiliarySessionIfMatches({
-        session: { ...current, allowedAdditionalDirectories: [...session.allowedAdditionalDirectories], updatedAt: currentTimestampLabel() },
+        session: { ...current, updatedAt: currentTimestampLabel() },
         expectedSession: current,
       });
       if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
@@ -1362,7 +1360,6 @@ export class AuxiliarySessionService {
       codexSpeed: current.codexSpeed,
       codexReviewer: current.codexReviewer,
       customAgentName: current.customAgentName,
-      allowedAdditionalDirectories: [...session.allowedAdditionalDirectories],
       composerDraft: current.composerDraft,
       displayAfterMessageIndex: session.displayAfterMessageIndex,
       threadId: current.threadId,
@@ -1459,7 +1456,7 @@ export class AuxiliarySessionService {
       model: auxiliary.model,
       reasoningEffort: auxiliary.reasoningEffort,
       customAgentName: auxiliary.customAgentName,
-      allowedAdditionalDirectories: [...auxiliary.allowedAdditionalDirectories],
+      allowedAdditionalDirectories: [...parent.allowedAdditionalDirectories],
       threadId: auxiliary.threadId,
       messages: auxiliary.messages,
       messageCount: auxiliary.messageCount,

@@ -760,6 +760,7 @@ export class SessionPersistenceService {
       ...nextSession,
       isPinned: currentSession?.isPinned ?? nextSession.isPinned,
       taskTitle: currentSession?.taskTitle ?? nextSession.taskTitle,
+      allowedAdditionalDirectories: currentSession?.allowedAdditionalDirectories ?? nextSession.allowedAdditionalDirectories,
     }, "upsert", terminalCommit);
   }
 

@@ -280,7 +280,6 @@ function buildAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxil
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "",
     composerDraft: "",
     messages: [],
@@ -1240,7 +1239,6 @@ test("AuxiliarySessionStorage は軽量summaryを保存して再読込する", a
       codexSpeed: "standard",
       codexReviewer: "user",
       customAgentName: "",
-      allowedAdditionalDirectories: [],
       threadId: "thread-1",
       composerDraft: "draft must stay out of summary",
       messages: [{ role: "assistant", text: "transcript must stay out of summary" }],
@@ -1437,7 +1435,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     assert.equal(auxiliary.approvalMode, DEFAULT_APPROVAL_MODE);
     assert.equal(auxiliary.codexSandboxMode, DEFAULT_CODEX_SANDBOX_MODE);
     assert.equal(auxiliary.codexSpeed, "standard");
-    assert.deepEqual(auxiliary.allowedAdditionalDirectories, ["C:/shared"]);
+    assert.deepEqual((await service.getAuxiliaryRuntimeSession(auxiliary.id))?.allowedAdditionalDirectories, ["C:/shared"]);
     assert.equal(auxiliary.displayAfterMessageIndex, parent.messages.length - 1);
 
     const sameActive = await service.createAuxiliarySession({
@@ -1660,7 +1658,6 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       approvalMode: "on-request",
       codexSandboxMode: "workspace-write-network",
       customAgentName: "reviewer",
-      allowedAdditionalDirectories: ["C:/shared", "C:/review-context"],
       composerDraft: "current visible draft",
     });
     const staleDraftAfterSettingsChange = await service.updateAuxiliarySession({
@@ -1670,7 +1667,6 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     assert.equal(staleDraftAfterSettingsChange.approvalMode, userConfiguredAuxiliary.approvalMode);
     assert.equal(staleDraftAfterSettingsChange.codexSandboxMode, userConfiguredAuxiliary.codexSandboxMode);
     assert.equal(staleDraftAfterSettingsChange.customAgentName, userConfiguredAuxiliary.customAgentName);
-    assert.deepEqual(staleDraftAfterSettingsChange.allowedAdditionalDirectories, userConfiguredAuxiliary.allowedAdditionalDirectories);
     assert.equal((await service.getAuxiliarySession(staleDraftAfterSettingsChange.id))?.composerDraft, userConfiguredAuxiliary.composerDraft);
 
     auxiliaryStorage.upsertAuxiliarySession({ ...staleDraftAfterSettingsChange, runState: "running" });
@@ -2726,17 +2722,17 @@ test("Auxiliary draft migration はactive/closedを移行しmalformed payloadを
 
 // @test-value v2
 // kind = "contract"
-// claim = "実行中Auxiliaryの次送信用設定は旧captureを変更せずcheckpoint失敗でも保持され、directory更新は本文とthreadを維持しread-only親の選択を拒否する"
+// claim = "実行中Auxiliaryの次送信用設定は旧captureを変更せずcheckpoint失敗でも保持され、metadata保存は本文・threadを維持しread-only親の選択を拒否する"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
-// fault = "running選択を拒否するか旧captureを変えるかcheckpoint失敗で選択を戻すかdirectory更新でthread/本文を変えるかread-only親を受理する"
-// observable = "旧capture、checkpoint失敗とdirectory更新後の選択/本文/runState、保存済みmodel/threadとread-only親の拒否"
+// fault = "running選択を拒否するか旧captureを変えるかcheckpoint失敗で選択を戻すかmetadata保存でthread/本文を変えるかread-only親を受理する"
+// observable = "旧capture、checkpoint失敗とmetadata保存後の選択/本文/runState、保存済みmodel/threadとread-only親の拒否"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service"
 // lifecycle = "permanent"
 // impact = "現在選択やproviderの会話履歴再開に必要なthreadIdが失われる"
 // distinction = "既存の一般更新testはcheckpoint失敗による現在選択と保存値の乖離を作らない"
 // @end-test-value
-test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthreadを維持する", async () => {
+test("AuxiliarySessionService はcheckpoint失敗後のmetadata保存でthreadを維持する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-checkpoint-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   const sessionStorage = new SessionStorage(dbPath);
@@ -2808,11 +2804,7 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
     }), /read-only/);
     assert.deepEqual(captureSessionExecutionOptions(selections.apply(withThread)), selectedOptions);
     parentReadOnly = false;
-    const updated = await service.updateAuxiliarySession({
-      ...currentSelection,
-      allowedAdditionalDirectories: ["C:/review-context"],
-    });
-    assert.deepEqual(updated.allowedAdditionalDirectories, ["C:/review-context"]);
+    const updated = await service.updateAuxiliarySession(currentSelection);
     assert.deepEqual(captureSessionExecutionOptions(updated), selectedOptions);
     assert.equal(updated.threadId, "existing-provider-thread");
     assert.equal(updated.runState, "running");
@@ -2920,7 +2912,6 @@ test("Auxiliary runtime metadata CAS は payload の本文と draft を保持し
       codexSpeed: "standard",
       codexReviewer: "user",
       customAgentName: "",
-      allowedAdditionalDirectories: [],
       threadId: "aux-thread",
       composerDraft: "draft to keep",
       messages: [{ role: "user", text: "message to keep" }],

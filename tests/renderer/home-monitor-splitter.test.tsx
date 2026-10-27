@@ -279,7 +279,7 @@ test("Monitorは他Sessionの更新で操作中の行を再mountしない", asyn
       id: `aux-C-${index}`, parentSessionId: "C", status: "active", runState: "idle", preview: `Child ${index}`,
       title: "", provider: "codex", catalogRevision: 1, model: "gpt-6.1-sol", reasoningEffort: "medium",
       approvalMode: "never", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user",
-      customAgentName: "", allowedAdditionalDirectories: [], threadId: "", displayAfterMessageIndex: null,
+      customAgentName: "", threadId: "", displayAfterMessageIndex: null,
       createdAt: "2026-10-12T00:00:00.000Z", updatedAt: "2026-10-12T00:00:00.000Z", closedAt: "",
     })) };
     const opened: unknown[][] = [];
@@ -344,7 +344,7 @@ test("Monitorは分類更新を跨いでAuxiliary展開と移動先を維持す�
       id: "stable-child", parentSessionId: "parent-1", status: "active", runState: "running", preview: "Child work",
       title: "", provider: "codex", catalogRevision: 1, model: "gpt-6.1-sol", reasoningEffort: "medium",
       approvalMode: "never", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user",
-      customAgentName: "", allowedAdditionalDirectories: [], threadId: "", displayAfterMessageIndex: null,
+      customAgentName: "", threadId: "", displayAfterMessageIndex: null,
       createdAt: "2026-10-12T00:00:00.000Z", updatedAt: "2026-10-12T00:00:00.000Z", closedAt: "",
     }],
   };

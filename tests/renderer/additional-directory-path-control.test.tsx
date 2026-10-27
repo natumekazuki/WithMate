@@ -11,10 +11,10 @@ import type { WorkspaceDirectoryValidationResult } from "../../src-shared/window
 
 // @test-value v2
 // kind = "contract"
-// claim = "Add Directory By Pathは入力を事前検証し、空欄・検証待ち・無効pathを送信せず、検証失敗を入力保持とalertで示す。処理中の二重送信と閉鎖を止め、保存失敗から再試行できる。取消・成功時はfocusを戻し、閉鎖前の遅い検証結果やdisabled後のdialogを復活させない"
+// claim = "Add Directory By Pathは対象会話を表示し、入力を事前検証し、空欄・検証待ち・無効pathを送信せず、検証失敗を入力保持とalertで示す。処理中の二重送信と閉鎖を止め、保存失敗から再試行できる。取消・成功時はfocusを戻し、閉鎖前の遅い検証結果やdisabled後のdialogを復活させない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path" }
-// fault = "未検証・無効pathや二重送信を通す、検証/保存失敗で入力を消す、busy中に閉じる、focusを失う、閉じたdialogの検証結果が再open後の追加可否やerrorを上書きする"
-// observable = "描画dialogの見出し・inputのaria-labelと値・alert・Add disabled/busy・callback回数とpath・閉鎖後のdocument.activeElement"
+// fault = "対象会話の表示を失う、未検証・無効pathや二重送信を通す、検証/保存失敗で入力を消す、busy中に閉じる、focusを失う、閉じたdialogの検証結果が再open後の追加可否やerrorを上書きする"
+// observable = "描画dialogの見出し・対象会話名・inputのaria-labelと値・alert・Add disabled/busy・callback回数とpath・閉鎖後のdocument.activeElement"
 // observation_boundary = "component-behavior"
 // scope = "AdditionalDirectoryPathControlの入力・保存・失敗・取消・編集制約"
 // lifecycle = "permanent"
@@ -50,7 +50,7 @@ test("Add Directory By Pathは入力・busy・失敗からの再試行とfocus�
     return new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
   };
   const render = async (disabled = false) => {
-    await act(async () => root!.render(<AdditionalDirectoryPathControl disabled={disabled} onAdd={onAdd} onValidate={onValidate} />));
+    await act(async () => root!.render(<AdditionalDirectoryPathControl disabled={disabled} onAdd={onAdd} onValidate={onValidate} directoryScopeLabel="Auxiliary · Character A" />));
   };
   const open = async () => {
     button("Add Directory By Path").focus();
@@ -72,6 +72,7 @@ test("Add Directory By Pathは入力・busy・失敗からの再試行とfocus�
     await render();
     await open();
     assert.equal(container.querySelector("h2")?.textContent, "Add Directory By Path");
+    assert.equal(container.querySelector(".additional-directory-scope")?.textContent, "Auxiliary · Character A");
     assert.equal(input().getAttribute("aria-label"), "Directory path");
     assert.equal(dom.window.document.activeElement, input());
     assert.equal(button("Add").disabled, true);

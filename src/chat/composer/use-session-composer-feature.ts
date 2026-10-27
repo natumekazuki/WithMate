@@ -82,6 +82,8 @@ type SessionComposerValueOperation<T> = (value: T) => void | Promise<void>;
 
 export type SessionComposerFeatureBridge = {
   session: Session;
+  directoryScopeLabel?: string;
+  canRemoveAdditionalDirectories: boolean;
   isCharacterAuthoringSession: boolean;
   target: "main" | "auxiliary";
   runtime: {
@@ -155,14 +157,8 @@ export type SessionComposerFeatureBridge = {
     layout: {
       beforeOpenSkillPicker?: () => boolean;
       openPromptTemplates?: SessionComposerOperation;
-      addAdditionalDirectory: {
-        main: (directoryPath?: string) => void | Promise<void>;
-        auxiliary: (directoryPath?: string) => void | Promise<void>;
-      };
-      removeAdditionalDirectory: {
-        main: (path: string) => void | Promise<void>;
-        auxiliary: (path: string) => void | Promise<void>;
-      };
+      addAdditionalDirectory: (directoryPath?: string) => void | Promise<void>;
+      removeAdditionalDirectory: (path: string) => void | Promise<void>;
       expandActionDock: () => void;
       jumpToBottom: () => void;
     };
@@ -495,14 +491,10 @@ export function useSessionComposerFeature(input: {
       setIsAdditionalDirectoryListOpen((current) => !current);
     };
     const onAddAdditionalDirectory = (directoryPath?: string) => {
-      return isAuxiliaryTarget
-        ? bridge.operations.layout.addAdditionalDirectory.auxiliary(directoryPath)
-        : bridge.operations.layout.addAdditionalDirectory.main(directoryPath);
+      return bridge.operations.layout.addAdditionalDirectory(directoryPath);
     };
     const onRemoveAdditionalDirectory = (path: string) => {
-      void (isAuxiliaryTarget
-        ? bridge.operations.layout.removeAdditionalDirectory.auxiliary(path)
-        : bridge.operations.layout.removeAdditionalDirectory.main(path));
+      void bridge.operations.layout.removeAdditionalDirectory(path);
     };
     const onDraftSelect = (selectionStart: number) => {
       if (!input.activeRunSessionId) {
@@ -533,6 +525,7 @@ export function useSessionComposerFeature(input: {
       ? "Waiting for the run to stop"
       : getComposerSendButtonTitle(composerSendability);
     const dock: LiveSessionComposerDockPropsInput = {
+      directoryScopeLabel: bridge.directoryScopeLabel,
       canSelectCustomAgent,
       additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
       isRunning: bridge.runtime.isRunning,
@@ -642,10 +635,11 @@ export function useSessionComposerFeature(input: {
       composer: buildLiveSessionComposerProps(dockSurface.composer),
       compactActionDock: buildLiveSessionCompactActionDockProps(dockSurface.compactActionDock),
       additionalDirectoryListProps: {
+        directoryScopeLabel: bridge.directoryScopeLabel,
         isOpen: isAdditionalDirectoryListOpen,
         items: buildAdditionalDirectoryItems(
           bridge.session.allowedAdditionalDirectories,
-          bridge.session.provider === "codex",
+          bridge.canRemoveAdditionalDirectories,
         ),
         isInteractionDisabled:
           bridge.runtime.isReadOnly
@@ -670,7 +664,7 @@ export function useSessionComposerFeature(input: {
       skillListError: bridge.resources.skillListError,
       additionalDirectoryItems: buildAdditionalDirectoryItems(
         bridge.session.allowedAdditionalDirectories,
-        bridge.session.provider === "codex",
+        bridge.canRemoveAdditionalDirectories,
       ),
       isAdditionalDirectoryListOpen,
       onRemoveAdditionalDirectory,

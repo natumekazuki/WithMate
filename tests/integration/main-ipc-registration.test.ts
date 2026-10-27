@@ -847,7 +847,6 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
     approvalMode: "never",
     codexSandboxMode: "workspace-write",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "thread-1",
     composerDraft: "",
     messages: [],

@@ -65,7 +65,6 @@ function auxiliary(id) {
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: `benchmark-thread-${id}`,
     composerDraft: "",
     messages: messageList(id, historyLength),

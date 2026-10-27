@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React, { act } from "react";
@@ -9,12 +10,12 @@ import type { LiveSessionRunState } from "../../src-shared/session/runtime-state
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Session WindowのMain/Auxiliary live本文は選択中の会話へ届き、Auxiliaryのterminalは保存本文へ一度だけ収束する。本文だけの更新、Files tab変更、Glossary検索は無関係なAuxiliary一覧の全summaryを再投影せず、Auxiliary draftを保持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: UI Implementation Boundary; pending中のlive activity / streaming response" }
-// fault = "rootが全文live snapshotやFiles tab/Glossary検索で一覧summaryを全件評価する、会話のlive購読が失われる、terminal後にliveと保存本文が二重表示される、または補助機能の操作でAuxiliary draftが消える"
-// observable = "実AppのMain/Auxiliary会話本文、Glossary検索owner、Auxiliary composer draft、summary characterIconPath getter読取回数"
+// claim = "Session WindowのMain/Auxiliary live本文は選択中の会話へ届き、Auxiliaryのterminalは保存本文へ一度だけ収束する。本文だけの更新、Files tab変更、Glossary検索は無関係なAuxiliary一覧の全summaryを再投影せず、Auxiliary draftを保持する。FilesとDirectory追加は共有対象ラベルを表示し、Files取得ownerは送信先切替へ追従する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: UI Implementation Boundary; pending中のlive activity / streaming response; AgentのFile Explorer" }
+// fault = "rootが全文live snapshotやFiles tab/Glossary検索で一覧summaryを全件評価する、会話のlive購読が失われる、terminal後にliveと保存本文が二重表示される、補助機能の操作でAuxiliary draftが消える、共有対象ラベルを個別会話へ戻す、またはFiles取得ownerが送信先切替へ追従しない"
+// observable = "実AppのMain/Auxiliary会話本文、Glossary検索owner、Auxiliary composer draft、summary characterIconPath getter読取回数、Filesと追加dialogの対象文字列、Files取得APIのSession ID"
 // observation_boundary = "component-behavior"
-// scope = "SessionWindowApp conversation update boundaries。live本文は非同期の表示反映を待ち、terminal本文は直ちに確認する"
+// scope = "SessionWindowApp conversation update boundariesとFiles／Directory追加対象。live本文は非同期の表示反映を待ち、terminal本文は直ちに確認する"
 // lifecycle = "permanent"
 // impact = "長い会話・多数Auxiliaryの実行中に無関係な一覧処理が波及し、応答の消失や重複で会話を読めなくなる"
 // distinction = "hook単体や型検査ではroot→ChatWindow→会話列の購読・表示とAuxiliary一覧への伝播を同時に検証できない。壁時計性能値をCI合否に使わない"
@@ -69,7 +70,8 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
   api.subscribeLiveSessionRun = (listener) => { liveListeners.add(listener); return () => { liveListeners.delete(listener); }; };
   const liveStates = new Map<string, LiveSessionRunState | null>();
   api.getLiveSessionRun = async (id) => liveStates.get(id) ?? null;
-  api.listSessionFileRoots = async () => [];
+  const fileOwners: string[] = [];
+  api.listSessionFileRoots = async (id) => { fileOwners.push(id); return []; };
   api.getSessionGlossaryProjection = async (id) => ({
     sessionId: id, scopeRevision: "fixture", sequence: 1,
     checkout: { repositoryName: "Fixture", branch: "test", pathLabel: "fixture" },
@@ -110,6 +112,9 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     return status ? { ...status, runState: savedAuxiliaryResponse ? "idle" : "running" } : null;
   };
   Object.defineProperty(dom.window, "withmate", { value: api });
+  const cssImports = registerHooks({ load(url, context, next) {
+    return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
+  } });
   const { createRoot } = await import("react-dom/client");
   const { default: App } = await import("../../src/app/SessionWindowApp.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
@@ -179,11 +184,29 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     assert.ok(openFiles);
     const beforeFileTab = summaryReads;
     await act(async () => { openFiles.click(); });
+    assert.equal(dom.window.document.querySelector(".session-file-explorer-scope")?.textContent, "Shared · Main + Auxiliary");
+    assert.equal(fileOwners.at(-1), terminalTargetId);
     const changesTab = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-tabs button[role='tab']:nth-child(2)");
     assert.ok(changesTab);
     await act(async () => { changesTab.click(); });
     assert.equal(textarea.value, "auxiliary draft to keep");
     assert.equal(summaryReads, beforeFileTab, "local Files tab changes must not reproject Auxiliary summaries");
+
+    const mainTarget = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".concurrent-chat-target-dock button"))
+      .find((button) => button.textContent === "Main");
+    assert.ok(mainTarget);
+    await act(async () => { mainTarget.click(); });
+    assert.equal(dom.window.document.querySelector(".session-file-explorer-scope")?.textContent, "Shared · Main + Auxiliary");
+    assert.equal(fileOwners.at(-1), "benchmark-main");
+    const addByPath = dom.window.document.querySelector<HTMLButtonElement>('button[title="Add Directory By Path"]');
+    assert.ok(addByPath);
+    await act(async () => { addByPath.click(); });
+    assert.equal(dom.window.document.querySelector(".additional-directory-scope")?.textContent, "Shared · Main + Auxiliary");
+    await act(async () => { auxiliaryTarget.click(); });
+    assert.equal(dom.window.document.querySelector('[role="dialog"][aria-label="Add Directory By Path"]'), null);
+    assert.equal(dom.window.document.querySelector(".session-file-explorer-scope")?.textContent, "Shared · Main + Auxiliary");
+    assert.equal(fileOwners.at(-1), terminalTargetId);
+    assert.equal(textarea.value, "auxiliary draft to keep");
 
     const openContext = dom.window.document.querySelector<HTMLButtonElement>("button[aria-label='Open right pane']");
     assert.ok(openContext);
@@ -207,6 +230,7 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     assert.equal(summaryReads, beforeSearch, "glossary search must not reproject Auxiliary summaries");
   } finally {
     await act(async () => { root.unmount(); });
+    cssImports.deregister();
     dom.window.close();
     for (const [key, descriptor] of originals) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

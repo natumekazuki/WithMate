@@ -43,6 +43,10 @@ Memoryのowner、scope、忘却、idempotency、保護対象fileは[V6 Memory Fo
 
 Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Auxiliaryが共有する。親削除で全記録をcascade削除し、AuxiliaryのCloseでは消さない。構造・競合・MCP・表示の契約は[Session Graph](session-graph.md)を参照する。
 
+## Additional Directory
+
+Additional Directoryは`sessions_v6.allowed_additional_directories_json`にだけ保存する。Auxiliaryの保存データとAPIのmetadataにはDirectoryを持たせず、Files認可・表示・次turnの実行contextは親Mainの現在の一覧から解決する。親Mainと配下の全Auxiliaryが共有し、別のMain配下とは共有しない。
+
 ## Files Pin
 
 `session_file_pins_v6`は親Sessionごとにroot種別、正規化root path、相対path、対象種類、root表示名を保持する。MainとAuxiliaryは同じ親SessionのPinを使い、アクセス時にはそれぞれの現在root認可を適用する。親Sessionへのforeign keyは`ON DELETE CASCADE`で、削除時にPinも削除する。新規・既存V6のschema更新はstorage Worker内の`ensureV6Schema`が行い、Session本文等を作り直さない。
