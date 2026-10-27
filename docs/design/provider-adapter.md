@@ -77,9 +77,9 @@ providerごとの差は次。
 - `ClaudeAdapter`
   - 公式SDK `0.3.285`と未改変の公式native実行物 `2.1.285`を使い、Windows / macOSの対象architecture向け実行物を配布物へ同梱する。CLIの既存ログインをSDKに任せ、WithMateはcredentialを読取・コピーせず、独自OAuthを行わない。SDKの認証・課金に関わる環境変数や設定の優先順位を上書きしない
   - `query()`で1 turnを実行し、保存済みの明示session IDを`resume`へ渡す。履歴全件の再送、暗黙の最新会話`continue`は行わない。取消時はSDKの公開spawn hookで子プロセスの実終了を追跡し、実終了までprovider Promiseを保持してruntimeの再送guardにつなぐ。正常なterminal result後のcleanupは[ADR 002](../adr/002-provider-turn-terminal-and-cancellation.md)のbounded graceに従う
-  - `claude-opus-5-5`と`low / medium / high / xhigh / max`をcatalogで扱う。`permissionMode: "default"`と共通UIの`Provider Controlled`のみを用い、Codexのsandbox選択は提供しない
+  - modelとdepthはcatalogから選び、同梱定義は`claude-opus-5-5`と`low / medium / high / xhigh / max`。WithMateのApprovalとReviewerの組合せをSDKの6 permission modeへ写像し、Speedは`Standard / Fast`へ対応する。Codexのsandbox選択は提供しない
   - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affect / Memoryを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
-  - SDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
+  - `Provider Controlled + User`ではSDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`Auto Run`と`Auto Review`では通常toolの強制askを行わず、選択したnative modeの制御へ任せる。いずれもSDKから届く承認要求は共通UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
   - background planeは別の非永続sessionで構造化JSONを要求し、tools / MCP / hooksを無効化する。`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合、実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
   - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。quotaはモデルを実行しないcontrol APIで取得し、Mainの非永続cacheへ保持する。token / cache usageはturn単位で扱う。API換算USDは実請求額として表示しない。backgroundの補助処理も解決された認証先の利用枠を消費する。同じ契約枠になる条件は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
 
@@ -196,25 +196,42 @@ adapter 実行に必要な保存済み session context:
 
 ## Approval Modes
 
-approval mode は WithMate が対応する Codex policy 値を正本にする。
+ApprovalとReviewerはproviderのnative設定名ではなく、WithMateの承認方式として定義する。Approvalは操作を自動許可・確認・拒否する方針、Reviewerは確認が必要な操作を誰が判断するかを表す。provider固有の実現方式はAdapterが写像し、対応しない選択や組合せを別設定へ暗黙変換しない。Sandboxは別の隔離設定であり、ApprovalやReviewerによるOSレベルの隔離は保証しない。
 
-- `never`
-- `on-request`
-- `untrusted`
+| Approval | 共通値 | WithMateでの意味 | Codex | Copilot | Claude（Reviewer: User） |
+| --- | --- | --- | --- | --- | --- |
+| Auto Run | `never` | 通常操作で承認確認を求めない。providerの明示的な禁止・必須確認は維持する | `never` | permission requestを自動許可 | `bypassPermissions`＋明示opt-in |
+| Provider Controlled | `on-request` | 確認が必要な操作をReviewerへ渡す。対象はproviderとWithMateの実行方針に従う | `on-request` | permission requestを共通UIへ | `default`＋read-only以外を強制ask |
+| Safety Focused | `untrusted` | 通常より許可範囲を絞り、provider別の安全側の方針で実行する | `untrusted` | read-only以外を拒否 | 非対応 |
+| Accept Edits | `accept-edits` | 編集・filesystem操作を自動許可し、それ以外の確認を維持する | 非対応 | 非対応 | `acceptEdits` |
+| Preapproved Only | `dont-ask` | 事前許可された操作だけ実行し、承認・AskUserQuestionの対話を開始しない | 非対応 | 非対応 | `dontAsk` |
+| Plan | `plan` | 計画用の権限制御で実行する。書込許可を自動的には与えない | 非対応 | 非対応 | `plan` |
 
-方針:
+Reviewerは`User / Auto Review`をCodexとClaudeで提供し、既定値は`user`。既存の`codexReviewer` fieldを保存・送信時捕捉に共用し、新規fieldやmigrationは追加しない。
 
-- renderer / shared state / session persistence / 最小turn記録ではCodex policy値をwrite-pathの正本として扱う
-- 既存 row に残る legacy 値は read-path normalize で吸収する
-  - `allow-all -> never`
-  - `safety -> untrusted`
-  - `provider-controlled -> on-request`
-- CodexAdapterは`approvalMode`をApp Serverの`approvalPolicy`へそのまま渡す
-- CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` を Session UI の approval card 中継として扱う
-- ClaudeAdapterは`on-request`だけを選択可能にし、SDKのdefault permissionと共通approval / elicitation UIで処理する
-- UIはpolicy値をそのまま表示せず、`Auto Run` / `Provider Controlled` / `Safety Focused`のdisplay labelへ変換する。保存・API・adapter境界ではpolicy値をrawのまま保持し、providerごとに出すchoicesを分ける
+- `User`はproviderが要求した操作承認をWithMateの共通approval UIへ中継する。
+- `Auto Review`は確認対象の操作をproviderの自動審査へ任せる。Codexは`approvalsReviewer: "auto_review"`、ClaudeはApprovalが`on-request`の場合に`permissionMode: "auto"`へ写像する。審査方式・対象・利用条件の同一性は保証しない。providerが人の確認をなお要求した場合は共通UIへ中継する。
+- Claudeの`accept-edits / dont-ask / plan`はReviewerが`user`のときだけ選択可能。UIは組合せに対応しない候補をdisabledにし、送信時検証とAdapterも不正な組合せを拒否する。保存値が不正な組合せならinvalidを示し、Reviewerの明示変更で修正できる。
+- `never`ではReviewerを適用せず、controlをdisabledにして保存済み値を保持する。Reviewerが有効なApprovalへ戻した場合は以前の選択を再利用する。保存済みApprovalが`never`の間のReviewer更新は採用しない。
+- Auxiliary作成時のReviewerは既存どおり親Sessionから継承する。作成時に実際に保存するApprovalとの組合せをcommit前に検証し、非対応なら作成を拒否する。親や作成要求の設定をUserへ暗黙変更しない。
 
-session作成、永続化、最小turn、artifact表示、resume復元ではpolicy値を追跡し、providerごとの差異はprovider-specific choicesとadapter実装で吸収する。
+renderer / shared state / session persistence / 最小turn記録は上記の共通値を保持する。既存rowのlegacy値はread-pathで`allow-all -> never`、`safety -> untrusted`、`provider-controlled -> on-request`へ正規化する。Codex／CopilotのApproval既定値は`untrusted`、Claudeは`on-request`を維持する。
+
+Claudeの実行制御:
+
+- `never`では`allowDangerouslySkipPermissions: true`を渡す。SDKのdeny / askルール、hook、managed policyは上書きしない。
+- `on-request + user`では`Read / Glob / Grep / WebSearch / WebFetch`以外を`PreToolUse`でaskにする。他の有効な承認方式では通常toolを強制askせず、選択したnative modeの制御へ任せる。
+- `Preapproved Only`以外の`AskUserQuestion`と、SDKから届くMCP elicitationは共通質問UIを使う。残るSDK承認要求は共通approval UIへ中継し、拒否・取消・UI不在ではdenyする。
+- Auto Reviewのmodel・契約・managed policy等の利用条件はSDKが判定する。起動時に要求と異なるpermission modeが返れば失敗として通知する。
+- artifactには送信時のApprovalとReviewerを分けて記録する。Reviewerは選択値であり、個々の操作で自動審査が実行された証明ではない。
+
+## Speed
+
+- 共通の`Standard / Fast`選択をCodexとClaudeで提供する。保存・送信時捕捉には既存の`codexSpeed` fieldを使用し、新しい保存fieldやmigrationは追加しない。既定値は`standard`
+- Codexは`standard -> serviceTier: "default"`、`fast -> serviceTier: "fast"`へ対応する
+- ClaudeはturnごとのSDK `settings.fastMode`へ`standard -> false`、`fast -> true`を明示し、user設定のFastをStandard選択へ持ち込まない。user設定fileへは書き込まない
+- Claude Fastのmodel・利用資格・追加課金条件はSDK／providerが判定する。起動時にFast無効化が確定していれば理由とStandardへの変更案をerrorとして返す。利用資格判定待ちは無効確定と扱わない
+- Claude SDKが実行結果へ速度状態を返した場合はartifactのspeed checkへ反映し、cooldown等でStandardになった結果をFastと表示しない。実速度状態が未提供の場合のFast表示は`Fast (Requested)`とする
 
 ## Sandbox Modes
 

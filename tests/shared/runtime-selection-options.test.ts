@@ -21,6 +21,38 @@ const providerCatalog: ModelCatalogProvider = {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Claude selectorは保存済みApprovalを維持し、対応値は選択可能、非対応値はdisabledのUnsupportedとして表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md; docs/design/provider-adapter.md#approval-modes" }
+// fault = "保存済みuntrustedを自動実行へ暗黙変換するか、neverを非対応として扱う"
+// observable = "選択値を含むapprovalChoiceOptionsのvalue、label、disabled"
+// observation_boundary = "public-boundary"
+// scope = "Claude runtime selection saved approval"
+// lifecycle = "permanent"
+// impact = "利用者の承認設定が意図せず変わるかAuto Runを選べなくなる"
+// distinction = "provider候補一覧testは保存済み選択値を補完するrenderer側の経路を通らない"
+// @end-test-value
+test("Claude runtime options preserve supported and unsupported saved approval values", () => {
+  const supported = [
+    { value: "never", label: "Auto Run" },
+    { value: "on-request", label: "Provider Controlled" },
+    { value: "accept-edits", label: "Accept Edits" },
+    { value: "dont-ask", label: "Preapproved Only" },
+    { value: "plan", label: "Plan" },
+  ];
+  for (const selectedApprovalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan", "untrusted"] as const) {
+    const options = buildRuntimeSelectionOptions({
+      providerId: "claude", providerCatalog: null, models: [], selectedModel: "claude-opus-5-5",
+      reasoningEfforts: ["high"], selectedApprovalMode, selectedCodexSandboxMode: "workspace-write",
+      selectedCodexSpeed: "standard", selectedCodexReviewer: "user",
+    });
+    assert.deepEqual(options.approvalChoiceOptions, selectedApprovalMode === "untrusted"
+      ? [{ value: "untrusted", label: "Unsupported (untrusted)", disabled: true }, ...supported]
+      : supported);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "providerと現在の選択値から一貫したruntime selector optionsを構築する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes; docs/design/provider-adapter.md#sandbox-modes; docs/design/model-catalog.md#ui-policy; docs/design/model-catalog.md#resolution-policy" }
 // fault = "provider非対応の設定が現れるか、既存sessionのmodelまたはreasoning表示が失われる"

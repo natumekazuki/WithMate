@@ -1,5 +1,6 @@
-import { DEFAULT_APPROVAL_MODE, approvalModeOptions, type ApprovalMode } from "./approval-mode.js";
+import { CODEX_APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE, approvalModeOptions, type ApprovalMode, type CodexApprovalPolicy } from "./approval-mode.js";
 import { codexSandboxModeOptions, type CodexSandboxMode } from "./codex-sandbox-mode.js";
+import { codexReviewerOptions, type CodexReviewer } from "./codex-reviewer.js";
 
 export type RuntimeSelectOption<T extends string = string> = {
   value: T;
@@ -7,25 +8,57 @@ export type RuntimeSelectOption<T extends string = string> = {
   disabled?: boolean;
 };
 
-const COPILOT_APPROVAL_VALUES = new Set<ApprovalMode>(["never", "on-request", "untrusted"]);
+const CLAUDE_PERMISSION_MODES = {
+  never: "bypassPermissions",
+  "on-request": "default",
+  "accept-edits": "acceptEdits",
+  "dont-ask": "dontAsk",
+  plan: "plan",
+} as const;
+
+export function mapApprovalModeToClaudePermissionMode(approvalMode: ApprovalMode, reviewer: CodexReviewer) {
+  if (approvalMode === "untrusted") {
+    throw new Error("The selected approval mode is not supported by Claude.");
+  }
+  if (reviewer === "auto-review" && approvalMode !== "never") {
+    if (approvalMode !== "on-request") {
+      throw new Error("Claude Auto Review requires Provider Controlled approval.");
+    }
+    return "auto";
+  }
+  return CLAUDE_PERMISSION_MODES[approvalMode];
+}
 
 export function getDefaultApprovalModeForProvider(providerId: string | null | undefined): ApprovalMode {
   return providerId === "claude" ? "on-request" : DEFAULT_APPROVAL_MODE;
 }
 
-export function getApprovalOptionsForProvider(providerId: string | null | undefined): RuntimeSelectOption<ApprovalMode>[] {
-  if (providerId === "claude") {
-    return approvalModeOptions
-      .filter((option) => option.id === "on-request")
-      .map((option) => ({ value: option.id, label: option.label }));
-  }
-  if (providerId === "copilot") {
-    return approvalModeOptions
-      .filter((option) => COPILOT_APPROVAL_VALUES.has(option.id))
-      .map((option) => ({ value: option.id, label: option.label }));
-  }
+export function getApprovalOptionsForProvider(
+  providerId: string | null | undefined,
+  reviewer: CodexReviewer = "user",
+): RuntimeSelectOption<ApprovalMode>[] {
+  return approvalModeOptions
+    .filter((option) => providerId === "claude"
+      ? Object.hasOwn(CLAUDE_PERMISSION_MODES, option.id)
+      : CODEX_APPROVAL_MODE_VALUES.includes(option.id as CodexApprovalPolicy))
+    .map((option) => ({
+      value: option.id,
+      label: option.label,
+      ...(providerId === "claude" && reviewer === "auto-review" && option.id !== "never" && option.id !== "on-request"
+        ? { disabled: true } : {}),
+    }));
+}
 
-  return approvalModeOptions.map((option) => ({ value: option.id, label: option.label }));
+export function getApprovalReviewerOptionsForProvider(
+  providerId: string | null | undefined,
+  approvalMode: ApprovalMode,
+): RuntimeSelectOption<CodexReviewer>[] {
+  if (providerId !== "codex" && providerId !== "claude") return [];
+  return codexReviewerOptions.map((option) => ({
+    ...option,
+    ...(providerId === "claude" && approvalMode !== "on-request" && approvalMode !== "never" && option.value === "auto-review"
+      ? { disabled: true } : {}),
+  }));
 }
 
 export function getSandboxOptionsForProvider(

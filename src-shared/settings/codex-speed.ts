@@ -23,5 +23,5 @@ export function mapCodexSpeedToServiceTier(speed: CodexSpeed): CodexServiceTier 
 export function getCodexSpeedOptions(
   providerId: string | null | undefined,
 ): RuntimeSelectOption<CodexSpeed>[] {
-  return providerId === "codex" ? codexSpeedOptions.map((option) => ({ ...option })) : [];
+  return providerId === "codex" || providerId === "claude" ? codexSpeedOptions.map((option) => ({ ...option })) : [];
 }

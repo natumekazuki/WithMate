@@ -113,7 +113,7 @@ function makeService(observe: {
   return { service, stored, adapter };
 }
 
-function makePersistence(runtime: SessionRuntimeService, stored: Session, auxiliaryOptions: Map<string, SessionExecutionOptions>) {
+function makePersistence(runtime: SessionRuntimeService, stored: Session, auxiliaryOptions: Map<string, SessionExecutionOptions>, catalog = providerCatalog) {
   let cached = [stored];
   const selections = new CurrentExecutionSelections();
   const checkpoints: SessionExecutionOptions[] = [];
@@ -137,7 +137,7 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
     auxiliary: { listAuxiliarySessionRuntimeIdentities: () => [] },
     settings: {
       getAppSettings: () => normalizeAppSettings({}),
-      getModelCatalogSnapshot: () => ({ revision: 1, providers: [providerCatalog] }),
+      getModelCatalogSnapshot: () => ({ revision: 1, providers: [catalog] }),
     },
     character: { createCharacterRuntimeSnapshot: () => null },
     effects: {
@@ -154,6 +154,43 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
   });
   return { persistence, selections, checkpoints, getCached: () => cached[0]! };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "ClaudeのAuto Run中に保持したReviewerは復帰時も保持し、不正なApprovalとの組合せならcheckpoint前に拒否する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+// fault = "never中のReviewer保持をvalidation後に適用してPlan＋Auto Reviewを保存するか、復帰時にReviewerを暗黙変更する"
+// observable = "persistence assemblyの更新拒否・ACK、checkpoint件数とReviewer、現在選択"
+// observation_boundary = "component-behavior"
+// scope = "Claude current execution selection and persistence"
+// lifecycle = "permanent"
+// impact = "選択を受理したように見せた後で次turnが実行不能になる"
+// distinction = "送信時validationとSQLite単体testは保存済みneverのReviewer保持との合成を通らない"
+// @end-test-value
+it("ClaudeのReviewer保持後も組合せを検証して選択とcheckpointを一致させる", async () => {
+  const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
+  const { service: runtime, stored } = makeService(observe);
+  const session: Session = { ...stored, provider: "claude", approvalMode: "never", codexReviewer: "auto-review" };
+  const { persistence, checkpoints, getCached } = makePersistence(runtime, session, new Map(), { ...providerCatalog, id: "claude" });
+  const captured = captureSessionExecutionOptions(session);
+  await assert.rejects(persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "plan", codexReviewer: "user",
+  }), /reviewer is not supported with this approval mode/);
+  assert.equal(checkpoints.length, 0);
+  assert.deepEqual(captureSessionExecutionOptions(getCached()), captured);
+  await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "on-request", codexReviewer: "user",
+  });
+  assert.equal(checkpoints.at(-1)?.codexReviewer, "auto-review");
+  await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "on-request", codexReviewer: "user",
+  });
+  await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "plan", codexReviewer: "user",
+  });
+  assert.equal(checkpoints.at(-1)?.approvalMode, "plan");
+  assert.equal(checkpoints.at(-1)?.codexReviewer, "user");
+});
 
 // @test-value v2
 // kind = "invariant"

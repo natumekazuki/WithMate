@@ -295,7 +295,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Agent は同じ chat screen / header / message list / composer / pane shell を使い、service adapter で差分を切り替える
 - 新しい会話機能を追加する場合も、chat layout 実装を増やさず、Session UI の mode を追加する
 - session title の rename / delete
-- approval 表示は `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording を使う
+- approval表示はprovider別候補のdisplay labelを使い、native値との対応は[Provider Adapter](provider-adapter.md#approval-modes)を正本にする
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
@@ -485,7 +485,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 詳細が欠落・取得失敗した場合はDetails内に状態と再openによる再試行を示し、会話本文と保存済みsummaryを維持する。同じ展開・表示期間では本文更新による自動再取得を行わず、閉じて再open・非表示からの復帰・履歴page復帰で取得し直す
   - `Changed files` は Details UIには表示しない。artifactの永続化、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
   - `Run checks`
-    - approval は `Auto Run / Provider Controlled / Safety Focused` の provider-neutral wording で表示する
+    - approvalはprovider別候補のdisplay labelで表示する
   - turn 内の operation timeline は arrival 順を保ち、全 operation を1つの `Operations` groupにまとめる。groupはdefault closedとし、summaryでは件数を示し、展開時は元のoperation単位・元順序で表示する
   - `Operations` groupの展開内容は高さを制約し、長い内容はgroup内部でscrollできるようにする。Details本体、Operations group、各operationはkeyboardで開閉でき、native detailsのaccessible name / focus / expanded stateを維持する
 - composer 上の添付 toolbar
@@ -503,9 +503,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar の `Add Directory` はフォルダーピッカーを開き、隣の `Add Directory By Path` は絶対パス入力dialogを開く。dialogの通常表示は操作名の見出し、可視label・placeholderのない入力欄、`Cancel`／`Add`のみとし、compactな角丸と余白を使い、背景をblurしない。dialogと入力欄は左右の余白を残してAction Dockの利用可能な横幅に追従し、狭幅ではみ出さない。入力幅を超える長いpathも値を省略・変形せず、選択・横スクロールで全体へ到達できる。入力欄のaccessible nameは維持する。パス入力はHomeのWorkspaceと共通部品・検証controllerを使い、入力停止から300ms後に検証する。検証待ち・確認中は入力内のspinnerとaccessible statusで示し、空欄・検証中・無効pathでは`Add`を無効にする。入力変更・閉鎖・対象切替後に古い検証結果を反映しない。Main／Auxiliaryとも、実在するアクセス可能なdirectoryを検証して既存の許可リストへ追加する。Windowsのパス入力はdrive付きまたはUNCの完全修飾pathを必要とする。drive未指定rooted path、相対path、不存在、file、利用不可、保存失敗では入力を保持してalertを表示し、再入力できる。追加時もパスを再検証し、追加処理中は `Add` を無効にして、dialog内のfocus移動、Enterで追加、Escape／Cancelで閉じた後のfocus復帰を維持する。追加処理中はdialogを閉じず、重複送信を防ぐ。横の `Dirs` toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする
-  - composer 下の runtime settings は shared chat composer を正本とし、`Approval / Sandbox / Model / Depth`を表示する。Codex providerでは`Approval`の直後にcompactな`Reviewer`選択、そのほかのruntime optionと同じ列に`Speed`選択を追加する。`Reviewer`は`User` / `Auto Review`、`Speed`は`Standard` / `Fast`をSession単位で保持する。Codex以外では両方を表示しない。`Reviewer`はread-only、blocked、入力凍結、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionもproviderの対応範囲と編集制約に従う
-  - Approvalの選択肢は `Auto Run / Provider Controlled / Safety Focused`
-  - ClaudeのApprovalは`Provider Controlled`のみを選べる。保存値が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーが`Provider Controlled`を選ぶことで有効値へ修正でき、黙って権限設定を置き換えない
+  - composer下のruntime settingsはshared chat composerを正本とし、providerの対応範囲で`Approval / Sandbox / Model / Depth`を表示する。CodexとClaudeでは`Approval`の直後にcompactな`Reviewer`（`User / Auto Review`）、同じ列に`Speed`（`Standard / Fast`）を表示し、Session単位で保持する。Approvalは承認方針、Reviewerは判断担当とするWithMate共通の定義とnative写像は[Provider Adapter](provider-adapter.md#approval-modes)を正本とする。`Reviewer`はread-only、blocked、入力凍結、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionもproviderの対応範囲と編集制約に従う
+  - CodexとCopilotのApproval候補は`Auto Run / Provider Controlled / Safety Focused`
+  - ClaudeのApproval候補は`Auto Run / Provider Controlled / Accept Edits / Preapproved Only / Plan`。既定は`Provider Controlled + User`。Auto ReviewはReviewerで選び、Provider Controlledとの組合せで有効になる。Auto RunではReviewerを適用せず保存値を保持する。Accept Edits／Preapproved Only／PlanとAuto Reviewの組合せは無効で、両selectは現在の相手側の選択に対応しない候補をdisabledにする。ReviewerがUserしか選べない正常状態ではcontrol全体をdisabledにするが、不正な保存組合せではinvalidを示してUserへの変更を受け付ける。保存Approval自体が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーの明示選択で修正でき、黙って権限設定を置き換えない
   - runtime設定のnative selectは、Main／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
   - runtime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。Electronのcustomizable selectでmenuに6px、各選択肢に上下8px・左右12pxの余白を設け、viewport内へ収める。常設の項目名は省略し、Approval / Reviewer / Sandbox / Model / Depth / Speedの現在値を文字で表示する。項目名はtooltipとaccessible nameに残し、disabled・invalid・focusの状態を維持する。候補はprovider・model設定に従う。幅が不足するときは文字や余白を縮めず設定群を折り返す
 - session title は mate `main`

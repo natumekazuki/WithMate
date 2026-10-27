@@ -27,7 +27,7 @@ import type { SessionExecutionOptions } from "../../../src-shared/session/sessio
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import {
   mapApprovalModeToCodexPolicy,
-  type ApprovalMode,
+  type CodexApprovalPolicy,
 } from "../../../src-shared/settings/approval-mode.js";
 import {
   resolveCodexSandboxThreadOptions,
@@ -307,7 +307,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 export type CodexThreadOptions = {
   workingDirectory: string;
   sandboxMode: CodexSandboxBaseMode;
-  approvalPolicy: ApprovalMode;
+  approvalPolicy: CodexApprovalPolicy;
   model: string;
   modelReasoningEffort: ModelReasoningEffort;
   networkAccessEnabled?: boolean;

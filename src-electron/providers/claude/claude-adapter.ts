@@ -4,7 +4,9 @@ import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { query, resolveSettings, type ElicitationRequest, type Options, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { MessageOperation, ProviderUsage, LiveElicitationField, LiveElicitationRequest, LiveRunStep } from "../../../src-shared/session/runtime-state.js";
+import type { MessageArtifact } from "../../../src-shared/session/session-state.js";
 import { resolveModelSelection } from "../../../src-shared/settings/model-catalog.js";
+import { mapApprovalModeToClaudePermissionMode } from "../../../src-shared/settings/provider-runtime-options.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
 import {
   ProviderTurnError,
@@ -364,6 +366,16 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     }
   }
 
+  private addExecutionChecks(artifact: MessageArtifact | undefined, input: RunSessionTurnInput, trace: ClaudeTrace): void {
+    if (!artifact) return;
+    const state = trace.result?.fast_mode_state;
+    const speed = input.executionOptions.codexSpeed === "standard" ? "Standard"
+      : state === "on" ? "Fast"
+        : state ? `Standard (Fast ${state})` : "Fast (Requested)";
+    artifact.runChecks.push({ label: "speed", value: speed });
+    artifact.runChecks.push({ label: "reviewer", value: input.executionOptions.codexReviewer });
+  }
+
   private result(input: RunSessionTurnInput, trace: ClaudeTrace): RunSessionTurnResult {
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const text = liveText(trace);
@@ -382,6 +394,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       providerCatalog: input.providerCatalog,
       selection: resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort),
     });
+    this.addExecutionChecks(artifact, input, trace);
     return {
       threadId: trace.threadId,
       assistantText: redactor.sanitizeText(text),
@@ -392,6 +405,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   }
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
+    const permissionMode = mapApprovalModeToClaudePermissionMode(input.executionOptions.approvalMode, input.executionOptions.codexReviewer);
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const trace = this.makeTrace(input.session.threadId || null, redactor);
@@ -442,7 +456,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       env: mergeDefinedProviderEnv(process.env, buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding)),
       model: selection.resolvedModel,
       effort: selection.resolvedReasoningEffort as Options["effort"],
-      permissionMode: "default",
+      permissionMode,
+      allowDangerouslySkipPermissions: input.executionOptions.approvalMode === "never",
+      settings: { fastMode: input.executionOptions.codexSpeed === "fast" },
       resume: input.session.threadId || undefined,
       systemPrompt: { type: "preset", preset: "claude_code", append: prompt.systemBodyText, snapshot: false },
       additionalDirectories: prompt.additionalDirectories,
@@ -477,15 +493,18 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           if (controller.signal.aborted) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Canceled" } };
           const readOnly = new Set(["Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
           if (readOnly.has(hookInput.tool_name)) return {};
+          if (permissionMode === "dontAsk") return {};
+          if (permissionMode !== "default" && hookInput.tool_name !== "AskUserQuestion") return {};
           return { hookSpecificOutput: {
             hookEventName: "PreToolUse",
-            permissionDecision: input.executionOptions.approvalMode === "on-request" ? "ask" : "deny",
-            permissionDecisionReason: input.executionOptions.approvalMode === "on-request" ? "WithMate approval required" : "Tool approval unavailable",
+            permissionDecision: "ask",
+            permissionDecisionReason: "WithMate approval required",
           } };
         }] }],
       },
       canUseTool: async (toolName, toolInput, context) => {
         if (controller.signal.aborted || context.signal.aborted) return { behavior: "deny", message: "Canceled" };
+        if (permissionMode === "dontAsk") return { behavior: "deny", message: "Only preapproved tools are allowed" };
         const requestId = context.toolUseID || `${input.session.id}:${Date.now()}`;
         if (toolName === "AskUserQuestion") {
           if (!input.onElicitationRequest) return { behavior: "deny", message: "Question UI is unavailable" };
@@ -510,7 +529,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
             return { behavior: "allow", updatedInput: { ...toolInput, answers } };
           } catch { return { behavior: "deny", message: "Canceled" }; }
         }
-        if (input.executionOptions.approvalMode !== "on-request" || !input.onApprovalRequest) {
+        if (!input.onApprovalRequest) {
           return { behavior: "deny", message: "Tool approval is unavailable" };
         }
         try {
@@ -555,6 +574,14 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const next = await signalRace(iterator.next(), controller.signal);
         if (next.done) break;
         this.receive(next.value, trace, Boolean(input.session.threadId));
+        if (next.value.type === "system" && next.value.subtype === "init") {
+          if (next.value.permissionMode && next.value.permissionMode !== permissionMode) {
+            throw new Error(`Claude did not apply the requested permission mode (${permissionMode}); active mode: ${next.value.permissionMode}.`);
+          }
+          if (input.executionOptions.codexSpeed === "fast" && next.value.fast_mode_state === "off" && next.value.fast_mode_disabled_reason !== "pending") {
+            throw new Error(`Claude Fast mode is unavailable (${next.value.fast_mode_disabled_reason ?? "disabled"}). Select Standard to continue.`);
+          }
+        }
         await signalRace(progress(), controller.signal);
         if (trace.result) break;
         if (++burst >= 32) { burst = 0; await signalRace(new Promise<void>(resolve => setImmediate(resolve)), controller.signal); }
@@ -580,6 +607,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         providerCatalog: input.providerCatalog,
         selection,
       }));
+      this.addExecutionChecks(result.artifact, input, trace);
       return result;
     } catch (error) {
       const failure = progressFailure ?? error;

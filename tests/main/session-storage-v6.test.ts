@@ -177,6 +177,50 @@ function listSessionTurnThreadIds(dbPath: string): string[] {
 
 describe("SessionStorageV6", () => {
   // @test-value v2
+  // kind = "contract"
+  // claim = "Claudeの全6 permission modeを表すApprovalとReviewerの組合せ・SpeedはV6 checkpointから再読込しても失われない"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send; docs/design/provider-adapter.md#approval-modes" }
+  // fault = "新しいClaude modeやFast選択が保存後に既定値へ戻り次turnの権限が変わる"
+  // observable = "setSessionExecutionOptions後のgetSessionが返すapprovalMode・codexReviewer・codexSpeed"
+  // observation_boundary = "public-boundary"
+  // scope = "Claude V6 runtime options persistence"
+  // lifecycle = "permanent"
+  // impact = "再起動やWindow再表示で選択した権限・速度が失われる"
+  // distinction = "normalizerとAdapter testは実SQLite checkpointの書込・読取を通らない"
+  // @end-test-value
+  it("roundtrips every Claude permission mode and speed through execution checkpoints", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-claude-options-"));
+    let storage: SessionStorageV6 | null = null;
+    try {
+      storage = new SessionStorageV6(path.join(tempDirectory, "withmate-v6.db"));
+      const session = storage.insertSession(buildNewSession({
+        taskTitle: "Claude options", provider: "claude", approvalMode: "on-request", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main",
+        characterId: "char-a", character: "A", characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#654321" },
+      }));
+      assert.equal(session.approvalMode, "on-request");
+      assert.equal(session.codexSpeed, "standard");
+      for (const [approvalMode, codexReviewer] of [
+        ["never", "user"], ["on-request", "user"], ["on-request", "auto-review"],
+        ["accept-edits", "user"], ["dont-ask", "user"], ["plan", "user"],
+      ] as const) {
+        for (const codexSpeed of ["standard", "fast"] as const) {
+          storage.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+            catalogRevision: session.catalogRevision, model: session.model, reasoningEffort: session.reasoningEffort, approvalMode,
+            codexSandboxMode: session.codexSandboxMode, codexReviewer, customAgentName: session.customAgentName, codexSpeed,
+          });
+          const restored = storage.getSession(session.id);
+          assert.equal(restored?.approvalMode, approvalMode);
+          assert.equal(restored?.codexReviewer, codexReviewer);
+          assert.equal(restored?.codexSpeed, codexSpeed);
+        }
+      }
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "Session summary のID指定読取は会話テーブルを参照せず、対象行の表示・実行metadataだけを返す"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#読取と通知" }

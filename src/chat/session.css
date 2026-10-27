@@ -4280,10 +4280,15 @@
   background: color-mix(in srgb, var(--character-main) 18%, transparent);
 }
 
-.composer-setting-field select option:hover,
-.composer-setting-field select option:focus-visible {
+.composer-setting-field select option:not(:disabled):hover,
+.composer-setting-field select option:not(:disabled):focus-visible {
   outline: none;
   background: color-mix(in srgb, var(--character-main) 28%, var(--surface-deep));
+}
+
+.composer-setting-field select option:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .composer-setting-field select:disabled {
@@ -4308,11 +4313,16 @@
   }
 
   .composer-setting-field select option:checked,
-  .composer-setting-field select option:hover,
-  .composer-setting-field select option:focus-visible {
+  .composer-setting-field select option:not(:disabled):hover,
+  .composer-setting-field select option:not(:disabled):focus-visible {
     color: HighlightText;
     background: Highlight;
     forced-color-adjust: none;
+  }
+
+  .composer-setting-field select option:disabled {
+    color: GrayText;
+    opacity: 1;
   }
 }
 

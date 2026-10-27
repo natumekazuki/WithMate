@@ -10,11 +10,13 @@ import {
 import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
 
 describe("Codex speed runtime option", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "Codex speedの欠落・未知値はStandardへ閉じ、tierとprovider別表示をcanonical ownerから決定する"
+  // claim = "speedの欠落・未知値はStandardへ閉じ、Codex／ClaudeへStandardとFastを提示する"
   // oracle = { type = "contract", ref = "accepted behavior: persisted selection / provider execution / shared UI" }
-  // failure_mode = "既存rowがFastへ昇格する、Standardがglobal Fastを継承する、またはCodex以外へSpeed controlが現れる"
+  // fault = "既存rowがFastへ昇格するか、ClaudeでFastを選べないか、Copilotへ未対応Speedが現れる"
+  // observable = "speed正規化値、Codex tier写像、provider別候補一覧"
+  // observation_boundary = "public-boundary"
   // scope = "codex-speed"
   // lifecycle = "permanent"
   // @end-test-value
@@ -30,19 +32,23 @@ describe("Codex speed runtime option", () => {
       { value: "fast", label: "Fast" },
     ]);
     assert.deepEqual(getCodexSpeedOptions("copilot"), []);
+    assert.deepEqual(getCodexSpeedOptions("claude"), [
+      { value: "standard", label: "Standard" },
+      { value: "fast", label: "Fast" },
+    ]);
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "shared runtime selection projectionはCodexだけにSpeed選択肢を公開する"
+  // claim = "shared runtime selection projectionはCodexとClaudeにSpeed選択肢を公開しCopilotには出さない"
   // oracle = { type = "contract", ref = "accepted behavior: shared UI" }
-  // fault = "CopilotなどCodex以外のshared composerにSpeed controlが表示される"
+  // fault = "ClaudeのSpeed controlが欠落するかCopilotへ未対応Speedを表示する"
   // observable = "providerId別のspeedSelectOptions配列"
   // observation_boundary = "public-boundary"
   // scope = "runtime-selection-options"
   // lifecycle = "permanent"
   // @end-test-value
-  it("shared runtime selectionではCodex以外のSpeed optionsを空にする", () => {
+  it("shared runtime selectionではCodexとClaudeのSpeed optionsを公開する", () => {
     const common = {
       providerCatalog: null,
       models: [],
@@ -55,6 +61,10 @@ describe("Codex speed runtime option", () => {
     };
 
     assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "copilot" }).speedSelectOptions, []);
+    assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "claude" }).speedSelectOptions, [
+      { value: "standard", label: "Standard" },
+      { value: "fast", label: "Fast" },
+    ]);
     assert.deepEqual(buildRuntimeSelectionOptions({ ...common, providerId: "codex" }).speedSelectOptions, [
       { value: "standard", label: "Standard" },
       { value: "fast", label: "Fast" },
