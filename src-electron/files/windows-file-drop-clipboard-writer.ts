@@ -36,7 +36,7 @@ $operationMarker = [System.Text.Encoding]::UTF8.GetString([System.Convert]::From
 $data = [System.Windows.Forms.Clipboard]::GetDataObject()
 $matches = $false
 if ($null -ne $data) {
-  $files = [System.Windows.Forms.Clipboard]::GetFileDropList()
+  $files = @($data.GetData([System.Windows.Forms.DataFormats]::FileDrop, $true))
   $effectValue = $data.GetData("Preferred DropEffect", $false)
   $markerValue = $data.GetData("${OPERATION_MARKER_FORMAT}", $false)
   $effectBytes = if ($effectValue -is [System.IO.MemoryStream]) { $effectValue.ToArray() } elseif ($effectValue -is [byte[]]) { $effectValue } else { $null }
