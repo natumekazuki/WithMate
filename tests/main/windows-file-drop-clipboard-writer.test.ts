@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { setImmediate } from "node:timers/promises";
 import { PassThrough } from "node:stream";
@@ -23,6 +23,59 @@ const completed = (stdout = ""): ClipboardHelperProcessResult => ({
 const writeStarted = (overrides: Partial<ClipboardHelperProcessResult> = {}): ClipboardHelperProcessResult => ({
   ...completed("WITHMATE_FILE_DROP_READY"),
   ...overrides,
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "検証helperは取得したDataObjectの単一FileDropとoperation markerの一致だけを成功とする"
+// oracle = { type = "contract", ref = "docs/adr/013-explicit-local-path-open-policy.md: Decision" }
+// fault = "FileDropの配列が単一要素でscalar化する、複数fileや異なるpath・markerを一致と判定する"
+// observable = "実PowerShellで実行したproduction検証scriptのmatch結果と正常終了"
+// observation_boundary = "component-behavior"
+// scope = "Windows clipboard verification scriptのDataObject読取り"
+// lifecycle = "permanent"
+// impact = "コピー成功の誤表示や、正しい単一fileを結果不明とする誤判定を防ぐ"
+// distinction = "既存testはhelperのJSON結果をstubするため、PowerShellの配列処理と実際の照合式を確認できない"
+// @end-test-value
+test("Windows file-drop検証scriptは同じDataObjectのfile一覧とmarkerを照合する", { skip: process.platform !== "win32" }, async () => {
+  const targetPath = "C:\\資料\\報告書.txt";
+  for (const fixture of [
+    { files: [targetPath.toUpperCase()], marker: "operation-1", match: true },
+    { files: [], marker: "operation-1", match: false },
+    { files: [targetPath, "C:\\other.txt"], marker: "operation-1", match: false },
+    { files: ["C:\\different.txt"], marker: "operation-1", match: false },
+    { files: [targetPath], marker: "another-operation", match: false },
+  ]) {
+    const fixtureBase64 = Buffer.from(JSON.stringify(fixture), "utf8").toString("base64");
+    const spawnWithFixture = ((command: string, args: readonly string[], options: SpawnOptions) => {
+      const script = Buffer.from(args.at(-1)!, "base64").toString("utf16le");
+      const isolatedScript = script.replace("[System.Windows.Forms.Clipboard]::GetDataObject()", "$fixtureData");
+      assert.notEqual(isolatedScript, script);
+      // Keep this test isolated from the user's system clipboard.
+      assert.doesNotMatch(isolatedScript, /\[System\.Windows\.Forms\.Clipboard\]/u);
+      const setup = String.raw`
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+Add-Type -AssemblyName System.Windows.Forms
+$fixture = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("${fixtureBase64}")) | ConvertFrom-Json
+$fixtureData = [System.Windows.Forms.DataObject]::new()
+$fixtureData.SetData([System.Windows.Forms.DataFormats]::FileDrop, $true, [string[]]@($fixture.files))
+$fixtureData.SetData("Preferred DropEffect", $false, [System.IO.MemoryStream]::new([byte[]](1, 0, 0, 0), $false))
+$fixtureData.SetData("WithMate File Copy Operation", $false, [System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes([string]$fixture.marker), $false))
+`;
+      return spawn(command, [
+        ...args.slice(0, -1),
+        Buffer.from(setup + isolatedScript, "utf16le").toString("base64"),
+      ], options);
+    }) as typeof spawn;
+    const result = await runPowerShellClipboardHelper({
+      mode: "verify", payload: { path: targetPath, marker: "operation-1" },
+    }, process.env.SystemRoot, undefined, spawnWithFixture);
+    assert.equal(result.started, true);
+    assert.equal(result.timedOut, false);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout), { match: fixture.match });
+  }
 });
 
 test("Windows file-drop writerは非ASCII pathをASCII-safeなhelper payloadへ変換する", () => {
