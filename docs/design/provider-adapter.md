@@ -77,7 +77,7 @@ providerごとの差は次。
 - `ClaudeAdapter`
   - 公式SDK `0.3.285`と未改変の公式native実行物 `2.1.285`を使い、Windows / macOSの対象architecture向け実行物を配布物へ同梱する。CLIの既存ログインをSDKに任せ、WithMateはcredentialを読取・コピーせず、独自OAuthを行わない。SDKの認証・課金に関わる環境変数や設定の優先順位を上書きしない
   - `query()`で1 turnを実行し、保存済みの明示session IDを`resume`へ渡す。履歴全件の再送、暗黙の最新会話`continue`は行わない。取消時はSDKの公開spawn hookで子プロセスの実終了を追跡し、実終了までprovider Promiseを保持してruntimeの再送guardにつなぐ。正常なterminal result後のcleanupは[ADR 002](../adr/002-provider-turn-terminal-and-cancellation.md)のbounded graceに従う
-  - `claude-opus-5-5`と`low / medium / high / xhigh / max`をcatalogで扱う。Approvalは`Auto Run / Provider Controlled`を提供し、Codexのsandbox選択は提供しない
+  - modelとdepthはcatalogから選び、同梱定義は`claude-opus-5-5`と`low / medium / high / xhigh / max`。ApprovalはSDKの6 permission modeへ、Speedは`Standard / Fast`へ対応する。独立したReviewerとCodexのsandbox選択は提供しない
   - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affect / Memoryを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
   - `Provider Controlled`ではSDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`Auto Run`では通常toolの強制askを行わず、SDKの自動許可を使う。どちらもSDKから届く承認要求は共通UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
   - background planeは別の非永続sessionで構造化JSONを要求し、tools / MCP / hooksを無効化する。`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合、実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
@@ -196,28 +196,44 @@ adapter 実行に必要な保存済み session context:
 
 ## Approval Modes
 
-approval mode は WithMate が対応する Codex policy 値を正本にする。
+approval mode はWithMateの共通選択値を正本にし、providerごとに対応候補とnative値への写像を定義する。
 
 - `never`
 - `on-request`
 - `untrusted`
+- `accept-edits`
+- `dont-ask`
+- `plan`
+- `auto`
 
 方針:
 
-- renderer / shared state / session persistence / 最小turn記録ではCodex policy値をwrite-pathの正本として扱う
+- renderer / shared state / session persistence / 最小turn記録では上記の共通選択値をwrite-pathの正本として扱う
 - 既存 row に残る legacy 値は read-path normalize で吸収する
   - `allow-all -> never`
   - `safety -> untrusted`
   - `provider-controlled -> on-request`
-- CodexAdapterは`approvalMode`をApp Serverの`approvalPolicy`へそのまま渡す
+- CodexAdapterは`never / on-request / untrusted`だけを受理し、App Serverの`approvalPolicy`へそのまま渡す。Claude固有modeは送信前に拒否する
 - CopilotAdapter は `never` を自動許可、`untrusted` を read-only 以外 rules deny、`on-request` を Session UI の approval card 中継として扱う
-- ClaudeAdapterは`never / on-request`を選択可能にする。既定値は`on-request`のまま維持し、保存値を暗黙に変更しない
+- ClaudeAdapterは`untrusted`以外の6値を選択可能にする。既定値は`on-request`のまま維持し、保存値を暗黙に変更しない
   - `never`（`Auto Run`）はSDKの`permissionMode: "bypassPermissions"`と`allowDangerouslySkipPermissions: true`へ対応する。通常toolへのWithMateの強制askを行わない。SDK側のdeny / askルール、hook、managed policyは上書きせず、SDKがなお要求する承認は共通approval UIへ中継する。無制限のsandboxやCodexのreviewerを提供する設定ではない
   - `on-request`（`Provider Controlled`）はSDKの`permissionMode: "default"`を使い、`Read / Glob / Grep / WebSearch / WebFetch`以外を`PreToolUse`でaskにして共通approval UIへ中継する
-  - `AskUserQuestion`とMCP elicitationはどちらのmodeでも共通質問UIを使う。`untrusted`は未対応とし、選択肢へ公開しない
-- UIはpolicy値をそのまま表示せず、`Auto Run` / `Provider Controlled` / `Safety Focused`のdisplay labelへ変換する。保存・API・adapter境界ではpolicy値をrawのまま保持し、providerごとに出すchoicesを分ける
+  - `accept-edits`（`Accept Edits`）は`acceptEdits`へ対応し、編集・filesystem操作の自動許可範囲をSDKへ任せる。通常toolをWithMateで強制askしない
+  - `dont-ask`（`Preapproved Only`）は`dontAsk`へ対応する。事前許可以外をSDKが拒否し、Adapterのpermission callbackも承認・AskUserQuestionの対話を開始しない
+  - `plan`（`Plan`）は`plan`へ対応する。計画中の権限制御をSDKへ任せ、届いた承認は共通UIで判断する。OSレベルのread-only sandboxではない
+  - `auto`（`Auto Review`）は`auto`へ対応し、SDKのclassifier審査を使う。独立したReviewer設定は重複表示しない。model・契約・managed policy等の利用条件をSDKが判定し、起動時に要求と異なるpermission modeが返れば失敗として通知する
+  - `Preapproved Only`以外の`AskUserQuestion`と、SDKから届くMCP elicitationは共通質問UIを使う。`untrusted`は未対応とし、選択肢へ公開しない
+- UIは共通選択値をdisplay labelへ変換する。保存・API・adapter境界では選択値をそのまま保持し、providerごとに出すchoicesを分ける
 
 session作成、永続化、最小turn、artifact表示、resume復元ではpolicy値を追跡し、providerごとの差異はprovider-specific choicesとadapter実装で吸収する。
+
+## Speed
+
+- 共通の`Standard / Fast`選択をCodexとClaudeで提供する。保存・送信時捕捉には既存の`codexSpeed` fieldを使用し、新しい保存fieldやmigrationは追加しない。既定値は`standard`
+- Codexは`standard -> serviceTier: "default"`、`fast -> serviceTier: "fast"`へ対応する
+- ClaudeはturnごとのSDK `settings.fastMode`へ`standard -> false`、`fast -> true`を明示し、user設定のFastをStandard選択へ持ち込まない。user設定fileへは書き込まない
+- Claude Fastのmodel・利用資格・追加課金条件はSDK／providerが判定する。起動時にFast無効化が確定していれば理由とStandardへの変更案をerrorとして返す。利用資格判定待ちは無効確定と扱わない
+- Claude SDKが実行結果へ速度状態を返した場合はartifactのspeed checkへ反映し、cooldown等でStandardになった結果をFastと表示しない。実速度状態が未提供の場合のFast表示は`Fast (Requested)`とする
 
 ## Sandbox Modes
 

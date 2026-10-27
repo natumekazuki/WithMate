@@ -1,4 +1,7 @@
-export const APPROVAL_MODE_VALUES = ["never", "on-request", "untrusted"] as const;
+export const CODEX_APPROVAL_MODE_VALUES = ["never", "on-request", "untrusted"] as const;
+export type CodexApprovalPolicy = (typeof CODEX_APPROVAL_MODE_VALUES)[number];
+
+export const APPROVAL_MODE_VALUES = [...CODEX_APPROVAL_MODE_VALUES, "accept-edits", "dont-ask", "plan", "auto"] as const;
 
 export type ApprovalMode = (typeof APPROVAL_MODE_VALUES)[number];
 
@@ -8,6 +11,10 @@ export const approvalModeOptions = [
   { id: "never", label: "Auto Run" },
   { id: "on-request", label: "Provider Controlled" },
   { id: "untrusted", label: "Safety Focused" },
+  { id: "accept-edits", label: "Accept Edits" },
+  { id: "dont-ask", label: "Preapproved Only" },
+  { id: "plan", label: "Plan" },
+  { id: "auto", label: "Auto Review" },
 ] as const satisfies Array<{ id: ApprovalMode; label: string }>;
 
 const LEGACY_APPROVAL_MODE_MAP = {
@@ -51,6 +58,10 @@ export function approvalModeLabel(value: string): string {
   return value;
 }
 
-export function mapApprovalModeToCodexPolicy(approvalMode: string): ApprovalMode {
-  return normalizeApprovalMode(approvalMode, DEFAULT_APPROVAL_MODE);
+export function mapApprovalModeToCodexPolicy(approvalMode: string): CodexApprovalPolicy {
+  const normalized = normalizeApprovalMode(approvalMode, DEFAULT_APPROVAL_MODE);
+  if (!CODEX_APPROVAL_MODE_VALUES.includes(normalized as CodexApprovalPolicy)) {
+    throw new Error("The selected approval mode is not supported by Codex.");
+  }
+  return normalized as CodexApprovalPolicy;
 }

@@ -7,7 +7,8 @@ WithMateが現在のSession UIから利用できるprovider機能を示す。pro
 | turn実行・session再開 | 対応 | 対応 | 対応 | 保存済みthread／session identityから再開する。Claudeは明示IDでresumeする |
 | 実行中の取消と状態表示 | 対応 | 対応 | 対応 | Mainのrun stateを共通Session UIへ投影する |
 | model・reasoning depth | 対応 | 対応 | Opus 5.5、low／medium／high／xhigh／max | 選択可能な値はproviderとcatalogに従う。Copilotでは非対応depthを渡さない |
-| approval | policyを写像 | permission requestへ応答 | Auto Run / Provider Controlled | 共通表示からprovider固有の実行判断へ変換する |
+| approval | policyを写像 | permission requestへ応答 | SDKの全6 permission mode | 共通表示からprovider固有の実行判断へ変換する |
+| speed | Standard / Fast | UI設定なし | Standard / Fast | ClaudeのFastはmodel・利用資格・追加課金条件に依存する |
 | sandbox設定 | 対応 | UI設定なし | UI設定なし | Codexの選択値をApp Serverのsandbox policyへ渡す |
 | file・folder・画像の入力 | 対応 | 対応 | file／folder、PNG／JPEG／GIF／WebP | workspaceと許可済みAdditional Directoryの範囲でprovider固有の入力へ変換する |
 | Skill | mentionへ変換 | directiveへ変換 | 選択pathをdirectiveへ変換 | 選択済みSkillをprovider側の入力へ反映する。Claudeのnative Skill探索とは別 |

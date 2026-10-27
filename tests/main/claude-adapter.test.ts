@@ -914,7 +914,7 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claudeは送信時approvalをSDK permission modeとPreToolUseへ対応させ、Auto Runの通常toolを強制askしない"
+// claim = "Claudeは送信時approvalの全6モードをSDKへ対応させ、Provider Controlled以外の通常toolを強制askしない"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
 // fault = "Auto Runでbypass opt-inを渡さず起動に失敗するか、通常toolをaskまたはdenyにする"
 // observable = "SDK queryへ渡るpermission設定とPreToolUseの返却値"
@@ -925,11 +925,14 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
 // distinction = "共通Approval unionとselector testはSDK optionとhookの組合せを確認しない"
 // @end-test-value
 it("maps captured Claude approval modes to SDK permissions and tool hooks", async () => {
-  for (const approvalMode of ["never", "on-request"] as const) {
+  for (const [approvalMode, permissionMode] of [
+    ["never", "bypassPermissions"], ["on-request", "default"], ["accept-edits", "acceptEdits"],
+    ["dont-ask", "dontAsk"], ["plan", "plan"], ["auto", "auto"],
+  ] as const) {
     const request = input();
     request.executionOptions = { ...request.executionOptions, approvalMode };
     const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-      assert.equal(options.permissionMode, approvalMode === "never" ? "bypassPermissions" : "default");
+      assert.equal(options.permissionMode, permissionMode);
       assert.equal(options.allowDangerouslySkipPermissions, approvalMode === "never");
       const hook = options.hooks!.PreToolUse![0].hooks[0];
       for (const toolName of ["Bash", "Edit", "Write", "mcp__example__write", "AskUserQuestion", "Read", "Glob", "Grep", "WebSearch", "WebFetch"]) {
@@ -938,7 +941,7 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
           tool_name: toolName, tool_input: {}, tool_use_id: "tool-1",
         }, "tool-1", { signal: new AbortController().signal });
         const readOnly = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"].includes(toolName);
-        assert.deepEqual(output, readOnly || (approvalMode === "never" && toolName !== "AskUserQuestion") ? {} : {
+        assert.deepEqual(output, readOnly || approvalMode === "dont-ask" || (approvalMode !== "on-request" && toolName !== "AskUserQuestion") ? {} : {
           hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "WithMate approval required" },
         }, `${approvalMode}: ${toolName}`);
       }
@@ -950,7 +953,7 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
 
 // @test-value v2
 // kind = "contract"
-// claim = "ClaudeがSDKから受け取った承認要求はAuto Runでもユーザー判断へ中継し、承認UI不在と要求取消ではdenyする"
+// claim = "ClaudeがSDKから受け取った承認要求はPreapproved Only以外の全modeでユーザー判断へ中継し、承認UI不在と要求取消ではdenyする"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
 // fault = "Auto Runを未対応としてdenyするかSDKが求めた承認を自動許可し、拒否や取消を無視する"
 // observable = "共通承認callbackのrequestIdとSDKへ返るallow／deny"
@@ -961,8 +964,8 @@ it("maps captured Claude approval modes to SDK permissions and tool hooks", asyn
 // impact = "SDKの明示的な承認要求が無断許可されるか、利用者が許可した操作を実行できない"
 // distinction = "permission設定testだけではSDKからの例外的な承認要求への応答を観測できない"
 // @end-test-value
-it("routes SDK-required approvals in both Claude modes and preserves denial and cancellation", async () => {
-  for (const approvalMode of ["never", "on-request"] as const) {
+it("routes SDK-required approvals in interactive Claude modes and preserves denial and cancellation", async () => {
+  for (const approvalMode of ["never", "on-request", "accept-edits", "plan", "auto"] as const) {
     for (const decision of ["approve", "deny", "unavailable", "canceled"] as const) {
       const request = input();
       request.executionOptions = { ...request.executionOptions, approvalMode };
@@ -987,8 +990,97 @@ it("routes SDK-required approvals in both Claude modes and preserves denial and 
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "Preapproved OnlyはSDKへdontAskを指定し、callbackでも承認とAskUserQuestionの対話を開始しない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+// fault = "事前許可限定modeでユーザーに承認や質問を求め、許可済み扱いにする"
+// observable = "SDK canUseToolのdeny結果と共通対話callbackの呼出数"
+// observation_boundary = "public-boundary"
+// scope = "Claude preapproved-only permission boundary"
+// lifecycle = "permanent"
+// impact = "無人実行を意図した要求が対話待ちで停止するか権限を拡大する"
+// distinction = "SDK optionとhookのtestだけでは実際のcallbackによる対話開始を検出しない"
+// @end-test-value
+it("does not prompt for approvals or questions in Preapproved Only", async () => {
+  const request = input();
+  request.executionOptions = { ...request.executionOptions, approvalMode: "dont-ask" };
+  request.onApprovalRequest = () => assert.fail("Approval UI must not open");
+  request.onElicitationRequest = () => assert.fail("Question UI must not open");
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+    for (const toolName of ["Bash", "AskUserQuestion"]) {
+      assert.deepEqual(await options.canUseTool!(toolName, {}, { requestId: "preapproved-1", toolUseID: "tool-1", signal: new AbortController().signal }), {
+        behavior: "deny", message: "Only preapproved tools are allowed",
+      });
+    }
+    yield result("preapproved");
+  }) });
+  await adapter.runSessionTurn(request);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "ClaudeのStandard／Fastは捕捉済みSpeedを明示的なSDK設定へ渡し、nativeの実速度状態をartifactへ残す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#speed" }
+// fault = "Standardがuser設定のFastを継承するか、FastのSDK設定を渡さないか、cooldownをFast成功として表示する"
+// observable = "SDK settings.fastModeとartifactのspeed check"
+// observation_boundary = "public-boundary"
+// scope = "Claude captured speed and native result"
+// lifecycle = "permanent"
+// impact = "選択に反して追加課金を伴うFastで動くか実際のStandardをFastと誤認する"
+// distinction = "選択肢や共通Speed正規化testはSDK optionと実行結果の組合せを通らない"
+// @end-test-value
+it("applies captured Claude speed and reports native speed outcomes", async () => {
+  for (const [codexSpeed, state, label] of [
+    ["standard", "off", "Standard"], ["fast", "on", "Fast"], ["fast", "cooldown", "Standard (Fast cooldown)"],
+  ] as const) {
+    const request = input();
+    request.executionOptions = { ...request.executionOptions, codexSpeed };
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+      assert.deepEqual(options.settings, { fastMode: codexSpeed === "fast" });
+      yield sdkMessage({ ...result("speed"), fast_mode_state: state });
+    }) });
+    const completed = await adapter.runSessionTurn(request);
+    assert.deepEqual(completed.artifact?.runChecks.filter((check) => check.label === "speed"), [{ label: "speed", value: label }]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeが起動時に要求と異なるpermissionや利用不可Fastを報告した場合は失敗として返し、未対応approvalはquery前に拒否する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes; docs/design/provider-adapter.md#speed" }
+// fault = "autoからdefaultへの暗黙降格やFast無効化を成功に見せるか、untrustedをdefaultで実行する"
+// observable = "query呼出数とProviderTurnErrorまたは未対応modeのerror"
+// observation_boundary = "public-boundary"
+// scope = "Claude unsupported runtime selection"
+// lifecycle = "permanent"
+// impact = "選択した承認や課金速度と異なる動作が利用者に通知されない"
+// distinction = "通常mapping testはnativeが選択を受理しなかった場合を再現しない"
+// @end-test-value
+it("rejects unavailable Claude modes without silently changing the selection", async () => {
+  for (const kind of ["permission", "speed"] as const) {
+    const request = input();
+    request.executionOptions = { ...request.executionOptions, approvalMode: "auto", codexSpeed: kind === "speed" ? "fast" : "standard" };
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      yield sdkMessage({ type: "system", subtype: "init", session_id: "rejected-settings", permissionMode: kind === "permission" ? "default" : "auto",
+        fast_mode_state: "off", fast_mode_disabled_reason: "extra_usage_disabled" });
+      assert.fail("Settings refusal must stop SDK consumption");
+    }) });
+    await assert.rejects(adapter.runSessionTurn(request), (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.match(error.message, kind === "permission" ? /requested permission mode/ : /Fast mode is unavailable/);
+      assert.equal(error.partialResult.threadId, "rejected-settings");
+      return true;
+    });
+  }
+  const request = input();
+  request.executionOptions = { ...request.executionOptions, approvalMode: "untrusted" };
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () { assert.fail("Unsupported mode must not start query"); }) });
+  await assert.rejects(adapter.runSessionTurn(request), /not supported by Claude/);
+});
+
+// @test-value v2
 // kind = "invariant"
-// claim = "Auto RunとProvider ControlledのAskUserQuestionは二択承認で代用せず、自由入力をSDK answersへ戻す"
+// claim = "Preapproved Only以外の全modeのAskUserQuestionは二択承認で代用せず、自由入力をSDK answersへ戻す"
 // oracle = { type = "contract", ref = "Issue #751; src-shared/session/runtime-state.ts LiveElicitationRequest" }
 // fault = "Questionをapprovalへ誤配送する、またはOther入力を破棄する"
 // observable = "Elicitation cardのfieldsとSDK permission updatedInput.answers"
@@ -999,7 +1091,7 @@ it("routes SDK-required approvals in both Claude modes and preserves denial and 
 // distinction = "既存CopilotのMCP elicitation testはClaudeのAskUserQuestion更新入力を確認しない"
 // @end-test-value
 it("routes AskUserQuestion to elicitation and returns a free-text answer", async () => {
-  for (const approvalMode of ["never", "on-request"] as const) {
+  for (const approvalMode of ["never", "on-request", "accept-edits", "plan", "auto"] as const) {
     let permission: unknown;
     let allowsFreeText = false;
     const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
