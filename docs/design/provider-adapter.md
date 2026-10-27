@@ -31,14 +31,14 @@ runtimeはshared contractの上に次の4 adapterを持つ。
 
 カスタムcatalogや保存済みSession内の未対応Provider定義は削除しない。新規Sessionで未対応Providerを明示した場合、または有効な対応Providerがない場合はlaunchを拒否する。
 
-`ProviderCodingAdapter`はprompt composition、quota取得、thread invalidation、live turn実行を担う。`ProviderBackgroundAdapter`は権限を制限したstructured promptによるcompleted turn後のCharacter Affect評価を担う。型と入力・出力の正本は`src-electron/providers/provider-runtime.ts`に置く。
+`ProviderCodingAdapter`はprompt composition、quota取得、thread invalidation、live turn実行を担う。型と入力・出力の正本は`src-electron/providers/provider-runtime.ts`に置く。
 
 Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げる。`canceled` は既存の session phase / retry / invalidation 判定のため boolean として維持し、失敗分類は `reason` で渡す。
 
 Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` から失敗理由を生成し、最小turnのerrorとassistant messageの`runFailure`へ保存する。受信済み`text`は変更せず、失敗通知を本文へ追記しない。本文未取得でも空の`text`と失敗理由を保存する。provider 固有の英語 message を再 parse しない。
 
 provider実行結果から取得済みassistant本文とartifactをMainへ返し、正常・失敗・取消の通常履歴へ保存する。操作の正本は`MessageArtifact.operationTimeline`とし、live stepと共通の操作型で実取得したID、status、exitCode、構造化error、truncationを保持する。未取得の値は省略し、turn全体のphaseや自由文から個別操作の成功・失敗を推定しない。
-Main Processでは`MainProviderFacade`がcoding planeとbackground planeの入口を分ける。`SessionRuntimeService`はcoding plane、completed turn後のCharacter Affect評価はbackground planeを使う。
+Main Processでは`MainProviderFacade`が通常turnのadapterを提供し、`SessionRuntimeService`が実行する。Memory／Affect更新は通常turn内MCPから既存application serviceへ接続する。
 
 providerごとの差は次。
 
@@ -52,7 +52,6 @@ providerごとの差は次。
   - asyncの待機signalはturn終了・取消で失効する。共通runtimeは正常・失敗・取消の終端で全formを解放し、質問文・選択肢・form回答状態・本文内の位置だけをassistant messageへ保存する。form操作と履歴表示は[Question Forms](desktop-ui.md#question-forms)を参照する
   - 実行中追加入力は現在のthread IDと`expectedTurnId`を使う`turn/steer`へ送る。terminal後は入力を受け付けない。dispatch済みsteerの応答はRPC timeoutの有界範囲で待ってからtransportを閉じ、terminalより遅れた成功ACKも受理結果として保持する。一致するACKで受理された入力だけを通常会話へ保存し、拒否された入力を受理済みとして扱わない
   - terminalはnative `turn/completed`のstatusを正本とし、受信済み通知は後続EOFでも到着順に処理する。EOF自体は成功の根拠にしない。終了・取消時は所有processと子孫をboundedに終了する。Windowsは起動前にJob Objectへsupervisorを割り当て、POSIXは専用process groupを使う。cleanup失敗は診断として独立して報告し、native terminal outcomeを上書きしない。所有processの終了確認まで同一Session・workspace・threadへの再実行を拒否し、Session runtimeの終了中guardを維持する
-  - background structured promptは独立した非継続thread、`read-only` / `never`、`outputSchema`で実行し、interactive requestを拒否する
   - `file / folder / image` 添付を shipped
   - workspace 外 access は session metadata `allowedAdditionalDirectories` を正本にして制御する
   - binary pathは`src-electron/providers/provider-binary-paths.ts`を正本とし、開発時は固定版`@openai/codex`のnative package、配布時は`resources/provider-binaries/`配下のstaged binaryを直接起動する。App Serverのenvironmentへcredentialとturnのruntime bindingを明示し、global `process.env`は書き換えない
@@ -92,9 +91,8 @@ providerごとの差は次。
   - catalogの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
   - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
   - token／contextは実取得値を投影し、Go契約quotaはモデルを実行しないusage HTTP APIから独立取得する。5時間・7日・請求月の残量を共通Monitor／Action Dockへ表示し、Mainの非永続cacheと既存の更新・失敗処理を使う。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
-  - backgroundは別owned processからstatelessな`generate.text()`を呼ぶ。Session・foreground MCP・agent toolsを使わず、専用config directoryとproject／Claude設定の無効化を適用する。返却text全体をJSON parseし、共有validatorでschemaを検証する`validated_json`であり、未知schema制約も拒否する。`threadId`／`usage`は`null`。既存post-turn Affectのtrigger・schema・settlementを維持し、通常Memoryの背景抽出は追加しない
 
-## Plane Separation
+## Provider実行とManaged MCP
 
 ### Managed HTTP MCP
 
@@ -104,11 +102,11 @@ Coding planeのMemory／CharacterとGlossaryは、Mainが所有する1つのloca
 - Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認した`withmate-memory`／`withmate-glossary`だけを当threadで無効化し、`withmate-memory-http`／`withmate-glossary-http`を登録する。第三者MCPと永続configは変更しない。
 - CopilotとClaudeは当turnのnative session／query optionsへ標準managed名のHTTP設定を渡す。既存native設定の探索と保存済みthreadのresumeは維持する。
 - OpenCodeは確定workspaceのlocationへ`mcp.add`で当turnのHTTP設定を登録し、必要なmanaged MCPの接続を`mcp.list`で確認してからpromptを送る。第三者MCPと永続設定は変更しない。
-- tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。background planeはforeground tokenを大小文字を区別せずenvから除去する。
+- tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
 - HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。operator CLIとadmission付きagent CLI fallbackは別経路で維持する。
 
-provider 境界は current 実装で次の 2 plane に分けて扱う。
+provider adapterは通常turn実行を所有する。Affect専用の背景生成経路は持たず、Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
 
 ### Coding Plane
 
@@ -122,17 +120,6 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
 - `SessionRuntimeService`
 - `MainObservabilityFacade`
 - `MainProviderFacade#getProviderCodingAdapter()`
-
-### Background Plane
-
-- completed turn後のCharacter Affect評価
-
-利用側:
-
-- `character-affect-turn-main-lifecycle`
-- `MainProviderFacade#getProviderBackgroundAdapter()`
-
-この分離により、通常のcoding turnと完了後のAffect評価をadapterの入口で分ける。
 
 ## Session Flow
 
@@ -352,7 +339,7 @@ runの解放は先行commandの後に配送し、Workerのowner削除応答かWo
 
 - assistant本文と操作結果は通常履歴・artifactへ保存し、`Details`で閲覧する。操作の配列順を保持し、独立した順序台帳を設けない
 - prompt、transport payload、raw event、本文tokenやstdout chunkごとの累積snapshotを別に保存しない
-- 最小turnはphase、実行設定、message位置、thread、時刻、error summaryを保存し、取消・retry・Conversation Timing・Character Affectの関連付けに使う
+- 最小turnはphase、実行設定、message位置、thread、時刻、error summaryを保存し、取消・retry・Conversation Timingの関連付けに使う
 - 保存失敗、結果不明、owner不一致を正常emptyや成功に変換せず、旧storage generationや削除済みownerへ書き戻さない
 
 ## Slash Command Routing

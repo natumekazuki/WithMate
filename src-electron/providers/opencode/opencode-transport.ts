@@ -16,7 +16,6 @@ export type OpenCodeTransportOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   databasePath: string;
-  background?: boolean;
   startupTimeoutMs?: number;
   closeTimeoutMs?: number;
 };
@@ -77,14 +76,6 @@ export class OpenCodeTransport {
       const password = randomBytes(32).toString("base64url");
       this.#password = password;
       const env: NodeJS.ProcessEnv = { ...this.#options.env, OPENCODE_DB: key, OPENCODE_PASSWORD: password, OPENCODE_SERVER_PASSWORD: password };
-      if (this.#options.background) {
-        delete env.OPENCODE_CONFIG;
-        delete env.OPENCODE_CONFIG_CONTENT;
-        env.OPENCODE_CONFIG_DIR = path.join(path.dirname(key), "background-config");
-        env.OPENCODE_CONFIG_PROJECT_DISABLE = "1";
-        env.OPENCODE_DISABLE_CLAUDE_CODE = "1";
-        await mkdir(env.OPENCODE_CONFIG_DIR!, { recursive: true });
-      }
       if (this.#closing || signal?.aborted) throw abortError();
       const owner = this.#spawn({ executable: this.#options.executable, arguments: OPENCODE_SERVE_ARGUMENTS, cwd: this.#options.cwd, env });
       this.#retainOwner(owner);

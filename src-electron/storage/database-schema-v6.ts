@@ -1414,6 +1414,7 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 }
 
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
+  db.exec("DROP TABLE IF EXISTS character_affect_turn_settlements;");
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (

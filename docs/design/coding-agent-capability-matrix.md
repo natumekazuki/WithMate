@@ -15,11 +15,11 @@ WithMateが現在のSession UIから利用できるprovider機能を示す。pro
 | assistant textのstreaming | 対応 | 対応 | 対応 | 対応 | 確定結果と実行中投影を区別する |
 | command・操作結果・変更差分 | 対応 | 対応 | 対応 | 操作結果のみ、artifact差分なし | 共通のoperationTimeline、応答Details、Git差分表示へ投影する |
 | app内の承認・elicitation | 承認・permissions・質問・MCP elicitationに対応 | 対応 | 承認・質問に対応 | 承認・form質問に対応 | 元requestとの対応を保持し、同一turnの要求を共通pending UIで直列処理する。OpenCodeの未対応fieldは拒否する |
-| Memory・即時Affect MCP／post-turn Affect | 対応 | 対応 | 対応 | managed HTTP MCP／validated JSON生成 | 既存application serviceとpost-turn lifecycleを使う。通常Memoryの背景抽出は行わない |
+| Memory・Affect MCP | 対応 | 対応 | 対応 | managed HTTP MCP | 通常turn内で既存application serviceを使う。Affectの専用post-turn評価、通常Memoryの背景抽出は行わない |
 | 実行中の追加入力 | 対応 | 未対応 | 未対応 | 未対応 | Codexの現在turnへexpectedTurnId付きturn/steerを送る。terminal後・turn不一致では拒否する |
 | background task snapshot | UI表示なし | 対応 | UI表示なし | UI表示なし | CopilotのTasks tabに現在のsessionのsnapshotを表示する |
 | usage・quota・context情報 | turn usage、契約quotaの定期取得・Monitor／Action Dock表示 | 取得可能な情報を表示 | token／cache usage、契約quotaの定期取得・Monitor／Action Dock表示 | token／context、Go契約quotaの定期取得・Monitor／Action Dock表示 | 契約残量とtoken消費を混同しない。ClaudeのAPI換算額は実請求額として表示しない |
 
-OpenCode列は実装の接続範囲を示す。Go実接続はWindows x64・CLI／client `2.1.4`で、両modelの`high`による通常turn／背景Affect生成、GLM-5.3の明示thread再開、Flashのstreaming中取消とowned process終了を確認している。Flashの通常turnからMemory追加・read-back、単独episode、即時Affect更新とlinked episodeの保存も確認している。`low / max`の生成、macOS／arm64の実接続はこの確認範囲に含まない。
+OpenCode列は実装の接続範囲を示す。Go実接続はWindows x64・CLI／client `2.1.4`で、両modelの`high`による通常turn、GLM-5.3の明示thread再開、Flashのstreaming中取消とowned process終了を確認している。Flashの通常turnからMemory追加・read-back、単独episode、即時Affect更新とlinked episodeの保存も確認している。`low / max`の生成、macOS／arm64の実接続はこの確認範囲に含まない。
 
 表示の詳細は[Desktop UI](desktop-ui.md)、usageの投影と保存境界は[Provider Usage Telemetry](provider-usage-telemetry.md)を参照する。capabilityが変わる実装では、この表を同じ論理変更で更新する。

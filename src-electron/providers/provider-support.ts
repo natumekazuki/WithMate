@@ -5,11 +5,7 @@ import {
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import type {
-  ProviderBackgroundAdapter,
-  ProviderCodingAdapter,
-  ProviderTurnAdapter,
-} from "./provider-runtime.js";
+import type { ProviderCodingAdapter, ProviderTurnAdapter } from "./provider-runtime.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
@@ -85,9 +81,6 @@ export function resolveProviderCodingAdapter(args: ResolveProviderAdapterArgs): 
   return resolveProviderAdapter(args);
 }
 
-export function resolveProviderBackgroundAdapter(args: ResolveProviderAdapterArgs): ProviderBackgroundAdapter {
-  return resolveProviderAdapter(args);
-}
 
 export async function fetchProviderQuotaTelemetry(
   args: FetchProviderQuotaTelemetryArgs,

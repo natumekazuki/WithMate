@@ -14,7 +14,6 @@ import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxilia
 import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
-import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character/character-affect-turn-ownership-coordinator.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
 
 function catalog(revision: number): ModelCatalogSnapshot {
@@ -81,7 +80,6 @@ function createService(options: {
   createCharacterRuntimeSnapshot?: (id: string) => CharacterRuntimeSnapshot | null | Promise<CharacterRuntimeSnapshot | null>;
   randomCharacter?: () => number;
   provider: ProviderRuntimeOperationCoordinator;
-  affect: CharacterAffectTurnOwnershipCoordinator;
   onCreationStateChanged?: (result: {
     status: string;
     clientRequestId: string;
@@ -109,7 +107,6 @@ function createService(options: {
     resolveSessionLaunchSelection: options.resolveSelection,
     getModelCatalogSnapshot: options.getCatalog,
     runProviderRuntimeOperationExclusive: (operation) => options.provider.runExclusive(operation),
-    runCharacterAffectTurnOwnershipExclusive: (operation) => options.affect.runExclusive(operation),
     listActiveCharacters: options.listActiveCharacters ?? (() => activeCharacters),
     createCharacterRuntimeSnapshot: options.createCharacterRuntimeSnapshot ?? ((id) => character(id, "Auxiliary")),
     randomCharacter: options.randomCharacter ?? (() => 0),
@@ -172,7 +169,6 @@ test("Claude Auxiliaryは非対応approvalを保存せず既定on-requestで作�
     resolveSelection: async () => selection(),
     getCatalog: () => snapshot,
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
   });
   try {
     sessionStorage.upsertSession(main);
@@ -220,7 +216,6 @@ test("Auxiliary Characterは同じ親の保存済み使用状況を優先し枯�
     listActiveCharacters: characterCandidates,
     randomCharacter: () => random,
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
   };
   let service = createService(options);
   const create = () => service.createAuxiliarySession({ parentSessionId: currentParent.id, provider: "codex", runtimeSelection: "latest-session" });
@@ -297,7 +292,6 @@ test("Auxiliary並行作成は未使用Characterを確定し枯渇後も作成�
         return character(id, id);
       },
       provider: new ProviderRuntimeOperationCoordinator(),
-      affect: new CharacterAffectTurnOwnershipCoordinator(),
     });
     try {
       const creationContext = mode === "context" ? await service.getAuxiliaryCreationContext(parent().id) : undefined;
@@ -337,7 +331,7 @@ test("Auxiliary並行作成は未使用Characterを確定し枯渇後も作成�
 // claim = "未使用Characterへのsnapshot再準備は広域排他を塞がず、取消・snapshot失敗・親やstorageや設定やcatalogの変更時は保存しない"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }
 // fault = "再準備をcoordinator内で待つ、再試行が最終検証を省略する、または保存前失敗をunknownや成功にする"
-// observable = "再準備中のprovider/ownership操作完了、作成拒否、状態通知、既存行の一致と保存件数"
+// observable = "再準備中のprovider操作完了、作成拒否、状態通知、既存行の一致と保存件数"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-character-repreparation-boundary"
 // lifecycle = "permanent"
@@ -354,7 +348,6 @@ test("Auxiliary Character再準備は排他を解放し取消と保存前の再�
     let revision = 1;
     let entries = characterCandidates();
     const provider = new ProviderRuntimeOperationCoordinator();
-    const affect = new CharacterAffectTurnOwnershipCoordinator();
     const firstSnapshots = Promise.withResolvers<void>();
     const repreparing = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -378,7 +371,6 @@ test("Auxiliary Character再準備は排他を解放し取消と保存前の再�
         return character(id, id);
       },
       provider,
-      affect,
       onCreationStateChanged: (change) => { changes.push(change); },
     });
     let settled: Promise<PromiseSettledResult<unknown>[]> | undefined;
@@ -390,14 +382,14 @@ test("Auxiliary Character再準備は排他を解放し取消と保存前の再�
       const preserved = storage.listAllAuxiliarySessions();
       assert.equal(preserved.length, 1);
       const pendingInput = inputs.find((input) => input.clientRequestId !== preserved[0]!.clientRequestId)!;
-      await provider.runExclusive(() => affect.runExclusive(async () => {
+      await provider.runExclusive(async () => {
         if (failure === "cancel") assert.equal((await service.cancelAuxiliaryCreation(pendingInput)).status, "cancelled");
         if (failure === "owner") service.releaseAuxiliaryCreationOwner(currentParent.id);
         if (failure === "parent") currentParent = parent({ incarnationId: "replacement-parent" });
         if (failure === "storage") currentStorage = replacement;
         if (failure === "runtime") revision = 2;
         if (failure === "archive") entries = entries.filter((entry) => entry.id !== "aux-b");
-      }));
+      });
       release.resolve();
       const results = await settled;
       assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
@@ -442,7 +434,6 @@ test("AuxiliaryはMain以外の候補0とsnapshot identity不一致を成功扱�
     listActiveCharacters: () => entries,
     createCharacterRuntimeSnapshot: () => character("main-character", "Main"),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
   });
   try {
     const creationContext = await service.getAuxiliaryCreationContext(parent().id);
@@ -474,7 +465,6 @@ test("Auxiliary作成は準備中のprovider操作を塞がずcommit前のselect
   const oldStorage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
   let parentSession = parent();
   const provider = new ProviderRuntimeOperationCoordinator();
-  const affect = new CharacterAffectTurnOwnershipCoordinator();
   let releasePreparation!: () => void;
   const preparation = new Promise<void>((resolve) => { releasePreparation = resolve; });
   let preparationEntered!: () => void;
@@ -493,7 +483,6 @@ test("Auxiliary作成は準備中のprovider操作を塞がずcommit前のselect
     },
     getCatalog: () => catalog(1),
     provider,
-    affect,
   });
   try {
     const create = service.createAuxiliarySession({
@@ -518,7 +507,6 @@ test("Auxiliary作成は準備中のprovider操作を塞がずcommit前のselect
       resolveSelection: async () => selection(1),
       getCatalog: () => catalog(catalogReads++ === 0 ? 1 : 2),
       provider,
-      affect,
     });
     await assert.rejects(
       explicitService.createAuxiliarySession({ parentSessionId: parentSession.id, provider: "codex", clientRequestId: "catalog-boundary" }),
@@ -555,7 +543,6 @@ test("Auxiliary作成の保存前再検証失敗はfailedで終端する", async
     resolveSelection: async () => selection(++selectionCalls === 1 ? 1 : 2),
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
     onCreationStateChanged: (result) => stateChanges.push(result.status),
   });
   try {
@@ -602,7 +589,6 @@ test("Auxiliary作成成功後の遅延cancelはcommittedへ解決する", async
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
     onCreationStateChanged: (result) => stateChanges.push(result.status),
   });
   try {
@@ -711,7 +697,6 @@ test("Auxiliary作成はcancelの永続化lookup中に割り込んだcreateと�
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
     onCreationStateChanged: (result) => {
       stateChanges.push(result.status);
     },
@@ -776,7 +761,6 @@ test("Auxiliary作成のcancel先着は未作成要求をtombstoneで拒否す�
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-cancel-first-"));
   const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
   const provider = new ProviderRuntimeOperationCoordinator();
-  const affect = new CharacterAffectTurnOwnershipCoordinator();
   let releaseParent!: () => void;
   const parentBarrier = new Promise<void>((resolve) => { releaseParent = resolve; });
   let blockParent = false;
@@ -791,7 +775,6 @@ test("Auxiliary作成のcancel先着は未作成要求をtombstoneで拒否す�
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider,
-    affect,
     onCreationStateChanged: (result) => stateChanges.push(result),
   });
   try {
@@ -844,7 +827,6 @@ test("Auxiliary作成はpersisted lookup中のcancelと並行createを安全に�
   const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
   const currentParent = parent();
   const provider = new ProviderRuntimeOperationCoordinator();
-  const affect = new CharacterAffectTurnOwnershipCoordinator();
   let releaseLookup!: () => void;
   const lookupBarrier = new Promise<void>((resolve) => { releaseLookup = resolve; });
   let lookupCalls = 0;
@@ -861,7 +843,6 @@ test("Auxiliary作成はpersisted lookup中のcancelと並行createを安全に�
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider,
-    affect,
   });
   try {
     const context = await service.getAuxiliaryCreationContext(currentParent.id);
@@ -920,7 +901,6 @@ test("Auxiliary作成のunknownはDB未検出後も保持し、後発commitをqu
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
   });
   try {
     const context = await service.getAuxiliaryCreationContext(currentParent.id);
@@ -975,7 +955,6 @@ test("Auxiliary作成は同一request IDの異なる入力を拒否する", asyn
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
   });
   try {
     const context = await service.getAuxiliaryCreationContext(currentParent.id);
@@ -1033,7 +1012,6 @@ test("Auxiliary作成のowner解放は旧generationを失効させる", async ()
     },
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
     onCreationStateChanged: (result) => {
       stateChanges.push(result.status);
       if (result.status === "preparing") preparingStarted();
@@ -1086,7 +1064,6 @@ test("Auxiliary作成はService再生成後も保存済みclientRequestIdをquer
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
   };
   try {
     const firstService = createService(options);
@@ -1132,7 +1109,6 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
   let currentStorage = first;
   let currentParent = parent();
   const provider = new ProviderRuntimeOperationCoordinator();
-  const affect = new CharacterAffectTurnOwnershipCoordinator();
   let releaseInitialParent!: () => void;
   const initialParent = new Promise<void>((resolve) => { releaseInitialParent = resolve; });
   let initialParentEntered!: () => void;
@@ -1151,7 +1127,6 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider,
-    affect,
   });
   try {
     const create = initialCreateService.createAuxiliarySession({ parentSessionId: currentParent.id, provider: "codex", runtimeSelection: "latest-session", clientRequestId: "storage-boundary-initial-read" });
@@ -1177,7 +1152,6 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
       resolveSelection: async () => selection(),
       getCatalog: () => catalog(1),
       provider,
-      affect,
     });
     let releaseCommitParent!: () => void;
     const commitParent = new Promise<void>((resolve) => { releaseCommitParent = resolve; });
@@ -1210,7 +1184,6 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
       resolveSelection: async () => selection(),
       getCatalog: () => catalog(1),
       provider,
-      affect,
     });
     let incarnationEntered!: () => void;
     const incarnationStarted = new Promise<void>((resolve) => { incarnationEntered = resolve; });
@@ -1238,7 +1211,6 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
       resolveSelection: async () => selection(),
       getCatalog: () => catalog(1),
       provider,
-      affect,
     });
     let characterEntered!: () => void;
     const characterStarted = new Promise<void>((resolve) => { characterEntered = resolve; });
@@ -1279,7 +1251,6 @@ test("Auxiliary作成はcommit前のstorage・親identity交換を拒否する",
         archivedAt: null,
       }] : [],
       provider,
-      affect,
     });
     const activeCharacterCreate = activeCharacterService.createAuxiliarySession({
       parentSessionId: currentParent.id,
@@ -1317,7 +1288,6 @@ test("Auxiliary作成commitは最新親設定を保存し同一clientRequestId�
   const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
   let currentParent = parent();
   const provider = new ProviderRuntimeOperationCoordinator();
-  const affect = new CharacterAffectTurnOwnershipCoordinator();
   let resolverCalls = 0;
   let releaseResolver!: () => void;
   const resolverBarrier = new Promise<void>((resolve) => { releaseResolver = resolve; });
@@ -1336,7 +1306,6 @@ test("Auxiliary作成commitは最新親設定を保存し同一clientRequestId�
     },
     getCatalog: () => catalog(1),
     provider,
-    affect,
   });
   try {
     const request = { parentSessionId: currentParent.id, provider: "codex", runtimeSelection: "latest-session" as const, clientRequestId: "same-request" };
@@ -1398,7 +1367,6 @@ test("Auxiliaryの取消レコードは回収し、遅延要求を拒否して�
     resolveSelection: async () => selection(),
     getCatalog: () => catalog(1),
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
   });
   const records = (service as unknown as { creationRecords: Map<string, unknown> }).creationRecords;
   let creation: ReturnType<AuxiliarySessionService["createAuxiliarySession"]> | undefined;
@@ -1492,7 +1460,6 @@ test("Auxiliary軽量変更は全履歴を読まずcheckpoint失敗後も現在�
       return catalog(1);
     },
     provider: new ProviderRuntimeOperationCoordinator(),
-    affect: new CharacterAffectTurnOwnershipCoordinator(),
     rememberExecutionOptions: (session, options) => { selected.set(session.id, options); },
     overlayCurrentExecutionOptions: (session) => {
       const options = selected.get(session.id);

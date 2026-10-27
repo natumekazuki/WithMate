@@ -148,28 +148,8 @@ test("MainProviderFacade の reset は adapter の reject を伝播する", asyn
 // distinction = "provider routing testではFacadeが返すruntime capability projectionを確認しない"
 // @end-test-value
 test("MainProviderFacade は未対応 provider の runtime capability を codex として誤報告しない", () => {
-  const codexAdapter = {
-    getBackgroundStructuredPromptPolicy() {
-      return {
-        allowsFileWrite: false,
-        allowsShellWrite: false,
-        allowsToolPermissionRequests: false,
-        structuredOutputOnly: true,
-        structuredOutputMode: "provider_schema",
-      } as const;
-    },
-  };
-  const copilotAdapter = {
-    getBackgroundStructuredPromptPolicy() {
-      return {
-        allowsFileWrite: false,
-        allowsShellWrite: false,
-        allowsToolPermissionRequests: false,
-        structuredOutputOnly: true,
-        structuredOutputMode: "schema_submit_tool",
-      } as const;
-    },
-  };
+  const codexAdapter = {};
+  const copilotAdapter = {};
   const facade = new MainProviderFacade({
     getModelCatalog: () => null,
     ensureModelCatalogSeeded: () => {
@@ -177,8 +157,8 @@ test("MainProviderFacade は未対応 provider の runtime capability を codex 
     },
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
-    claudeAdapter: { getBackgroundStructuredPromptPolicy: () => ({}) } as never,
-    opencodeAdapter: { getBackgroundStructuredPromptPolicy: () => ({}) } as never,
+    claudeAdapter: {} as never,
+    opencodeAdapter: {} as never,
   });
 
   const capabilities = facade.getProviderRuntimeCapabilities("custom");

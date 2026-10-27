@@ -5,9 +5,7 @@ import type { OpenCodeClient, OpenCodeEvent, SessionInfo, SessionMessageInfo, Se
 import { OpenCodeAdapter, buildOpenCodePermissions } from "../../src-electron/providers/opencode/opencode-adapter.js";
 import { resolveOpenCodeModelRef } from "../../src-electron/providers/opencode/opencode-model.js";
 import { buildOpenCodeElicitation } from "../../src-electron/providers/opencode/opencode-interactions.js";
-import { OpenCodeBackgroundAdapter } from "../../src-electron/providers/opencode/opencode-background.js";
-import { SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } from "../../src-electron/session/session-memory-extraction.js";
-import { ProviderTurnError, type RunSessionTurnInput, type RunBackgroundStructuredPromptInput } from "../../src-electron/providers/provider-runtime.js";
+import { ProviderTurnError, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
@@ -24,7 +22,7 @@ function input(threadId = ""): RunSessionTurnInput {
 
 function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void>; createBackground?: (client: OpenCodeClient) => OpenCodeBackgroundAdapter } = {}) {
+function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
@@ -76,104 +74,15 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
   } as unknown as OpenCodeClient;
   let release!: () => void;
   const closed = new Promise<void>((resolve) => { release = resolve; });
-  const adapter = new OpenCodeAdapter({ databasePath: path.join(process.cwd(), "unused.db"), executable: path.join(process.cwd(), "unused.exe"), backgroundAdapter: options.createBackground?.(client), createTransport: () => ({
+  const adapter = new OpenCodeAdapter({ databasePath: path.join(process.cwd(), "unused.db"), executable: path.join(process.cwd(), "unused.exe"), createTransport: () => ({
     start: async () => client, close: async () => { calls.push("close"); if (options.cleanupPending) throw new Error("cleanup timeout"); release(); }, whenClosed: () => closed,
   }) });
   return { adapter, calls, getPrompt: () => prompt, mcpRegistrations, release };
 }
 
-function backgroundHarness(client: OpenCodeClient, options: { pendingCleanup?: boolean; holdGeneration?: boolean } = {}) {
-  let launches = 0;
-  let releaseCleanup!: () => void;
-  let releaseGeneration!: () => void;
-  let notifyGenerating!: () => void;
-  const cleanup = new Promise<void>((resolve) => { releaseCleanup = resolve; });
-  const generation = new Promise<void>((resolve) => { releaseGeneration = resolve; });
-  const generating = new Promise<void>((resolve) => { notifyGenerating = resolve; });
-  const adapter = new OpenCodeBackgroundAdapter({ databasePath: path.join(process.cwd(), "unused.db"), executable: path.join(process.cwd(), "unused.exe"), createTransport: () => {
-    const first = launches++ === 0;
-    let resolveClosed!: () => void;
-    const closed = first && options.pendingCleanup ? cleanup : new Promise<void>((resolve) => { resolveClosed = resolve; });
-    return { start: async () => ({ ...client, generate: { text: async () => {
-      notifyGenerating();
-      if (first && options.holdGeneration) await generation;
-      return { text: '{"goal":null,"decisions":null,"openQuestions":null,"nextActions":null,"notes":null}' };
-    } } }), close: async () => { if (first && options.pendingCleanup) throw new Error("cleanup timeout"); resolveClosed(); }, whenClosed: () => closed };
-  } });
-  return { adapter, launches: () => launches, releaseCleanup, releaseGeneration, generating, cleanup };
-}
 
-function backgroundInput(workspacePath = process.cwd()): RunBackgroundStructuredPromptInput {
-  return { providerId: "opencode", workspacePath, appSettings: createDefaultAppSettings(), model: "opencode-go/glm-5.3", reasoningEffort: "high", timeoutMs: 5000,
-    prompt: { systemText: "Evaluate", userText: "turn", outputSchema: SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } };
-}
 
-// @test-value v2
-// kind = "contract"
-// claim = "foregroundのcleanup未確認は同workspaceのbackgroundとextractだけを実終了まで拒否し正常active実行や別workspaceを妨げない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
-// fault = "foreground close失敗後にbackgroundまたはextractを開始するか無関係なworkspaceまで停止する"
-// observable = "公開入口のreject、background transport起動数、別workspace成功、whenClosed後の再開"
-// observation_boundary = "public-boundary"
-// scope = "OpenCode foreground to background cleanup exclusion"
-// lifecycle = "permanent"
-// impact = "終了未確認processと補助処理の競合を防ぎ通常の並行実行を保持する"
-// distinction = "plane内のguard testはforegroundからbackgroundとextractへの境界を通らない"
-// @end-test-value
-it("OpenCode foreground pending cleanup guards background and extract by normalized workspace", async () => {
-  const turn = input();
-  let background!: ReturnType<typeof backgroundHarness>;
-  const run = fixture(turn, { cleanupPending: true, createBackground: (client) => (background = backgroundHarness(client)).adapter });
-  let pending: Promise<void> | undefined;
-  turn.onCleanupPending = (completion) => { pending = completion; };
-  let checkedActive = false;
-  await run.adapter.runSessionTurn(turn, async () => {
-    if (!checkedActive) { checkedActive = true; await run.adapter.runBackgroundStructuredPrompt(backgroundInput()); }
-  });
-  assert.equal(background.launches(), 1, "normal active foreground permits background execution");
-  const normalizedWorkspace = `${process.cwd()}${path.sep}.`;
-  const extract = { session: { ...turn.session, workspacePath: normalizedWorkspace }, appSettings: turn.appSettings, model: turn.executionOptions.model,
-    reasoningEffort: turn.executionOptions.reasoningEffort, timeoutMs: 5000, prompt: { systemText: "Evaluate", userText: "turn", outputSchema: SESSION_MEMORY_EXTRACTION_OUTPUT_SCHEMA } };
-  await assert.rejects(run.adapter.runBackgroundStructuredPrompt(backgroundInput(normalizedWorkspace)), /still terminating/);
-  await assert.rejects(run.adapter.extractSessionMemoryDelta(extract), /still terminating/);
-  assert.equal(background.launches(), 1, "blocked entrances must not launch a background process");
-  await run.adapter.runBackgroundStructuredPrompt(backgroundInput(path.dirname(process.cwd())));
-  assert.equal(background.launches(), 2);
-  assert.ok(pending); run.release(); await pending;
-  await run.adapter.runBackgroundStructuredPrompt(backgroundInput(normalizedWorkspace));
-  await run.adapter.extractSessionMemoryDelta(extract);
-  assert.equal(background.launches(), 4);
-});
 
-// @test-value v2
-// kind = "contract"
-// claim = "backgroundのcleanup未確認は同workspaceのforegroundを実終了まで拒否し正常active実行と別workspaceを妨げない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
-// fault = "background close失敗後にforegroundを開始するか生成中というだけで通常実行を拒否する"
-// observable = "foregroundの結果とreject、native prompt回数、whenClosed後の再開"
-// observation_boundary = "public-boundary"
-// scope = "OpenCode background to foreground cleanup exclusion"
-// lifecycle = "permanent"
-// impact = "補助processの残留との競合を防ぎMain/Auxの通常並行性を維持する"
-// distinction = "background単体testはcoding plane入口のcleanup照合を通らない"
-// @end-test-value
-it("OpenCode background pending cleanup guards foreground until actual exit", async () => {
-  const turn = input();
-  let background!: ReturnType<typeof backgroundHarness>;
-  const run = fixture(turn, { createBackground: (client) => (background = backgroundHarness(client, { pendingCleanup: true, holdGeneration: true })).adapter });
-  const generation = run.adapter.runBackgroundStructuredPrompt(backgroundInput());
-  await background.generating;
-  await run.adapter.runSessionTurn(turn);
-  assert.equal(run.calls.filter((call) => call === "prompt").length, 1, "normal active background permits foreground execution");
-  background.releaseGeneration(); await generation;
-  await assert.rejects(run.adapter.runSessionTurn({ ...turn, executionWorkspacePath: `${process.cwd()}${path.sep}.` }), /background process cleanup is still pending/);
-  assert.equal(run.calls.filter((call) => call === "prompt").length, 1);
-  await run.adapter.runSessionTurn({ ...turn, executionWorkspacePath: path.dirname(process.cwd()) });
-  assert.equal(run.calls.filter((call) => call === "prompt").length, 2);
-  background.releaseCleanup(); await background.cleanup;
-  await run.adapter.runSessionTurn(turn);
-  assert.equal(run.calls.filter((call) => call === "prompt").length, 3);
-});
 
 // @test-value v2
 // kind = "contract"

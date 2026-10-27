@@ -4,7 +4,7 @@ import type { spawn } from "node:child_process";
 import { it } from "node:test";
 import type { Options, ResolvedSettings, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
-import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
+import { ProviderTurnError, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
@@ -944,48 +944,6 @@ it("routes AskUserQuestion to elicitation and returns a free-text answer", async
   } });
 });
 
-// @test-value v2
-// kind = "invariant"
-// claim = "Claude Backgroundはmanaged設定がある場合queryを開始せず、未管理時はtool・MCP・hookを無効にしてstructured outputを要求する"
-// oracle = { type = "contract", ref = "Issue #751; docs/design/provider-adapter.md" }
-// fault = "managed hookを実行可能なままread-only Backgroundを開始する、または出力schemaを省く"
-// observable = "query呼出回数とSDK options、structured output"
-// observation_boundary = "public-boundary"
-// scope = "claude-background-turn"
-// lifecycle = "permanent"
-// impact = "補助評価で意図しない書込・shell実行が起こる、または不正出力を成功として保存する"
-// distinction = "型検査はruntime managed設定判定とSDK起動前の停止を検証しない"
-// @end-test-value
-it("gates managed settings before background query and constrains clean background runs", async () => {
-  const background: RunBackgroundStructuredPromptInput = {
-    providerId: "claude", workspacePath: process.cwd(), appSettings: createDefaultAppSettings(), model: "claude-opus-5-5",
-    reasoningEffort: "high", timeoutMs: 1000,
-    prompt: { systemText: "Only JSON", userText: "Rate", outputSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] } },
-  };
-  let starts = 0;
-  const managed = new ClaudeAdapter({
-    query: fakeQuery(async function* () { yield result("unused"); }, () => { starts += 1; }),
-    resolveSettings: async () => ({ sources: [{ source: "managed", settings: {} }], effective: {}, provenance: {} } as ResolvedSettings),
-  });
-  await assert.rejects(managed.runBackgroundStructuredPrompt(background), /managed settings/);
-  assert.equal(starts, 0);
-
-  let options: Options | undefined;
-  const clean = new ClaudeAdapter({
-    query: fakeQuery(async function* () { yield result("background", { structured_output: { answer: "ok" } }); }, (value) => { options = value; }),
-    resolveSettings: async () => ({ sources: [], effective: {}, provenance: {} } as ResolvedSettings),
-  });
-  const completed = await clean.runBackgroundStructuredPrompt<{ answer: string }>(background);
-  assert.deepEqual(completed.output, { answer: "ok" });
-  assert.deepEqual(options?.tools, []);
-  assert.deepEqual(options?.mcpServers, {});
-  assert.deepEqual(options?.settingSources, []);
-  assert.deepEqual(options?.settings, { disableAllHooks: true });
-  assert.equal(options?.hooks, undefined);
-  assert.equal(options?.strictMcpConfig, true);
-  assert.equal(options?.persistSession, false);
-  assert.deepEqual(options?.outputFormat, { type: "json_schema", schema: background.prompt.outputSchema });
-});
 
 // @test-value v2
 // kind = "invariant"
@@ -1012,32 +970,6 @@ it("preserves streamed partial text when the SDK ends before result", async () =
   });
 });
 
-// @test-value v2
-// kind = "invariant"
-// claim = "Claude BackgroundのtimeoutはSDK nextが停止しても有限時間で失敗しQueryをcloseする"
-// oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md; Issue #751" }
-// fault = "AbortSignalだけに依存して停止したiterator.nextを無期限に待つ"
-// observable = "timeout後の拒否とQuery.close呼出"
-// observation_boundary = "public-boundary"
-// scope = "claude-background-turn"
-// lifecycle = "permanent"
-// impact = "Affectの補助処理が終了せずSession後処理を滞留させる"
-// distinction = "通常のSDK fixtureはabortに協力し、この非協力transport境界を検査できない"
-// @end-test-value
-it("bounds background timeout even when SDK next never settles", async () => {
-  let closed = false;
-  const background: RunBackgroundStructuredPromptInput = {
-    providerId: "claude", workspacePath: process.cwd(), appSettings: createDefaultAppSettings(), model: "claude-opus-5-5",
-    reasoningEffort: "high", timeoutMs: 30,
-    prompt: { systemText: "Only JSON", userText: "Rate", outputSchema: { type: "object" } },
-  };
-  const adapter = new ClaudeAdapter({
-    query: (() => ({ next: () => new Promise(() => undefined), close: () => { closed = true; } })) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query,
-    resolveSettings: async () => ({ sources: [], effective: {}, provenance: {} } as ResolvedSettings),
-  });
-  await assert.rejects(adapter.runBackgroundStructuredPrompt(background), /Canceled/);
-  assert.equal(closed, true);
-});
 
 // @test-value v2
 // kind = "invariant"

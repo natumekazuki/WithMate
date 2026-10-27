@@ -27,7 +27,6 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit && npm run typecheck:tests && npm run check:sqlite-owner-boundary && npm run check:dependency-boundaries",
     "check:dependency-boundaries": "tsx scripts/checks/check-dependency-boundaries.ts",
     "check:sqlite-owner-boundary": "tsx scripts/checks/check-sqlite-owner-boundary.ts",
-    "affect:settlement-recovery": "tsx scripts/checks/character-affect-turn-settlement-recovery.ts",
     "validate:snapshot-ignore": "tsx scripts/checks/validate-snapshot-ignore.ts"
   },
   "keywords": [],

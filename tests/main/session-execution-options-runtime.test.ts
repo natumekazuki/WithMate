@@ -149,7 +149,6 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
       closeSessionWindow() {},
       discardSessionWindow() {},
       broadcastSessions() {},
-      runCharacterAffectTurnOwnershipExclusive: async (operation) => operation(),
     },
   });
   return { persistence, selections, checkpoints, getCached: () => cached[0]! };

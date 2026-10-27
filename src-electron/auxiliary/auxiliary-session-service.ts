@@ -42,7 +42,6 @@ import { selectWeightedRandomLaunchCharacterId } from "../../src-shared/characte
 import type { Awaitable, AuxiliarySessionStorageAccess } from "../storage/persistent-store-lifecycle-service.js";
 import type { SessionLaunchSelection } from "../session/session-launch-selection-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "../providers/provider-runtime-operation-coordinator.js";
-import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { AuxiliarySessionThreadPatchInput, AuxiliaryThreadPatchResult, AuxiliaryRuntimeMetadataPatchResult } from "./auxiliary-session-storage.js";
 import type { AuxiliarySessionRuntimeMetadataPatchInput } from "./auxiliary-session-storage.js";
 import type { AuxiliaryDraftStorageSaveInput, AuxiliaryDraftStorageConsumeInput } from "./auxiliary-session-storage.js";
@@ -66,7 +65,6 @@ type AuxiliarySessionServiceDeps = {
   listActiveCharacters(): Awaitable<readonly CharacterCatalogEntry[]>;
   createCharacterRuntimeSnapshot(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
   randomCharacter?: () => number;
-  runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
   onCreationStateChanged?(result: AuxiliaryCreationStateChange): void;
   onRuntimeMessagesCommitted?(parentSessionId: string): void;
   captureStorageIdentity?(): unknown;
@@ -748,9 +746,7 @@ export class AuxiliarySessionService {
         this.notifyCreationState(record, "queued");
       }
       const result = await this.deps.runProviderRuntimeOperationExclusive(
-        () => this.deps.runCharacterAffectTurnOwnershipExclusive
-          ? this.deps.runCharacterAffectTurnOwnershipExclusive(() => this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput))
-          : this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput),
+        () => this.commitAuxiliarySession(input, storage, prepared, record, normalizedInput),
       );
       if (result) return result;
 

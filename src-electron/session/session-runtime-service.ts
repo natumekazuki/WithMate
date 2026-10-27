@@ -31,7 +31,6 @@ import { applyProviderProgressChanges } from "../providers/provider-progress.js"
 
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
-const DEFAULT_APPRAISAL_READY_RETRY_MS = 1_000;
 
 function logSessionRunStuckInvestigation(
   event: string,
@@ -85,19 +84,6 @@ export type SessionRuntimeServiceDeps = {
     session: Session,
     query: string,
   ) => Awaitable<CharacterContextResponse | null>;
-  queueCompletedTurnAppraisal?: (input: {
-    session: Session;
-    correlationId: string;
-    userMessage: string;
-    assistantMessage: string;
-    assistantMessageIndex: number;
-    occurredAt: string;
-  }) => Awaitable<void>;
-  markCompletedTurnAppraisalReady?: (
-    correlationId: string,
-  ) => Awaitable<"ready" | "absent" | void>;
-  requireDurableCompletedTurnAppraisal?: boolean;
-  appraiseCompletedTurn?: () => Awaitable<void>;
   createSessionTurn(input: SessionTurnInput): Awaitable<SessionTurnRecord>;
   updateSessionTurn(id: number, input: SessionTurnInput): Awaitable<void | SessionTurnRecord>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -141,7 +127,6 @@ export type SessionRuntimeServiceDeps = {
   currentTimestampLabel?: () => string;
   currentDate?: () => Date;
   providerCancelGraceMs?: number;
-  appraisalReadyRetryMs?: number;
 };
 
 function notifySessionTurnTerminalBestEffort(
@@ -171,73 +156,6 @@ function invalidateProviderSessionThreadBestEffort(
   } catch (error) {
     console.warn("Detached provider session invalidation failed", error);
   }
-}
-
-function appraiseCompletedTurnBestEffort(
-  appraise: SessionRuntimeServiceDeps["appraiseCompletedTurn"],
-): void {
-  if (!appraise) {
-    return;
-  }
-
-  try {
-    void Promise.resolve(appraise())
-      .catch((error) => console.warn(
-        "Character affect turn appraisal failed",
-        error instanceof Error ? error.name : "UnknownError",
-      ));
-  } catch (error) {
-    console.warn(
-      "Character affect turn appraisal failed",
-      error instanceof Error ? error.name : "UnknownError",
-    );
-  }
-}
-
-async function markCompletedTurnAppraisalReadyWithRetry(
-  markReady: NonNullable<SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"]>,
-  correlationId: string,
-  retryMs: number,
-): Promise<boolean> {
-  while (true) {
-    try {
-      const result = await markReady(correlationId);
-      return result !== "absent";
-    } catch (error) {
-      console.warn(
-        "Character affect turn appraisal readiness update failed",
-        error instanceof Error ? error.name : "UnknownError",
-      );
-      await new Promise<void>((resolve) => setTimeout(resolve, retryMs));
-    }
-  }
-}
-
-function completeCompletedTurnAppraisalBestEffort(
-  markReady: SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"],
-  appraise: SessionRuntimeServiceDeps["appraiseCompletedTurn"],
-  correlationId: string,
-  retryMs: number,
-): void {
-  setTimeout(() => {
-    void Promise.resolve().then(async () => {
-      if (markReady) {
-        const ready = await markCompletedTurnAppraisalReadyWithRetry(
-          markReady,
-          correlationId,
-          retryMs,
-        );
-        if (!ready) {
-          return;
-        }
-      }
-      appraiseCompletedTurnBestEffort(appraise);
-    })
-    .catch((error) => console.warn(
-      "Character affect turn background completion failed",
-      error instanceof Error ? error.name : "UnknownError",
-    ));
-  }, 0);
 }
 
 function buildCanceledPartialResult(
@@ -1332,27 +1250,7 @@ export class SessionRuntimeService {
           },
         ],
       };
-      const affectTurnCorrelationId = `turn:${sessionId}:turn:${runningTurn.id}`;
       const assistantMessageIndex = (completedSession.messageCount ?? completedSession.messages.length) - 1;
-      const requiresDurableAppraisal = this.deps.requireDurableCompletedTurnAppraisal === true
-        && completedSession.sessionKind === "default"
-        && Boolean(completedSession.characterId);
-      if (
-        requiresDurableAppraisal
-        && (!this.deps.queueCompletedTurnAppraisal || !this.deps.markCompletedTurnAppraisalReady)
-      ) {
-        throw new Error("Default Character Session requires durable affect turn settlement before completion.");
-      }
-      if (this.deps.queueCompletedTurnAppraisal) {
-        await this.deps.queueCompletedTurnAppraisal({
-          session: completedSession,
-          correlationId: affectTurnCorrelationId,
-          userMessage: nextMessage,
-          assistantMessage: result.assistantText,
-          assistantMessageIndex,
-          occurredAt: completedAt,
-        });
-      }
 
       const completedSessionUpsertStartedAt = Date.now();
       const completedThreadId = pickPreferredThreadId(result.threadId, completedSession.threadId);
@@ -1385,12 +1283,6 @@ export class SessionRuntimeService {
           lastNonEmptyAssistantMessageText: result.lastNonEmptyAssistantMessageText ?? "",
         });
       }
-      completeCompletedTurnAppraisalBestEffort(
-        requiresDurableAppraisal ? this.deps.markCompletedTurnAppraisalReady : undefined,
-        this.deps.appraiseCompletedTurn,
-        affectTurnCorrelationId,
-        this.deps.appraisalReadyRetryMs ?? DEFAULT_APPRAISAL_READY_RETRY_MS,
-      );
 
       return storedCompletedSession;
     } catch (error: unknown) {

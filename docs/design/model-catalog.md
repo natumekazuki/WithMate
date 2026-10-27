@@ -133,8 +133,18 @@ adapter 実行時は Send が捕捉した `executionOptions.catalogRevision` と
 - model が見つからなければそのままエラーにする
 - depth が model catalog の定義に無ければそのままエラーにする
 - 実 provider 側でさらに拒否された場合も、そのまま実行エラーとして扱う
-- OpenCodeはmodel IDの最初の`/`でnative provider／modelを分け、残りの`/`はmodel IDに保持する。Depthは同名のnative variantへ渡し、`#variant`をmodel IDへ保存しない。foreground／backgroundともnative model一覧で有効性とvariantを検証し、foregroundでは添付のinput modalityも検証する。別modelやDepthへfallbackしない
-- OpenCode Goの両modelはWindows x64・CLI／client `2.1.4`のnative一覧でenabledと`low / high / max`を確認し、生成は`high`の通常turn／背景Affectで確認している。`low / max`の生成は未確認であり、同梱値を全利用環境の保証とはしない。利用環境のnative一覧と実際の生成で拒否され得る
+- OpenCodeはmodel IDの最初の`/`でnative provider／modelを分け、残りの`/`はmodel IDに保持する。Depthは同名のnative variantへ渡し、`#variant`をmodel IDへ保存しない。native model一覧で有効性とvariantを検証し、添付のinput modalityも検証する。別modelやDepthへfallbackしない
+- OpenCode Goの両modelはWindows x64・CLI／client `2.1.4`のnative一覧でenabledと`low / high / max`を確認し、生成は`high`の通常turnで確認している。`low / max`の生成は未確認であり、同梱値を全利用環境の保証とはしない。利用環境のnative一覧と実際の生成で拒否され得る
+
+## OpenCodeのmodelと認証
+
+- WithMateのprovider IDは`opencode`のまま、model IDでnative providerを区別する。Goは`opencode-go/<model>`、OpenCode配信は`opencode/<model>`、OpenAI経由は`openai/<model>`を使う。任意のnative prefixを表現でき、モデル追加のためのcatalog schema拡張は不要である。
+- catalogはmodelの選択肢であり、API key・OAuth・アカウントを保持しない。OpenCodeでChatGPT認証を使ってもWithMateのproviderを`codex`へ変える必要はなく、認証はnative integration側が解決する。複数アカウントの選択をcatalogで指定する機能はない。
+- WithMateはnative DBをuser data・build channel別に分離する。OpenCode v2.1.4のcredentialは同じnative DBへ保存されるため、デスクトップ版の別DBに保存したログインを自動共有しない。nativeの旧`auth.json`移行はあるが、別DB間の継続同期ではない。WithMate内のOAuth接続・credential import・アカウント切替UIは未提供である。
+- SettingsのGo keyはGo用であり、ChatGPT OAuthの代替ではない。Go keyが空でも通常turnを一律に拒否せず、native一覧で選択modelのenabled状態を確認する。nativeモデルをcatalogへ追加するには、既存catalogをexportして`opencode.models`へ追記し、全体をimportする。利用環境で実在するmodel IDとvariantを確認し、認証済みであることを別途満たす。
+- 現行schemaのDepthは既定のeffort enumから1個以上が必須であり、OpenCodeでは同名variantへ渡す。variantなし・任意名variantやmodel別アカウント固定を一般的に表現するschemaではない。同梱Go以外の利用可否をcatalogへの登録だけで保証しない。
+
+認証保存先の根拠: [OpenCode 2.1.4 credential実装](https://github.com/anomalyco/opencode/blob/ed74ec82ce1fe3a36da6c0815a935473ef4bb0fb/packages/core/src/credential.ts)、[旧認証のnative移行](https://github.com/anomalyco/opencode/blob/ed74ec82ce1fe3a36da6c0815a935473ef4bb0fb/packages/core/src/database/migration/20260805200742_import_legacy_credentials.ts)。
 
 ## Import / Export Policy
 

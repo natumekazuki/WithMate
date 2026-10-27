@@ -24,7 +24,7 @@ V6 schemaは設定・catalog、Project scope、Main／Auxiliary Session、messag
 
 通常のCharacter ContextはWorkerの`affect.getContextState`で軽量effective projectionと既存state versionを同じread transactionから取得する。layer別projection、寄与event ID、reasonは詳細取得だけで組み立て、通常Contextへ転送しない。version結果だけを最大32 owner scopeまでWorker内で保持し、SQLiteの`data_version`と同接続の`total_changes()`の変化で無効化する。履歴payloadと時間依存effectiveは保持せず、decayと別Sessionのafterglowは読取りごとに評価する。正本event、詳細inspection、version形式と楽観的競合検出は変更しない。
 
-`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完と、旧pending Affect settlementのowner解釈はschema更新で扱い、既存の本文やcorrelation fingerprintを変更しない。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
+`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完はschema更新で扱う。Affect専用queueは同じschema更新で削除し、候補を再適用しない。保存済みevent／episode／Memoryとversion・idempotency情報は保持する。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
 
 turn contextはMain SessionかAuxiliaryの一方をownerとし、`session_turns_v6`に最小実行情報とterminal markerを置く。保存済み本文と操作結果は通常履歴・artifactを正本とし、artifact detailを対象ごとに遅延取得する。live本文やstdout chunkごとの累積snapshotはDBへ保存しない。既存V6のschema更新では最小turnを継続し、Audit専用のinterim、provider output、legacy event tableを物理削除する。通常会話・artifact、Timing、Affect、Memoryの記録は保持し、過去詳細のバックフィルや既存artifactの全件書換えは行わない。既存artifactの操作結果の欠損は未記録として読み、成功やexitCode 0を補完しない。
 

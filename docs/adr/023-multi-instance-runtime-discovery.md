@@ -6,6 +6,8 @@ Accepted
 
 ## 適用状態
 
+[ADR 028](028-in-turn-affect-mcp-only.md)により、Affect専用background／unbound clientへのselector除去に関する本文は、当該clientの廃止に伴い現行運用の適用対象外とする。通常turnのexact owner selection、runtime discovery、generationとcredentialの境界は維持する。
+
 [ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの入口に限り、challenge前にcredentialと本文を送らない判断を部分的に置換する実装へ適用した判断である。現行runtime discovery、exact owner selection、別instanceへfallbackしない契約、および既存runtime exchangeとCLIのchallengeは維持する。
 
 ## Context

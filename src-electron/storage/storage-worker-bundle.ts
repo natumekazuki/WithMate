@@ -2,7 +2,6 @@ import { AuxiliarySessionStorage, type AuxiliarySessionStorage as AuxiliarySessi
 import type { WorkerOptions } from "node:worker_threads";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
-import { CharacterAffectTurnSettlementStorage } from "../character/character-affect-turn-settlement-storage.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
 import { MateStorage } from "../mate/mate-storage.js";
@@ -74,11 +73,6 @@ const STORE_METHODS = {
     "applyProfileFiles",
   ],
   prompt: ["listPromptTemplates", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate"],
-  settlement: [
-    "enqueue", "listPending", "listReadyPending", "listDueReadyPending", "hasRecoverablePending", "listQuarantined",
-    "listUnreadyPendingBefore", "markReady", "getPending", "saveEvaluation", "recordAppraisalFailure", "recordAttempt",
-    "recoverInterruptedAttempts", "recordFailure", "releaseQuarantined", "markSettled", "markDiscarded",
-  ],
 } as const;
 
 const MUTATIONS = new Set([
@@ -97,8 +91,7 @@ const MUTATIONS = new Set([
   "ensureSeeded", "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
   "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
   "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
-  "enqueue", "markReady", "saveEvaluation",
-  "recordAppraisalFailure", "recordAttempt", "recoverInterruptedAttempts", "recordFailure", "releaseQuarantined", "markSettled", "markDiscarded",
+  "enqueue",
 ]);
 
 type StorageInstances = Record<keyof typeof STORE_METHODS, object>;
@@ -132,8 +125,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const catalog = new ModelCatalogStorage(data.dbPath, data.bundledModelCatalogPath);
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
-  const settlement = new CharacterAffectTurnSettlementStorage(data.dbPath);
-  instances = { session, turn, queue, auxiliary, character, settings, catalog, mate, prompt, settlement };
+  instances = { session, turn, queue, auxiliary, character, settings, catalog, mate, prompt };
   const currentInstances = instances;
   catalog.ensureSeeded();
 
@@ -251,6 +243,5 @@ export type V6StorageWorkerBundle = {
     catalog: AsyncStore<ModelCatalogStorage>;
     mate: AsyncStore<MateStorage>;
     prompt: AsyncStore<PromptTemplateStorage>;
-    settlement: AsyncStore<CharacterAffectTurnSettlementStorage>;
   };
 };

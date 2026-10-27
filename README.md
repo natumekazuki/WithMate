@@ -16,7 +16,9 @@ WithMate は、Codex、GitHub Copilot、Claude Agent、OpenCode の coding agent
 
 providerごとの対応状況は[対応機能一覧](docs/design/coding-agent-capability-matrix.md)を参照してください。
 
-OpenCodeは同梱の公式CLI／client `2.1.4`を使います。Settingsの`OpenCode Go API Key`（未設定時は`OPENCODE_API_KEY`）からGo用keyを渡し、初期catalogにはGLM-5.3／GLM-5.3 FlashとDepth `low / high / max`を用意しています。Windows x64で両modelの`high`による通常turnと背景Affect生成、GLM-5.3の明示thread再開、Flashのstreaming中取消を実接続で確認しています。`low / max`はnative一覧への掲載を確認していますが、生成は未確認です。通常のOpenCode設定はnative経路で読み込み、会話DBだけをWithMateのuser data・build channel別に分離します。利用前に自身の契約・設定・課金経路を確認してください。
+OpenCodeは同梱の公式CLI／client `2.1.4`を使います。Settingsの`OpenCode Go API Key`（未設定時は`OPENCODE_API_KEY`）からGo用keyを渡し、初期catalogにはGLM-5.3／GLM-5.3 FlashとDepth `low / high / max`を用意しています。Windows x64で両modelの`high`による通常turn、GLM-5.3の明示thread再開、Flashのstreaming中取消を実接続で確認しています。`low / max`はnative一覧への掲載を確認していますが、生成は未確認です。通常のOpenCode設定はnative経路で読み込み、native DBをWithMateのuser data・build channel別に分離します。利用前に自身の契約・設定・課金経路を確認してください。
+
+ModelCatalogの`opencode`内には`opencode-go/...`、`opencode/...`、`openai/...`等のnative model IDを登録できます。ただし登録は認証を行いません。OpenCode v2の保存済みログインもnative DBに属するため、別DBを使うOpenCodeデスクトップ版のChatGPT等のログイン状態をWithMateが自動共有する構成ではありません。WithMate内のOAuth接続UI・アカウント選択は未提供です。詳細は[Model Catalog](docs/design/model-catalog.md#opencodeのmodelと認証)を参照してください。
 
 Claude Agent は公式 Claude Agent SDK に付属する未改変の実行物を使い、利用者自身が Claude CLI でログインした認証状態を SDK が利用します。WithMate は認証情報を読み取り・コピーせず、独自 OAuth も提供しません。Claude Pro で `claude-opus-5-5` の実接続を確認していますが、SDK が参照する環境変数・設定によって認証先や課金経路が変わり得ます。利用前に自身の契約・設定・課金経路を確認してください。認証失敗や利用枠不足を別の認証・モデル・provider へ自動切替しません。Claude の SDK transcript は WithMate の会話履歴とは別に Claude 側へ保存され、WithMate はそれを管理・削除しません。
 

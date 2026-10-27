@@ -27,7 +27,6 @@ import type {
   DeleteSessionsResult,
 } from "../../src-shared/window/withmate-window-types.js";
 import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage-errors.js";
-import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SetExecutionOptionsResult, SetSessionTitleResult } from "../../src-shared/session/session-mutation-contract.js";
@@ -40,6 +39,7 @@ import type {
 import type { SessionRuntimeMetadataPatchInput, SessionRuntimeMetadataPatchResult, SessionThreadPatchInput, SessionThreadPatchResult } from "./session-storage-v6.js";
 import type { SessionMetadataResult, SessionSteerAppendInput, SessionTerminalAppendInput, SessionRunMetadataCheckpointInput } from "./session-runtime-storage-contract.js";
 import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import type { RunProviderRuntimeOperationExclusive } from "../providers/provider-runtime-operation-coordinator.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -51,6 +51,7 @@ function logSessionRunStuckInvestigation(
 }
 
 export type SessionPersistenceServiceDeps = {
+  runProviderRuntimeOperationExclusive?: RunProviderRuntimeOperationExclusive;
   getSessions(): Session[];
   setSessions(nextSessions: Session[]): void;
   getSession(sessionId: string): Session | null;
@@ -93,7 +94,6 @@ export type SessionPersistenceServiceDeps = {
   closeSessionWindow(sessionId: string): void;
   discardSessionWindow?(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>, detailChanged?: false): void;
-  runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
 function isRunningSession(session: Session): boolean {
@@ -350,21 +350,21 @@ export class SessionPersistenceService {
   }
 
   async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
-    const committed = await this.runCharacterAffectTurnOwnershipExclusive(
-      () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false }),
-    );
+    const commit = () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false });
+    const committed = await (this.deps.runProviderRuntimeOperationExclusive?.(commit) ?? commit());
     return this.finishSessionDeletion(committed);
   }
 
   async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<DeleteSessionsResult> {
-    const committed = await this.runCharacterAffectTurnOwnershipExclusive(async () => {
+    const commit = async () => {
       const sessionIds = this.deps.listStoredSessionIdsLastActiveBefore
         ? await this.deps.listStoredSessionIdsLastActiveBefore(cutoff)
         : (await this.deps.listStoredSessions())
             .filter((session) => Date.parse(session.updatedAt) < cutoff.cutoffTimestampMs)
             .map((session) => session.id);
       return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
-    });
+    };
+    const committed = await (this.deps.runProviderRuntimeOperationExclusive?.(commit) ?? commit());
     return this.finishSessionDeletion(committed);
   }
 
@@ -437,10 +437,6 @@ export class SessionPersistenceService {
       throw new AggregateError(failures, "The Session was deleted, but post-deletion projection or provider thread cleanup failed.");
     }
     return committed.result;
-  }
-
-  private runCharacterAffectTurnOwnershipExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    return this.deps.runCharacterAffectTurnOwnershipExclusive?.(operation) ?? operation();
   }
 
   private async deleteSessionsByIds(
@@ -832,7 +828,7 @@ export class SessionPersistenceService {
     },
   ): Promise<Session[]> {
     return this.enqueueSessionMutation(
-      () => this.runCharacterAffectTurnOwnershipExclusive(() => this.replaceAllSessionsNow(nextSessions, options)),
+      () => this.replaceAllSessionsNow(nextSessions, options),
     );
   }
 

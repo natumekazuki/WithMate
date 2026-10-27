@@ -29,7 +29,6 @@ import {
 } from "../../src-electron/session/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
-import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character/character-affect-turn-settlement-storage.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
@@ -1706,9 +1705,6 @@ describe("SessionRuntimeService", () => {
       invalidateSessionThread: unexpectedAdapterCall,
       invalidateAllSessionThreads: unexpectedAdapterCall,
       runSessionTurn: unexpectedAdapterCall,
-      getBackgroundStructuredPromptPolicy: unexpectedAdapterCall,
-      extractSessionMemoryDelta: unexpectedAdapterCall,
-      runBackgroundStructuredPrompt: unexpectedAdapterCall,
     };
     const catalog = { revision: 1, providers: [createProviderCatalog(), createProviderCatalog("custom")] };
     const facade = new MainProviderFacade({
@@ -1755,20 +1751,19 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知を依頼してbackground settlementを待たず次turnを受け付ける"
-  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal / notifySessionTurnTerminalBestEffort / completeCompletedTurnAppraisalBestEffort; docs/design/session-run-lifecycle.md: Character Affect の完了後評価" }
-  // fault = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
-  // observable = "providerへ渡されたturnごとのCharacter context、terminal commit後の通知とready correlation順序、appraisal依頼回数、次turnの完了結果"
+  // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知して次turnを受け付ける"
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal / notifySessionTurnTerminalBestEffort" }
+  // fault = "永続化前の通知により通知先が未保存状態を読むか、次turnが前turnの完了時刻を取得できない"
+  // observable = "providerへ渡されたturnごとのCharacter context、terminal commit後の通知順序、次turnの完了時刻snapshot"
   // observation_boundary = "public-boundary"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
   // @end-test-value
-  it("各turnで最新Character contextを取得し、terminal commit後はready・appraisalを待たずに返す", async () => {
+  it("各turnで最新Character contextを取得し、terminal commit後に通知して次turnを受け付ける", async () => {
     let storedSession = createSession();
     let contextVersion = 0;
     let turnId = 0;
     let completionNotificationCount = 0;
-    let appraisalRequestCount = 0;
     const callOrder: string[] = [];
     const timingCompletionSnapshots: Array<string | null> = [];
     let lastCommittedAt: string | null = null;
@@ -1870,19 +1865,6 @@ describe("SessionRuntimeService", () => {
         contextVersion += 1;
         return context(contextVersion);
       },
-      async queueCompletedTurnAppraisal(input) {
-        assert.equal(input.assistantMessageIndex, input.session.messageCount! - 1);
-        callOrder.push(`queued:${input.correlationId}`);
-      },
-      markCompletedTurnAppraisalReady(correlationId) {
-        callOrder.push(`pending-ready:${correlationId}`);
-      },
-      requireDurableCompletedTurnAppraisal: true,
-      async appraiseCompletedTurn() {
-        appraisalRequestCount++;
-        callOrder.push("appraisal-started");
-        await new Promise<void>(() => undefined);
-      },
       createSessionTurn(input) {
         turnId += 1;
         return { ...createSessionTurnBase(input), id: turnId };
@@ -1925,7 +1907,6 @@ describe("SessionRuntimeService", () => {
     const firstCompletedAt = lastCommittedAt;
     assert.equal(service.isRunInFlight(storedSession.id), false);
     assert.equal(confirmedPreviewTexts[0], "完了");
-    assert.equal(callOrder.some((entry) => entry === `pending-ready:turn:${storedSession.id}:turn:1`), false);
     await service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "second",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b2",
@@ -1933,289 +1914,19 @@ describe("SessionRuntimeService", () => {
     });
     callOrder.push("second-returned");
 
-    await waitForCondition(
-      () => appraisalRequestCount === 2,
-      "ready・appraisal・terminal turnがbackgroundで完了すること",
-    );
 
     assert.equal(contextVersion, 2);
     assert.deepEqual(composedCharacterContextVersions, ["affect-v1-1", "affect-v1-2"]);
-    assert.equal(appraisalRequestCount, 2);
-    assert.deepEqual(callOrder.filter((entry) => entry.startsWith("pending-ready:")), [
-      `pending-ready:turn:${storedSession.id}:turn:1`,
-      `pending-ready:turn:${storedSession.id}:turn:2`,
-    ]);
     assert.equal(timingCompletionSnapshots[0], null);
     assert.equal(timingCompletionSnapshots[1], firstCompletedAt);
     for (const [turnId, returned] of [
       [1, "first-returned"],
       [2, "second-returned"],
     ] as const) {
-      const correlationId = `turn:${storedSession.id}:turn:${turnId}`;
       assert.ok(callOrder.indexOf(`completed-upsert:${turnId}`) < callOrder.indexOf(`completion-notification:${turnId}`));
       assert.ok(callOrder.indexOf(`completion-notification:${turnId}`) < callOrder.indexOf(returned));
-      assert.ok(callOrder.indexOf(returned) < callOrder.indexOf(`pending-ready:${correlationId}`));
     }
-    assert.equal(callOrder.filter((entry) => entry === "appraisal-started").length, 2);
 
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "SessionRuntimeServiceへ注入したdurable appraisal queueがcompletedより先にpendingを永続化し、enqueue失敗・ready再試行・欠落pendingを適切に収束させる"
-  // oracle = { type = "contract", ref = "Session runtime persistence ordering contract" }
-  // fault = "completed sessionを先に保存してpendingを失う、enqueue失敗時もcompletedを保存する、またはready再試行・欠落pendingを誤ってappraisalする"
-  // observable = "pending enqueueとcompleted保存の順序、enqueue/readiness/appraisal結果、最終Session runState"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService pending persistence and failure handling"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("注入したdurable appraisal queueはpendingをcompleted Sessionより先に永続化し、保存失敗時はcompletedにしない", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "withmate-mandatory-appraisal-"));
-    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "app.sqlite"));
-    const createService = (
-      initialSession: Session,
-      queueCompletedTurnAppraisal: NonNullable<SessionRuntimeServiceDeps["queueCompletedTurnAppraisal"]>,
-      beforeCompletedUpsert?: () => void | Promise<void>,
-      markCompletedTurnAppraisalReady?: NonNullable<SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"]>,
-      appraiseCompletedTurn?: NonNullable<SessionRuntimeServiceDeps["appraiseCompletedTurn"]>,
-    ) => {
-      let storedSession = initialSession;
-      const completedWrites: Session[] = [];
-      const callOrder: string[] = [];
-      const adapter: ProviderCodingAdapter = {
-        composePrompt() {
-          return {
-            systemBodyText: "system",
-            inputBodyText: "input",
-            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-            imagePaths: [],
-            additionalDirectories: [],
-          };
-        },
-        async getProviderQuotaTelemetry() {
-          return null;
-        },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-        async runSessionTurn() {
-          return createPartialResult({ assistantText: "完了" });
-        },
-      };
-      const service = createTestRuntime({
-        getSession(sessionId) {
-          return sessionId === storedSession.id ? storedSession : null;
-        },
-        async upsertSession(next) {
-          if (next.runState === "idle" && next.messages.at(-1)?.role === "assistant") {
-            await beforeCompletedUpsert?.();
-            completedWrites.push(next);
-            callOrder.push("completed-upsert");
-          }
-          storedSession = next;
-          return next;
-        },
-        async resolveComposerPreview() {
-          return { attachments: [], errors: [] };
-        },
-        getAppSettings() {
-          return normalizeAppSettings({});
-        },
-        resolveProviderCatalog() {
-          const provider = createProviderCatalog();
-          return { snapshot: { revision: 1, providers: [provider] }, provider };
-        },
-        getProviderCodingAdapter() {
-          return adapter;
-        },
-        getSessionMemory(session) {
-          return createSessionMemory(session.id);
-        },
-        resolveProjectMemoryEntriesForPrompt() {
-          return [];
-        },
-        queueCompletedTurnAppraisal(input) {
-          callOrder.push("pending-enqueue");
-          return queueCompletedTurnAppraisal(input);
-        },
-        markCompletedTurnAppraisalReady(correlationId) {
-          callOrder.push("pending-ready");
-          if (markCompletedTurnAppraisalReady) {
-            return markCompletedTurnAppraisalReady(correlationId);
-          }
-          storage.markReady(correlationId);
-        },
-        appraiseCompletedTurn,
-        requireDurableCompletedTurnAppraisal: true,
-        createSessionTurn(input) {
-          return createSessionTurnBase(input);
-        },
-        updateSessionTurn() {},
-        setLiveSessionRun() {},
-        getLiveSessionRun() {
-          return null;
-        },
-        waitForApprovalDecision() {
-        return "approve" as const;
-        },
-        waitForElicitationResponse() {
-          return { action: "cancel" };
-        },
-        setProviderQuotaTelemetry() {},
-        setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-        scheduleProviderQuotaTelemetryRefresh() {},
-        broadcastLiveSessionRun() {},
-        resolvePendingApprovalRequest() {},
-        resolvePendingElicitationRequest() {},
-        currentTimestampLabel,
-        appraisalReadyRetryMs: 0,
-      });
-      return { service, completedWrites, callOrder };
-    };
-
-    try {
-      const successfulSession = createSession();
-      const successful = createService(
-        successfulSession,
-        (input) => {
-          storage.enqueue({
-            correlationId: input.correlationId,
-            characterId: input.session.characterId,
-            sessionId: input.session.id,
-            userMessage: input.userMessage,
-            assistantMessage: input.assistantMessage,
-            assistantMessageIndex: input.assistantMessageIndex,
-            occurredAt: input.occurredAt,
-          });
-        },
-        () => {
-          assert.equal(storage.listPending().length, 1);
-          assert.deepEqual(storage.listReadyPending(), []);
-        },
-      );
-      const successfulResult = await successful.service.runSessionTurn(successfulSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "保存して",
-      });
-      await waitForCondition(
-        () => storage.listReadyPending().length === 1,
-        "terminal commit後にbackgroundでpendingがready化されること",
-      );
-      const pending = storage.listPending();
-
-      assert.equal(successfulResult.runState, "idle");
-      assert.equal(pending.length, 1);
-      assert.equal(pending[0]?.assistantMessage, "完了");
-      assert.notEqual(pending[0]?.readyAt, null);
-      assert.deepEqual(successful.callOrder, ["pending-enqueue", "completed-upsert", "pending-ready"]);
-
-      const failingSession = createSession();
-      const failing = createService(failingSession, () => {
-        throw new Error("settlement storage unavailable");
-      });
-      const failingResult = await failing.service.runSessionTurn(failingSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "保存に失敗して",
-      });
-
-      assert.equal(failingResult.runState, "error");
-      assert.equal(failing.completedWrites.length, 0);
-      assert.deepEqual(failing.callOrder, ["pending-enqueue"]);
-
-      const readinessFailureSession = createSession();
-      let appraisalCalls = 0;
-      let readinessAttempts = 0;
-      let releaseReadiness: () => void = () => undefined;
-      const readinessBarrier = new Promise<void>((resolve) => {
-        releaseReadiness = resolve;
-      });
-      const readinessFailure = createService(
-        readinessFailureSession,
-        (input) => {
-          storage.enqueue({
-            correlationId: input.correlationId,
-            characterId: input.session.characterId,
-            sessionId: input.session.id,
-            userMessage: input.userMessage,
-            assistantMessage: input.assistantMessage,
-            assistantMessageIndex: input.assistantMessageIndex,
-            occurredAt: input.occurredAt,
-          });
-        },
-        undefined,
-        async (correlationId) => {
-          readinessAttempts += 1;
-          if (readinessAttempts === 1) {
-            throw new Error("temporary readiness failure");
-          }
-          await readinessBarrier;
-          storage.markReady(correlationId);
-        },
-        () => {
-          appraisalCalls += 1;
-        },
-      );
-      let readinessRunResolved = false;
-      const readinessFailureRun = readinessFailure.service.runSessionTurn(readinessFailureSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "ready化に失敗しても完了を維持して",
-      });
-      void readinessFailureRun.then(() => {
-        readinessRunResolved = true;
-      });
-
-      await waitForCondition(() => readinessAttempts >= 2, "background ready retryが2回目へ進むこと");
-
-      assert.equal(readinessRunResolved, true);
-      assert.equal(appraisalCalls, 0);
-      assert.equal(storage.getPending(`turn:${readinessFailureSession.id}:turn:1`)?.readyAt, null);
-
-      releaseReadiness();
-      const readinessFailureResult = await readinessFailureRun;
-      await waitForCondition(() => appraisalCalls === 1, "ready成功後にappraisal schedulerが起動すること");
-
-      assert.equal(readinessFailureResult.runState, "idle");
-      assert.equal(readinessFailure.completedWrites.length, 1);
-      assert.equal(readinessAttempts, 2);
-      assert.equal(appraisalCalls, 1);
-      assert.equal(readinessFailureResult.messages.filter((message) => message.role === "assistant").length, 1);
-
-      const absentSession = createSession();
-      let absentReadyCalls = 0;
-      let absentAppraisalCalls = 0;
-      const absent = createService(
-        absentSession,
-        (input) => {
-          storage.enqueue({
-            correlationId: input.correlationId,
-            characterId: input.session.characterId,
-            sessionId: input.session.id,
-            userMessage: input.userMessage,
-            assistantMessage: input.assistantMessage,
-            assistantMessageIndex: input.assistantMessageIndex,
-            occurredAt: input.occurredAt,
-          });
-        },
-        undefined,
-        () => {
-          absentReadyCalls += 1;
-          return "absent";
-        },
-        () => {
-          absentAppraisalCalls += 1;
-        },
-      );
-      const absentResult = await absent.service.runSessionTurn(absentSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "削除済みpendingは終端して",
-      });
-      await waitForCondition(() => absentReadyCalls === 1, "missing pendingのready化が一度だけ試行されること");
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-      assert.equal(absentResult.runState, "idle");
-      assert.equal(absentReadyCalls, 1);
-      assert.equal(absentAppraisalCalls, 0);
-    } finally {
-      storage.close();
-      await rm(directory, { recursive: true, force: true });
-    }
   });
 
   // @test-value v2
@@ -3524,7 +3235,6 @@ resolveProvider!(createPartialResult());
     const session = createSession();
     let resolveProvider: (result: RunSessionTurnResult) => void = () => undefined;
     let notificationCount = 0;
-    let queuedAppraisalCount = 0;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -3575,10 +3285,6 @@ resolveProvider!(createPartialResult());
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
-      queueCompletedTurnAppraisal(input) {
-        queuedAppraisalCount += 1;
-        assert.equal(input.assistantMessageIndex, input.session.messages.length - 1);
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -3620,7 +3326,6 @@ resolveProvider!(createPartialResult());
     assert.equal(result.runState, "idle");
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");
     assert.equal(notificationCount, 0);
-    assert.equal(queuedAppraisalCount, 1);
   });
 
   // @test-value v2

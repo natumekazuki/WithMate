@@ -8,7 +8,6 @@ import type { Session } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { SessionRuntimeFixture as SessionRuntimeService, type SessionRuntimeFixtureDeps as SessionRuntimeServiceDeps } from "./session-runtime-fixture.js";
-import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character/character-affect-turn-ownership-coordinator.js";
 import { ProviderRuntimeOperationCoordinator } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
 import { admitSessionTurn } from "../../src-electron/session/session-turn-admission.js";
 import type { ProviderCodingAdapter } from "../../src-electron/providers/provider-runtime.js";
@@ -166,7 +165,7 @@ describe("SessionRuntimeService session admission", () => {
   // kind = "invariant"
   // claim = "Session turn reservationだけをglobal coordinator内で確定し、Worker read待機中も無関係なcoordinator操作を進められる"
   // oracle = { type = "contract", ref = "src-electron/session/session-turn-admission.ts#admitSessionTurn" }
-  // fault = "provider/ownership coordinatorをWorker read完了まで保持し、無関係なmaintenance操作を不必要に待たせる"
+  // fault = "provider coordinatorをWorker read完了まで保持し、無関係なmaintenance操作を不必要に待たせる"
   // observable = "readProvider barrier中のreservation、無関係なcoordinator操作の完了、最終provider validation後の開始"
   // observation_boundary = "component-behavior"
   // scope = "session-turn-admission-worker-read-barrier"
@@ -176,14 +175,13 @@ describe("SessionRuntimeService session admission", () => {
   // @end-test-value
   it("Worker read待機中もreservationを保持したまま無関係なcoordinator操作を進める", { timeout: 10_000 }, async () => {
     const provider = new ProviderRuntimeOperationCoordinator();
-    const ownership = new CharacterAffectTurnOwnershipCoordinator();
     const readStarted = deferred();
     const releaseRead = deferred();
     const providerCallCount = { value: 0 };
     const runtime = createRuntime({
       providerCallCount,
       runSessionAdmissionExclusive: (_sessionId, reserve, signal) => admitSessionTurn({
-        runExclusive: (operation) => provider.runExclusive(() => ownership.runExclusive(operation)),
+        runExclusive: (operation) => provider.runExclusive(operation),
         assertCurrent: () => signal.throwIfAborted(),
         reserve,
         readProvider: async () => {
@@ -197,10 +195,10 @@ describe("SessionRuntimeService session admission", () => {
     const admission = runRequest(runtime.service, runtime.session.id);
     await readStarted.promise;
 
-    await provider.runExclusive(() => ownership.runExclusive(() => {
+    await provider.runExclusive(() => {
       assert.equal(runtime.service.isRunInFlight(runtime.session.id), true);
       assert.equal(providerCallCount.value, 0);
-    }));
+    });
     releaseRead.resolve();
     await admission;
     assert.equal(providerCallCount.value, 1);
@@ -222,14 +220,13 @@ describe("SessionRuntimeService session admission", () => {
   it("validation失敗時はprovider開始前にreservationを解放して再試行できる", async () => {
     for (const failure of ["read", "owner", "provider", "cancel", "reset"] as const) {
       const provider = new ProviderRuntimeOperationCoordinator();
-      const ownership = new CharacterAffectTurnOwnershipCoordinator();
       const providerCallCount = { value: 0 };
       let failing = true;
       let ownerChanged = false;
       const runtime = createRuntime({
         providerCallCount,
         runSessionAdmissionExclusive: (_sessionId, reserve, signal) => admitSessionTurn({
-          runExclusive: (operation) => provider.runExclusive(() => ownership.runExclusive(operation)),
+          runExclusive: (operation) => provider.runExclusive(operation),
           assertCurrent: () => {
             if (ownerChanged) throw new Error("owner is no longer active");
             if (signal.aborted) throw new Error("Session run canceled.");
@@ -281,9 +278,8 @@ describe("SessionRuntimeService session admission", () => {
     let reads = 0;
     const providerCallCount = { value: 0 };
     const provider = new ProviderRuntimeOperationCoordinator();
-    const ownership = new CharacterAffectTurnOwnershipCoordinator();
     const runAdmission = <T>(_sessionId: string, operation: () => T | Promise<T>): Promise<T> =>
-      provider.runExclusive(() => ownership.runExclusive(operation));
+      provider.runExclusive(operation);
     const runtime = createRuntime({
       providerCallCount,
       runSessionAdmissionExclusive: (sessionId, reserve, signal) => admitSessionTurn({
@@ -495,7 +491,6 @@ describe("SessionRuntimeService session admission", () => {
   // @end-test-value
   it("admission待機がcancel graceを超えても終了までterminating guardを保持する", { timeout: 5_000 }, async () => {
     const provider = new ProviderRuntimeOperationCoordinator();
-    const ownership = new CharacterAffectTurnOwnershipCoordinator();
     const readStarted = deferred();
     const releaseRead = deferred();
     const providerCallCount = { value: 0 };
@@ -503,7 +498,7 @@ describe("SessionRuntimeService session admission", () => {
       providerCallCount,
       providerCancelGraceMs: 5,
       runSessionAdmissionExclusive: (_sessionId, reserve, signal) => admitSessionTurn({
-        runExclusive: (operation) => provider.runExclusive(() => ownership.runExclusive(operation)),
+        runExclusive: (operation) => provider.runExclusive(operation),
         assertCurrent: () => signal.throwIfAborted(),
         reserve,
         readProvider: async () => {

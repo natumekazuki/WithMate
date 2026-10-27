@@ -82,7 +82,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - 刻みはapp共通の`AppSettings.previewWheelZoomStep`として永続化し、保存後は開いているSession／独立File Previewへ通知する。次のCtrl＋wheelから新しい刻みを使い、現在倍率・Fit状態・pan位置、Zoom In／Outの10ポイント刻みは変えない。独立File Previewは初期取得と変更通知を購読し、設定取得中・失敗時はCtrl＋wheelの倍率変更だけを止める。preview本体と他の倍率操作は維持し、読込中表示と失敗時のRetryを提供する
 - `Prompt Context` の4項目を個別に保存し、既定値はすべて有効とする。表示labelは `Character Definition Snapshot` / `Character Affect Context` / `Conversation Timing` / `Tool Call Presence` とし、補足説明やHelp iconは表示しない。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
   - `Character Definition Snapshot` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session の Character snapshot に対する `Output Boundary` は残す
-  - `Character Affect Context` は system 側の該当 section と通常 session の context 取得を切り替える。turn後のBackground Affect評価・保存には影響しない
+  - `Character Affect Context` は system 側の該当 section と通常 session の context 取得を切り替える。通常turn内のMemory／Affect MCPの利用可否は切り替えない
   - `Conversation Timing` は input 側の該当 section と通常 session の timing 取得を切り替える
   - `Tool Call Presence` は既存の通常 session の character snapshot 境界内で該当 section を切り替える。`character-authoring` には注入しない
 - `Conversation Timing` は Copilot の system session cache を変えず、system 側の3項目は合成された system message の変更として扱う
@@ -112,7 +112,6 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 
 ## Runtime Policy
 
-- completed turn後のCharacter Affect評価はSettingsで切り替えない
 - Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する
 - `model catalog export` の document 取得も `SettingsCatalogService` が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する

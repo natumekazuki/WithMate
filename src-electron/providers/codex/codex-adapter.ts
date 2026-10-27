@@ -33,16 +33,8 @@ import {
   resolveCodexSandboxThreadOptions,
   type CodexSandboxBaseMode,
 } from "../../../src-shared/settings/codex-sandbox-mode.js";
-import {
-  DEFAULT_CODEX_SPEED,
-  mapCodexSpeedToServiceTier,
-  type CodexServiceTier,
-} from "../../../src-shared/settings/codex-speed.js";
-import {
-  DEFAULT_CODEX_REVIEWER,
-  mapCodexReviewerToApprovalsReviewer,
-  type CodexApprovalsReviewer,
-} from "../../../src-shared/settings/codex-reviewer.js";
+import { mapCodexSpeedToServiceTier, type CodexServiceTier } from "../../../src-shared/settings/codex-speed.js";
+import { mapCodexReviewerToApprovalsReviewer, type CodexApprovalsReviewer } from "../../../src-shared/settings/codex-reviewer.js";
 import {
   reasoningEffortLabel,
   resolveModelSelection,
@@ -66,23 +58,7 @@ import {
   composeProviderPrompt,
   isCanceledProviderMessage,
 } from "../provider-prompt.js";
-import {
-  ProviderTurnError,
-  resolveRunWorkspacePath,
-  BACKGROUND_STRUCTURED_PROMPT_POLICY,
-  type ExtractSessionMemoryResult,
-  type GetProviderQuotaTelemetryInput,
-  type ExtractSessionMemoryInput,
-  type ProviderErrorReason,
-  type ProviderPromptComposition,
-  type RunBackgroundStructuredPromptInput,
-  type RunBackgroundStructuredPromptResult,
-  type ProviderTurnAdapter,
-  type RunSessionTurnInput,
-  type RunSessionTurnProgressHandler,
-  type RunSessionTurnResult,
-} from "../provider-runtime.js";
-import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
+import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderErrorReason, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import {
   resolveDevelopmentProviderBinaryPath,
   resolvePackagedProviderBinaryPath,
@@ -102,12 +78,7 @@ import {
 } from "../provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
 import { buildCodexManagedHttpMcpArguments, buildCodexManagedHttpMcpConfig, buildCodexManagedMcpDisableConfig } from "../managed-http-mcp.js";
-import {
-  buildChangedFilesFromSources as buildChangedFilesProjection,
-  buildCodexProviderMetadata as buildProviderMetadataProjection,
-  buildCodexStableRawItems as buildStableRawItemsProjection,
-  toMessageOperations as toMessageOperationsProjection,
-} from "./codex-event-projection.js";
+import { buildChangedFilesFromSources as buildChangedFilesProjection, buildCodexProviderMetadata as buildProviderMetadataProjection, toMessageOperations as toMessageOperationsProjection } from "./codex-event-projection.js";
 import {
   createCodexTurnStreamState,
   collectCodexAssistantResponseFromItems,
@@ -289,15 +260,6 @@ function toActivitySummary(items: CodexTurnItem[]): string[] {
     .filter((item) => item.type !== "agent_message")
     .map((item) => item.summary)
     .slice(0, 6);
-}
-function parseStructuredPromptJson(rawText: string): unknown | null {
-  const trimmed = rawText.trim();
-  const match = trimmed.match(/^\`\`\`(?:json)?\s*([\s\S]*?)\s*\`\`\`$/i);
-  try {
-    return JSON.parse(match ? (match[1] ?? "") : trimmed);
-  } catch {
-    return null;
-  }
 }
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -821,9 +783,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
     }
   }
-  getBackgroundStructuredPromptPolicy() {
-    return BACKGROUND_STRUCTURED_PROMPT_POLICY;
-  }
   async invalidateSessionThread(sessionId: string): Promise<void> {
     const active = this.activeTurns.get(sessionId);
     if (active) {
@@ -944,8 +903,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     reviewer: CodexApprovalsReviewer;
     input: unknown[];
     signal?: AbortSignal;
-    outputSchema?: unknown;
-    sessionInput?: RunSessionTurnInput;
+    sessionInput: RunSessionTurnInput;
     onProgress?: RunSessionTurnProgressHandler;
   }): Promise<void> {
     const { transport, state, options, signal, sessionInput } = args;
@@ -957,16 +915,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const asyncQuestions = new AbortController();
     const asyncQuestionSignal = signal ? AbortSignal.any([signal, asyncQuestions.signal]) : asyncQuestions.signal;
     const seenAsyncQuestions = new Set<string>();
-    const interactions = sessionInput
-      ? new CodexTurnInteractions(
-          sessionInput,
-          redactor.sanitizeText,
-          (error) => {
-            interactionError = error;
-            void transport.close().catch(() => undefined);
-          },
-        )
-      : null;
+    const interactions = new CodexTurnInteractions(
+      sessionInput,
+      redactor.sanitizeText,
+      (error) => {
+        interactionError = error;
+        void transport.close().catch(() => undefined);
+      },
+    );
     let active: ActiveCodexTurn | null = null;
     let projectionId: string | null = null;
     let projectionError: unknown;
@@ -1136,9 +1092,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
           model: options.model,
           effort: options.modelReasoningEffort,
           serviceTier: args.serviceTier,
-          ...(args.outputSchema === undefined
-            ? {}
-            : { outputSchema: args.outputSchema }),
         },
         { signal },
       );
@@ -1161,7 +1114,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         sessionId: sessionInput?.session.id ?? "", threadId: state.threadId, turnId: state.turnId,
         binding: sessionInput?.agentRuntimeBinding, apiKey: args.apiKey,
         progress: Boolean(sessionInput && args.onProgress),
-        diagnosticTrace: !sessionInput,
+        diagnosticTrace: false,
       });
       await progress(true, true);
       let burst = 0;
@@ -1193,14 +1146,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
             await event.reject({
               code: -32602,
               message: "Request is outside the current turn",
-            });
-            continue;
-          }
-          if (!interactions) {
-            await event.reject({
-              code: -32601,
-              message:
-                "Interactive requests are disabled for structured background execution",
             });
             continue;
           }
@@ -1347,86 +1292,6 @@ export class CodexAdapter implements ProviderTurnAdapter {
       }
       if ((!turnFailed || turnCanceled) && projectionFailed) throw projectionError;
     }
-  }
-  async runBackgroundStructuredPrompt<TOutput = unknown>(
-    input: RunBackgroundStructuredPromptInput,
-  ): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
-    this.assertCleanupComplete(input.workspacePath);
-    const signal = input.signal
-      ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs)])
-      : AbortSignal.timeout(input.timeoutMs);
-    const sandbox = resolveCodexSandboxThreadOptions("read-only");
-    const state = createCodexTurnStreamState(null);
-    const diagnostics: CodexTurnDiagnostics = { rawItems: [] };
-    const { transport, apiKey } = this.createTransport(
-      input.providerId,
-      input.appSettings,
-      input.workspacePath,
-    );
-    const redactor = createProviderAgentRuntimeBindingRedactor(null, [apiKey]);
-    await this.executeTurn({
-      transport,
-      apiKey,
-      state,
-      diagnostics,
-      options: {
-        workingDirectory: input.workspacePath,
-        sandboxMode: sandbox.sandboxMode,
-        approvalPolicy: "never",
-        model: input.model,
-        modelReasoningEffort: input.reasoningEffort,
-        networkAccessEnabled: sandbox.networkAccessEnabled,
-        additionalDirectories: normalizeAllowedAdditionalDirectories(
-          input.workspacePath,
-          input.additionalDirectories ?? [],
-        ),
-      },
-      serviceTier: mapCodexSpeedToServiceTier(DEFAULT_CODEX_SPEED),
-      reviewer: mapCodexReviewerToApprovalsReviewer(DEFAULT_CODEX_REVIEWER),
-      input: userInput(
-        `${input.prompt.systemText}\n\n${input.prompt.userText}`.trim(),
-        [],
-      ),
-      outputSchema: input.prompt.outputSchema,
-      signal,
-    }).catch((error) => { throw sanitizeCodexError(error, redactor); });
-    const response = collectCodexAssistantResponseFromItems(
-      state.items.values(),
-    );
-    const rawText = redactor.sanitizeText(response.lastNonEmptyAssistantMessageText);
-    const parsedJson = parseStructuredPromptJson(rawText);
-    return {
-      threadId: state.threadId,
-      rawText,
-      output: parsedJson as TOutput | null,
-      parsedJson,
-      rawItemsJson: diagnostics.projection?.rawItemsJson ?? stringifyBoundedProviderRawItems(
-        redactor.sanitize([...diagnostics.rawItems, ...buildStableRawItemsProjection([...state.items.values()])]),
-      ),
-      usage: state.usage,
-      providerQuotaTelemetry: null,
-    };
-  }
-  async extractSessionMemoryDelta(
-    input: ExtractSessionMemoryInput,
-  ): Promise<ExtractSessionMemoryResult> {
-    const result = await this.runBackgroundStructuredPrompt({
-      providerId: input.session.provider,
-      workspacePath: input.session.workspacePath,
-      appSettings: input.appSettings,
-      model: input.model,
-      reasoningEffort: input.reasoningEffort,
-      timeoutMs: input.timeoutMs,
-      prompt: input.prompt,
-    });
-    return {
-      threadId: result.threadId,
-      rawText: result.rawText,
-      delta: parseSessionMemoryDeltaText(result.rawText),
-      rawItemsJson: result.rawItemsJson,
-      usage: result.usage,
-      providerQuotaTelemetry: null,
-    };
   }
   private buildSnapshotRoots(input: RunSessionTurnInput): string[] {
     const workspacePath = resolveRunWorkspacePath(input);

@@ -11,7 +11,6 @@ import type { CharacterRuntimeSnapshot } from "../../src-shared/character/charac
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character/character-affect-turn-ownership-coordinator.js";
 import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
 import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -206,7 +205,6 @@ describe("SessionPersistenceService", () => {
               revokeSessionAgentRuntimeBindings: () => undefined,
               closeSessionWindow: () => undefined,
               discardSessionWindow: () => undefined,
-              runCharacterAffectTurnOwnershipExclusive: async (operation) => operation(),
               broadcastSessions: (ids) => {
                 broadcasts.push(Array.from(ids ?? []));
                 if (fault === "broadcast") throw new Error("window send failed");
@@ -2144,135 +2142,4 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(persistedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
   });
 
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "replaceAllSessionsは進行中appraisal完了後にremoved/provider change副作用を処理する"
-  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#replaceAllSessions" }
-  // fault = "appraisal完了前にSessionを削除またはprovider cleanupし、進行中保存と競合する"
-  // observable = "副作用順序と最終stored sessions"
-  // observation_boundary = "public-boundary"
-  // scope = "session-persistence-replace-all-appraisal-order"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("replaceAllSessions は進行中appraisalを待ってから removed/provider change の副作用を処理する", async () => {
-    const sessionA = createSession({ id: "session-a", provider: "codex", model: "codex-default" });
-    const sessionB = createSession({ id: "session-b", provider: "copilot", model: "copilot-default" });
-    const nextSessionA = { ...sessionA, provider: "copilot", model: "copilot-default", threadId: "" };
-    const storedSessions: Session[] = [sessionA, sessionB];
-    const clearedTelemetry: string[] = [];
-    const clearedBackground: string[] = [];
-    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    const broadcastedSessionIds: string[][] = [];
-    const replaceOrder: string[] = [];
-    const ownershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
-    let releaseAppraisal: () => void = () => undefined;
-    let markAppraisalStarted: () => void = () => undefined;
-    const appraisalBarrier = new Promise<void>((resolve) => {
-      releaseAppraisal = resolve;
-    });
-    const appraisalStarted = new Promise<void>((resolve) => {
-      markAppraisalStarted = resolve;
-    });
-    const appraisal = ownershipCoordinator.runExclusive(async () => {
-      markAppraisalStarted();
-      await appraisalBarrier;
-    });
-    await appraisalStarted;
-
-    const service = new SessionPersistenceService({
-      getSessions() {
-        return storedSessions;
-      },
-      setSessions(nextSessions) {
-        replaceOrder.push("setSessions");
-        storedSessions.splice(0, storedSessions.length, ...nextSessions);
-      },
-      getSession(sessionId) {
-        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      upsertStoredSession(next) {
-        storedSessions.splice(0, storedSessions.length, next);
-        return next;
-      },
-      async replaceStoredSessions(nextSessions) {
-        replaceOrder.push("replaceStoredSessions:start");
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        replaceOrder.push("replaceStoredSessions:end");
-        storedSessions.splice(0, storedSessions.length, ...nextSessions.map((session) => ({
-          ...session,
-          isPinned: session.id === "session-a" ? true : session.isPinned,
-        })));
-      },
-      setStoredSessionPinned(sessionId, isPinned) {
-        replaceOrder.push("setStoredSessionPinned");
-        const session = storedSessions.find((entry) => entry.id === sessionId);
-        assert.ok(session);
-        const pinned = { ...session, isPinned };
-        storedSessions.splice(0, storedSessions.length, pinned);
-        return pinned;
-      },
-      listStoredSessions() {
-        return [...storedSessions];
-      },
-      deleteStoredSession() {},
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      getModelCatalogSnapshot() {
-        return createSnapshot();
-      },
-      syncSessionDependencies() {},
-      clearSessionContextTelemetry(sessionId) {
-        clearedTelemetry.push(sessionId);
-      },
-      clearSessionBackgroundActivities(sessionId) {
-        clearedBackground.push(sessionId);
-      },
-      invalidateProviderSessionThread(providerId, sessionId) {
-        invalidated.push({ providerId, sessionId });
-      },
-      closeSessionWindow() {},
-      broadcastSessions(sessionIds) {
-        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
-      },
-      runCharacterAffectTurnOwnershipExclusive: (operation) => ownershipCoordinator.runExclusive(operation),
-    });
-
-    const replacePromise = service.replaceAllSessions([nextSessionA], {
-      invalidateSessionIds: ["session-a"],
-    });
-    const pinPromise = service.setSessionPinned("session-a", false);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    assert.deepEqual(replaceOrder, []);
-    assert.deepEqual(clearedTelemetry, []);
-    assert.deepEqual(clearedBackground, []);
-    assert.deepEqual(invalidated, []);
-    assert.deepEqual(broadcastedSessionIds, []);
-
-    releaseAppraisal();
-    const [, replaced, pinned] = await Promise.all([appraisal, replacePromise, pinPromise]);
-
-    assert.equal(replaced.length, 1);
-    assert.equal(replaced[0]?.isPinned, true);
-    assert.equal(pinned.isPinned, false);
-    assert.equal(storedSessions[0]?.isPinned, false);
-    assert.deepEqual(clearedTelemetry.sort(), ["session-a", "session-b"]);
-    assert.deepEqual(clearedBackground, ["session-b"]);
-    assert.deepEqual(invalidated, [
-      { providerId: "codex", sessionId: "session-a" },
-      { providerId: "copilot", sessionId: "session-b" },
-      { providerId: "copilot", sessionId: "session-a" },
-    ]);
-    assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"], ["session-a"]]);
-    assert.deepEqual(replaceOrder, [
-      "replaceStoredSessions:start",
-      "replaceStoredSessions:end",
-      "setSessions",
-      "setStoredSessionPinned",
-      "setSessions",
-    ]);
-  });
 });

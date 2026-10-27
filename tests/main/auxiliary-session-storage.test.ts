@@ -1831,7 +1831,6 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
       provider: "codex",
     };
     sessionStorage.upsertSession(parent);
-    const coordinator = new (await import("../../src-electron/character/character-affect-turn-ownership-coordinator.js")).CharacterAffectTurnOwnershipCoordinator();
     let releaseSelection!: () => void;
     const selectionReady = new Promise<void>((resolve) => { releaseSelection = resolve; });
     let selectionEntered!: () => void;
@@ -1857,7 +1856,6 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
           customAgentName: "",
         };
       },
-      runCharacterAffectTurnOwnershipExclusive: (operation) => coordinator.runExclusive(operation),
     });
     const create = service.createAuxiliarySession({
       parentSessionId: parent.id,
@@ -1866,10 +1864,10 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
       clientRequestId: "race-create",
     });
     await selectionStarted;
-    const deleteParent = coordinator.runExclusive(async () => {
+    const deleteParent = (async () => {
       sessionStorage.deleteSession(parent.id);
       auxiliaryStorage.deleteAuxiliarySessionsForParent(parent.id);
-    });
+    })();
     await deleteParent;
     assert.equal(resolveSelectionCalls, 1);
     releaseSelection();
@@ -1878,10 +1876,10 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
 
     const reverseParent = { ...parent, id: "session-race-reverse" };
     sessionStorage.upsertSession(reverseParent);
-    await coordinator.runExclusive(async () => {
+    await (async () => {
       sessionStorage.deleteSession(reverseParent.id);
       auxiliaryStorage.deleteAuxiliarySessionsForParent(reverseParent.id);
-    });
+    })();
     await assert.rejects(
       service.createAuxiliarySession({
         parentSessionId: reverseParent.id,

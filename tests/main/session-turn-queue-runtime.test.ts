@@ -16,7 +16,6 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ProviderCodingAdapter } from "../../src-electron/providers/provider-runtime.js";
-import type { CharacterAffectTurnSettlementStorage } from "../../src-electron/character/character-affect-turn-settlement-storage.js";
 
 function gate() {
   let resolve!: () => void;
@@ -115,7 +114,6 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
         resolveProviderCatalog: () => ({ snapshot, provider }) },
       provider: { getProviderCodingAdapter: () => adapter },
       memory: { getAppSettings: () => normalizeAppSettings({}), resolveProjectMemoryEntriesForPrompt: () => [], onCharacterContextFailure() {} },
-      character: { getSettlementStorage: () => bundle.stores.settlement as unknown as CharacterAffectTurnSettlementStorage },
       turn: { createSessionTurn: (input) => bundle.stores.turn.createSessionTurn(input), updateSessionTurn: (id, input) => bundle.stores.turn.updateSessionTurn(id, input) },
       live: { setLiveSessionRun: (_, next) => { live = next; }, getLiveSessionRun: () => live,
         setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {} },

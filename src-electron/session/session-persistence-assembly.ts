@@ -13,7 +13,7 @@ export type SessionPersistenceAssemblyDeps = {
     overlayCurrentExecutionOptions?: NonNullable<SessionPersistenceServiceDeps["overlayCurrentExecutionOptions"]>;
     rememberExecutionOptions?: NonNullable<SessionPersistenceServiceDeps["rememberExecutionOptions"]>;
   };
-  runtime: Pick<SessionPersistenceServiceDeps, "isSessionRunInFlight" | "listRunningActiveAuxiliaryParentIds">;
+  runtime: Pick<SessionPersistenceServiceDeps, "isSessionRunInFlight" | "listRunningActiveAuxiliaryParentIds" | "runProviderRuntimeOperationExclusive">;
   auxiliary: {
     listAuxiliarySessionRuntimeIdentities(parentSessionId: string): ReturnType<NonNullable<SessionPersistenceServiceDeps["listAuxiliarySessionRuntimeIdentities"]>>;
   };
@@ -30,7 +30,6 @@ export type SessionPersistenceAssemblyDeps = {
     closeSessionWindow: SessionPersistenceServiceDeps["closeSessionWindow"];
     discardSessionWindow: NonNullable<SessionPersistenceServiceDeps["discardSessionWindow"]>;
     broadcastSessions: SessionPersistenceServiceDeps["broadcastSessions"];
-    runCharacterAffectTurnOwnershipExclusive: NonNullable<SessionPersistenceServiceDeps["runCharacterAffectTurnOwnershipExclusive"]>;
   };
 };
 
@@ -42,6 +41,14 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
   });
 
   const assembled: SessionPersistenceServiceDeps = {
+    runProviderRuntimeOperationExclusive: deps.runtime.runProviderRuntimeOperationExclusive
+      ? (operation) => deps.runtime.runProviderRuntimeOperationExclusive!(async () => {
+        assertOwner("provider runtime operation");
+        const result = await operation();
+        assertOwner("provider runtime operation");
+        return result;
+      })
+      : undefined,
     getSessions: () => { assertOwner("cache read"); return deps.cache.getSessions(); },
     setSessions: (nextSessions) => { assertOwner("cache write"); deps.cache.setSessions(nextSessions); },
     getSession: (sessionId) => { assertOwner("session read"); return deps.cache.getSession(sessionId); },
@@ -163,7 +170,6 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
     discardSessionWindow: (sessionId) => { assertOwner("session window discard"); deps.effects.discardSessionWindow(sessionId); },
     upsertStoredTerminalSession: storageCommands.upsertStoredTerminalSession,
     broadcastSessions: (sessionIds, detailChanged) => { assertOwner("broadcast"); deps.effects.broadcastSessions(sessionIds, detailChanged); },
-    runCharacterAffectTurnOwnershipExclusive: (operation) => deps.effects.runCharacterAffectTurnOwnershipExclusive(async () => { assertOwner("Character affect ownership"); const result = await operation(); assertOwner("Character affect ownership"); return result; }),
   };
   return new SessionPersistenceService(assembled);
 }

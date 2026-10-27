@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -81,6 +81,93 @@ function event(overrides: Partial<AffectEventInput> = {}): AffectEventInput {
     ...overrides,
   };
 }
+
+// @test-value v2
+// kind = "invariant"
+// claim = "旧Affect queueを持つV6 DBを繰り返し更新・再openしても、確定済みevent・linked episode・一般Memory・冪等性・contextを変更せず、旧本文・未適用候補・retry状態を廃棄する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879 §9 保存済みデータと旧pendingの移行; docs/design/database-schema.md#起動時の移行とデータ保護" }
+// fault = "旧queue整理が確定済み保存領域を削除するか候補を再適用し、再起動後に保存済みAffectの状態やMemoryが変わる"
+// observable = "実SQLiteのqueue消滅、保存領域全行snapshot、Affect context/versionと同じkeyのreplay結果"
+// observation_boundary = "component-behavior"
+// scope = "既存V6 schema更新とAffect/Memoryデータ継続"
+// lifecycle = "permanent"
+// impact = "利用者の確定済みAffectやMemoryの喪失・重複と、旧queueに残る会話本文の保持を防ぐ"
+// distinction = "型・schema宣言では検知できない、実legacy行を含む既存DBへのDDL適用と再起動後のデータ保護を小さいSQLite fixtureで確認する"
+// @end-test-value
+it("旧Affect queueを廃棄し、部分確定したeventとepisodeを再適用せず繰り返し保持する", () => {
+  const fixture = createFixture();
+  let storage: CharacterAffectStorage | undefined = affectStorage(fixture.dbPath);
+  let db: DatabaseSync | undefined = new DatabaseSync(fixture.dbPath);
+  const scope = { characterId: "character-a", userId: "local-user", sessionId: "session-a" };
+  const retainedTables = [
+    "character_affect_events_v6", "character_affect_idempotency_v6", "character_affect_mutations_v6",
+    "character_affect_resets_v6", "memory_entries_v6", "memory_entry_tags_v6", "memory_idempotency_keys_v6",
+  ];
+  const snapshot = () => retainedTables.map((table) => db!.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  try {
+    db.exec("PRAGMA foreign_keys = ON;");
+    const committed = storage.recordEvent(event());
+    for (const [id, title] of [["linked-episode", "確定済みepisode"], ["ordinary-memory", "一般Memory"]]) {
+      db.prepare(`INSERT INTO memory_entries_v6
+        (id, owner_type, owner_id, scope_type, scope_id, kind, title, body, body_sha256, preview,
+          state, source_type, source_session_id, created_at, updated_at)
+        VALUES (?, 'character', 'character-a', 'character', 'character-a', 'note', ?, ?, ?, ?,
+          'active', 'agent', 'session-a', '2026-08-09T01:00:00.000Z', '2026-08-09T01:00:00.000Z')`)
+        .run(id, title, title, createHash("sha256").update(title).digest("hex"), title);
+    }
+    storage.linkMemoryEpisode(committed.event.id, "linked-episode");
+    const before = snapshot();
+    const context = storage.getContextState(scope);
+    db.exec(readFileSync(new URL("./fixtures/character-affect-turn-settlements.sql", import.meta.url), "utf8"));
+    const insert = db.prepare(`INSERT INTO character_affect_turn_settlements
+      (correlation_id, character_id, session_id, user_message, assistant_message, assistant_message_index,
+        occurred_at, request_fingerprint, status, created_at, ready_at, attempt_count, candidates_json,
+        last_effect, saved_candidate_indices_json, next_attempt_at, attempt_started_at, quarantined_at)
+      VALUES (?, 'character-a', 'session-a', '旧会話本文', '旧応答本文', 1,
+        '2026-08-09T01:00:00.000Z', 'legacy-fingerprint', ?, '2026-08-09T01:00:00.000Z',
+        '2026-08-09T01:00:00.000Z', ?, ?, ?, ?, ?, ?, ?)`);
+    const candidates = JSON.stringify([event(), event({ idempotencyKey: "never-committed-candidate" })]);
+    for (const [id, status, attempts, candidateJson, effect, saved, retry, running, quarantine] of [
+      ["unevaluated", "pending", 0, null, "none", "[]", null, null, null],
+      ["evaluated", "pending", 1, candidates, "none", "[]", null, null, null],
+      ["retry", "pending", 2, candidates, "none", "[]", "2026-08-10T00:00:00.000Z", null, null],
+      ["running", "pending", 1, candidates, "none", "[]", null, "2026-08-09T01:01:00.000Z", null],
+      ["quarantine", "pending", 6, candidates, "none", "[]", null, null, "2026-08-09T01:01:00.000Z"],
+      ["partly-committed", "pending", 1, candidates, "partial", "[0]", null, null, null],
+      ["uncertain", "pending", 1, candidates, "unknown", "[]", null, null, null],
+      ["settled", "settled", 1, null, "committed", "[0]", null, null, null],
+    ] as const) {
+      insert.run(id, status, attempts, candidateJson, effect, saved, retry, running, quarantine);
+    }
+    storage.close();
+    storage = undefined;
+    db.close();
+    db = undefined;
+    for (let reopen = 0; reopen < 2; reopen += 1) {
+      db = new DatabaseSync(fixture.dbPath);
+      db.exec("PRAGMA foreign_keys = ON;");
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+      assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'character_affect_turn_settlements'").get(), undefined);
+      assert.deepEqual(snapshot(), before);
+      assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+      storage = affectStorage(fixture.dbPath);
+      assert.deepEqual(storage.getContextState(scope), context);
+      const replay = storage.recordEvent(event());
+      assert.equal(replay.created, false);
+      assert.equal(replay.event.id, committed.event.id);
+      assert.equal(replay.event.memoryEntryId, "linked-episode");
+      storage.close();
+      storage = undefined;
+      db.close();
+      db = undefined;
+    }
+  } finally {
+    storage?.close();
+    db?.close();
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
 
 function addSession(dbPath: string, sessionId: string, characterId = "character-a"): void {
   const db = new DatabaseSync(dbPath);

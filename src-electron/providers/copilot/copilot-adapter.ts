@@ -1,27 +1,13 @@
 import { existsSync } from "node:fs";
-import { validateStructuredPromptSchemaValue } from "../structured-prompt-validation.js";
 import { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
-import {
-  CopilotClient,
-  RuntimeConnection,
-  type CopilotSession,
-  type JsonValue,
-  type PermissionHandler,
-  type MessageOptions,
-  type PermissionRequest,
-  type PermissionRequestResult,
-  type SessionConfig,
-  type SessionEvent,
-  type Tool,
-} from "@github/copilot-sdk";
+import { CopilotClient, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type MessageOptions, type PermissionRequest, type PermissionRequestResult, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
 
-import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationField, LiveElicitationRequest, LiveElicitationResponse, LiveRunStep, ProviderQuotaSnapshot, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../../src-shared/session/runtime-state.js";
+import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationResponse, LiveRunStep, ProviderQuotaTelemetry } from "../../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
-import type { SessionMemoryDelta } from "../../../src-shared/memory/session-memory-state.js";
 import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import { normalizeApprovalMode } from "../../../src-shared/settings/approval-mode.js";
 import {
@@ -35,21 +21,7 @@ import {
   WORKSPACE_DIFF_CAPTURE_ENABLED,
 } from "../../files/workspace-diff-policy.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
-import {
-  ProviderTurnError,
-  resolveRunWorkspacePath,
-  SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY,
-  type ExtractSessionMemoryResult,
-  type ExtractSessionMemoryInput,
-  type ProviderPromptComposition,
-  type RunBackgroundStructuredPromptInput,
-  type RunBackgroundStructuredPromptResult,
-  type ProviderTurnAdapter,
-  type RunSessionTurnInput,
-  type RunSessionTurnProgressHandler,
-  type RunSessionTurnResult,
-} from "../provider-runtime.js";
-import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
+import { ProviderTurnError, resolveRunWorkspacePath, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import {
   captureWorkspaceSnapshot,
   type SnapshotCaptureStats,
@@ -78,14 +50,8 @@ import {
 } from "../provider-agent-runtime-binding.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
-import {
-  buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection,
-  buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection,
-  readCopilotQuotaSnapshots,
-  type CopilotQuotaSnapshotLike,
-} from "./copilot-quota-telemetry.js";
+import { buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection, buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection, readCopilotQuotaSnapshots } from "./copilot-quota-telemetry.js";
 import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection } from "./copilot-elicitation.js";
-import { buildLiveElicitationFieldFromMcpSchema as buildElicitationFieldProjection } from "../mcp-elicitation.js";
 import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
 import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
 
@@ -594,21 +560,6 @@ function appendDetail(current: string | undefined, next: string | undefined): st
   return `${current}\n${next}`;
 }
 
-function parseStructuredPromptJson(rawText: string): unknown | null {
-  const trimmed = rawText.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const fencedMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  const jsonText = fencedMatch ? fencedMatch[1] ?? "" : trimmed;
-
-  try {
-    return JSON.parse(jsonText);
-  } catch {
-    return null;
-  }
-}
 
 
 function normalizeCopilotToolName(toolName: string): string {
@@ -983,26 +934,6 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
   }
 }
 
-function buildBackgroundPermissionHandler(input: RunBackgroundStructuredPromptInput): PermissionHandler {
-  const approvalMode = input.approvalMode === undefined ? "untrusted" : normalizeApprovalMode(input.approvalMode);
-  switch (approvalMode) {
-    case "never":
-      return () => toPermissionDecision("approved");
-    case "untrusted":
-      return (request) => (
-        isReadOnlyPermissionRequest(request)
-          ? toPermissionDecision("approved")
-          : toPermissionDecision("denied-by-rules")
-      );
-    case "on-request":
-    default:
-      return (request) => (
-        isReadOnlyPermissionRequest(request)
-          ? toPermissionDecision("approved")
-          : toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user")
-      );
-  }
-}
 
 function buildCopilotBootstrapDebugItems(
   input: RunSessionTurnInput,
@@ -1476,9 +1407,6 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return composeProviderPrompt(input);
   }
 
-  getBackgroundStructuredPromptPolicy() {
-    return SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY;
-  }
 
   async invalidateSessionThread(sessionId: string): Promise<void> {
     await this.disposeSessionAndClientCache(sessionId);
@@ -1511,59 +1439,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return this.fetchProviderQuotaTelemetry(providerId, appSettings);
   }
 
-  async runBackgroundStructuredPrompt<TOutput = unknown>(
-    input: RunBackgroundStructuredPromptInput,
-  ): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
-    const result = await this.runBackgroundPromptFromInput(
-      {
-        providerId: input.providerId,
-        workspacePath: input.workspacePath,
-        appSettings: input.appSettings,
-        model: input.model,
-        reasoningEffort: input.reasoningEffort,
-        timeoutMs: input.timeoutMs,
-        additionalDirectories: input.additionalDirectories,
-        approvalMode: input.approvalMode,
-        codexSandboxMode: input.codexSandboxMode,
-        prompt: input.prompt,
-      },
-      (rawText) => parseStructuredPromptJson(rawText) as TOutput | null,
-      input.signal,
-    );
-    return {
-      threadId: result.threadId,
-      rawText: result.rawText,
-      output: result.output,
-      parsedJson: result.parsedJson,
-      structuredOutput: result.structuredOutput,
-      rawItemsJson: result.rawItemsJson,
-      usage: result.usage,
-      providerQuotaTelemetry: result.providerQuotaTelemetry,
-    };
-  }
 
-  async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const result = await this.runBackgroundPromptFromInput(
-      {
-        providerId: input.session.provider,
-        workspacePath: input.session.workspacePath,
-        appSettings: input.appSettings,
-        model: input.model,
-        reasoningEffort: input.reasoningEffort,
-        timeoutMs: input.timeoutMs,
-        prompt: input.prompt,
-      },
-      parseSessionMemoryDeltaText,
-    );
-    return {
-      threadId: result.threadId,
-      rawText: result.rawText,
-      delta: result.output,
-      rawItemsJson: result.rawItemsJson,
-      usage: result.usage,
-      providerQuotaTelemetry: result.providerQuotaTelemetry,
-    };
-  }
 
   private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
     const binding = input.agentRuntimeBinding;
@@ -1604,117 +1480,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return client;
   }
 
-  private buildBackgroundSessionConfig(
-    input: RunBackgroundStructuredPromptInput,
-    tools?: Tool[],
-  ): SessionConfig {
-    return {
-      model: input.model,
-      reasoningEffort: toCopilotReasoningEffort(input.reasoningEffort),
-      workingDirectory: input.workspacePath,
-      streaming: false,
-      tools,
-      onPermissionRequest: buildBackgroundPermissionHandler(input),
-      systemMessage: {
-        mode: "append",
-        content: input.prompt.systemText,
-      },
-    };
-  }
 
-  private async runBackgroundPromptFromInput<TOutput>(
-    input: RunBackgroundStructuredPromptInput,
-    parse: (rawText: string) => TOutput | null,
-    signal?: AbortSignal,
-  ): Promise<{
-    threadId: string | null;
-    rawText: string;
-    output: TOutput | null;
-    parsedJson: unknown | null;
-    structuredOutput: unknown | null;
-    rawItemsJson: string;
-    usage: ProviderUsage | null;
-    providerQuotaTelemetry: ProviderQuotaTelemetry | null;
-  }> {
-    const client = this.getOrCreateClientByAppSettings(input.providerId, input.appSettings);
-    await client.start();
-    let usage: ProviderUsage | null = null;
-    let structuredOutput: unknown = null;
-    let structuredOutputCallCount = 0;
-    const submitToolName = "withmate_submit_structured_output";
-    const submitTool: Tool = {
-      name: submitToolName,
-      description: "Submit the structured JSON output requested by WithMate.",
-      parameters: input.prompt.outputSchema as Tool["parameters"],
-      skipPermission: true,
-      handler: (args) => {
-        structuredOutput = args;
-        structuredOutputCallCount += 1;
-        return "structured output accepted";
-      },
-    };
-
-    const extractionSession = await client.createSession(this.buildBackgroundSessionConfig(input, [submitTool]));
-    const unsubscribeUsage = extractionSession.on("assistant.usage", (event) => {
-      usage = normalizeCopilotTokenUsage(event.data);
-    });
-    const aborting = signal ?? null;
-    const handleAbort = () => {
-      void extractionSession.abort().catch(() => undefined);
-    };
-    if (aborting) {
-      aborting.addEventListener("abort", handleAbort, { once: true });
-    }
-
-    try {
-      await extractionSession.sendAndWait({
-        prompt: [
-          input.prompt.userText,
-          "",
-          "# Structured Output",
-          `Call the \`${submitToolName}\` tool exactly once with the requested JSON object.`,
-          "Do not answer in natural language.",
-        ].join("\n"),
-      }, input.timeoutMs);
-      if (structuredOutputCallCount === 0) {
-        throw new Error("Structured output tool was not called for schema submit workflow.");
-      }
-      if (structuredOutputCallCount > 1) {
-        throw new Error("Structured output tool was called multiple times for schema submit workflow.");
-      }
-
-      const validationErrors = validateStructuredPromptSchemaValue(input.prompt.outputSchema, structuredOutput);
-      if (validationErrors.length > 0) {
-        throw new Error(`Structured output tool arguments did not match schema: ${validationErrors.join("; ")}`);
-      }
-
-      const rawText = JSON.stringify(structuredOutput);
-      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerId, input.appSettings)
-        .catch(() => null);
-      return {
-        threadId: extractionSession.sessionId,
-        rawText,
-        output: parse(rawText),
-        parsedJson: structuredOutput,
-        structuredOutput,
-        rawItemsJson: JSON.stringify({
-          type: "copilot-background-response",
-          sessionId: extractionSession.sessionId,
-          content: rawText,
-          structuredOutputSource: "tool",
-          quotaSnapshots: providerQuotaTelemetry?.snapshots ?? [],
-        }, null, 2),
-        usage,
-        providerQuotaTelemetry,
-      };
-    } finally {
-      unsubscribeUsage();
-      await extractionSession.disconnect().catch(() => undefined);
-      if (aborting) {
-        aborting.removeEventListener("abort", handleAbort);
-      }
-    }
-  }
 
   private async disposeSessionCache(sessionId: string): Promise<void> {
     const cached = this.sessions.get(sessionId);

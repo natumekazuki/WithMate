@@ -1,12 +1,6 @@
 import { DEFAULT_PROVIDER_ID, type ModelCatalogProvider, type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import type { ProviderBackgroundAdapter, ProviderCodingAdapter, ProviderTurnAdapter } from "../providers/provider-runtime.js";
-import {
-  getProviderRuntimeCapabilities,
-  resolveProviderBackgroundAdapter,
-  resolveProviderCatalogOrThrow,
-  resolveProviderCodingAdapter,
-  type ProviderRuntimeCapabilities,
-} from "../providers/provider-support.js";
+import type { ProviderCodingAdapter, ProviderTurnAdapter } from "../providers/provider-runtime.js";
+import { getProviderRuntimeCapabilities, resolveProviderCatalogOrThrow, resolveProviderCodingAdapter, type ProviderRuntimeCapabilities } from "../providers/provider-support.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
 type MainProviderFacadeDeps = {
@@ -49,15 +43,6 @@ export class MainProviderFacade {
     });
   }
 
-  getProviderBackgroundAdapter(providerId: string | null | undefined): ProviderBackgroundAdapter {
-    return resolveProviderBackgroundAdapter({
-      providerId,
-      codexAdapter: this.deps.codexAdapter,
-      copilotAdapter: this.deps.copilotAdapter,
-      claudeAdapter: this.deps.claudeAdapter,
-      opencodeAdapter: this.deps.opencodeAdapter,
-    });
-  }
 
   getProviderRuntimeCapabilities(providerId: string | null | undefined): ProviderRuntimeCapabilities {
     const resolvedProviderId = providerId ?? DEFAULT_PROVIDER_ID;

@@ -9,7 +9,7 @@ import { composeProviderPrompt } from "../provider-prompt.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv } from "../provider-agent-runtime-binding.js";
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
-import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderBackgroundAdapter, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
+import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import { OpenCodeTransport, type OpenCodeTransportOptions } from "./opencode-transport.js";
 import { resolveOpenCodeModelRef, validateOpenCodeModel } from "./opencode-model.js";
 import { OpenCodeTurnProjection } from "./opencode-events.js";
@@ -23,7 +23,6 @@ export type OpenCodeAdapterOptions = {
   executable?: string;
   fetch?: typeof fetch;
   createTransport?: (options: OpenCodeTransportOptions) => Transport;
-  backgroundAdapter?: ProviderBackgroundAdapter & { dispose?(): Promise<void>; assertCleanupComplete?(workspacePath: string): void };
   log?: (input: { level: "warn" | "error"; kind: string; message: string; data?: unknown }) => void;
 };
 
@@ -104,26 +103,12 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     if (!apiKey) return null;
     return fetchOpenCodeQuotaTelemetry(apiKey, input.signal, this.options.fetch);
   }
-  getBackgroundStructuredPromptPolicy() { return this.background().getBackgroundStructuredPromptPolicy(); }
-  async extractSessionMemoryDelta(input: Parameters<ProviderBackgroundAdapter["extractSessionMemoryDelta"]>[0]) {
-    this.assertCleanupComplete(input.session.workspacePath, input.session.id, input.session.threadId);
-    return this.background().extractSessionMemoryDelta(input);
-  }
-  async runBackgroundStructuredPrompt<TOutput = unknown>(input: Parameters<ProviderBackgroundAdapter["runBackgroundStructuredPrompt"]>[0]) {
-    this.assertCleanupComplete(input.workspacePath);
-    return this.background().runBackgroundStructuredPrompt<TOutput>(input);
-  }
   private assertCleanupComplete(workspacePath: string, sessionId?: string, threadId?: string | null): void {
     for (const [ownerId, cleanup] of this.pendingCleanups) {
       if (ownerId === sessionId || cleanup.workspace === path.resolve(workspacePath) || (threadId && cleanup.threadId === threadId)) {
         throw new Error("OpenCode Session, workspace or thread is still terminating");
       }
     }
-    this.options.backgroundAdapter?.assertCleanupComplete?.(workspacePath);
-  }
-  private background(): ProviderBackgroundAdapter {
-    if (!this.options.backgroundAdapter) throw new Error("OpenCode background adapter is unavailable");
-    return this.options.backgroundAdapter;
   }
   async invalidateSessionThread(sessionId: string): Promise<void> {
     const active = this.active.get(sessionId);
@@ -133,7 +118,6 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
   }
   async invalidateAllSessionThreads(): Promise<void> {
     await Promise.all([...this.active.keys()].map((id) => this.invalidateSessionThread(id)));
-    await this.options.backgroundAdapter?.dispose?.();
   }
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
