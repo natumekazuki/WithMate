@@ -44,6 +44,7 @@ import { deleteSessionTurnsForTargets, insertSessionTurn } from "./session-turn-
 import type { SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
+import { synchronizeAuxiliaryDirectories } from "../storage/shared-session-directories.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import {
   SessionIdCollisionError,
@@ -1381,6 +1382,7 @@ export class SessionStorageV6 {
     if (operation === "create" && Number(result.changes) === 0) {
       throw new SessionIdCollisionError(session.id);
     }
+    synchronizeAuxiliaryDirectories(this.db, session.id, JSON.stringify(session.allowedAdditionalDirectories));
 
     const existingArtifactBodies = new Map(
       (this.db.prepare(`

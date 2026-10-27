@@ -1330,7 +1330,7 @@ export class AuxiliarySessionService {
         throw new Error("A running Auxiliary Session cannot be updated.");
       }
       const updated = await storage.updateAuxiliarySessionIfMatches({
-        session: { ...current, allowedAdditionalDirectories: [...session.allowedAdditionalDirectories], updatedAt: currentTimestampLabel() },
+        session: { ...current, updatedAt: currentTimestampLabel() },
         expectedSession: current,
       });
       if (!updated) throw new Error("Saving was canceled because the Auxiliary Session was deleted or changed.");
@@ -1357,7 +1357,7 @@ export class AuxiliarySessionService {
       codexSpeed: current.codexSpeed,
       codexReviewer: current.codexReviewer,
       customAgentName: current.customAgentName,
-      allowedAdditionalDirectories: [...session.allowedAdditionalDirectories],
+      allowedAdditionalDirectories: [...current.allowedAdditionalDirectories],
       composerDraft: current.composerDraft,
       displayAfterMessageIndex: session.displayAfterMessageIndex,
       threadId: current.threadId,

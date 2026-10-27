@@ -2726,17 +2726,17 @@ test("Auxiliary draft migration はactive/closedを移行しmalformed payloadを
 
 // @test-value v2
 // kind = "contract"
-// claim = "実行中Auxiliaryの次送信用設定は旧captureを変更せずcheckpoint失敗でも保持され、directory更新は本文とthreadを維持しread-only親の選択を拒否する"
+// claim = "実行中Auxiliaryの次送信用設定は旧captureを変更せずcheckpoint失敗でも保持され、staleなmetadata保存は共通Directory・本文・threadを維持しread-only親の選択を拒否する"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
-// fault = "running選択を拒否するか旧captureを変えるかcheckpoint失敗で選択を戻すかdirectory更新でthread/本文を変えるかread-only親を受理する"
-// observable = "旧capture、checkpoint失敗とdirectory更新後の選択/本文/runState、保存済みmodel/threadとread-only親の拒否"
+// fault = "running選択を拒否するか旧captureを変えるかcheckpoint失敗で選択を戻すかmetadata保存でDirectory/thread/本文を変えるかread-only親を受理する"
+// observable = "旧capture、checkpoint失敗とmetadata保存後のDirectory/選択/本文/runState、保存済みmodel/threadとread-only親の拒否"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service"
 // lifecycle = "permanent"
 // impact = "現在選択やproviderの会話履歴再開に必要なthreadIdが失われる"
 // distinction = "既存の一般更新testはcheckpoint失敗による現在選択と保存値の乖離を作らない"
 // @end-test-value
-test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthreadを維持する", async () => {
+test("AuxiliarySessionService はcheckpoint失敗後のstaleなmetadata保存でthreadを維持する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-checkpoint-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   const sessionStorage = new SessionStorage(dbPath);
@@ -2812,7 +2812,7 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
       ...currentSelection,
       allowedAdditionalDirectories: ["C:/review-context"],
     });
-    assert.deepEqual(updated.allowedAdditionalDirectories, ["C:/review-context"]);
+    assert.deepEqual(updated.allowedAdditionalDirectories, currentSelection.allowedAdditionalDirectories);
     assert.deepEqual(captureSessionExecutionOptions(updated), selectedOptions);
     assert.equal(updated.threadId, "existing-provider-thread");
     assert.equal(updated.runState, "running");

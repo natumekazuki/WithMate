@@ -1,8 +1,4 @@
 import { normalizeApprovalMode, type ApprovalMode } from "../settings/approval-mode.js";
-import {
-  addAllowedAdditionalDirectory,
-  removeAllowedAdditionalDirectory,
-} from "../settings/additional-directory-state.js";
 import { normalizeCodexSandboxMode, type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
 import { normalizeCodexSpeed, type CodexSpeed } from "../settings/codex-speed.js";
 import { normalizeCodexReviewer, type CodexReviewer } from "../settings/codex-reviewer.js";
@@ -214,30 +210,6 @@ export function applyAuxiliarySessionReasoningEffortChange(
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
     },
-    updatedAt,
-  );
-}
-
-export function addAuxiliarySessionAdditionalDirectory(
-  session: AuxiliarySession,
-  directoryPath: string,
-  updatedAt: string,
-): AuxiliarySession {
-  return applyAuxiliarySessionPatch(
-    session,
-    { allowedAdditionalDirectories: addAllowedAdditionalDirectory(session.allowedAdditionalDirectories, directoryPath) },
-    updatedAt,
-  );
-}
-
-export function removeAuxiliarySessionAdditionalDirectory(
-  session: AuxiliarySession,
-  directoryPath: string,
-  updatedAt: string,
-): AuxiliarySession {
-  return applyAuxiliarySessionPatch(
-    session,
-    { allowedAdditionalDirectories: removeAllowedAdditionalDirectory(session.allowedAdditionalDirectories, directoryPath) },
     updatedAt,
   );
 }

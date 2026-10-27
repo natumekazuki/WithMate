@@ -183,10 +183,6 @@ import {
   enqueueAuxiliarySessionSaveWithQueue,
 } from "../chat/auxiliary/auxiliary-session-update-operation.js";
 import {
-  runAddAuxiliaryAdditionalDirectoryOperationWithApi,
-  runRemoveAuxiliaryAdditionalDirectoryOperation,
-} from "../chat/auxiliary/auxiliary-additional-directory-operation.js";
-import {
   applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
@@ -466,11 +462,7 @@ export default function AgentSessionWindowApp() {
     validateSessionWorkspace,
   } = useSessionWorkspaceAvailability(withmateApi, selectedSession);
   const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
-  const directoryScopeLabel = auxiliaryWorkspace.target === "auxiliary"
-    ? activeAuxiliarySession?.characterRuntimeSnapshot?.name
-      ? `Auxiliary · ${activeAuxiliarySession.characterRuntimeSnapshot.name}`
-      : "Auxiliary"
-    : "Main";
+  const directoryScopeLabel = "Shared · Main + Auxiliary";
   const selectedAuxiliaryRuntimeSession = useMainAuxiliaryRuntimeSession(selectedSession, auxiliaryWorkspace.selectedSession);
   const isAuxiliaryMode = activeAuxiliarySession !== null;
   const selectedSessionId = selectedSession?.id ?? null;
@@ -1821,41 +1813,17 @@ export default function AgentSessionWindowApp() {
         if (!selectedSession) {
           return false;
         }
-        const nextSession = buildSessionWithRemovedAdditionalDirectory(selectedSession, targetPath);
+        const current = getCurrentMainSession();
+        if (!current || current.id !== selectedSession.id || getSessionIncarnationId(current) !== getSessionIncarnationId(selectedSession)) {
+          throw new Error("Wait for the conversation to load before changing this session.");
+        }
+        const nextSession = buildSessionWithRemovedAdditionalDirectory(current, targetPath);
         if (!nextSession) {
           return false;
         }
         await persistSession(nextSession);
         return true;
       },
-    });
-  };
-
-  const handleAddAuxiliaryAdditionalDirectory = async (directoryPath?: string) => {
-    if (composerRegistry.isFrozen || !withmateApi || !selectedSession) return;
-    await runAddAuxiliaryAdditionalDirectoryOperationWithApi({
-      api: {
-        pickDirectory: async (basePath) => {
-          const selectedPath = await selectAdditionalDirectoryPath({ sessionId: selectedSession.id, directoryPath, initialPath: basePath, api: withmateApi });
-          return composerRegistry.isFrozen ? null : selectedPath;
-        },
-      },
-      hasParentSession: !!selectedSession,
-      activeAuxiliarySession,
-      pickerBaseDirectory,
-      workspacePath: selectedSession?.workspacePath,
-      setPickerBaseDirectory,
-      updateActiveAuxiliarySession,
-      createTimestampLabel: currentTimestampLabel,
-    });
-  };
-
-  const handleRemoveAuxiliaryAdditionalDirectory = async (directoryPath: string) => {
-    if (composerRegistry.isFrozen) return;
-    await runRemoveAuxiliaryAdditionalDirectoryOperation({
-      directoryPath,
-      updateActiveAuxiliarySession,
-      createTimestampLabel: currentTimestampLabel,
     });
   };
 
@@ -2060,6 +2028,7 @@ export default function AgentSessionWindowApp() {
   const chatComposerFeature = composerFeature.buildSurface({
     session: renderedSession,
     directoryScopeLabel,
+    canRemoveAdditionalDirectories: selectedSession.provider === "codex",
     isCharacterAuthoringSession: renderedSession.sessionKind === "character-authoring",
     target: auxiliaryWorkspace.target,
     runtime: {
@@ -2147,14 +2116,8 @@ export default function AgentSessionWindowApp() {
       layout: {
         beforeOpenSkillPicker: requestCentralSurfaceClose,
         openPromptTemplates: handleOpenPromptTemplates,
-        addAdditionalDirectory: {
-          main: handleAddAdditionalDirectory,
-          auxiliary: handleAddAuxiliaryAdditionalDirectory,
-        },
-        removeAdditionalDirectory: {
-          main: handleRemoveAdditionalDirectory,
-          auxiliary: handleRemoveAuxiliaryAdditionalDirectory,
-        },
+        addAdditionalDirectory: handleAddAdditionalDirectory,
+        removeAdditionalDirectory: handleRemoveAdditionalDirectory,
         expandActionDock: handleToggleActionDock,
         jumpToBottom: followMessageListLatest,
       },
@@ -2377,7 +2340,7 @@ export default function AgentSessionWindowApp() {
         directoryScopeLabel={directoryScopeLabel}
         prepareCentralSurfaceOpen={() => prepareCentralSurfaceOpenRef.current()}
         workspacePath={selectedSession.workspacePath}
-        additionalDirectories={activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories ?? []}
+        additionalDirectories={selectedSession.allowedAdditionalDirectories}
         enabled={isSelectedWorkspaceAvailable}
         visible={Boolean(chatShellSurface.isLeftPaneVisible) && !chatShellSurface.isSidePaneBudgetCollapsed}
         relatedSessionIds={[selectedSession.id, ...auxiliaryWorkspace.summaries.map((session) => session.id)]}

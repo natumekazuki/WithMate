@@ -22,7 +22,7 @@ export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: Aux
     model: auxiliary.model,
     reasoningEffort: auxiliary.reasoningEffort,
     customAgentName: auxiliary.customAgentName,
-    allowedAdditionalDirectories: auxiliary.allowedAdditionalDirectories,
+    allowedAdditionalDirectories: parent.allowedAdditionalDirectories,
     threadId: auxiliary.threadId,
     messages: auxiliary.messages,
     messageCount: auxiliary.messageCount,

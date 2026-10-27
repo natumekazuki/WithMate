@@ -22,6 +22,6 @@ export async function readSessionFileExplorerContext(
     workspacePath: session.workspacePath,
     parentSessionId: session.id,
     parentIncarnationId: getSessionIncarnationId(session),
-    allowedAdditionalDirectories: auxiliary?.allowedAdditionalDirectories ?? session.allowedAdditionalDirectories,
+    allowedAdditionalDirectories: session.allowedAdditionalDirectories,
   };
 }

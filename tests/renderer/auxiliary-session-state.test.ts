@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   applyAuxiliarySessionApprovalModeChange,
   applyAuxiliarySessionCodexSandboxModeChange,
-  addAuxiliarySessionAdditionalDirectory,
   applyAuxiliarySessionPatch,
   applyAuxiliarySessionComposerDraftPatch,
   applyAuxiliarySessionCustomAgentPatch,
@@ -16,7 +15,6 @@ import {
   buildEditableActiveAuxiliarySessionPatch,
   buildAuxiliarySessionRunningTransition,
   buildAuxiliaryPreview,
-  removeAuxiliarySessionAdditionalDirectory,
   resolveAuxiliarySessionDisplayAfterMessageIndex,
   resolveAuxiliarySessionSendPreflight,
   resolveAuxiliarySessionSendTarget,
@@ -325,56 +323,6 @@ test("applyAuxiliarySessionModelSelectionPatch は model selection と updatedAt
       catalogRevision: 2,
       model: "gpt-5.4-mini",
       reasoningEffort: "low",
-      updatedAt: "2026-01-02T00:00:00.000Z",
-    },
-  );
-});
-
-test("addAuxiliarySessionAdditionalDirectory は重複を避けて directory と updatedAt を更新する", () => {
-  const session = createAuxiliarySession({
-    allowedAdditionalDirectories: ["C:/workspace/existing"],
-  });
-
-  assert.deepEqual(
-    addAuxiliarySessionAdditionalDirectory(
-      session,
-      "C:/workspace/next",
-      "2026-01-02T00:00:00.000Z",
-    ),
-    {
-      ...session,
-      allowedAdditionalDirectories: ["C:/workspace/existing", "C:/workspace/next"],
-      updatedAt: "2026-01-02T00:00:00.000Z",
-    },
-  );
-  assert.deepEqual(
-    addAuxiliarySessionAdditionalDirectory(
-      session,
-      "C:/workspace/existing",
-      "2026-01-02T00:00:00.000Z",
-    ),
-    {
-      ...session,
-      allowedAdditionalDirectories: ["C:/workspace/existing"],
-      updatedAt: "2026-01-02T00:00:00.000Z",
-    },
-  );
-});
-
-test("removeAuxiliarySessionAdditionalDirectory は指定 directory と updatedAt を更新する", () => {
-  const session = createAuxiliarySession({
-    allowedAdditionalDirectories: ["C:/workspace/keep", "C:/workspace/remove"],
-  });
-
-  assert.deepEqual(
-    removeAuxiliarySessionAdditionalDirectory(
-      session,
-      "C:/workspace/remove",
-      "2026-01-02T00:00:00.000Z",
-    ),
-    {
-      ...session,
-      allowedAdditionalDirectories: ["C:/workspace/keep"],
       updatedAt: "2026-01-02T00:00:00.000Z",
     },
   );
