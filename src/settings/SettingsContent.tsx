@@ -48,6 +48,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { LoadError } from "../ui/load-error.js";
 import { SettingsActionButton } from "./SettingsActionButton.js";
+import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -207,6 +208,7 @@ export function HomeSettingsContent({
   const [busyActions, setBusyActions] = useState<ReadonlySet<SettingsActionKey>>(() => new Set());
   const busyActionsRef = useRef(new Set<SettingsActionKey>());
   const [invalidPreviewWheelZoomStep, setInvalidPreviewWheelZoomStep] = useState<string | null>(null);
+  const [cleaningSessionFiles, setCleaningSessionFiles] = useState(false);
   const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
   const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
   const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
@@ -732,7 +734,7 @@ export function HomeSettingsContent({
                     type="date"
                     value={sessionCleanupCutoffDate}
                     onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
-                    disabled={deletingOldSessions || actionIsBusy("delete-sessions")}
+                    disabled={cleaningSessionFiles || deletingOldSessions || actionIsBusy("delete-sessions")}
                   />
                   <SettingsActionButton
                     failure={settingsErrors.get("delete-sessions")}
@@ -740,7 +742,7 @@ export function HomeSettingsContent({
                     className="launch-toggle"
                     type="button"
                     onClick={() => void runAction("delete-sessions", onDeleteSessionsLastActiveBefore)}
-                    disabled={deletingOldSessions || actionIsBlocked("delete-sessions") || !sessionCleanupCutoffDate}
+                    disabled={cleaningSessionFiles || deletingOldSessions || actionIsBlocked("delete-sessions") || !sessionCleanupCutoffDate}
                     aria-busy={actionIsBusy("delete-sessions")}
                     aria-label={actionIsBusy("delete-sessions") ? "Deleting old sessions" : "Delete"}
                   >
@@ -754,6 +756,7 @@ export function HomeSettingsContent({
                 </div>
                 <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
               </label>
+              <SessionFolderCleanup disabled={deletingOldSessions || actionIsBusy("delete-sessions")} onBusyChange={setCleaningSessionFiles} />
             </div>
           </section>
 

@@ -213,3 +213,5 @@ export const WITHMATE_GET_SESSION_GRAPH_WINDOW_PAYLOAD_CHANNEL = "withmate:get-s
 export const WITHMATE_READ_SESSION_GRAPH_WINDOW_CHANNEL = "withmate:read-session-graph-window";
 export const WITHMATE_UPDATE_SESSION_GRAPH_WINDOW_STATE_CHANNEL = "withmate:update-session-graph-window-state";
 export const WITHMATE_OPEN_SESSION_GRAPH_WINDOW_REFERENCE_CHANNEL = "withmate:open-session-graph-window-reference";
+export const WITHMATE_SCAN_SESSION_FOLDER_CLEANUP_CHANNEL = "withmate:scan-session-folder-cleanup";
+export const WITHMATE_RUN_SESSION_FOLDER_CLEANUP_CHANNEL = "withmate:run-session-folder-cleanup";

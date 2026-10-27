@@ -73,6 +73,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
   - `Delete Old Sessions`
   - 指定日より前に最後に使われた Session の削除
   - 実行中の Session は削除せず、結果フィードバックで skip 件数を返す
+  - `Clean Session Files`: Sessionと会話を残したファイル整理。操作条件は[Session Folder Cleanup](#session-folder-cleanup)を参照
 - `Save Settings`
 - 結果フィードバック
 
@@ -110,6 +111,20 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
   - 実行中の Session は削除しない
 
 ## Runtime Policy
+
+### Session Folder Cleanup
+
+`Storage Maintenance`の`Clean Session Files`は、Sessionを削除せずmanaged folderのファイルを完全削除する独立操作である。期間・サイズはWindow内の一時入力とし、app settingsへ保存しない。
+
+- `Last Active`の`From`／`Through`はSessionの最終利用日時をローカル日付で絞り、両日を含む。片端を省略するとその側の制限を設けず、全期間は`All Dates`で明示する。
+- `Min File Size (MiB)`以上を対象とし、同値を含む。`0`は期間内の全ファイルを対象とする。
+- `Calculate`は対象Session Folder数、合計容量、削除対象ファイルの件数・容量だけを表示する。全ファイル一覧やリンク切れの説明、内部ID、保護規則の常設解説は表示しない。
+- `Delete Files…`は条件と削除概要だけの確認を開く。`Cancel`またはEscapeでは何も削除せず、`Permanently Delete`で実行する。正常0件と計算失敗を区別し、未計算・0件・処理中は削除へ進めない。
+- 実行結果は削除件数・容量を表示する。除外・失敗は発生時だけ件数を表示し、失敗原因は操作横の詳細入口から確認する。計算中・削除中は操作button内のspinnerとaccessible busy stateを使う。
+- 条件編集と実行後は計算結果を失効させ、再計算を必要とする。Settingsの古いSession削除とは同時実行しない。実際の対象保護と削除境界は[Session Local Files](session-local-files.md#sessionを残すファイル掃除)に従う。
+- 削除失敗・部分失敗後は同じ`Delete Files…`から再操作できる。再計算した対象の概要を確認し、再び`Permanently Delete`を選ぶまで削除しない。再計算失敗も同じbutton横の詳細入口に表示し、対象が0件なら確認を開かない。
+
+### Settings Runtime
 
 - completed turn後のCharacter Affect評価はSettingsで切り替えない
 - Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する

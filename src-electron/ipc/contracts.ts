@@ -1,4 +1,5 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
+import type { SessionFolderCleanupRequest, SessionFolderCleanupScan, SessionFolderCleanupResult } from "../../src-shared/session/session-folder-cleanup.js";
 import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../../src-shared/file-explorer/session-html-preview-contract.js";
 
 import type { RendererLogInput } from "../../src-shared/window/app-log-types.js";
@@ -331,6 +332,8 @@ export type MainIpcSettingsDeps = MainIpcEventWindowDeps &
       update: ChatLayoutPreferenceUpdate,
     ): Awaitable<void>;
     getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
+    scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
+    runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
     getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
     installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
     uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
