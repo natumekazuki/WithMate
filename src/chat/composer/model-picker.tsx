@@ -54,7 +54,8 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
     }
     const sorted = searchModelPickerOptions(next, "");
     const style = window.getComputedStyle(triggerRef.current!);
-    setTheme(Object.fromEntries(["--ink", "--muted", "--surface-strong", "--surface-deep", "--line", "--character-main", "--shadow"]
+    setTheme(Object.fromEntries(["--ink", "--muted", "--surface-strong", "--surface-deep", "--line", "--character-main", "--shadow",
+      "--scrollbar-track", "--scrollbar-thumb", "--scrollbar-thumb-hover"]
       .map((property) => [property, style.getPropertyValue(property)])));
     setSnapshot(sorted);
     setQuery("");
@@ -214,14 +215,14 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
         <div style={{ height: visible.length * ROW_HEIGHT, position: "relative" }}>
           {indices.map((index) => {
             const option = visible[index]!;
-            const secondary = [option.sourceLabel, option.value !== option.label ? option.value : null].filter(Boolean).join(" · ");
             return <div key={option.value} id={`${id}-option-${index}`} role="option" aria-selected={option.value === value}
               aria-disabled={option.disabled || undefined} aria-posinset={index + 1} aria-setsize={visible.length}
               className={`composer-model-option${active === index ? " is-active" : ""}`}
-              style={{ top: index * ROW_HEIGHT, height: ROW_HEIGHT }} title={[option.label, secondary].filter(Boolean).join("\n")}
+              style={{ top: index * ROW_HEIGHT, height: ROW_HEIGHT }}
+              title={[option.label, option.sourceLabel, option.value !== option.label ? option.value : null].filter(Boolean).join("\n")}
               onPointerDown={(event) => event.preventDefault()} onClick={() => choose(index)}>
               <span className="composer-model-check" aria-hidden="true">{option.value === value ? "✓" : ""}</span>
-              <span className="composer-model-option-copy"><span>{option.label}</span><small>{secondary}</small></span>
+              <span className="composer-model-option-copy"><span>{option.label}</span>{option.sourceLabel ? <small>{option.sourceLabel}</small> : null}</span>
             </div>;
           })}
         </div>
