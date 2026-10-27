@@ -9,6 +9,8 @@ import {
 import { buildCodexAsyncQuestionRequest, CodexTurnInteractions } from "./codex-app-server-interactions.js";
 import { CodexProjectionClient } from "./codex-projection-client.js";
 import { projectCodexQuotaTelemetry } from "./codex-quota-telemetry.js";
+import { parseCodexModelPage } from "./codex-model-catalog.js";
+import type { ListProviderModelsInput } from "../provider-runtime.js";
 import { CODEX_LIVE_PROGRESS_INTERVAL_MS, type CodexProjectionFinal, type CodexProjectionProgress, type CodexProjectionEvent } from "./codex-projection-protocol.js";
 
 import type { AppSettings } from "../../../src-shared/settings/provider-settings-state.js";
@@ -758,6 +760,42 @@ export class CodexAdapter implements ProviderTurnAdapter {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
   }
+  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
+    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    this.assertCleanupComplete(input.workspacePath);
+    const { transport, apiKey } = this.createTransport("codex", input.appSettings, input.workspacePath);
+    try {
+      await transport.start(signal);
+      if (apiKey) {
+        const login = await transport.request<{ type: string }>("account/login/start", { type: "apiKey", apiKey }, { signal });
+        if (login.type !== "apiKey") throw new Error("Codex authentication failed");
+      }
+      const models: ModelCatalogProvider["models"] = [];
+      const cursors = new Set<string>();
+      let cursor: string | null = null;
+      let defaultModelId: string | undefined;
+      do {
+        const page = parseCodexModelPage(await transport.request<unknown>("model/list", { cursor, limit: 100, includeHidden: false }, { signal }));
+        models.push(...page.models);
+        defaultModelId = page.defaultModelId ?? defaultModelId;
+        cursor = page.nextCursor;
+        if (cursor && cursors.has(cursor)) throw new Error("Codex model cursor did not advance");
+        if (cursor) cursors.add(cursor);
+      } while (cursor);
+      const preferred = models.find((model) => model.id === defaultModelId) ?? models[0];
+      return { id: "codex", label: "Codex", models, defaultModelId: preferred?.id ?? "", defaultReasoningEffort: preferred?.defaultReasoningEffort ?? "" };
+    } catch {
+      throw new Error(signal.aborted ? "Codex model discovery canceled" : "Codex models could not be retrieved");
+    } finally {
+      try { await transport.close(); }
+      catch {
+        this.pendingCleanups.set(transport, { workspace: workspaceKey(input.workspacePath), threadId: null });
+        void transport.whenClosed().then(() => { this.pendingCleanups.delete(transport); });
+        throw new Error("Codex model discovery process cleanup failed");
+      }
+    }
+  }
   async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null> {
     if (resolveCodexApiKey(input.providerId, input.appSettings)) return null;
     const workspace = process.cwd();
@@ -1051,7 +1089,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         serviceTier: args.serviceTier,
         config: {
           ...(managedMcpConfig ? { mcp_servers: managedMcpConfig } : {}),
-          model_reasoning_effort: options.modelReasoningEffort,
+          ...(options.modelReasoningEffort ? { model_reasoning_effort: options.modelReasoningEffort } : {}),
           service_tier: args.serviceTier,
           approvals_reviewer: args.reviewer,
           ...(options.additionalDirectories?.length
@@ -1090,7 +1128,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           approvalsReviewer: args.reviewer,
           sandboxPolicy: sandboxPolicy(options),
           model: options.model,
-          effort: options.modelReasoningEffort,
+          ...(options.modelReasoningEffort ? { effort: options.modelReasoningEffort } : {}),
           serviceTier: args.serviceTier,
         },
         { signal },

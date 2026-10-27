@@ -161,15 +161,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async openTerminalAtPath() {},
     } satisfies MainIpcWindowDepsArgs,
     catalog: {
-      getModelCatalog: () => null,
-      importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
-      async importModelCatalogFromFile() {
-        return null;
-      },
-      exportModelCatalogDocument: () => null,
-      async exportModelCatalogToFile() {
-        return null;
-      },
+      getModelCatalog: () => ({ providers: [] }),
     } satisfies MainIpcCatalogDepsArgs,
     settings: {
       getAppSettings: () =>

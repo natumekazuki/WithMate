@@ -54,7 +54,6 @@ export const SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL = "Open Crash Dumps";
 export const SETTINGS_RESET_DATABASE_TARGET_LABELS: Record<ResetAppDatabaseTarget, string> = {
   sessions: "Sessions",
   appSettings: "App settings",
-  modelCatalog: "Model catalog",
   projectMemory: "Project memory",
 };
 

@@ -1,7 +1,7 @@
 import type { Session } from "../../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
 
-export type AuxiliaryRuntimeProjectionInput = Pick<AuxiliarySession, "id" | "runState" | "title" | "provider" | "catalogRevision" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName" | "allowedAdditionalDirectories" | "threadId" | "messages" | "messageCount" | "createdAt" | "updatedAt" | "characterId" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid">;
+export type AuxiliaryRuntimeProjectionInput = Pick<AuxiliarySession, "id" | "runState" | "title" | "provider" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName" | "allowedAdditionalDirectories" | "threadId" | "messages" | "messageCount" | "createdAt" | "updatedAt" | "characterId" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid">;
 export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: AuxiliaryRuntimeProjectionInput): Session {
   if (auxiliary.characterRuntimeSnapshotInvalid) throw new Error("Auxiliary character runtime snapshot is invalid.");
   const snapshot = auxiliary.characterRuntimeSnapshot;
@@ -13,7 +13,6 @@ export function buildMainAuxiliaryRuntimeSession(parent: Session, auxiliary: Aux
     status: auxiliary.runState === "running" ? "running" : "idle",
     updatedAt: auxiliary.updatedAt,
     provider: auxiliary.provider,
-    catalogRevision: auxiliary.catalogRevision,
     runState: auxiliary.runState,
     approvalMode: auxiliary.approvalMode,
     codexSandboxMode: auxiliary.codexSandboxMode,

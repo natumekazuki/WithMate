@@ -11,9 +11,7 @@ export const V6_SCHEMA_STATUS = "foundation";
 export const REQUIRED_V6_TABLES = [
   "app_settings",
   "prompt_templates",
-  "model_catalog_revisions",
-  "model_catalog_providers",
-  "model_catalog_models",
+  "provider_model_cache",
   "characters",
   "project_scopes_v6",
   "sessions_v6",
@@ -84,9 +82,7 @@ const REQUIRED_V6_INDEXES = [
 const REQUIRED_V6_TABLE_COLUMNS = {
   app_settings: ["setting_key", "setting_value", "updated_at"],
   prompt_templates: ["id", "name", "prompt", "created_at", "updated_at"],
-  model_catalog_revisions: ["revision", "source", "imported_at", "is_active"],
-  model_catalog_providers: ["revision", "provider_id", "label", "default_model_id", "default_reasoning_effort", "sort_order"],
-  model_catalog_models: ["revision", "provider_id", "model_id", "label", "reasoning_efforts_json", "sort_order"],
+  provider_model_cache: ["provider_id", "provider_json", "context_key", "fetched_at"],
   characters: ["id", "name", "description", "icon_file_path", "theme_main", "theme_sub", "state", "is_default", "created_at", "updated_at", "archived_at"],
   project_scopes_v6: ["id", "project_type", "project_key", "workspace_path", "git_root", "git_remote_url", "display_name", "created_at", "updated_at"],
   sessions_v6: [
@@ -631,34 +627,13 @@ export const CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL = `
     ON prompt_templates(name COLLATE NOCASE);
 `;
 
-export const CREATE_V6_MODEL_CATALOG_TABLES_SQL = `
-  CREATE TABLE IF NOT EXISTS model_catalog_revisions (
-    revision INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL,
-    imported_at TEXT NOT NULL,
-    is_active INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS model_catalog_providers (
-    revision INTEGER NOT NULL,
+export const CREATE_V6_PROVIDER_MODEL_CACHE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS provider_model_cache (
     provider_id TEXT NOT NULL,
-    label TEXT NOT NULL,
-    default_model_id TEXT NOT NULL,
-    default_reasoning_effort TEXT NOT NULL,
-    sort_order INTEGER NOT NULL,
-    PRIMARY KEY (revision, provider_id),
-    FOREIGN KEY (revision) REFERENCES model_catalog_revisions(revision) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS model_catalog_models (
-    revision INTEGER NOT NULL,
-    provider_id TEXT NOT NULL,
-    model_id TEXT NOT NULL,
-    label TEXT NOT NULL,
-    reasoning_efforts_json TEXT NOT NULL,
-    sort_order INTEGER NOT NULL,
-    PRIMARY KEY (revision, provider_id, model_id),
-    FOREIGN KEY (revision) REFERENCES model_catalog_revisions(revision) ON DELETE CASCADE
+    provider_json TEXT NOT NULL,
+    context_key TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (provider_id, context_key)
   );
 `;
 
@@ -1315,7 +1290,7 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
   CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL,
-  CREATE_V6_MODEL_CATALOG_TABLES_SQL,
+  CREATE_V6_PROVIDER_MODEL_CACHE_TABLE_SQL,
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
@@ -1414,6 +1389,7 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 }
 
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
+  db.exec("DROP TABLE IF EXISTS model_catalog_models; DROP TABLE IF EXISTS model_catalog_providers; DROP TABLE IF EXISTS model_catalog_revisions;");
   db.exec("DROP TABLE IF EXISTS character_affect_turn_settlements;");
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
   for (const statement of CREATE_V6_SCHEMA_SQL) {

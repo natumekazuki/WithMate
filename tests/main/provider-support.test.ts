@@ -17,7 +17,7 @@ import {
 // @test-value v2
 // kind = "contract"
 // claim = "指定されたproviderのcatalogを非同期storage経由で解決する"
-// oracle = { type = "contract", ref = "src-electron/provider-support.ts#resolveProviderCatalogOrThrow" }
+// oracle = { type = "contract", ref = "src-electron/providers/provider-support.ts#resolveProviderCatalogOrThrow" }
 // fault = "非同期catalog取得を待たずにprovider解決してPromiseを誤って扱う"
 // observable = "resolveProviderCatalogOrThrowの解決結果"
 // observation_boundary = "public-boundary"
@@ -31,7 +31,6 @@ test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", (
     const result = await resolveProviderCatalogOrThrow({
     providerId: "copilot",
     getModelCatalog: async () => ({
-      revision: 2,
       providers: [
         {
           id: "codex",
@@ -49,12 +48,9 @@ test("resolveProviderCatalogOrThrow は指定 provider の catalog を返す", (
         },
       ],
     }),
-    ensureSeeded() {
-      throw new Error("not used");
-    },
     });
 
-    assert.equal(result.snapshot.revision, 2);
+    assert.equal(result.snapshot.providers.length, 2);
     assert.equal(result.provider.id, "copilot");
   })();
 });
@@ -139,7 +135,6 @@ test("実行用catalogは指定Providerが見つからなければ拒否する",
     const catalog = { revision: 1, providers: includeCustomProvider ? [...providers, { ...providers[0]!, id: "custom" }] : providers };
     const deps = {
       getModelCatalog: () => catalog,
-      ensureSeeded: () => catalog,
     };
     await assert.rejects(resolveProviderCatalogOrThrow({ ...deps, providerId: "custom" }), /Unsupported provider: custom/);
     await assert.rejects(resolveProviderCatalogOrThrow({ ...deps, providerId: "copilot" }), /Provider copilot is not available/);

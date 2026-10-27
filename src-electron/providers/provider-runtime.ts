@@ -87,6 +87,12 @@ export type GetProviderQuotaTelemetryInput = {
   signal?: AbortSignal;
 };
 
+export type ListProviderModelsInput = {
+  appSettings: AppSettings;
+  workspacePath: string;
+  signal?: AbortSignal;
+};
+
 export type RunSessionTurnResult = {
   threadId: string | null;
   assistantText: string;
@@ -126,6 +132,7 @@ export class ProviderTurnError extends Error {
 }
 
 export type ProviderCodingAdapter = {
+  listModels?(input: ListProviderModelsInput): Promise<ModelCatalogProvider>;
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
   invalidateSessionThread(sessionId: string): Promise<void>;

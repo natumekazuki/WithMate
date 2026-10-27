@@ -90,7 +90,6 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
     getProviderQuotaTelemetry: async () => null,
     subscribeProviderQuotaTelemetry: () => () => {},
     getModelCatalog: async () => ({
-      revision: 1,
       providers: [{
         id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high",
         models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
@@ -221,7 +220,7 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
 // claim = "Settingsのapp settingsとmodel catalogは個別に読込・回復し、その未完了や失敗でMemory diagnosticsの表示と準備済みの操作を塞がずcatalogの購読更新も画面へ反映する"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#runtime-policy and GitHub Issue #744" }
 // fault = "Settingsの初回readを一括待機し、別領域の内容や操作を隠すか、失敗後の再取得またはcatalog購読更新の表示をできなくする"
-// observable = "deferred API応答中のSettings section、独立したLoadError/LoadingIndicator、Import Models操作、Retry後と購読更新後のprovider row"
+// observable = "deferred API応答中のSettings section、独立したLoadError/LoadingIndicator、Retry後と購読更新後のprovider row"
 // observation_boundary = "component-behavior"
 // scope = "Settings Window independent initial reads, recovery and model catalog subscription"
 // lifecycle = "permanent"
@@ -242,7 +241,6 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
   let settingsCalls = 0;
   let catalogCalls = 0;
   const catalogListeners = new Set<(snapshot: ModelCatalogSnapshot) => void>();
-  let imports = 0;
   const savedSettings: ReturnType<typeof createDefaultAppSettings>[] = [];
   const originalSettings = {
     ...createDefaultAppSettings(),
@@ -254,7 +252,6 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
     },
   };
   const catalog: ModelCatalogSnapshot = {
-    revision: 2,
     providers: [{
       id: "codex", label: "Codex", defaultModelId: "gpt-5.4", defaultReasoningEffort: "high",
       models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
@@ -288,7 +285,6 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
       },
       lastErrors: [],
     }),
-    importModelCatalogFile: async () => { imports += 1; return null; },
     updateAppSettings: async (settings) => { savedSettings.push(settings); return settings; },
   };
   dom.window.withmate = api as WithMateWindowApi;
@@ -311,10 +307,6 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
     assert.ok(rootElement.querySelector('[aria-label="Loading app settings"]'));
     assert.ok(rootElement.querySelector('[aria-label="Loading model catalog"]'));
     assert.ok(rootElement.textContent?.includes("stopped"), "diagnostics should resolve independently");
-    const importButton = findButton(rootElement, "Import Models");
-    assert.equal(importButton.disabled, false);
-    await act(async () => importButton.click());
-    assert.equal(imports, 1);
 
     await act(async () => firstSettingsLoad.reject(new Error("Settings unavailable")));
     assert.match(rootElement.textContent ?? "", /Settings unavailable/);
@@ -351,7 +343,6 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
       for (const listener of catalogListeners) {
         listener({
           ...catalog,
-          revision: 3,
           providers: catalog.providers.map((provider) => ({ ...provider, label: "Updated Codex" })),
         });
       }

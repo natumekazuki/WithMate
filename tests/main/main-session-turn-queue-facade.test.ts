@@ -14,6 +14,8 @@ function fixture() {
       branch: "main", characterId: "character", character: "Character", characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" }),
     incarnationId: "current-owner",
+    model: "discovered-model",
+    reasoningEffort: "high",
   };
   const rows: SessionTurnQueueReceipt[] = [];
   const calls = { preview: 0, provider: 0, workspace: 0, acceptance: 0 };
@@ -39,9 +41,9 @@ function fixture() {
   const deps: MainSessionTurnQueueFacadeDeps = {
     assertActive() {}, assertAccepting() {}, getSession: async () => session,
     validateWorkspace: async () => { calls.workspace += 1; },
-    validateProvider: async (_, revision) => {
+    validateProvider: async () => {
       calls.provider += 1;
-      return { revision, provider: { id: "codex", label: "Codex", defaultModelId: session.model,
+      return { provider: { id: "codex", label: "Codex", defaultModelId: session.model,
         defaultReasoningEffort: session.reasoningEffort,
         models: [{ id: session.model, label: "Model", reasoningEfforts: [session.reasoningEffort] }] } };
     },
@@ -133,7 +135,7 @@ test("再送は正規化済みrequestのreceiptを返し再捕捉しない", asy
 test("受付は本文と設定と添付path descriptorを捕捉する", async () => {
   const { facade, deps, input, preview, session, service } = fixture();
   const options = {
-    catalogRevision: 7, model: "captured-model", reasoningEffort: "high", approvalMode: "on-request",
+    model: "captured-model", reasoningEffort: "high", approvalMode: "on-request",
     codexSandboxMode: "workspace-write-network", codexSpeed: "fast", codexReviewer: "auto-review", customAgentName: "captured-agent",
   } as const;
   input.executionOptions = { ...options };

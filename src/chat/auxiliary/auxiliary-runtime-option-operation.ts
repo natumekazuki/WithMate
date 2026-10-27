@@ -110,7 +110,6 @@ export async function runAuxiliaryCodexReviewerChangeOperation(input: {
 export async function runAuxiliaryModelChangeOperation(input: {
   model: string;
   providerCatalog: ModelCatalogProvider;
-  catalogRevision: number;
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
   createTimestampLabel: () => string;
 }): Promise<void> {
@@ -119,7 +118,6 @@ export async function runAuxiliaryModelChangeOperation(input: {
       current,
       input.providerCatalog,
       input.model,
-      input.catalogRevision,
       input.createTimestampLabel(),
     )
   ));
@@ -128,7 +126,6 @@ export async function runAuxiliaryModelChangeOperation(input: {
 export async function runAuxiliaryReasoningEffortChangeOperation(input: {
   reasoningEffort: ModelReasoningEffort;
   providerCatalog: ModelCatalogProvider;
-  catalogRevision: number;
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
   createTimestampLabel: () => string;
 }): Promise<void> {
@@ -137,7 +134,6 @@ export async function runAuxiliaryReasoningEffortChangeOperation(input: {
       current,
       input.providerCatalog,
       input.reasoningEffort,
-      input.catalogRevision,
       input.createTimestampLabel(),
     )
   ));

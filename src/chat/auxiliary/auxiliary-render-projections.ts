@@ -47,7 +47,6 @@ function toAuxiliaryRuntimeProjectionInput(session: AuxiliarySession): Auxiliary
     runState: session.runState,
     title: session.title,
     provider: session.provider,
-    catalogRevision: session.catalogRevision,
     model: session.model,
     reasoningEffort: session.reasoningEffort,
     approvalMode: session.approvalMode,
@@ -76,7 +75,6 @@ function useRuntimeProjectionSession(
     [
       activeSession?.allowedAdditionalDirectories,
       activeSession?.approvalMode,
-      activeSession?.catalogRevision,
       activeSession?.codexSandboxMode,
       activeSession?.codexSpeed,
       activeSession?.codexReviewer,

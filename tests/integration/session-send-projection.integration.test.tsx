@@ -339,6 +339,11 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
     require: () => ({ contextBridge: { exposeInMainWorld: (_key: string, value: WithMateWindowApi) => { api = value; } } }),
     process: { argv: ["--benchmark-auxiliary-count=1"] }, Buffer,
   });
+  const getModelCatalog = api.getModelCatalog;
+  api.getModelCatalog = async (request) => {
+    const snapshot = await getModelCatalog(request);
+    return snapshot ? { ...snapshot, workspacePath: request?.workspacePath } : snapshot;
+  };
   const initialMain = await api.getSession("benchmark-main");
   const initialAuxiliary = await api.getAuxiliarySession("benchmark-aux-1");
   assert.ok(initialMain);

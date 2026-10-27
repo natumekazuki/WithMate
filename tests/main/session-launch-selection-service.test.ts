@@ -8,7 +8,6 @@ import { SessionLaunchSelectionService } from "../../src-electron/session/sessio
 
 function createModelCatalogSnapshot(): ModelCatalogSnapshot {
   return {
-    revision: 7,
     providers: [
       {
         id: "codex",
@@ -72,6 +71,48 @@ function createLatestSessionSummary(
 describe("SessionLaunchSelectionService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "保存modelと作成開始時のSDK既定値を保持し、未選択の作成だけ対象workspaceとproviderのdiscoveryを待つ"
+  // oracle = { type = "contract", ref = "accepted behavior: saved selections survive discovery changes; new selections use SDK defaults" }
+  // fault = "保存選択を既定値へ置換するか、未選択の作成で別workspaceの候補を使う"
+  // observable = "resolve結果のmodel/depthと対象discovery要求"
+  // observation_boundary = "public-boundary"
+  // scope = "session-launch-discovery-selection"
+  // lifecycle = "permanent"
+  // impact = "既存会話の利用modelを変えず、workspace固有のnative設定で新規会話を作る"
+  // distinction = "helper単独testでは履歴選択と初回discovery待機の分岐を確認できない"
+  // @end-test-value
+  it("保存選択は未取得catalogから保持し未選択だけ対象discoveryを待つ", async () => {
+    let latest: SessionSummary | null = createLatestSessionSummary({ provider: "codex", model: "saved-model", reasoningEffort: "native-depth" });
+    const requests: Array<[string | undefined, string | undefined]> = [];
+    let discoveredDefault = "gpt-5.6";
+    const service = new SessionLaunchSelectionService({
+      getAppSettings: () => normalizeAppSettings({}),
+      getLatestSessionSummaryForProvider: () => latest,
+      getModelCatalogSnapshot: (workspace, providerId) => {
+        requests.push([workspace, providerId]);
+        const snapshot = createModelCatalogSnapshot();
+        snapshot.providers[0]!.defaultModelId = discoveredDefault;
+        if (!providerId) snapshot.providers[0] = { ...snapshot.providers[0]!, models: [], defaultModelId: "", defaultReasoningEffort: "" };
+        return snapshot;
+      },
+    });
+    const saved = await service.resolve("codex", "C:/selected-workspace");
+    assert.equal(saved.model, "saved-model");
+    assert.equal(saved.reasoningEffort, "native-depth");
+    assert.deepEqual(requests, [["C:/selected-workspace", undefined]]);
+    latest = null;
+    requests.length = 0;
+    const initial = await service.resolve("codex", "C:/selected-workspace");
+    assert.equal(initial.model, "gpt-5.6");
+    assert.deepEqual(requests, [["C:/selected-workspace", undefined], ["C:/selected-workspace", "codex"]]);
+    discoveredDefault = "updated-sdk-default";
+    requests.length = 0;
+    assert.equal((await service.resolve("codex", "C:/selected-workspace", initial)).model, "gpt-5.6");
+    assert.deepEqual(requests, [["C:/selected-workspace", undefined]]);
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "明示した未対応ProviderやcatalogにないProviderのlaunchを別Providerへ置き換えない"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
   // fault = "catalog fallbackまたはenabled判定だけで未知Providerのlaunchを許可する"
@@ -96,15 +137,15 @@ describe("SessionLaunchSelectionService", () => {
       await assert.rejects(service.resolve(providerId), /Unsupported provider:/);
     }
     catalog.providers = [codex];
-    await assert.rejects(service.resolve("copilot"), /Provider copilot is not available/);
+    await assert.rejects(service.resolve("copilot"), /Provider copilot model discovery is unavailable/);
     assert.equal(historyReads, 0);
   });
 
   // @test-value v2
   // kind = "contract"
-  // claim = "Provider未指定時はenabledな対応Providerだけを選び、なければ明示的に失敗する"
+  // claim = "Provider未指定時はCodexを選び、無効なら別Providerに切り替えず失敗する"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
-  // fault = "先頭のenabledな未知Providerを選ぶか、無効なCodexを暗黙に使う"
+  // fault = "無効なCodexを実行するか別Providerへ切り替える"
   // observable = "resolveのProvider IDと対応Provider不在時のreject"
   // observation_boundary = "public-boundary"
   // scope = "session-launch-default-provider"
@@ -112,7 +153,7 @@ describe("SessionLaunchSelectionService", () => {
   // impact = "未対応Providerだけが有効なcatalogで別Providerを実行しない"
   // distinction = "明示指定の拒否とは別の未指定時探索分岐を、外部runtimeなしで短時間に検証する"
   // @end-test-value
-  it("未指定時は対応Providerだけを選び、未対応Providerのみ有効なら拒否する", async () => {
+  it("未指定時はCodexを選び無効なら拒否する", async () => {
     const catalog = createModelCatalogSnapshot();
     catalog.providers.unshift({ ...catalog.providers[0]!, id: "custom", label: "Custom" });
     const settings = normalizeAppSettings({ codingProviderSettings: { codex: { enabled: false }, copilot: { enabled: true }, custom: { enabled: true } } });
@@ -121,12 +162,12 @@ describe("SessionLaunchSelectionService", () => {
       getModelCatalogSnapshot: () => catalog,
       getLatestSessionSummaryForProvider: () => null,
     });
-    assert.equal((await service.resolve()).provider, "copilot");
+    await assert.rejects(service.resolve(), /Provider codex is disabled/);
     settings.codingProviderSettings.codex!.enabled = true;
     assert.equal((await service.resolve()).provider, "codex");
     settings.codingProviderSettings.codex!.enabled = false;
     settings.codingProviderSettings.copilot!.enabled = false;
-    await assert.rejects(service.resolve(), /No enabled supported provider/);
+    await assert.rejects(service.resolve(), /Provider codex is disabled/);
   });
 
   // @test-value v2
@@ -143,7 +184,7 @@ describe("SessionLaunchSelectionService", () => {
     const service = new SessionLaunchSelectionService({
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { codex: { enabled: true } } }),
       getModelCatalogSnapshot: createModelCatalogSnapshot,
-      getCurrentExecutionOptions: () => ({ catalogRevision: 7, model: "gpt-5.6", reasoningEffort: "xhigh", approvalMode: "untrusted", codexSandboxMode: "workspace-write", codexSpeed: "fast", codexReviewer: "auto-review", customAgentName: "" }),
+      getCurrentExecutionOptions: () => ({ model: "gpt-5.6", reasoningEffort: "xhigh", approvalMode: "untrusted", codexSandboxMode: "workspace-write", codexSpeed: "fast", codexReviewer: "auto-review", customAgentName: "" }),
       getLatestSessionSummaryForProvider: () => createLatestSessionSummary({ provider: "codex", model: "gpt-5.6", reasoningEffort: "high", codexSpeed: "standard", codexReviewer: "user" }),
     });
     const selection = await service.resolve("codex");
@@ -184,7 +225,6 @@ describe("SessionLaunchSelectionService", () => {
     assert.deepEqual(queriedProviderIds, ["copilot"]);
     assert.deepEqual(selection, {
       provider: "copilot",
-      catalogRevision: 7,
       model: "claude-sonnet",
       reasoningEffort: "high",
       approvalMode: "never",
@@ -195,11 +235,13 @@ describe("SessionLaunchSelectionService", () => {
     });
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "履歴のない新規SessionはCodex speedをStandard、ReviewerをUserで初期化する"
   // oracle = { type = "contract", ref = "accepted behavior: new Session default" }
-  // failure_mode = "履歴のない新規SessionがFastまたはAuto-reviewで作成される"
+  // fault = "履歴のない新規SessionがFastまたはAuto-reviewで作成される"
+  // observable = "resolveが返すspeedとreviewer"
+  // observation_boundary = "public-boundary"
   // scope = "session-launch-selection"
   // lifecycle = "permanent"
   // @end-test-value
@@ -218,7 +260,6 @@ describe("SessionLaunchSelectionService", () => {
 
     assert.deepEqual(selection, {
       provider: "codex",
-      catalogRevision: 7,
       model: "gpt-5.6",
       reasoningEffort: "high",
       approvalMode: "untrusted",

@@ -15,6 +15,8 @@ import { resolveOpenCodeModelRef, validateOpenCodeModel } from "./opencode-model
 import { OpenCodeTurnProjection } from "./opencode-events.js";
 import { buildOpenCodeElicitation } from "./opencode-interactions.js";
 import { fetchOpenCodeQuotaTelemetry } from "./opencode-quota-telemetry.js";
+import type { ListProviderModelsInput } from "../provider-runtime.js";
+import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
 
 const require = createRequire(import.meta.url);
 type Transport = Pick<OpenCodeTransport, "start" | "close" | "whenClosed"> & { readonly secrets?: readonly string[] };
@@ -98,6 +100,42 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
   private readonly pendingCleanups = new Map<string, { workspace: string; threadId: string; completion: Promise<void> }>();
   constructor(private readonly options: OpenCodeAdapterOptions = {}) {}
   composePrompt(input: RunSessionTurnInput) { return composeProviderPrompt(input); }
+  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
+    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    this.assertCleanupComplete(input.workspacePath);
+    if (!this.options.databasePath) throw new Error("OpenCode dedicated database path is required");
+    const apiKey = getProviderAppSettings(input.appSettings, "opencode").apiKey.trim() || process.env.OPENCODE_API_KEY?.trim() || "";
+    const transport = (this.options.createTransport ?? ((options) => new OpenCodeTransport(options)))({
+      executable: this.options.executable ?? resolveOpenCodeBinaryPath(), cwd: input.workspacePath,
+      databasePath: this.options.databasePath,
+      env: mergeDefinedProviderEnv(process.env, apiKey ? { OPENCODE_API_KEY: apiKey } : {}),
+    });
+    try {
+      const client = await transport.start(signal);
+      const location = { directory: input.workspacePath };
+      const catalog = await client.model.list({ location }, { signal });
+      const models = catalog.data.filter((model) => model.enabled).map((model) => ({
+        id: `${model.providerID}/${model.id}`, label: model.name, sourceLabel: model.providerID,
+        reasoningEfforts: model.variants.map((variant) => variant.id), defaultReasoningEffort: "",
+      }));
+      const preferred = models.length ? await client.model.default({ location }, { signal }) : null;
+      const preferredId = preferred?.data ? `${preferred.data.providerID}/${preferred.data.id}` : "";
+      return { id: "opencode", label: "OpenCode", models,
+        defaultModelId: models.find((model) => model.id === preferredId)?.id ?? models[0]?.id ?? "", defaultReasoningEffort: "" };
+    } catch {
+      throw new Error(signal.aborted ? "OpenCode model discovery canceled" : "OpenCode models could not be retrieved");
+    } finally {
+      try { await transport.close(); }
+      catch {
+        const id = randomUUID();
+        const completion = transport.whenClosed();
+        this.pendingCleanups.set(id, { workspace: path.resolve(input.workspacePath), threadId: "", completion });
+        void completion.then(() => this.pendingCleanups.delete(id));
+        throw new Error("OpenCode model discovery process cleanup failed");
+      }
+    }
+  }
   async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput) {
     const apiKey = getProviderAppSettings(input.appSettings, "opencode").apiKey.trim() || process.env.OPENCODE_API_KEY?.trim() || "";
     if (!apiKey) return null;

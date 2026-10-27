@@ -63,6 +63,8 @@ function createSession(overrides?: Partial<Session>): Session {
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
     }),
     ...overrides,
   };
@@ -174,7 +176,7 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     upsertSession(next) { stored = next; return next; },
     async resolveComposerPreview() { return { attachments: [], errors: [] }; },
     getAppSettings: () => normalizeAppSettings({}),
-    resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+    resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
     getProviderCodingAdapter: () => adapter,
     getSessionMemory: () => createSessionMemory(session.id),
     resolveProjectMemoryEntriesForPrompt: () => [],
@@ -334,7 +336,7 @@ it("turn終端でprovider別のquota更新を予約する", async () => {
         return createPartialResult({ assistantText: "done" });
       }, {
         getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [provider]: { enabled: true } } }),
-        resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [catalog] }, provider: catalog }),
+        resolveProviderCatalog: () => ({ snapshot: { providers: [catalog] }, provider: catalog }),
         scheduleProviderQuotaTelemetryRefresh: (id, delays) => { calls.push([id, delays]); },
       });
       const result = await runtime.runSessionTurn(session.id, { userMessage: "run", executionOptions: captureSessionExecutionOptions(session) });
@@ -437,7 +439,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
     getSession: () => current,
     upsertSession: (next) => { current = { ...next, ...captureSessionExecutionOptions(current), allowedAdditionalDirectories: [...current.allowedAdditionalDirectories] }; return current; },
     getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } }),
-    resolveProviderCatalog: () => ({ snapshot: { revision: session.catalogRevision, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") }),
+    resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") }),
     resetProviderSessionThread: () => undefined,
     assertCapturedComposerAttachmentsAvailable: async () => undefined,
     persistQueuedTurnStart: (next, count, _id, turn) => ({ session: next, turn: { ...turn, id: 42, userMessageSeq: count } }),
@@ -451,7 +453,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued実行は捕捉入力と開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
+// claim = "queued実行は候補一覧にない捕捉model/depthと開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Run Cancel; src-electron/session/session-running-turn-start.ts" }
 // fault = "本文を再previewするか捕捉設定を現在選択で置換し、開始を分割保存するかterminal応答でcleanup guardを解放する"
 // observable = "atomic開始payload・Provider request・onStarted identity・terminal待機中の返却と実guard/release通知"
@@ -476,7 +478,7 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
   runtime = createProgressRuntime(currentSession, async (input) => {
     assert.equal(input.session.threadId, "current-thread");
     assert.equal(input.userMessage, "captured message");
-    assert.deepEqual(input.executionOptions, { ...capturedOptions, catalogRevision: 2 });
+    assert.deepEqual(input.executionOptions, capturedOptions);
     assert.deepEqual(input.attachments, receipt.captured.attachments);
     input.onCleanupPending?.(cleanup.promise);
     return createPartialResult({ assistantText: "done" });
@@ -488,10 +490,10 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
       assert.equal(current.threadId, "current-thread");
       assert.deepEqual(attachments, receipt.captured.attachments);
     },
-    resolveProviderCatalog: (_, revision) => {
-      assert.equal(revision, undefined);
+    resolveProviderCatalog: () => {
       const provider = createProviderCatalog();
-      return { snapshot: { revision: 2, providers: [provider] }, provider };
+      provider.models = [];
+      return { snapshot: { providers: [provider] }, provider };
     },
     persistQueuedTurnStart: (next, count, id, turn) => {
       atomics += 1;
@@ -528,14 +530,14 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
   await draining;
   assert.equal(runtime.isRunInFlight(session.id), false);
   assert.ok(releases > 0);
-  assert.equal(receipt.captured.request.executionOptions.catalogRevision, 1);
+  assert.deepEqual(receipt.captured.request.executionOptions, capturedOptions);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued開始前にowner/provider/workspace/添付または捕捉modelが無効なら未開始の確定failedを返す"
+// claim = "queued開始前にowner/provider/workspace/添付が無効または捕捉modelが空なら未開始の確定failedを返す"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Delete; src-shared/session/session-execution-options.ts validateSessionExecutionOptions" }
-// fault = "変更されたowner/実行先や失われた添付を実行するか別modelへ自動切替する"
+// fault = "変更されたowner/実行先や失われた添付を実行するか空modelを既定値へ自動切替する"
 // observable = "failed返却、atomic開始とProviderの呼出し件数0"
 // observation_boundary = "public-boundary"
 // scope = "queued runtime pre-provider capture validation"
@@ -556,10 +558,10 @@ it("queued runtimeは無効になった捕捉入力を開始前にfailedで返�
       persistQueuedTurnStart: (next, _, __, turn) => { starts += 1; return { session: next, turn: { id: 1, ...turn } }; },
       resolveProviderCatalog: () => {
         const provider = createProviderCatalog();
-        if (stage === "model") provider.models = [];
-        return { snapshot: { revision: 2, providers: [provider] }, provider };
+        return { snapshot: { providers: [provider] }, provider };
       },
     });
+    if (stage === "model") receipt.captured.request.executionOptions = { ...receipt.captured.request.executionOptions, model: "" };
     const result = await runtime.runQueuedSessionTurn(receipt, async () => { assert.fail("Rejected start cannot be observed as started"); });
     assert.equal(result.state, "failed");
     assert.ok(result.reason);
@@ -788,7 +790,7 @@ describe("SessionRuntimeService", () => {
       service = createTestRuntime({
         getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
         resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-        resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+        resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
         getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
         createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, update) => { phases.push(update.phase); },
         setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
@@ -1055,7 +1057,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       upsertTerminalSession: async (next) => { saveStarted = true; await saveGate; stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
@@ -1131,7 +1133,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
@@ -1211,7 +1213,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1284,7 +1286,7 @@ describe("SessionRuntimeService", () => {
         throw new Error("append commit reply lost");
       },
       getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1337,7 +1339,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async (_session, text) => { if (text === "race") { previewStarted = true; await previewGate; } return { attachments: [], errors: [] }; }, getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1381,7 +1383,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }), resetProviderSessionThread: () => { resets += 1; },
@@ -1461,7 +1463,7 @@ describe("SessionRuntimeService", () => {
       upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
       getSessionMemory: (session) => createSessionMemory(session.id),
       resolveProjectMemoryEntriesForPrompt: () => [],
@@ -1521,7 +1523,7 @@ describe("SessionRuntimeService", () => {
         memory: { items: [], updatedAt: null } }),
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
       getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
@@ -1617,7 +1619,7 @@ describe("SessionRuntimeService", () => {
             return { attachments: [], errors: [] };
           },
           getAppSettings: () => normalizeAppSettings({}),
-          resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+          resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
           getProviderCodingAdapter: () => adapter,
           getSessionMemory: (session) => createSessionMemory(session.id),
           resolveProjectMemoryEntriesForPrompt: () => [],
@@ -1706,14 +1708,13 @@ describe("SessionRuntimeService", () => {
       invalidateAllSessionThreads: unexpectedAdapterCall,
       runSessionTurn: unexpectedAdapterCall,
     };
-    const catalog = { revision: 1, providers: [createProviderCatalog(), createProviderCatalog("custom")] };
+    const catalog = { providers: [createProviderCatalog(), createProviderCatalog("custom")] };
     const facade = new MainProviderFacade({
       codexAdapter: adapter,
       copilotAdapter: adapter,
       claudeAdapter: adapter,
       opencodeAdapter: adapter,
       getModelCatalog: () => catalog,
-      ensureModelCatalogSeeded: () => catalog,
     });
     const unexpectedWrite = (): never => { writes += 1; throw new Error("Unexpected write"); };
     const service = createTestRuntime({
@@ -1721,7 +1722,7 @@ describe("SessionRuntimeService", () => {
       upsertSession: unexpectedWrite,
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { custom: { enabled: true } } }),
-      resolveProviderCatalog: (id, revision) => facade.resolveProviderCatalog(id, revision),
+      resolveProviderCatalog: (id) => facade.resolveProviderCatalog(id),
       getProviderCodingAdapter: (id) => facade.getProviderCodingAdapter(id),
       getProviderAgentRuntimeBinding: () => { bindingIssues += 1; return null; },
       getSessionMemory: () => createSessionMemory(session.id),
@@ -1846,7 +1847,7 @@ describe("SessionRuntimeService", () => {
       },
       resolveProviderCatalog() {
         const provider = createProviderCatalog();
-        return { snapshot: { revision: 1, providers: [provider] }, provider };
+        return { snapshot: { providers: [provider] }, provider };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2018,7 +2019,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2130,7 +2131,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2222,7 +2223,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2376,7 +2377,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2501,7 +2502,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2742,7 +2743,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2859,7 +2860,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2966,7 +2967,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3103,7 +3104,7 @@ resolveComposer!({ attachments: [], errors: [] });
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3274,7 +3275,7 @@ resolveProvider!(createPartialResult());
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3382,7 +3383,7 @@ resolveProvider!(createPartialResult());
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3522,7 +3523,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
+        return { snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3719,7 +3720,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
+        return { snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3771,10 +3772,10 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "usage_limit reasonは最小turnと応答の失敗理由へ利用制限と再開可能時刻を保存し、生成本文を保持する"
+  // claim = "usage_limit reasonは最小turnと応答の失敗理由へ利用制限と再開可能時刻を保存する"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Error Handling" }
   // fault = "usage limitを通常provider failureとして表示し、利用者の制限理由を隠す"
-  // observable = "turn error fieldsとassistant runFailure、取得済みtext"
+  // observable = "turn error fieldsとassistant runFailure"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService usage limit failure mapping"
   // lifecycle = "permanent"
@@ -3829,7 +3830,7 @@ releaseSecondAttempt!();
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3932,7 +3933,7 @@ releaseSecondAttempt!();
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -4037,7 +4038,7 @@ releaseSecondAttempt!();
           return normalizeAppSettings({ codingProviderSettings: { [providerId]: { enabled: true } } });
         },
         resolveProviderCatalog() {
-          return { snapshot: { revision: 1, providers: [createProviderCatalog(providerId)] }, provider: createProviderCatalog(providerId) };
+          return { snapshot: { providers: [createProviderCatalog(providerId)] }, provider: createProviderCatalog(providerId) };
         },
         getProviderCodingAdapter() {
           return adapter;
@@ -4142,7 +4143,7 @@ releaseSecondAttempt!();
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;

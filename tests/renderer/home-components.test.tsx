@@ -28,7 +28,6 @@ import { formatTimestampLabel } from "../../src-shared/time-state.js";
 
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {
-    revision: 1,
     providers: [
       {
         id: "codex",
@@ -68,7 +67,6 @@ describe("HomeSettingsContent", () => {
     <HomeSettingsContent
       settingsDraft={params?.settingsDraft ?? settingsDraft}
       providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
-      modelCatalogRevisionLabel={String(modelCatalog.revision)}
       memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
       memoryV6DiagnosticsLoadStatus="loaded"
       memoryV6DiagnosticsLoadError=""
@@ -107,8 +105,6 @@ describe("HomeSettingsContent", () => {
       onBrowseProviderSkillRootPath={noOp}
       onBrowseProviderSkillRelativePath={noOp}
       onBrowseProviderInstructionRelativePath={noOp}
-      onImportModelCatalog={noOp}
-      onExportModelCatalog={noOp}
       onOpenAppLogFolder={noOp}
       onOpenCrashDumpFolder={noOp}
       onOpenMemoryV6Review={noOp}
@@ -317,7 +313,6 @@ describe("HomeSettingsContent", () => {
     const draft = createDefaultAppSettings();
     draft.codingProviderSettings.opencode = { enabled: true, apiKey: "go-key-fixture", skillRootPath: "" };
     const catalog: ModelCatalogSnapshot = {
-      revision: 2,
       providers: [{ id: "opencode", label: "OpenCode", defaultModelId: "opencode-go/glm-5.3", defaultReasoningEffort: "high", models: [{ id: "opencode-go/glm-5.3", label: "GLM-5.3", reasoningEfforts: ["low", "high", "max"] }] }],
     };
     const html = renderSettings({ settingsDraft: draft, providerSettingRows: buildHomeProviderSettingRows(catalog, draft) });

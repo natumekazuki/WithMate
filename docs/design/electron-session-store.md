@@ -46,7 +46,7 @@ contextはrequestごとに現在の正本から解決する。画像chunkやPin�
 
 ### 実行設定と Send
 
-Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は provider / catalog / model / reasoning / 権限設定を検証し、その turn の prompt、Provider adapter、最小turn記録 に同じ設定を渡す。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
+Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は固定provider、非空model、reasoningと権限設定の入力形式を検証し、その turn の prompt、Provider adapter、最小turn記録 に同じ設定を渡す。SDK一覧への掲載やcatalog revisionを実行の条件にしない。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
 
 Main の `CurrentExecutionSelections` は会話 owner ごとの小さい選択値だけを保持する。同じアプリ内で Window を開き直した場合はこの値を復元し、storage generation の変更、owner の削除・incarnation の変更では破棄する。新規会話の初期値は provider ごとの現在選択を優先し、存在しなければ保存済みの直近値を使う。アプリ再起動では保存済み checkpoint から復元する。
 
@@ -64,9 +64,9 @@ Header・Action Dock・Side Paneの復元設定は、Rendererへ即時適用し�
 
 layoutの現在値はserviceの寿命中保持し、App SettingsまたはDB全体のreset成功時に破棄する。resetは任意checkpointの完了を待たず、未開始の旧checkpointを失効させる。dispatch前には既存のstorage ownerを照合し、旧serviceのqueueを新しいDB世代へ持ち越さない。
 
-Settingsのcredential変更でthreadをresetする場合は、MainのID・incarnation・provider・元thread、AuxiliaryのID・親・作成時刻・provider・元threadをtransaction内で照合し、対象fieldだけを条件付き更新する。本文、draft、messages、無関係な削除は全collection snapshotで巻き戻さない。後段失敗時は更新成功を確認できた行だけreverse CASし、結果不明の書込みへ無条件の逆書込みをしない。catalog import／resetでSession runtime metadataを反映する場合も同じ対象限定とowner照合を守る。
+Settingsのcredential変更でthreadをresetする場合は、MainのID・incarnation・provider・元thread、AuxiliaryのID・親・作成時刻・provider・元threadをtransaction内で照合し、対象fieldだけを条件付き更新する。本文、draft、messages、無関係な削除は全collection snapshotで巻き戻さない。後段失敗時は更新成功を確認できた行だけreverse CASし、結果不明の書込みへ無条件の逆書込みをしない。SDK model候補の更新ではSession runtime metadataを変更しない。
 
-provider cleanupは短いownership境界の外で完了を待つ。同じproviderのcleanupが残る間はそのproviderの新規turn admissionを拒否し、無関係なproviderは止めない。rollbackは開始時のstorage ownerとreset境界を再確認する。復元に成功した場合はSettings／catalogとSessionのinvalidationを再配信し、Auxiliaryの更新通知は親Session IDへ送る。
+provider cleanupは短いownership境界の外で完了を待つ。同じproviderのcleanupが残る間はそのproviderの新規turn admissionを拒否し、無関係なproviderは止めない。rollbackは開始時のstorage ownerとreset境界を再確認する。復元に成功した場合はSettingsとSessionのinvalidationを再配信し、Auxiliaryの更新通知は親Session IDへ送る。
 
 ## Lifecycle
 

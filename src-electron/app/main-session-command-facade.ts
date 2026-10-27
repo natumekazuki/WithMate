@@ -27,7 +27,7 @@ type MainSessionCommandFacadeDeps = {
   getStoredSessionSummaries(): Promise<readonly SessionSummary[]> | readonly SessionSummary[];
   getSessionStorageIdentity(): object;
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
-  resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
+  resolveSessionLaunchSelection(providerId?: string | null, workspacePath?: string, capturedDefaults?: SessionLaunchSelection): Promise<SessionLaunchSelection>;
   getSessionPersistenceService(): SessionPersistenceService;
   getSessionRuntimeService(): SessionRuntimeService;
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
@@ -51,6 +51,7 @@ export class MainSessionCommandFacade {
     return this.createSessionWithFilesDirectory(
       input.provider,
       (sessionId) => ({ ...input, id: sessionId }),
+      input.workspacePath,
     );
   }
 
@@ -70,6 +71,7 @@ export class MainSessionCommandFacade {
         workspacePath: workspace.kind === "session-folder" ? sessionFilesPath : workspace.path,
         branch: workspace.kind === "session-folder" ? "" : workspace.branch,
       }),
+      workspace.kind === "directory" ? workspace.path : undefined,
     );
     try {
       await this.deps.initializeCreatedSession(session);
@@ -86,9 +88,9 @@ export class MainSessionCommandFacade {
   private async createSessionWithFilesDirectory(
     providerId: string | undefined,
     buildInput: (sessionId: string, sessionFilesPath: string, launchSelection: SessionLaunchSelection) => CreateSessionInput & { id: string },
+    workspacePath?: string,
   ): Promise<Session> {
     const storageIdentity = this.deps.getSessionStorageIdentity();
-    const initialSelection = await this.deps.resolveSessionLaunchSelection(providerId);
     const sessionId = this.issueSessionId();
     const sessionFilesPath = await this.deps.createSessionFilesDirectory(sessionId);
     if (!sessionFilesPath.trim()) {
@@ -97,11 +99,13 @@ export class MainSessionCommandFacade {
 
     let persistenceStarted = false;
     try {
+      const discoveryWorkspacePath = workspacePath ?? sessionFilesPath;
+      const initialSelection = await this.deps.resolveSessionLaunchSelection(providerId, discoveryWorkspacePath);
       return await this.deps.runProviderRuntimeOperationExclusive(async () => {
         if (this.deps.getSessionStorageIdentity() !== storageIdentity) {
           throw new Error("Session storage changed during creation. Try creating the session again.");
         }
-        const latestSelection = await this.deps.resolveSessionLaunchSelection(providerId);
+        const latestSelection = await this.deps.resolveSessionLaunchSelection(providerId, discoveryWorkspacePath, initialSelection);
         if (!isDeepStrictEqual(latestSelection, initialSelection)) {
           throw new Error("Startup settings changed during creation. Try creating the session again.");
         }

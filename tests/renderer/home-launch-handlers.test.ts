@@ -390,7 +390,7 @@ describe("home-launch-handlers", () => {
       sessionCharacterUsageLoadStatus: "loaded",
       openSessionWindowIdsLoadStatus: "loaded",
       appSettings: createDefaultAppSettings(),
-      modelCatalog: { revision: 1, providers: [createProvider()] },
+      modelCatalog: { providers: [createProvider()] },
     }).canStartSession;
     assert.equal(canStart(), true);
 

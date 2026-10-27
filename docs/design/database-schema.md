@@ -12,7 +12,7 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 
 | 領域 | 主な正本 |
 | --- | --- |
-| 設定・catalog | `app_settings`、`prompt_templates`、`model_catalog_*`、`characters` |
+| 設定・catalog | `app_settings`、`prompt_templates`、`provider_model_cache`、`characters` |
 | Project | `project_scopes_v6` |
 | Main Session | `sessions_v6`、`session_messages_v6` |
 | Turn Queue | `session_turn_queue_v6` |
@@ -47,6 +47,8 @@ root種別・root path・相対pathの識別keyを親Session内で一意にし�
 list／追加／解除は既存のtyped IPCからstorage Workerへ渡し、親Session IDとincarnationを確認する。解除はrootが除去済みでも可能だが、別親SessionのPinは変更しない。本文読込・全件index・追加watcherは用いず、登録先のmetadata確認を最大4件ずつ並列実行する。保存結果不明・取得失敗はエラーとして伝え、空のPin集合へfallbackしない。
 
 ## 起動時の移行とデータ保護
+
+SDK model一覧は`provider_model_cache`へproviderとcontext keyの組を主キーに保存する。`provider_json`と`fetched_at`を保持し、context keyやcredentialをrendererへ渡さない。更新契約は[Provider Model Discovery](model-catalog.md)を参照する。V6 schema更新では`model_catalog_models`、`model_catalog_providers`、`model_catalog_revisions`を削除する。公開済みSessionの`catalog_revision`列の保存値は保持するが、実行設定の検証には使わず、Session、会話、draft、最小turnをcatalog変更で移行しない。
 
 V6 schema更新は`character_affect_turn_settlements`を`DROP TABLE IF EXISTS`で削除する。旧queueのpending、評価候補、retry、実行中、quarantineは再開せず、本文・候補も除去する。旧storage constructorや中断回収を起動せず、再実行・再起動でも旧評価を送信しない。破棄を評価成功として扱わず、保存済みAffect event／関連episode／一般Memoryとversion・idempotency情報は保持する。一部保存済みや保存結果不明の候補も再適用しない。
 

@@ -65,7 +65,7 @@ export type SessionRuntimeServiceDeps = {
   resolveSessionFolderPath?: (sessionId: string) => Awaitable<string>;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => Awaitable<AppSettings>;
-  resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): Awaitable<{
+  resolveProviderCatalog(providerId: string | null | undefined, workspacePath?: string): Awaitable<{
     snapshot: ModelCatalogSnapshot;
     provider: ModelCatalogProvider;
   }>;
@@ -937,13 +937,13 @@ export class SessionRuntimeService {
       throw new Error("This provider is disabled in Settings.");
     }
 
-    const { snapshot, provider } = await this.deps.resolveProviderCatalog(session.provider, queued ? undefined : request.executionOptions?.catalogRevision);
+    const { provider } = await this.deps.resolveProviderCatalog(session.provider, session.workspacePath);
     if (provider.id !== session.provider) {
       throw new Error("The selected provider does not match this session.");
     }
     let executionOptions: SessionExecutionOptions;
     try {
-      executionOptions = validateSessionExecutionOptions(queued ? { ...request.executionOptions, catalogRevision: snapshot.revision } : request.executionOptions, provider, snapshot.revision);
+      executionOptions = validateSessionExecutionOptions(request.executionOptions, provider);
     } catch (error) {
       if (queued) throw new QueuedTurnPreflightError(error instanceof Error ? error.message : "The captured execution options are unavailable.");
       throw error;

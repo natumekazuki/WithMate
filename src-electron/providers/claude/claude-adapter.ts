@@ -17,6 +17,8 @@ import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED 
 import { buildLiveElicitationFieldFromMcpSchema } from "../mcp-elicitation.js";
 import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
 import { projectClaudeQuotaTelemetry } from "./claude-quota-telemetry.js";
+import type { ListProviderModelsInput } from "../provider-runtime.js";
+import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
 
 const require = createRequire(import.meta.url);
 const CANCEL_GRACE_MS = 2_000;
@@ -211,6 +213,61 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
+  }
+
+  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    input.signal?.addEventListener("abort", abort, { once: true });
+    if (input.signal?.aborted) abort();
+    const timer = setTimeout(abort, 30_000);
+    let iterator: ReturnType<ClaudeQuery> | undefined;
+    let childExited: Promise<void> | undefined;
+    let closeInput!: () => void;
+    const inputClosed = new Promise<void>((resolve) => { closeInput = resolve; });
+    async function* emptyInput(): AsyncGenerator<SDKUserMessage> { await inputClosed; }
+    try {
+      controller.signal.throwIfAborted();
+      const settings = await signalRace(this.inspectSettings({ cwd: input.workspacePath, settingSources: [] }), controller.signal);
+      if (settings.sources.some((source) => source.source === "managed")) throw new Error("Managed settings prevent metadata-only discovery");
+      controller.signal.throwIfAborted();
+      iterator = this.runQuery({ prompt: emptyInput(), options: {
+        cwd: input.workspacePath, pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
+        env: mergeDefinedProviderEnv(process.env, {}),
+        tools: [], mcpServers: {}, strictMcpConfig: true,
+        settingSources: [], settings: { disableAllHooks: true }, persistSession: false,
+        abortController: controller,
+        spawnClaudeCodeProcess: (options) => {
+          const child = this.spawnProcess(options.command, options.args, {
+            cwd: options.cwd, env: options.env, signal: options.signal,
+            stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+          });
+          child.stderr?.on("error", () => undefined);
+          child.stderr?.resume();
+          childExited = new Promise<void>((resolve) => {
+            child.once("close", () => resolve());
+            child.once("error", () => { if (child.pid === undefined) resolve(); });
+          });
+          return child;
+        },
+      } });
+      const metadata = await signalRace(iterator.supportedModels(), controller.signal);
+      const models = metadata.map((model) => ({ id: model.value, label: model.displayName,
+        reasoningEfforts: model.supportsEffort ? model.supportedEffortLevels ?? [] : [], defaultReasoningEffort: "" }));
+      return { id: "claude", label: "Claude", models, defaultModelId: models[0]?.id ?? "", defaultReasoningEffort: "" };
+    } catch {
+      throw new Error(controller.signal.aborted ? "Claude model discovery canceled" : "Claude models could not be retrieved");
+    } finally {
+      clearTimeout(timer);
+      input.signal?.removeEventListener("abort", abort);
+      closeInput();
+      try { iterator?.close(); }
+      catch { throw new Error("Claude model discovery process cleanup failed"); }
+      finally {
+        controller.abort();
+        if (childExited) await childExited;
+      }
+    }
   }
 
   async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput) {
@@ -416,7 +473,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
       env: mergeDefinedProviderEnv(process.env, buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding)),
       model: selection.resolvedModel,
-      effort: selection.resolvedReasoningEffort as Options["effort"],
+      ...(selection.resolvedReasoningEffort ? { effort: selection.resolvedReasoningEffort as Options["effort"] } : {}),
       permissionMode: "default",
       resume: input.session.threadId || undefined,
       systemPrompt: { type: "preset", preset: "claude_code", append: prompt.systemBodyText, snapshot: false },

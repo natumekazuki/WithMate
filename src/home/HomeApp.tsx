@@ -766,7 +766,6 @@ export default function HomeApp() {
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
     settingsDraft,
     providerSettingRows,
-    modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
     memoryV6Diagnostics,
     settingsDraftLoaded,
     memoryV6DiagnosticsLoadStatus,

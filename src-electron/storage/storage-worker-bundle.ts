@@ -65,7 +65,7 @@ const STORE_METHODS = {
     "createRuntimeSnapshot", "refreshRuntimeSnapshot", "deleteCharacterRootDirectory",
   ],
   settings: ["getSettings", "updateSettings", "updateChatLayoutPreference", "resetSettings"],
-  catalog: ["ensureSeeded", "getActiveCatalog", "getCatalog", "getProviderCatalog", "importCatalogDocument", "resetToBundled", "exportCatalogDocument"],
+  catalog: ["getCachedProviders", "getCatalog", "upsertProvider", "clear"],
   mate: [
     "initializeSchema", "getMateState", "getUserDataPath", "getMateProfile", "verifyMateProfileFiles",
     "getMateGrowthSettings", "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate",
@@ -87,8 +87,8 @@ const MUTATIONS = new Set([
   "deleteAuxiliarySessionsExceptParents", "saveAuxiliaryDraft", "consumeAuxiliaryDraft",
   "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",
   "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
-  "deleteCharacterRootDirectory", "updateSettings", "updateChatLayoutPreference", "resetSettings", "importCatalogDocument", "resetToBundled",
-  "ensureSeeded", "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
+  "deleteCharacterRootDirectory", "updateSettings", "updateChatLayoutPreference", "resetSettings", "upsertProvider", "clear",
+  "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
   "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
   "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
   "enqueue",
@@ -100,8 +100,8 @@ let instances: StorageInstances | null = null;
 let conversationQueries: ConversationQueryCoordinator | null = null;
 
 function createStoreHandlers(data: StorageWorkerEntryData) {
-  if (!data.dbPath || !data.bundledModelCatalogPath || !data.userDataPath) {
-    throw new Error("V6 storage worker requires dbPath, bundledModelCatalogPath, and userDataPath.");
+  if (!data.dbPath || !data.userDataPath) {
+    throw new Error("V6 storage worker requires dbPath and userDataPath.");
   }
   const dbPath = data.dbPath;
   const schemaDb = openAppDatabase(dbPath);
@@ -122,12 +122,11 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
   const queries = conversationQueries;
   const character = new CharacterStorage(data.dbPath, data.userDataPath);
   const settings = new AppSettingsStorage(data.dbPath);
-  const catalog = new ModelCatalogStorage(data.dbPath, data.bundledModelCatalogPath);
+  const catalog = new ModelCatalogStorage(data.dbPath);
   const mate = new MateStorage(data.dbPath, data.userDataPath);
   const prompt = new PromptTemplateStorage(data.dbPath);
   instances = { session, turn, queue, auxiliary, character, settings, catalog, mate, prompt };
   const currentInstances = instances;
-  catalog.ensureSeeded();
 
   return {
     "conversation.query": (payload: unknown, context: StorageWorkerHandlerContext) => {
@@ -139,7 +138,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
     },
     "conversation.cancel": (payload: unknown) => queries.cancel(payload as ConversationQueryCancelRequest),
     "bundle.initialize": async () => ({
-      activeModelCatalog: await catalog.ensureSeeded(),
+      activeModelCatalog: catalog.getCatalog(),
       sessions: sessionSummariesToSessions(await session.listSessionSummaries()),
     }),
     "maintenance.truncateWal": (payload: unknown) => {
@@ -184,7 +183,6 @@ export async function stopStorageConversationQueries(): Promise<void> {
 
 export function createV6StorageWorkerBundle(options: {
   dbPath: string;
-  bundledModelCatalogPath: string;
   userDataPath: string;
   workerUrl?: URL | string;
   handlerModule?: URL | string;
@@ -203,7 +201,6 @@ export function createV6StorageWorkerBundle(options: {
     workerData: {
       handlerModule,
       dbPath: options.dbPath,
-      bundledModelCatalogPath: options.bundledModelCatalogPath,
       userDataPath: options.userDataPath,
     },
   });

@@ -159,7 +159,7 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       assertOwner("session deletion");
     },
     getAppSettings: async () => { assertOwner("settings read"); const result = await deps.settings.getAppSettings(); assertOwner("settings read"); return result; },
-    getModelCatalogSnapshot: async () => { assertOwner("catalog read"); const result = await deps.settings.getModelCatalogSnapshot(); assertOwner("catalog read"); return result; },
+    getModelCatalogSnapshot: async (workspacePath, providerId) => { assertOwner("catalog read"); const result = await deps.settings.getModelCatalogSnapshot(workspacePath, providerId); assertOwner("catalog read"); return result; },
     createCharacterRuntimeSnapshot: async (characterId) => { assertOwner("character snapshot"); const result = await deps.character.createCharacterRuntimeSnapshot(characterId); assertOwner("character snapshot"); return result; },
     syncSessionDependencies: (session) => { assertOwner("session dependency sync"); deps.effects.syncSessionDependencies(session); },
     clearSessionContextTelemetry: (sessionId) => { assertOwner("context telemetry clear"); deps.effects.clearSessionContextTelemetry(sessionId); },

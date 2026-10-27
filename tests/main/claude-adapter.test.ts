@@ -416,6 +416,28 @@ function result(sessionId: string, overrides: Record<string, unknown> = {}): SDK
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "Claude turnは保存済みnative Depthをそのまま渡し未指定時にeffortを省略する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "未知の保存値を別Depthへ置換するか空文字をSDK optionへ送る"
+// observable = "queryへ渡るOptions.effortとpropertyの有無"
+// observation_boundary = "public-boundary"
+// scope = "Claude turn Depth forwarding"
+// lifecycle = "permanent"
+// @end-test-value
+it("Claude native Depthは保持し未指定effortはSDKへ送らない", async () => {
+  for (const effort of ["", "native-future-effort"]) {
+    const request = input();
+    request.executionOptions = { ...request.executionOptions, reasoningEffort: effort };
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("depth"); }, (options) => {
+      assert.equal(Object.hasOwn(options, "effort"), Boolean(effort));
+      assert.equal(options.effort, effort || undefined);
+    }) });
+    await adapter.runSessionTurn(request);
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Claudeの長い本文はprogressへ全量配送して成功結果にも保持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }

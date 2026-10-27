@@ -3,8 +3,6 @@ import { describe, it } from "node:test";
 
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
-  exportHomeModelCatalog,
-  importHomeModelCatalog,
   resetHomeDatabase,
   saveHomeSettings,
   deleteOldSessions,
@@ -16,14 +14,12 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 
 function createApi(overrides?: Partial<HomeSettingsApi>): HomeSettingsApi {
   return {
-    importModelCatalogFile: async () => null,
-    exportModelCatalogFile: async () => null,
     updateAppSettings: async (settings) => settings,
     resetAppDatabase: async () => ({
       resetTargets: ["sessions"],
       sessions: [],
       appSettings: createDefaultAppSettings(),
-      modelCatalog: { revision: 1, providers: [] },
+      modelCatalog: { providers: [] },
     }),
     deleteSessionsLastActiveBefore: async () => ({
       cutoffDate: "2026-07-01",
@@ -40,26 +36,6 @@ async function flushAsyncHandlers(): Promise<void> {
 }
 
 describe("home-settings-actions", () => {
-  // @test-value v2
-  // kind = "contract"
-  // claim = "model catalog import/export actionは読み込みrevisionと保存pathを含む成功feedbackを返す"
-  // oracle = { type = "contract", ref = "src/settings/settings-actions.ts: importHomeModelCatalog/exportHomeModelCatalog" }
-  // fault = "成功操作を汎用または旧言語feedbackにし、revisionまたは保存先pathを利用者へ伝えない"
-  // observable = "import/export actionの戻り値"
-  // observation_boundary = "public-boundary"
-  // scope = "home-settings-model-catalog-feedback"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("import/export の feedback を返す", async () => {
-    const api = createApi({
-      importModelCatalogFile: async () => ({ revision: 3, providers: [] }),
-      exportModelCatalogFile: async () => "tmp/catalog.json",
-    });
-
-    assert.equal(await importHomeModelCatalog(api), "Loaded model catalog revision 3.");
-    assert.equal(await exportHomeModelCatalog(api), "Saved the model catalog to tmp/catalog.json.");
-  });
-
   // @test-value v2
   // kind = "contract"
   // claim = "Settings save actionは更新済みsettingsと保存完了feedbackを返す"

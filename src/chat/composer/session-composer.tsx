@@ -18,6 +18,7 @@ import { AdditionalDirectoryPathControl } from "./additional-directory-path-cont
 import type { WorkspaceDirectoryValidationResult } from "../../../src-shared/window/workspace-directory-validation.js";
 import { ComposerIcon } from "./composer-icon.js";
 import { ComposerSettingSelect } from "./composer-setting-select.js";
+import { ModelPicker } from "./model-picker.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
 import {
   getComposerSendButtonTitle,
@@ -30,6 +31,8 @@ import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../../settings/shortc
 export type SessionSelectOption = {
   value: string;
   label: string;
+  sourceLabel?: string;
+  disabled?: boolean;
 };
 
 type SessionCustomAgentItem = {
@@ -116,6 +119,9 @@ export type SessionComposerExpandedProps = {
   speedOptions: Array<{ value: CodexSpeed; label: string }>;
   selectedCodexSpeed: CodexSpeed;
   modelOptions: SessionSelectOption[];
+  modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
+  modelDiscoveryError?: string;
+  modelDiscoveryHasCache?: boolean;
   selectedModel: string;
   selectedModelFallbackLabel: string;
   reasoningOptions: SessionSelectOption[];
@@ -148,6 +154,7 @@ export type SessionComposerExpandedProps = {
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeCodexSpeed: (value: CodexSpeed) => void;
   onChangeModel: (value: string) => void;
+  onModelPickerOpen?: () => void;
   onChangeReasoningEffort: (value: string) => void;
   onMessageViewModeChange?: (mode: MessageViewMode) => void;
 };
@@ -209,6 +216,9 @@ export function SessionComposerExpanded({
   speedOptions = [],
   selectedCodexSpeed = "standard",
   modelOptions,
+  modelDiscoveryStatus,
+  modelDiscoveryError,
+  modelDiscoveryHasCache,
   selectedModel,
   selectedModelFallbackLabel,
   reasoningOptions,
@@ -241,6 +251,7 @@ export function SessionComposerExpanded({
   onChangeCodexSandboxMode,
   onChangeCodexSpeed = () => {},
   onChangeModel,
+  onModelPickerOpen,
   onChangeReasoningEffort,
   onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
@@ -690,34 +701,26 @@ export function SessionComposerExpanded({
             </>
           ) : null}
 
-          <div className="composer-setting-field composer-setting-model">
-            <select
-              aria-label="Model"
-              title={`Model: ${modelOptions.find((option) => option.value === selectedModel)?.label ?? selectedModelFallbackLabel}`}
-              value={selectedModel}
-              onChange={(event) => onChangeModel(event.target.value)}
-              disabled={composerControlsDisabled}
-            >
-              {modelOptions.length > 0 ? (
-                modelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))
-              ) : (
-                <option value={selectedModel}>{selectedModelFallbackLabel}</option>
-              )}
-            </select>
-          </div>
+          <ModelPicker
+            options={modelOptions}
+            discoveryStatus={modelDiscoveryStatus}
+            discoveryError={modelDiscoveryError}
+            discoveryHasCache={modelDiscoveryHasCache}
+            value={selectedModel}
+            fallbackLabel={selectedModelFallbackLabel}
+            onChange={onChangeModel}
+            onOpen={onModelPickerOpen}
+            disabled={composerControlsDisabled}
+          />
 
-          <ComposerSettingSelect
+          {reasoningOptions.length > 0 ? <ComposerSettingSelect
             className="composer-setting-depth"
             label="Reasoning depth"
             value={selectedReasoningEffort}
             options={reasoningOptions}
             onChange={onChangeReasoningEffort}
             disabled={composerControlsDisabled}
-          />
+          /> : null}
 
           {speedOptions.length > 0 ? (
             <ComposerSettingSelect

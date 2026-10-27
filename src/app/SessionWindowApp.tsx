@@ -38,7 +38,7 @@ import {
   getReasoningEffortOptionsForModel,
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
-import { startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
+import { isSameModelCatalogWorkspace, startModelCatalogSubscription } from "../settings/model-catalog-subscription.js";
 import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
 import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
 import {
@@ -339,7 +339,6 @@ export default function AgentSessionWindowApp() {
     getCurrentSession: getCurrentMainSession,
     selectExecutionOptions: selectMainExecutionOptions,
     updateSessionProjection,
-    applyModelCatalog: applyMainExecutionCatalog,
   } = mainSessionRuntime;
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
@@ -875,24 +874,20 @@ export default function AgentSessionWindowApp() {
   useEffect(() => {
     return startModelCatalogSubscription({
       api: withmateApi,
-      enabled: true,
+      enabled: Boolean(selectedSession?.workspacePath),
+      workspacePath: selectedSession?.workspacePath,
       subscribe: true,
       applyModelCatalog: (snapshot) => {
-        if (snapshot) {
-          applyMainExecutionCatalog(snapshot);
-          auxiliaryWorkspace.applyModelCatalog(snapshot);
-        }
         setModelCatalog(snapshot);
         setModelCatalogLoadStatus("loaded");
         setModelCatalogLoadError("");
       },
       onInitialLoadError: (error) => {
-        setModelCatalog(null);
         setModelCatalogLoadStatus("error");
         setModelCatalogLoadError(error instanceof Error ? error.message : "Could not load model catalog.");
       },
     });
-  }, [withmateApi, applyMainExecutionCatalog, auxiliaryWorkspace.applyModelCatalog, modelCatalogReadRevision]);
+  }, [withmateApi, selectedSession?.workspacePath, modelCatalogReadRevision]);
 
   useEffect(() => {
     return startAppSettingsSubscription({
@@ -1251,7 +1246,6 @@ export default function AgentSessionWindowApp() {
       session: getCurrentMainSession(),
       isReadOnly: isSelectedSessionReadOnly,
       providerCatalog: selectedProviderCatalog,
-      catalogRevision: modelCatalog?.revision ?? null,
       option,
       persist: (nextSession) => {
         setExecutionOptionsFeedback(null);
@@ -2036,6 +2030,9 @@ export default function AgentSessionWindowApp() {
       chatNotice: isCentralPreviewActive ? actionDockChatNotice : "",
       providerCatalog: selectedProviderCatalog,
       models: modelOptions,
+      modelDiscoveryHasCache: Boolean(isSameModelCatalogWorkspace(modelCatalog?.workspacePath, renderedSession.workspacePath) && modelCatalog?.discovery?.[renderedSession.provider]?.fetchedAt),
+      modelDiscoveryStatus: modelCatalog?.discovery?.[renderedSession.provider]?.status ?? (modelCatalogLoadStatus === "error" ? "error" : "loading"),
+      modelDiscoveryError: modelCatalog?.discovery?.[renderedSession.provider]?.error ?? modelCatalogLoadError,
       reasoningEfforts: availableReasoningEfforts,
     },
     resources: {
@@ -2046,6 +2043,20 @@ export default function AgentSessionWindowApp() {
       skillListError,
     },
     operations: {
+      onModelPickerOpen: () => {
+        if (!withmateApi) return;
+        const workspacePath = renderedSession.workspacePath;
+        void withmateApi.getModelCatalog({ providerId: renderedSession.provider, workspacePath }).then((snapshot) => {
+          if (snapshot && isSameModelCatalogWorkspace(snapshot.workspacePath, workspacePath)) {
+            setModelCatalog((current) => isSameModelCatalogWorkspace(current?.workspacePath, workspacePath) ? current : snapshot);
+          }
+        }).catch((error: unknown) => {
+          setModelCatalog((current) => current?.workspacePath === workspacePath ? {
+            ...current,
+            discovery: { ...current.discovery, [renderedSession.provider]: { status: "error", error: error instanceof Error ? error.message : "Could not load models." } },
+          } : current);
+        });
+      },
       send: {
         main: handleSend,
         auxiliary: handleSend,
@@ -2069,7 +2080,6 @@ export default function AgentSessionWindowApp() {
         auxiliary: {
           session: activeAuxiliarySession,
           update: updateAuxiliaryExecutionOptions,
-          catalogRevision: modelCatalog?.revision ?? null,
           timestamp: currentTimestampLabel,
         },
       },

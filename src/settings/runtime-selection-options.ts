@@ -31,6 +31,7 @@ export function buildRuntimeSelectionOptions({
   providerCatalog,
   models,
   selectedModel,
+  selectedReasoningEffort,
   reasoningEfforts,
   selectedApprovalMode,
   selectedCodexSandboxMode,
@@ -41,6 +42,7 @@ export function buildRuntimeSelectionOptions({
   providerCatalog: ModelCatalogProvider | null | undefined;
   models: readonly ModelCatalogItem[];
   selectedModel: string;
+  selectedReasoningEffort?: string;
   reasoningEfforts: readonly ModelReasoningEffort[];
   selectedApprovalMode: ApprovalMode;
   selectedCodexSandboxMode: CodexSandboxMode;
@@ -63,6 +65,12 @@ export function buildRuntimeSelectionOptions({
   const modelSelectOptions = buildModelSelectOptions(models, selectedModel);
   const selectedModelFallbackLabel = resolveModelFallbackLabel(providerCatalog, selectedModel);
   const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEfforts);
+  if (reasoningSelectOptions.length > 0 && !reasoningSelectOptions.some((option) => option.value === "")) {
+    reasoningSelectOptions.unshift({ value: "", label: "Default" });
+  }
+  if (reasoningSelectOptions.length > 0 && selectedReasoningEffort && !reasoningSelectOptions.some((option) => option.value === selectedReasoningEffort)) {
+    reasoningSelectOptions.unshift({ value: selectedReasoningEffort, label: selectedReasoningEffort });
+  }
   const speedSelectOptions = getCodexSpeedOptions(providerId);
   const reviewerSelectOptions = getCodexReviewerOptions(providerId);
 

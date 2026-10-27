@@ -4,6 +4,7 @@ import { modelDisplayLabel, modelOptionLabel, reasoningDepthLabel } from "../ui/
 export type ModelSelectOption = {
   value: string;
   label: string;
+  sourceLabel?: string;
 };
 
 export type ReasoningEffortSelectOption = {
@@ -15,9 +16,10 @@ export function buildModelSelectOptions(
   models: readonly ModelCatalogItem[],
   selectedModelId = "",
 ): ModelSelectOption[] {
-  const options = models.map((model) => ({
+  const options: ModelSelectOption[] = models.map((model) => ({
     value: model.id,
     label: modelOptionLabel(model),
+    ...(model.sourceLabel ? { sourceLabel: model.sourceLabel } : {}),
   }));
   if (selectedModelId && !options.some((option) => option.value === selectedModelId)) {
     options.unshift({ value: selectedModelId, label: selectedModelId });
@@ -38,6 +40,6 @@ export function buildReasoningEffortSelectOptions(
 ): ReasoningEffortSelectOption[] {
   return reasoningEfforts.map((reasoningEffort) => ({
     value: reasoningEffort,
-    label: reasoningDepthLabel(reasoningEffort),
+    label: reasoningEffort ? reasoningDepthLabel(reasoningEffort) : "Default",
   }));
 }

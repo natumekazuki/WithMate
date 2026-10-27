@@ -80,6 +80,7 @@ const providerCatalog: ModelCatalogProvider = {
     {
       id: "gpt-5.4-mini",
       label: "GPT-5.4 Mini",
+      defaultReasoningEffort: "low",
       reasoningEfforts: ["low", "medium"],
     },
   ],
@@ -112,7 +113,6 @@ describe("home-settings-draft", () => {
   };
 
   const modelCatalogSnapshot: ModelCatalogSnapshot = {
-    revision: 1,
     providers: [providerCatalog, copilotProviderCatalog],
   };
 

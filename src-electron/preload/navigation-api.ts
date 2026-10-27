@@ -135,34 +135,8 @@ export function createCatalogApi(
   ipcRenderer: IpcRendererLike,
 ): WithMateWindowCatalogApi {
   return {
-    getModelCatalog(revision) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_GET_MODEL_CATALOG_CHANNEL,
-        revision ?? null,
-      );
-    },
-    importModelCatalog(document) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
-        document,
-      );
-    },
-    exportModelCatalog(revision) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
-        revision ?? null,
-      );
-    },
-    importModelCatalogFile() {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL,
-      );
-    },
-    exportModelCatalogFile(revision) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL,
-        revision ?? null,
-      );
+    getModelCatalog(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_GET_MODEL_CATALOG_CHANNEL, request);
     },
     getDiffPreview(token) {
       return ipcRenderer.invoke(

@@ -24,7 +24,7 @@ import {
 import { CODEX_SPEED_VALUES, DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
 import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
 import {
-  coerceModelSelection,
+  resolveModelSelection,
   getProviderCatalog,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
@@ -58,10 +58,10 @@ import type {
 
 type AuxiliarySessionServiceDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
-  resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
+  resolveSessionLaunchSelection(providerId?: string | null, workspacePath?: string): Promise<SessionLaunchSelection>;
   getParentSession(parentSessionId: string): Awaitable<Session | null>;
   getStorage(): AuxiliarySessionStorageAccess;
-  getModelCatalogSnapshot?(): Awaitable<ModelCatalogSnapshot | null>;
+  getModelCatalogSnapshot?(workspacePath?: string, providerId?: string): Awaitable<ModelCatalogSnapshot | null>;
   listActiveCharacters(): Awaitable<readonly CharacterCatalogEntry[]>;
   createCharacterRuntimeSnapshot(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
   randomCharacter?: () => number;
@@ -124,7 +124,10 @@ function buildInterruptedMessages(messages: AuxiliarySession["messages"]): Auxil
 }
 
 function resolveInitialModelSelection(input: CreateAuxiliarySessionInput, providerCatalog: ModelCatalogProvider) {
-  return coerceModelSelection(
+  if (!(input.model ?? providerCatalog.defaultModelId).trim()) {
+    throw new Error(`Provider ${providerCatalog.id} has no available model. Complete model discovery before creating an Auxiliary Session.`);
+  }
+  return resolveModelSelection(
     providerCatalog,
     input.model ?? providerCatalog.defaultModelId,
     input.reasoningEffort ?? providerCatalog.defaultReasoningEffort,
@@ -440,7 +443,7 @@ export class AuxiliarySessionService {
     if (!snapshot || !provider || provider.id !== session.provider) {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
     }
-    const options = { ...validateSessionExecutionOptions(request.executionOptions, provider, snapshot.revision),
+    const options = { ...validateSessionExecutionOptions(request.executionOptions, provider),
       codexReviewer: resolveCodexReviewerUpdate(fresh, request.executionOptions.codexReviewer) };
     this.assertStorageIdentity(storage, identity);
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
@@ -715,12 +718,13 @@ export class AuxiliarySessionService {
     const parentIncarnationId = getSessionIncarnationId(parent);
     const parentCharacterId = resolveParentCharacterId(parent);
     const launchSelection = options.runtimeSelectionMode === "latest-session"
-      ? await this.deps.resolveSessionLaunchSelection(input.provider)
+      ? await this.deps.resolveSessionLaunchSelection(input.provider, parent.workspacePath)
       : await this.resolveExplicitLaunchSelection(
         input,
         options.approvalMode,
         options.codexSandboxMode,
         options.codexSpeed,
+        parent.workspacePath,
       );
 
     const characterSelection = await this.resolveAuxiliaryCharacter(parentCharacterId, storage, input.parentSessionId);
@@ -801,18 +805,7 @@ export class AuxiliarySessionService {
       }
     }
 
-    const runtimeSelectionMode = resolveRuntimeSelectionMode(input.runtimeSelection);
-    const launchSelection = runtimeSelectionMode === "latest-session"
-      ? await this.deps.resolveSessionLaunchSelection(input.provider)
-      : await this.resolveExplicitLaunchSelection(
-        input,
-        prepared.launchSelection.approvalMode,
-        prepared.launchSelection.codexSandboxMode,
-        prepared.launchSelection.codexSpeed,
-      );
-    if (!isDeepStrictEqual(launchSelection, prepared.launchSelection)) {
-      throw new Error("Auxiliary Session creation was canceled because its runtime selection changed during creation.");
-    }
+    const launchSelection = prepared.launchSelection;
     if (this.deps.getStorage() !== storage) {
       throw new Error("Auxiliary Session creation was canceled because its storage changed during creation.");
     }
@@ -844,7 +837,7 @@ export class AuxiliarySessionService {
       runState: "idle",
       title: "",
       provider: launchSelection.provider,
-      catalogRevision: launchSelection.catalogRevision,
+      catalogRevision: 0,
       model: launchSelection.model,
       reasoningEffort: launchSelection.reasoningEffort,
       approvalMode: launchSelection.approvalMode,
@@ -939,8 +932,9 @@ export class AuxiliarySessionService {
     approvalMode: SessionLaunchSelection["approvalMode"],
     codexSandboxMode: SessionLaunchSelection["codexSandboxMode"],
     codexSpeed: SessionLaunchSelection["codexSpeed"],
+    workspacePath: string,
   ): Promise<SessionLaunchSelection> {
-    const snapshot = await this.deps.getModelCatalogSnapshot?.();
+    const snapshot = await this.deps.getModelCatalogSnapshot?.(workspacePath, input.model ? undefined : input.provider);
     const providerCatalog = getProviderCatalog(snapshot?.providers ?? [], input.provider);
     if (!snapshot || !providerCatalog || providerCatalog.id !== input.provider.trim()) {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
@@ -951,7 +945,6 @@ export class AuxiliarySessionService {
     const modelSelection = resolveInitialModelSelection(input, providerCatalog);
     return {
       provider: providerCatalog.id,
-      catalogRevision: snapshot.revision,
       model: modelSelection.resolvedModel,
       reasoningEffort: modelSelection.resolvedReasoningEffort,
       approvalMode,

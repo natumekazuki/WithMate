@@ -1,167 +1,48 @@
-# Model Catalog
+# Provider Model Discovery
 
+## 正本と責務
 
-## Goal
+Model候補とDepthはCodex、Claude、GitHub Copilot、OpenCodeのSDK／native model一覧から取得する。WithMateは選択肢をSQLiteへcacheするが、手管理のmodel定義、同梱JSON、import／export、catalog revisionによる実行許可は持たない。
 
-WithMate の model catalog を SQLite で管理し、Session Window と provider adapter が同じ catalog revision を参照できるようにする。
+`ProviderCodingAdapter.listModels()`がprovider固有の取得・正規化を担い、`ProviderModelDiscoveryService`が取得の開始、cacheの選択、状態通知を所有する。Sessionのproviderは作成時に固定し、Model UIはそのproviderの候補だけを表示する。OpenCodeのnative配信元はmodel IDに含まれ、WithMateのprovider切替ではない。
 
-外部との入出力は versionless JSON で行い、アプリ内部だけ revision を持つ。
+## Cacheと更新
 
-## Decision
+- storage Workerが`provider_model_cache`を所有する。主キーは`provider_id / context_key`、payloadは`provider_json`、取得時刻は`fetched_at`に保存する。
+- contextはprovider、絶対workspace path、provider設定、関連する認証環境変数で分離する。credentialを含む入力はMain内でdigest化し、rendererのsnapshotへcontext keyやcredentialを渡さない。
+- UIは該当contextのcacheを先に表示する。10分以上古いcacheまたは未取得の一覧は、Modelを開いたときにbackgroundで取得する。同contextの実行中取得はまとめ、通常の再試行は30秒間隔とする。取得には20秒のabort timeoutを設ける。
+- 起動時とprovider設定変更時は有効なproviderをbackgroundで取得する。設定変更前の応答を新contextへ保存せず、storage lifecycle終了時は取得をabortして完了を待つ。
+- `idle / loading / ready / error`と取得時刻を通知する。失敗時は同contextの既存cacheを保持し、失敗を正常emptyや別contextの候補へ置換しない。専用のrefresh操作は設けない。
 
-- model catalog の正本は SQLite に置く
-- catalog の import / export 形式は versionless JSON にする
-- 初回起動で active catalog が無ければ、アプリ同梱の `public/model-catalog.json` を import して seed する
-- import のたびに内部 revision を新規採番し、active revision を切り替える
-- Agent / Auxiliary の runtime session は `provider / model / reasoningEffort / catalogRevision` を保持する
-- Session Window の model 設定は catalog 選択のみとし、自由入力は許可しない
-- catalog import 時は既存 Agent / Auxiliary session も新 active revision へ自動 migrate する
+## 選択と実行
 
-## JSON Format
+候補の更新は選択肢の更新であり、Session migrationではない。保存済み・現在選択のmodel／Depth、入力draft、thread、実行中turn、受付済みqueueの捕捉値は変更しない。cacheから消えた現在のmodelも表示を維持する。
 
-```json
-{
-  "providers": [
-    {
-      "id": "codex",
-      "label": "Codex",
-      "defaultModelId": "gpt-5.4",
-      "defaultReasoningEffort": "high",
-      "models": [
-        {
-          "id": "gpt-5.4",
-          "label": "GPT-5.4",
-          "reasoningEfforts": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
-        }
-      ]
-    }
-  ]
-}
-```
+新規会話はproviderごとの現在選択、なければ保存済みの直近値を引き継ぐ。どちらにもmodelがない場合だけ初回一覧を待ち、取得したprovider defaultを使う。一覧取得に失敗した場合は固定modelへfallbackしない。
 
-### Rules
+Sendはその時点のmodel、Depth、権限等を`executionOptions`へ捕捉し、Main／Auxiliaryの実行と最小turn記録へ同じ値を渡す。非空modelと入力形式・権限はMainの境界で検証し、SDK一覧への掲載やrevisionを実行の条件にしない。providerが拒否したmodel／Depthは実行エラーとして扱い、別model、Depth、providerへ自動切替しない。
 
-- top-level に `version` は持たない
-- `providers` は 1 件以上必須
-- provider ごとに
-  - `id`
-  - `label`
-  - `defaultModelId`
-  - `defaultReasoningEffort`
-  - `models`
-  が必須
-- `defaultModelId` はその provider の `models` に存在しなければならない
-- `defaultReasoningEffort` は `defaultModelId` の `reasoningEfforts` に含まれていなければならない
-- reasoning effort は model が対応する値だけを列挙する。Codex の `max` / `ultra` も model が advertise する場合だけ指定する
+Depthはmodelがadvertiseする任意文字列の配列であり、固定enumに限定しない。空配列はDepthなしを表し、UIを隠す。候補がある場合は空文字の`Default`も表示し、nativeへのDepth未指定と表示を一致させる。明示的なmodel変更では、新modelで現在のDepthを使える場合は維持し、使えなければそのmodelのdefaultまたは未指定へ変更する。候補のbackground更新だけではDepthを変更しない。
 
-## Internal Storage
+## Model UI
 
-SQLite では次の 4 テーブルで保持する。
-
-### `model_catalog_revisions`
-
-- `revision INTEGER PRIMARY KEY AUTOINCREMENT`
-- `source TEXT NOT NULL`
-- `imported_at TEXT NOT NULL`
-- `is_active INTEGER NOT NULL`
-
-### `model_catalog_providers`
-
-- `revision INTEGER NOT NULL`
-- `provider_id TEXT NOT NULL`
-- `label TEXT NOT NULL`
-- `default_model_id TEXT NOT NULL`
-- `default_reasoning_effort TEXT NOT NULL`
-- `sort_order INTEGER NOT NULL`
-
-### `model_catalog_models`
-
-- `revision INTEGER NOT NULL`
-- `provider_id TEXT NOT NULL`
-- `model_id TEXT NOT NULL`
-- `label TEXT NOT NULL`
-- `reasoning_efforts_json TEXT NOT NULL`
-- `sort_order INTEGER NOT NULL`
-
-## Revision Policy
-
-- active catalog は常に 1 revision
-- import 時は既存 revision を破壊更新しない
-- 新 revision を作って `is_active = 1` に切り替える
-- Agent / Auxiliary session には `catalogRevision` を保存する
-
-### 現行の反映
-
-- Session Window の選択肢は常に current active revision を正本にして表示する
-- Session 内で model / depth を変更した場合は current active revision に乗り換える
-- import 成功時は、active revision の切り替えと同じタイミングで既存 Agent / Auxiliary session も自動 migrate 対象にする
-- `catalogRevision` は `旧 revision を保持し続ける pin` の説明よりも、`その session に現在反映されている revision` を示す値として扱う
-- import後はUIと実行のcatalog revisionを揃える
-- import／reset／rollbackのactive revision変更は、MainとRendererの現在選択にも適用する。古いcheckpointの到着とは区別し、model／depthを新catalogで正規化する。保存失敗で未保存の選択も対象とし、importの一時的な正規化だけでは利用者の選択意図を書き換えない。
-- migration では provider / model / reasoningEffort を新 active revision に合わせて正規化し、選択が変わった runtime session は thread をリセットしてよい
-- catalog import／resetによる内部metadataの移行は会話・利用の更新ではないため、model／depthの正規化やthread resetを伴ってもMain／Auxiliaryの`updatedAt`とMainの`last_active_at`を維持する。通常の会話・明示的なSession操作による時刻更新とは区別する。
-
-## Seed Policy
-
-- app 起動時に active catalog が無ければ、`public/model-catalog.json` を import する
-- seed で作られた revision は `source = bundled`
-- ユーザー import で作られた revision は `source = imported`
-- active catalogに不足する同梱providerだけを補完し、既存providerのユーザー編集は保持する。OpenCodeのprovider IDは`opencode`とし、初期modelは`opencode-go/glm-5.3`／`opencode-go/glm-5.3-flash`、Depthは`low / high / max`、既定はGLM-5.3／`high`とする
-
-## UI Policy
-
-### Session Window
-
-- textarea 下に `Model` select を出す
-- 候補は current active catalog の provider catalog から出す
-- `Depth` は selected model の `reasoningEfforts` だけを chip で出す
-- current session の model が catalog から消えている場合は、互換用の 1 項目だけ一時表示する
-
-### Home / NewSession
-
-- `Settings Window` から `Import Models` / `Export Models` を実行できる
-- file picker / save dialog は Main Process が開く
-- import 成功時は active revision を切り替え、既存 Agent / Auxiliary session も同じタイミングで migrate する
-- HomeのNew Sessionではmodel / depthを出さない
-- new session は active catalog の provider default で作る
-
-## Resolution Policy
-
-adapter 実行時は Send が捕捉した `executionOptions.catalogRevision` と session の `provider` を使って provider catalog を読む。
-
-- `requestedModel` が exact match すればその model を使う
-- model が見つからなければそのままエラーにする
-- depth が model catalog の定義に無ければそのままエラーにする
-- 実 provider 側でさらに拒否された場合も、そのまま実行エラーとして扱う
-- OpenCodeはmodel IDの最初の`/`でnative provider／modelを分け、残りの`/`はmodel IDに保持する。Depthは同名のnative variantへ渡し、`#variant`をmodel IDへ保存しない。native model一覧で有効性とvariantを検証し、添付のinput modalityも検証する。別modelやDepthへfallbackしない
-- OpenCode Goの両modelはWindows x64・CLI／client `2.1.4`のnative一覧でenabledと`low / high / max`を確認し、生成は`high`の通常turnで確認している。`low / max`の生成は未確認であり、同梱値を全利用環境の保証とはしない。利用環境のnative一覧と実際の生成で拒否され得る
+- 共通ComposerのModelは検索付きpopoverとし、Depthは独立した選択のままにする。providerやsortの追加UIは置かない。
+- 通常順は表示名の自然順昇順（数値を数値として比較）とし、同名は配信元、IDの順で安定化する。選択中modelにはcheckを表示する。
+- 検索は表示名／IDの完全一致、前方一致、部分一致、配信元だけの一致の順で並べ、同順位では通常順を使う。名前に加え、識別に必要な配信元とIDを表示する。
+- 大量候補はvirtualizeする。開いている一覧はsnapshotとして安定させ、background更新で候補が動かないようにする。cacheなしで開いた場合だけ最初の取得成功を反映し、検索文字列とfocusを維持したまま候補を表示する。取得中、取得失敗、正常empty、検索0件は区別する。
+- keyboardの矢印／Page移動、Enterで選択、Escapeで取消、focus復帰を提供し、IME変換中のEnterを選択として扱わない。
 
 ## OpenCodeのmodelと認証
 
-- WithMateのprovider IDは`opencode`のまま、model IDでnative providerを区別する。Goは`opencode-go/<model>`、OpenCode配信は`opencode/<model>`、OpenAI経由は`openai/<model>`を使う。任意のnative prefixを表現でき、モデル追加のためのcatalog schema拡張は不要である。
-- catalogはmodelの選択肢であり、API key・OAuth・アカウントを保持しない。OpenCodeでChatGPT認証を使ってもWithMateのproviderを`codex`へ変える必要はなく、認証はnative integration側が解決する。複数アカウントの選択をcatalogで指定する機能はない。
-- WithMateはnative DBをuser data・build channel別に分離する。OpenCode v2.1.4のcredentialは同じnative DBへ保存されるため、デスクトップ版の別DBに保存したログインを自動共有しない。nativeの旧`auth.json`移行はあるが、別DB間の継続同期ではない。WithMate内のOAuth接続・credential import・アカウント切替UIは未提供である。
-- SettingsのGo keyはGo用であり、ChatGPT OAuthの代替ではない。Go keyが空でも通常turnを一律に拒否せず、native一覧で選択modelのenabled状態を確認する。nativeモデルをcatalogへ追加するには、既存catalogをexportして`opencode.models`へ追記し、全体をimportする。利用環境で実在するmodel IDとvariantを確認し、認証済みであることを別途満たす。
-- 現行schemaのDepthは既定のeffort enumから1個以上が必須であり、OpenCodeでは同名variantへ渡す。variantなし・任意名variantやmodel別アカウント固定を一般的に表現するschemaではない。同梱Go以外の利用可否をcatalogへの登録だけで保証しない。
+model IDは`<native provider>/<model>`とし、最初の`/`で分ける。残りの`/`はmodel IDに保持する。`opencode-go/...`、`opencode/...`、`openai/...`等を同じWithMate provider `opencode`内で扱い、Depthをnative variantへ渡す。`#variant`をmodel IDへ保存しない。native一覧で選択modelのenabled状態、variant、添付modalityを確認する。
 
-認証保存先の根拠: [OpenCode 2.1.4 credential実装](https://github.com/anomalyco/opencode/blob/ed74ec82ce1fe3a36da6c0815a935473ef4bb0fb/packages/core/src/credential.ts)、[旧認証のnative移行](https://github.com/anomalyco/opencode/blob/ed74ec82ce1fe3a36da6c0815a935473ef4bb0fb/packages/core/src/database/migration/20260805200742_import_legacy_credentials.ts)。
+一覧の取得は認証ではない。SettingsのGo keyはGo用であり、ChatGPT OAuthの代替ではない。keyが空でも通常turnを一律拒否せず、native側の認証・設定に従う。native DBはWithMateのuser data・build channel別に分離し、別DBを使うOpenCodeデスクトップ版のログインを自動共有しない。WithMate内のOAuth接続・credential import・アカウント切替UIは提供しない。
 
-## Import / Export Policy
+## 保存境界
 
-- export は active revision を versionless JSON に戻す
-- import は JSON を validate して新 revision として保存する
-- import 成功時は既存 session の `catalogRevision` と必要な provider / model / depth 解決も自動 migrate する
-- partial merge はしない
-- import 前に session migration の前提を先に確認し、import 後の session 反映に失敗した場合は active catalog と、実際に更新を試みて成功した runtime metadata だけを条件付き reverse CAS で直前値へ戻す。Session / Auxiliary の本文、draft、messages、無関係な削除や未試行 collection は rollback 対象にしない。書込み結果が不明な対象には無条件の逆書込みを行わず、元の失敗と rollback 失敗は `AggregateError` で保持する。
-- provider / model の追加・削除も revision 単位で扱う
+公開済みSessionの`catalog_revision`列の値は保存互換性のため保持するが、renderer、現在選択、送信要求、adapterの実行条件には使わない。V6 schema更新では手管理catalogの3 tableを削除し、Session・会話・draft・最小turnは保持する。詳細は[Database Schema](database-schema.md)を参照する。
 
-## Non Goals
+## 関連
 
-- SDK / CLI から model catalog を自動取得すること
-- remote catalog 配信を前提にすること
-- 全provider共通のcapability探索・catalog自動同期基盤をruntimeへ追加すること。OpenCodeの選択済みmodel／variant／添付能力の実行前検証は行うが、catalogの選択肢を書き換えない
-
-## References
-
-- `docs/design/provider-adapter.md`
-- `docs/design/electron-session-store.md`
+- [Provider Adapter](provider-adapter.md)
+- [Electron Session Store](electron-session-store.md#実行設定と-send)

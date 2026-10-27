@@ -36,7 +36,7 @@ import type {
   StartCharacterAuthoringSessionInput,
 } from "../src-shared/character/character-authoring.js";
 import {
-  type ModelCatalogDocument,
+  type ModelCatalogRequest,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src-shared/settings/model-catalog.js";
@@ -176,6 +176,7 @@ import { MainBootstrapService } from "./app/main-bootstrap-service.js";
 import { MainBroadcastFacade } from "./app/main-broadcast-facade.js";
 import { MainObservabilityFacade } from "./app/main-observability-facade.js";
 import { MainProviderFacade } from "./app/main-provider-facade.js";
+import { ProviderModelDiscoveryService } from "./settings/provider-model-discovery-service.js";
 import { MainSessionCommandFacade } from "./app/main-session-command-facade.js";
 import { ProviderRuntimeOperationCoordinator } from "./providers/provider-runtime-operation-coordinator.js";
 import { runWithStorageOperationCorrelation, startEventLoopDelayMonitoring, type StorageOperationDiagnostic } from "./storage/storage-operation-diagnostics.js";
@@ -300,9 +301,6 @@ const appLogService = new AppLogService({
 });
 const storageOperationLogService = new StorageOperationLogService(writeAppLog);
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-const bundledModelCatalogPath = devServerUrl
-  ? path.resolve(currentDir, "../../public/model-catalog.json")
-  : path.resolve(rendererDistPath, "model-catalog.json");
 const bundledCharacterAuthoringSkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", CHARACTER_AUTHORING_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", CHARACTER_AUTHORING_SKILL_NAME);
@@ -416,7 +414,6 @@ const mainWindowRuntime = new MainWindowRuntime({
   readSession: (sessionId) => requireSessionStorage().getSession(sessionId),
   getLiveSessionRunOwnerSessionId: (sessionId) => auxiliaryLiveRunParents.get(sessionId)
     ?? (mainWindowRuntime.getSessionWindowBridge().getWindow(sessionId) ? sessionId : null),
-  getSettingsCatalog: () => requireSettingsCatalogService(),
   isSessionRunInFlight,
   getTerminalCloseConfirmationCount: (window) => terminalService?.countRequiringCloseConfirmation(window) ?? 0,
   cancelInFlightSessionRuns,
@@ -548,6 +545,7 @@ let sessionMemorySupportService: SessionMemorySupportService | null = null;
 let mainBroadcastFacade: MainBroadcastFacade<BrowserWindow> | null = null;
 let mainObservabilityFacade: MainObservabilityFacade | null = null;
 let mainProviderFacade: MainProviderFacade | null = null;
+let providerModelDiscoveryService: ProviderModelDiscoveryService | null = null;
 let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
@@ -1100,8 +1098,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             ...input,
             diagnosticSink: logStorageOperationDiagnostic,
           }),
-          createModelCatalogStorage: (nextDbPath, nextBundledModelCatalogPath) =>
-            new ModelCatalogStorage(nextDbPath, nextBundledModelCatalogPath),
+          createModelCatalogStorage: (nextDbPath) => new ModelCatalogStorage(nextDbPath),
           createCharacterStorage: (nextDbPath, nextUserDataPath) =>
             new CharacterStorage(nextDbPath, nextUserDataPath),
           createSessionStorage: (nextDbPath) => new SessionStorage(nextDbPath),
@@ -1209,7 +1206,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             initializePersistentStores,
             recoverInterruptedSessions,
-            broadcastModelCatalog,
+            broadcastModelCatalog: () => {
+              void getModelCatalog().then(broadcastModelCatalog).catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.bootstrap-failed", process: "main", message: "Model choices could not be loaded", error: appLogService.errorToLogError(error) }));
+            },
             onBootStatus: publishAppBootStatus,
             ipcRegistration: {
               window: {
@@ -1310,11 +1309,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 reportRendererLog: mainLogComposition.writeRendererLog,
               },
               catalog: {
-                getModelCatalog: (revision) => requireSettingsCatalogService().getModelCatalog(revision),
-                importModelCatalogDocument: (document) => requireSettingsCatalogService().importModelCatalogDocument(document),
-                importModelCatalogFromFile: async (targetWindow) => importModelCatalogFromFile(targetWindow),
-                exportModelCatalogDocument: (revision) => requireSettingsCatalogService().exportModelCatalogDocument(revision),
-                exportModelCatalogToFile: async (revision, targetWindow) => exportModelCatalogToFile(revision, targetWindow),
+                getModelCatalog,
               },
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
@@ -1779,11 +1774,27 @@ function requireMainObservabilityFacade(): MainObservabilityFacade {
   return mainObservabilityFacade;
 }
 
+function requireProviderModelDiscoveryService(): ProviderModelDiscoveryService {
+  if (!providerModelDiscoveryService) {
+    const owner = requireActivePersistentStoreOwnerForFactory("Model discovery");
+    providerModelDiscoveryService = new ProviderModelDiscoveryService({
+      getAppSettings: () => owner.appSettingsStorage.getSettings(),
+      getCachedProviders: () => owner.modelCatalogStorage.getCachedProviders(),
+      upsertProvider: (entry) => owner.modelCatalogStorage.upsertProvider(entry),
+      getAdapter: getProviderCodingAdapter,
+      defaultWorkspace: () => mainStoreContext.sessions[0]?.workspacePath || app.getPath("home"),
+      onChanged: (snapshot) => {
+        void broadcastModelCatalog(snapshot).catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.broadcast-failed", process: "main", message: "Model choices could not be updated", error: appLogService.errorToLogError(error) }));
+      },
+    });
+  }
+  return providerModelDiscoveryService;
+}
+
 function requireMainProviderFacade(): MainProviderFacade {
   if (!mainProviderFacade) {
     mainProviderFacade = new MainProviderFacade({
-      getModelCatalog: (revision) => requireModelCatalogStorage().getCatalog(revision ?? null),
-      ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
+      getModelCatalog: (request) => requireProviderModelDiscoveryService().get(request),
       codexAdapter,
       copilotAdapter,
       claudeAdapter,
@@ -1804,8 +1815,8 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       getSessions: () => mainStoreContext.sessions,
       getStoredSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
       getSessionStorageIdentity: () => requireSessionStorage(),
-      resolveSessionLaunchSelection: (providerId) =>
-        requireSessionLaunchSelectionService().resolve(providerId),
+      resolveSessionLaunchSelection: (providerId, workspacePath, capturedDefaults) =>
+        requireSessionLaunchSelectionService().resolve(providerId, workspacePath, capturedDefaults),
       runProviderRuntimeOperationExclusive: (operation) => {
         if (databaseMaintenanceRequested) {
           throw new Error("A database maintenance operation is in progress, so a Session cannot be created.");
@@ -1846,7 +1857,9 @@ function requireSessionLaunchSelectionService(): SessionLaunchSelectionService {
   if (!sessionLaunchSelectionService) {
     sessionLaunchSelectionService = new SessionLaunchSelectionService({
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
-      getModelCatalogSnapshot: async () => await getModelCatalog(null) ?? await requireModelCatalogStorage().ensureSeeded(),
+      getModelCatalogSnapshot: (workspacePath, providerId) => providerId
+        ? requireProviderModelDiscoveryService().ensure(providerId, workspacePath)
+        : getModelCatalog({ ...(workspacePath ? { workspacePath } : {}) }),
       getLatestSessionSummaryForProvider: (providerId) =>
         requireSessionStorage().getLatestSessionSummaryForProvider(providerId),
       getCurrentExecutionOptions: (providerId) => mainStoreContext.executionSelections.latestForProvider(providerId),
@@ -1937,9 +1950,11 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
         assertPersistentStoreOwnerIsActive(owner, "Auxiliary session storage access");
         return storage;
       },
-      getModelCatalogSnapshot: async () => {
+      getModelCatalogSnapshot: async (workspacePath, providerId) => {
         assertPersistentStoreOwnerIsActive(owner, "Auxiliary session catalog read");
-        const catalog = await getModelCatalog(null) ?? await owner.modelCatalogStorage.ensureSeeded();
+        const catalog = providerId
+          ? await requireProviderModelDiscoveryService().ensure(providerId, workspacePath)
+          : await getModelCatalog({ ...(workspacePath ? { workspacePath } : {}) });
         assertPersistentStoreOwnerIsActive(owner, "Auxiliary session catalog read");
         return catalog;
       },
@@ -2283,12 +2298,12 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
       },
       getSession: getQueueRuntimeSession,
       validateWorkspace: assertSessionQueueWorkspaceAvailable,
-      validateProvider: async (session, revision) => {
+      validateProvider: async (session) => {
         if (!getProviderAppSettings(await requireAppSettingsStorage().getSettings(), session.provider).enabled) {
           throw new Error("This provider is disabled in Settings.");
         }
-        const catalog = await resolveProviderCatalog(session.provider, revision);
-        return { provider: catalog.provider, revision: catalog.snapshot.revision };
+        const catalog = await resolveProviderCatalog(session.provider, session.workspacePath);
+        return { provider: catalog.provider };
       },
       preview: async (session, message) => {
         const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionStatus(session.id);
@@ -2544,8 +2559,9 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       },
       settings: {
         getAppSettings: () => owner.appSettingsStorage.getSettings(),
-        getModelCatalogSnapshot: async () =>
-          await getModelCatalog(null) ?? await owner.modelCatalogStorage.ensureSeeded(),
+        getModelCatalogSnapshot: (workspacePath, providerId) => providerId
+          ? requireProviderModelDiscoveryService().ensure(providerId, workspacePath)
+          : getModelCatalog({ ...(workspacePath ? { workspacePath } : {}) }),
       },
       character: {
         createCharacterRuntimeSnapshot: (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
@@ -2620,26 +2636,16 @@ function requireSettingsCatalogService(): SettingsCatalogService {
         error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { message: String(error) },
       }),
       getModelCatalog,
-      ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
-      importModelCatalogDocument: (document, source) => requireModelCatalogStorage().importCatalogDocument(document, source),
-      exportModelCatalogDocument: (revision) => requireModelCatalogStorage().exportCatalogDocument(revision),
       replaceAllSessions: (nextSessions, options) =>
         requireMainSessionPersistenceFacade().replaceAllSessions(nextSessions, options),
       updateSessionThreadIfMatches: (input) =>
         requireMainSessionPersistenceFacade().updateSessionThreadIfMatches(input),
-      updateSessionRuntimeMetadataIfMatches: (input) =>
-        requireMainSessionPersistenceFacade().updateSessionRuntimeMetadataIfMatches(input),
-      replaceAuxiliarySessions: (nextSessions) =>
-        requireAuxiliarySessionService().replaceAuxiliarySessions(nextSessions),
       updateAuxiliarySessionThreadIfMatches: (input) =>
         requireAuxiliarySessionService().updateAuxiliarySessionThreadIfMatches(input),
-      updateAuxiliarySessionRuntimeMetadataIfMatches: (input) =>
-        requireAuxiliarySessionService().updateAuxiliarySessionRuntimeMetadataIfMatches(input),
       clearProviderQuotaTelemetry,
       clearSessionContextTelemetry,
       invalidateProviderSessionThread,
       resetAppSettings,
-      resetModelCatalogToBundled: () => requireModelCatalogStorage().resetToBundled(),
       clearProjectMemories: () => requireProjectMemoryStorage().clearProjectMemories(),
       resetSessionRuntime: () => requireSessionRuntimeService().reset(),
       clearAllProviderQuotaTelemetry,
@@ -2652,13 +2658,10 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       recreateDatabaseFile,
       applyAppSettingsSideEffects: (settings) => {
         applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
+        void requireProviderModelDiscoveryService().refreshEnabled().catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.refresh-failed", process: "main", message: "Model choices could not be refreshed", error: appLogService.errorToLogError(error) }));
       },
       broadcastSessions,
       broadcastAppSettings,
-      applyCurrentExecutionCatalog: (snapshot) => {
-        mainStoreContext.executionSelections.setModelCatalog(snapshot);
-        mainStoreContext.setSessions(mainStoreContext.sessions);
-      },
       broadcastModelCatalog,
     });
   }
@@ -2862,19 +2865,23 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   try {
     const bundle = await requirePersistentStoreLifecycleService().initialize(
       mainStoreContext.dbPath,
-      bundledModelCatalogPath,
       app.getPath("userData"),
     );
     const activeModelCatalog = applyPersistentStoreBundle(bundle);
     mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
     startWalMaintenance();
-    return activeModelCatalog;
+    const discovery = requireProviderModelDiscoveryService();
+    const snapshot = await discovery.get();
+    void discovery.refreshEnabled(true).catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.startup-failed", process: "main", message: "Model choices could not be refreshed", error: appLogService.errorToLogError(error) }));
+    return snapshot;
   } catch (error) {
     throw error;
   }
 }
 
 async function closePersistentStores(): Promise<void> {
+  await providerModelDiscoveryService?.close();
+  providerModelDiscoveryService = null;
   await sessionTurnQueueService?.close();
   await Promise.all([sessionRuntimeService?.waitForPendingRuns(), auxiliarySessionRuntimeService?.waitForPendingRuns()]);
   sessionObservabilityService?.dispose();
@@ -2939,7 +2946,9 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   }
   await requireMateStorage().deleteMateProjectionDirectory();
   mainStoreContext.setMateProfileItemStorage(null);
-  const bundle = await requirePersistentStoreLifecycleService().recreate(mainStoreContext.dbPath, bundledModelCatalogPath, {
+  await providerModelDiscoveryService?.close();
+  providerModelDiscoveryService = null;
+  const bundle = await requirePersistentStoreLifecycleService().recreate(mainStoreContext.dbPath, {
     storageWorker: mainStoreContext.storageWorker,
     modelCatalogStorage: mainStoreContext.modelCatalogStorage,
     characterStorage: mainStoreContext.characterStorage,
@@ -2990,15 +2999,15 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   return activeModelCatalog;
 }
 
-async function getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null> {
-  return requireMainProviderFacade().getModelCatalog(revision);
+async function getModelCatalog(request?: ModelCatalogRequest): Promise<ModelCatalogSnapshot> {
+  return requireMainProviderFacade().getModelCatalog(request);
 }
 
 async function resolveProviderCatalog(
   providerId: string | null | undefined,
-  revision?: number | null,
+  workspacePath?: string,
 ): Promise<{ snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider }> {
-  return requireMainProviderFacade().resolveProviderCatalog(providerId, revision);
+  return requireMainProviderFacade().resolveProviderCatalog(providerId, workspacePath);
 }
 
 function getProviderCodingAdapter(providerId: string | null | undefined) {
@@ -3125,6 +3134,9 @@ async function broadcastAppSettings(settings?: AppSettings): Promise<void> {
   const current = settings ?? await requireAppSettingsStorage().getSettings();
   requireMainObservabilityFacade().configureProviderQuotaPolling(current);
   await requireMainBroadcastFacade().broadcastAppSettings(current);
+  if (providerModelDiscoveryService) {
+    void providerModelDiscoveryService.refreshEnabled().catch((error: unknown) => writeAppLog({ level: "warn", kind: "model.discovery.settings-failed", process: "main", message: "Model choices could not be refreshed", error: appLogService.errorToLogError(error) }));
+  }
 }
 
 function getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null {
@@ -3267,13 +3279,6 @@ function waitForLiveElicitationResponse(
   return requireSessionElicitationService().waitForLiveElicitationResponse(sessionId, request, signal);
 }
 
-async function importModelCatalogFromFile(targetWindow?: BrowserWindow | null): Promise<ModelCatalogSnapshot | null> {
-  return requireWindowDialogService().importModelCatalogFromFile(targetWindow);
-}
-
-async function exportModelCatalogToFile(revision: number | null | undefined, targetWindow?: BrowserWindow | null): Promise<string | null> {
-  return requireWindowDialogService().exportModelCatalogToFile(revision, targetWindow);
-}
 
 async function upsertSession(nextSession: Session): Promise<Session> {
   return requireMainSessionPersistenceFacade().upsertSession(nextSession);

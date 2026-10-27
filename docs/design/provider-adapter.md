@@ -27,11 +27,11 @@ runtimeはshared contractの上に次の4 adapterを持つ。
 - `ClaudeAdapter`
 - `OpenCodeAdapter`
 
-対応ProviderとAdapterの対応表は`src-electron/providers/provider-support.ts`を正本とし、capability、Coding / Backgroundの解決、Session launchで共有する。未知のProvider IDは実行前に明示的に拒否し、Codexへ置き換えない。実行用catalogは指定Providerとの完全一致で解決し、未登録の場合も別Providerへfallbackしない。Adapter・実行用catalogのProvider指定を省略した場合だけCodexを既定とする。
+対応ProviderとAdapterの対応表は`src-electron/providers/provider-support.ts`を正本とし、capability、Coding / Backgroundの解決、Session launchで共有する。未知のProvider IDは実行前に明示的に拒否し、Codexへ置き換えない。AdapterのProvider指定を省略した場合だけCodexを既定とする。Sessionのproviderは作成時に固定し、model一覧の更新で変更しない。
 
-カスタムcatalogや保存済みSession内の未対応Provider定義は削除しない。新規Sessionで未対応Providerを明示した場合、または有効な対応Providerがない場合はlaunchを拒否する。
+保存済みSession内の未対応Provider定義は削除しない。新規Sessionで未対応Providerを明示した場合、または有効な対応Providerがない場合はlaunchを拒否する。
 
-`ProviderCodingAdapter`はprompt composition、quota取得、thread invalidation、live turn実行を担う。型と入力・出力の正本は`src-electron/providers/provider-runtime.ts`に置く。
+`ProviderCodingAdapter`はprompt composition、SDK model一覧の取得、quota取得、thread invalidation、live turn実行を担う。型と入力・出力の正本は`src-electron/providers/provider-runtime.ts`に置く。`listModels()`はmodel ID・表示名・任意の配信元・Depth候補・defaultを共通形式へ正規化する。取得とcacheの境界は[Provider Model Discovery](model-catalog.md)を参照する。
 
 Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げる。`canceled` は既存の session phase / retry / invalidation 判定のため boolean として維持し、失敗分類は `reason` で渡す。
 
@@ -77,7 +77,7 @@ providerごとの差は次。
 - `ClaudeAdapter`
   - 公式SDK `0.3.285`と未改変の公式native実行物 `2.1.285`を使い、Windows / macOSの対象architecture向け実行物を配布物へ同梱する。CLIの既存ログインをSDKに任せ、WithMateはcredentialを読取・コピーせず、独自OAuthを行わない。SDKの認証・課金に関わる環境変数や設定の優先順位を上書きしない
   - `query()`で1 turnを実行し、保存済みの明示session IDを`resume`へ渡す。履歴全件の再送、暗黙の最新会話`continue`は行わない。取消時はSDKの公開spawn hookで子プロセスの実終了を追跡し、実終了までprovider Promiseを保持してruntimeの再送guardにつなぐ。正常なterminal result後のcleanupは[ADR 002](../adr/002-provider-turn-terminal-and-cancellation.md)のbounded graceに従う
-  - `claude-opus-5-5`と`low / medium / high / xhigh / max`をcatalogで扱う。`permissionMode: "default"`と共通UIの`Provider Controlled`のみを用い、Codexのsandbox選択は提供しない
+  - modelとDepth候補はSDKから取得する。`permissionMode: "default"`と共通UIの`Provider Controlled`のみを用い、Codexのsandbox選択は提供しない
   - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affect / Memoryを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
   - SDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
   - background planeは別の非永続sessionで構造化JSONを要求し、tools / MCP / hooksを無効化する。`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合、実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
@@ -88,7 +88,7 @@ providerごとの差は次。
   - `OPENCODE_DB`は`<userData>/providers/opencode/<build channel>/opencode.db`へ固定し、Main内でnative DB bootstrapを直列化する。DBの所有者はOpenCodeであり、adapterから直接SQLを実行しない。foregroundはPATH／HOMEとnative global／project設定、AGENTS、skills、第三者MCPの読込を維持する
   - 共通promptの`logicalPrompt.composedText`を毎turn送る。保存済みの明示thread IDを取得し、root・workspace・既存incarnation由来のownerを照合する。未配送inboxは同ownerとrequest IDを確認できる旧入力だけをcancelし、未知ownerや取消未確認はエラーにする。入力の自動再送やstale threadの自動resetはしない
   - event接続を確認してからpromptを1回だけ送る。admissionを完了とせず、当該入力の配送、root execution終端とmessageのidle outcomeを照合する。text deltaは確定messageで補正し、tool・usageはnative IDで重複を除く。失敗・取消では取得済み本文・操作・threadをpartial resultとして返す
-  - catalogの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
+  - 選択済みの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。Depth未指定はvariantを渡さない。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
   - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
   - token／contextは実取得値を投影し、Go契約quotaはモデルを実行しないusage HTTP APIから独立取得する。5時間・7日・請求月の残量を共通Monitor／Action Dockへ表示し、Mainの非永続cacheと既存の更新・失敗処理を使う。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
 
@@ -129,7 +129,7 @@ provider adapterは通常turn実行を所有する。Affect専用の背景生成
 4. Main Process が textarea 内の `@path` を解決し、file / folder / image を正規化する
    - workspace 外 path は `allowedAdditionalDirectories` 配下だけを許可する
 5. prompt composer がCharacter context、user inputと添付referenceをproviderへ渡す形式に正規化する
-6. Main Process が送信された `executionOptions.catalogRevision` と session の `provider` から provider catalog を解決し、revision、model、reasoning depth、実行 option 値を検証する。model が存在しない、depth が非対応などの不正な選択は turn 開始保存・Provider 起動前に拒否し、default や保存値へ置換しない
+6. Main Process がsessionの固定providerと送信されたmodel、reasoning depth、実行optionの入力形式・権限設定を検証する。非空modelを必須とするが、SDK一覧への掲載やcatalog revisionを実行の条件にしない。不正な入力はturn開始保存・Provider起動前に拒否し、defaultや保存値へ置換しない
 7. 検証済み`executionOptions`を独立したturn snapshotとしてprompt、coding plane adapter、最小turn記録へ渡し、provider-native実行へ変換する
    - `CodexAdapter`: file / folderのworkspace外accessはsession metadata `allowedAdditionalDirectories`からsandbox policyの`writableRoots`へ変換し、画像は`localImage` inputとして`turn/start`へ渡す。model、effort、approval、sandbox、service tier、reviewerは送信時の検証済み値を使う
    - `CopilotAdapter`: prompt composerの結果とattachmentを送る。file / folderは`session.send({ attachments })`の`file` / `directory`へ変換し、imageも`file` attachmentとして渡す。workspace外pathはWithMate側の`allowedAdditionalDirectories`判定を正本にする。`on-request`ではpermission requestをMain Processへ返し、Session UIのapproval cardと往復する。Electronではnative CLI binaryを明示して起動し、bootstrap failure時は診断ログに必要なerror metadataを残す
@@ -195,7 +195,7 @@ adapter 実行に必要な保存済み session context:
 - `session.characterId`
 - `session.threadId`
 
-実行値は保存済み session とは独立した送信時の `executionOptions` を正本にする。これは `catalogRevision / model / reasoningEffort / approvalMode / codexSandboxMode / codexSpeed / codexReviewer / customAgentName` を含む。
+実行値は保存済み session とは独立した送信時の `executionOptions` を正本にする。これは `model / reasoningEffort / approvalMode / codexSandboxMode / codexSpeed / codexReviewer / customAgentName` を含む。
 
 ## Approval Modes
 
@@ -234,10 +234,10 @@ Codex session は `codexSandboxMode` を持つ。UI では Codex provider のと
 ## Model Resolution Policy
 
 - session metadata は選択状態を保存するが、turn の Provider 実行値は Main / Auxiliary の送信要求に含まれる `executionOptions` を使う
-- Main Process は送信された catalog revision と session provider の catalog を解決し、snapshot revision、model、reasoning effort を実行開始前に検証する
-- model 自体が見つからない場合はそのままエラーにする
-- selected depth が非対応ならそのままエラーにする
-- 保存済みの値、catalog default、depth clamp への暗黙の置換はしない
+- Main ProcessはSessionの固定provider、非空model、Depthと実行optionの入力形式・権限設定を検証する。SDK model一覧は選択肢であり、実行の許可表にはしない
+- 一覧更新は保存済み・現在選択、draft、thread、実行中turn、受付済みqueueの捕捉値を変更しない
+- Depthは任意文字列または未指定を表現し、provider-native optionへ変換する。provider側の対応外値を別のDepthへclampしない
+- 保存済みの値、provider defaultへの暗黙の置換はしない
 - provider 実行時に拒否された場合も、そのまま session error として扱う
 
 詳細は `docs/design/model-catalog.md` を参照する。

@@ -23,7 +23,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - Session Monitor Window
 - Session の coding agent 作業 UI
 - Diff Window の閲覧 UI
-- Settings Window と model catalog 操作
+- Settings Window
 
 ## UI Source Of Truth Boundary
 
@@ -31,7 +31,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## 読込と表示言語の適用
 
-- Sessionは基本情報からheaderとFilesを表示し、会話は独立して読み込む。会話取得が成功するまで会話全体を必要とする編集・送信を行わない。Homeの一覧はapp stateの取得を待たず、Settingsの設定draft、Model Catalog、Diagnosticsはそれぞれの取得状態を持つ。
+- Sessionは基本情報からheaderとFilesを表示し、会話は独立して読み込む。会話取得が成功するまで会話全体を必要とする編集・送信を行わない。Homeの一覧はapp stateの取得を待たず、Settingsの設定draftとDiagnostics、SessionのSDK model候補はそれぞれの取得状態を持つ。
 - 現役6 HTML entryのshellは`lang="en"`とする。
 
 ## Windows Session Notifications
@@ -214,7 +214,6 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - `Prompt Context` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える。sectionやproviderを装飾cardで入れ子にしない
   - `Diagnostics`
-  - `Model Catalog` import / export
   - `Repository Glossary` の自動追加上限
   - `Storage Maintenance` の古いSession削除
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
@@ -497,8 +496,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Approvalの選択肢は `Auto Run / Provider Controlled / Safety Focused`
   - ClaudeのApprovalは`Provider Controlled`のみを選べる。保存値が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーが`Provider Controlled`を選ぶことで有効値へ修正でき、黙って権限設定を置き換えない
   - OpenCodeのApprovalは`Provider Controlled`（既定）と`Auto Run`を選べる。`Safety Focused`、Codex専用Sandbox／Reviewer／Speedは提供しない。OpenCodeのform質問は共通Question Formsで回答し、実行中の`Steer`とCopilot専用`Tasks`は表示しない
-  - runtime設定のnative selectは、Main／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
-  - runtime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。Electronのcustomizable selectでmenuに6px、各選択肢に上下8px・左右12pxの余白を設け、viewport内へ収める。常設の項目名は省略し、Approval / Reviewer / Sandbox / Model / Depth / Speedの現在値を文字で表示する。項目名はtooltipとaccessible nameに残し、disabled・invalid・focusの状態を維持する。候補はprovider・model設定に従う。幅が不足するときは文字や余白を縮めず設定群を折り返す
+  - runtime設定はMain／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
+  - ModelはSessionの固定providerのSDK候補を検索するpopoverとする。通常は表示名の自然順昇順、同名は配信元・ID順とし、検索結果は名前／IDの完全一致、前方一致、部分一致、配信元だけの一致を優先する。選択中modelにcheckを付け、識別用の配信元とIDを併記する。大量候補はvirtualizeし、開いている候補はsnapshotとして保持する。矢印／Page移動、Enterで選択、Escapeで取消とfocus復帰、IME変換中のEnter抑止を提供する。providerやsortの追加UIは置かない
+  - Modelはcacheを先に表示し、古い一覧はbackground更新する。取得中・取得失敗・正常empty・検索0件を区別し、候補の更新で現在選択、draft、threadを変更しない。候補から消えた現在modelも表示する。Depthは独立した選択とし、modelがadvertiseする任意の値を表示する。Depth候補が空なら隠す。取得・実行の境界は[Provider Model Discovery](model-catalog.md)を参照する
+  - Model以外のruntime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。Electronのcustomizable selectでmenuに6px、各選択肢に上下8px・左右12pxの余白を設け、viewport内へ収める。常設の項目名は省略し、Approval / Reviewer / Sandbox / Model / Depth / Speedの現在値を文字で表示する。項目名はtooltipとaccessible nameに残し、disabled・invalid・focusの状態を維持する。幅が不足するときは文字や余白を縮めず設定群を折り返す
 - session title は mate `main`
 - assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
@@ -559,5 +560,5 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Session は mate の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
 - theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Character Editor / Session / Diff で同じ WCAG AA 基準を使う
 - 保存済み会話は SQLite を正本とし、表示中の実行設定は現在選択を使う。Send はその時点の選択値を捕捉し、checkpoint の完了を待たない
-- model catalog は DB の active revision を読む
+- model候補はprovider／workspace／設定・認証context別のSDK cacheを読み、一覧更新は実行設定や履歴のmigrationを行わない
 - message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `Latest Command` へ分離する

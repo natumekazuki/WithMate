@@ -208,7 +208,7 @@ export default function CharacterEditorApp() {
     }
 
     void Promise.all([
-      api.getModelCatalog(null),
+      api.getModelCatalog(),
       api.getAppSettings(),
     ]).then(([catalog, settings]) => {
       if (!active) {

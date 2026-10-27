@@ -356,7 +356,7 @@ function createComposerBridge(
               log.auxiliarySpeedChanges.push(recipe(options.auxiliarySession).codexSpeed);
             }
           },
-          catalogRevision: null,
+
           timestamp: () => "2026-09-22T00:00:00.000Z",
         },
       },
@@ -482,6 +482,7 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
     title: "Auxiliary session",
     provider: "codex",
     catalogRevision: 1,
+
     model: "gpt-test",
     reasoningEffort: "medium",
     approvalMode: "never",

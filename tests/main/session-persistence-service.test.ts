@@ -52,7 +52,6 @@ function createProviderCatalog(id: string, enabled = true): ModelCatalogProvider
 
 function createSnapshot(): ModelCatalogSnapshot {
   return {
-    revision: 2,
     providers: [
       createProviderCatalog("codex"),
       createProviderCatalog("copilot"),
@@ -817,11 +816,11 @@ describe("SessionPersistenceService", () => {
     assert.equal(await service.resolveCharacterAuthoringProvider("codex"), "codex");
     await assert.rejects(
       () => service.resolveCharacterAuthoringProvider("unknown-provider"),
-      /provider.*model catalog/,
+      /Provider unknown-provider model discovery is unavailable/,
     );
     await assert.rejects(
       () => service.resolveCharacterAuthoringProvider("copilot"),
-      /provider is disabled/,
+      /Provider copilot is disabled/,
     );
 
     const created = await service.createSession({
@@ -834,9 +833,9 @@ describe("SessionPersistenceService", () => {
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
-      provider: "copilot",
-      model: "copilot-default",
-      reasoningEffort: "high",
+      provider: "codex",
+      model: "codex-default",
+      reasoningEffort: "medium",
       customAgentName: "",
       allowedAdditionalDirectories: ["C:/workspace/..", "C:/workspace/external"],
     } satisfies CreateSessionInput);
@@ -845,7 +844,6 @@ describe("SessionPersistenceService", () => {
     assert.equal(created.model, "codex-default");
     assert.equal(created.reasoningEffort, "medium");
     assert.equal(created.customAgentName, "");
-    assert.equal(created.catalogRevision, 2);
     assert.equal(created.allowedAdditionalDirectories.length, 1);
     assert.deepEqual(snapshotCharacterIds, ["char-a"]);
     assert.deepEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
@@ -872,7 +870,7 @@ describe("SessionPersistenceService", () => {
         customAgentName: "",
         allowedAdditionalDirectories: [],
       }),
-      /provider is disabled/,
+      /Provider copilot is disabled/,
     );
     assert.deepEqual(storeOperations, ["create"]);
 
@@ -892,7 +890,7 @@ describe("SessionPersistenceService", () => {
         customAgentName: "",
         allowedAdditionalDirectories: [],
       }),
-      /provider.*model catalog/,
+      /Provider unknown-provider model discovery is unavailable/,
     );
     assert.deepEqual(storeOperations, ["create"]);
   });

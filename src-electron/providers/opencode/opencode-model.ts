@@ -7,7 +7,7 @@ export function resolveOpenCodeModelRef(model: string, reasoningEffort: ModelRea
   if (boundary <= 0 || !model.slice(boundary + 1) || model.includes("#")) {
     throw new Error(`Invalid OpenCode model reference: ${model}`);
   }
-  return { providerID: model.slice(0, boundary), id: model.slice(boundary + 1), variant: reasoningEffort };
+  return { providerID: model.slice(0, boundary), id: model.slice(boundary + 1), ...(reasoningEffort ? { variant: reasoningEffort } : {}) };
 }
 
 export async function validateOpenCodeModel(

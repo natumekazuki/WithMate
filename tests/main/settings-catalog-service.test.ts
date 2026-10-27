@@ -2,45 +2,29 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 import type { SessionThreadPatchInput } from "../../src-electron/session/session-storage-v6.js";
 import type { AuxiliarySessionThreadPatchInput } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
-import type { AuxiliarySessionRuntimeMetadataPatchInput } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
-import type { ProviderRuntimeMetadataPatch } from "../../src-electron/providers/provider-runtime-metadata-patch.js";
 import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
 import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings/settings-catalog-service.js";
 import type { SettingsCatalogServiceDeps } from "../../src-electron/settings/settings-catalog-service.js";
-import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
-import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
-import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
-import { ModelCatalogStorage } from "../../src-electron/settings/model-catalog-storage.js";
-import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
-import { buildHomeSessionProjection } from "../../src/home/home-session-projection.js";
 
 type SettingsCatalogDeps = SettingsCatalogServiceDeps;
 type DefaultedSettingsCatalogDependency =
-  | "applyCurrentExecutionCatalog"
   | "updateChatLayoutPreference"
   | "runProviderRuntimeOperationExclusive"
   | "listSessionCredentialThreads"
   | "listAuxiliaryCredentialThreads"
   | "updateSessionThreadIfMatches"
   | "updateAuxiliarySessionThreadIfMatches"
-  | "updateSessionRuntimeMetadataIfMatches"
-  | "updateAuxiliarySessionRuntimeMetadataIfMatches"
   | "replaceAllSessions"
   | "resetAppSettings"
-  | "resetModelCatalogToBundled"
   | "clearProjectMemories"
   | "resetSessionRuntime"
   | "clearAllProviderQuotaTelemetry"
@@ -54,18 +38,14 @@ type SettingsCatalogTestDeps = Omit<SettingsCatalogDeps, DefaultedSettingsCatalo
   & Partial<Pick<SettingsCatalogDeps, DefaultedSettingsCatalogDependency>>;
 
 const defaultSettingsCatalogDependencies: Pick<SettingsCatalogDeps, DefaultedSettingsCatalogDependency> = {
-  applyCurrentExecutionCatalog() {},
   updateChatLayoutPreference() {},
   runProviderRuntimeOperationExclusive: async (operation) => await operation(),
   listSessionCredentialThreads: async () => { throw new Error("unexpected listSessionCredentialThreads"); },
   listAuxiliaryCredentialThreads: async () => { throw new Error("unexpected listAuxiliaryCredentialThreads"); },
   updateSessionThreadIfMatches: async () => { throw new Error("unexpected updateSessionThreadIfMatches"); },
   updateAuxiliarySessionThreadIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionThreadIfMatches"); },
-  updateSessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateSessionRuntimeMetadataIfMatches"); },
-  updateAuxiliarySessionRuntimeMetadataIfMatches: async () => { throw new Error("unexpected updateAuxiliarySessionRuntimeMetadataIfMatches"); },
   replaceAllSessions: async () => { throw new Error("unexpected replaceAllSessions"); },
   resetAppSettings: async () => { throw new Error("unexpected resetAppSettings"); },
-  resetModelCatalogToBundled: async () => { throw new Error("unexpected resetModelCatalogToBundled"); },
   clearProjectMemories: () => { throw new Error("unexpected clearProjectMemories"); },
   resetSessionRuntime: () => { throw new Error("unexpected resetSessionRuntime"); },
   clearAllProviderQuotaTelemetry: () => { throw new Error("unexpected clearAllProviderQuotaTelemetry"); },
@@ -128,40 +108,7 @@ class SettingsCatalogService extends SettingsCatalogServiceImpl {
         );
         if (!target) return null;
         const next = { ...target, threadId: input.nextThreadId, updatedAt: input.updatedAt };
-        if (deps.replaceAuxiliarySessions) {
-          const replaced = await deps.replaceAuxiliarySessions(sessions.map((session) => session.id === next.id ? next : session));
-          return replaced.find((session) => session.id === next.id) ?? next;
-        }
-        Object.assign(target, next);
-        return next;
-      }),
-      updateSessionRuntimeMetadataIfMatches: deps.updateSessionRuntimeMetadataIfMatches ?? (async (input) => {
-        const sessions = await deps.listSessions();
-        const target = sessions.find((session) => session.id === input.sessionId);
-        if (!target || getSessionIncarnationId(target) !== input.incarnationId ||
-            target.provider !== input.expected.provider || target.catalogRevision !== input.expected.catalogRevision ||
-            target.model !== input.expected.model || target.reasoningEffort !== input.expected.reasoningEffort ||
-            target.threadId !== input.expected.threadId) return null;
-        const next = { ...target, ...input.next };
-        if (deps.replaceAllSessions) {
-          const replaced = await deps.replaceAllSessions(sessions.map((session) => session.id === next.id ? next : session), { broadcast: false });
-          return replaced.find((session) => session.id === next.id) ?? next;
-        }
-        Object.assign(target, next);
-        return next;
-      }),
-      updateAuxiliarySessionRuntimeMetadataIfMatches: deps.updateAuxiliarySessionRuntimeMetadataIfMatches ?? (async (input: AuxiliarySessionRuntimeMetadataPatchInput) => {
-        const sessions = await deps.listAuxiliarySessions();
-        const target = sessions.find((session) => session.id === input.auxiliarySessionId);
-        if (!target || target.parentSessionId !== input.parentSessionId || target.createdAt !== input.createdAt ||
-            target.provider !== input.expected.provider || target.catalogRevision !== input.expected.catalogRevision ||
-            target.model !== input.expected.model || target.reasoningEffort !== input.expected.reasoningEffort ||
-            target.threadId !== input.expected.threadId) return null;
-        const next = { ...target, ...input.next };
-        if (deps.replaceAuxiliarySessions) {
-          const replaced = await deps.replaceAuxiliarySessions(sessions.map((session) => session.id === next.id ? next : session));
-          return replaced.find((session) => session.id === next.id) ?? next;
-        }
+
         Object.assign(target, next);
         return next;
       }),
@@ -245,9 +192,8 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
   };
 }
 
-function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
+function createCatalogSnapshot(): ModelCatalogSnapshot {
   return {
-    revision,
     providers: [
       {
         id: "codex",
@@ -273,141 +219,6 @@ function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "catalog import・正規化・失敗時rollback・resetはMain/Auxiliaryの最終利用時刻とHomeのUpdated表示・順序を維持する"
-  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
-  // fault = "catalogの内部移行を利用更新として保存し、各sessionの活動時刻を上書きする"
-  // observable = "実DBの活動時刻・draft・messages、summary、Home markup、移行済みmetadataと失敗時の復元値"
-  // observation_boundary = "consumer"
-  // scope = "settings-catalog-session-activity"
-  // lifecycle = "permanent"
-  // impact = "最終利用時刻が失われ、未使用の会話が最近使った順へ繰り上がる"
-  // distinction = "storage単体とHome単体では検出できないcatalog serviceから保存・表示への伝播を小規模な一時DBで確認する"
-  // @end-test-value
-  it("catalog移行はMain/Auxiliaryの最終利用時刻とHomeのUpdated表示・順序を維持する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-catalog-session-activity-"));
-    const dbPath = path.join(tempDirectory, "withmate.db");
-    const sessions = new SessionStorageV6(dbPath);
-    const auxiliaries = new AuxiliarySessionStorage(dbPath);
-    const catalogs = new ModelCatalogStorage(dbPath, path.resolve("public/model-catalog.json"));
-    const db = new DatabaseSync(dbPath);
-    try {
-      const initialDocument = { providers: createCatalogSnapshot().providers };
-      const initial = catalogs.importCatalogDocument(initialDocument);
-      const older = sessions.insertSession(createSession({
-        id: "z-older", taskTitle: "Older", catalogRevision: initial.revision, updatedAt: "2026-09-01T00:00:00.000Z",
-      }));
-      const newer = sessions.insertSession(createSession({
-        id: "a-newer", taskTitle: "Newer", catalogRevision: initial.revision, updatedAt: "2026-09-02T00:00:00.000Z",
-        model: "gpt-5.4-mini", reasoningEffort: "low",
-      }));
-      for (const parent of [older, newer]) {
-        auxiliaries.upsertAuxiliarySession(createAuxiliarySession({
-          id: `aux-${parent.id}`, parentSessionId: parent.id, catalogRevision: initial.revision,
-          model: parent.model, reasoningEffort: parent.reasoningEffort, updatedAt: parent.updatedAt,
-          composerDraft: `draft-${parent.id}`,
-        }));
-      }
-      const readActivity = () => {
-        const summaries = sessions.listSessionSummaryPage().entries;
-        const projection = buildHomeSessionProjection(summaries, [], "");
-        return {
-          main: db.prepare("SELECT id, updated_at, last_active_at FROM sessions_v6 ORDER BY id").all(),
-          auxiliary: db.prepare("SELECT id, updated_at FROM auxiliary_sessions ORDER BY id").all(),
-          drafts: db.prepare("SELECT * FROM auxiliary_session_drafts ORDER BY auxiliary_session_id").all(),
-          mainMessages: db.prepare("SELECT * FROM session_messages_v6 ORDER BY session_id, seq").all(),
-          auxiliaryMessages: db.prepare("SELECT * FROM auxiliary_session_messages ORDER BY auxiliary_session_id, seq").all(),
-          summaries: summaries.map(({ id, updatedAt }) => ({ id, updatedAt })),
-          auxiliarySummaries: auxiliaries.listAuxiliarySessionSummaries([older.id, newer.id])
-            .map(({ id, updatedAt }) => ({ id, updatedAt })),
-          home: renderToStaticMarkup(createElement(HomeRecentSessionsPanel, {
-            filteredSessionEntries: projection.filteredSessionEntries,
-            onOpenSession() {}, onSetSessionPinned() {},
-          })).match(/<strong>[^<]*<\/strong>|Updated [^<]*/g),
-        };
-      };
-      const before = readActivity();
-      assert.deepEqual(before.summaries.map(({ id }) => id), [newer.id, older.id]);
-      const invalidated: string[] = [];
-      let failurePhase: "broadcast" | "cleanup" | null = null;
-      const service = new SettingsCatalogService({
-        hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
-        listSessions: () => sessions.listSessions(), listAuxiliarySessions: () => auxiliaries.listAllAuxiliarySessions(),
-        getAppSettings: () => createDefaultAppSettings(), updateAppSettings: (settings) => settings,
-        getModelCatalog: (revision) => catalogs.getCatalog(revision), ensureModelCatalogSeeded: () => catalogs.ensureSeeded(),
-        importModelCatalogDocument: (document, source) => catalogs.importCatalogDocument(document, source),
-        exportModelCatalogDocument: (revision) => catalogs.exportCatalogDocument(revision),
-        resetModelCatalogToBundled: () => catalogs.resetToBundled(),
-        updateSessionRuntimeMetadataIfMatches: (input) => sessions.updateSessionRuntimeMetadataIfMatches(input),
-        updateAuxiliarySessionRuntimeMetadataIfMatches: (input) => auxiliaries.updateAuxiliarySessionRuntimeMetadataIfMatches(input),
-        replaceAllSessions: () => { throw new Error("catalog migration must not replace conversations"); },
-        replaceAuxiliarySessions: () => { throw new Error("catalog migration must not replace conversations"); },
-        clearProviderQuotaTelemetry() {}, clearSessionContextTelemetry() {}, broadcastSessions() {}, broadcastAppSettings() {},
-        invalidateProviderSessionThread(_providerId, sessionId) {
-          invalidated.push(sessionId);
-          if (failurePhase === "cleanup") {
-            failurePhase = null;
-            throw new Error("catalog cleanup failed");
-          }
-        },
-        broadcastModelCatalog() {
-          if (failurePhase === "broadcast") {
-            failurePhase = null;
-            throw new Error("catalog broadcast failed");
-          }
-        },
-      });
-
-      const unchanged = await service.importModelCatalogDocument(initialDocument);
-      assert.ok(unchanged.revision > initial.revision);
-      assert.deepEqual(readActivity(), before);
-      for (const parent of [older, newer]) {
-        assert.equal(sessions.getSession(parent.id)?.catalogRevision, unchanged.revision);
-        assert.equal(sessions.getSession(parent.id)?.threadId, parent.threadId);
-        assert.equal(auxiliaries.getAuxiliarySession(`aux-${parent.id}`)?.catalogRevision, unchanged.revision);
-        assert.equal(auxiliaries.getAuxiliarySession(`aux-${parent.id}`)?.threadId, "aux-thread-1");
-      }
-
-      const normalizedDocument = { providers: createCatalogSnapshot().providers };
-      normalizedDocument.providers[0]!.defaultReasoningEffort = "medium";
-      normalizedDocument.providers[0]!.models = [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium"] }];
-      invalidated.length = 0;
-      const normalized = await service.importModelCatalogDocument(normalizedDocument);
-      assert.deepEqual(readActivity(), before);
-      for (const session of [...sessions.listSessions(), ...auxiliaries.listAllAuxiliarySessions()]) {
-        assert.equal(session.catalogRevision, normalized.revision);
-        assert.equal(session.model, "gpt-5.4");
-        assert.equal(session.reasoningEffort, "medium");
-        assert.equal(session.threadId, "");
-      }
-      assert.deepEqual([...invalidated].sort(), [older.id, newer.id, `aux-${older.id}`, `aux-${newer.id}`].sort());
-
-      const beforeRollback = { main: sessions.listSessions(), auxiliary: auxiliaries.listAllAuxiliarySessions() };
-      for (const phase of ["broadcast", "cleanup"] as const) {
-        const revision = catalogs.getActiveCatalog()!.revision;
-        failurePhase = phase;
-        await assert.rejects(service.importModelCatalogDocument(initialDocument), new RegExp(`catalog ${phase} failed`));
-        assert.ok(catalogs.getActiveCatalog()!.revision > revision);
-        assert.deepEqual(catalogs.exportCatalogDocument(), normalizedDocument);
-        assert.deepEqual({ main: sessions.listSessions(), auxiliary: auxiliaries.listAllAuxiliarySessions() }, beforeRollback);
-        assert.deepEqual(readActivity(), before);
-      }
-
-      const reset = await service.resetAppDatabase({ targets: ["modelCatalog"] });
-      assert.deepEqual(readActivity(), before);
-      assert.deepEqual(catalogs.exportCatalogDocument(), catalogs.exportCatalogDocument(reset.modelCatalog.revision));
-      for (const session of [...sessions.listSessions(), ...auxiliaries.listAllAuxiliarySessions()]) {
-        assert.equal(session.catalogRevision, reset.modelCatalog.revision);
-      }
-    } finally {
-      db.close();
-      catalogs.close();
-      auxiliaries.close();
-      sessions.close();
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
 
   // @test-value v2
   // kind = "contract"
@@ -475,10 +286,7 @@ describe("SettingsCatalogService", () => {
         },
         clearProjectMemories: () => {},
         getModelCatalog: () => createCatalogSnapshot(),
-        ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-        importModelCatalogDocument: () => createCatalogSnapshot(),
-        exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
-        replaceAuxiliarySessions: (sessions) => sessions,
+
         clearProviderQuotaTelemetry: () => {},
         clearSessionContextTelemetry: () => {},
         invalidateProviderSessionThread: () => {},
@@ -571,10 +379,7 @@ describe("SettingsCatalogService", () => {
         return storedSettings;
       },
       getModelCatalog: () => createCatalogSnapshot(),
-      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-      importModelCatalogDocument: () => createCatalogSnapshot(),
-      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
-      replaceAuxiliarySessions: (sessions) => sessions,
+
       clearProviderQuotaTelemetry: () => {},
       clearAllProviderQuotaTelemetry: () => {},
       clearSessionContextTelemetry: () => {},
@@ -645,10 +450,7 @@ describe("SettingsCatalogService", () => {
         firstWriteFinished.resolve();
       },
       getModelCatalog: () => createCatalogSnapshot(),
-      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-      importModelCatalogDocument: () => createCatalogSnapshot(),
-      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
-      replaceAuxiliarySessions: (sessions) => sessions,
+
       clearProviderQuotaTelemetry: () => {},
       clearSessionContextTelemetry: () => {},
       invalidateProviderSessionThread: () => {},
@@ -698,10 +500,8 @@ describe("SettingsCatalogService", () => {
         getAppSettings: () => previousSettings,
         updateAppSettings: (settings) => { writes += 1; return settings; },
         getModelCatalog: () => createCatalogSnapshot(),
-        ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-        importModelCatalogDocument: () => createCatalogSnapshot(),
-        exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
-        replaceAllSessions: () => [], replaceAuxiliarySessions: (sessions) => sessions,
+
+        replaceAllSessions: () => [],
         clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
         invalidateProviderSessionThread: () => {}, broadcastSessions: () => {},
         broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
@@ -765,21 +565,11 @@ describe("SettingsCatalogService", () => {
         getModelCatalog() {
           return createCatalogSnapshot();
         },
-        ensureModelCatalogSeeded() {
-          return createCatalogSnapshot();
-        },
-        importModelCatalogDocument() {
-          return createCatalogSnapshot();
-        },
-        exportModelCatalogDocument() {
-          return { providers: createCatalogSnapshot().providers };
-        },
+
         replaceAllSessions(nextSessions) {
           return nextSessions;
         },
-        replaceAuxiliarySessions(nextSessions) {
-          return nextSessions;
-        },
+
         clearProviderQuotaTelemetry() {},
         clearSessionContextTelemetry() {},
         invalidateProviderSessionThread() {},
@@ -861,15 +651,7 @@ describe("SettingsCatalogService", () => {
         getModelCatalog() {
           return createCatalogSnapshot();
         },
-        ensureModelCatalogSeeded() {
-          return createCatalogSnapshot();
-        },
-        importModelCatalogDocument() {
-          return createCatalogSnapshot();
-        },
-        exportModelCatalogDocument() {
-          return { providers: createCatalogSnapshot().providers };
-        },
+
         async updateSessionThreadIfMatches(input) {
           const current = previousSessions[0];
           current.threadId = input.nextThreadId;
@@ -878,9 +660,7 @@ describe("SettingsCatalogService", () => {
           await resumeSessionReplacement.promise;
           return { ...current };
         },
-        replaceAuxiliarySessions(nextSessions) {
-          return nextSessions;
-        },
+
         clearProviderQuotaTelemetry() {},
         clearSessionContextTelemetry() {},
         invalidateProviderSessionThread() {},
@@ -974,15 +754,7 @@ describe("SettingsCatalogService", () => {
         getModelCatalog() {
           return createCatalogSnapshot();
         },
-        ensureModelCatalogSeeded() {
-          return createCatalogSnapshot();
-        },
-        importModelCatalogDocument() {
-          return createCatalogSnapshot();
-        },
-        exportModelCatalogDocument() {
-          return { providers: createCatalogSnapshot().providers };
-        },
+
         async updateSessionThreadIfMatches(input) {
           replaceCallCount += 1;
           const current = previousSessions[0];
@@ -995,9 +767,7 @@ describe("SettingsCatalogService", () => {
           }
           return { ...current };
         },
-        replaceAuxiliarySessions(nextSessions) {
-          return nextSessions;
-        },
+
         clearProviderQuotaTelemetry() {},
         clearSessionContextTelemetry() {},
         invalidateProviderSessionThread() {},
@@ -1083,23 +853,12 @@ describe("SettingsCatalogService", () => {
       getModelCatalog() {
         return createCatalogSnapshot();
       },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot();
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot();
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot().providers };
-      },
+
       replaceAllSessions(nextSessions) {
         currentSessions = nextSessions;
         return nextSessions;
       },
-      replaceAuxiliarySessions(nextSessions) {
-        currentAuxiliarySessions = nextSessions;
-        return nextSessions;
-      },
+
       clearProviderQuotaTelemetry() {},
       clearSessionContextTelemetry() {},
       invalidateProviderSessionThread() {},
@@ -1182,15 +941,7 @@ describe("SettingsCatalogService", () => {
       getModelCatalog() {
         return createCatalogSnapshot();
       },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot();
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot();
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot().providers };
-      },
+
       replaceAllSessions() {
         throw new Error("credential thread test must not replace the full Session collection");
       },
@@ -1208,9 +959,7 @@ describe("SettingsCatalogService", () => {
         replacedSessions = previousSessions;
         return { ...current };
       },
-      replaceAuxiliarySessions() {
-        throw new Error("credential thread test must not replace the full Auxiliary collection");
-      },
+
       updateAuxiliarySessionThreadIfMatches() {
         return null;
       },
@@ -1254,8 +1003,8 @@ describe("SettingsCatalogService", () => {
   // kind = "invariant"
   // claim = "credential変更時は対象Auxiliaryのthreadを条件付き更新し、親Sessionを含むprovider runtime invalidationを実行する"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-  // fault = "Auxiliary collection全体をreplaceする、または親Sessionのprovider invalidationを省略する"
-  // observable = "Auxiliary threadId、messages、telemetry clear、provider invalidation、旧collection replace呼出し"
+  // fault = "Auxiliaryの条件付きthread更新または親Sessionのprovider invalidationを省略する"
+  // observable = "Auxiliary threadId、messages、telemetry clear、provider invalidation"
   // observation_boundary = "component-behavior"
   // scope = "settings-credential-auxiliary-thread"
   // lifecycle = "permanent"
@@ -1265,9 +1014,9 @@ describe("SettingsCatalogService", () => {
     const previousSettings = createDefaultAppSettings();
     const previousSessions = [createSession({ threadId: "" })];
     const previousAuxiliarySessions = [createAuxiliarySession()];
+    const previousMessages = structuredClone(previousAuxiliarySessions[0].messages);
     const clearContextCalls: string[] = [];
     const invalidated: string[] = [];
-    let replacedAuxiliarySessions: AuxiliarySession[] = [];
 
     const service = new SettingsCatalogService({
       hasInFlightSessionRuns() {
@@ -1294,24 +1043,14 @@ describe("SettingsCatalogService", () => {
       getModelCatalog() {
         return createCatalogSnapshot();
       },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot();
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot();
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot().providers };
-      },
+
       replaceAllSessions() {
         throw new Error("credential thread test must not replace the full Session collection");
       },
       updateSessionThreadIfMatches() {
         return null;
       },
-      replaceAuxiliarySessions() {
-        throw new Error("credential thread test must not replace the full Auxiliary collection");
-      },
+
       updateAuxiliarySessionThreadIfMatches(input) {
         const current = previousAuxiliarySessions.find((session) =>
           session.id === input.auxiliarySessionId
@@ -1323,7 +1062,6 @@ describe("SettingsCatalogService", () => {
         if (!current) return null;
         current.threadId = input.nextThreadId;
         current.updatedAt = input.updatedAt;
-        replacedAuxiliarySessions = previousAuxiliarySessions;
         return { ...current };
       },
       clearProviderQuotaTelemetry() {},
@@ -1349,8 +1087,8 @@ describe("SettingsCatalogService", () => {
       },
     });
 
-    assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
-    assert.deepEqual(replacedAuxiliarySessions[0]?.messages, previousAuxiliarySessions[0].messages);
+    assert.equal(previousAuxiliarySessions[0]?.threadId, "");
+    assert.deepEqual(previousAuxiliarySessions[0]?.messages, previousMessages);
     assert.deepEqual(clearContextCalls, ["session-1", "aux-1"]);
     assert.deepEqual(invalidated, ["codex:session-1", "codex:aux-1"]);
   });
@@ -1388,11 +1126,9 @@ describe("SettingsCatalogService", () => {
       getAppSettings: () => savedSettings,
       updateAppSettings: (settings) => { savedSettings = settings; return settings; },
       getModelCatalog: () => createCatalogSnapshot(),
-      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-      importModelCatalogDocument: () => createCatalogSnapshot(),
-      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+
       replaceAllSessions: () => { throw new Error("must use thread patch"); },
-      replaceAuxiliarySessions: () => { throw new Error("must use auxiliary thread patch"); },
+
       updateSessionThreadIfMatches: (input) => {
         const current = sessions.find((session) => session.id === input.sessionId && getSessionIncarnationId(session) === input.incarnationId && session.provider === input.provider && session.threadId === input.expectedThreadId);
         if (!current) return null;
@@ -1474,11 +1210,9 @@ describe("SettingsCatalogService", () => {
       getAppSettings: () => savedSettings,
       updateAppSettings: (settings) => { savedSettings = settings; return settings; },
       getModelCatalog: () => createCatalogSnapshot(),
-      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-      importModelCatalogDocument: () => createCatalogSnapshot(),
-      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+
       replaceAllSessions: () => [session],
-      replaceAuxiliarySessions: () => [],
+
       updateSessionThreadIfMatches: (input) => ({ ...session, threadId: input.nextThreadId }),
       updateAuxiliarySessionThreadIfMatches: () => null,
       clearProviderQuotaTelemetry: () => {},
@@ -1535,9 +1269,9 @@ describe("SettingsCatalogService", () => {
         updateAppSettings: (settings) => { updateCount += 1; current = settings; return settings; },
         hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
         listSessions: () => [session], listAuxiliarySessions: () => [],
-        getModelCatalog: () => createCatalogSnapshot(), ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-        importModelCatalogDocument: () => createCatalogSnapshot(), exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
-        replaceAllSessions: () => [], replaceAuxiliarySessions: () => [],
+        getModelCatalog: () => createCatalogSnapshot(),
+
+        replaceAllSessions: () => [],
         clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {}, invalidateProviderSessionThread: async () => { cleanupStarted.resolve(); await releaseCleanup.promise; throw new Error("cleanup failed"); },
         broadcastSessions: () => {}, broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
         captureStorageIdentity: () => storageGeneration,
@@ -1547,7 +1281,7 @@ describe("SettingsCatalogService", () => {
         clearAllSessionBackgroundActivities: () => {}, invalidateAllProviderSessionThreads: async () => {},
         closeResetTargetWindows: () => {}, resetSessionRuntime: () => {},
         clearProjectMemories: () => {}, recreateDatabaseFile: async () => createCatalogSnapshot(),
-        resetModelCatalogToBundled: () => createCatalogSnapshot(),
+
       });
       const updating = service.updateAppSettings(resetSettings);
       await cleanupStarted.promise;
@@ -1589,7 +1323,7 @@ describe("SettingsCatalogService", () => {
   it("settings rollback後に正本を再broadcastする", async () => {
     const previous = createDefaultAppSettings();
     const session = createSession({ provider: "copilot" });
-    let auxiliary = createAuxiliarySession({ parentSessionId: session.id });
+    const auxiliary = createAuxiliarySession({ parentSessionId: session.id });
     let current = previous;
     const broadcasted: AppSettings[] = [];
     const sessionNotifications: string[][] = [];
@@ -1598,9 +1332,9 @@ describe("SettingsCatalogService", () => {
       updateAppSettings: (settings) => { current = settings; return settings; },
       hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
       listSessions: () => [session], listAuxiliarySessions: () => [auxiliary],
-      getModelCatalog: () => createCatalogSnapshot(), ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-      importModelCatalogDocument: () => createCatalogSnapshot(), exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
-      replaceAllSessions: () => [], replaceAuxiliarySessions: (sessions) => { auxiliary = sessions[0]; return sessions; },
+      getModelCatalog: () => createCatalogSnapshot(),
+
+      replaceAllSessions: () => [],
       clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {}, invalidateProviderSessionThread: async () => { throw new Error("cleanup failed"); },
       broadcastSessions: (ids) => { sessionNotifications.push(ids ? [...ids] : []); }, broadcastAppSettings: (settings) => { broadcasted.push(settings ?? current); }, broadcastModelCatalog: () => {},
     });
@@ -1641,9 +1375,9 @@ describe("SettingsCatalogService", () => {
       updateAppSettings: (settings) => { current = settings; return settings; },
       hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
       listSessions: () => [session], listAuxiliarySessions: () => [],
-      getModelCatalog: () => createCatalogSnapshot(), ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-      importModelCatalogDocument: () => createCatalogSnapshot(), exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
-      replaceAllSessions: () => [], replaceAuxiliarySessions: () => [],
+      getModelCatalog: () => createCatalogSnapshot(),
+
+      replaceAllSessions: () => [],
       clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {}, invalidateProviderSessionThread: async () => {
         cleanupCount += 1;
         if (cleanupCount === 1) { firstCleanup.resolve(); await firstCleanupRelease.promise; throw new Error("first cleanup failed"); }
@@ -1690,11 +1424,9 @@ describe("SettingsCatalogService", () => {
       getAppSettings: () => savedSettings,
       updateAppSettings: (settings) => { savedSettings = settings; return settings; },
       getModelCatalog: () => createCatalogSnapshot(),
-      ensureModelCatalogSeeded: () => createCatalogSnapshot(),
-      importModelCatalogDocument: () => createCatalogSnapshot(),
-      exportModelCatalogDocument: () => ({ providers: createCatalogSnapshot().providers }),
+
       replaceAllSessions: () => { throw new Error("must use thread patch"); },
-      replaceAuxiliarySessions: () => { throw new Error("must use auxiliary thread patch"); },
+
       updateSessionThreadIfMatches: (input) => {
         if (input.expectedThreadId === "") reverseCalls += 1;
         main.threadId = input.nextThreadId;
@@ -1719,366 +1451,6 @@ describe("SettingsCatalogService", () => {
     assert.equal(savedSettings.codingProviderSettings.codex.apiKey, "");
     assert.equal(main.threadId, "");
     assert.equal(reverseCalls, 0);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "model catalog import は Main session の runtime metadata だけを新 revision へ移行し broadcast する"
-  // fault = "session 全体を置換し本文・別 metadata を失う"
-  // observable = "catalog revision、model、thread、messages、broadcast"
-  // observation_boundary = "component-behavior"
-  // scope = "catalog-import-session-metadata"
-  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-  // lifecycle = "permanent"
-  // impact = "catalog import で会話本文や実行状態を破壊する"
-  // distinction = "metadata CAS と notification の契約を直接確認する"
-  // @end-test-value
-  it("model catalog import で session を新 revision に移行して broadcast する", async () => {
-    const previousSessions = [
-      createSession({
-        provider: "legacy",
-        model: "missing-model",
-        reasoningEffort: "high",
-      }),
-    ];
-    const importedDocument: ModelCatalogDocument = {
-      providers: createCatalogSnapshot(2).providers,
-    };
-    let importedSource: string | null = null;
-    let broadcasted = false;
-    let replacedSessions: Session[] = [];
-    let catalog = createCatalogSnapshot(1);
-    const cleanupStarted = createDeferred();
-    const releaseCleanup = createDeferred();
-    let invalidationCalls = 0;
-
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns() {
-        return false;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      listSessions() {
-        return previousSessions;
-      },
-      listAuxiliarySessions() {
-        return [];
-      },
-      getAppSettings() {
-        return createDefaultAppSettings();
-      },
-      updateAppSettings(settings) {
-        return settings;
-      },
-      getModelCatalog() {
-        return catalog;
-      },
-      ensureModelCatalogSeeded() {
-        return catalog;
-      },
-      importModelCatalogDocument(document, source) {
-        importedSource = source;
-        catalog = {
-          revision: source === "rollback" ? 1 : catalog.revision + 1,
-          providers: document.providers,
-        };
-        return catalog;
-      },
-      exportModelCatalogDocument() {
-        return { providers: catalog.providers };
-      },
-      replaceAllSessions() {
-        throw new Error("catalog import must use metadata CAS");
-      },
-      updateSessionRuntimeMetadataIfMatches(input) {
-        const current = previousSessions[0];
-        if (!current || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        const next = { ...current, ...input.next };
-        previousSessions[0] = next;
-        replacedSessions = previousSessions;
-        return next;
-      },
-      replaceAuxiliarySessions(nextSessions) {
-        return nextSessions;
-      },
-      clearProviderQuotaTelemetry() {},
-      clearSessionContextTelemetry() {},
-      invalidateProviderSessionThread: async () => {
-        invalidationCalls += 1;
-        if (invalidationCalls === 1) {
-          cleanupStarted.resolve();
-          await releaseCleanup.promise;
-          throw new Error("catalog cleanup failed");
-        }
-      },
-      broadcastSessions() {
-        broadcasted = true;
-      },
-      broadcastAppSettings() {},
-      broadcastModelCatalog() {
-        broadcasted = true;
-      },
-    });
-
-    const importing = service.importModelCatalogDocument(importedDocument);
-    await cleanupStarted.promise;
-    const concurrent = await service.importModelCatalogDocument(importedDocument);
-    releaseCleanup.resolve();
-    await assert.rejects(() => importing);
-
-    assert.equal(concurrent.revision, 3);
-    assert.equal(importedSource, "imported");
-    assert.equal(replacedSessions[0]?.catalogRevision, 3);
-    assert.equal(replacedSessions[0]?.model, "gpt-5.4");
-    assert.deepEqual(replacedSessions[0]?.messages, previousSessions[0].messages);
-    assert.equal(broadcasted, true);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "catalog importとcleanup rollbackは現在選択をactive revisionへ揃えてからsnapshotを通知する"
-  // fault = "永続値だけ変更して現在選択を旧revisionに残すか、rollbackで元の選択を失う"
-  // observable = "通知時のMain/Auxiliary選択とcatalog revision sequence、親Session ID通知"
-  // observation_boundary = "component-behavior"
-  // scope = "catalog-rollback-rebroadcast"
-  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-  // lifecycle = "permanent"
-  // impact = "rendererが保存されていないcatalog revisionを保持する"
-  // distinction = "cleanup失敗、rollback、復元snapshot通知の順序を確認する"
-  // @end-test-value
-  it("catalog cleanup失敗のrollback後に復元snapshotを再broadcastする", async () => {
-    const session = createSession();
-    const auxiliary = createAuxiliarySession({ parentSessionId: session.id });
-    let catalog = createCatalogSnapshot(1);
-    const broadcasts: number[] = [];
-    const sessionNotifications: string[][] = [];
-    const selections = new CurrentExecutionSelections();
-    const options = captureSessionExecutionOptions({ ...session, model: "gpt-5.4-mini", reasoningEffort: "low" });
-    selections.remember(session, options);
-    selections.remember(auxiliary, options);
-    const observedSelections: Array<[number, string, string]> = [];
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
-      listSessions: () => [session], listAuxiliarySessions: () => [auxiliary],
-      getAppSettings: () => createDefaultAppSettings(), updateAppSettings: (settings) => settings,
-      getModelCatalog: () => catalog, ensureModelCatalogSeeded: () => catalog,
-      exportModelCatalogDocument: () => ({ providers: catalog.providers }),
-      importModelCatalogDocument: (document, source) => {
-        catalog = { revision: source === "rollback" ? 3 : 2, providers: document.providers };
-        return catalog;
-      },
-      replaceAllSessions: () => [], replaceAuxiliarySessions: () => [],
-      clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
-      invalidateProviderSessionThread: async () => { throw new Error("catalog cleanup failed"); },
-      broadcastSessions: (ids) => { sessionNotifications.push(ids ? [...ids] : []); }, broadcastAppSettings: () => {},
-      applyCurrentExecutionCatalog: (snapshot) => selections.setModelCatalog(snapshot),
-      broadcastModelCatalog: (snapshot) => {
-        if (snapshot) broadcasts.push(snapshot.revision);
-        const main = selections.apply(session);
-        const aux = selections.apply(auxiliary);
-        observedSelections.push([main.catalogRevision, main.model, aux.model]);
-      },
-      });
-    const imported = createCatalogSnapshot(2);
-    imported.providers[0]!.models = imported.providers[0]!.models.filter((model) => model.id !== "gpt-5.4-mini");
-    await assert.rejects(service.importModelCatalogDocument({ providers: imported.providers }), /catalog cleanup failed/);
-    assert.deepEqual(broadcasts, [2, 3]);
-    assert.equal(catalog.revision, 3);
-    assert.deepEqual(sessionNotifications, [[session.id], [session.id]]);
-    assert.deepEqual(observedSelections, [[2, "gpt-5.4", "gpt-5.4"], [3, "gpt-5.4-mini", "gpt-5.4-mini"]]);
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "model catalog import は Auxiliary の runtime metadata も限定更新する"
-  // fault = "Auxiliary 本文・draft を full replace で失う"
-  // observable = "Auxiliary catalog revision、model、thread、messages、invalidation"
-  // observation_boundary = "component-behavior"
-  // scope = "catalog-import-auxiliary-metadata"
-  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-  // lifecycle = "permanent"
-  // impact = "Auxiliary の作業状態を catalog import で破壊する"
-  // distinction = "Auxiliary metadata CAS と provider cleanup を確認する"
-  // @end-test-value
-  it("model catalog import で auxiliary metadata も新 revision に移行する", async () => {
-    const previousSessions = [createSession()];
-    const previousAuxiliarySessions = [
-      createAuxiliarySession({
-        model: "missing-model",
-        reasoningEffort: "high",
-        threadId: "aux-thread-1",
-        composerDraft: "draft must survive import",
-      }),
-    ];
-    const importedDocument: ModelCatalogDocument = {
-      providers: createCatalogSnapshot(2).providers,
-    };
-    const invalidated: string[] = [];
-    let replacedAuxiliarySessions: AuxiliarySession[] = [];
-
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns() {
-        return false;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      listSessions() {
-        return previousSessions;
-      },
-      listAuxiliarySessions() {
-        return previousAuxiliarySessions;
-      },
-      getAppSettings() {
-        return createDefaultAppSettings();
-      },
-      updateAppSettings(settings) {
-        return settings;
-      },
-      getModelCatalog() {
-        return createCatalogSnapshot(1);
-      },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot(1);
-      },
-      importModelCatalogDocument(document) {
-        return {
-          revision: 2,
-          providers: document.providers,
-        };
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot(1).providers };
-      },
-      replaceAllSessions() {
-        throw new Error("catalog import must use metadata CAS");
-      },
-      updateSessionRuntimeMetadataIfMatches(input) {
-        const current = previousSessions[0];
-        if (!current || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        previousSessions[0] = { ...current, ...input.next };
-        return previousSessions[0];
-      },
-      replaceAuxiliarySessions(nextSessions) {
-        throw new Error("catalog import must use metadata CAS");
-      },
-      updateAuxiliarySessionRuntimeMetadataIfMatches(input) {
-        const current = previousAuxiliarySessions[0];
-        if (!current || current.parentSessionId !== input.parentSessionId || current.createdAt !== input.createdAt || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        const next = { ...current, ...input.next };
-        previousAuxiliarySessions[0] = next;
-        replacedAuxiliarySessions = previousAuxiliarySessions;
-        return next;
-      },
-      clearProviderQuotaTelemetry() {},
-      clearSessionContextTelemetry() {},
-      invalidateProviderSessionThread(providerId, sessionId) {
-        invalidated.push(`${providerId}:${sessionId}`);
-      },
-      broadcastSessions() {},
-      broadcastAppSettings() {},
-      broadcastModelCatalog() {},
-    });
-
-    await service.importModelCatalogDocument(importedDocument);
-
-    assert.equal(replacedAuxiliarySessions[0]?.catalogRevision, 2);
-    assert.equal(replacedAuxiliarySessions[0]?.model, "gpt-5.4");
-    assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
-    assert.equal(replacedAuxiliarySessions[0]?.composerDraft, "draft must survive import");
-    assert.deepEqual(replacedAuxiliarySessions[0]?.messages, previousAuxiliarySessions[0].messages);
-    assert.deepEqual(invalidated, ["codex:session-1", "codex:aux-1"]);
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "model catalog exportはstorage documentをそのまま返す"
-  // oracle = { type = "contract", ref = "src-electron/settings/settings-catalog-service.ts" }
-  // fault = "export時に保存済みprovider/model情報を置換または欠落させる"
-  // observable = "exportされたdocumentとstorageのdocumentの内容一致"
-  // observation_boundary = "public-boundary"
-  // scope = "model catalog export"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("model catalog export は storage の document をそのまま返す", () => {
-    const document = { providers: createCatalogSnapshot(1).providers };
-    let requestedRevision: number | null | undefined;
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns() {
-        return false;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      listSessions() {
-        return [];
-      },
-      listAuxiliarySessions() {
-        return [];
-      },
-      getAppSettings() {
-        return createDefaultAppSettings();
-      },
-      updateAppSettings(settings) {
-        return settings;
-      },
-      getModelCatalog() {
-        return createCatalogSnapshot(1);
-      },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot(1);
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot(1);
-      },
-      exportModelCatalogDocument(revision) {
-        requestedRevision = revision;
-        return document;
-      },
-      replaceAllSessions(nextSessions) {
-        return nextSessions;
-      },
-      replaceAuxiliarySessions(nextSessions) {
-        return nextSessions;
-      },
-      clearProviderQuotaTelemetry() {},
-      clearSessionContextTelemetry() {},
-      invalidateProviderSessionThread() {},
-      resetAppSettings() {
-        return createDefaultAppSettings();
-      },
-      resetModelCatalogToBundled() {
-        return createCatalogSnapshot(1);
-      },
-      clearProjectMemories() {},
-      resetSessionRuntime() {},
-      clearAllProviderQuotaTelemetry() {},
-      clearAllSessionContextTelemetry() {},
-      clearAllSessionBackgroundActivities() {},
-      invalidateAllProviderSessionThreads() {},
-      closeResetTargetWindows() {},
-      async recreateDatabaseFile() {
-        return createCatalogSnapshot(1);
-      },
-      broadcastSessions() {},
-      broadcastAppSettings() {},
-      broadcastModelCatalog() {},
-    });
-
-    return service.exportModelCatalogDocument(1).then((exported) => {
-      assert.equal(requestedRevision, 1);
-      assert.deepEqual(exported, document);
-    });
   });
 
   // @test-value v2
@@ -2131,17 +1503,9 @@ describe("SettingsCatalogService", () => {
         return settings;
       },
       getModelCatalog() {
-        return createCatalogSnapshot(1);
+        return createCatalogSnapshot();
       },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot(1);
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot(1);
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot(1).providers };
-      },
+
       async replaceAllSessions(nextSessions) {
         replaceCallCount += 1;
         calls.push(`replace:${nextSessions.length}`);
@@ -2153,10 +1517,7 @@ describe("SettingsCatalogService", () => {
         sessions = nextSessions;
         return nextSessions;
       },
-      replaceAuxiliarySessions(nextSessions) {
-        calls.push(`replaceAux:${nextSessions.length}`);
-        return nextSessions;
-      },
+
       clearProviderQuotaTelemetry(providerId) {
         calls.push(`clearQuota:${providerId}`);
       },
@@ -2170,10 +1531,7 @@ describe("SettingsCatalogService", () => {
         calls.push("resetAppSettings");
         return createDefaultAppSettings();
       },
-      resetModelCatalogToBundled() {
-        calls.push("resetCatalog");
-        return createCatalogSnapshot(2);
-      },
+
       clearProjectMemories() {
         calls.push("clearProject");
       },
@@ -2207,7 +1565,7 @@ describe("SettingsCatalogService", () => {
           throw new Error("recreate database failed");
         }
         sessions = [];
-        return createCatalogSnapshot(3);
+        return createCatalogSnapshot();
       },
       broadcastSessions() {
         calls.push("broadcastSessions");
@@ -2221,7 +1579,7 @@ describe("SettingsCatalogService", () => {
     });
 
     const failedPartialReset = service.resetAppDatabase({
-      targets: ["sessions", "appSettings", "projectMemory"],
+      targets: ["sessions", "appSettings"],
     });
     await firstReplacementStarted.promise;
     assert.equal(calls.some((call) => call.startsWith("dismissNotification:")), false);
@@ -2234,10 +1592,10 @@ describe("SettingsCatalogService", () => {
 
     calls.length = 0;
     const result = await service.resetAppDatabase({
-      targets: ["sessions", "appSettings", "projectMemory"],
+      targets: ["sessions", "appSettings"],
     });
 
-    assert.deepEqual(result.resetTargets, ["sessions", "appSettings", "projectMemory"]);
+    assert.deepEqual(result.resetTargets, ["sessions", "appSettings"]);
     assert.deepEqual(calls, [
       "closeResetWindows",
       "replace:0",
@@ -2250,7 +1608,6 @@ describe("SettingsCatalogService", () => {
       "invalidateAllThreads",
       "resetAppSettings",
       "clearAllQuota",
-      "clearProject",
       "broadcastSessions",
       "broadcastSettings",
       "broadcastCatalog",
@@ -2282,7 +1639,6 @@ describe("SettingsCatalogService", () => {
     assert.deepEqual(fullResult.resetTargets, [
       "sessions",
       "appSettings",
-      "modelCatalog",
       "projectMemory",
     ]);
     assert.deepEqual(calls, [
@@ -2302,263 +1658,4 @@ describe("SettingsCatalogService", () => {
       "broadcastCatalog",
     ]);
   });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "model catalog reset は Auxiliary の runtime metadata だけを bundled catalog へ移行する"
-  // fault = "reset で Auxiliary の本文・draft を全置換する"
-  // observable = "Auxiliary revision、model、thread、messages、invalidation"
-  // observation_boundary = "component-behavior"
-  // scope = "catalog-reset-auxiliary-metadata"
-  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#settingscatalogservice" }
-  // lifecycle = "permanent"
-  // impact = "catalog reset で Auxiliary 作業を失う"
-  // distinction = "reset 時の限定 metadata 更新を確認する"
-  // @end-test-value
-  it("model catalog reset で auxiliary metadata も bundled catalog へ移行する", async () => {
-    const sessions = [createSession()];
-    const auxiliarySessions = [
-      createAuxiliarySession({
-        model: "missing-model",
-        reasoningEffort: "high",
-        threadId: "aux-thread-1",
-        composerDraft: "draft must survive reset",
-      }),
-    ];
-    const invalidated: string[] = [];
-    let replacedAuxiliarySessions: AuxiliarySession[] = [];
-
-    const service = new SettingsCatalogService({
-      hasInFlightSessionRuns() {
-        return false;
-      },
-      isSessionRunInFlight() {
-        return false;
-      },
-      isRunningSession() {
-        return false;
-      },
-      listSessions() {
-        return sessions;
-      },
-      listAuxiliarySessions() {
-        return auxiliarySessions;
-      },
-      getAppSettings() {
-        return createDefaultAppSettings();
-      },
-      updateAppSettings(settings) {
-        return settings;
-      },
-      getModelCatalog() {
-        return createCatalogSnapshot(3);
-      },
-      ensureModelCatalogSeeded() {
-        return createCatalogSnapshot(3);
-      },
-      importModelCatalogDocument() {
-        return createCatalogSnapshot(3);
-      },
-      exportModelCatalogDocument() {
-        return { providers: createCatalogSnapshot(3).providers };
-      },
-      replaceAllSessions() {
-        throw new Error("catalog reset must use metadata CAS");
-      },
-      replaceAuxiliarySessions() {
-        throw new Error("catalog reset must use metadata CAS");
-      },
-      updateSessionRuntimeMetadataIfMatches(input) {
-        const current = sessions[0];
-        if (!current || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        sessions[0] = { ...current, ...input.next };
-        return sessions[0];
-      },
-      updateAuxiliarySessionRuntimeMetadataIfMatches(input) {
-        const current = auxiliarySessions[0];
-        if (!current || current.parentSessionId !== input.parentSessionId || current.createdAt !== input.createdAt || current.provider !== input.expected.provider || current.catalogRevision !== input.expected.catalogRevision || current.model !== input.expected.model || current.threadId !== input.expected.threadId) return null;
-        const next = { ...current, ...input.next };
-        auxiliarySessions[0] = next;
-        replacedAuxiliarySessions = auxiliarySessions;
-        return next;
-      },
-      clearProviderQuotaTelemetry() {},
-      clearSessionContextTelemetry() {},
-      invalidateProviderSessionThread(providerId, sessionId) {
-        invalidated.push(`${providerId}:${sessionId}`);
-      },
-      resetAppSettings() {
-        return createDefaultAppSettings();
-      },
-      resetModelCatalogToBundled() {
-        return createCatalogSnapshot(3);
-      },
-      clearProjectMemories() {},
-      resetSessionRuntime() {},
-      clearAllProviderQuotaTelemetry() {},
-      clearAllSessionContextTelemetry() {},
-      clearAllSessionBackgroundActivities() {},
-      invalidateAllProviderSessionThreads() {},
-      closeResetTargetWindows() {},
-      async recreateDatabaseFile() {
-        return createCatalogSnapshot(3);
-      },
-      broadcastSessions() {},
-      broadcastAppSettings() {},
-      broadcastModelCatalog() {},
-    });
-
-    await service.resetAppDatabase({ targets: ["modelCatalog"] });
-
-    assert.equal(replacedAuxiliarySessions[0]?.catalogRevision, 3);
-    assert.equal(replacedAuxiliarySessions[0]?.model, "gpt-5.4");
-    assert.equal(replacedAuxiliarySessions[0]?.threadId, "");
-    assert.equal(replacedAuxiliarySessions[0]?.composerDraft, "draft must survive reset");
-    assert.deepEqual(replacedAuxiliarySessions[0]?.messages, auxiliarySessions[0].messages);
-    assert.deepEqual(invalidated, ["codex:session-1", "codex:aux-1"]);
-  });
-
-
-// @test-value v2
-// kind = "invariant"
-// claim = "catalog import の失敗時は試行済みのMain/Auxiliary collectionだけを復元する"
-// oracle = { type = "contract", ref = "src-electron/settings/settings-catalog-service.ts" }
-// fault = "未試行collectionの並行更新を古いsnapshotへ戻すか、rollback失敗を隠す"
-// observable = "collection state, catalog state, rollback errors"
-// observation_boundary = "public-boundary"
-// scope = "catalog-import-rollback-ownership"
-// lifecycle = "permanent"
-// @end-test-value
-it("catalog import の rollback は試行済み collection に限定する", { timeout: 10_000 }, async () => {
-  for (const failedCollection of ["main", "auxiliary"] as const) {
-    for (const rollbackFails of [false, true]) {
-      const original = {
-        main: [createSession()],
-        auxiliary: [createAuxiliarySession()],
-      };
-      const current = structuredClone(original);
-      const entered = createDeferred();
-      const resume = createDeferred();
-      const importError = new Error("import replacement failed");
-      const rollbackError = new Error("rollback failed");
-      const sources: string[] = [];
-      let rollingBack = false;
-      let catalog = createCatalogSnapshot(1);
-      const replace = async <K extends keyof typeof current>(key: K, rows: typeof current[K]) => {
-        current[key] = rows;
-        if (!rollingBack && key === failedCollection) {
-          entered.resolve();
-          await resume.promise;
-          rollingBack = true;
-          throw importError;
-        }
-        if (rollingBack && rollbackFails && key === failedCollection) {
-          throw rollbackError;
-        }
-        return rows;
-      };
-      const service = new SettingsCatalogService({
-        hasInFlightSessionRuns: () => false,
-        isSessionRunInFlight: () => false,
-        isRunningSession: () => false,
-        listSessions: () => current.main,
-        listAuxiliarySessions: () => current.auxiliary,
-        getAppSettings: createDefaultAppSettings,
-        updateAppSettings: (settings) => settings,
-        getModelCatalog: () => catalog,
-        ensureModelCatalogSeeded: () => catalog,
-        importModelCatalogDocument(document, source) {
-          sources.push(source);
-          if (source === "rollback" && rollbackFails) {
-            throw rollbackError;
-          }
-          catalog = { revision: source === "rollback" ? 3 : 2, providers: document.providers };
-          return catalog;
-        },
-        exportModelCatalogDocument: () => ({ providers: catalog.providers }),
-        updateSessionRuntimeMetadataIfMatches: async (input) => {
-          const currentSession = current.main[0];
-          if (!currentSession || currentSession.catalogRevision !== input.expected.catalogRevision || currentSession.threadId !== input.expected.threadId) {
-            return null;
-          }
-          current.main[0] = { ...currentSession, ...input.next };
-          if (!rollingBack && failedCollection === "main") {
-            entered.resolve();
-            await resume.promise;
-            rollingBack = true;
-            throw importError;
-          }
-          if (rollingBack && rollbackFails && failedCollection === "main") {
-            throw rollbackError;
-          }
-          return current.main[0];
-        },
-        updateAuxiliarySessionRuntimeMetadataIfMatches: async (input) => {
-          const currentSession = current.auxiliary[0];
-          if (!currentSession || currentSession.catalogRevision !== input.expected.catalogRevision || currentSession.threadId !== input.expected.threadId) {
-            return null;
-          }
-          current.auxiliary[0] = { ...currentSession, ...input.next };
-          if (!rollingBack && failedCollection === "auxiliary") {
-            entered.resolve();
-            await resume.promise;
-            rollingBack = true;
-            throw importError;
-          }
-          if (rollingBack && rollbackFails && failedCollection === "auxiliary") {
-            throw rollbackError;
-          }
-          return current.auxiliary[0];
-        },
-        replaceAllSessions: (rows) => replace("main", rows),
-        replaceAuxiliarySessions: (rows) => replace("auxiliary", rows),
-        clearProviderQuotaTelemetry() {},
-        clearSessionContextTelemetry() {},
-        invalidateProviderSessionThread() {},
-        broadcastSessions() {},
-        broadcastAppSettings() {},
-        broadcastModelCatalog() {},
-      });
-      const incomingCatalog = createCatalogSnapshot(2);
-      incomingCatalog.providers[0].label = "Imported Codex";
-      const pending = service.importModelCatalogDocument({ providers: incomingCatalog.providers });
-      const rejection = assert.rejects(pending, (error: unknown) => {
-        if (!rollbackFails) {
-          assert.equal(error, importError);
-        } else {
-          assert.ok(error instanceof AggregateError);
-          assert.deepEqual(error.errors, [importError, rollbackError]);
-        }
-        return true;
-      });
-      await entered.promise;
-      assert.deepEqual(catalog.providers, incomingCatalog.providers);
-      if (failedCollection === "main") {
-        current.auxiliary = [];
-      }
-      const expectedAuxiliary = structuredClone(current.auxiliary);
-      resume.resolve();
-      await rejection;
-      if (rollbackFails) {
-        assert.deepEqual(sources, ["imported", "rollback"]);
-        assert.deepEqual(catalog.providers, incomingCatalog.providers);
-        continue;
-      }
-      if (failedCollection === "main") {
-        assert.equal(current.main[0]?.catalogRevision, 2);
-      } else {
-        assert.deepEqual(current.main, original.main);
-      }
-      if (failedCollection === "auxiliary") {
-        assert.equal(current.auxiliary[0]?.catalogRevision, 2);
-      } else {
-        assert.deepEqual(current.auxiliary, failedCollection === "main" ? expectedAuxiliary : original.auxiliary);
-      }
-      assert.deepEqual(sources, ["imported", "rollback"]);
-      assert.deepEqual(catalog.providers, (rollbackFails ? incomingCatalog : createCatalogSnapshot(1)).providers);
-    }
-  }
-});
-
-
 });

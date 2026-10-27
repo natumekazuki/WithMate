@@ -84,7 +84,7 @@ export type SessionPersistenceServiceDeps = {
   deleteStoredSession?(sessionId: string): Awaitable<void>;
   deleteStoredSessions?(sessionIds: readonly string[]): Awaitable<void>;
   getAppSettings: () => Awaitable<AppSettings>;
-  getModelCatalogSnapshot(): Awaitable<ModelCatalogSnapshot>;
+  getModelCatalogSnapshot(workspacePath?: string, providerId?: string): Awaitable<ModelCatalogSnapshot>;
   createCharacterRuntimeSnapshot?(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
@@ -159,19 +159,19 @@ export class SessionPersistenceService {
     }
 
     const appSettings = await this.deps.getAppSettings();
-    const snapshot = await this.deps.getModelCatalogSnapshot();
+    const snapshot = await this.deps.getModelCatalogSnapshot(input.workspacePath,
+      input.model ? undefined : input.provider ?? DEFAULT_PROVIDER_ID);
     const provider = this.resolveEnabledProviderCatalog(
       snapshot,
       appSettings,
       input.provider,
       input.sessionKind === "character-authoring",
     );
-    const requestedModel = input.provider && input.provider !== provider.id
-      ? provider.defaultModelId
-      : input.model ?? provider.defaultModelId;
-    const requestedReasoningEffort = input.provider && input.provider !== provider.id
-      ? provider.defaultReasoningEffort
-      : input.reasoningEffort ?? provider.defaultReasoningEffort;
+    const requestedModel = input.model ?? provider.defaultModelId;
+    if (!requestedModel.trim()) {
+      throw new Error(`Provider ${provider.id} has no available model. Complete model discovery before creating a Session.`);
+    }
+    const requestedReasoningEffort = input.reasoningEffort ?? provider.defaultReasoningEffort;
     const selection = resolveModelSelection(
       provider,
       requestedModel,
@@ -180,7 +180,6 @@ export class SessionPersistenceService {
     const created = buildNewSession({
       ...input,
       provider: provider.id,
-      catalogRevision: snapshot.revision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
       characterRuntimeSnapshot:
@@ -312,7 +311,7 @@ export class SessionPersistenceService {
     const fresh = this.deps.overlayCurrentExecutionOptions?.(current) ?? current;
     const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
-    const validated = { ...validateSessionExecutionOptions(options, provider, catalog.revision),
+    const validated = { ...validateSessionExecutionOptions(options, provider),
       codexReviewer: resolveCodexReviewerUpdate(fresh, options.codexReviewer) };
     this.deps.rememberExecutionOptions?.(fresh, validated);
     this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
@@ -406,7 +405,6 @@ export class SessionPersistenceService {
         current &&
         getSessionIncarnationId(current) === input.incarnationId &&
         current.provider === input.expected.provider &&
-        current.catalogRevision === input.expected.catalogRevision &&
         current.model === input.expected.model &&
         current.reasoningEffort === input.expected.reasoningEffort &&
         current.threadId === input.expected.threadId
@@ -920,38 +918,14 @@ export class SessionPersistenceService {
     requestedProviderId?: string | null,
     requireRequestedProvider = false,
   ): ModelCatalogProvider {
-    const normalizedRequestedProviderId = requestedProviderId?.trim() ?? "";
-    const requestedProvider = requireRequestedProvider
-      ? snapshot.providers.find((provider) => provider.id === normalizedRequestedProviderId) ?? null
-      : requestedProviderId
-        ? getProviderCatalog(snapshot.providers, requestedProviderId)
-        : null;
-    if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
-      return requestedProvider;
+    const providerId = requestedProviderId?.trim() || (requireRequestedProvider ? "" : DEFAULT_PROVIDER_ID);
+    if (!providerId) throw new Error("Select a provider for Character authoring.");
+    const provider = getProviderCatalog(snapshot.providers, providerId);
+    if (!provider) throw new Error(`Provider ${providerId} model discovery is unavailable.`);
+    if (!getProviderAppSettings(appSettings, providerId).enabled) {
+      throw new Error(`Provider ${providerId} is disabled in Settings.`);
     }
-    if (requireRequestedProvider) {
-      if (!normalizedRequestedProviderId) {
-        throw new Error("Select a provider for Character authoring.");
-      }
-      if (!requestedProvider) {
-        throw new Error("The selected Character authoring provider is not in the model catalog.");
-      }
-      throw new Error("The selected Character authoring provider is disabled in Settings.");
-    }
-
-    const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;
-    if (defaultProvider && getProviderAppSettings(appSettings, defaultProvider.id).enabled) {
-      return defaultProvider;
-    }
-
-    const firstEnabledProvider = snapshot.providers.find((provider) =>
-      getProviderAppSettings(appSettings, provider.id).enabled
-    );
-    if (firstEnabledProvider) {
-      return firstEnabledProvider;
-    }
-
-    throw new Error("No enabled provider is available in Settings.");
+    return provider;
   }
 
   private syncStoredSession(stored: Session): void {

@@ -159,6 +159,32 @@ class FakeTransport {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Codex turnは空Depthをthread configとturn requestから省略しnative値を保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "SDK未指定を空文字へ変えるか保存済みnative Depthを固定値へ置換する"
+// observable = "thread/start configとturn/start params"
+// observation_boundary = "public-boundary"
+// scope = "Codex turn Depth forwarding"
+// lifecycle = "permanent"
+// @end-test-value
+it("Codex native Depthは保持し未指定effortはRPCへ送らない", async () => {
+  for (const effort of ["", "persistent"]) {
+    const request = createCodexRunSessionTurnInput(process.cwd());
+    request.executionOptions = { ...request.executionOptions, reasoningEffort: effort };
+    const transport = new FakeTransport();
+    transport.events = [completed([])];
+    await new CodexAdapter(undefined, { createTransport: () => transport }).runSessionTurn(request);
+    const thread = transport.calls.find((call) => call.method === "thread/start")?.params as { config: Record<string, unknown> };
+    const turn = transport.calls.find((call) => call.method === "turn/start")?.params as Record<string, unknown>;
+    assert.equal(Object.hasOwn(thread.config, "model_reasoning_effort"), Boolean(effort));
+    assert.equal(thread.config.model_reasoning_effort, effort || undefined);
+    assert.equal(Object.hasOwn(turn, "effort"), Boolean(effort));
+    assert.equal(turn.effort, effort || undefined);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Codex quota取得はaccount RPCのみを使い成功失敗取消でもtransportを閉じ、API key指定時に別accountへfallbackしない"
 // oracle = { type = "contract", ref = "Issue #827; https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt" }
 // fault = "quota取得でturnやloginを開始する、失敗や取消で子processを残す、API key時にChatGPT quotaを取得する"

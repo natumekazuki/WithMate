@@ -24,6 +24,7 @@ const providerCatalog = {
     {
       id: "gpt-fast",
       label: "GPT Fast",
+      defaultReasoningEffort: "minimal",
       reasoningEfforts: ["minimal", "low"],
     },
   ],
@@ -103,10 +104,19 @@ test("buildSessionWithCodexSandboxMode は同じ sandbox mode なら no-op を�
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "明示model変更はSDK既定Depthと新しいmodelをpatchへ反映する"
+// oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+// fault = "未対応Depthを前modelから引き継ぐかmodel変更を失う"
+// observable = "modelとDepthとupdatedAtのpatch"
+// observation_boundary = "public-boundary"
+// scope = "model-change-patch"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildSessionWithModelChange は model catalog selection を session patch に反映する", () => {
   const session = {
     id: "session-1",
-    catalogRevision: 1,
     model: "gpt-default",
     reasoningEffort: "high" as const,
     updatedAt: "2026-06-07T00:00:00.000Z",
@@ -116,23 +126,30 @@ test("buildSessionWithModelChange は model catalog selection を session patch 
     session,
     providerCatalog,
     "gpt-fast",
-    2,
     "2026-06-07T01:00:00.000Z",
   );
 
   assert.deepEqual(nextSession, {
     id: "session-1",
-    catalogRevision: 2,
     model: "gpt-fast",
     reasoningEffort: "minimal",
     updatedAt: "2026-06-07T01:00:00.000Z",
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "明示Depth変更はmodelを変えずDepthと更新日時をpatchへ反映する"
+// oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+// fault = "Depth変更が別modelへ変更するか更新を失う"
+// observable = "modelとDepthとupdatedAtのpatch"
+// observation_boundary = "public-boundary"
+// scope = "depth-change-patch"
+// lifecycle = "permanent"
+// @end-test-value
 test("buildSessionWithReasoningEffort は reasoning effort selection を session patch に反映する", () => {
   const session = {
     id: "session-1",
-    catalogRevision: 1,
     model: "gpt-fast",
     reasoningEffort: "low" as const,
     updatedAt: "2026-06-07T00:00:00.000Z",
@@ -142,23 +159,30 @@ test("buildSessionWithReasoningEffort は reasoning effort selection を session
     session,
     providerCatalog,
     "minimal",
-    2,
     "2026-06-07T01:00:00.000Z",
   );
 
   assert.deepEqual(nextSession, {
     id: "session-1",
-    catalogRevision: 2,
     model: "gpt-fast",
     reasoningEffort: "minimal",
     updatedAt: "2026-06-07T01:00:00.000Z",
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "同じ実行設定の明示更新でも現在値と指定更新日時を返す"
+// oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+// fault = "同値選択でpatchを失うか指定日時を捨てる"
+// observable = "modelとDepthとupdatedAtのpatch"
+// observation_boundary = "public-boundary"
+// scope = "same-selection-patch"
+// lifecycle = "permanent"
+// @end-test-value
 test("model / reasoning effort helper は同じ選択でも既存どおり patch を返す", () => {
   const session = {
     id: "session-1",
-    catalogRevision: 1,
     model: "gpt-default",
     reasoningEffort: "medium" as const,
     updatedAt: "2026-06-07T00:00:00.000Z",
@@ -169,12 +193,10 @@ test("model / reasoning effort helper は同じ選択でも既存どおり patch
       session,
       providerCatalog,
       "gpt-default",
-      2,
       "2026-06-07T01:00:00.000Z",
     ),
     {
       id: "session-1",
-      catalogRevision: 2,
       model: "gpt-default",
       reasoningEffort: "medium",
       updatedAt: "2026-06-07T01:00:00.000Z",
@@ -185,12 +207,10 @@ test("model / reasoning effort helper は同じ選択でも既存どおり patch
       session,
       providerCatalog,
       "medium",
-      2,
       "2026-06-07T01:00:00.000Z",
     ),
     {
       id: "session-1",
-      catalogRevision: 2,
       model: "gpt-default",
       reasoningEffort: "medium",
       updatedAt: "2026-06-07T01:00:00.000Z",
@@ -200,20 +220,19 @@ test("model / reasoning effort helper は同じ選択でも既存どおり patch
 
 // @test-value v2
 // kind = "contract"
-// claim = "modelとreasoning effortのinvalid selectionはmodel catalog由来のvalidation errorを維持する"
+// claim = "明示model変更は候補外を拒否し、reasoning変更はSDK固有の文字列を保持する"
 // oracle = { type = "contract", ref = "src-shared/settings/model-catalog.ts#resolveModelSelection" }
-// fault = "invalid modelまたはreasoning effortを受け入れるか、model catalogのvalidation境界を別errorへ変換する"
-// observable = "thrown validation errors from model and reasoning helper calls"
+// fault = "候補外modelの明示変更を受理するか、SDK固有のreasoning値を拒否・置換する"
+// observable = "model変更の例外とreasoning変更の保存値"
 // observation_boundary = "public-boundary"
 // scope = "runtime option model catalog validation"
 // lifecycle = "permanent"
-// impact = "Sessionへ存在しないmodel/reasoning selectionが保存される"
-// distinction = "modelとreasoningの両invalid selectionをruntime helper経由で個別に確認する"
+// impact = "不正なmodel選択またはSDK固有のDepthを利用できなくなる"
+// distinction = "rendererの明示変更helper経由で共有モデル契約の保存への伝播を確認する"
 // @end-test-value
-test("model / reasoning effort helper は model catalog validation error を維持する", () => {
+test("model helperは候補外を拒否しreasoning helperはSDK固有値を保持する", () => {
   const session = {
     id: "session-1",
-    catalogRevision: 1,
     model: "gpt-default",
     reasoningEffort: "medium" as const,
     updatedAt: "2026-06-07T00:00:00.000Z",
@@ -224,21 +243,13 @@ test("model / reasoning effort helper は model catalog validation error を維�
       session,
       providerCatalog,
       "missing-model",
-      2,
       "2026-06-07T01:00:00.000Z",
     ),
     /selected model/,
   );
-  assert.throws(
-    () => buildSessionWithReasoningEffort(
-      session,
-      providerCatalog,
-      "xhigh",
-      2,
-      "2026-06-07T01:00:00.000Z",
-    ),
-    /The selected reasoning effort does not match the model catalog definition/,
-  );
+  assert.equal(buildSessionWithReasoningEffort(
+    session, providerCatalog, "xhigh", "2026-06-07T01:00:00.000Z",
+  ).reasoningEffort, "xhigh");
 });
 
 test("resolveRuntimeOptionValue は selected value が option にあれば維持する", () => {

@@ -77,7 +77,7 @@ function makeService(observe: {
     },
     resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
     getAppSettings: () => normalizeAppSettings({}),
-    resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [providerCatalog] }, provider: providerCatalog }),
+    resolveProviderCatalog: () => ({ snapshot: { providers: [providerCatalog] }, provider: providerCatalog }),
     getProviderCodingAdapter: () => adapter,
     getSessionMemory: () => ({
       sessionId: stored.id,
@@ -137,7 +137,7 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
     auxiliary: { listAuxiliarySessionRuntimeIdentities: () => [] },
     settings: {
       getAppSettings: () => normalizeAppSettings({}),
-      getModelCatalogSnapshot: () => ({ revision: 1, providers: [providerCatalog] }),
+      getModelCatalogSnapshot: () => ({ providers: [providerCatalog] }),
     },
     character: { createCharacterRuntimeSnapshot: () => null },
     effects: {
@@ -322,24 +322,45 @@ it("turn送信値を保存済み設定と独立にProviderと最小turnへ固定
 
 // @test-value v2
 // kind = "invariant"
-// claim = "catalogに無いmodelまたは当該model非対応depthはProvider起動とturn開始保存の前に拒否される"
-// oracle = { type = "contract", ref = "Issue #738 invalid turn selection rejection" }
-// fault = "無効な送信値をDB値・default・clampへ置き換えて実行する"
+// claim = "空modelはProvider起動とturn開始保存の前に拒否される"
+// oracle = { type = "contract", ref = "accepted behavior: Send requires a selected model" }
+// fault = "空modelをDB値やdefaultに置換して実行する"
 // observable = "runSessionTurn rejection、provider call数、保存数"
 // observation_boundary = "component-behavior"
 // scope = "SessionRuntimeService turn selection validation"
 // lifecycle = "permanent"
 // impact = "利用者が選ばなかったmodel/depthで実行される"
-// distinction = "型検査ではIPC実行時値とcatalog対応関係を検証できない"
+// distinction = "型検査ではIPC実行時の空文字を検証できない"
 // @end-test-value
-it("無効なmodel・depthを保存とProvider起動前に拒否する", async () => {
+it("空modelを保存とProvider起動前に拒否する", async () => {
   const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
   const { service, stored } = makeService(observe);
   const selected = captureSessionExecutionOptions(stored);
-  await assert.rejects(service.runSessionTurn(stored.id, { userMessage: "run", executionOptions: { ...selected, model: "unknown" } }), /model catalog/);
-  await assert.rejects(service.runSessionTurn(stored.id, { userMessage: "run", executionOptions: { ...selected, model: "model-b", reasoningEffort: "high" } }), /reasoning effort/);
+  await assert.rejects(service.runSessionTurn(stored.id, { userMessage: "run", executionOptions: { ...selected, model: " " } }), /selected model is invalid/);
   assert.equal(observe.persisted.length, 0);
   assert.equal(observe.composed.length, 0);
   assert.equal(observe.executed.length, 0);
   assert.equal(observe.turn.length, 0);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "discoveryにない保存modelと任意depthを送信時の値のままproviderへ渡す"
+// oracle = { type = "contract", ref = "accepted behavior: discovery updates never replace captured selections" }
+// fault = "最新候補にないmodelやdepthを拒否または既定値へ置換する"
+// observable = "providerとturn保存へ渡されたmodelとdepth"
+// observation_boundary = "public-boundary"
+// scope = "SessionRuntimeService captured selection execution"
+// lifecycle = "permanent"
+// impact = "選択が候補から消えた会話を勝手に別modelで実行することを防ぐ"
+// distinction = "共有helperの値保持だけでなくSendからproviderまでの値を小さいfixtureで確認する"
+// @end-test-value
+it("discoveryから消えたmodelとdepthもcaptured値を実行する", async () => {
+  const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
+  const { service, stored } = makeService(observe);
+  const selected = { ...captureSessionExecutionOptions(stored), model: "saved-model", reasoningEffort: "sdk-native-depth" };
+  await service.runSessionTurn(stored.id, { userMessage: "run", executionOptions: selected });
+  assert.deepEqual(observe.executed[0]?.executionOptions, selected);
+  assert.equal(observe.turn[0]?.model, "saved-model");
+  assert.equal(observe.turn[0]?.reasoningEffort, "sdk-native-depth");
 });

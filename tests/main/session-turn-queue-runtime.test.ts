@@ -37,8 +37,7 @@ function gate() {
 // @end-test-value
 test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合する", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-queue-runtime-"));
-  const bundle = createV6StorageWorkerBundle({ dbPath: path.join(temporary, "withmate-v6.db"), userDataPath: temporary,
-    bundledModelCatalogPath: path.join(process.cwd(), "public", "model-catalog.json") });
+  const bundle = createV6StorageWorkerBundle({ dbPath: path.join(temporary, "withmate-v6.db"), userDataPath: temporary });
   let queue: SessionTurnQueueService | undefined;
   const finishFirst = gate();
   try {
@@ -46,11 +45,12 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     await writeFile(path.join(temporary, "input.txt"), "captured path fixture");
     const saved = await bundle.stores.session.insertSession(buildNewSession({ id: "queue-runtime", taskTitle: "Queue", workspaceLabel: "workspace",
       workspacePath: temporary, branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "",
-      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" }));
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request",
+      model: "captured-native-model", reasoningEffort: "native-depth" }));
     const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) };
     const provider = { id: "codex", label: "Codex", defaultModelId: saved.model, defaultReasoningEffort: saved.reasoningEffort,
       models: [{ id: saved.model, label: "Model", reasoningEfforts: ["medium", "high"] as Array<"medium" | "high"> }] };
-    const snapshot = { revision: 1, providers: [provider] };
+    const snapshot = { providers: [provider] };
     let cache: Session[] = [saved];
     const getSession = async (id: string) => {
       const metadata = await bundle.stores.session.getSessionMetadata(id);
@@ -141,7 +141,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     await queue.start();
     let previews = 0;
     const facade = new MainSessionTurnQueueFacade({ assertActive() {}, assertAccepting() {}, getSession,
-      validateWorkspace: async () => {}, validateProvider: async () => ({ provider, revision: 1 }),
+      validateWorkspace: async () => {}, validateProvider: async () => ({ provider }),
       preview: async (session, text) => { previews += 1; return resolveComposerPreview(session, text); }, store: bundle.stores.queue, service: queue });
     const options = captureSessionExecutionOptions(saved);
     const firstInput = { incarnationId: owner.incarnationId, clientRequestId: firstRequestId,

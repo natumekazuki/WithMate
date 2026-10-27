@@ -2,7 +2,6 @@ import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_REASONING_EFFORT } from "../../src-shared/settings/model-catalog.js";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 
 export const APP_DATABASE_V2_FILENAME = "withmate-v2.db";
@@ -72,7 +71,7 @@ export const CREATE_V2_SESSIONS_TABLE_SQL = `
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     provider TEXT NOT NULL,
-    catalog_revision INTEGER NOT NULL DEFAULT ${DEFAULT_CATALOG_REVISION},
+    catalog_revision INTEGER NOT NULL DEFAULT ${1},
     workspace_label TEXT NOT NULL,
     workspace_path TEXT NOT NULL,
     branch TEXT NOT NULL,
@@ -85,8 +84,8 @@ export const CREATE_V2_SESSIONS_TABLE_SQL = `
     run_state TEXT NOT NULL,
     approval_mode TEXT NOT NULL,
     codex_sandbox_mode TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_CODEX_SANDBOX_MODE)},
-    model TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_MODEL_ID)},
-    reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral(DEFAULT_REASONING_EFFORT)},
+    model TEXT NOT NULL DEFAULT ${sqlStringLiteral("gpt-5.4")},
+    reasoning_effort TEXT NOT NULL DEFAULT ${sqlStringLiteral("high")},
     custom_agent_name TEXT NOT NULL DEFAULT '',
     allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
     thread_id TEXT NOT NULL DEFAULT '',

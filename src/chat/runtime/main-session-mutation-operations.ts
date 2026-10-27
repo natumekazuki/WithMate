@@ -35,7 +35,6 @@ export async function runMainRuntimeOptionOperation(input: {
   session: Session | null;
   isReadOnly: boolean;
   providerCatalog: ModelCatalogProvider | null;
-  catalogRevision: number | null;
   option: MainRuntimeOption;
   persist: (session: Session) => Promise<Session>;
   createTimestampLabel: () => string;
@@ -44,7 +43,6 @@ export async function runMainRuntimeOptionOperation(input: {
     session,
     isReadOnly,
     providerCatalog,
-    catalogRevision,
     option,
     persist,
     createTimestampLabel,
@@ -106,21 +104,19 @@ export async function runMainRuntimeOptionOperation(input: {
     );
     return next ? persist(next) : null;
   }
-  if (!providerCatalog || catalogRevision === null) return null;
+  if (!providerCatalog) return null;
   const next =
     option.kind === "model"
       ? buildSessionWithModelChange(
           session,
           providerCatalog,
           option.value,
-          catalogRevision,
           createTimestampLabel(),
         )
       : buildSessionWithReasoningEffort(
           session,
           providerCatalog,
           option.value,
-          catalogRevision,
           createTimestampLabel(),
         );
   return persist(next);

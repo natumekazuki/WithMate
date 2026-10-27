@@ -34,6 +34,8 @@ function createSession(overrides: Partial<Session> = {}): Session {
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
     }),
     ...overrides,
   };
@@ -109,7 +111,7 @@ function createRuntime(options: {
     resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
     getAppSettings: () => normalizeAppSettings({}),
     resolveProviderCatalog: () => ({
-      snapshot: { revision: 1, providers: [{
+      snapshot: { providers: [{
         id: "codex",
         label: "Codex",
         defaultModelId: "gpt-5.4",

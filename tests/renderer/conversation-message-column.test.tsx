@@ -244,7 +244,7 @@ test("finite Find counts accepted Steer bridge once before and after canonical a
   let active: SessionTurnQueueReceipt[] = [{
     sessionId: "aux", incarnationId: "inc", id: "steer", requestId: "request", sequence: 1, state: "queued", turnId: null, userMessageSeq: null,
     captured: { request: { userMessage: "needle", clientRequestId: "request", executionOptions: {
-      catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+      model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
     } }, attachments: [], provider: "codex", workspacePath: "workspace" },
     reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
   }];
@@ -411,7 +411,7 @@ test("queued images load through their Main or Auxiliary conversation context", 
     const queued: SessionTurnQueueReceipt = {
       sessionId, incarnationId: "inc", id: "queued", requestId: "request", sequence: 1, state: "queued", turnId: null, userMessageSeq: null,
       captured: { request: { userMessage: "![queued image](./queued.svg)\n\nnext request", clientRequestId: "request", executionOptions: {
-        catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+        model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
       } }, attachments: [], provider: "codex", workspacePath: "C:/workspace" },
       reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
     };
@@ -677,7 +677,7 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       };
       const receipt = (sequence: number): SessionTurnQueueReceipt => ({
         sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`, sequence, state: "running", turnId: `turn-${sequence}`, userMessageSeq: (sequence - 1) * 2,
-        captured: { request: { clientRequestId: `request-${sequence}`, userMessage: `prompt-${sequence}`, executionOptions: { catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+        captured: { request: { clientRequestId: `request-${sequence}`, userMessage: `prompt-${sequence}`, executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
         reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
       });
       let saved: SessionMessageColumnProps["messages"] = [];
@@ -991,7 +991,7 @@ test("conversation column は保存本文が遅れても次Turnの応答を所�
     assert.notEqual(earlyResponseKey, oldResponseKey);
     receipts = [{ sessionId: "aux", incarnationId: "inc", id: "next", requestId: "request", sequence: 2, state: "running", turnId: "2", userMessageSeq: 2,
       captured: { request: { userMessage: "second", clientRequestId: "request", executionOptions: {
-        catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+        model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
       } }, attachments: [], provider: "codex", workspacePath: "workspace" },
       reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" }];
     await act(async () => changed?.("aux"));
@@ -1491,7 +1491,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       const receipt: SessionTurnQueueReceipt = {
         sessionId: kind, incarnationId: "inc", id: "receipt", requestId: "request", sequence: 1, state: "queued",
         captured: { request: { clientRequestId: "request", userMessage: "captured prompt", executionOptions: {
-          catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
+          model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
         } }, attachments: [], provider: "codex", workspacePath: "workspace" },
         turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
       };

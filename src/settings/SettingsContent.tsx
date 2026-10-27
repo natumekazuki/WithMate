@@ -51,7 +51,6 @@ import { LoadError } from "../ui/load-error.js";
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
-  modelCatalogRevisionLabel: string;
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDraftLoaded: boolean;
   memoryV6DiagnosticsLoadStatus: "loading" | "loaded" | "error";
@@ -90,8 +89,6 @@ export type HomeSettingsContentProps = {
   onBrowseProviderSkillRootPath: (providerId: string) => void | Promise<void>;
   onBrowseProviderSkillRelativePath: (providerId: string) => void | Promise<void>;
   onBrowseProviderInstructionRelativePath: (providerId: string) => void | Promise<void>;
-  onImportModelCatalog: () => void | Promise<void>;
-  onExportModelCatalog: () => void | Promise<void>;
   onOpenAppLogFolder: () => void | Promise<void>;
   onOpenCrashDumpFolder: () => void | Promise<void>;
   onOpenMemoryV6Review: () => void | Promise<void>;
@@ -139,7 +136,6 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
-  modelCatalogRevisionLabel,
   memoryV6Diagnostics,
   settingsDraftLoaded,
   memoryV6DiagnosticsLoadStatus,
@@ -178,8 +174,6 @@ export function HomeSettingsContent({
   onBrowseProviderSkillRootPath,
   onBrowseProviderSkillRelativePath,
   onBrowseProviderInstructionRelativePath,
-  onImportModelCatalog,
-  onExportModelCatalog,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onOpenMemoryV6Review,
@@ -620,45 +614,6 @@ export function HomeSettingsContent({
                     busyLabel="Opening crash dumps."
                   >
                     {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
-                  </ButtonContent>
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>Model Catalog</strong>
-              <p className="settings-help">ActiveRevision: {modelCatalogRevisionLabel}</p>
-              <div className="settings-actions">
-                <button
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("import-models", onImportModelCatalog)}
-                  disabled={isBusy}
-                  aria-busy={actionIsBusy("import-models")}
-                  aria-label={actionIsBusy("import-models") ? "Importing models" : "Import Models"}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("import-models")}
-                    busyLabel="Importing models."
-                  >
-                    Import Models
-                  </ButtonContent>
-                </button>
-                <button
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("export-models", onExportModelCatalog)}
-                  disabled={isBusy}
-                  aria-busy={actionIsBusy("export-models")}
-                  aria-label={actionIsBusy("export-models") ? "Exporting models" : "Export Models"}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("export-models")}
-                    busyLabel="Exporting models."
-                  >
-                    Export Models
                   </ButtonContent>
                 </button>
               </div>

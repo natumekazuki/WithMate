@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { MainProviderFacade } from "../../src-electron/app/main-provider-facade.js";
-import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { ModelCatalogRequest, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainProviderFacadeは非同期catalog解決とprovider adapter無効化を委譲する"
+// claim = "MainProviderFacadeはproviderとworkspaceをcatalog取得へ渡し非同期解決を待ち、provider adapter無効化を委譲する"
 // oracle = { type = "contract", ref = "src-electron/app/main-provider-facade.ts#resolveProviderCatalog; src-electron/app/main-provider-facade.ts#invalidateProviderSessionThread" }
-// fault = "catalog解決Promiseを待たずにproviderへアクセスする"
-// observable = "resolveProviderCatalogのproviderとadapter無効化の呼び出し順"
+// fault = "catalog取得へprovider/workspaceを渡さないか、解決Promiseを待たずにproviderへアクセスする"
+// observable = "catalog取得request、resolveProviderCatalogのproviderとadapter無効化の呼び出し順"
 // observation_boundary = "public-boundary"
 // scope = "main-provider-facade"
 // lifecycle = "permanent"
@@ -18,8 +18,9 @@ import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catal
 // @end-test-value
 test("MainProviderFacade は provider catalog を解決し adapter 無効化を委譲する", async () => {
   const calls: string[] = [];
-  let resolveCatalog!: (catalog: ModelCatalogSnapshot | null) => void;
-  const catalogPromise = new Promise<ModelCatalogSnapshot | null>((resolve) => { resolveCatalog = resolve; });
+  let resolveCatalog!: (catalog: ModelCatalogSnapshot) => void;
+  const catalogPromise = new Promise<ModelCatalogSnapshot>((resolve) => { resolveCatalog = resolve; });
+  const catalogRequests: Array<ModelCatalogRequest | undefined> = [];
   const codexAdapter = {
     async invalidateSessionThread(sessionId: string) {
       calls.push(`codex:${sessionId}`);
@@ -45,9 +46,9 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
   };
   const facade = new MainProviderFacade({
-    getModelCatalog: () => catalogPromise,
-    ensureModelCatalogSeeded: () => {
-      throw new Error("should not seed");
+    getModelCatalog: (request) => {
+      catalogRequests.push(request);
+      return catalogPromise;
     },
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
@@ -64,11 +65,11 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
   });
 
-  const resolvedPromise = facade.resolveProviderCatalog("copilot");
+  const resolvedPromise = facade.resolveProviderCatalog("copilot", "C:/workspace");
   await Promise.resolve();
   assert.deepEqual(calls, []);
+  assert.deepEqual(catalogRequests, [{ providerId: "copilot", workspacePath: "C:/workspace" }]);
   resolveCatalog({
-      revision: 1,
       providers: [
         {
           id: "codex",
@@ -124,8 +125,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
 test("MainProviderFacade の reset は adapter の reject を伝播する", async () => {
   const error = new Error("reset failed");
   const facade = new MainProviderFacade({
-    getModelCatalog: () => null,
-    ensureModelCatalogSeeded: () => { throw new Error("not used"); },
+    getModelCatalog: () => ({ providers: [] }),
     codexAdapter: { invalidateSessionThread: async () => { throw error; } } as never,
     copilotAdapter: { invalidateSessionThread: async () => undefined } as never,
     claudeAdapter: { invalidateSessionThread: async () => undefined } as never,
@@ -151,10 +151,7 @@ test("MainProviderFacade は未対応 provider の runtime capability を codex 
   const codexAdapter = {};
   const copilotAdapter = {};
   const facade = new MainProviderFacade({
-    getModelCatalog: () => null,
-    ensureModelCatalogSeeded: () => {
-      throw new Error("not used");
-    },
+    getModelCatalog: () => ({ providers: [] }),
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
     claudeAdapter: {} as never,

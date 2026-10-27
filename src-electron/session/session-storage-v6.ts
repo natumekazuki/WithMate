@@ -793,7 +793,7 @@ export class SessionStorageV6 {
   setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): void {
     const result = this.db.prepare(`
       UPDATE sessions_v6
-      SET catalog_revision = ?, model_id = ?, reasoning_effort = ?, approval_mode = ?,
+      SET model_id = ?, reasoning_effort = ?, approval_mode = ?,
           codex_sandbox_mode = ?, custom_agent_name = ?,
           runtime_policy_json = json_set(
             CASE WHEN json_valid(runtime_policy_json) THEN runtime_policy_json ELSE '{}' END,
@@ -801,7 +801,7 @@ export class SessionStorageV6 {
           )
       WHERE id = ? AND incarnation_id = ?
     `).run(
-      options.catalogRevision, options.model, options.reasoningEffort, options.approvalMode,
+      options.model, options.reasoningEffort, options.approvalMode,
       options.codexSandboxMode, options.customAgentName, options.codexSpeed, options.codexReviewer,
       sessionId, incarnationId,
     );

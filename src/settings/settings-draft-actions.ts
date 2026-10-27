@@ -256,8 +256,8 @@ export function handleAddMateMemoryGenerationPriority(input: ModelCatalogActionI
   const provider = input.modelCatalog?.providers[0];
   input.setSettingsDraft((current) => addMateMemoryGenerationPriorityDraft(current, {
     provider: provider?.id ?? "codex",
-    model: provider?.defaultModelId ?? "gpt-5.4",
-    reasoningEffort: provider?.defaultReasoningEffort ?? "low",
+    model: provider?.defaultModelId ?? "",
+    reasoningEffort: provider?.defaultReasoningEffort ?? "",
     timeoutSeconds: 180,
   }));
 }

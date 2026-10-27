@@ -11,9 +11,7 @@ import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js
 
 type ResolveProviderCatalogArgs = {
   providerId: string | null | undefined;
-  revision?: number | null;
-  getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
-  ensureSeeded(): Awaitable<ModelCatalogSnapshot>;
+  getModelCatalog(): Awaitable<ModelCatalogSnapshot | null>;
 };
 
 type ResolveProviderAdapterArgs = {
@@ -63,7 +61,8 @@ export async function resolveProviderCatalogOrThrow(
   args: ResolveProviderCatalogArgs,
 ): Promise<{ snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider }> {
   const providerId = requireSupportedProviderId(args.providerId);
-  const snapshot = (await args.getModelCatalog(args.revision)) ?? (await args.ensureSeeded());
+  const snapshot = await args.getModelCatalog();
+  if (!snapshot) throw new Error(`Provider ${providerId} model discovery is unavailable.`);
   const provider = snapshot.providers.find((entry) => entry.id === providerId);
   if (!provider) {
     throw new Error(`Provider ${providerId} is not available in the model catalog.`);

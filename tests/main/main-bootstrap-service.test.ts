@@ -18,7 +18,7 @@ import { MainBootstrapService } from "../../src-electron/app/main-bootstrap-serv
 // @end-test-value
 test("MainBootstrapService は runtime side effect なしで起動シーケンスを順に実行する", async () => {
   const calls: string[] = [];
-  const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
+  const activeModelCatalog = { providers: [] } satisfies ModelCatalogSnapshot;
 
   const service = new MainBootstrapService({
     getMateState() {
@@ -38,7 +38,8 @@ test("MainBootstrapService は runtime side effect なしで起動シーケン�
       calls.push("registerIpcHandlers");
     },
     broadcastModelCatalog(snapshot) {
-      calls.push(`broadcastModelCatalog:${snapshot.revision}`);
+      assert.equal(snapshot, activeModelCatalog);
+      calls.push("broadcastModelCatalog");
     },
   });
 
@@ -49,6 +50,6 @@ test("MainBootstrapService は runtime side effect なしで起動シーケン�
     "recoverInterruptedSessions:start",
     "recoverInterruptedSessions:end",
     "registerIpcHandlers",
-    "broadcastModelCatalog:1",
+    "broadcastModelCatalog",
   ]);
 });

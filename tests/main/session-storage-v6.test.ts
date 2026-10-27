@@ -400,7 +400,7 @@ describe("SessionStorageV6", () => {
   // claim = "Session title・bookmark・実行オプションの個別更新は既存message履歴と別incarnationの保存状態を壊さない"
   // oracle = { type = "contract", ref = "docs/design/database-schema.md: Sessionとmessageの個別保存境界" }
   // fault = "個別更新をSession全体の再保存へ戻し、本文または別incarnationへ影響させる"
-  // observable = "V6実DBの対象Session再読込、message本文、旧incarnation更新拒否"
+  // observable = "V6実DBの対象Session再読込、保存専用catalogRevision、message本文、旧incarnation更新拒否"
   // observation_boundary = "public-boundary"
   // scope = "session-storage-v6-narrow-updates"
   // lifecycle = "permanent"
@@ -419,13 +419,14 @@ describe("SessionStorageV6", () => {
           characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
           approvalMode: DEFAULT_APPROVAL_MODE,
         }),
+        catalogRevision: 17,
         messages: [{ role: "user", text: "keep" }, { role: "assistant", text: "response" }],
       });
       const owner = getSessionIncarnationId(session);
       storage.setSessionTitle(session.id, owner, "After");
       storage.setSessionMessageBookmark(session.id, owner, 1, true);
       storage.setSessionExecutionOptions(session.id, owner, {
-        catalogRevision: session.catalogRevision, model: "gpt-new", reasoningEffort: "medium",
+        model: "gpt-new", reasoningEffort: "medium",
         approvalMode: session.approvalMode, codexSandboxMode: session.codexSandboxMode,
         codexSpeed: session.codexSpeed, codexReviewer: session.codexReviewer,
         customAgentName: "Custom",
@@ -433,6 +434,7 @@ describe("SessionStorageV6", () => {
       const stored = storage.getSession(session.id)!;
       assert.equal(stored.taskTitle, "After");
       assert.equal(stored.model, "gpt-new");
+      assert.equal(stored.catalogRevision, session.catalogRevision);
       assert.equal(stored.customAgentName, "Custom");
       assert.deepEqual(stored.messages.map((message) => message.text), ["keep", "response"]);
       assert.equal(stored.messages[1]?.isBookmarked, true);
@@ -446,7 +448,7 @@ describe("SessionStorageV6", () => {
       assert.throws(() => storage.setSessionTitle(session.id, owner, "Wrong"), /could not be found/i);
       assert.throws(() => storage.setSessionMessageBookmark(session.id, owner, 0, true), /could not be found/i);
       assert.throws(() => storage.setSessionExecutionOptions(session.id, owner, {
-        catalogRevision: session.catalogRevision, model: session.model, reasoningEffort: session.reasoningEffort,
+        model: session.model, reasoningEffort: session.reasoningEffort,
         approvalMode: session.approvalMode, codexSandboxMode: session.codexSandboxMode,
         codexSpeed: session.codexSpeed, codexReviewer: session.codexReviewer, customAgentName: "",
       }), /could not be found/i);

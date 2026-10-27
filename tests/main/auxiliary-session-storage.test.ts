@@ -237,9 +237,8 @@ type SqliteIndexListRow = {
   name: string;
 };
 
-function buildTestModelCatalogSnapshot(revision: number): ModelCatalogSnapshot {
+function buildTestModelCatalogSnapshot(): ModelCatalogSnapshot {
   return {
-    revision,
     providers: [
       {
         id: "codex",
@@ -1370,7 +1369,7 @@ test("AuxiliarySessionStorage は最終使用順で一覧を返す", async () =>
 // claim = "Auxiliaryの新規作成はtitleとpreviewを空にし、不正optionの再送を拒否する。作成・更新・再読込・終了は各会話のruntime option、draft、thread、preview、親境界を保つ"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#persistence" }
 // fault = "既存clientRequestIdの再送で入力検証を迂回する、複数Auxiliaryやstale保存で別会話の状態を上書きする、初期titleやpreviewを誤表示する、または親境界を越えて残す"
-// observable = "既存clientRequestId付き不正optionのreject、作成時のtitleとpreview、再読込・runtime upsert・stale update・close・parent filteringの公開結果"
+// observable = "既存clientRequestId付き不正optionのreject、作成時のtitleとpreview、再読込・runtime upsert・stale update・close・parent filteringの公開結果、実行設定更新後の保存専用catalogRevision保持"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-service"
 // lifecycle = "permanent"
@@ -1404,7 +1403,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       codexSandboxMode: "workspace-write-network" as const,
     };
     sessionStorage.upsertSession(parent);
-    let activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
+    let activeModelCatalog = buildTestModelCatalogSnapshot();
 
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
@@ -1517,7 +1516,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       reasoningEffort: "medium",
       threadId: "",
     });
-    activeModelCatalog = buildTestModelCatalogSnapshot(migratedAuxiliary.catalogRevision);
+    activeModelCatalog = buildTestModelCatalogSnapshot();
     const staleRendererSave = await service.updateAuxiliarySession({
       ...staleDraftUpdate,
       catalogRevision: auxiliary.catalogRevision,
@@ -1576,7 +1575,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       reasoningEffort: "high",
       threadId: "thread-before-model-change",
     });
-    activeModelCatalog = buildTestModelCatalogSnapshot(3);
+    activeModelCatalog = buildTestModelCatalogSnapshot();
     const draftBeforeModelChange = await service.updateAuxiliarySession({
       ...olderCatalogAuxiliary,
       composerDraft: "draft saved before model change",
@@ -1597,14 +1596,13 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       createdAt: draftBeforeModelChange.createdAt,
       executionOptions: {
         ...captureSessionExecutionOptions(draftBeforeModelChange),
-        catalogRevision: 3,
         model: "gpt-5.4-mini",
         reasoningEffort: "medium",
       },
     });
     const explicitModelChange = await service.getAuxiliarySession(draftBeforeModelChange.id);
     assert.ok(explicitModelChange);
-    assert.equal(explicitModelChange.catalogRevision, 3);
+    assert.equal(explicitModelChange.catalogRevision, draftBeforeModelChange.catalogRevision);
     assert.equal(explicitModelChange.model, "gpt-5.4-mini");
     assert.equal(explicitModelChange.reasoningEffort, "medium");
     assert.equal(explicitModelChange.threadId, "thread-before-model-change");
@@ -1641,7 +1639,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       reasoningEffort: "high",
       threadId: "",
     });
-    activeModelCatalog = buildTestModelCatalogSnapshot(resetMigratedAuxiliary.catalogRevision);
+    activeModelCatalog = buildTestModelCatalogSnapshot();
     const staleSaveAfterCatalogReset = await service.updateAuxiliarySession({
       ...explicitModelChange,
       catalogRevision: 5,
@@ -1743,7 +1741,7 @@ test("AuxiliarySessionService はMain除外とsnapshot失敗時の既存状態�
     const service = new AuxiliarySessionService({
       getParentSession: (id) => id === parent.id ? parent : null,
       getStorage: () => auxiliaryStorage,
-      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
       listActiveCharacters: () => [
         { id: "main-character", name: "Main", description: "", iconFilePath: "", theme: { main: "#6f8cff", sub: "#6fb8c7" }, state: "active", createdAt: "", updatedAt: "", archivedAt: null },
         { id: "aux-a", name: "Aux A", description: "", iconFilePath: "", theme: { main: "#6f8cff", sub: "#6fb8c7" }, state: "active", createdAt: "", updatedAt: "", archivedAt: null },
@@ -1839,7 +1837,7 @@ test("Auxiliary作成と親削除は同じcoordinatorでorphanを作らない", 
     const service = new AuxiliarySessionService({
       getParentSession: (id) => sessionStorage.getSession(id),
       getStorage: () => auxiliaryStorage,
-      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
       resolveSessionLaunchSelection: async () => {
         resolveSelectionCalls += 1;
         selectionEntered();
@@ -1937,7 +1935,7 @@ test("Auxiliary Reviewerは親から継承した後に独立して保存する",
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => parentSessionId === parent.id ? parent : null,
       getStorage: () => auxiliaryStorage!,
-      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
     });
 
     const auxiliary = await service.createAuxiliarySession({
@@ -2014,7 +2012,7 @@ test("Auxiliary更新は保存済みApprovalがneverの間Reviewerを保持す�
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => parentSessionId === parent.id ? parent : null,
       getStorage: () => auxiliaryStorage!,
-      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
     });
     const auxiliary = await service.createAuxiliarySession({
       parentSessionId: parent.id,
@@ -2123,6 +2121,18 @@ test("AuxiliarySessionStorage は指定parent集合の全status summaryを返す
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliaryのexplicit作成は指定したmodel/depth・approval・sandbox・custom agentを親の選択で上書きせず保存する"
+// oracle = { type = "contract", ref = "src-electron/auxiliary/auxiliary-session-service.ts resolveExplicitLaunchSelection / commitAuxiliarySession" }
+// fault = "作成要求の実行設定を親のmodel/depth・権限・custom agentまたはprovider既定値へ置換する"
+// observable = "createAuxiliarySessionが返すprovider、model、reasoningEffort、approvalMode、codexSandboxMode、customAgentName"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-explicit-runtime-selection"
+// lifecycle = "permanent"
+// impact = "指定と異なるmodelや実行権限でAuxiliaryを開始する"
+// distinction = "型検査やstorage CRUDでは作成serviceによる設定解決と親設定の混同を検出できず、短い実DB作成で確認する"
+// @end-test-value
 test("AuxiliarySessionService は通常起動と同じ選択済み runtime option context で active session を作成する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-model-selection-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
@@ -2151,7 +2161,7 @@ test("AuxiliarySessionService は通常起動と同じ選択済み runtime optio
       customAgentName: "parent-agent",
     };
     sessionStorage.upsertSession(parent);
-    const activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
+    const activeModelCatalog = buildTestModelCatalogSnapshot();
 
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
@@ -2184,15 +2194,15 @@ test("AuxiliarySessionService は通常起動と同じ選択済み runtime optio
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryのlatest-session作成は再検証で同値だったresolverのruntime設定を保存し、driftした再検証結果は拒否する"
-// oracle = { type = "contract", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
+// claim = "Auxiliaryのlatest-session作成は準備時のmodel/depthと権限設定を捕捉し、その後の現在選択変更で置換しない"
+// oracle = { type = "contract", ref = "src-electron/auxiliary/auxiliary-session-service.ts prepareAuxiliarySession / commitAuxiliarySession" }
 // fault = "resolverから受け取ったmodel・権限・custom agentを親または既定値で上書きして保存する"
-// observable = "resolverに渡したprovider、同値選択を保存したAuxiliaryのruntime選択、およびdrift時のreject"
+// observable = "resolverに渡したprovider、commit前に変更した現在選択、保存したAuxiliaryの捕捉runtime選択"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-runtime-selection"
 // lifecycle = "permanent"
 // @end-test-value
-test("AuxiliarySessionService は latest-session 選択を保存し、再検証のdriftを拒否する", async () => {
+test("AuxiliarySessionService は latest-session 準備時のmodel/depthを現在選択変更後も保存する", async () => {
   const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-latest-selection-"));
   const dbPath = path.join(tempDirectory, "withmate.db");
   let sessionStorage: SessionStorage | null = null;
@@ -2219,7 +2229,6 @@ test("AuxiliarySessionService は latest-session 選択を保存し、再検証�
     sessionStorage.upsertSession(parent);
     const expectedSelection = {
       provider: "codex",
-      catalogRevision: 8,
       model: "gpt-5.4-mini",
       reasoningEffort: "medium",
       approvalMode: "never",
@@ -2228,43 +2237,37 @@ test("AuxiliarySessionService は latest-session 選択を保存し、再検証�
       codexReviewer: "user",
       customAgentName: "latest-agent",
     } as const;
-    const createService = (drift: boolean) => {
+    const createService = () => {
       const resolvedProviderIds: Array<string | null | undefined> = [];
-      let invocation = 0;
+      let parentReads = 0;
+      let currentSelection = { ...expectedSelection, model: String(expectedSelection.model), reasoningEffort: String(expectedSelection.reasoningEffort) };
       const service = new AuxiliarySessionService({
-        getParentSession: (requestedParentSessionId) => sessionStorage?.getSession(requestedParentSessionId) ?? null,
+        getParentSession: (requestedParentSessionId) => {
+          parentReads += 1;
+          if (parentReads === 2) currentSelection = { ...currentSelection, model: "changed-native-model", reasoningEffort: "changed-native-depth" };
+          return sessionStorage?.getSession(requestedParentSessionId) ?? null;
+        },
         getStorage: () => auxiliaryStorage!,
-        getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+        getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
         resolveSessionLaunchSelection: async (providerId) => {
           resolvedProviderIds.push(providerId);
-          invocation += 1;
-          if (drift && invocation === 2) {
-            return {
-              ...expectedSelection,
-              model: "gpt-5.4",
-              reasoningEffort: "high",
-              approvalMode: "on-request",
-              codexSandboxMode: "workspace-write",
-              codexSpeed: "fast",
-              codexReviewer: "auto-review",
-              customAgentName: "drifted-agent",
-            };
-          }
-          return expectedSelection;
+          return currentSelection;
         },
       });
-      return { service, resolvedProviderIds };
+      return { service, resolvedProviderIds, currentSelection: () => currentSelection };
     };
 
-    const successful = createService(false);
+    const successful = createService();
     const auxiliary = await successful.service.createAuxiliarySession({
       parentSessionId: parent.id,
       provider: "codex",
       runtimeSelection: "latest-session",
     });
-    assert.deepEqual(successful.resolvedProviderIds, ["codex", "codex"]);
+    assert.deepEqual(successful.resolvedProviderIds, ["codex"]);
+    assert.equal(successful.currentSelection().model, "changed-native-model");
+    assert.equal(successful.currentSelection().reasoningEffort, "changed-native-depth");
     assert.equal(auxiliary.provider, expectedSelection.provider);
-    assert.equal(auxiliary.catalogRevision, expectedSelection.catalogRevision);
+    assert.equal(auxiliary.catalogRevision, 0);
     assert.equal(auxiliary.model, expectedSelection.model);
     assert.equal(auxiliary.reasoningEffort, expectedSelection.reasoningEffort);
     assert.equal(auxiliary.approvalMode, expectedSelection.approvalMode);
@@ -2273,19 +2276,6 @@ test("AuxiliarySessionService は latest-session 選択を保存し、再検証�
     assert.equal(auxiliary.codexReviewer, expectedSelection.codexReviewer);
     assert.equal(auxiliary.customAgentName, expectedSelection.customAgentName);
 
-    const driftParent = { ...parent, id: "session-main-drift" };
-    sessionStorage.upsertSession(driftParent);
-    const drifted = createService(true);
-    await assert.rejects(
-      drifted.service.createAuxiliarySession({
-        parentSessionId: driftParent.id,
-        provider: "codex",
-        runtimeSelection: "latest-session",
-      }),
-      /Auxiliary Session creation was canceled because its runtime selection changed during creation/,
-    );
-    assert.deepEqual(drifted.resolvedProviderIds, ["codex", "codex"]);
-    assert.deepEqual(await auxiliaryStorage.listAuxiliarySessions(driftParent.id), []);
   } finally {
     auxiliaryStorage?.close();
     sessionStorage?.close();
@@ -2331,7 +2321,7 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
       getStorage: () => auxiliaryStorage!,
-      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
       resolveSessionLaunchSelection: async () => {
         throw new Error("latest selection conversion failed");
       },
@@ -2398,7 +2388,7 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
       }),
       provider: "codex",
     };
-    const activeModelCatalog = buildTestModelCatalogSnapshot(parentTemplate.catalogRevision);
+    const activeModelCatalog = buildTestModelCatalogSnapshot();
 
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
@@ -2475,7 +2465,7 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
 // claim = "Auxiliary作成でruntime optionを省略した場合、指定Providerのcatalog既定値を一組で保存する"
 // oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md#decision" }
 // fault = "Providerの既定model/reasoningを欠落させる、または別Providerの既定値を混在させる"
-// observable = "作成Auxiliaryのprovider、catalogRevision、model、reasoningEffortと保存件数"
+// observable = "作成Auxiliaryのprovider、model、reasoningEffortと保存件数"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-session-provider-defaults"
 // lifecycle = "permanent"
@@ -2508,7 +2498,7 @@ test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ�
       codexSandboxMode: "danger-full-access" as const,
     };
     sessionStorage.upsertSession(parent);
-    const activeModelCatalog = buildTestModelCatalogSnapshot(parent.catalogRevision);
+    const activeModelCatalog = buildTestModelCatalogSnapshot();
 
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
@@ -2523,7 +2513,6 @@ test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ�
 
     assert.equal(auxiliary.parentSessionId, parent.id);
     assert.equal(auxiliary.provider, "copilot");
-    assert.equal(auxiliary.catalogRevision, activeModelCatalog.revision);
     assert.equal(auxiliary.model, "claude-sonnet-4.5");
     assert.equal(auxiliary.reasoningEffort, "medium");
     assert.equal(auxiliary.approvalMode, DEFAULT_APPROVAL_MODE);
@@ -2576,7 +2565,7 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
     const service = new AuxiliarySessionService({
       getParentSession: (parentSessionId) => sessionStorage?.getSession(parentSessionId) ?? null,
       getStorage: () => auxiliaryStorage!,
-      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
     });
     const auxiliary = await service.createAuxiliarySession({ parentSessionId: parent.id, provider: parent.provider });
     auxiliaryStorage.upsertAuxiliarySession({
@@ -2764,7 +2753,7 @@ test("AuxiliarySessionService はcheckpoint失敗後のdirectory更新でthread�
         return saved && parentReadOnly ? { ...saved, accessMode: "legacy_readonly" as const } : saved;
       },
       getStorage: () => auxiliaryStorage,
-      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(parent.catalogRevision),
+      getModelCatalogSnapshot: () => buildTestModelCatalogSnapshot(),
       rememberExecutionOptions: (session, options) => selections.remember(session, options),
       overlayCurrentExecutionOptions: (session) => selections.apply(session),
     });

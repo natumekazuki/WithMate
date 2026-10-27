@@ -53,19 +53,16 @@ import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection, buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection, readCopilotQuotaSnapshots } from "./copilot-quota-telemetry.js";
 import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection } from "./copilot-elicitation.js";
 import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
+import type { ListProviderModelsInput } from "../provider-runtime.js";
+import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
 import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
-export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort): CopilotReasoningEffort {
-  if (reasoningEffort === "minimal") {
-    return "low";
-  }
-  if (reasoningEffort === "max" || reasoningEffort === "ultra") {
-    throw new Error(`GitHub Copilot does not support reasoning effort ${reasoningEffort}.`);
-  }
-
-  return reasoningEffort;
+export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort): CopilotReasoningEffort | undefined {
+  if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high" || reasoningEffort === "xhigh" || reasoningEffort === "max") return reasoningEffort;
+  throw new Error(`GitHub Copilot SDK does not support reasoning effort ${reasoningEffort}.`);
 }
 
 type CachedCopilotSession = {
@@ -1055,7 +1052,7 @@ export function buildCopilotSessionSettings(
   const systemMessage = buildCopilotSystemMessage(prompt);
   const config: SessionConfig = {
     model: selection.resolvedModel,
-    reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort),
+    ...(selection.resolvedReasoningEffort ? { reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort) } : {}),
     workingDirectory: workspacePath,
     streaming: true,
     onPermissionRequest: buildPermissionHandler(input),
@@ -1299,6 +1296,7 @@ export async function resolveCopilotSessionForSettings(args: {
 }
 
 type CopilotAdapterOptions = {
+  createClient?: (options: ConstructorParameters<typeof CopilotClient>[0]) => CopilotClient;
   onBackgroundTasksChanged?: (sessionId: string, tasks: LiveBackgroundTask[]) => void;
   log?: (input: CopilotAdapterLogInput) => void;
   clientStopTimeoutMs?: number;
@@ -1405,6 +1403,52 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
     return composeProviderPrompt(input);
+  }
+
+  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
+    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    let client: CopilotClient | undefined;
+    let abort: (() => void) | undefined;
+    try {
+      const apiKey = getProviderAppSettings(input.appSettings, "copilot").apiKey.trim();
+      const options = { connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
+        workingDirectory: input.workspacePath, env: buildCopilotClientEnv(process.env),
+        ...(apiKey ? { gitHubToken: apiKey, useLoggedInUser: false } : {}) };
+      client = this.options.createClient?.(options) ?? new CopilotClient(options);
+      const ownedClient = client;
+      const metadata = await Promise.race([
+        (async () => { await ownedClient.start(); signal.throwIfAborted(); return ownedClient.listModels(); })(),
+        new Promise<never>((_, reject) => {
+          abort = () => reject(new Error("Canceled"));
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        }),
+      ]);
+      const models = metadata.filter((model) => !model.policy || model.policy.state === "enabled").map((model) => ({
+        id: model.id, label: model.name,
+        reasoningEfforts: model.capabilities.supports.reasoningEffort ? model.supportedReasoningEfforts ?? [] : [],
+        defaultReasoningEffort: model.capabilities.supports.reasoningEffort ? model.defaultReasoningEffort ?? "" : "",
+      }));
+      return { id: "copilot", label: "GitHub Copilot", models, defaultModelId: models[0]?.id ?? "", defaultReasoningEffort: models[0]?.defaultReasoningEffort ?? "" };
+    } catch {
+      throw new Error(signal.aborted ? "Copilot model discovery canceled" : "Copilot models could not be retrieved");
+    } finally {
+      if (abort) signal.removeEventListener("abort", abort);
+      if (client) {
+        const lifetime = captureCopilotProcessLifetime(client);
+        const timeout = this.options.clientStopTimeoutMs ?? COPILOT_CLIENT_STOP_TIMEOUT_MS;
+        const stopped = await settleCopilotCleanupWithin(() => client!.stop(), timeout);
+        if (stopped.status !== "settled" || stopped.value.length > 0) {
+          const forced = await settleCopilotCleanupWithin(() => client!.forceStop(), timeout);
+          if (forced.status !== "settled") throw new Error("Copilot model discovery process cleanup failed");
+        }
+        if (lifetime) {
+          const exited = await settleCopilotCleanupWithin(() => lifetime.exited, timeout);
+          if (exited.status !== "settled") throw new Error("Copilot model discovery process cleanup failed");
+        }
+      }
+    }
   }
 
 

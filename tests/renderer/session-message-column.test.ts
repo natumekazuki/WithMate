@@ -35,9 +35,9 @@ import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 // @test-value v2
 // kind = "contract"
 // claim = "runtime設定は現在の選択値を正式名の文字で表し、供給された候補と変更通知を保つ"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime設定の現在値表示とnative select" }
-// fault = "選択値の表示名やtitleが追従しない、候補へ未設定値を追加、またはselect変更が別設定へ通知される"
-// observable = "実composerの6selectのaccessible nameと現在値、5種類の変更callback・selected optionの文字・title、Modelの表示名"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: runtime設定の現在値表示" }
+// fault = "選択値の表示名やtitleが追従しない、候補へ未設定値を追加、または変更が別設定へ通知される"
+// observable = "実composerのModel pickerと5selectのaccessible name、現在値表示とtitle、変更callbackの保存値"
 // observation_boundary = "component-behavior"
 // scope = "Session composer runtime settings"
 // lifecycle = "permanent"
@@ -48,6 +48,7 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  Object.assign(dom.window.HTMLElement.prototype, { attachEvent() {}, detachEvent() {} });
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
   const changes: string[] = [];
@@ -63,6 +64,7 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       reviewerOptions: [option("user", "User"), option("auto-review", "Auto Review")],
       sandboxOptions: [option("workspace-write", "Workspace Write"), option("read-only", "Read Only")],
       reasoningOptions: [option("low", "Low"), option("high", "High")],
+      modelOptions: [option("gpt-5.4", "GPT-5.4"), option("vendor/model-b", "Model B")],
       speedOptions: [option("standard", "Standard"), option("fast", "Fast")],
       ...selection,
       onChangeApprovalMode: (value) => change("selectedApprovalMode", value),
@@ -70,16 +72,17 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       onChangeCodexSandboxMode: (value) => change("selectedCodexSandboxMode", value),
       onChangeReasoningEffort: (value) => change("selectedReasoningEffort", value),
       onChangeCodexSpeed: (value) => change("selectedCodexSpeed", value),
+      onChangeModel: (value) => change("selectedModel", value),
     }));
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     await act(async () => root.render(React.createElement(Fixture)));
     const document = dom.window.document;
-    assert.deepEqual([...document.querySelectorAll(".composer-settings select")].map((select) => select.getAttribute("aria-label")),
+    assert.deepEqual([...document.querySelectorAll('.composer-settings select, .composer-settings button[aria-haspopup="listbox"]')].map((select) => select.getAttribute("aria-label")),
       ["Approval", "Reviewer", "Sandbox", "Model", "Reasoning depth", "Speed"]);
-    const model = document.querySelector<HTMLSelectElement>('select[aria-label="Model"]')!;
-    assert.equal(model.selectedOptions[0].textContent, "GPT-5.4");
+    const model = document.querySelector<HTMLButtonElement>('button[aria-label="Model"]')!;
+    assert.equal(model.querySelector("span")?.textContent, "GPT-5.4");
     assert.equal(model.title, "Model: GPT-5.4");
     const depth = document.querySelector<HTMLSelectElement>('select[aria-label="Reasoning depth"]')!;
     assert.deepEqual([...depth.options].map((item) => item.value), ["low", "high"]);
@@ -100,13 +103,65 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       assert.equal(select.title, label + ": " + title);
       assert.equal(select.selectedOptions[0].textContent, title);
     }
-    assert.equal(changes.length, 5);
+    await act(async () => model.click());
+    const candidates = [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    assert.equal(candidates.length, 2);
+    const nextModel = candidates.find((candidate) => candidate.textContent?.includes("Model B"));
+    assert.ok(nextModel);
+    await act(async () => nextModel.click());
+    assert.equal(changes.at(-1), "selectedModel:vendor/model-b");
+    assert.equal(model.querySelector("span")?.textContent, "Model B");
+    assert.equal(model.title, "Model: Model B");
+    assert.equal(changes.length, 6);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
     Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Depth省略値はDefaultとして空valueを表示し、SDK非対応モデルでは保存Depthを変えず欄を非表示にする"
+// oracle = { type = "contract", ref = "Issue #879 SDK Depth omission and unsupported Depth controls" }
+// fault = "空Depthを先頭のSDK値として表示するか、非対応モデルのDepth欄を表示・保存値を置換する"
+// observable = "実ComposerのDepth select valueとselected option表示、非対応時の欄不在と選択props"
+// observation_boundary = "component-behavior"
+// scope = "Composer SDK Depth current-value display"
+// lifecycle = "permanent"
+// impact = "利用者が表示から判断したDepthと次送信設定が食い違う"
+// distinction = "候補生成単体ではnative selectの選択valueと実際の表示文字の一致を検証できない"
+// @end-test-value
+test("ComposerのDepthは省略valueとDefault表示を一致させ非対応モデルの欄を隠す", () => {
+  const model = { id: "sdk-model", label: "SDK Model", reasoningEfforts: ["low"], defaultReasoningEffort: "" };
+  const input = {
+    providerId: "codex",
+    providerCatalog: { id: "codex", label: "Codex", defaultModelId: model.id, defaultReasoningEffort: "", models: [model] },
+    models: [model], selectedModel: model.id,
+    selectedApprovalMode: "never" as const, selectedCodexSandboxMode: "workspace-write" as const,
+    selectedCodexSpeed: "standard" as const, selectedCodexReviewer: "user" as const,
+  };
+  const props = createComposerTestProps({ selectedReasoningEffort: "" });
+  const options = buildRuntimeSelectionOptions({ ...input, selectedReasoningEffort: props.selectedReasoningEffort, reasoningEfforts: model.reasoningEfforts });
+  const dom = new JSDOM(renderToStaticMarkup(React.createElement(SessionComposerExpanded, {
+    ...props, reasoningOptions: options.reasoningSelectOptions,
+  })));
+  try {
+    const depth = dom.window.document.querySelector<HTMLSelectElement>(".composer-setting-depth select");
+    assert.ok(depth);
+    assert.equal(depth.value, props.selectedReasoningEffort);
+    assert.equal(depth.selectedOptions[0]?.textContent, "Default");
+  } finally { dom.window.close(); }
+  const savedProps = createComposerTestProps({ selectedReasoningEffort: "saved-sdk-depth" });
+  const unsupported = buildRuntimeSelectionOptions({ ...input, selectedReasoningEffort: savedProps.selectedReasoningEffort, reasoningEfforts: [] });
+  const unsupportedDom = new JSDOM(renderToStaticMarkup(React.createElement(SessionComposerExpanded, {
+    ...savedProps, reasoningOptions: unsupported.reasoningSelectOptions,
+  })));
+  try {
+    assert.equal(unsupportedDom.window.document.querySelector(".composer-setting-depth"), null);
+    assert.equal(savedProps.selectedReasoningEffort, "saved-sdk-depth");
+  } finally { unsupportedDom.window.close(); }
 });
 
 function createComposerTestProps(
@@ -4156,15 +4211,15 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 
 // @test-value v2
 // kind = "contract"
-// claim = "running中はCancelを主操作にしてSendとApproval/Sandbox/Model/Depthを変更不可にし、idleとread-onlyでも対象の操作制約を維持する"
+// claim = "queue受付を提供しないComposerではrunning中のSendとApproval/Sandbox/Model/Depthを変更不可にし、Cancelの配置とidle/read-onlyの操作制約を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "Cancel/Sendのrunning状態が誤る、Approval/Sandbox/Model/Depthがrunning中に変更できる、またはread-onlyでも変更できる"
-// observable = "running/idle/read-onlyのCancel slot、Send disabled/title、Approval/Sandbox/Model/Depth select disabled属性"
+// fault = "queue受付のないComposerでCancel/Sendのrunning状態が誤る、設定がrunning中に変更できる、またはread-onlyでも変更できる"
+// observable = "running/idle/read-onlyのCancel slot、Send disabled/title、Approval/Sandbox/Depth selectとModel triggerのdisabled属性"
 // observation_boundary = "component-behavior"
-// scope = "expanded ActionDock primary action"
+// scope = "expanded ActionDock primary action without onQueueTurn"
 // lifecycle = "permanent"
-// impact = "実行中の設定と画面表示の混同を防ぎ、CancelとSendの位置を維持する"
-// distinction = "Composer単体の実描画属性をrunning/idleで確認し、Main側の設定捕捉や保存の検査とは役割を分ける"
+// impact = "queue受付のない状態で実行中の設定変更を防ぎ、CancelとSendの位置を維持する"
+// distinction = "queue受付未提供のComposer単体の描画属性を確認し、queue対応Appの次送信用設定やMain側の捕捉/保存の検査と区別する"
 // @end-test-value
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
   const renderComposer = (isRunning: boolean, composerBlocked = false) => renderToStaticMarkup(
@@ -4274,7 +4329,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   const runningSelect = (className: string) => controlRow.querySelector<HTMLSelectElement>(`.${className} select`);
   assert.equal(runningSelect("composer-setting-approval")?.disabled, true);
   assert.equal(runningSelect("composer-setting-sandbox")?.disabled, true);
-  assert.equal(runningSelect("composer-setting-model")?.disabled, true);
+  assert.equal(controlRow.querySelector<HTMLButtonElement>('.composer-setting-model button[aria-label="Model"]')?.disabled, true);
   assert.equal(runningSelect("composer-setting-depth")?.disabled, true);
 
   const idleHtml = renderComposer(false);
@@ -4294,11 +4349,11 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.equal(idleCancelSlot.querySelector("button"), null);
   assert.equal(idleCancelSlot.nextElementSibling, idleTargetSlot);
   assert.equal(idleSendButton.disabled, false);
-  assert.equal(idleControlRow.querySelector<HTMLSelectElement>(".composer-setting-model select")?.disabled, false);
+  assert.equal(idleControlRow.querySelector<HTMLButtonElement>('.composer-setting-model button[aria-label="Model"]')?.disabled, false);
   assert.equal(idleControlRow.querySelector<HTMLSelectElement>(".composer-setting-depth select")?.disabled, false);
 
   const readOnlyDocument = new JSDOM(renderComposer(true, true)).window.document;
-  assert.equal(readOnlyDocument.querySelector<HTMLSelectElement>(".composer-setting-model select")?.disabled, true);
+  assert.equal(readOnlyDocument.querySelector<HTMLButtonElement>('.composer-setting-model button[aria-label="Model"]')?.disabled, true);
   assert.equal(readOnlyDocument.querySelector<HTMLSelectElement>(".composer-setting-depth select")?.disabled, true);
 });
 
@@ -4588,15 +4643,15 @@ test("SessionActionDockCompactRow は実行状態が変わっても Main / Auxil
 
 // @test-value v2
 // kind = "contract"
-// claim = "ModelとDepthはrunning・blocked・freezeのいずれかで値を保持したまま変更不可となり、全制限がないときだけ変更できる"
+// claim = "queue受付を提供しないComposerのModelとDepthはrunning・blocked・freezeのいずれかで値を保持したまま変更不可となる"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/776; docs/design/desktop-ui.md: runtime settings" }
-// fault = "実行中のModel/Depthが編集可能になる、既存blocked/freeze制限が消える、または無効化で選択値が変わる"
-// observable = "実Composer DOMのModel/Depth selectのdisabled、value、selected optionの表示名"
+// fault = "queue受付のないComposerで実行中のModel/Depthが編集可能になる、blocked/freeze制限が消える、または無効化で選択値が変わる"
+// observable = "実Composer DOMのModel triggerとDepth selectのdisabled、現在値の表示名とtitle"
 // observation_boundary = "component-behavior"
-// scope = "session-composer-model-depth-availability"
+// scope = "session-composer-model-depth-availability without onQueueTurn"
 // lifecycle = "permanent"
-// impact = "実行中の設定と画面表示の混同、利用制限中の編集、待機中の設定変更不能を防ぐ"
-// distinction = "型検査と既存freeze testではrunning単独や各制限の独立性を確認できない。既存fixtureの8組合せだけでnative selectの継続的な操作契約を低コストで確認する"
+// impact = "queue受付のない実行中の設定変更、利用制限中の編集、idleでの設定変更不能を防ぐ"
+// distinction = "queue受付未提供のcomponent条件で各制限の独立性を8組合せで確認する。queue対応Appのrunning編集可は別境界のtestが担う"
 // @end-test-value
 test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限を独立に適用する", () => {
   for (const isRunning of [false, true]) {
@@ -4617,13 +4672,16 @@ test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限�
         const dom = new JSDOM(html);
         try {
           const context = JSON.stringify({ isRunning, composerBlocked, frozen });
-          for (const [setting, value, label] of [["model", "gpt-5.4", "GPT-5.4"], ["depth", "high", "High"]]) {
-            const select = dom.window.document.querySelector<HTMLSelectElement>(`.composer-setting-${setting} select`);
-            assert.ok(select, `${setting}: ${context}`);
-            assert.equal(select.disabled, isRunning || composerBlocked || frozen, `${setting}: ${context}`);
-            assert.equal(select.value, value, `${setting}: ${context}`);
-            assert.equal(select.selectedOptions[0]?.textContent, label, `${setting}: ${context}`);
-          }
+          const model = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Model"]');
+          assert.ok(model, context);
+          assert.equal(model.disabled, isRunning || composerBlocked || frozen, context);
+          assert.equal(model.querySelector("span")?.textContent, "GPT-5.4", context);
+          assert.equal(model.title, "Model: GPT-5.4", context);
+          const depth = dom.window.document.querySelector<HTMLSelectElement>(".composer-setting-depth select");
+          assert.ok(depth, context);
+          assert.equal(depth.disabled, isRunning || composerBlocked || frozen, context);
+          assert.equal(depth.value, "high", context);
+          assert.equal(depth.selectedOptions[0]?.textContent, "High", context);
         } finally {
           dom.window.close();
         }
@@ -4637,7 +4695,7 @@ test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限�
 // claim = "Composerがfreezeされたとき、入力・Model/Depthを変更するtrigger・候補をdisabledにし、空欄shortcutの強制feedbackを表示する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: close/app quit flush; docs/design/desktop-ui.md: composer feedback" }
 // fault = "終了flush中にpicker・template・directory・Model/Depth操作が実行可能なまま残る、または空欄shortcutのMessage is empty表示が失われる"
-// observable = "freeze済みComposerの各操作buttonとModel/Depth selectのdisabled属性、composer-sendability-feedbackの本文・textarea aria-describedby"
+// observable = "freeze済みComposerの各操作buttonとModel trigger/Depth selectのdisabled属性、composer-sendability-feedbackの本文・textarea aria-describedby"
 // observation_boundary = "component-behavior"
 // scope = "frozen composer mutation controls and forced sendability feedback"
 // lifecycle = "permanent"
@@ -4671,7 +4729,7 @@ test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強�
   for (const selector of [
     ".composer-attachments-toolbar button", ".composer-agent-toolbar button",
     ".composer-path-match-list button",
-    ".composer-setting-model select", ".composer-setting-depth select",
+    '.composer-setting-model button[aria-label="Model"]', ".composer-setting-depth select",
   ]) {
     const controls = Array.from(renderedDocument.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(selector));
     assert.ok(controls.length > 0, selector);

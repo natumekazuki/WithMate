@@ -24,6 +24,8 @@ function session(id: string, provider: string): Session {
       workspacePath: "C:/workspace",
       branch: "main",
       provider,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
       characterId: `character-${id}`,
       character: id,
       characterIconPath: "",
@@ -137,7 +139,7 @@ function makeRuntimeService(
     getAppSettings: () => appSettings,
     resolveProviderCatalog: (providerId) => {
       const provider = providerCatalog(providerId ?? "codex");
-      return { provider, snapshot: { revision: 1, providers: [provider] } };
+      return { provider, snapshot: { providers: [provider] } };
     },
     getProviderCodingAdapter: (providerId) => adapters.get(providerId ?? "codex")!,
     getSessionMemory: (next) => ({

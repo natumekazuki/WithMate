@@ -4,7 +4,7 @@
 
 V6 runtimeの正本は`<userData>/withmate-v6.db`である。旧DBをin-placeでV6へ書き換えない。起動時の選択・migrationは`src-electron/storage/app-database-path.ts`、V6 schemaのSQLと検証は`src-electron/storage/database-schema-v6.ts`を正本とする。[Database Schema](database-schema.md)は現在の保存領域と参照先を示す。
 
-旧DBからV6へ自動継続するのは、Character catalogと定義file・icon・theme・metadata、app／provider settings、model catalogなどV6の利用に必要な情報である。Character file rootは`<userData>/characters/<character-id>/`を継続する。V5以前のSession履歴、旧Memory、Growth、provider instruction projectionはV6の正本へ取り込まない。旧DBはmigration sourceまたはbackupとして扱い、通常のV6保存先にしない。
+旧DBからV6へ自動継続するのは、Character catalogと定義file・icon・theme・metadata、app／provider settingsなどV6の利用に必要な情報である。Model候補はSDKからcontext別に取得してcacheし、手管理catalogは継続対象にしない。Character file rootは`<userData>/characters/<character-id>/`を継続する。V5以前のSession履歴、旧Memory、Growth、provider instruction projectionはV6の正本へ取り込まない。旧DBはmigration sourceまたはbackupとして扱い、通常のV6保存先にしない。
 
 `app_settings.v4_to_v6_release_data_migrated_at`はV4からの継続データcopy完了markerである。validな空V6 bootstrap DBが先に存在しても、未移行のvalid V4があれば継続データを取り込む。marker済みなら再copyとmigration progress表示を行わない。既存invalid V6 DBを黙って上書きせず、source DBと共有file・blobをmigrationの副作用で破壊しない。
 

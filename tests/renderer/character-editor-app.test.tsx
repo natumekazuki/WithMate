@@ -49,7 +49,6 @@ function findButtonByText(container: HTMLElement, text: string): HTMLButtonEleme
 
 function createModelCatalog(): ModelCatalogSnapshot {
   return {
-    revision: 1,
     providers: [
       {
         id: "codex",

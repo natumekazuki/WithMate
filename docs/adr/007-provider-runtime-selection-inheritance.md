@@ -5,6 +5,8 @@
 
 ## 適用状態
 
+model catalogのimport・revision検証・一覧に合わせた選択の正規化に関する判断は、SDK model探索への置換により適用対象外とする。現在選択と保存済みの直近値の継承、入力形式・権限・ownerの検証は維持する。SDK一覧はcontext別の選択肢cacheであり、一覧更新でSessionやturnの捕捉値を変更しない。後継判断と現行契約は[Provider Model Discovery](../design/model-catalog.md)を参照する。以下の判断本文は履歴として保持する。
+
 Auxiliaryの準備済みCharacterを再抽選しない判断は、Issue #749の同一親Session内での未使用Character優先に関する競合には適用しない。commit時に使用済みCharacterとの衝突と未使用候補を確認した場合は保存せず、広域coordinatorの外で選択・snapshot準備をやり直す。取消、親identity、storage、runtime selection、active状態の再検証は維持する。現行契約は[Auxiliary SessionのCharacter identity](../design/auxiliary-session.md#character-identity)を参照する。
 
 作成時の設定検証と ownership 境界は引き続き適用する。DB の直近 Session だけを実行設定の継承元とする判断は、Issue #738 の現在選択と保存 checkpoint の分離により適用対象外とする。新規会話は Main Process が保持する provider ごとの現在選択を優先し、存在しない場合に保存済みの直近値を参照する。各 Send は送信時に捕捉した設定を検証して使用する。後継判断と現行契約は [Electron Session Store の実行設定と Send](../design/electron-session-store.md#実行設定と-send) に記載する。以下の判断本文は履歴として保持する。

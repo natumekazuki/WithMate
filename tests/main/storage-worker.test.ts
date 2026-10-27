@@ -87,7 +87,6 @@ test("V6 storage workerは最小turnとgeneration境界を維持する", async (
     const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
     const options = {
       dbPath: bootstrap.dbPath,
-      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
       userDataPath,
       workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
       handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
@@ -237,7 +236,7 @@ test("storage worker client rejects sent mutations after worker exit", async () 
 // @end-test-value
 test("auxiliary conditional save reports an unknown write outcome after worker exit", async () => {
   const bundle = createV6StorageWorkerBundle({
-    dbPath: "unused.db", bundledModelCatalogPath: "unused.json", userDataPath: ".",
+    dbPath: "unused.db", userDataPath: ".",
   workerUrl: createFixtureWorkerUrl(), workerOptions: {},
   });
   try {
@@ -555,14 +554,13 @@ test("V6 storage worker bundle initializes against a temporary database", async 
     const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
     bundle = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
-      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
       userDataPath,
       workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
       handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
       workerOptions: { execArgv: ["--import", "tsx"] },
     });
-    const initial = await bundle.initialize() as { activeModelCatalog: { revision: number }; sessions: unknown[] };
-    assert.ok(initial.activeModelCatalog.revision > 0);
+    const initial = await bundle.initialize() as { activeModelCatalog: { providers: unknown[] }; sessions: unknown[] };
+    assert.deepEqual(initial.activeModelCatalog.providers, []);
     assert.deepEqual(initial.sessions, []);
     assert.deepEqual(await bundle.stores.session.listSessions(), []);
     await bundle.stores.prompt.createPromptTemplate({ name: "worker-test", prompt: "persisted" });
@@ -571,7 +569,6 @@ test("V6 storage worker bundle initializes against a temporary database", async 
 
     const reopened = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
-      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
       userDataPath,
       workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
       handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
@@ -606,7 +603,6 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
     const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
     bundle = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
-      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
       userDataPath,
       workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
       handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
@@ -716,7 +712,6 @@ test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復
     const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
     bundle = createV6StorageWorkerBundle({
       dbPath: bootstrap.dbPath,
-      bundledModelCatalogPath: join(process.cwd(), "public", "model-catalog.json"),
       userDataPath,
       workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
       handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
@@ -861,14 +856,13 @@ test("V6 persistent store lifecycle uses the storage worker across close and reo
   try {
     const bootstrap = await createOrVerifyV6FreshDatabase(userDataPath);
     dbPath = bootstrap.dbPath;
-    const bundledCatalogPath = join(process.cwd(), "public", "model-catalog.json");
-    first = await service.initialize(bootstrap.dbPath, bundledCatalogPath, userDataPath);
+    first = await service.initialize(bootstrap.dbPath, userDataPath);
     assert.ok(first.storageWorker);
     assert.deepEqual(await first.sessionStorage.listSessions(), []);
     await service.close(first, bootstrap.dbPath);
     await assert.rejects(async () => first!.sessionStorage.listSessions(), StorageWorkerGenerationError);
     first = null;
-    const second = await service.initialize(bootstrap.dbPath, bundledCatalogPath, userDataPath);
+    const second = await service.initialize(bootstrap.dbPath, userDataPath);
     try {
       assert.ok(second.storageWorker);
       assert.deepEqual(await second.sessionStorage.listSessions(), []);

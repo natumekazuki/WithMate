@@ -17,11 +17,10 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import type { SessionSummary } from "../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
-import { isProviderSupported, requireSupportedProviderId } from "../providers/provider-support.js";
+import { requireSupportedProviderId } from "../providers/provider-support.js";
 
 export type SessionLaunchSelection = {
   provider: string;
-  catalogRevision: number;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
@@ -33,7 +32,7 @@ export type SessionLaunchSelection = {
 
 type SessionLaunchSelectionServiceDeps = {
   getAppSettings(): Awaitable<AppSettings>;
-  getModelCatalogSnapshot(): Awaitable<ModelCatalogSnapshot>;
+  getModelCatalogSnapshot(workspacePath?: string, providerId?: string): Awaitable<ModelCatalogSnapshot>;
   getLatestSessionSummaryForProvider(providerId: string): Awaitable<SessionSummary | null>;
   getCurrentExecutionOptions?(providerId: string): SessionExecutionOptions | null;
 };
@@ -43,44 +42,38 @@ function resolveEnabledProviderCatalog(
   appSettings: AppSettings,
   requestedProviderId?: string | null,
 ): ModelCatalogProvider {
-  const requestedId = requestedProviderId != null ? requireSupportedProviderId(requestedProviderId) : null;
-  const requestedProvider = requestedId != null
-    ? snapshot.providers.find((provider) => provider.id === requestedId)
-    : null;
-  if (requestedProviderId != null && !requestedProvider) {
-    throw new Error(`Provider ${requestedProviderId} is not available in the model catalog.`);
+  const providerId = requireSupportedProviderId(requestedProviderId ?? DEFAULT_PROVIDER_ID);
+  const provider = snapshot.providers.find((entry) => entry.id === providerId);
+  if (!provider) throw new Error(`Provider ${providerId} model discovery is unavailable.`);
+  if (!getProviderAppSettings(appSettings, providerId).enabled) {
+    throw new Error(`Provider ${providerId} is disabled in Settings.`);
   }
-  if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
-    return requestedProvider;
-  }
-
-  const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;
-  if (defaultProvider && getProviderAppSettings(appSettings, defaultProvider.id).enabled) {
-    return defaultProvider;
-  }
-
-  const firstEnabledProvider = snapshot.providers.find((provider) =>
-    isProviderSupported(provider.id) && getProviderAppSettings(appSettings, provider.id).enabled
-  );
-  if (firstEnabledProvider) {
-    return firstEnabledProvider;
-  }
-
-  throw new Error("No enabled supported provider is available in Settings.");
+  return provider;
 }
 
 export class SessionLaunchSelectionService {
   constructor(private readonly deps: SessionLaunchSelectionServiceDeps) {}
 
-  async resolve(requestedProviderId?: string | null): Promise<SessionLaunchSelection> {
-    const snapshot = await this.deps.getModelCatalogSnapshot();
-    const provider = resolveEnabledProviderCatalog(
+  async resolve(requestedProviderId?: string | null, workspacePath?: string, capturedDefaults?: SessionLaunchSelection): Promise<SessionLaunchSelection> {
+    const snapshot = await this.deps.getModelCatalogSnapshot(workspacePath);
+    let provider = resolveEnabledProviderCatalog(
       snapshot,
       await this.deps.getAppSettings(),
       requestedProviderId,
     );
     const latestSession = this.deps.getCurrentExecutionOptions?.(provider.id)
-      ?? await this.deps.getLatestSessionSummaryForProvider(provider.id);
+      ?? await this.deps.getLatestSessionSummaryForProvider(provider.id)
+      ?? (capturedDefaults?.provider === provider.id ? capturedDefaults : null);
+    if (!latestSession?.model) {
+      provider = resolveEnabledProviderCatalog(
+        await this.deps.getModelCatalogSnapshot(workspacePath, provider.id),
+        await this.deps.getAppSettings(),
+        provider.id,
+      );
+      if (!provider.defaultModelId) {
+        throw new Error(`Provider ${provider.id} has no available model. Complete model discovery before creating a Session.`);
+      }
+    }
     const modelSelection = resolveModelSelection(
       provider,
       latestSession?.model ?? provider.defaultModelId,
@@ -89,7 +82,6 @@ export class SessionLaunchSelectionService {
 
     return {
       provider: provider.id,
-      catalogRevision: snapshot.revision,
       model: modelSelection.resolvedModel,
       reasoningEffort: modelSelection.resolvedReasoningEffort,
       approvalMode: latestSession?.approvalMode ?? getDefaultApprovalModeForProvider(provider.id),

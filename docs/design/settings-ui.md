@@ -11,20 +11,20 @@
 
 - 設定は `Home Window` から開く独立 `Settings Window` とする
 - Character定義は`Characters` editorで管理し、Session開始時の`CharacterRuntimeSnapshot`をruntime promptへ渡す
-- current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Diagnostics`、`Model Catalog`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
+- current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Diagnostics`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
 - Settings のsectionとprovider rowは意味上のgroupを保つが、入れ子の装飾card、重複するsection見出し、説明だけの空行は置かない
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` はfieldsetの内外でsection間の余白を24pxに揃え、直前の入力欄やfocus枠と区切り線を離す。内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - `Session Turn Notification`はturn完了・失敗とCodexの構造化質問通知に共通で適用する。`Notification Response Preview`は成功したturnの完了通知だけを対象とし、質問文や入力値は表示しない。通知の条件と復帰先は[Desktop UI](desktop-ui.md#windows-session-notifications)を参照する
 - `Session Approval Notification`はMain／AuxiliaryのCodex・Copilot・Claude・OpenCodeの承認待ち通知を独立して切り替える。既定値は有効で、通知内容はSession名と承認待ちだけとし、承認内容やwarning、pathは表示しない
 - file picker / save dialog は Main Process 側で開く
-- current 実装では Main Process 側の settings / catalog 更新は `src-electron/settings/settings-catalog-service.ts` に寄せ、renderer 側の provider row 組み立ては `src/home-settings-view-model.ts` に寄せる
+- Main Process側のsettings更新は`src-electron/settings/settings-catalog-service.ts`、SDK model取得は`src-electron/settings/provider-model-discovery-service.ts`が担当する。renderer側のprovider row組み立ては`src/settings/settings-view-model.ts`に寄せる
 
 ## Interaction
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動し、`Import Models` / `Export Models` も実行できる
+3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動する
 4. 結果は window 内の短いフィードバックで返す
 
 設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。失敗時はエラーをフィードバック領域に残す。
@@ -64,8 +64,6 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
       - runtime API status / application instance / runtime generation / build channel / discovery publish status
       - CLI shim status
       - latest Memory V6 diagnostic errors
-- `Model Catalog`
-  - `Import Models` / `Export Models`
 - `Repository Glossary`
   - `Glossary Proactive Create Limit`
 - `Storage Maintenance`
@@ -89,7 +87,8 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - `Launch At Login` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - Claude AgentとOpenCodeは初期状態で無効とし、有効化した場合だけ新規Sessionのprovider候補に出す。Codexは既定のproviderとして維持する
-- OpenCodeのGo用keyは`codingProviderSettings.opencode.apiKey`へ保存し、未設定時は実行環境の`OPENCODE_API_KEY`を使う。入力は既存の設定draft／保存・provider変更通知・実行中判定・thread invalidationを利用し、catalogや履歴へは含めない。独自OAuthやaccount選択は提供しない
+- OpenCodeのGo用keyは`codingProviderSettings.opencode.apiKey`へ保存し、未設定時は実行環境の`OPENCODE_API_KEY`を使う。入力は既存の設定draft／保存・provider変更通知・実行中判定・thread invalidationを利用し、model候補のpayloadや履歴へは含めない。独自OAuthやaccount選択は提供しない
+- Model候補はSDKから自動取得し、Settingsに手管理のimport／exportやrefresh操作は置かない。provider設定変更時は有効なproviderをbackground取得し、context別cacheを使う。現在選択やdraftは書き換えない。詳細は[Provider Model Discovery](model-catalog.md)を参照する
 - coding provider ごとの `Provider File Settings`
   - `Root Directory` は provider ごとの file 設定の基準 directory として保持される
   - `Skill Relative Path` がある場合は root 配下の相対 path として解決される
@@ -103,8 +102,6 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
   - CLI shimはplatform、support、install状態、PATH状態を表示する
   - credential、binding reference、Memory本文、個人path、provider別状態、managed Skill同期状態はdiagnostics stateへ含めない
 - Memory Review は active Memory entries の検索、raw body の read-only 表示、entry files の export、forget、protected object GC を提供する。`Kind` filter と `Forget Reason` selectorは`All Kinds` / `Decision` / `User Request`などのローカルTitle Case labelを使い、検索・forget payloadのkind / reason raw valueは変更しない。Forget と GC の確認では対象と削除影響を明示し、diagnostics の raw status / code と Memory の internal enum は翻訳しない
-- `Model Catalog` の import
-- `Model Catalog` の export
 - `Storage Maintenance` の古い Session 削除
   - cutoff date は Settings Window 内の一時入力として扱い、app settings には保存しない
   - cutoff date のローカル日付 00:00 より前に最後に使われた Session を対象にする
@@ -112,15 +109,14 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 
 ## Runtime Policy
 
-- Main Process 側の `app settings` 更新、`model catalog` import、rollback、関連 session / telemetry invalidation は `SettingsCatalogService` が担当する
-- `model catalog export` の document 取得も `SettingsCatalogService` が担当する
+- Main Process側の`app settings`更新、rollback、関連session／telemetry invalidationは`SettingsCatalogService`が担当する
 - renderer 側では `HomeApp.tsx` が storage 正規化を直接持たず、`home-settings-view-model` の derived data を使って provider row を描画する
 - renderer 側の provider settings draft 更新は `home-settings-draft` の pure function を経由する
 - provider file settings の directory / file picker は、`Root Directory` 配下で選ばれた path だけを相対 path として draft へ反映する
 - `HomeApp.tsx` は provider settings を別 state で持たず、単一の `AppSettings draft` を編集する
-- save 時の payload は `settings-view-model` が resolved model / reasoning を反映した `persisted settings` として組み立てる。catalog未取得時は保存済みのprovider設定を保持し、一般設定の保存で未取得項目を消さない
-- Settings Windowはapp settings、model catalog、Memory diagnosticsを独立して取得する。設定draftが取得できればcatalogやdiagnosticsを待たず編集でき、失敗は対象領域で再試行する。無関係な取得の完了や再試行で編集中draftを初期化しない。表示は共通spinnerとaccessible status/busyへ集約し、正常な読込中にLoading文字列を重ねない
-- Settings Window の `import / export / save` の文言組み立てと戻り値解釈は `home-settings-actions` が担当する
+- save時のpayloadは`settings-view-model`が設定draftから組み立てる。SDK model一覧の取得を待たず、設定保存でSessionのmodel／Depthを変更しない
+- Settings Windowはapp settingsとMemory diagnosticsを独立して取得する。設定draftが取得できればdiagnosticsを待たず編集でき、失敗は対象領域で再試行する。無関係な取得の完了や再試行で編集中draftを初期化しない。表示は共通spinnerとaccessible status/busyへ集約し、正常な読込中にLoading文字列を重ねない
+- Settings Windowのsaveの文言組み立てと戻り値解釈は`settings-actions`が担当する
 - Settings Window の古い Session 削除の確認文言と戻り値解釈は `home-settings-actions` が担当し、削除 orchestration は Main Process 側の session command API に委譲する
 - Settings 保存成功時は renderer 側で戻り値の `appSettings` を draft に同期し、dirty 状態を解消する。完了後に常設の成功説明を残さない
 - Settings の save が成功しても、その待機中に加えられた変更は上書きせず、`Unsaved Changes` として draft に残す

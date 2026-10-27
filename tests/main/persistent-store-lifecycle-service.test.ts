@@ -206,13 +206,13 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
       runState: "idle",
     },
   ] as never;
-  const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
+  const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
   let listSessionSummariesCallCount = 0;
 
   const service = new PersistentStoreLifecycleService({
     createModelCatalogStorage: () =>
       ({
-        ensureSeeded: () => activeModelCatalog,
+        getCatalog: () => activeModelCatalog,
         close() {
           closeCalls.push("model");
         },
@@ -240,7 +240,7 @@ test("PersistentStoreLifecycleService は store を初期化して session depen
     async removeFile() {},
   });
 
-  const bundle = await service.initialize("withmate.db", "model-catalog.json");
+  const bundle = await service.initialize("withmate.db");
 
   assert.equal(bundle.activeModelCatalog, activeModelCatalog);
   assert.deepEqual(bundle.sessions.map((session) => ({
@@ -273,7 +273,7 @@ test("PersistentStoreLifecycleService は起動時に Mate projection を復元�
     let mateFactoryCalls = 0;
     let firstProfile: Awaited<ReturnType<MateStorage["getMateProfile"]>> | null = null;
     const service = new PersistentStoreLifecycleService({
-      createModelCatalogStorage: () => ({ ensureSeeded: () => ({ revision: 1, providers: [] }), close() {} }) as never,
+      createModelCatalogStorage: () => ({ getCatalog: () => ({ providers: [] }), close() {} }) as never,
       createSessionStorage: () => ({ listSessions: () => [], listSessionSummaries: () => [], close() {} }) as never,
       createSessionMemoryStorage: () => ({ close() {} }) as never,
       createProjectMemoryStorage: () => ({ close() {} }) as never,
@@ -301,7 +301,7 @@ test("PersistentStoreLifecycleService は起動時に Mate projection を復元�
     });
 
     try {
-      const firstBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+      const firstBundle = await service.initialize(dbPath, userDataPath);
       try {
         await firstBundle.mateStorage.createMate({ displayName: "Mika" });
         await firstBundle.mateStorage.applyProfileFiles({
@@ -313,7 +313,7 @@ test("PersistentStoreLifecycleService は起動時に Mate projection を復元�
         await service.close(firstBundle, dbPath);
       }
 
-      const secondBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+      const secondBundle = await service.initialize(dbPath, userDataPath);
       try {
         const restoredProfile = await secondBundle.mateStorage.getMateProfile();
         assert.equal(restoredProfile?.displayName, firstProfile?.displayName);
@@ -356,7 +356,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          getCatalog: () => ({ providers: [] }),
           close() {},
         }) as never,
       createSessionStorage: () =>
@@ -375,7 +375,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate schema を初�
       async removeFile() {},
     });
 
-    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    const bundle = await service.initialize(dbPath, userDataPath);
 
     assert.equal(bundle.mateStorage.getMateState(), "not_created");
     assert.throws(
@@ -416,7 +416,7 @@ test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          getCatalog: () => ({ providers: [] }),
           close() {},
         }) as never,
       createSessionStorage: () =>
@@ -436,7 +436,7 @@ test("PersistentStoreLifecycleService は legacy DB 起動時に Mate schema を
     });
 
     const tableNamesBefore = readTableNames(dbPath);
-    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    const bundle = await service.initialize(dbPath, userDataPath);
     try {
       assert.equal(bundle.mateStorage.getMateState(), "profile_unavailable");
       assert.deepEqual(readTableNames(dbPath), tableNamesBefore);
@@ -464,7 +464,7 @@ test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema 
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          getCatalog: () => ({ providers: [] }),
           close() {},
         }) as never,
       createSessionStorage: () =>
@@ -495,7 +495,7 @@ test("PersistentStoreLifecycleService は V3 legacy DB 起動時に Mate schema 
     });
 
     const tableNamesBefore = readTableNames(dbPath);
-    const bundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    const bundle = await service.initialize(dbPath, userDataPath);
     try {
       assert.equal(bundle.mateStorage.getMateState(), "profile_unavailable");
       assert.deepEqual(readTableNames(dbPath), tableNamesBefore);
@@ -520,7 +520,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => ({ revision: 1, providers: [] }),
+          getCatalog: () => ({ providers: [] }),
           close() {},
         }) as never,
       createSessionStorage: () =>
@@ -539,7 +539,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
       async removeFile() {},
     });
 
-    const firstBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    const firstBundle = await service.initialize(dbPath, userDataPath);
     let firstProfile: Awaited<ReturnType<MateStorage["getMateProfile"]>> | null = null;
     try {
       await firstBundle.mateStorage.createMate({ displayName: "Mika" });
@@ -556,7 +556,7 @@ test("PersistentStoreLifecycleService は v4 DB 起動時に Mate projection を
     const corePath = path.join(userDataPath, "mate/core.md");
     await writeFile(corePath, "# Core\n- Broken\n", "utf8");
 
-    const secondBundle = await service.initialize(dbPath, "model-catalog.json", userDataPath);
+    const secondBundle = await service.initialize(dbPath, userDataPath);
     try {
       const restoredCore = await readFile(corePath, "utf8");
       const mismatches = await secondBundle.mateStorage.verifyMateProfileFiles();
@@ -741,7 +741,7 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
   const service = new PersistentStoreLifecycleService({
     createModelCatalogStorage: () =>
       ({
-        ensureSeeded: () => ({ revision: 3, providers: [] }),
+        getCatalog: () => ({ providers: [] }),
         close() {},
       }) as never,
     createSessionStorage: () =>
@@ -768,8 +768,8 @@ test("PersistentStoreLifecycleService は WAL truncate 失敗後も DB 再生成
   console.warn = () => {};
 
   try {
-    const bundle = await service.recreate("withmate.db", "model-catalog.json", {});
-    assert.equal(bundle.activeModelCatalog.revision, 3);
+    const bundle = await service.recreate("withmate.db", {});
+    assert.deepEqual(bundle.activeModelCatalog, { providers: [] });
     assert.deepEqual(truncateWalCalls, ["withmate.db"]);
     assert.deepEqual(removedPaths, [
       "withmate.db-wal",
@@ -797,7 +797,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
   const service = new PersistentStoreLifecycleService({
     createModelCatalogStorage: () =>
       ({
-        ensureSeeded: () => ({ revision: 2, providers: [] }),
+        getCatalog: () => ({ providers: [] }),
         close() {},
       }) as never,
     createSessionStorage: () =>
@@ -820,7 +820,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     },
   });
 
-  const bundle = await service.recreate("withmate.db", "model-catalog.json", {});
+  const bundle = await service.recreate("withmate.db", {});
 
   assert.deepEqual(removedPaths, [
     "withmate.db-wal",
@@ -828,7 +828,7 @@ test("PersistentStoreLifecycleService は DB を再生成して再初期化す�
     "withmate.db",
   ]);
   assert.deepEqual(truncateWalCalls, ["withmate.db"]);
-  assert.equal(bundle.activeModelCatalog.revision, 2);
+  assert.deepEqual(bundle.activeModelCatalog, { providers: [] });
 });
 
 // @test-value v2
@@ -849,7 +849,7 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => ({ revision: 4, providers: [] }),
+          getCatalog: () => ({ providers: [] }),
           close() {},
         }) as never,
       createSessionStorage: () => {
@@ -878,9 +878,9 @@ test("PersistentStoreLifecycleService は V2 DB 再生成後に V2 schema を作
       },
     });
 
-    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+    const bundle = await service.recreate(dbPath, {});
 
-    assert.equal(bundle.activeModelCatalog.revision, 4);
+    assert.deepEqual(bundle.activeModelCatalog, { providers: [] });
     assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
     assert.deepEqual(bundle.sessions, []);
     await service.close(bundle, dbPath);
@@ -916,7 +916,7 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => ({ revision: 7, providers: [] }),
+          getCatalog: () => ({ providers: [] }),
           close() {},
         }) as never,
       createSessionStorage: () =>
@@ -952,9 +952,9 @@ test("PersistentStoreLifecycleService は V3 DB 再生成時に blob root も削
       },
     });
 
-    const bundle = await service.recreate(dbPath, "model-catalog.json", {});
+    const bundle = await service.recreate(dbPath, {});
 
-    assert.equal(bundle.activeModelCatalog.revision, 7);
+    assert.deepEqual(bundle.activeModelCatalog, { providers: [] });
     assert.deepEqual(removedDirectories, [path.join(dir, "blobs", "v3")]);
     assert.equal(bundle.sessionStorage instanceof SessionStorageV3, true);
     await service.close(bundle, dbPath);
@@ -983,7 +983,7 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Ch
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => ({ revision: 8, providers: [] }),
+          getCatalog: () => ({ providers: [] }),
           close() {},
         }) as never,
       createSessionStorage: () =>
@@ -1008,9 +1008,9 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Ch
       },
     });
 
-    const bundle = await service.recreate(dbPath, "model-catalog.json", {}, userDataPath);
+    const bundle = await service.recreate(dbPath, {}, userDataPath);
 
-    assert.equal(bundle.activeModelCatalog.revision, 8);
+    assert.deepEqual(bundle.activeModelCatalog, { providers: [] });
     assert.deepEqual(removedDirectories, [
       path.join(dir, "blobs", "v3"),
       path.join(userDataPath, "characters"),
@@ -1032,14 +1032,14 @@ test("PersistentStoreLifecycleService は V4 DB 再生成時に blob root と Ch
 // lifecycle = "permanent"
 // @end-test-value
 test("PersistentStoreLifecycleService は required V2 tables がない withmate-v2.db では V1-compatible injected storages を使う", async () => {
-  const activeModelCatalog = { revision: 5, providers: [] } as ModelCatalogSnapshot;
+  const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
   let createSessionStorageCallCount = 0;
 
   await withTempEmptyV2NamedDatabase(async (dbPath) => {
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => activeModelCatalog,
+          getCatalog: () => activeModelCatalog,
           close() {},
         }) as never,
       createSessionStorage: () => {
@@ -1060,7 +1060,7 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
       async removeFile() {},
     });
 
-    const bundle = await service.initialize(dbPath, "model-catalog.json");
+    const bundle = await service.initialize(dbPath);
 
     assert.equal(bundle.activeModelCatalog, activeModelCatalog);
     assert.equal(bundle.sessionStorage instanceof SessionStorageV2, false);
@@ -1079,7 +1079,7 @@ test("PersistentStoreLifecycleService は required V2 tables がない withmate-
 // lifecycle = "permanent"
 // @end-test-value
 test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使ってセッション要約を読む", async () => {
-  const activeModelCatalog = { revision: 1, providers: [] } as ModelCatalogSnapshot;
+  const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
 
   await withTempV2Database(async (dbPath) => {
     const db = new DatabaseSync(dbPath);
@@ -1133,7 +1133,7 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => activeModelCatalog,
+          getCatalog: () => activeModelCatalog,
           close() {},
         }) as never,
       createSessionStorage: () => {
@@ -1154,7 +1154,7 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
 
     let bundle: Awaited<ReturnType<typeof service.initialize>> | null = null;
     try {
-      bundle = await service.initialize(dbPath, "model-catalog.json");
+      bundle = await service.initialize(dbPath);
       assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
       assert.deepEqual(bundle.sessions.map((session) => ({
         id: session.id,
@@ -1194,14 +1194,14 @@ test("PersistentStoreLifecycleService は V2 DB では SessionStorageV2 を使�
 // lifecycle = "permanent"
 // @end-test-value
 test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages を生成せず V2 storages を返す", async () => {
-  const activeModelCatalog = { revision: 2, providers: [] } as ModelCatalogSnapshot;
+  const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
   let createSessionStorageCallCount = 0;
 
   await withTempV2Database(async (dbPath) => {
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => activeModelCatalog,
+          getCatalog: () => activeModelCatalog,
           close() {},
         }) as never,
       createSessionStorage: () => {
@@ -1222,7 +1222,7 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
       async removeFile() {},
     });
 
-    const bundle = await service.initialize(dbPath, "model-catalog.json");
+    const bundle = await service.initialize(dbPath);
     try {
       assert.equal(bundle.sessionStorage instanceof SessionStorageV2, true);
       assert.equal(createSessionStorageCallCount, 0);
@@ -1245,7 +1245,7 @@ test("PersistentStoreLifecycleService は V2 DB では V1 write-capable storages
 // distinction = "factoryの型検査やschema SQL確認では、initialize後の実SQLite table副作用とfactory非呼出しを同時に確認できない"
 // @end-test-value
 test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作成しない", async () => {
-  const activeModelCatalog = { revision: 3, providers: [] } as ModelCatalogSnapshot;
+  const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
   let createSessionMemoryStorageCallCount = 0;
   let createProjectMemoryStorageCallCount = 0;
   let createCharacterStorageCallCount = 0;
@@ -1254,7 +1254,7 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => activeModelCatalog,
+          getCatalog: () => activeModelCatalog,
           close() {},
         }) as never,
       createSessionStorage: () => {
@@ -1279,7 +1279,7 @@ test("PersistentStoreLifecycleService は V2 DB に legacy memory table を作�
       async removeFile() {},
     });
 
-    const bundle = await service.initialize(dbPath, "model-catalog.json");
+    const bundle = await service.initialize(dbPath);
     try {
       const db = new DatabaseSync(dbPath, { readOnly: true });
       try {
@@ -1328,30 +1328,9 @@ test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/
     const userDataPath = path.join(dir, "user-data");
     const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
     assert.equal(path.basename(dbPath), APP_DATABASE_V6_FILENAME);
-    const bundledModelCatalogPath = path.join(dir, "model-catalog.json");
-    await writeFile(
-      bundledModelCatalogPath,
-      JSON.stringify({
-        providers: [
-          {
-            id: "codex",
-            label: "Codex",
-            defaultModelId: "gpt-5.4",
-            defaultReasoningEffort: "medium",
-            models: [
-              {
-                id: "gpt-5.4",
-                label: "GPT 5.4",
-                reasoningEfforts: ["medium"],
-              },
-            ],
-          },
-        ],
-      }),
-    );
 
     const service = createPersistentStoreLifecycleService();
-    const bundle = await service.initialize(dbPath, bundledModelCatalogPath, userDataPath);
+    const bundle = await service.initialize(dbPath, userDataPath);
     try {
       const auxiliary = await bundle.auxiliarySessionStorage.upsertAuxiliarySession(createAuxiliarySessionFixture());
       assert.equal(auxiliary.id, "aux-v6");
@@ -1385,7 +1364,7 @@ test("PersistentStoreLifecycleService は V6 DB に legacy session/audit/memory/
 // lifecycle = "permanent"
 // @end-test-value
 test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せず V3 storages を返して schema hook を呼ぶ", async () => {
-  const activeModelCatalog = { revision: 6, providers: [] } as ModelCatalogSnapshot;
+  const activeModelCatalog = { providers: [] } as ModelCatalogSnapshot;
   let ensureV3SchemaCallCount = 0;
   let createSessionStorageCallCount = 0;
   let createSessionMemoryStorageCallCount = 0;
@@ -1396,7 +1375,7 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
     const service = new PersistentStoreLifecycleService({
       createModelCatalogStorage: () =>
         ({
-          ensureSeeded: () => activeModelCatalog,
+          getCatalog: () => activeModelCatalog,
           close() {},
         }) as never,
       createSessionStorage: () => {
@@ -1426,7 +1405,7 @@ test("PersistentStoreLifecycleService は V3 DB では V1 storages を生成せ�
       async removeFile() {},
     });
 
-    const bundle = await service.initialize(dbPath, "model-catalog.json");
+    const bundle = await service.initialize(dbPath);
     try {
       assert.equal(bundle.activeModelCatalog, activeModelCatalog);
       assert.equal(bundle.sessionStorage instanceof SessionStorageV3, true);

@@ -101,6 +101,9 @@ export type SessionComposerFeatureBridge = {
     chatNotice?: string;
     providerCatalog: ModelCatalogProvider | null | undefined;
     models: readonly ModelCatalogItem[];
+    modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
+    modelDiscoveryError?: string;
+    modelDiscoveryHasCache?: boolean;
     reasoningEfforts: readonly ModelReasoningEffort[];
   };
   resources: {
@@ -111,6 +114,7 @@ export type SessionComposerFeatureBridge = {
     skillListError: string | null;
   };
   operations: {
+    onModelPickerOpen?: () => void;
     send: {
       main: SessionComposerOperation;
       auxiliary: SessionComposerOperation;
@@ -126,7 +130,6 @@ export type SessionComposerFeatureBridge = {
       auxiliary: {
         session: AuxiliarySession | null;
         update: (recipe: (current: AuxiliarySession) => AuxiliarySession) => Promise<void>;
-        catalogRevision: number | null;
         timestamp: () => string;
       };
     };
@@ -299,6 +302,7 @@ export function useSessionComposerFeature(input: {
       providerCatalog: bridge.runtime.providerCatalog,
       models: bridge.runtime.models,
       selectedModel: bridge.session.model,
+      selectedReasoningEffort: bridge.session.reasoningEffort,
       reasoningEfforts: bridge.runtime.reasoningEfforts,
       selectedApprovalMode: bridge.session.approvalMode,
       selectedCodexSandboxMode: bridge.session.codexSandboxMode,
@@ -364,25 +368,23 @@ export function useSessionComposerFeature(input: {
       });
     };
     const onAuxiliaryModel = (model: string) => {
-      if (!bridge.runtime.providerCatalog || auxiliaryRuntime.catalogRevision === null) {
+      if (!bridge.runtime.providerCatalog) {
         return;
       }
       return runAuxiliaryModelChangeOperation({
         model,
         providerCatalog: bridge.runtime.providerCatalog,
-        catalogRevision: auxiliaryRuntime.catalogRevision,
         updateActiveAuxiliarySession: auxiliaryRuntime.update,
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });
     };
     const onAuxiliaryReasoning = (reasoningEffort: string) => {
-      if (!bridge.runtime.providerCatalog || auxiliaryRuntime.catalogRevision === null || !auxiliaryRuntime.session) {
+      if (!bridge.runtime.providerCatalog || !auxiliaryRuntime.session) {
         return;
       }
       return runAuxiliaryReasoningEffortChangeOperation({
         reasoningEffort: reasoningEffort as Session["reasoningEffort"],
         providerCatalog: bridge.runtime.providerCatalog,
-        catalogRevision: auxiliaryRuntime.catalogRevision,
         updateActiveAuxiliarySession: auxiliaryRuntime.update,
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });
@@ -557,6 +559,10 @@ export function useSessionComposerFeature(input: {
       speedOptions: runtimeOptions.speedSelectOptions,
       selectedCodexSpeed: bridge.session.codexSpeed,
       modelOptions: runtimeOptions.modelSelectOptions,
+      modelDiscoveryStatus: bridge.runtime.modelDiscoveryStatus,
+      modelDiscoveryError: bridge.runtime.modelDiscoveryError,
+      modelDiscoveryHasCache: bridge.runtime.modelDiscoveryHasCache,
+      onModelPickerOpen: bridge.operations.onModelPickerOpen,
       selectedModel: bridge.session.model,
       selectedModelFallbackLabel: runtimeOptions.selectedModelFallbackLabel,
       reasoningOptions: runtimeOptions.reasoningSelectOptions,

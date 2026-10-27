@@ -2076,10 +2076,38 @@ it("Session完了後のquota telemetry停止はturn resultを待たせない", a
 });
 
 describe("CopilotAdapter session settings", () => {
-  it("max / ultra は Copilot SDK 境界で拒否する", () => {
-    assert.throws(() => toCopilotReasoningEffort("max"), /max/);
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Copilot effort変換はSDK対応値を保持し省略を許可し非対応値を別の値へ置換しない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+  // fault = "maxを拒否するかminimalをlowへ暗黙変換する"
+  // observable = "toCopilotReasoningEffortの戻り値と拒否"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot SDK effort conversion"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("native effortと省略を保持しSDK未対応値は置換せず拒否する", () => {
+    assert.equal(toCopilotReasoningEffort("max"), "max");
+    assert.equal(toCopilotReasoningEffort(""), undefined);
     assert.throws(() => toCopilotReasoningEffort("ultra"), /ultra/);
-    assert.equal(toCopilotReasoningEffort("minimal"), "low");
+    assert.throws(() => toCopilotReasoningEffort("minimal"), /minimal/);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Depth未指定のCopilot turnはSDK configへreasoningEffortを送らない"
+  // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+  // fault = "空文字のDepthをSDKへ明示値として送る"
+  // observable = "buildCopilotSessionSettingsのSDK config property"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot omitted Depth"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Depth未指定はCopilot SDK configから省略する", () => {
+    const request = createRunSessionInput();
+    request.executionOptions = { ...request.executionOptions, reasoningEffort: "" };
+    const settings = buildCopilotSessionSettings(request, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+    assert.equal(Object.hasOwn(settings.config, "reasoningEffort"), false);
   });
 
   it("custom agent 変更後の session settings は新 agent 情報を反映する", () => {

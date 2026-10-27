@@ -163,7 +163,7 @@ function sendQueue(h: Awaited<ReturnType<typeof mountDrafts>>, state: ReturnType
   const executionOptions = captureSessionExecutionOptions(selected);
   const displayed: Session = {
     id: selected.id, incarnationId: selected.createdAt, taskTitle: selected.title, status: "idle", updatedAt: selected.updatedAt, isPinned: false,
-    provider: selected.provider, ...executionOptions, workspaceLabel: "Workspace", workspacePath: "workspace", branch: "feature",
+    provider: selected.provider, catalogRevision: selected.catalogRevision, ...executionOptions, workspaceLabel: "Workspace", workspacePath: "workspace", branch: "feature",
     sessionKind: "default", accessMode: "active", sourceSchemaVersion: 6, characterId: "mate", character: "Mate", characterIconPath: "",
     characterThemeColors: { main: "#000000", sub: "#000000" }, characterRuntimeSnapshot: null,
     runState: selected.runState, allowedAdditionalDirectories: [], threadId: selected.threadId, messages: [], stream: [],
