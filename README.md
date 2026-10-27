@@ -55,7 +55,7 @@ Session WindowのFile Explorerには次のタブがあります。
 
 Codexの応答に`visualize`で指定されたローカルHTML／PDFは、会話本文内でも同じ隔離されたプレビューで閲覧できます。元ファイルのリンクから通常のFile Previewへ開くこともできます。通常リンク・file citation・未対応形式の成果物はリンクとして表示します。
 
-HTMLはアプリ権限から隔離したWeb環境で表示し、Sourceへ切り替えられます。相対CSS／JavaScript・画像・font・media、外部CDN、通信、worker、iframe、表示中のWeb storageを利用できます。local資源は元HTMLと同じ許可root内（root外のHTMLは親directory内）に限定し、Git履歴では同じcommitの資源だけを読みます。権限要求・子Window・外部protocolはアプリ側で確認し、downloadは保存dialogで保存先を選択します。画面外への移動・Source切替・Reloadで実行環境とその権限・storageを破棄します。WithMate APIや公式visualize runtimeの互換bridgeは提供しません。利用条件は[HTML Preview Isolation](docs/design/electron-window-runtime.md#html-preview-isolation)を参照してください。
+HTMLはアプリ権限から隔離したWeb環境で表示し、Sourceへ切り替えられます。相対CSS／JavaScript・画像・font・media、外部CDN、通信、worker、iframe、表示中のWeb storageを利用できます。local資源は元HTMLと同じ許可root内（root外のHTMLは親directory内）に限定し、Git履歴では同じcommitの資源だけを読みます。権限要求・子Window・外部protocolはアプリ側で確認し、downloadは保存dialogで保存先を選択します。選択済み機器の許可は同じorigin・同じプレビュー内で維持しますが、回答待ちの確認は文書の遷移・終了で取り消します。画面外への移動・Source切替・Reloadで実行環境とその権限・storageを破棄します。File System Access APIの選択済みhandleによる読書きは現在利用できません。通常のファイル入力による明示選択ファイルの読込みは利用できます。WithMate APIや公式visualize runtimeの互換bridgeは提供しません。利用条件は[HTML Preview Isolation](docs/design/electron-window-runtime.md#html-preview-isolation)を参照してください。
 
 ### Repository Glossary
 

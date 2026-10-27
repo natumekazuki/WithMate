@@ -61,11 +61,13 @@ async function harness() {
   const sessions = new Map<string, TestSession>();
   const children: Window[] = [];
   const guests: Contents[] = [];
+  const externalTargets: string[] = [];
   Object.assign(globalThis, { __withmateHtmlPreviewElectron: {
     ownerOf: (contents: Contents) => [owner, foreign, ...children].find((window) => window.webContents === contents),
     fromPartition: (partition: string) => { const session = new TestSession(); sessions.set(partition, session); return session; },
     createWindow: (options: Electron.BrowserWindowConstructorOptions) => { const child = new Window(options); children.push(child); return child; },
     fromFrame: (frame: unknown) => [owner.webContents, foreign.webContents, ...children.map((child) => child.webContents), ...guests].find((contents) => contents.mainFrame === frame),
+    openExternal: (target: string) => { externalTargets.push(target); },
   } });
   const hooks = registerHooks({
     resolve(specifier, context, next) { return specifier === "electron" ? { url: "withmate:test-html-preview-electron", shortCircuit: true } : next(specifier, context); },
@@ -77,7 +79,7 @@ async function harness() {
         }
         export const session = { fromPartition: (...args) => globalThis.__withmateHtmlPreviewElectron.fromPartition(...args) };
         export const protocol = { registerSchemesAsPrivileged() {} };
-        export const shell = { openExternal: async () => {} };
+        export const shell = { openExternal: async (target) => globalThis.__withmateHtmlPreviewElectron.openExternal(target) };
         export const webContents = { fromFrame: (...args) => globalThis.__withmateHtmlPreviewElectron.fromFrame(...args) };
         export const desktopCapturer = { getSources: async () => [] };
       ` } : next(url, context);
@@ -103,7 +105,7 @@ async function harness() {
     assert.ok(last?.type === "prompt" && last.prompt);
     return last.prompt;
   };
-  return { owner, foreign, service, mount, attach, prompt, children, close() {
+  return { owner, foreign, service, mount, attach, prompt, children, externalTargets, close() {
     owner.destroy(); foreign.destroy(); hooks.deregister(); Reflect.deleteProperty(globalThis, "__withmateHtmlPreviewElectron");
   } };
 }
@@ -160,6 +162,107 @@ test("HTML preview uses isolated authorized sessions and rejects stale resource 
     h.owner.destroy();
     assert.equal(guest.isDestroyed(), true);
     assert.equal((await second.session.response(new Request(second.url))).status, 403);
+  } finally { h.close(); }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "子文書の遷移・終了で外部protocol確認を取消し、失効済みの回答や承認直後の遷移から外部起動しない。後続の有効な確認は操作できる"
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#html-preview-isolation" }
+// fault = "外部起動をmountの生存だけで許可する、または失効した子文書の確認がqueueを塞ぐ"
+// observable = "host prompt event、古いrequestへの回答拒否、mock shell.openExternalの対象URL"
+// observation_boundary = "public-boundary"
+// scope = "HtmlPreviewServiceの子文書と外部protocol確認の寿命"
+// lifecycle = "permanent"
+// impact = "終了・遷移済み文書に対する古い承認の実行を防ぎ、現在の文書の確認を利用可能にする"
+// distinction = "型検査とpermission単体testはhost queueと非同期外部起動の競合を観測できない"
+// @end-test-value
+test("external confirmations expire with the requesting child document", async () => {
+  const h = await harness();
+  try {
+    const mounted = h.mount("external");
+    const guest = h.attach(mounted);
+    const popup = guest.open({ url: "https://preview.test/child" } as Electron.HandlerDetails);
+    if (popup.action !== "allow" || !popup.createWindow) throw new Error("Expected popup confirmation");
+    const child = popup.createWindow({}) as unknown as Contents;
+    h.service.respond(event(h.owner), "external", h.prompt().requestId, 0);
+    await flush();
+    const external = (contents: Contents, url: string) => contents.emit("will-frame-navigate", { url, preventDefault() {} });
+    external(child, "mailto:stale@example.test");
+    const stale = h.prompt();
+    external(guest, "mailto:current@example.test");
+    child.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+    assert.notEqual(h.prompt().requestId, stale.requestId);
+    assert.throws(() => h.service.respond(event(h.owner), "external", stale.requestId, 0), /no longer active/);
+    h.service.respond(event(h.owner), "external", h.prompt().requestId, 0);
+    await flush();
+    assert.deepEqual(h.externalTargets, ["mailto:current@example.test"]);
+    external(child, "mailto:raced@example.test");
+    h.service.respond(event(h.owner), "external", h.prompt().requestId, 0);
+    child.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+    await flush();
+    assert.deepEqual(h.externalTargets, ["mailto:current@example.test"]);
+    external(child, "mailto:closed@example.test");
+    const closed = h.prompt();
+    child.close();
+    assert.deepEqual(h.owner.webContents.events.at(-1), { id: "external", type: "prompt", prompt: null });
+    assert.throws(() => h.service.respond(event(h.owner), "external", closed.requestId, 0), /no longer active/);
+    await flush();
+    assert.deepEqual(h.externalTargets, ["mailto:current@example.test"]);
+    external(guest, "mailto:fragment@example.test");
+    const fragment = h.prompt();
+    guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+    assert.equal(h.prompt().requestId, fragment.requestId);
+    h.service.respond(event(h.owner), "external", fragment.requestId, 0);
+    await flush();
+    assert.deepEqual(h.externalTargets, ["mailto:current@example.test", "mailto:fragment@example.test"]);
+  } finally { h.close(); }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "許可待ちの子Window終了と要求元文書の遷移で確認を取消し、子文書の権限確認も終了時にqueueから除く"
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#html-preview-isolation" }
+// fault = "閉じたpopupや取消済みpermissionの確認をqueueに残す、または遷移後に古いpopupを表示する"
+// observable = "host promptの取消event、子Windowのdestroy値、permission callbackの拒否値"
+// observation_boundary = "public-boundary"
+// scope = "HtmlPreviewServiceとpermission handlerの確認queue統合"
+// lifecycle = "permanent"
+// impact = "利用者が回答不能な古い確認で塞がれず、要求した文書だけの操作を確認する"
+// distinction = "permission単体testはserviceのhost queueから確認が除かれることを検出できない"
+// @end-test-value
+test("popup and permission confirmations are removed when their documents end", async () => {
+  const h = await harness();
+  try {
+    const mounted = h.mount("prompt-cancel");
+    const guest = h.attach(mounted);
+    const popup = () => {
+      const result = guest.open({ url: "https://preview.test/child" } as Electron.HandlerDetails);
+      if (result.action !== "allow" || !result.createWindow) throw new Error("Expected popup confirmation");
+      return result.createWindow({}) as unknown as Contents;
+    };
+    popup();
+    const closed = h.prompt();
+    h.children[0]!.destroy();
+    assert.deepEqual(h.owner.webContents.events.at(-1), { id: "prompt-cancel", type: "prompt", prompt: null });
+    assert.throws(() => h.service.respond(event(h.owner), "prompt-cancel", closed.requestId, 0), /no longer active/);
+    popup();
+    guest.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+    await flush();
+    assert.equal(h.children[1]!.isDestroyed(), true);
+    const child = popup();
+    child.mainFrame.url = "https://preview.test/child";
+    h.service.respond(event(h.owner), "prompt-cancel", h.prompt().requestId, 0);
+    await flush();
+    let permission: boolean | undefined;
+    mounted.session.request!(child as unknown as WebContents, "notifications", (allowed) => { permission = allowed; }, {
+      requestingUrl: child.mainFrame.url, isMainFrame: true,
+    });
+    const requested = h.prompt();
+    child.close();
+    assert.equal(permission, false);
+    assert.deepEqual(h.owner.webContents.events.at(-1), { id: "prompt-cancel", type: "prompt", prompt: null });
+    assert.throws(() => h.service.respond(event(h.owner), "prompt-cancel", requested.requestId, 0), /no longer active/);
   } finally { h.close(); }
 });
 

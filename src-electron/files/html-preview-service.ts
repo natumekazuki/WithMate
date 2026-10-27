@@ -7,7 +7,7 @@ import { assertNotHtmlPreviewSender, registerHtmlPreviewSession } from "./html-p
 import { installHtmlPreviewPermissions } from "./html-preview-permissions.js";
 import type { HtmlPreviewResources } from "./html-preview-resources.js";
 
-type Prompt = { value: HtmlPreviewPrompt; resolve: (choice: number | null) => void };
+type Prompt = { value: HtmlPreviewPrompt; finish: (choice: number | null) => void };
 type Preview = {
   id: string; owner: BrowserWindow; partition: string; session: Session; url: string;
   guest?: WebContents; contents: Set<WebContents>; windows: Set<BrowserWindow>;
@@ -76,7 +76,7 @@ export class HtmlPreviewService {
 
   private cancelPrompts(preview: Preview): void {
     const prompts = preview.prompts.splice(0);
-    for (const prompt of prompts) prompt.resolve(null);
+    for (const prompt of prompts) prompt.finish(null);
     if (prompts.length) this.report(preview, { id: preview.id, type: "prompt", prompt: null });
   }
 
@@ -88,7 +88,7 @@ export class HtmlPreviewService {
       throw new TypeError("Invalid HTML request response.");
     }
     preview.prompts.shift();
-    prompt.resolve(choice);
+    prompt.finish(choice);
     this.report(preview, { id, type: "prompt", prompt: preview.prompts[0]?.value ?? null });
   }
 
@@ -108,10 +108,22 @@ export class HtmlPreviewService {
     const active = () => this.previews.get(key) === preview;
     const warn = (message: string) => this.report(preview, { id: preview.id, type: "warning", message });
     const fail = (message: string) => { if (active()) { this.report(preview, { id: preview.id, type: "error", message }); dispose(); } };
-    const ask = (value: Omit<HtmlPreviewPrompt, "requestId">): Promise<number | null> => {
-      if (!active()) return Promise.resolve(null);
+    const ask = (value: Omit<HtmlPreviewPrompt, "requestId">, signal: AbortSignal): Promise<number | null> => {
+      if (!active() || signal.aborted) return Promise.resolve(null);
       return new Promise((resolve) => {
-        preview.prompts.push({ value: { ...value, requestId: randomUUID() }, resolve });
+        const cancel = () => {
+          const index = preview.prompts.indexOf(prompt);
+          if (index < 0) return;
+          preview.prompts.splice(index, 1);
+          prompt.finish(null);
+          if (index === 0) this.report(preview, { id: preview.id, type: "prompt", prompt: preview.prompts[0]?.value ?? null });
+        };
+        const prompt: Prompt = { value: { ...value, requestId: randomUUID() }, finish: (choice) => {
+          signal.removeEventListener("abort", cancel);
+          resolve(choice);
+        } };
+        signal.addEventListener("abort", cancel, { once: true });
+        preview.prompts.push(prompt);
         if (preview.prompts.length === 1) this.report(preview, { id: preview.id, type: "prompt", prompt: preview.prompts[0]!.value });
       });
     };
@@ -121,25 +133,27 @@ export class HtmlPreviewService {
       ask, isActive: active, ownsContents: (contents) => preview.contents.has(contents),
     });
 
-    const openExternal = async (target: string) => {
+    const openExternal = async (target: string, signal: AbortSignal) => {
       let parsed: URL;
       try { parsed = new URL(target); } catch { warn("This link is not a valid URL."); return; }
       if (["file:", "javascript:", "chrome:", "devtools:"].includes(parsed.protocol) || parsed.protocol.startsWith("withmate")) {
         warn("This link cannot access local files or WithMate internals. Select local files with the document's file picker.");
         return;
       }
-      const selected = await ask({ title: "Open an external application?", detail: target, choices: ["Open"] });
-      if (selected === 0 && active()) {
+      const selected = await ask({ title: "Open an external application?", detail: target, choices: ["Open"] }, signal);
+      if (selected === 0 && active() && !signal.aborted) {
         try { await shell.openExternal(target); } catch { warn("The external application could not be opened."); }
       }
     };
 
     const attach = (contents: WebContents) => {
+      let document = new AbortController();
       preview.contents.add(contents);
       permissions.attachContents(contents);
       contents.setWindowOpenHandler((details) => {
         if (!active()) return { action: "deny" };
-        if (!isWebUrl(details.url, preview)) { void openExternal(details.url); return { action: "deny" }; }
+        const opener = document.signal;
+        if (!isWebUrl(details.url, preview)) { void openExternal(details.url, opener); return { action: "deny" }; }
         return {
           action: "allow",
           overrideBrowserWindowOptions: { show: false, autoHideMenuBar: true, webPreferences: { ...safePreferences, session: browserSession } },
@@ -149,8 +163,11 @@ export class HtmlPreviewService {
             const childId = child.webContents.id;
             preview.windows.add(child);
             attach(child.webContents);
-            const approved = ask({ title: "Open a preview window?", detail: details.url, choices: ["Open"] }).then((selected) => {
-              const allowed = selected === 0 && active() && !child.isDestroyed();
+            const closed = new AbortController();
+            child.once("closed", () => closed.abort());
+            const confirmation = AbortSignal.any([opener, closed.signal]);
+            const approved = ask({ title: "Open a preview window?", detail: details.url, choices: ["Open"] }, confirmation).then((selected) => {
+              const allowed = selected === 0 && active() && !confirmation.aborted && !child.isDestroyed();
               pendingWindows.delete(childId);
               if (!child.isDestroyed()) { if (allowed) child.show(); else child.destroy(); }
               return allowed;
@@ -162,12 +179,15 @@ export class HtmlPreviewService {
         };
       });
       contents.on("will-frame-navigate", (details) => {
-        if (!isWebUrl(details.url, preview)) { details.preventDefault(); void openExternal(details.url); }
+        if (!isWebUrl(details.url, preview)) { details.preventDefault(); void openExternal(details.url, document.signal); }
       });
       contents.on("will-redirect", (details) => {
-        if (!isWebUrl(details.url, preview)) { details.preventDefault(); void openExternal(details.url); }
+        if (!isWebUrl(details.url, preview)) { details.preventDefault(); void openExternal(details.url, document.signal); }
       });
       contents.on("did-start-navigation", (details) => {
+        if (details.isSameDocument) return;
+        document.abort();
+        document = new AbortController();
         if (contents === preview.guest && details.isMainFrame && !details.isSameDocument) this.cancelPrompts(preview);
       });
       contents.on("dom-ready", () => {
@@ -193,6 +213,7 @@ export class HtmlPreviewService {
       contents.on("unresponsive", stopped);
       contents.on("render-process-gone", stopped);
       contents.once("destroyed", () => {
+        document.abort();
         preview.contents.delete(contents);
         if (active() && contents === preview.guest) fail("HTML Preview closed. Reload the preview to continue.");
       });

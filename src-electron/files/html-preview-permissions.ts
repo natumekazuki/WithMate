@@ -1,5 +1,6 @@
 import { desktopCapturer, webContents } from "electron";
 import type { Session, WebContents, WebFrameMain } from "electron";
+import { HTML_PREVIEW_SCHEME } from "../../src-shared/window/html-preview.js";
 
 export interface HtmlPreviewPermissionPrompt {
   title: string;
@@ -8,7 +9,7 @@ export interface HtmlPreviewPermissionPrompt {
 }
 
 interface PermissionOptions {
-  ask: (prompt: HtmlPreviewPermissionPrompt) => Promise<number | null>;
+  ask: (prompt: HtmlPreviewPermissionPrompt, signal: AbortSignal) => Promise<number | null>;
   isActive: () => boolean;
   ownsContents: (contents: WebContents) => boolean;
 }
@@ -63,7 +64,11 @@ export function installHtmlPreviewPermissions(session: Session, options: Permiss
 
   function complete<T>(callback: (value: T) => void, denied: T) {
     let done = false;
-    const cancel = () => finish(denied);
+    const controller = new AbortController();
+    const cancel = () => {
+      controller.abort();
+      finish(denied);
+    };
     function finish(value: T) {
       if (done) return;
       done = true;
@@ -71,17 +76,31 @@ export function installHtmlPreviewPermissions(session: Session, options: Permiss
       callback(value);
     }
     pending.add(cancel);
-    return finish;
+    return Object.assign(finish, { signal: controller.signal });
   }
 
-  async function choose(frame: WebFrameMain | null, title: string, choices: string[], detail = "", attribution = "Requested by") {
+  async function choose(frame: WebFrameMain | null, signal: AbortSignal, title: string, choices: string[], detail = "", attribution = "Requested by") {
     const valid = frameGuard(frame);
-    if (!valid || !frame || choices.length === 0) return null;
-    const selected = await options.ask({ title, detail: `${attribution}: ${origin(frame.url)}${detail ? `\n${detail}` : ""}`, choices });
-    return valid() && selected !== null && Number.isInteger(selected) && selected >= 0 && selected < choices.length ? selected : null;
+    if (!valid || !frame || signal.aborted || choices.length === 0) return null;
+    const selected = await options.ask({ title, detail: `${attribution}: ${origin(frame.url)}${detail ? `\n${detail}` : ""}`, choices }, signal);
+    return !signal.aborted && valid() && selected !== null && Number.isInteger(selected) && selected >= 0 && selected < choices.length ? selected : null;
   }
 
   session.setPermissionCheckHandler((contents, permission, requestingOrigin, details) => {
+    if (!contents && (permission === "usb" || permission === "hid")) {
+      const requested = details.securityOrigin ?? requestingOrigin;
+      let requester: string;
+      try {
+        const parsed = new URL(requested);
+        // Only our registered standard scheme has a nonopaque custom-scheme origin.
+        if (parsed.origin === "null" && (parsed.protocol !== `${HTML_PREVIEW_SCHEME}:` || !parsed.host)) return false;
+        requester = origin(requested);
+      } catch { return false; }
+      // Native device grants still decide access to explicitly selected devices.
+      // This origin-only native check enables a chooser for a live page in this mount.
+      return [...attachments.keys()].some((page) => active(page)
+        && page.mainFrame.framesInSubtree.some((frame) => !frame.detached && origin(frame.url) === requester));
+    }
     if (!contents) return false;
     const frame = findFrame(contents, details.requestingUrl, details.isMainFrame, details.securityOrigin ?? requestingOrigin);
     if (!frame) return false;
@@ -101,7 +120,7 @@ export function installHtmlPreviewPermissions(session: Session, options: Permiss
     const label = permission === "media" && types.length
       ? types.map((type) => type === "video" ? "camera" : "microphone").join(" and ") : labels[permission] ?? `web permission (${permission})`;
     const detail = "filePath" in details ? `File: ${details.filePath}\nAccess: ${details.fileAccessType}` : "";
-    void choose(frame, `Allow ${label}?`, ["Allow", "Deny"], detail).then((selected) => {
+    void choose(frame, finish.signal, `Allow ${label}?`, ["Allow", "Deny"], detail).then((selected) => {
       const allowed = selected === 0 && valid();
       if (allowed && permission !== "fileSystem" && permission !== "display-capture") {
         const approved = grants.get(frame) ?? new Set<string>();
@@ -120,12 +139,12 @@ export function installHtmlPreviewPermissions(session: Session, options: Permiss
       || !request.frame || origin(request.frame.url) !== origin(request.securityOrigin)) { finish({}); return; }
     void (async () => {
       const sources = await desktopCapturer.getSources({ types: ["screen", "window"], thumbnailSize: { width: 0, height: 0 } });
-      if (!valid()) { finish({}); return; }
-      const selected = await choose(request.frame, "Choose a screen or window to share", sources.map((source) => `${source.name} (${source.id})`));
+      if (finish.signal.aborted || !valid()) { finish({}); return; }
+      const selected = await choose(request.frame, finish.signal, "Choose a screen or window to share", sources.map((source) => `${source.name} (${source.id})`));
       if (selected === null || !valid()) { finish({}); return; }
       let audio: "loopback" | undefined;
       if (request.audioRequested && process.platform === "win32") {
-        const sound = await choose(request.frame, "Also share system audio?", ["Share audio", "Share video only"]);
+        const sound = await choose(request.frame, finish.signal, "Also share system audio?", ["Share audio", "Share video only"]);
         if (sound === null || !valid()) { finish({}); return; }
         if (sound === 0) audio = "loopback";
       }
@@ -142,7 +161,7 @@ export function installHtmlPreviewPermissions(session: Session, options: Permiss
       .filter((child) => child !== page.mainFrame && !child.detached).map((child) => origin(child.url)))] : [];
     const detail = page ? `Electron does not identify which frame requested this device.${embeddedOrigins.length
       ? `\nEmbedded origins: ${embeddedOrigins.join(", ")}` : ""}` : "";
-    void choose(frame, title, devices.map((device) => `${device.name} (${device.id})`), detail,
+    void choose(frame, finish.signal, title, devices.map((device) => `${device.name} (${device.id})`), detail,
       page ? "Requesting page (including embedded frames)" : "Requested by").then(
       (selected) => finish(selected === null ? "" : devices[selected]!.id), () => finish(""));
   }
