@@ -196,15 +196,15 @@ test("CharacterEditorApp は操作別busyと編集状態を成功・失敗後も
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Character Editorのauthoring provider pickerは取得中と取得失敗を有効providerゼロと区別し、editor本体の初期読み込みをbusyとして公開する"
-// oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary" }
-// fault = "provider catalogのloading/errorを空一覧へfallbackする、loading中のeditorをbusyとして公開しない、または実エラーを失う"
-// observable = "editor main aria-busy、provider picker spinner/aria-busy、error feedback、No enabled coding providers.の不在"
+// claim = "Character Editorはproviderのloading/errorを正常emptyと区別し、catalog/settings読取失敗の診断と明示Retryを提供して同じCharacter内容のままStart可能へ復帰する"
+// oracle = { type = "contract", ref = "docs/design/character-authoring-growth.md#launch-boundary; docs/design/ui-design-guidelines.md#読込・空・失敗" }
+// fault = "読取失敗をempty扱いする、診断やRetryを失う、RetryでCharacterを再読込し内容を置換する、またはStart disabledのまま復帰しない"
+// observable = "editor/providerのbusy status、error詳細の原文、Retry後のStart disabledとprovider option、Character入力値とgetCharacter回数"
 // observation_boundary = "component-behavior"
-// scope = "CharacterEditorApp authoring provider loading and error states"
+// scope = "CharacterEditorApp authoring provider initial loading and catalog/settings retry lifecycle"
 // lifecycle = "permanent"
-// impact = "provider取得中の誤操作と失敗時の誤った正常空状態表示を防ぐ"
-// distinction = "settled empty provider stateと非settled loading/error stateを同じ描画結果にしない"
+// impact = "provider読取の一時障害でWindow再起動が必須になることと、再試行によるCharacter内容の消失を防ぐ"
+// distinction = "型検査では確認できない実componentの失敗から明示Retryへの配線と、独立したCharacter読込を繰り返さないことをdeferredで検証する"
 // @end-test-value
 test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区別する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -218,7 +218,10 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
   const previousTextDecoder = globalThis.TextDecoder;
   const previousWithMate = (globalThis.window as typeof window | undefined)?.withmate;
   const characterDeferred = createDeferred<CharacterDetail>();
-  const catalogDeferred = createDeferred<ModelCatalogSnapshot>();
+  let catalogDeferred = createDeferred<ModelCatalogSnapshot>();
+  let settingsFailure = false;
+  let characterReads = 0;
+  let catalogReads = 0;
 
   Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
@@ -233,12 +236,15 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
 
   dom.window.withmate = {
     async getModelCatalog() {
+      catalogReads += 1;
       return catalogDeferred.promise;
     },
     async getAppSettings() {
+      if (settingsFailure) throw new Error("settings request failed");
       return createDefaultAppSettings();
     },
     async getCharacter(characterId: string) {
+      characterReads += 1;
       assert.equal(characterId, "char-1");
       return characterDeferred.promise;
     },
@@ -277,9 +283,37 @@ test("CharacterEditorApp はauthoring providerのloading/errorを空一覧と区
     await act(async () => {
       await Promise.resolve();
     });
-    assert.match(rootElement.textContent ?? "", /catalog request failed/);
+    const start = findButtonByText(rootElement, "Start");
+    assert.equal(start.disabled, true);
     assert.doesNotMatch(rootElement.textContent ?? "", /No enabled coding providers\./);
-    assert.match(rootElement.querySelector('[role="alert"]')?.textContent ?? "", /catalog request failed/);
+    assert.match(rootElement.querySelector('[role="alert"]')?.textContent ?? "", /Could not load coding providers/);
+    await act(async () => rootElement.querySelector<HTMLButtonElement>('[aria-label="Provider Load Error Details"]')!.click());
+    assert.match(dom.window.document.querySelector('[role="dialog"][aria-label="Provider Load Error Details"]')?.textContent ?? "", /catalog request failed/);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Close Error Details"]')!.click());
+
+    catalogDeferred = createDeferred<ModelCatalogSnapshot>();
+    settingsFailure = true;
+    await act(async () => findButtonByText(rootElement, "Retry").click());
+    assert.equal(start.disabled, true);
+    assert.equal(catalogReads, 2);
+    catalogDeferred.resolve(createModelCatalog());
+    await act(async () => { await Promise.resolve(); });
+    assert.equal(start.disabled, true);
+    await act(async () => rootElement.querySelector<HTMLButtonElement>('[aria-label="Provider Load Error Details"]')!.click());
+    assert.match(dom.window.document.querySelector('[role="dialog"][aria-label="Provider Load Error Details"]')?.textContent ?? "", /settings request failed/);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Close Error Details"]')!.click());
+
+    settingsFailure = false;
+    catalogDeferred = createDeferred<ModelCatalogSnapshot>();
+    await act(async () => findButtonByText(rootElement, "Retry").click());
+    assert.ok(rootElement.querySelector('[role="status"][aria-label="Loading coding providers"]'));
+    assert.equal(start.disabled, true);
+    await act(async () => catalogDeferred.resolve(createModelCatalog()));
+    assert.equal(start.disabled, false);
+    assert.ok(rootElement.querySelector('[role="option"][aria-selected="true"]'));
+    assert.equal(rootElement.querySelector("input")?.value, "Muse");
+    assert.equal(characterReads, 1);
+    assert.equal(catalogReads, 3);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

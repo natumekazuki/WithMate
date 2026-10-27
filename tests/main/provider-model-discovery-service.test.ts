@@ -144,6 +144,42 @@ it("retains cached candidates on failure and distinguishes a successful empty re
 
 // @test-value v2
 // kind = "contract"
+// claim = "初期選択は背景取得失敗後も同contextの既定model cacheを利用でき、cacheなし失敗と正常0件を区別する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#cacheと更新" }
+// fault = "保持cacheをerror状態だけで拒否する、別workspaceのcacheへfallbackする、または正常0件を失敗へ変換する"
+// observable = "ensureの既定modelとdiscovery状態、SDK呼出し数、cacheなし時の拒否と正常0件snapshot"
+// observation_boundary = "public-boundary"
+// scope = "initial model selection after discovery failure"
+// lifecycle = "permanent"
+// impact = "providerの一時障害だけで保存済み候補を使う新規会話が作れなくなるか別contextのmodelを誤使用する"
+// distinction = "既存のcache表示testでは初期選択用ensureの拒否条件とfallback禁止を観測しない。固定時計とfake adapterだけで検証する"
+// @end-test-value
+it("uses the same-context cached default after refresh failure without masking uncached failure or empty success", async (t) => {
+  const h = harness();
+  const service = h.create();
+  t.after(() => service.close());
+  await service.ensure("codex");
+  h.advance(10 * 60_000 + 1);
+  h.list(async () => { throw new Error("Connection failed"); });
+  await service.get({ providerId: "codex" });
+  await setImmediate();
+
+  const cached = await service.ensure("codex");
+  assert.equal(cached.providers.find((provider) => provider.id === "codex")?.defaultModelId, "available-model");
+  assert.equal(cached.discovery?.codex?.status, "error");
+  assert.equal(h.calls.length, 2);
+  await assert.rejects(service.ensure("codex", path.resolve("uncached-workspace")), /Model discovery failed/);
+  assert.equal(h.calls.length, 3);
+
+  h.list(async () => catalog("codex", ""));
+  const empty = await service.ensure("codex", path.resolve("empty-workspace"));
+  assert.equal(empty.discovery?.codex?.status, "ready");
+  assert.equal(empty.providers.find((provider) => provider.id === "codex")?.defaultModelId, "");
+  assert.deepEqual(models(empty), []);
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "候補cacheはprovider、workspace、provider設定と認証環境が一致した場合だけ再利用する"
 // oracle = { type = "contract", ref = "docs/design/model-catalog.md" }
 // fault = "別workspace、providerまたは認証contextの候補を流用する"

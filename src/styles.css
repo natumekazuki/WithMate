@@ -4,6 +4,7 @@
 @import "./styles/tokens.css";
 @import "./styles/shell.css";
 @import "./styles/common.css";
+@import "./ui/error-details.css";
 @import "./home/home.css";
 @import "./settings/settings.css";
 @import "./chat/session-shell.css";

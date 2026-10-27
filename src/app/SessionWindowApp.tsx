@@ -344,6 +344,7 @@ export default function AgentSessionWindowApp() {
   const [modelCatalogLoadStatus, setModelCatalogLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [modelCatalogLoadError, setModelCatalogLoadError] = useState("");
   const [modelCatalogReadRevision, setModelCatalogReadRevision] = useState(0);
+  const modelCatalogRequestRevisionRef = useRef(0);
   const conversationFeature = useSessionChatConversationFeature();
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
@@ -872,12 +873,14 @@ export default function AgentSessionWindowApp() {
   });
 
   useEffect(() => {
-    return startModelCatalogSubscription({
+    modelCatalogRequestRevisionRef.current += 1;
+    const unsubscribe = startModelCatalogSubscription({
       api: withmateApi,
       enabled: Boolean(selectedSession?.workspacePath),
       workspacePath: selectedSession?.workspacePath,
       subscribe: true,
       applyModelCatalog: (snapshot) => {
+        modelCatalogRequestRevisionRef.current += 1;
         setModelCatalog(snapshot);
         setModelCatalogLoadStatus("loaded");
         setModelCatalogLoadError("");
@@ -887,6 +890,10 @@ export default function AgentSessionWindowApp() {
         setModelCatalogLoadError(error instanceof Error ? error.message : "Could not load model catalog.");
       },
     });
+    return () => {
+      modelCatalogRequestRevisionRef.current += 1;
+      unsubscribe();
+    };
   }, [withmateApi, selectedSession?.workspacePath, modelCatalogReadRevision]);
 
   useEffect(() => {
@@ -2046,14 +2053,25 @@ export default function AgentSessionWindowApp() {
       onModelPickerOpen: () => {
         if (!withmateApi) return;
         const workspacePath = renderedSession.workspacePath;
-        void withmateApi.getModelCatalog({ providerId: renderedSession.provider, workspacePath }).then((snapshot) => {
+        const providerId = renderedSession.provider;
+        const revision = ++modelCatalogRequestRevisionRef.current;
+        void withmateApi.getModelCatalog({ providerId, workspacePath }).then((snapshot) => {
+          if (modelCatalogRequestRevisionRef.current !== revision) return;
           if (snapshot && isSameModelCatalogWorkspace(snapshot.workspacePath, workspacePath)) {
-            setModelCatalog((current) => isSameModelCatalogWorkspace(current?.workspacePath, workspacePath) ? current : snapshot);
+            setModelCatalog((current) => {
+              if (modelCatalogRequestRevisionRef.current !== revision) return current;
+              if (!isSameModelCatalogWorkspace(current?.workspacePath, workspacePath)) return snapshot;
+              const discovery = snapshot.discovery?.[providerId];
+              return current && discovery ? {
+                ...current,
+                discovery: { ...current.discovery, [providerId]: discovery },
+              } : current ?? snapshot;
+            });
           }
         }).catch((error: unknown) => {
-          setModelCatalog((current) => current?.workspacePath === workspacePath ? {
+          setModelCatalog((current) => modelCatalogRequestRevisionRef.current === revision && current && isSameModelCatalogWorkspace(current.workspacePath, workspacePath) ? {
             ...current,
-            discovery: { ...current.discovery, [renderedSession.provider]: { status: "error", error: error instanceof Error ? error.message : "Could not load models." } },
+            discovery: { ...current.discovery, [providerId]: { ...current.discovery?.[providerId], status: "error", error: error instanceof Error ? error.message : "Could not load models." } },
           } : current);
         });
       },

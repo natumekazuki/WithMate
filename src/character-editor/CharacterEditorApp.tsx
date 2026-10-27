@@ -88,6 +88,7 @@ export default function CharacterEditorApp() {
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [authoringProviderLoadStatus, setAuthoringProviderLoadStatus] = useState<ProviderLaunchLoadStatus>("loading");
   const [authoringProviderLoadError, setAuthoringProviderLoadError] = useState("");
+  const [authoringProviderReadRevision, setAuthoringProviderReadRevision] = useState(0);
   const [authoringProviderId, setAuthoringProviderId] = useState(DEFAULT_PROVIDER_ID);
   const [authoringLaunchOpen, setAuthoringLaunchOpen] = useState(false);
   const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
@@ -207,6 +208,8 @@ export default function CharacterEditorApp() {
       };
     }
 
+    setAuthoringProviderLoadStatus("loading");
+    setAuthoringProviderLoadError("");
     void Promise.all([
       api.getModelCatalog(),
       api.getAppSettings(),
@@ -224,14 +227,13 @@ export default function CharacterEditorApp() {
         const message = formatCharacterEditorError(error, "Could not load authoring provider settings.");
         setAuthoringProviderLoadStatus("error");
         setAuthoringProviderLoadError(message);
-        setFeedback(message);
       }
     });
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [desktopRuntime, authoringProviderReadRevision]);
 
   useEffect(() => {
     const provider = resolveAuthoringProvider(enabledAuthoringProviders, authoringProviderId);
@@ -812,6 +814,7 @@ export default function CharacterEditorApp() {
               providers={enabledAuthoringProviders}
               loadStatus={authoringProviderLoadStatus}
               loadError={authoringProviderLoadError}
+              onRetryLoad={() => setAuthoringProviderReadRevision((revision) => revision + 1)}
               selectedProviderId={selectedAuthoringProvider?.id ?? null}
               onSelectProvider={changeAuthoringProvider}
             />

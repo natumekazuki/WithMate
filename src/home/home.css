@@ -1793,6 +1793,8 @@
   overflow-wrap: anywhere;
 }
 
+div.launch-provider-error { display: flex; align-items: center; align-self: center; gap: 8px; margin: 0; }
+
 @container (max-width: 36em) {
   .launch-provider-options {
     min-block-size: calc(2lh + 18px);
@@ -1966,9 +1968,17 @@
 }
 
 .home-launch-dialog > .launch-dialog-foot .launch-feedback {
-  flex-basis: 100%;
   text-align: left;
 }
+
+.home-launch-feedback {
+  flex-basis: 100%;
+  min-block-size: 2lh;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.home-launch-error { display: flex; align-items: center; gap: 8px; color: var(--ink); }
 
 .home-launch-dialog > .launch-dialog-foot .drawer-toggle {
   width: auto;

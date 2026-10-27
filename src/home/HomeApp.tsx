@@ -643,7 +643,9 @@ export default function HomeApp() {
   const randomLaunchFeedback = launchDraft.characterSelectionMode === "random"
     ? resolveRandomHomeLaunchFeedback(sessionSummariesState.characterUsageStatus, openSessionsLoadStatus)
     : "";
-  const launchFeedback = launchFeedbackState.source === "readiness" ? randomLaunchFeedback : launchFeedbackState.message;
+  const launchFeedback = launchFeedbackState.source === "readiness" ? randomLaunchFeedback
+    : launchFeedbackState.source === "creation-error" ? "" : launchFeedbackState.message;
+  const launchCreationError = launchFeedbackState.source === "creation-error" ? launchFeedbackState.message : "";
   useEffect(() => {
     if (!randomLaunchFeedback) {
       setLaunchFeedbackState((current) => current.source === "readiness" ? { message: "", source: "launch" } : current);
@@ -932,6 +934,7 @@ export default function HomeApp() {
       projection: launchProjection,
       canUsePrimaryFeatures,
       launchFeedback,
+      launchCreationError,
       launchStarting,
       onClose: homeLaunchHandlers.onCloseLaunchDialog,
       onChangeTitle: homeLaunchHandlers.onChangeTitle,

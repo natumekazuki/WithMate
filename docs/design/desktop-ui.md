@@ -200,6 +200,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に provider ごとの現在選択を優先して解決する。現在選択がなければ保存済みの直近 Session 一件を参照する。詳細は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する
   - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
   - 開始中も`Cancel`で閉じられるが、送信済みのSession作成は取り消さない。開始要求はそのdialog表示に所属し、閉じた要求の成功・失敗・busy解除で再表示後の入力・選択・feedback・開始中状態・focusを変更しない。同じ表示内の開始要求は同時に一つだけ受け付ける
+  - Model取得を含むSession作成要求の失敗では入力・選択を保持し、footerにerror詳細のiconと成否不明時のRecent Sessions確認の注意を表示する。診断全文は非modal popoverで開き、`Retry`は同じ入力で作成要求を明示再試行する。validationや開始前の取得待ちを作成失敗へ変換せず、自動再送しない。詳細はEscape・閉じる操作で入口へfocusを戻し、外側の操作ではfocusを奪わない
   - 閉じた要求がSessionを作成した場合はRecent Sessionsへ反映し、Windowは自動で開かない。作成結果・確認不能の失敗はtitle付きの独立した結果通知としてHome Window内のRecent Sessionsに保持し、利用者が`Dismiss`するまで表示する。通知自体はWindowをまたいで永続化しない。別のNew Session表示中は通知を保留し、閉じた後に表示する。`Dismiss`は通知だけを消し、Sessionを削除しない。結果不明の自動再送やrollbackは行わない
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる

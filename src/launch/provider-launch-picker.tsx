@@ -1,5 +1,6 @@
 import { focusRovingItemByKey } from "../ui/a11y.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ErrorDetailsButton } from "../ui/error-details.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE } from "./launch-feedback.js";
 
 type Provider = {
@@ -17,6 +18,7 @@ export type ProviderLaunchPickerProps = {
   ariaLabel?: string;
   loadStatus?: ProviderLaunchLoadStatus;
   loadError?: string;
+  onRetryLoad?: () => void;
   disabled?: boolean;
 };
 
@@ -28,6 +30,7 @@ export function ProviderLaunchPicker({
   ariaLabel = "Coding Provider",
   loadStatus = "loaded",
   loadError = "",
+  onRetryLoad,
   disabled = false,
 }: ProviderLaunchPickerProps) {
   const loading = loadStatus === "loading";
@@ -67,8 +70,15 @@ export function ProviderLaunchPicker({
         {loadStatus === "loaded" && providers.length === 0 ? (
           <p className="launch-provider-empty">{LAUNCH_EMPTY_PROVIDER_MESSAGE}</p>
         ) : null}
+        {loadStatus === "error" && onRetryLoad ? (
+          <div className="launch-provider-error">
+            <span className="visually-hidden" role="alert">Could not load coding providers.</span>
+            <ErrorDetailsButton message={loadError || "Could not load coding providers."} label="Provider Load Error Details" />
+            <button className="drawer-toggle compact secondary" type="button" disabled={disabled} onClick={onRetryLoad}>Retry</button>
+          </div>
+        ) : null}
       </div>
-      {loadStatus === "error" ? (
+      {loadStatus === "error" && !onRetryLoad ? (
         <p className="launch-provider-error" role="alert" aria-live="assertive">
           {loadError || "Could not load coding providers."}
         </p>
@@ -89,6 +99,7 @@ export function ProviderLaunchField({
   ariaLabel,
   loadStatus,
   loadError,
+  onRetryLoad,
   disabled,
 }: ProviderLaunchFieldProps) {
   return (
@@ -105,6 +116,7 @@ export function ProviderLaunchField({
           ariaLabel={ariaLabel}
           loadStatus={loadStatus}
           loadError={loadError}
+          onRetryLoad={onRetryLoad}
           disabled={disabled}
         />
       </div>

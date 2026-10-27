@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { focusRovingItemByKey, useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
@@ -11,6 +11,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
 import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
+import { ErrorDetailsButton } from "../ui/error-details.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
@@ -30,6 +31,7 @@ export type HomeLaunchDialogProps = {
   characterLoadStatus?: HomeCharacterLoadStatus;
   canStartSession: boolean;
   launchFeedback: string;
+  launchCreationError?: string;
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
@@ -60,6 +62,7 @@ export function HomeLaunchDialog({
   characterLoadStatus,
   canStartSession,
   launchFeedback,
+  launchCreationError = "",
   launchStarting,
   onClose,
   onChangeTitle,
@@ -72,6 +75,10 @@ export function HomeLaunchDialog({
   onStartSession,
 }: HomeLaunchDialogProps) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const [startLabel, setStartLabel] = useState("Start");
+  useLayoutEffect(() => {
+    if (!launchStarting) setStartLabel(launchCreationError ? "Retry" : "Start");
+  }, [launchCreationError, launchStarting]);
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open,
     onClose,
@@ -96,17 +103,27 @@ export function HomeLaunchDialog({
       closeOnBackdropClick={false}
       dialogClassName="home-launch-dialog"
       footer={
-        <LaunchDialogFooter
-          feedback={launchStarting ? "" : launchFeedback}
-          startButtonLabel="Start"
-          startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
-          startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
-          startButtonBusy={launchStarting}
-          startButtonLoadingText="Starting session"
-          cancelButtonLabel="Cancel"
-          onCancel={onClose}
-          onStart={onStartSession}
-        />
+        <>
+          <div className="home-launch-feedback">
+            {!launchStarting && (launchCreationError
+              ? <div className="home-launch-error" key={launchCreationError}>
+                  <ErrorDetailsButton message={launchCreationError} label="Session Creation Error Details" />
+                  <span role="alert">Check Recent Sessions before trying again.</span>
+                </div>
+              : launchFeedback ? <p className="launch-feedback" role="status">{launchFeedback}</p> : null)}
+          </div>
+          <LaunchDialogFooter
+            feedback=""
+            startButtonLabel={startLabel}
+            startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
+            startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
+            startButtonBusy={launchStarting}
+            startButtonLoadingText="Starting session"
+            cancelButtonLabel="Cancel"
+            onCancel={onClose}
+            onStart={onStartSession}
+          />
+        </>
       }
     >
       <section className="launch-section minimal">

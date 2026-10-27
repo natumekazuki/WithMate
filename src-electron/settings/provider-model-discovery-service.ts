@@ -92,7 +92,10 @@ export class ProviderModelDiscoveryService {
     const result = await this.deps.getCachedProviders();
     const currentSettings = await this.deps.getAppSettings();
     const snapshot = this.snapshot(workspace, currentSettings, result);
-    if (snapshot.discovery?.[providerId]?.status === "error") throw new Error("Model discovery failed. Check the provider connection and try again.");
+    const provider = snapshot.providers.find((entry) => entry.id === providerId);
+    if (snapshot.discovery?.[providerId]?.status === "error" && !provider?.defaultModelId.trim()) {
+      throw new Error("Model discovery failed. Check the provider connection and try again.");
+    }
     return snapshot;
   }
 

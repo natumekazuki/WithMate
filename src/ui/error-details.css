@@ -1,0 +1,29 @@
+.error-details-trigger {
+  display: inline-flex;
+  flex: 0 0 32px;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: #fbbf24;
+  cursor: pointer;
+}
+.error-details-trigger:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.error-details-popover {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  overflow: auto;
+  padding: 14px 46px 14px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+}
+.error-details-popover > .surface-close-button { position: absolute; top: 8px; right: 8px; }
+.error-details-popover > p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.84rem; line-height: 1.5; }

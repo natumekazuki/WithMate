@@ -18,7 +18,7 @@ Model候補とDepthはCodex、Claude、GitHub Copilot、OpenCodeのSDK／native 
 
 候補の更新は選択肢の更新であり、Session migrationではない。保存済み・現在選択のmodel／Depth、入力draft、thread、実行中turn、受付済みqueueの捕捉値は変更しない。cacheから消えた現在のmodelも表示を維持する。
 
-新規会話はproviderごとの現在選択、なければ保存済みの直近値を引き継ぐ。どちらにもmodelがない場合だけ初回一覧を待ち、取得したprovider defaultを使う。一覧取得に失敗した場合は固定modelへfallbackしない。
+新規会話はproviderごとの現在選択、なければ保存済みの直近値を引き継ぐ。どちらにもmodelがない場合、同contextのcacheに既定modelがあれば背景更新の失敗後も利用する。cacheがなければ初回一覧を待ち、取得したprovider defaultを使う。一覧取得に失敗した場合は固定modelや別contextへfallbackしない。
 
 Sendはその時点のmodel、Depth、権限等を`executionOptions`へ捕捉し、Main／Auxiliaryの実行と最小turn記録へ同じ値を渡す。非空modelと入力形式・権限はMainの境界で検証し、SDK一覧への掲載やrevisionを実行の条件にしない。providerが拒否したmodel／Depthは実行エラーとして扱い、別model、Depth、providerへ自動切替しない。
 
@@ -29,7 +29,7 @@ Depthはmodelがadvertiseする任意文字列の配列であり、固定enumに
 - 共通ComposerのModelは検索付きpopoverとし、Depthは独立した選択のままにする。providerやsortの追加UIは置かない。
 - 通常順は表示名の自然順昇順（数値を数値として比較）とし、同名は配信元、IDの順で安定化する。選択中modelにはcheckを表示する。
 - 検索は表示名／IDの完全一致、前方一致、部分一致、配信元だけの一致の順で並べ、同順位では通常順を使う。名前に加え、識別に必要な配信元とIDを表示する。
-- 大量候補はvirtualizeする。開いている一覧はsnapshotとして安定させ、background更新で候補が動かないようにする。cacheなしで開いた場合だけ最初の取得成功を反映し、検索文字列とfocusを維持したまま候補を表示する。取得中、取得失敗、正常empty、検索0件は区別する。
+- 大量候補はvirtualizeする。開いている一覧はsnapshotとして安定させ、background更新で候補が動かないようにする。cacheなしで開いた場合だけ最初の取得成功を反映し、検索文字列とfocusを維持したまま候補を表示する。取得中、取得失敗、正常empty、検索0件は区別する。再openで開始した取得の状態は候補の固定と独立して反映し、先着した新しい通知やworkspace切替後の状態を遅い応答で巻き戻さない。
 - keyboardの矢印／Page移動、Enterで選択、Escapeで取消、focus復帰を提供し、IME変換中のEnterを選択として扱わない。
 
 ## OpenCodeのmodelと認証
