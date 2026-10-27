@@ -82,6 +82,7 @@ type SessionComposerValueOperation<T> = (value: T) => void | Promise<void>;
 
 export type SessionComposerFeatureBridge = {
   session: Session;
+  directoryScopeLabel?: string;
   isCharacterAuthoringSession: boolean;
   target: "main" | "auxiliary";
   runtime: {
@@ -533,6 +534,7 @@ export function useSessionComposerFeature(input: {
       ? "Waiting for the run to stop"
       : getComposerSendButtonTitle(composerSendability);
     const dock: LiveSessionComposerDockPropsInput = {
+      directoryScopeLabel: bridge.directoryScopeLabel,
       canSelectCustomAgent,
       additionalDirectoryCount: bridge.session.allowedAdditionalDirectories.length,
       isRunning: bridge.runtime.isRunning,
@@ -642,6 +644,7 @@ export function useSessionComposerFeature(input: {
       composer: buildLiveSessionComposerProps(dockSurface.composer),
       compactActionDock: buildLiveSessionCompactActionDockProps(dockSurface.compactActionDock),
       additionalDirectoryListProps: {
+        directoryScopeLabel: bridge.directoryScopeLabel,
         isOpen: isAdditionalDirectoryListOpen,
         items: buildAdditionalDirectoryItems(
           bridge.session.allowedAdditionalDirectories,

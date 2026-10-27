@@ -504,10 +504,10 @@ test("ChatWindow は追加Directory一覧の開閉と対象を表示へ接続す
 
 // @test-value v2
 // kind = "contract"
-// claim = "追加Directory一覧は削除可能項目とreadonly項目を区別し、interaction disabledを各controlへ投影する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/731: toolbar操作の対象付きaccessible name・disabled・既存権限境界を維持する" }
-// fault = "readonly項目を削除可能にするか、disabled状態とaccessible labelを失う"
-// observable = "remove buttonのdisabled属性と対象付きaria-label、削除不可itemにbuttonがないこと"
+// claim = "追加Directory一覧は対象会話を表示し、削除可能項目とreadonly項目を区別し、interaction disabledを各controlへ投影する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: AgentのFile Explorerと追加済みDirectory一覧の対象表示・認可境界" }
+// fault = "対象会話の表示を失う、readonly項目を削除可能にするか、disabled状態とaccessible labelを失う"
+// observable = "一覧見出しの対象会話名、remove buttonのdisabled属性と対象付きaria-label、削除不可itemにbuttonがないこと"
 // observation_boundary = "component-behavior"
 // scope = "chat-additional-directory-list"
 // lifecycle = "permanent"
@@ -517,6 +517,7 @@ test("ChatWindow は追加Directory一覧の開閉と対象を表示へ接続す
 test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影する", () => {
   const props: React.ComponentProps<typeof ChatAdditionalDirectoryList> = {
     isOpen: true,
+    directoryScopeLabel: "Auxiliary · Character B",
     items: [
       {
         key: "C:/shared/removable",
@@ -546,6 +547,7 @@ test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影す�
     })));
     const removable = dom.window.document.querySelector('[title="C:/shared/removable"]');
     const readonly = dom.window.document.querySelector('[title="C:/shared/allowed"]');
+    assert.match(dom.window.document.querySelector(".chat-additional-directory-heading")?.textContent ?? "", /Additional Directories · Auxiliary · Character B/);
     assert.ok(removable && readonly);
     const removeButton = removable.querySelector("button");
     assert.ok(removeButton);

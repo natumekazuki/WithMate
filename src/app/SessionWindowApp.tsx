@@ -466,6 +466,11 @@ export default function AgentSessionWindowApp() {
     validateSessionWorkspace,
   } = useSessionWorkspaceAvailability(withmateApi, selectedSession);
   const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
+  const directoryScopeLabel = auxiliaryWorkspace.target === "auxiliary"
+    ? activeAuxiliarySession?.characterRuntimeSnapshot?.name
+      ? `Auxiliary · ${activeAuxiliarySession.characterRuntimeSnapshot.name}`
+      : "Auxiliary"
+    : "Main";
   const selectedAuxiliaryRuntimeSession = useMainAuxiliaryRuntimeSession(selectedSession, auxiliaryWorkspace.selectedSession);
   const isAuxiliaryMode = activeAuxiliarySession !== null;
   const selectedSessionId = selectedSession?.id ?? null;
@@ -2054,6 +2059,7 @@ export default function AgentSessionWindowApp() {
   });
   const chatComposerFeature = composerFeature.buildSurface({
     session: renderedSession,
+    directoryScopeLabel,
     isCharacterAuthoringSession: renderedSession.sessionKind === "character-authoring",
     target: auxiliaryWorkspace.target,
     runtime: {
@@ -2368,6 +2374,7 @@ export default function AgentSessionWindowApp() {
         ref={filesFeatureRef}
         api={withmateApi}
         activeRunSessionId={activeRunSessionId}
+        directoryScopeLabel={directoryScopeLabel}
         prepareCentralSurfaceOpen={() => prepareCentralSurfaceOpenRef.current()}
         workspacePath={selectedSession.workspacePath}
         additionalDirectories={activeAuxiliarySession?.allowedAdditionalDirectories ?? selectedSession.allowedAdditionalDirectories ?? []}

@@ -51,6 +51,7 @@ type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
 export type ChatAdditionalDirectoryListProps = {
   isOpen: boolean;
+  directoryScopeLabel?: string;
   items: AdditionalDirectoryItem[];
   isInteractionDisabled: boolean;
   onRemove: (path: string) => void;
@@ -400,6 +401,7 @@ export function ChatSkillPickerPanel({
 
 export function ChatAdditionalDirectoryList({
   isOpen,
+  directoryScopeLabel,
   items,
   isInteractionDisabled,
   onRemove,
@@ -411,7 +413,7 @@ export function ChatAdditionalDirectoryList({
   return (
     <section className="chat-additional-directory-surface" aria-label="Additional directories">
       <div className="chat-additional-directory-heading">
-        <span>Additional Directories</span>
+        <span>Additional Directories{directoryScopeLabel ? ` · ${directoryScopeLabel}` : ""}</span>
         <span className="chat-additional-directory-count">{items.length}</span>
       </div>
       <div className="chat-additional-directory-list">

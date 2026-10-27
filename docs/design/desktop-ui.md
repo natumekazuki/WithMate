@@ -359,6 +359,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
+  - Directoryの表示・追加・一覧はAction Dockの送信対象へ追従し、File Explorer上部、パス追加dialog、追加済み一覧に`Main`または`Auxiliary · Character名`を表示する。Auxiliary作成時点のAdditional Directoryを初期継承し、作成後のMain／兄弟の変更は同期しない。認可境界は[Auxiliary Session](auxiliary-session.md#context-boundary)に従う
   - ヘッダーは既定の文字サイズで最小幅260pxから`Files / Changes / History`とPinフィルター・更新操作を1行に収める。文字サイズとラベルを維持し、横余白を抑え、操作領域は高さ28px以上とする。文字拡大等で収まらない場合は折り返しを許容し、操作を切り落とさない
   - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
