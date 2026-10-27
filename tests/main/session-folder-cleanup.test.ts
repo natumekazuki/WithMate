@@ -322,17 +322,17 @@ it("削除失敗、消失、成功を区別する", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "削除中にMainが捕捉したSession状態が変わると以降の削除を中断し、既に削除した容量と残りskipを返す"
+// claim = "削除中にstorage owner identityが失効すると以降の削除を中断し、既に削除したfileと残りskipを返す"
 // oracle = { type = "contract", ref = "docs/design/session-local-files.md" }
-// fault = "非同期削除の途中で状態が変わっても削除を続けるか、部分成功の件数を失う"
-// observable = "runの削除件数、skip件数、残存file数とIssue kind"
+// fault = "storage ownerの失効後も削除を続ける、または部分成功と残りskipを正しく集計できない"
+// observable = "runのdeletedFileCount/deletedBytes/skippedFileCount/failedFileCount、残存file数と最終Issue kind"
 // observation_boundary = "public-boundary"
-// scope = "SessionFolderCleanupService in-progress state invalidation"
+// scope = "SessionFolderCleanupService storage owner identity invalidation during run"
 // lifecycle = "permanent"
-// impact = "途中でWorkspace等が変わった際の未確認データ削除を防ぎ、実施済みの削除量を隠さない"
-// distinction = "scanとrunの間ではなくunlinkのawait中の状態変化を注入してserviceの中断を確認する"
+// impact = "storage owner失効後の追加削除を止め、既に実行した削除と残存fileを正確に伝える"
+// distinction = "unlinkのawait中にfixtureのstorage owner identityだけを変更する。Mainが保持するSession配列参照の更新検証やWorkspace状態更新は通さない"
 // @end-test-value
-it("削除中の状態変更で中断して部分結果を返す", async () => {
+it("削除中のstorage owner失効で中断し部分結果を返す", async () => {
   const f = await fixture();
   const originalUnlink = fs.unlink;
   try {
