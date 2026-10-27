@@ -16,7 +16,7 @@ export function getDefaultApprovalModeForProvider(providerId: string | null | un
 export function getApprovalOptionsForProvider(providerId: string | null | undefined): RuntimeSelectOption<ApprovalMode>[] {
   if (providerId === "claude") {
     return approvalModeOptions
-      .filter((option) => option.id === "on-request")
+      .filter((option) => option.id === "never" || option.id === "on-request")
       .map((option) => ({ value: option.id, label: option.label }));
   }
   if (providerId === "copilot") {

@@ -913,8 +913,82 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "Claudeは送信時approvalをSDK permission modeとPreToolUseへ対応させ、Auto Runの通常toolを強制askしない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+// fault = "Auto Runでbypass opt-inを渡さず起動に失敗するか、通常toolをaskまたはdenyにする"
+// observable = "SDK queryへ渡るpermission設定とPreToolUseの返却値"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn approval mapping"
+// lifecycle = "permanent"
+// impact = "選択した承認方針で通常の編集やコマンド実行を進められなくなる"
+// distinction = "共通Approval unionとselector testはSDK optionとhookの組合せを確認しない"
+// @end-test-value
+it("maps captured Claude approval modes to SDK permissions and tool hooks", async () => {
+  for (const approvalMode of ["never", "on-request"] as const) {
+    const request = input();
+    request.executionOptions = { ...request.executionOptions, approvalMode };
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+      assert.equal(options.permissionMode, approvalMode === "never" ? "bypassPermissions" : "default");
+      assert.equal(options.allowDangerouslySkipPermissions, approvalMode === "never");
+      const hook = options.hooks!.PreToolUse![0].hooks[0];
+      for (const toolName of ["Bash", "Edit", "Write", "mcp__example__write", "AskUserQuestion", "Read", "Glob", "Grep", "WebSearch", "WebFetch"]) {
+        const output = await hook({
+          hook_event_name: "PreToolUse", session_id: "thread", transcript_path: "transcript.jsonl", cwd: process.cwd(),
+          tool_name: toolName, tool_input: {}, tool_use_id: "tool-1",
+        }, "tool-1", { signal: new AbortController().signal });
+        const readOnly = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"].includes(toolName);
+        assert.deepEqual(output, readOnly || (approvalMode === "never" && toolName !== "AskUserQuestion") ? {} : {
+          hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: "WithMate approval required" },
+        }, `${approvalMode}: ${toolName}`);
+      }
+      yield result("thread-permissions");
+    }) });
+    await adapter.runSessionTurn(request);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "ClaudeがSDKから受け取った承認要求はAuto Runでもユーザー判断へ中継し、承認UI不在と要求取消ではdenyする"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
+// fault = "Auto Runを未対応としてdenyするかSDKが求めた承認を自動許可し、拒否や取消を無視する"
+// observable = "共通承認callbackのrequestIdとSDKへ返るallow／deny"
+// observation_boundary = "public-boundary"
+// scope = "claude-coding-turn SDK-required approval"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "SDKの明示的な承認要求が無断許可されるか、利用者が許可した操作を実行できない"
+// distinction = "permission設定testだけではSDKからの例外的な承認要求への応答を観測できない"
+// @end-test-value
+it("routes SDK-required approvals in both Claude modes and preserves denial and cancellation", async () => {
+  for (const approvalMode of ["never", "on-request"] as const) {
+    for (const decision of ["approve", "deny", "unavailable", "canceled"] as const) {
+      const request = input();
+      request.executionOptions = { ...request.executionOptions, approvalMode };
+      const seen: string[] = [];
+      if (decision !== "unavailable") request.onApprovalRequest = (card) => {
+        seen.push(card.requestId);
+        return decision === "approve" ? "approve" : "deny";
+      };
+      const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+        const controller = new AbortController();
+        if (decision === "canceled") controller.abort();
+        const permission = await options.canUseTool!("Bash", { command: "example" }, { requestId: "permission-1", toolUseID: "sdk-ask", signal: controller.signal });
+        assert.deepEqual(permission, decision === "approve" ? { behavior: "allow" } : {
+          behavior: "deny", message: decision === "unavailable" ? "Tool approval is unavailable" : decision === "canceled" ? "Canceled" : "Denied by user",
+        });
+        yield result("thread-sdk-approval");
+      }) });
+      await adapter.runSessionTurn(request);
+      assert.deepEqual(seen, decision === "approve" || decision === "deny" ? ["sdk-ask"] : []);
+    }
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
-// claim = "AskUserQuestionは二択承認で代用せず、自由入力をSDK answersへ戻す"
+// claim = "Auto RunとProvider ControlledのAskUserQuestionは二択承認で代用せず、自由入力をSDK answersへ戻す"
 // oracle = { type = "contract", ref = "Issue #751; src-shared/session/runtime-state.ts LiveElicitationRequest" }
 // fault = "Questionをapprovalへ誤配送する、またはOther入力を破棄する"
 // observable = "Elicitation cardのfieldsとSDK permission updatedInput.answers"
@@ -925,24 +999,27 @@ it("Claudeのlive配送失敗はfailed返却とchild実終了guardを両立す�
 // distinction = "既存CopilotのMCP elicitation testはClaudeのAskUserQuestion更新入力を確認しない"
 // @end-test-value
 it("routes AskUserQuestion to elicitation and returns a free-text answer", async () => {
-  let permission: unknown;
-  let allowsFreeText = false;
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
-    permission = await options.canUseTool?.("AskUserQuestion", {
-      questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }],
-    }, { toolUseID: "question-1", signal: new AbortController().signal } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
-    yield result("thread-question");
-  }) });
-  const request = input();
-  request.onElicitationRequest = (card) => {
-    allowsFreeText = card.fields.some((field) => field.name === "0" && field.type === "select" && field.allowFreeText === true);
-    return { action: "accept", content: { "0": "A custom path" } };
-  };
-  await adapter.runSessionTurn(request);
-  assert.equal(allowsFreeText, true);
-  assert.deepEqual(permission, { behavior: "allow", updatedInput: {
-    questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }], answers: { "Which path?": "A custom path" },
-  } });
+  for (const approvalMode of ["never", "on-request"] as const) {
+    let permission: unknown;
+    let allowsFreeText = false;
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+      permission = await options.canUseTool?.("AskUserQuestion", {
+        questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }],
+      }, { toolUseID: "question-1", signal: new AbortController().signal } as Parameters<NonNullable<Options["canUseTool"]>>[2]);
+      yield result("thread-question");
+    }) });
+    const request = input();
+    request.executionOptions = { ...request.executionOptions, approvalMode };
+    request.onElicitationRequest = (card) => {
+      allowsFreeText = card.fields.some((field) => field.name === "0" && field.type === "select" && field.allowFreeText === true);
+      return { action: "accept", content: { "0": "A custom path" } };
+    };
+    await adapter.runSessionTurn(request);
+    assert.equal(allowsFreeText, true);
+    assert.deepEqual(permission, { behavior: "allow", updatedInput: {
+      questions: [{ question: "Which path?", options: [{ label: "A" }], multiSelect: false }], answers: { "Which path?": "A custom path" },
+    } });
+  }
 });
 
 // @test-value v2

@@ -442,7 +442,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       env: mergeDefinedProviderEnv(process.env, buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding)),
       model: selection.resolvedModel,
       effort: selection.resolvedReasoningEffort as Options["effort"],
-      permissionMode: "default",
+      permissionMode: input.executionOptions.approvalMode === "never" ? "bypassPermissions" : "default",
+      allowDangerouslySkipPermissions: input.executionOptions.approvalMode === "never",
       resume: input.session.threadId || undefined,
       systemPrompt: { type: "preset", preset: "claude_code", append: prompt.systemBodyText, snapshot: false },
       additionalDirectories: prompt.additionalDirectories,
@@ -477,10 +478,12 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           if (controller.signal.aborted) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Canceled" } };
           const readOnly = new Set(["Read", "Glob", "Grep", "WebSearch", "WebFetch"]);
           if (readOnly.has(hookInput.tool_name)) return {};
+          if (input.executionOptions.approvalMode === "never" && hookInput.tool_name !== "AskUserQuestion") return {};
+          const canRequest = input.executionOptions.approvalMode === "on-request" || input.executionOptions.approvalMode === "never";
           return { hookSpecificOutput: {
             hookEventName: "PreToolUse",
-            permissionDecision: input.executionOptions.approvalMode === "on-request" ? "ask" : "deny",
-            permissionDecisionReason: input.executionOptions.approvalMode === "on-request" ? "WithMate approval required" : "Tool approval unavailable",
+            permissionDecision: canRequest ? "ask" : "deny",
+            permissionDecisionReason: canRequest ? "WithMate approval required" : "Tool approval unavailable",
           } };
         }] }],
       },
@@ -510,7 +513,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
             return { behavior: "allow", updatedInput: { ...toolInput, answers } };
           } catch { return { behavior: "deny", message: "Canceled" }; }
         }
-        if (input.executionOptions.approvalMode !== "on-request" || !input.onApprovalRequest) {
+        if ((input.executionOptions.approvalMode !== "on-request" && input.executionOptions.approvalMode !== "never") || !input.onApprovalRequest) {
           return { behavior: "deny", message: "Tool approval is unavailable" };
         }
         try {
