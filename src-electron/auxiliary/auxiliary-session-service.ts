@@ -4,7 +4,7 @@ import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-revi
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import { getApprovalOptionsForProvider, getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import type {
   AuxiliaryRuntimeSelectionMode,
   AuxiliarySession,
@@ -444,6 +444,7 @@ export class AuxiliarySessionService {
     }
     const options = { ...validateSessionExecutionOptions(request.executionOptions, provider, snapshot.revision),
       codexReviewer: resolveCodexReviewerUpdate(fresh, request.executionOptions.codexReviewer) };
+    if (options.codexReviewer !== request.executionOptions.codexReviewer) validateSessionExecutionOptions(options, provider, snapshot.revision);
     this.assertStorageIdentity(storage, identity);
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };
     this.deps.rememberExecutionOptions?.(fresh, options);
@@ -832,6 +833,10 @@ export class AuxiliarySessionService {
     if (usedCharacterIds.has(prepared.characterSelection.characterId)
       && activeCharacters.some((entry) => entry.id !== prepared.parentCharacterId && !usedCharacterIds.has(entry.id))) {
       return null;
+    }
+    if (getApprovalReviewerOptionsForProvider(launchSelection.provider, launchSelection.approvalMode)
+      .some((option) => option.value === parent.codexReviewer && option.disabled)) {
+      throw new Error("The selected reviewer is not supported with this approval mode.");
     }
     if (record) {
       if (record.cancelRequested) {

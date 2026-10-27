@@ -178,10 +178,10 @@ function listSessionTurnThreadIds(dbPath: string): string[] {
 describe("SessionStorageV6", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "Claudeの全6 permission選択値とSpeedはV6 checkpointから再読込しても失われない"
+  // claim = "Claudeの全6 permission modeを表すApprovalとReviewerの組合せ・SpeedはV6 checkpointから再読込しても失われない"
   // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send; docs/design/provider-adapter.md#approval-modes" }
   // fault = "新しいClaude modeやFast選択が保存後に既定値へ戻り次turnの権限が変わる"
-  // observable = "setSessionExecutionOptions後のgetSessionが返すapprovalModeとcodexSpeed"
+  // observable = "setSessionExecutionOptions後のgetSessionが返すapprovalMode・codexReviewer・codexSpeed"
   // observation_boundary = "public-boundary"
   // scope = "Claude V6 runtime options persistence"
   // lifecycle = "permanent"
@@ -199,14 +199,18 @@ describe("SessionStorageV6", () => {
       }));
       assert.equal(session.approvalMode, "on-request");
       assert.equal(session.codexSpeed, "standard");
-      for (const approvalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan", "auto"] as const) {
+      for (const [approvalMode, codexReviewer] of [
+        ["never", "user"], ["on-request", "user"], ["on-request", "auto-review"],
+        ["accept-edits", "user"], ["dont-ask", "user"], ["plan", "user"],
+      ] as const) {
         for (const codexSpeed of ["standard", "fast"] as const) {
           storage.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
             catalogRevision: session.catalogRevision, model: session.model, reasoningEffort: session.reasoningEffort, approvalMode,
-            codexSandboxMode: session.codexSandboxMode, codexReviewer: session.codexReviewer, customAgentName: session.customAgentName, codexSpeed,
+            codexSandboxMode: session.codexSandboxMode, codexReviewer, customAgentName: session.customAgentName, codexSpeed,
           });
           const restored = storage.getSession(session.id);
           assert.equal(restored?.approvalMode, approvalMode);
+          assert.equal(restored?.codexReviewer, codexReviewer);
           assert.equal(restored?.codexSpeed, codexSpeed);
         }
       }

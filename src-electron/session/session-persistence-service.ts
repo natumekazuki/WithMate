@@ -314,6 +314,7 @@ export class SessionPersistenceService {
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
     const validated = { ...validateSessionExecutionOptions(options, provider, catalog.revision),
       codexReviewer: resolveCodexReviewerUpdate(fresh, options.codexReviewer) };
+    if (validated.codexReviewer !== options.codexReviewer) validateSessionExecutionOptions(validated, provider, catalog.revision);
     this.deps.rememberExecutionOptions?.(fresh, validated);
     this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
       ? { ...session, ...validated } : session));

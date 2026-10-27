@@ -31,12 +31,6 @@ export function resolveCodexReviewerUpdate(
   return normalizeCodexReviewer(requestedReviewer);
 }
 
-export function getCodexReviewerOptions(
-  providerId: string | null | undefined,
-): RuntimeSelectOption<CodexReviewer>[] {
-  return providerId === "codex" ? codexReviewerOptions.map((option) => ({ ...option })) : [];
-}
-
 export function isCodexReviewerControlDisabled(input: {
   approvalMode: ApprovalMode;
   isRunning: boolean;

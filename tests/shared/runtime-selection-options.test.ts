@@ -38,9 +38,8 @@ test("Claude runtime options preserve supported and unsupported saved approval v
     { value: "accept-edits", label: "Accept Edits" },
     { value: "dont-ask", label: "Preapproved Only" },
     { value: "plan", label: "Plan" },
-    { value: "auto", label: "Auto Review" },
   ];
-  for (const selectedApprovalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan", "auto", "untrusted"] as const) {
+  for (const selectedApprovalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan", "untrusted"] as const) {
     const options = buildRuntimeSelectionOptions({
       providerId: "claude", providerCatalog: null, models: [], selectedModel: "claude-opus-5-5",
       reasoningEfforts: ["high"], selectedApprovalMode, selectedCodexSandboxMode: "workspace-write",

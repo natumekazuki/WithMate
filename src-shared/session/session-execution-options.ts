@@ -1,5 +1,5 @@
 import { APPROVAL_MODE_VALUES, type ApprovalMode } from "../settings/approval-mode.js";
-import { getApprovalOptionsForProvider } from "../settings/provider-runtime-options.js";
+import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider } from "../settings/provider-runtime-options.js";
 import { CODEX_REVIEWER_VALUES, type CodexReviewer } from "../settings/codex-reviewer.js";
 import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "../settings/codex-sandbox-mode.js";
 import { CODEX_SPEED_VALUES, type CodexSpeed } from "../settings/codex-speed.js";
@@ -66,6 +66,10 @@ export function validateSessionExecutionOptions(
   }
   if (!CODEX_REVIEWER_VALUES.includes(candidate.codexReviewer as CodexReviewer)) {
     throw new Error("The selected reviewer is invalid.");
+  }
+  if (getApprovalReviewerOptionsForProvider(providerCatalog.id, candidate.approvalMode as ApprovalMode)
+    .some((option) => option.value === candidate.codexReviewer && option.disabled)) {
+    throw new Error("The selected reviewer is not supported with this approval mode.");
   }
   if (typeof candidate.customAgentName !== "string") {
     throw new Error("The selected custom agent is invalid.");

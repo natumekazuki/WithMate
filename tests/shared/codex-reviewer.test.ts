@@ -2,19 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  getCodexReviewerOptions,
   isCodexReviewerControlDisabled,
   mapCodexReviewerToApprovalsReviewer,
   normalizeCodexReviewer,
   resolveCodexReviewerUpdate,
 } from "../../src-shared/settings/codex-reviewer.js";
+import { getApprovalReviewerOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import { buildSessionWithApprovalMode } from "../../src/settings/runtime-option-state.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Reviewerの未知値はUserへ正規化され、SDK値とCodex限定の選択肢へ一意に変換される"
+// claim = "Reviewerの未知値はUserへ正規化され、CodexとClaudeは共通候補を持ちClaudeの固有承認方針ではAuto Reviewを選べない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md" }
-// fault = "未知値がAuto Reviewへ昇格する、SDKへ誤った値を渡す、または非Codex providerにReviewerを表示する"
+// fault = "未知値がAuto Reviewへ昇格する、SDK値を誤る、または対応しないproviderや承認方針でAuto Reviewを選べる"
 // observable = "normalizeCodexReviewerの正規化値、SDKへの変換値、provider別選択肢"
 // observation_boundary = "public-boundary"
 // scope = "codex-reviewer"
@@ -26,11 +26,20 @@ test("Reviewerを正規化してSDK値とprovider別選択肢へ写像する", (
   assert.equal(normalizeCodexReviewer(undefined), "user");
   assert.equal(mapCodexReviewerToApprovalsReviewer("user"), "user");
   assert.equal(mapCodexReviewerToApprovalsReviewer("auto-review"), "auto_review");
-  assert.deepEqual(getCodexReviewerOptions("codex"), [
+  const choices = [
     { value: "user", label: "User" },
     { value: "auto-review", label: "Auto Review" },
-  ]);
-  assert.deepEqual(getCodexReviewerOptions("copilot"), []);
+  ];
+  assert.deepEqual(getApprovalReviewerOptionsForProvider("codex", "untrusted"), choices);
+  assert.deepEqual(getApprovalReviewerOptionsForProvider("claude", "on-request"), choices);
+  assert.deepEqual(getApprovalReviewerOptionsForProvider("claude", "never"), choices);
+  for (const mode of ["accept-edits", "dont-ask", "plan"] as const) {
+    assert.deepEqual(getApprovalReviewerOptionsForProvider("claude", mode), [
+      { value: "user", label: "User" },
+      { value: "auto-review", label: "Auto Review", disabled: true },
+    ]);
+  }
+  assert.deepEqual(getApprovalReviewerOptionsForProvider("copilot", "on-request"), []);
 });
 
 // @test-value v1

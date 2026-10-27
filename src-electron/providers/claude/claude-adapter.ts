@@ -366,13 +366,14 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     }
   }
 
-  private addSpeedCheck(artifact: MessageArtifact | undefined, input: RunSessionTurnInput, trace: ClaudeTrace): void {
+  private addExecutionChecks(artifact: MessageArtifact | undefined, input: RunSessionTurnInput, trace: ClaudeTrace): void {
     if (!artifact) return;
     const state = trace.result?.fast_mode_state;
     const speed = input.executionOptions.codexSpeed === "standard" ? "Standard"
       : state === "on" ? "Fast"
         : state ? `Standard (Fast ${state})` : "Fast (Requested)";
     artifact.runChecks.push({ label: "speed", value: speed });
+    artifact.runChecks.push({ label: "reviewer", value: input.executionOptions.codexReviewer });
   }
 
   private result(input: RunSessionTurnInput, trace: ClaudeTrace): RunSessionTurnResult {
@@ -393,7 +394,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       providerCatalog: input.providerCatalog,
       selection: resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort),
     });
-    this.addSpeedCheck(artifact, input, trace);
+    this.addExecutionChecks(artifact, input, trace);
     return {
       threadId: trace.threadId,
       assistantText: redactor.sanitizeText(text),
@@ -404,7 +405,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   }
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
-    const permissionMode = mapApprovalModeToClaudePermissionMode(input.executionOptions.approvalMode);
+    const permissionMode = mapApprovalModeToClaudePermissionMode(input.executionOptions.approvalMode, input.executionOptions.codexReviewer);
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const trace = this.makeTrace(input.session.threadId || null, redactor);
@@ -606,7 +607,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         providerCatalog: input.providerCatalog,
         selection,
       }));
-      this.addSpeedCheck(result.artifact, input, trace);
+      this.addExecutionChecks(result.artifact, input, trace);
       return result;
     } catch (error) {
       const failure = progressFailure ?? error;

@@ -112,7 +112,7 @@ export type SessionComposerExpandedProps = {
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string; disabled?: boolean }>;
   selectedApprovalMode: ApprovalMode;
-  reviewerOptions: Array<{ value: CodexReviewer; label: string }>;
+  reviewerOptions: Array<{ value: CodexReviewer; label: string; disabled?: boolean }>;
   selectedCodexReviewer: CodexReviewer;
   sandboxOptions: Array<{ value: CodexSandboxMode; label: string }>;
   selectedCodexSandboxMode: CodexSandboxMode;
@@ -720,11 +720,13 @@ export function SessionComposerExpanded({
                   value={selectedCodexReviewer}
                   options={reviewerOptions}
                   onChange={(value) => onChangeCodexReviewer(value as CodexReviewer)}
+                  invalid={reviewerOptions.some((option) => option.value === selectedCodexReviewer && option.disabled)}
                   disabled={isCodexReviewerControlDisabled({
                     approvalMode: selectedApprovalMode,
                     isRunning: isRunning && !canQueueTurn,
                     composerBlocked: composerBlocked || composerFrozen,
-                  })}
+                  }) || (reviewerOptions.filter((option) => !option.disabled).length === 1
+                    && reviewerOptions.some((option) => option.value === selectedCodexReviewer && !option.disabled))}
                 />
               ) : null}
 

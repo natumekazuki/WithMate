@@ -2,7 +2,7 @@ import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } fro
 import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 import type { CodexSandboxMode } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { getCodexSpeedOptions, type CodexSpeed } from "../../src-shared/settings/codex-speed.js";
-import { getCodexReviewerOptions, type CodexReviewer } from "../../src-shared/settings/codex-reviewer.js";
+import type { CodexReviewer } from "../../src-shared/settings/codex-reviewer.js";
 import {
   buildModelSelectOptions,
   buildReasoningEffortSelectOptions,
@@ -12,6 +12,7 @@ import {
 } from "./model-select-options.js";
 import {
   getApprovalOptionsForProvider,
+  getApprovalReviewerOptionsForProvider,
   getSandboxOptionsForProviderSelection,
   type RuntimeSelectOption,
 } from "../../src-shared/settings/provider-runtime-options.js";
@@ -48,7 +49,7 @@ export function buildRuntimeSelectionOptions({
   selectedCodexReviewer: CodexReviewer;
 }): RuntimeSelectionOptions {
   const approvalChoiceOptions = (() => {
-    const options = getApprovalOptionsForProvider(providerId);
+    const options = getApprovalOptionsForProvider(providerId, selectedCodexReviewer);
     if (options.some((option) => option.value === selectedApprovalMode)) {
       return options;
     }
@@ -64,7 +65,7 @@ export function buildRuntimeSelectionOptions({
   const selectedModelFallbackLabel = resolveModelFallbackLabel(providerCatalog, selectedModel);
   const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEfforts);
   const speedSelectOptions = getCodexSpeedOptions(providerId);
-  const reviewerSelectOptions = getCodexReviewerOptions(providerId);
+  const reviewerSelectOptions = getApprovalReviewerOptionsForProvider(providerId, selectedApprovalMode);
 
   return {
     approvalChoiceOptions,

@@ -9,7 +9,7 @@ import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.j
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
@@ -149,10 +149,10 @@ function characterCandidates(): CharacterCatalogEntry[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude Auxiliaryのexplicit作成は非対応approvalを保存前に拒否し、省略時はon-requestで作成する"
+// claim = "Claude Auxiliaryは親Reviewerを継承して有効な承認方針だけ保存し、非対応値と作成・更新時の不正な組合せを拒否する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
-// fault = "共通enumだけを検証してClaude非対応値を永続化するかClaude既定値を変更する"
-// observable = "createAuxiliarySessionのreject、SQLiteの作成件数と保存approvalMode"
+// fault = "対応する方針を作成できないか、親のAuto ReviewやReviewer保持による不正な組合せを保存するか、非対応値を受理する"
+// observable = "作成・更新APIのrejectとACK、SQLiteの作成件数・保存approvalMode・codexReviewer"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-explicit-claude-approval"
 // lifecycle = "permanent"
@@ -163,7 +163,7 @@ test("Claude Auxiliaryは非対応approvalを保存せず既定on-requestで作�
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-auxiliary-claude-approval-"));
   const sessionStorage = new SessionStorageV6(path.join(directory, "app.db"));
   const storage = new AuxiliarySessionStorage(path.join(directory, "app.db"));
-  const main = parent({ characterRuntimeSnapshot: null });
+  let main = parent({ characterRuntimeSnapshot: null });
   const snapshot = catalog(1);
   snapshot.providers[0] = { ...snapshot.providers[0]!, id: "claude", label: "Claude" };
   const service = createService({
@@ -176,17 +176,50 @@ test("Claude Auxiliaryは非対応approvalを保存せず既定on-requestで作�
   });
   try {
     sessionStorage.upsertSession(main);
-    for (const approvalMode of ["untrusted", "never"] as const) {
-      await assert.rejects(service.createAuxiliarySession({
+    await assert.rejects(service.createAuxiliarySession({
+      parentSessionId: main.id, provider: "claude", runtimeSelection: "explicit", approvalMode: "untrusted",
+    }), /approval mode is not supported by this provider/);
+    assert.deepEqual(storage.listAuxiliarySessions(main.id), []);
+    for (const approvalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan"] as const) {
+      const supported = await service.createAuxiliarySession({
         parentSessionId: main.id, provider: "claude", runtimeSelection: "explicit", approvalMode,
-      }), /approval mode is not supported by this provider/);
-      assert.deepEqual(storage.listAuxiliarySessions(main.id), []);
+      });
+      const restored = storage.getAuxiliarySession(supported.id);
+      assert.equal(restored?.approvalMode, approvalMode);
+      assert.equal(restored?.codexReviewer, "user");
     }
     const created = await service.createAuxiliarySession({
       parentSessionId: main.id, provider: "claude", runtimeSelection: "explicit",
     });
     assert.equal(created.approvalMode, "on-request");
     assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "on-request");
+    const update = (approvalMode: SessionExecutionOptions["approvalMode"], codexReviewer: SessionExecutionOptions["codexReviewer"]) => service.setAuxiliaryExecutionOptions({
+      auxiliarySessionId: created.id, parentSessionId: main.id, createdAt: created.createdAt,
+      executionOptions: { ...captureSessionExecutionOptions(created), approvalMode, codexReviewer },
+    });
+    assert.deepEqual(await update("on-request", "auto-review"), { status: "accepted", checkpointSaved: true });
+    assert.equal(storage.getAuxiliarySession(created.id)?.codexReviewer, "auto-review");
+    main = { ...main, codexReviewer: "auto-review" };
+    const countBefore = storage.listAuxiliarySessions(main.id).length;
+    for (const approvalMode of ["accept-edits", "dont-ask", "plan"] as const) {
+      await assert.rejects(service.createAuxiliarySession({
+        parentSessionId: main.id, provider: "claude", runtimeSelection: "explicit", approvalMode,
+      }), /reviewer is not supported with this approval mode/);
+      assert.equal(storage.listAuxiliarySessions(main.id).length, countBefore);
+    }
+    for (const approvalMode of ["on-request", "never"] as const) {
+      const inherited = await service.createAuxiliarySession({
+        parentSessionId: main.id, provider: "claude", runtimeSelection: "explicit", approvalMode,
+      });
+      assert.equal(storage.getAuxiliarySession(inherited.id)?.approvalMode, approvalMode);
+      assert.equal(storage.getAuxiliarySession(inherited.id)?.codexReviewer, "auto-review");
+    }
+    await assert.rejects(update("plan", "auto-review"), /reviewer is not supported with this approval mode/);
+    assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "on-request");
+    await update("never", "auto-review");
+    await assert.rejects(update("plan", "user"), /reviewer is not supported with this approval mode/);
+    assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "never");
+    assert.equal(storage.getAuxiliarySession(created.id)?.codexReviewer, "auto-review");
   } finally {
     storage.close();
     sessionStorage.close();
