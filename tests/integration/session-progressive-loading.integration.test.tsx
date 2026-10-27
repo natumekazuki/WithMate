@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React, { act } from "react";
@@ -72,7 +73,10 @@ test("Sessionは基本情報から描画し会話の失敗と空状態を独立�
   api.getAppSettings = async () => ({ ...await originalSettings(), chatLayoutPreference: { header: "visible", sidePane: "files", actionDock: "expanded" } });
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");
-  const { default: App } = await import("../../src/app/SessionWindowApp.js");
+  const cssImports = registerHooks({ load(url, context, next) {
+    return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
+  } });
+  const { default: App } = await import("../../src/app/SessionWindowApp.js").finally(() => cssImports.deregister());
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   try {

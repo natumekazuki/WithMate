@@ -421,7 +421,7 @@ describe("HomeSettingsContent", () => {
   // claim = "Settings操作は設定・Session更新、native picker、CLI shimの実際の競合だけを排他し、独立した導線と日付編集を維持する"
   // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ; docs/design/settings-ui.md#runtime-policy" }
   // fault = "保存とimport等の競合を許可する、独立操作を停止する、重複要求を受け付ける、または競合待ちbuttonを実行中として通知する"
-  // observable = "各操作待ちの全buttonのdisabled/aria-busy/spinner、同一tickのcallback回数、cleanup日付の編集可否、完了後の解除"
+  // observable = "設定保存・catalog・picker・Session削除・CLI shimの各操作buttonのdisabled/aria-busy/spinner、同一tickのcallback回数、Session削除日付の編集可否、完了後の解除"
   // observation_boundary = "component-behavior"
   // scope = "HomeSettingsContent action conflicts"
   // lifecycle = "permanent"
@@ -462,7 +462,7 @@ describe("HomeSettingsContent", () => {
           onBrowseProviderSkillRelativePath: pending,
           onBrowseProviderInstructionRelativePath: pending,
         })));
-        const buttons = [...container.querySelectorAll<HTMLButtonElement>("button[aria-busy]")];
+        const buttons = [...container.querySelectorAll<HTMLButtonElement>("button[aria-busy][aria-label]")];
         const labels = new Map(buttons.map((button) => [button, button.getAttribute("aria-label")!]));
         const selected = buttons.find((button) => labels.get(button) === scenario.label)!;
         await act(async () => { selected.click(); selected.click(); });

@@ -433,6 +433,18 @@ test("FilePreviewAppの画像は設定Retryと通知で次のwheel刻みだけ�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "独立Diff Windowはpayload取得後にDiff画面のshellを描画する"
+// oracle = { type = "contract", ref = "docs/design/window-architecture.md" }
+// fault = "Window rootとpayload取得の接続が切れてDiff画面が表示されない"
+// observable = "DiffAppをmountし非同期payload取得後のdiff-window-shell"
+// observation_boundary = "component-behavior"
+// scope = "detached-diff-window-render"
+// lifecycle = "permanent"
+// impact = "独立Windowで変更内容を確認できなくなる"
+// distinction = "payload APIをstubにした実Window rootの初期表示で、型検査やDiff行変換testとは異なる接続を確認する。実layoutとresizeは対象外"
+// @end-test-value
 test("DiffApp は独立 Window の内容を描画する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -444,6 +456,11 @@ test("DiffApp は独立 Window の内容を描画する", async () => {
     "<!doctype html><html><head><title>Diff</title></head><body><div id=\"root\"></div></body></html>",
     { pretendToBeVisual: true, url: "http://localhost/diff.html?token=diff-1" },
   );
+  const previousResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: class { observe() {} disconnect() {} unobserve() {} },
+  });
   const api = {
     async getDiffPreview() {
       return {
@@ -496,6 +513,8 @@ test("DiffApp は独立 Window の内容を描画する", async () => {
     Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    if (previousResizeObserver) Object.defineProperty(globalThis, "ResizeObserver", previousResizeObserver);
+    else Reflect.deleteProperty(globalThis, "ResizeObserver");
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       previousActEnvironment;
     dom.window.close();

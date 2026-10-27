@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import React from "react";
 import { renderToString } from "react-dom/server";
 
-import App from "../../src/app/SessionWindowApp.js";
+const cssImports = registerHooks({ load(url, context, next) {
+  return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
+} });
+const { default: App } = await import("../../src/app/SessionWindowApp.js").finally(() => cssImports.deregister());
 
 // @test-value v2
 // kind = "contract"

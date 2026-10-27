@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import React, { act } from "react";
@@ -84,7 +85,10 @@ test("Main/AuxiliaryのResendとEditは前回依頼とdraftのownerを維持す�
   });
   Object.defineProperty(dom.window, "withmate", { value: api });
   const { createRoot } = await import("react-dom/client");
-  const { default: App } = await import("../../src/app/SessionWindowApp.js");
+  const cssImports = registerHooks({ load(url, context, next) {
+    return url.endsWith(".css") ? { format: "module", shortCircuit: true, source: "" } : next(url, context);
+  } });
+  const { default: App } = await import("../../src/app/SessionWindowApp.js").finally(() => cssImports.deregister());
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   const composer = () => container.querySelector<HTMLTextAreaElement>("textarea")!;
