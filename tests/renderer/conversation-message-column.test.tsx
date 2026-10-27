@@ -23,14 +23,14 @@ import type { MarkdownImageApi } from "../../src/ui/markdown/image-resource-load
 import type { SessionFilePreviewImageActionRequest, SessionImageResourceRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
 import { SessionTurnSubmissions } from "../../src/chat/runtime/session-turn-submissions.js";
-import type { HtmlPreviewEvent } from "../../src-shared/window/html-preview.js";
+import type { HtmlPreviewEvent, HtmlPreviewMountRequest } from "../../src-shared/window/html-preview.js";
 
 // @test-value v2
 // kind = "contract"
 // claim = "MainとAuxiliaryのHTMLプレビューFind通知は一度でactive会話の検索を開き、非active列では検索を開かない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Ctrl+Fはactiveなchatを検索する" }
 // fault = "HTML consumerがFind callbackを渡さずfocus復帰だけになる、または非active列で検索を開く"
-// observable = "実SessionMessageColumnのFind inputの有無とfocus、HTML previewのmount/通知ID"
+// observable = "実SessionMessageColumnのFind inputの有無とfocus、HTML previewのmount/通知IDとlink出自"
 // observation_boundary = "consumer"
 // scope = "SessionMessageColumn→MessageRichText→MarkdownHtmlPreview→HtmlPreviewのFind接続"
 // lifecycle = "permanent"
@@ -54,8 +54,14 @@ test("HTML previewのFind通知はactiveなMain/Auxiliary会話の検索を開�
   let mountedId = "";
   Object.defineProperty(dom.window, "withmate", { value: {
     readSessionHtmlPreview: async () => ({ html: "<h1>Chart</h1>", fileName: "chart.html" }),
-    mountHtmlPreview: async ({ id }: { id: string }) => { mountedId = id; return "withmate-html-preview://test/"; },
+    mountHtmlPreview: async ({ id, source }: HtmlPreviewMountRequest) => {
+      assert.equal(source.kind, "link");
+      if (source.kind === "link") assert.equal(source.request.target, "/work/chart.html");
+      mountedId = id;
+      return { url: "withmate-html-preview://test/", partition: "test" };
+    },
     disposeHtmlPreview: async () => {},
+    respondHtmlPreview: async () => {},
     subscribeHtmlPreviewEvents: (listener: (event: HtmlPreviewEvent) => void) => {
       listeners.add(listener);
       return () => { listeners.delete(listener); };

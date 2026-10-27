@@ -57,6 +57,7 @@ import { SessionTurnService } from "./session/session-turn-service.js";
 import { registerHtmlPreviewHandlers } from "./ipc/html-preview.js";
 import { registerHtmlPreviewScheme } from "./files/html-preview-service.js";
 import { readSessionHtmlPreview } from "./files/session-html-preview-reader.js";
+import { createHtmlPreviewResources } from "./files/html-preview-resources.js";
 import type { SessionTurnRecord } from "../src-shared/session/session-turn-state.js";
 import { AppSettingsStorage } from "./app/app-settings-storage.js";
 import { PromptTemplateStorage } from "./prompt-templates/prompt-template-storage.js";
@@ -1318,7 +1319,18 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               if (!terminalService) throw new Error("Terminal service is unavailable.");
               registerTerminalHandlers(ipc, terminalService);
-              registerHtmlPreviewHandlers(ipc);
+              registerHtmlPreviewHandlers(ipc, {
+                authorization: deps.sessionQuery,
+                resolveResources: async (source) => {
+                  const explorer = createSessionFileExplorerService();
+                  if (source.kind === "resource") {
+                    return createHtmlPreviewResources(explorer, createFileRootGitChangesService(), source.resource);
+                  }
+                  const resolved = await explorer.resolvePreviewTarget(source.request.sessionId, source.request.target, source.request.baseResource);
+                  if (resolved.type !== "file") throw new Error("HTML preview requires a local HTML file.");
+                  return createHtmlPreviewResources(explorer, createFileRootGitChangesService(), resolved.resource);
+                },
+              });
             },
             initializePersistentStores,
             recoverInterruptedSessions,

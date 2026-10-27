@@ -1,4 +1,5 @@
 import type { IpcMain } from "electron";
+import { assertNotHtmlPreviewSender } from "../files/html-preview-isolation.js";
 
 import { registerAuxiliaryHandlers } from "./auxiliary.js";
 import { registerCatalogHandlers } from "./catalog.js";
@@ -45,6 +46,7 @@ export function registerMainIpcHandlers(
   ipcMain.on(
     WITHMATE_RENDERER_LOG_CHANNEL,
     (event, input: RendererLogInput) => {
+      try { assertNotHtmlPreviewSender(event); } catch { return; }
       const windowId = deps.common.resolveEventWindow(event)?.id;
       deps.common.reportRendererLog?.(input, windowId);
     },
@@ -52,6 +54,7 @@ export function registerMainIpcHandlers(
   ipcMain.on(
     WITHMATE_SESSION_DRAFT_FLUSH_ACK_CHANNEL,
     (event, payload: { requestId: string; success: boolean }) => {
+      try { assertNotHtmlPreviewSender(event); } catch { return; }
       deps.common.acknowledgeSessionDraftFlush(event, payload);
     },
   );
@@ -66,6 +69,7 @@ function createErrorLoggingIpcMain(
       ipcMain.handle(channel, async (event, ...args) => {
         const startedAt = Date.now();
         try {
+          assertNotHtmlPreviewSender(event);
           return await handler(event, ...args);
         } catch (error) {
           const clientRequestId =

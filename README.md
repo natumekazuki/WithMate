@@ -55,7 +55,7 @@ Session WindowのFile Explorerには次のタブがあります。
 
 Codexの応答に`visualize`で指定されたローカルHTML／PDFは、会話本文内でも同じ隔離されたプレビューで閲覧できます。元ファイルのリンクから通常のFile Previewへ開くこともできます。通常リンク・file citation・未対応形式の成果物はリンクとして表示します。
 
-HTMLは自己完結したCSS／JavaScriptを隔離して表示し、Sourceへ切り替えられます。外部スクリプトや相対ファイルの読込、WithMate APIは利用できません。通信の完全遮断を保証する機能ではありません。公式visualize runtimeとの互換機能ではありません。
+HTMLはアプリ権限から隔離したWeb環境で表示し、Sourceへ切り替えられます。相対CSS／JavaScript・画像・font・media、外部CDN、通信、worker、iframe、表示中のWeb storageを利用できます。local資源は元HTMLと同じ許可root内（root外のHTMLは親directory内）に限定し、Git履歴では同じcommitの資源だけを読みます。権限要求・子Window・外部protocolはアプリ側で確認し、downloadは保存dialogで保存先を選択します。画面外への移動・Source切替・Reloadで実行環境とその権限・storageを破棄します。WithMate APIや公式visualize runtimeの互換bridgeは提供しません。利用条件は[HTML Preview Isolation](docs/design/electron-window-runtime.md#html-preview-isolation)を参照してください。
 
 ### Repository Glossary
 

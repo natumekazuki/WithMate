@@ -1445,6 +1445,7 @@ export function SessionFilePreview({
             <HtmlPreview
               key={reloadRevision}
               html={decodedText}
+              source={{ kind: "resource", resource: request }}
               title={descriptor?.name ?? "HTML Preview"}
               className="session-file-html"
               onFind={openFind}
