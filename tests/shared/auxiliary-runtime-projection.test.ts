@@ -31,7 +31,6 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: ["C:/alpha", "C:/beta"],
     threadId: "thread-1",
     composerDraft: "",
     messages: [{ role: "assistant", text: "auxiliary response" }],

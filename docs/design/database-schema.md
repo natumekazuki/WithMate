@@ -45,7 +45,7 @@ Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Aux
 
 ## Additional Directory
 
-Additional Directoryの正本は`sessions_v6.allowed_additional_directories_json`で、配下の全Auxiliaryが共有する。`auxiliary_sessions`の同名列は読取投影として親の保存と同一transactionで更新し、Auxiliary自身のmetadata保存から独立変更しない。起動時に既存の親・全Auxiliaryの登録分を親単位で統合し、双方へatomic保存する。本文、draft、Character、thread、更新時刻は変更しない。
+Additional Directoryは`sessions_v6.allowed_additional_directories_json`にだけ保存する。Auxiliaryの保存データとAPIのmetadataにはDirectoryを持たせず、Files認可・表示・次turnの実行contextは親Mainの現在の一覧から解決する。親Mainと配下の全Auxiliaryが共有し、別のMain配下とは共有しない。
 
 ## Files Pin
 

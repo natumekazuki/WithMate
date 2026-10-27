@@ -55,7 +55,6 @@ function toAuxiliaryRuntimeProjectionInput(session: AuxiliarySession): Auxiliary
     codexSpeed: session.codexSpeed,
     codexReviewer: session.codexReviewer,
     customAgentName: session.customAgentName,
-    allowedAdditionalDirectories: session.allowedAdditionalDirectories,
     threadId: session.threadId,
     messages: session.messages,
     messageCount: session.messageCount,
@@ -74,7 +73,6 @@ function useRuntimeProjectionSession(
   return useMemo(
     () => activeSession ? toAuxiliaryRuntimeProjectionInput(activeSession) : null,
     [
-      activeSession?.allowedAdditionalDirectories,
       activeSession?.approvalMode,
       activeSession?.catalogRevision,
       activeSession?.codexSandboxMode,

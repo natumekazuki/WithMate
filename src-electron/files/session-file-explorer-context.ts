@@ -4,7 +4,7 @@ import type { SessionFileExplorerContext } from "./session-file-explorer-service
 
 type SessionFileExplorerContextReads = {
   assertCurrent(): void;
-  getAuxiliaryMetadata(sessionId: string): Promise<Pick<AuxiliarySessionSummary, "parentSessionId" | "allowedAdditionalDirectories"> | null>;
+  getAuxiliaryMetadata(sessionId: string): Promise<Pick<AuxiliarySessionSummary, "parentSessionId"> | null>;
   getSessionSummary(sessionId: string): Promise<SessionSummary | null>;
 };
 

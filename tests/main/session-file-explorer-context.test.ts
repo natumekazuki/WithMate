@@ -29,7 +29,7 @@ function mainSummary() {
 test("Files contextはMainとAuxiliaryで現在の親の許可を使用する", async () => {
   let parent = mainSummary();
   let exists = true;
-  const auxiliary = { parentSessionId: "main", allowedAdditionalDirectories: ["C:/aux-only"] };
+  const auxiliary = { parentSessionId: "main" };
   const reads = {
     assertCurrent() {},
     getAuxiliaryMetadata: async (id: string) => id === "aux" ? auxiliary : null,
@@ -39,7 +39,6 @@ test("Files contextはMainとAuxiliaryで現在の親の許可を使用する", 
     workspacePath: "C:/workspace", parentSessionId: "main", parentIncarnationId: "owner-1", allowedAdditionalDirectories: ["C:/main-only"],
   });
   assert.deepEqual((await readSessionFileExplorerContext("aux", reads))?.allowedAdditionalDirectories, ["C:/main-only"]);
-  auxiliary.allowedAdditionalDirectories = [];
   parent = { ...parent, incarnationId: "owner-2", workspacePath: "C:/replacement", allowedAdditionalDirectories: [] };
   assert.deepEqual(await readSessionFileExplorerContext("aux", reads), {
     workspacePath: "C:/replacement", parentSessionId: "main", parentIncarnationId: "owner-2", allowedAdditionalDirectories: [],
@@ -75,7 +74,7 @@ test("Files contextはどちらのmetadata待機後もgenerationを再確認す�
       assertCurrent: () => { if (!active) throw new Error("Storage generation changed"); },
       getAuxiliaryMetadata: async () => {
         if (stage === "auxiliary") active = false;
-        return { parentSessionId: "main", allowedAdditionalDirectories: ["C:/old-permission"] };
+        return { parentSessionId: "main" };
       },
       getSessionSummary: async () => { active = false; return parent; },
     });

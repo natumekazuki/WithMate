@@ -14,7 +14,6 @@ import {
 import { CURRENT_SESSION_SCHEMA_VERSION, isReadOnlySession } from "../../src-shared/session/session-state.js";
 import { normalizeMessage, summarizeMessageArtifact, type Message, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
-import { readParentDirectoriesJson, mergeParentDirectories, migrateSharedSessionDirectories } from "../storage/shared-session-directories.js";
 import { writeSessionTurnTerminalCommit, type SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
 import { insertSessionTurn } from "../session/session-turn-storage-v6.js";
@@ -52,7 +51,6 @@ type AuxiliarySessionRow = {
   codex_speed: string;
   codex_reviewer: string;
   custom_agent_name: string;
-  allowed_additional_directories_json: string;
   thread_id: string;
   display_after_message_index: number | null;
   closed_at: string;
@@ -163,7 +161,6 @@ const CREATE_AUXILIARY_SESSIONS_TABLE_SQL = `
     codex_speed TEXT NOT NULL DEFAULT '',
     codex_reviewer TEXT NOT NULL DEFAULT '',
     custom_agent_name TEXT NOT NULL DEFAULT '',
-    allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
     closed_at TEXT NOT NULL DEFAULT '',
@@ -193,7 +190,7 @@ const CREATE_AUXILIARY_MESSAGES_TABLE_SQL = `
 const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.status, a.created_at, a.updated_at,
   a.title, a.run_state, a.preview, a.provider_id, a.catalog_revision, a.model_id,
   a.reasoning_effort, a.approval_mode, a.codex_sandbox_mode, a.codex_speed,
-  a.codex_reviewer, a.custom_agent_name, a.allowed_additional_directories_json,
+  a.codex_reviewer, a.custom_agent_name,
   a.thread_id, a.display_after_message_index, a.closed_at, a.character_id,
   NULL AS character_snapshot_json, 0 AS character_snapshot_invalid, a.character_icon_path,
   a.client_request_id, NULL AS creation_context_json, NULL AS creation_request_json`;
@@ -759,10 +756,10 @@ export class AuxiliarySessionStorage {
         const draftRow = db.prepare("SELECT draft_text FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?")
           .get(input.expectedSession.id) as { draft_text: string } | undefined;
         const currentWithDraft = current && draftRow ? { ...current, composerDraft: draftRow.draft_text } : current;
-        const currentRuntime = currentWithDraft && { ...currentWithDraft, allowedAdditionalDirectories: [], updatedAt: input.expectedSession.updatedAt,
+        const currentRuntime = currentWithDraft && { ...currentWithDraft, updatedAt: input.expectedSession.updatedAt,
           composerDraft: "", preview: currentWithDraft.preview ?? "",
           messages: currentWithDraft.messages.map((message) => ({ ...message, isBookmarked: undefined })) };
-        const expectedRuntime = expected && { ...expected, allowedAdditionalDirectories: [], composerDraft: "", preview: expected.preview ?? current?.preview ?? "",
+        const expectedRuntime = expected && { ...expected, composerDraft: "", preview: expected.preview ?? current?.preview ?? "",
           messages: expected.messages.map((message) => ({ ...message,
             artifact: message.artifact ? summarizeMessageArtifact(message.artifact) : undefined,
             isBookmarked: undefined })) };
@@ -813,7 +810,7 @@ export class AuxiliarySessionStorage {
           (id, parent_session_id, status, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?)`)
           .run(session.id, session.parentSessionId, session.status, session.createdAt, session.updatedAt);
-        const stored = writeAuxiliaryMetadata(db, persisted);
+        writeAuxiliaryMetadata(db, persisted);
         const conversationChanged = writeAuxiliaryMessages(db, persisted);
         db.prepare(`
           INSERT OR IGNORE INTO auxiliary_session_drafts
@@ -823,7 +820,7 @@ export class AuxiliarySessionStorage {
         db.exec("COMMIT");
         if (conversationChanged || !existing || previousOwner?.parent_session_id !== session.parentSessionId || previousOwner?.created_at !== session.createdAt)
           this.onConversationChanged("auxiliary_session_messages", session.id);
-        return stored;
+        return persisted;
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -1012,7 +1009,6 @@ function parseAuxiliarySessionRow(row: AuxiliarySessionRow): AuxiliarySession | 
       codexSpeed: row.codex_speed,
       codexReviewer: row.codex_reviewer,
       customAgentName: row.custom_agent_name,
-      allowedAdditionalDirectories: JSON.parse(row.allowed_additional_directories_json),
       threadId: row.thread_id,
       displayAfterMessageIndex: row.display_after_message_index,
       closedAt: row.closed_at,
@@ -1062,20 +1058,18 @@ function insertAuxiliaryMessage(db: DatabaseSync, id: string, seq: number, messa
     VALUES (?, ?, ?, ?, ?, ?)`).run(id, seq, normalized.role, body, artifact ? JSON.stringify(artifact) : null, updatedAt);
 }
 
-function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): AuxiliarySession {
-  const directoriesJson = readParentDirectoriesJson(db, session.parentSessionId)
-    ?? JSON.stringify(session.allowedAdditionalDirectories);
+function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): void {
   db.prepare(`UPDATE auxiliary_sessions SET parent_session_id = ?, status = ?, created_at = ?, updated_at = ?,
     title = ?, run_state = ?, preview = ?, provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?,
     approval_mode = ?, codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, custom_agent_name = ?,
-    allowed_additional_directories_json = ?, thread_id = ?, display_after_message_index = ?, closed_at = ?,
+    thread_id = ?, display_after_message_index = ?, closed_at = ?,
     character_id = ?, character_snapshot_json = ?, character_snapshot_invalid = ?, character_icon_path = ?,
     client_request_id = ?, creation_context_json = ?, creation_request_json = ? WHERE id = ?`).run(
     session.parentSessionId, session.status, session.createdAt, session.updatedAt,
     session.title, session.runState, session.preview ?? buildAuxiliaryPreview(session.messages),
     session.provider, session.catalogRevision, session.model, session.reasoningEffort,
     session.approvalMode, session.codexSandboxMode, session.codexSpeed, session.codexReviewer,
-    session.customAgentName, directoriesJson, session.threadId,
+    session.customAgentName, session.threadId,
     session.displayAfterMessageIndex, session.closedAt, session.characterId ?? null,
     session.characterRuntimeSnapshot === undefined ? null : JSON.stringify(session.characterRuntimeSnapshot),
     session.characterRuntimeSnapshotInvalid ? 1 : 0, session.characterIconPath ?? null,
@@ -1083,7 +1077,6 @@ function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): Au
     session.creationContext ? JSON.stringify(session.creationContext) : null,
     session.creationRequest ? JSON.stringify(session.creationRequest) : null, session.id,
   );
-  return { ...session, allowedAdditionalDirectories: JSON.parse(directoriesJson) };
 }
 
 function writeAuxiliaryMessages(db: DatabaseSync, session: AuxiliarySession): boolean {
@@ -1201,7 +1194,6 @@ function migrateAuxiliaryStorage(db: DatabaseSync): void {
         ["codex_speed", "TEXT NOT NULL DEFAULT ''"],
         ["codex_reviewer", "TEXT NOT NULL DEFAULT ''"],
         ["custom_agent_name", "TEXT NOT NULL DEFAULT ''"],
-        ["allowed_additional_directories_json", "TEXT NOT NULL DEFAULT '[]'"],
         ["thread_id", "TEXT NOT NULL DEFAULT ''"],
         ["display_after_message_index", "INTEGER"],
         ["closed_at", "TEXT NOT NULL DEFAULT ''"],
@@ -1234,16 +1226,15 @@ function migrateAuxiliaryStorage(db: DatabaseSync): void {
           : buildAuxiliaryPreview(session.messages);
         const migrated = { ...session, createdAt: session.createdAt || row.created_at,
           updatedAt: session.updatedAt || row.updated_at, status: row.status as AuxiliarySession["status"], preview };
-        if (readParentDirectoriesJson(db, session.parentSessionId) !== undefined) {
-          mergeParentDirectories(db, session.parentSessionId, session.allowedAdditionalDirectories);
-        }
         writeAuxiliaryMetadata(db, migrated);
         writeAuxiliaryMessages(db, migrated);
       }
       if (columns.has("summary_json")) db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN summary_json");
       db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN payload_json");
     }
-    migrateSharedSessionDirectories(db);
+    if (columns.has("allowed_additional_directories_json")) {
+      db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN allowed_additional_directories_json");
+    }
     const violations = db.prepare("PRAGMA foreign_key_check").all();
     if (violations.length) throw new Error("Auxiliary migration foreign key check failed.");
     db.exec("COMMIT");

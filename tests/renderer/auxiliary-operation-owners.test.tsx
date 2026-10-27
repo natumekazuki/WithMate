@@ -29,7 +29,7 @@ function session(id = "aux-1"): AuxiliarySession {
   return { id, parentSessionId: "parent", status: "active", runState: "idle", title: id, provider: "codex",
     catalogRevision: 1, model: "model-a", reasoningEffort: "medium", approvalMode: "untrusted",
     codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
-    allowedAdditionalDirectories: [], threadId: "thread", composerDraft: "", messages: [],
+    threadId: "thread", composerDraft: "", messages: [],
     displayAfterMessageIndex: null, createdAt: "creation-1", updatedAt: "before", closedAt: "" };
 }
 

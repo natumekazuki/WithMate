@@ -64,7 +64,6 @@ function createAuxiliarySession(
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "thread-1",
     composerDraft: "",
     messages,

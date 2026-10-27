@@ -405,7 +405,6 @@ describe("SessionRuntimeService session admission", () => {
         codexSpeed: parent.codexSpeed,
         codexReviewer: parent.codexReviewer,
         customAgentName: parent.customAgentName,
-        allowedAdditionalDirectories: [],
         threadId: "",
         messages: [],
         composerDraft: "",

@@ -60,7 +60,6 @@ function createAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxi
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "",
     composerDraft: "",
     messages: [],
@@ -662,19 +661,19 @@ test("resolveEditableActiveAuxiliarySession は保存対象の active session �
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary編集recipeは同ownerの実行中Sessionにも適用しdirectory以外の本文/runStateを保持して異なるIDを拒否する"
-// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: Additional Directoryの次送信用編集" }
-// fault = "running recipeを適用しないか古いactive Sessionを基底にして現行本文を失う"
-// observable = "recipe適用結果のdirectory/本文/runStateとowner不一致のnull"
+// claim = "Auxiliary編集recipeは同ownerの現在Sessionへ適用しtitle以外の本文/runStateを保持して異なるIDを拒否する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md" }
+// fault = "古いactive Sessionを基底にして現行本文を失うか異なるownerへ編集を適用する"
+// observable = "recipe適用結果のtitle/本文/runStateとowner不一致のnull"
 // observation_boundary = "public-boundary"
 // scope = "Auxiliary editable recipe resolution"
 // lifecycle = "permanent"
-// impact = "次依頼のdirectory追加を反映できないか現在会話の状態を戻す"
+// impact = "会話の編集を反映できないか現在会話の状態を戻す"
 // distinction = "resolver参照のtestだけではrecipeに渡された実基底を検証できない"
 // @end-test-value
 test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recipe を適用する", () => {
   const activeSession = createAuxiliarySession({ title: "active" });
-  const currentSession = createAuxiliarySession({ title: "current" });
+  const currentSession = createAuxiliarySession({ title: "current", messages: [{ role: "user", text: "current" }] });
 
   assert.deepEqual(
     buildEditableActiveAuxiliarySessionPatch({
@@ -694,15 +693,6 @@ test("buildEditableActiveAuxiliarySessionPatch は保存対象 session に recip
       recipe: (current) => ({ ...current, title: "next" }),
     }),
     null,
-  );
-  const running = createAuxiliarySession({ runState: "running", messages: [{ role: "user", text: "current" }] });
-  assert.deepEqual(
-    buildEditableActiveAuxiliarySessionPatch({
-      activeSession,
-      currentSession: running,
-      recipe: (current) => ({ ...current, allowedAdditionalDirectories: ["C:/next"] }),
-    }),
-    { ...running, allowedAdditionalDirectories: ["C:/next"] },
   );
 });
 

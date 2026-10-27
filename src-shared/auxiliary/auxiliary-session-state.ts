@@ -88,7 +88,6 @@ export type AuxiliarySession = {
   codexSpeed: CodexSpeed;
   codexReviewer: CodexReviewer;
   customAgentName: string;
-  allowedAdditionalDirectories: string[];
   threadId: string;
   composerDraft: string;
   messages: Message[];
@@ -438,9 +437,6 @@ export function normalizeAuxiliarySession(value: unknown): AuxiliarySession | nu
     codexSpeed: normalizeCodexSpeed(candidate.codexSpeed),
     codexReviewer: normalizeCodexReviewer(candidate.codexReviewer),
     customAgentName: typeof candidate.customAgentName === "string" ? candidate.customAgentName : "",
-    allowedAdditionalDirectories: Array.isArray(candidate.allowedAdditionalDirectories)
-      ? candidate.allowedAdditionalDirectories.filter((entry): entry is string => typeof entry === "string")
-      : [],
     threadId: typeof candidate.threadId === "string" ? candidate.threadId : "",
     composerDraft: typeof candidate.composerDraft === "string" ? candidate.composerDraft : "",
     messages: Array.isArray(candidate.messages)

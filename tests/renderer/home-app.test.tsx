@@ -490,7 +490,7 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       title: "Auxiliary", preview: "Auxiliary task", provider: "codex", catalogRevision: 1,
       model: "gpt-5.4", reasoningEffort: "high", approvalMode: "on-request", codexSpeed: "standard",
       codexReviewer: "auto-review", codexSandboxMode: "danger-full-access", customAgentName: "",
-      allowedAdditionalDirectories: [], threadId: "", displayAfterMessageIndex: null,
+      threadId: "", displayAfterMessageIndex: null,
       createdAt: "2026-10-07T00:00:00.000Z", updatedAt: "2026-10-07T00:00:00.000Z", closedAt: "",
     };
     const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();

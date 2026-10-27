@@ -45,7 +45,6 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "",
     composerDraft: "",
     messages: [],

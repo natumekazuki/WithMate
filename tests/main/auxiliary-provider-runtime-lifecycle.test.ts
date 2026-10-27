@@ -20,7 +20,6 @@ function createAuxiliarySession(provider: string): AuxiliarySession {
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "",
     composerDraft: "",
     messages: [],

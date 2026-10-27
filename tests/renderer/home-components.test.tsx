@@ -1931,7 +1931,6 @@ describe("HomeMonitorContent", () => {
     approvalMode: "untrusted",
     codexSandboxMode: "danger-full-access",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "",
     displayAfterMessageIndex: null,
     createdAt: "2026-03-28T00:00:00.000Z",

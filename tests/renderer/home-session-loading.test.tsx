@@ -57,7 +57,7 @@ function auxiliary(id: string, cancellationState?: AuxiliarySessionSummary["canc
     id, parentSessionId: "open", status: "active", runState: "idle", title: id,
     provider: "codex", catalogRevision: 1, model: "gpt-5.4", reasoningEffort: "high",
     approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard",
-    codexReviewer: "auto-review", customAgentName: "", allowedAdditionalDirectories: [],
+    codexReviewer: "auto-review", customAgentName: "",
     threadId: "", displayAfterMessageIndex: null, createdAt: "", updatedAt: "", closedAt: "",
     preview: id, cancellationState,
   };

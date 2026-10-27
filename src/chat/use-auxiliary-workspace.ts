@@ -128,9 +128,6 @@ function sortByLastUsed(summaries: AuxiliarySessionSummary[], recency?: Readonly
 function sameSummary(left: AuxiliarySessionSummary, right: AuxiliarySessionSummary): boolean {
   const keys = Object.keys(right) as Array<keyof AuxiliarySessionSummary>;
   return Object.keys(left).length === keys.length && keys.every((key) => {
-    if (key === "allowedAdditionalDirectories") {
-      return left[key].length === right[key].length && left[key].every((value, index) => value === right[key][index]);
-    }
     return left[key] === right[key];
   });
 }

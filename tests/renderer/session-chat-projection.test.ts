@@ -483,7 +483,6 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
     codexSpeed: "standard",
     codexReviewer: "user",
     customAgentName: "",
-    allowedAdditionalDirectories: [],
     threadId: "thread-auxiliary",
     composerDraft: "",
     messages: [],
