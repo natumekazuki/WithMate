@@ -1078,10 +1078,13 @@ it("rejects unavailable Claude modes without silently changing the selection", a
   }
   const request = input();
   request.executionOptions = { ...request.executionOptions, approvalMode: "untrusted" };
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () { assert.fail("Unsupported mode must not start query"); }) });
+  let queryCalls = 0;
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {}, () => { queryCalls += 1; }) });
   await assert.rejects(adapter.runSessionTurn(request), /not supported by Claude/);
+  assert.equal(queryCalls, 0);
   request.executionOptions = { ...request.executionOptions, approvalMode: "accept-edits", codexReviewer: "auto-review" };
   await assert.rejects(adapter.runSessionTurn(request), /Auto Review requires Provider Controlled/);
+  assert.equal(queryCalls, 0);
 });
 
 // @test-value v2
