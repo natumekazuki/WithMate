@@ -248,3 +248,69 @@ test("期間の明示指定と計算single-flight、正常0件の削除抑止を
     assert.equal([...root.querySelectorAll("button")].find((item) => item.textContent === "Delete Files…")!.disabled, true);
   });
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "削除例外・部分失敗の診断は通常計算の成功・失敗と再確認取消を経ても保持され、削除の再実行結果で更新される"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#interaction" }
+// fault = "Calculateが削除失敗理由・件数を消す、確認取消で失敗が解消扱いになる、次の削除結果へ前回の失敗が残る"
+// observable = "計算・削除API呼出回数、削除操作横の診断原文と失敗件数、再実行後の削除結果"
+// observation_boundary = "component-behavior"
+// scope = "SessionFolder cleanup independent operation feedback"
+// lifecycle = "permanent"
+// impact = "別操作の結果によって未解消の削除失敗を再確認できなくなる、または回復後も失敗表示が残る"
+// distinction = "既存service・renderer testと型検査はCalculateと削除結果の交差経路を検証しない"
+// @end-test-value
+test("通常の再計算と確認取消は未解消の削除失敗を保持する", async () => {
+  for (const partial of [false, true]) {
+    let scans = 0;
+    let runs = 0;
+    await withCleanup({
+      async scanSessionFolderCleanup() {
+        if (++scans === 3) throw new Error("Synthetic calculation failure");
+        return { ...scan, scanId: `scan-${scans}` };
+      },
+      async runSessionFolderCleanup(request) {
+        runs++;
+        if (runs === 1) {
+          if (!partial) throw new Error("Synthetic deletion failure");
+          return { deletedFileCount: 39, deletedBytes: 3072, deletedDirectoryCount: 0, skippedFileCount: 0, failedFileCount: 1,
+            issues: [{ sessionId: "synthetic", relativePath: "locked", kind: "failed", message: "Synthetic deletion failure" }] };
+        }
+        assert.equal(request.scanId, "scan-4");
+        return { deletedFileCount: 1, deletedBytes: 1024, deletedDirectoryCount: 0, skippedFileCount: 0, failedFileCount: 0, issues: [] };
+      },
+    }, async ({ root, click }) => {
+      await click("All Dates");
+      await click("Calculate");
+      await click("Delete Files…");
+      await click("Permanently Delete");
+      const button = [...root.querySelectorAll("button")].find((item) => item.textContent === "Delete Files…")!;
+      const assertDeletionFailure = () => {
+        assert.match(button.parentElement!.querySelector('[popover]')!.textContent!, /Synthetic deletion failure/);
+        if (partial) assert.match(root.textContent!, /1 Files Failed/);
+        assert.equal(runs, 1);
+      };
+      assertDeletionFailure();
+      await click("Calculate");
+      assertDeletionFailure();
+      assert.ok(root.querySelector("dl"));
+      await click("Delete Files…");
+      await click("Cancel");
+      assertDeletionFailure();
+      await click("Calculate");
+      assertDeletionFailure();
+      assert.match(root.textContent!, /Synthetic calculation failure/);
+      await click("Delete Files…");
+      assertDeletionFailure();
+      await click("Cancel");
+      assertDeletionFailure();
+      await click("Delete Files…");
+      await click("Permanently Delete");
+      assert.equal(scans, 4);
+      assert.equal(runs, 2);
+      assert.match(root.textContent!, /1 Files Deleted · 1 KiB/);
+      assert.equal(button.parentElement!.querySelector('[popover]'), null);
+    });
+  }
+});

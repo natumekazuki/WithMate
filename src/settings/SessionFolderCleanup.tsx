@@ -123,10 +123,9 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
     inFlight.current = true;
     setPhase(confirmDeletion ? "retrying" : "scanning");
     setScan(null);
-    setResult(null);
+    if (!deleteFailure) setResult(null);
     setValidation("");
     setScanError("");
-    setDeleteError("");
     try {
       const next = await api.scanSessionFolderCleanup(request);
       if (token === operation.current) {
@@ -149,6 +148,7 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
     inFlight.current = true;
     setConfirming(false);
     setPhase("deleting");
+    setResult(null);
     setDeleteError("");
     try {
       const next = await api.runSessionFolderCleanup({ scanId: scan.scanId });
