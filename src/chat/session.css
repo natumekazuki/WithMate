@@ -2193,6 +2193,7 @@
 }
 
 .live-elicitation-card .live-approval-actions {
+  min-width: 0;
   justify-content: flex-end;
 }
 
@@ -2219,6 +2220,7 @@
 
 .live-elicitation-form {
   display: grid;
+  min-width: 0;
   gap: 12px;
 }
 
@@ -2230,6 +2232,7 @@
 
 .live-elicitation-field {
   display: grid;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -2247,6 +2250,7 @@
 .live-elicitation-field select,
 .live-elicitation-field textarea {
   width: 100%;
+  min-width: 0;
   padding: 10px 12px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: 12px;
@@ -2311,10 +2315,12 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  overflow-wrap: anywhere;
 }
 
 .live-elicitation-options {
   display: grid;
+  min-width: 0;
   gap: 8px;
 }
 
