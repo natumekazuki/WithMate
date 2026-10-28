@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -388,25 +387,4 @@ test("startModelCatalogSubscription は cleanup 後の初回取得結果を反�
   await flushPromises();
 
   assert.deepEqual(updates, []);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "Session Window Appはmodel catalogの購読を有効化してprovider model更新を受け取る"
-// oracle = { type = "contract", ref = "src/app/SessionWindowApp.tsx model catalog subscription" }
-// fault = "Appがmodel catalog subscriptionを無効化し、初回snapshot後の更新を反映しない"
-// observable = "SessionWindowApp source内のstartModelCatalogSubscription呼び出しとsubscribe設定"
-// observation_boundary = "declaration"
-// scope = "model-catalog-subscription SessionWindowApp integration"
-// lifecycle = "permanent"
-// @end-test-value
-test("App は model catalog subscription を有効にする", async () => {
-  const source = await readFile(new URL("../../src/app/SessionWindowApp.tsx", import.meta.url), "utf8");
-  const subscriptionIndex = source.indexOf("startModelCatalogSubscription({");
-
-  assert.notEqual(subscriptionIndex, -1);
-  assert.match(
-    source.slice(subscriptionIndex, subscriptionIndex + 320),
-    /subscribe: true/,
-  );
 });

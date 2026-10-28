@@ -48,7 +48,7 @@ test("buildRuntimeSelectionOptions は approval / sandbox / model / reasoning / 
     { value: "untrusted", label: "Safety Focused" },
   ]);
   assert.deepEqual(options.sandboxChoiceOptions, []);
-  assert.deepEqual(options.modelSelectOptions[0], { value: "legacy-model", label: "legacy-model" });
+  assert.deepEqual(options.modelSelectOptions[0], { value: "legacy-model", label: "legacy-model", model: null });
   assert.equal(options.selectedModelFallbackLabel, "legacy-model");
   assert.deepEqual(options.reasoningSelectOptions, [
     { value: "", label: "Default" },
@@ -81,7 +81,7 @@ test("buildRuntimeSelectionOptions は Copilot 以外で sandbox 選択肢が空
   });
 
   assert.deepEqual(options.sandboxChoiceOptions, []);
-  assert.deepEqual(options.modelSelectOptions, [{ value: "model-a", label: "Model A" }]);
+  assert.deepEqual(options.modelSelectOptions, [{ value: "model-a", label: "Model A", model: providerCatalog.models[0] }]);
   assert.equal(options.selectedModelFallbackLabel, "Model A");
   assert.deepEqual(options.reasoningSelectOptions, [
     { value: "", label: "Default" },
