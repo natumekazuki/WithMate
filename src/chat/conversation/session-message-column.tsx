@@ -23,12 +23,14 @@ import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
-import { clampFindMatchIndex, findTextMatches, iterateTextMatches } from "../../../src-shared/text/find-text-matches.js";
+import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
+import { createMessageSearchProjection, iterateMessageSearchMatches } from "../../../src-shared/session/message-find.js";
+import { MessageSourceMatch } from "./message-source-match.js";
 
 import { resolveSelectionActionOverlayPosition } from "../../chat/selection-action-overlay.js";
 
 import {
-  createMessageRenderedSearchTextProjection,
+  createMessageSearchProjectionCache,
   isMessageRenderedSearchTextNode,
 } from "./message-rendered-search-text.js";
 import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
@@ -548,6 +550,7 @@ export function SessionMessageColumn({
   const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
+  const scrolledSourceMatchRef = useRef<string | null>(null);
   const handledMessageJumpRequestIdRef = useRef<number | null>(null);
   const requestedMessageJumpIdRef = useRef<number | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
@@ -729,7 +732,7 @@ export function SessionMessageColumn({
     pendingMessageText.trim().length > 0;
   const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
-  const projectMessageSearchTexts = useMemo(() => createMessageRenderedSearchTextProjection(provider), [sessionId, provider]);
+  const projectMessageSearchTexts = useMemo(() => createMessageSearchProjectionCache(provider), [sessionId, provider]);
   const conversationFind = useConversationQueryPages({
     identity: `${conversationQueryOwner}:${conversationQueryRevision}:${messageViewMode}:${findQuery}`,
     enabled: isContentActive && artifactDetailsEnabled && findOpen && hasFindQuery,
@@ -738,16 +741,14 @@ export function SessionMessageColumn({
     cancel: cancelConversationQuery,
   });
   useEffect(() => { setConversationFindError(""); }, [findQuery, messageViewMode, conversationQueryOwner]);
-  const messageRenderedSearchTexts = useMemo(
+  const messageSearchProjections = useMemo(
     () => projectMessageSearchTexts(messages, messageKeys, messageViewMode, hasFindQuery),
     [hasFindQuery, messageKeys, messageViewMode, messages, projectMessageSearchTexts],
   );
-  const pendingRenderedSearchText = useMemo(
+  const pendingSearchProjection = useMemo(
     () => (hasFindQuery && isRunning && hasPendingMessageText
-      ? messageViewMode === "source"
-        ? pendingMessageText
-        : projectMessageRenderedSearchText(pendingMessageText, provider)
-      : ""),
+      ? createMessageSearchProjection(pendingMessageText, provider, messageViewMode)
+      : null),
     [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText, provider],
   );
   const pendingMessageGroupEndIndex = useMemo(
@@ -763,22 +764,25 @@ export function SessionMessageColumn({
     },
     [isRunning, messageGroups, pendingMessageGroupId],
   );
+  const pendingSearchMatches = useMemo(() => pendingSearchProjection
+    ? [...iterateMessageSearchMatches(pendingSearchProjection, findQuery, messageViewMode)] : [],
+  [pendingSearchProjection, findQuery, messageViewMode]);
   const messageFindMatches = useMemo(() => {
     const matches: Array<
       | { kind: "message"; messageIndex: number; occurrenceIndex: number }
       | { kind: "pending"; occurrenceIndex: number }
     > = [];
     if (searchConversation) return matches;
-    const pendingMatches = findTextMatches(pendingRenderedSearchText, findQuery);
     const appendPendingMatches = () => {
-      pendingMatches.forEach((_, occurrenceIndex) => {
+      pendingSearchMatches.forEach((_, occurrenceIndex) => {
         matches.push({ kind: "pending", occurrenceIndex });
       });
     };
-    messageRenderedSearchTexts.forEach((text, messageIndex) => {
-      findTextMatches(text, findQuery).forEach((_, occurrenceIndex) => {
-        matches.push({ kind: "message", messageIndex, occurrenceIndex });
-      });
+    messageSearchProjections.forEach((projection, messageIndex) => {
+      let occurrenceIndex = 0;
+      for (const _match of iterateMessageSearchMatches(projection, findQuery, messageViewMode)) {
+        matches.push({ kind: "message", messageIndex, occurrenceIndex: occurrenceIndex++ });
+      }
       if (messageIndex === pendingMessageGroupEndIndex) {
         appendPendingMatches();
       }
@@ -787,8 +791,8 @@ export function SessionMessageColumn({
       appendPendingMatches();
     }
     return matches;
-  }, [searchConversation, findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
-  const tailSearchProjection = useMemo(() => createMessageRenderedSearchTextProjection(provider), [conversationQueryOwner, provider]);
+  }, [searchConversation, messageSearchProjections, findQuery, messageViewMode, pendingMessageGroupEndIndex, pendingSearchMatches]);
+  const tailSearchProjection = useMemo(() => createMessageSearchProjectionCache(provider), [conversationQueryOwner, provider]);
   const tailFind = useMemo(() => {
     type TailMatch = { kind: "message"; messageIndex: number; historyIndex: number; occurrenceIndex: number } | { kind: "pending"; occurrenceIndex: number };
     let totalCount = 0;
@@ -801,28 +805,29 @@ export function SessionMessageColumn({
       const historyIndex = getMessageHistoryIndex(message, index);
       if (historyIndex < conversationFind.messageCount!) return;
       let occurrenceIndex = 0;
-      for (const _match of iterateTextMatches(texts[index], findQuery)) {
+      for (const _match of iterateMessageSearchMatches(texts[index], findQuery, messageViewMode)) {
         if (totalCount === selectedIndex) selected = { kind: "message", historyIndex, messageIndex: messages.findIndex((loaded, localIndex) => (searchMessageIndexes?.[localIndex] ?? getMessageHistoryIndex(loaded, localIndex)) === historyIndex), occurrenceIndex };
         totalCount++;
         occurrenceIndex++;
       }
     });
     let occurrenceIndex = 0;
-    for (const _match of iterateTextMatches(pendingRenderedSearchText, findQuery)) {
+    for (const _match of pendingSearchMatches) {
       if (totalCount === selectedIndex) selected = { kind: "pending", occurrenceIndex };
       totalCount++;
       occurrenceIndex++;
     }
     return { totalCount, selected };
-  }, [searchConversation, conversationFind.messageCount, conversationFind.totalCount, currentFindMatch, searchTailMessages, searchMessageIndexes, messages, tailSearchProjection, messageViewMode, hasFindQuery, findQuery, pendingRenderedSearchText]);
+  }, [searchConversation, conversationFind.messageCount, conversationFind.totalCount, currentFindMatch, searchTailMessages, searchMessageIndexes, messages, tailSearchProjection, messageViewMode, hasFindQuery, findQuery, pendingSearchMatches]);
   const findMatchCount = searchConversation ? conversationFind.totalCount + tailFind.totalCount : messageFindMatches.length;
   const findMatchMessageIndexes = useMemo(
-    () => searchConversation ? new Set(messageRenderedSearchTexts.flatMap((text, index) => iterateTextMatches(text, findQuery).next().done ? [] : [index])) : new Set(
+    () => searchConversation ? new Set(messageSearchProjections.flatMap((projection, index) =>
+      iterateMessageSearchMatches(projection, findQuery, messageViewMode).next().done ? [] : [index])) : new Set(
       messageFindMatches
         .filter((match): match is Extract<typeof match, { kind: "message" }> => match.kind === "message")
         .map((match) => match.messageIndex),
     ),
-    [messageFindMatches, searchConversation, messageRenderedSearchTexts, findQuery],
+    [messageFindMatches, searchConversation, messageSearchProjections, findQuery, messageViewMode],
   );
   const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, findMatchCount);
   const savedFindMatch = searchConversation && activeCurrentFindMatch < conversationFind.totalCount ? conversationFind.itemAt(activeCurrentFindMatch) : undefined;
@@ -831,6 +836,21 @@ export function SessionMessageColumn({
     ? { kind: "message" as const, messageIndex: messages.findIndex((message, index) => getMessageHistoryIndex(message, index) === savedFindMatch.messageIndex), occurrenceIndex: savedFindMatch.occurrenceIndex }
     : tailFindMatch
     : messageFindMatches[activeCurrentFindMatch];
+  const selectedSearchMatch = useMemo(() => {
+    if (selectedFindMatch?.kind === "pending") return pendingSearchMatches[selectedFindMatch.occurrenceIndex];
+    if (!selectedFindMatch) return undefined;
+    const projection = messageSearchProjections[selectedFindMatch.messageIndex];
+    if (!projection) return undefined;
+    let occurrenceIndex = 0;
+    for (const match of iterateMessageSearchMatches(projection, findQuery, messageViewMode)) {
+      if (occurrenceIndex++ === selectedFindMatch.occurrenceIndex) return match;
+    }
+    return undefined;
+  }, [selectedFindMatch?.kind, selectedFindMatch?.occurrenceIndex,
+    selectedFindMatch?.kind === "message" ? selectedFindMatch.messageIndex : -1,
+    pendingSearchMatches, messageSearchProjections, findQuery, messageViewMode]);
+  const sourceMatch = findOpen && messageViewMode === "preview" && selectedSearchMatch?.kind === "source"
+    ? selectedSearchMatch : undefined;
   const canRenderGroupedPending =
     pendingResponseMessageIndex < 0 &&
     pendingMessageGroupEndIndex >= 0 &&
@@ -1013,10 +1033,18 @@ export function SessionMessageColumn({
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
     if (!isContentActive || !findOpen || !findQuery.trim() || !messageListElement) {
+      scrolledSourceMatchRef.current = null;
       return;
     }
     const ownerDocument = messageListElement.ownerDocument;
     const current = selectedFindMatch ?? null;
+    const sourceMatchKey = sourceMatch && current ? JSON.stringify([
+      conversationQueryOwner, findQuery, activeCurrentFindMatch, current.kind,
+      current.kind === "message" ? findHistoryIndex ?? messageKeys?.[current.messageIndex] ?? current.messageIndex : null,
+      current.occurrenceIndex,
+    ]) : null;
+    if (!sourceMatchKey) scrolledSourceMatchRef.current = null;
+    let sourceScrollFrame: number | null = null;
     const applyHighlights = () => {
       const resolvedMatches: RenderedTextMatch[] = [];
       let resolvedCurrentMatch: RenderedTextMatch | null = null;
@@ -1030,8 +1058,8 @@ export function SessionMessageColumn({
         const index = createRenderedTextSearchIndex(pendingRichText, isMessageRenderedSearchTextNode);
         const matches = findRenderedTextMatchOffsets(index, findQuery);
         appendRenderedTextMatches(resolvedMatches, index, matches);
-        if (current?.kind === "pending") {
-          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, current.occurrenceIndex);
+        if (current?.kind === "pending" && !sourceMatch) {
+          resolvedCurrentMatch = resolveRenderedTextMatch(index, matches, selectedSearchMatch?.renderedOccurrenceIndex ?? current.occurrenceIndex);
         }
         return true;
       };
@@ -1046,14 +1074,14 @@ export function SessionMessageColumn({
           const index = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
           const matches = findRenderedTextMatchOffsets(index, findQuery);
           appendRenderedTextMatches(resolvedMatches, index, matches);
-          if (current?.kind === "message" && current.messageIndex === messageIndex) {
+          if (current?.kind === "message" && current.messageIndex === messageIndex && !sourceMatch) {
             // Count the original prefix, including a question currently replaced by controls.
             // Form labels and inserted tool-only questions do not belong to the message body.
             const sourceStart = Number(richText.dataset.sourceStart ?? 0);
             const prefix = sourceStart > 0 ? messages[messageIndex].text.slice(0, sourceStart) : "";
             const prefixText = messageViewMode === "source" || !prefix ? prefix : projectMessageRenderedSearchText(prefix, messages[messageIndex].role === "assistant" ? provider : undefined);
             const precedingMatches = findTextMatches(prefixText, findQuery).length;
-            resolvedCurrentMatch ??= resolveRenderedTextMatch(index, matches, current.occurrenceIndex - precedingMatches);
+            resolvedCurrentMatch ??= resolveRenderedTextMatch(index, matches, (selectedSearchMatch?.renderedOccurrenceIndex ?? current.occurrenceIndex) - precedingMatches);
           }
         }
         if (messageIndex === pendingMessageGroupEndIndex) {
@@ -1064,28 +1092,49 @@ export function SessionMessageColumn({
         appendPendingHighlights(messageListElement);
       }
       applyRenderedTextHighlights(ownerDocument, resolvedMatches, resolvedCurrentMatch);
-      scrollRenderedTextMatchIntoView(resolvedCurrentMatch, messageListElement);
+      if (sourceMatch) {
+        const node = messageListElement.querySelector<HTMLElement>(".message-source-match mark")?.firstChild;
+        const view = ownerDocument.defaultView;
+        if (sourceMatchKey && scrolledSourceMatchRef.current !== sourceMatchKey && sourceScrollFrame === null && node?.nodeType === Node.TEXT_NODE && view) {
+          sourceScrollFrame = view.requestAnimationFrame(() => {
+            sourceScrollFrame = null;
+            const target = messageListElement.querySelector<HTMLElement>(".message-source-match mark")?.firstChild;
+            if (target?.nodeType !== Node.TEXT_NODE) return;
+            const text = target as Text;
+            scrollRenderedTextMatchIntoView({ startNode: text, startOffset: 0, endNode: text, endOffset: text.length }, messageListElement);
+            scrolledSourceMatchRef.current = sourceMatchKey;
+          });
+        }
+      } else {
+        scrollRenderedTextMatchIntoView(resolvedCurrentMatch, messageListElement);
+      }
     };
     applyHighlights();
     const MutationObserverConstructor = ownerDocument.defaultView?.MutationObserver;
     const observer = MutationObserverConstructor ? new MutationObserverConstructor(applyHighlights) : null;
     observer?.observe(messageListElement, { childList: true, characterData: true, subtree: true });
     return () => {
+      if (sourceScrollFrame !== null) ownerDocument.defaultView?.cancelAnimationFrame(sourceScrollFrame);
       observer?.disconnect();
       clearRenderedTextHighlights(ownerDocument);
     };
   }, [
     activeCurrentFindMatch,
+    conversationQueryOwner,
+    findHistoryIndex,
     findOpen,
     findQuery,
     isContentActive,
     messageFindMatches,
+    messageKeys,
     messages,
     messageViewMode,
     provider,
     selectedFindMatch?.kind,
     selectedFindMatch?.occurrenceIndex,
     selectedFindMatch?.kind === "message" ? selectedFindMatch.messageIndex : -1,
+    selectedSearchMatch,
+    sourceMatch,
     messageCollapseTargetByKey,
     collapsedMessageKeys,
     messageListRef,
@@ -1225,6 +1274,7 @@ export function SessionMessageColumn({
           />
         </div>
       ) : null}
+      {hasPendingMessageText && sourceMatch && selectedFindMatch?.kind === "pending" ? <MessageSourceMatch text={pendingMessageText} match={sourceMatch} /> : null}
       {liveRunErrorMessage ? (
         <p className="pending-run-error-note" role="alert">{liveRunErrorMessage}</p>
       ) : null}
@@ -1490,6 +1540,8 @@ export function SessionMessageColumn({
                           <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
                         )}
                       </div>
+                      {sourceMatch && selectedFindMatch?.kind === "message" && selectedFindMatch.messageIndex === absoluteIndex
+                        ? <MessageSourceMatch text={message.text} match={sourceMatch} /> : null}
                     </div>
 
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}

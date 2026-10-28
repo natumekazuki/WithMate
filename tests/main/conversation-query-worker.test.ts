@@ -19,7 +19,7 @@ async function fixture() {
     workspacePath: "C:/workspace", branch: "main", characterId: "char", character: "Character", characterIconPath: "",
     characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "never" }),
     messages: Array.from({ length: 135 }, (_, index): Message => ({ role: index === 0 ? "user" : "assistant",
-      text: index === 3 ? "**needle** needle ![hidden](hidden.png)" : `message ${index} needle`, isBookmarked: index === 4 })) });
+      text: index === 3 ? "**needle** needle ![hidden](hidden.png) [filename](C:/users/admin/documents/sample.md)" : `message ${index} needle`, isBookmarked: index === 4 })) });
   const auxiliary: AuxiliarySession = { ...session, id: "query-aux", parentSessionId: session.id, status: "active", runState: "idle",
     title: "Query aux", preview: "", composerDraft: "", displayAfterMessageIndex: null,
     createdAt: "2026-10-10T00:00:00.000Z", updatedAt: "2026-10-10T00:00:00.000Z", closedAt: "" };
@@ -29,9 +29,9 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main／AuxiliaryのどちらがCodexでも全履歴検索とnavigatorは各ownerのproviderで固有参照を投影し、Sourceを保持する"
+// claim = "Main／Auxiliaryの検索はPreviewでも原文属性を見つけ、navigatorは各ownerのproviderで固有参照を投影する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
-// fault = "workerへproviderが届かないか親のproviderをAuxiliaryへ流用し、非表示属性が検索されるか他providerの本文を失う"
+// fault = "Preview検索から原文属性が落ちるか親のproviderをAuxiliaryへ流用してnavigatorの表示labelを誤る"
 // observable = "実storage Workerから取得するpreview／Sourceの検索件数とnavigatorのpreview"
 // observation_boundary = "public-boundary"
 // scope = "Main／Auxiliary query ownerのprovider伝播"
@@ -54,7 +54,7 @@ test("全履歴投影は会話ownerごとのproviderを使う", async () => {
           const result = await store.searchConversation(id, { producerId: id, requestId: `${id}-${mode}`, query: "Hidden Title", mode });
           assert.equal(result.status, "complete");
           if (result.status !== "complete") throw new Error("missing provider search result");
-          assert.equal(result.totalCount, isCodex && mode === "preview" ? 0 : 1);
+          assert.equal(result.totalCount, 1);
         }
         const navigator = await store.listConversationNavigator(id, { producerId: id, requestId: `${id}-navigator`, filter: "all" });
         assert.equal(navigator.status, "complete");
@@ -69,7 +69,7 @@ test("全履歴投影は会話ownerごとのproviderを使う", async () => {
 // kind = "contract"
 // claim = "Worker検索はMain/Auxiliary全履歴のsourceとpreview意味・seq・occurrenceを維持し、任意offsetを同じstampで64件以内に返す"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md#storage-overview" }
-// fault = "末尾会話だけを検索するか全matchを一度に返すかMarkdown非表示要素をpreview matchへ含める"
+// fault = "末尾会話だけを検索するか全matchを一度に返すかMarkdown原文固有の一致をpreview検索から落とす"
 // observable = "実Workerから取得したtotalCount、64件page、stamp再取得page、source/preview件数、navigator Bookmarkとpreview"
 // observation_boundary = "public-boundary"
 // scope = "v6-storage-worker-conversation-query"
@@ -106,7 +106,13 @@ test("実Worker検索は全履歴の意味と有限pageを維持する", async (
       for (const mode of ["source", "preview"] as const) {
         const hidden = await store.searchConversation(id, { ...req, requestId: `hidden-${mode}`, query: "hidden", mode });
         assert.equal(hidden.status, "complete");
-        if (hidden.status === "complete") assert.equal(hidden.totalCount, mode === "source" ? 2 : 0);
+        if (hidden.status === "complete") assert.equal(hidden.totalCount, 2);
+        const path = await store.searchConversation(id, { ...req, requestId: `path-${mode}`, query: "sample.md", mode });
+        assert.equal(path.status, "complete");
+        if (path.status === "complete") {
+          assert.equal(path.totalCount, 1);
+          assert.deepEqual(path.items, [{ messageIndex: 3, occurrenceIndex: 0 }]);
+        }
       }
       const bookmarks = await store.listConversationNavigator(id, { producerId: req.producerId, requestId: "bookmarks", filter: "bookmarks" });
       assert.equal(bookmarks.status, "complete");

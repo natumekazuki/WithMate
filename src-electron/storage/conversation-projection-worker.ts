@@ -1,8 +1,8 @@
 import { parentPort } from "node:worker_threads";
 import { normalizeMessage } from "../../src-shared/session/session-state.js";
 import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
-import { projectMessagePlainText, projectMessageRenderedSearchText } from "../../src-shared/session/message-search.js";
-import { iterateTextMatches } from "../../src-shared/text/find-text-matches.js";
+import { projectMessagePlainText } from "../../src-shared/session/message-search.js";
+import { createMessageSearchProjection, iterateMessageSearchMatches, type MessageSearchProjection } from "../../src-shared/session/message-find.js";
 import { CONVERSATION_QUERY_PAGE_SIZE, type ConversationNavigatorEntry, type ConversationSearchMatch } from "../../src-shared/session/conversation-page.js";
 import type { ConversationQueryRow } from "./conversation-query.js";
 
@@ -16,18 +16,19 @@ export type ConversationProjectionInput = {
 };
 export type ConversationProjectionResult = { count: number; items: Array<ConversationSearchMatch | ConversationNavigatorEntry> };
 
-const cache = new Map<string, { value: string; bytes: number }>();
+const cache = new Map<string, { value: string | MessageSearchProjection; bytes: number }>();
 let cacheBytes = 0;
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
-function projection(key: string, create: () => string): string {
+function projection<T extends string | MessageSearchProjection>(key: string, create: () => T): T {
   const cached = cache.get(key);
   if (cached) {
     cache.delete(key);
     cache.set(key, cached);
-    return cached.value;
+    return cached.value as T;
   }
   const value = create();
-  const bytes = 128 + 2 * (key.length + value.length);
+  const bytes = 128 + 2 * key.length + (typeof value === "string" ? 2 * value.length
+    : 2 * (value.sourceText.length + value.renderedText.length) + value.sourceRuns.length * 64);
   if (bytes <= MAX_CACHE_BYTES) {
     while (cacheBytes + bytes > MAX_CACHE_BYTES) {
       const oldest = cache.keys().next().value!;
@@ -54,10 +55,10 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
     const message = withMessageRunFailure(normalized, row.runFailure);
     const responseProvider = message.role === "assistant" ? input.provider : undefined;
     if (input.query.kind === "search") {
-      const text = input.query.mode === "source" ? message.text
-        : projection(`${input.cacheScope}:${input.provider}:${row.seq}:rendered`, () => projectMessageRenderedSearchText(message.text, responseProvider));
+      const search = input.query.mode === "source" ? createMessageSearchProjection(message.text, responseProvider, "source")
+        : projection(`${input.cacheScope}:${input.provider}:${row.seq}:search`, () => createMessageSearchProjection(message.text, responseProvider));
       let occurrenceIndex = 0;
-      for (const _match of iterateTextMatches(text, input.query.query)) {
+      for (const _match of iterateMessageSearchMatches(search, input.query.query, input.query.mode)) {
         const occurrence = occurrenceIndex++;
         retain(() => ({ messageIndex: row.seq, occurrenceIndex: occurrence }));
       }

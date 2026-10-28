@@ -1741,6 +1741,168 @@ test("paged Find counts global saved hits and only unsaved tail and pending", as
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "Preview検索は原文リンク先の一致理由を該当messageに示し、表示一致を二重計上せず前後移動・Source切替・Close後も元の本文を保つ"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/887" }
+// fault = "原文一致を数えない、一致抜粋を別messageへ出す、表示本文を二重に数える、または検索でMarkdown表示を置換する"
+// observable = "Findの件数、Source Matchのmarkと所属message、CSS Highlight、通常link、Source切替・Close後の本文"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnのlocal Findと原文一致表示"
+// lifecycle = "permanent"
+// impact = "リンク先だけにあるファイル名を検索し、見つかった根拠と通常本文を同時に確認できる"
+// distinction = "shared matcherではReactの結果選択・抜粋・本文表示・Closeの接続を確認できない。短い2messageで操作境界を検証する"
+// @end-test-value
+test("chat Find shows raw-only link matches without replacing Markdown or duplicating visible hits", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+    add(range: Range) { this.ranges.push(range); return this; }
+  }
+  const text = "ordinary needle [filename](C:/users/admin/documents/sample.md)";
+  const mounted = await mountSessionMessageColumn({ messages: [
+    { role: "assistant", text }, { role: "user", text: "Another [label](C:/second/sample.md)" },
+  ] });
+  const highlights = new Map<string, TestHighlight>();
+  Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+  Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
+  const snippet = () => mounted.container.querySelector(".message-source-match");
+  try {
+    await setMessageFindQuery(mounted, "sample.md");
+    assert.equal(count(), "1/2");
+    assert.equal(snippet()?.querySelector("mark")?.textContent, "sample.md");
+    assert.equal(snippet()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "0");
+    assert.match(snippet()?.textContent ?? "", /C:\/users\/admin\/documents\/sample.md/);
+    assert.equal(mounted.container.querySelector(".rich-text a")?.textContent, "filename");
+    assert.equal(highlights.get("withmate-find-current")?.ranges.length ?? 0, 0);
+    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    assert.equal(count(), "2/2");
+    assert.equal(snippet()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "1");
+    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!.click());
+    assert.equal(count(), "1/2");
+    await setMessageFindQuery(mounted, "filename");
+    assert.equal(count(), "1/1");
+    assert.equal(snippet(), null);
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "filename");
+    await setMessageFindQuery(mounted, "needle");
+    assert.equal(count(), "1/1");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
+    await setMessageFindQuery(mounted, "sample.md");
+    await mounted.rerender({ messageViewMode: "source" });
+    assert.equal(count(), "1/2");
+    assert.equal(snippet(), null);
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "sample.md");
+    await mounted.rerender({ messageViewMode: "preview" });
+    assert.ok(snippet());
+    await act(async () => {
+      mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']")!.blur();
+      mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Close find']")!.click();
+    });
+    assert.equal(snippet(), null);
+    assert.equal(mounted.container.querySelector(".rich-text a")?.textContent, "filename");
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "原文一致への移動後はDOM更新で読取位置を強制せず、別の一致を選択すれば再び移動できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findと結果への移動" }
+// fault = "一致選択後の本文更新や仮想行変更のたびに同じ原文一致へスクロールする"
+// observable = "原文一致へのスクロール要求回数と選択中の一致"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnの原文一致とDOM更新"
+// lifecycle = "permanent"
+// impact = "検索結果を選択したまま会話を読む位置がstreaming中に戻される"
+// distinction = "共有matcherのtestではDOM更新と選択移動の接続を確認できない"
+// @end-test-value
+test("chat Find preserves the reading position on DOM updates after navigating to a source match", async () => {
+  const mounted = await mountSessionMessageColumn({
+    messages: [
+      { role: "assistant", text: "[first](C:/one/sample.md)" },
+      { role: "assistant", text: "[second](C:/two/sample.md)" },
+    ],
+    isRunning: true,
+    liveRunAssistantText: "streaming response",
+  });
+  let scrollRequests = 0;
+  mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () {
+    if (this.matches(".message-source-match mark")) scrollRequests += 1;
+  };
+  try {
+    await setMessageFindQuery(mounted, "sample.md");
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/2");
+    assert.equal(scrollRequests, 1);
+    await act(async () => {
+      const node = mounted.dom.window.document.createElement("span");
+      node.textContent = "unrelated update";
+      mounted.messageListRef.current!.appendChild(node);
+    });
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(scrollRequests, 1);
+    await mounted.rerender({ isRunning: true, liveRunAssistantText: "streaming response updated" });
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(scrollRequests, 1);
+    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/2");
+    assert.equal(scrollRequests, 2);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliaryのpaged Findは保存原文一致・未保存tail・pendingを各1回数え、原文抜粋と履歴page移動を選択結果へ対応させる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/887; docs/design/desktop-ui.md: 全履歴Find" }
+// fault = "保存結果ordinalを表示一致ordinalと誤解する、loaded保存本文を加算する、またはtail/pending原文一致の選択を失う"
+// observable = "Find件数と循環移動順、抜粋mark、onLoadMessagePageのhistory index"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnのpaged保存検索とtail/pending合流"
+// lifecycle = "permanent"
+// impact = "Main/Auxiliaryどちらでも保存前後のリンク先を一続きの検索結果として辿れる"
+// distinction = "worker testはrendererの未保存合流とpending表示を通らない。明示した保存API結果で2ownerの接続を検証する"
+// @end-test-value
+test("paged raw Find merges saved, tail and pending matches for Main and Auxiliary", async () => {
+  for (const sessionId of ["main", "auxiliary"]) {
+    const loaded: number[] = [];
+    const messages: Message[] = [
+      { role: "assistant", text: "[saved](C:/saved/sample.md)", historyIndex: 49 },
+      { role: "user", text: "[tail](C:/tail/sample.md)", historyIndex: 50 },
+    ];
+    function Column(props: SessionMessageColumnProps) {
+      return React.createElement(SessionMessageColumn, {
+        ...props, searchTailMessages: messages, conversationQueryOwner: sessionId,
+        searchConversation: async (request) => ({ status: "complete", stamp: {
+          generationId: "generation", ownerIdentity: sessionId, contentRevision: 1, requestId: request.requestId,
+        }, incarnationId: "incarnation", messageCount: 50, totalCount: 1, offset: 0,
+        items: [{ messageIndex: 49, occurrenceIndex: 0 }] }),
+        onLoadMessagePage: async (index) => { loaded.push(index); },
+      });
+    }
+    const mounted = await mountSessionMessageColumn({ sessionId, messages, component: Column,
+      isRunning: true, pendingMessageText: "[pending](C:/pending/sample.md)" });
+    const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
+    const snippet = () => mounted.container.querySelector(".message-source-match")?.textContent ?? "";
+    try {
+      await setMessageFindQuery(mounted, "sample.md");
+      assert.equal(count(), "1/3", sessionId);
+      assert.match(snippet(), /C:\/saved\/sample.md/);
+      assert.equal(loaded.at(-1), 49);
+      const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
+      await act(async () => next.click());
+      assert.equal(count(), "2/3");
+      assert.match(snippet(), /C:\/tail\/sample.md/);
+      assert.equal(loaded.at(-1), 50);
+      await act(async () => next.click());
+      assert.equal(count(), "3/3");
+      assert.match(snippet(), /C:\/pending\/sample.md/);
+      await act(async () => next.click());
+      assert.equal(count(), "1/3");
+      assert.match(snippet(), /C:\/saved\/sample.md/);
+    } finally { await mounted.cleanup(); }
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "検索queryを保ったPreviewのlive更新は確定履歴を再解析せず、変更されたlive本文だけを検索投影する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A" }
@@ -1754,7 +1916,7 @@ test("paged Find counts global saved hits and only unsaved tail and pending", as
 // @end-test-value
 test("ConversationMessageColumn の検索はlive末尾更新だけを再解析する", async (t) => {
   const messages = Array.from({ length: 40 }, (_, index): Message => ({
-    role: "user", text: `history ${index} needle [label](https://needle.example)`,
+    role: "user", text: `history ${index} needle [label](https://destination.example)`,
   }));
   const mounted = await mountSessionMessageColumn({
     messages, component: ConversationBackedMessageColumn, isRunning: true, liveRunAssistantText: "live needle 0",
@@ -1811,8 +1973,8 @@ test("ConversationMessageColumn の検索はlive末尾更新だけを再解析�
 // @test-value v2
 // kind = "invariant"
 // claim = "検索本文の再利用はkeyと本文に一致する現在の会話だけを対象とし、Source中の本文変更・owner切替・履歴離脱・query空を越えて古い投影を再利用しない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A; issue-737-search-projection-initial.md: 本文変更・会話owner・寿命" }
-// fault = "配列再生成・並べ替えで全文再解析する、同じkeyの変更本文を見落とす、SourceのURLをPreviewへ混入する、離脱履歴や別ownerを保持し続ける"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/737#issuecomment-5979140173 PERF-737-A; https://github.com/natumekazuki/WithMate/issues/887" }
+// fault = "配列再生成・並べ替えで全文再解析する、同じkeyやSource中に変更した本文を見落とす、離脱履歴や別ownerを保持し続ける"
 // observable = "SessionMessageColumnの検索件数と、各入力変更による共通検索投影関数のV8呼出回数"
 // observation_boundary = "component-behavior"
 // scope = "検索投影の本文・key・owner・現在履歴の寿命"
@@ -1829,23 +1991,23 @@ test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴
   try {
     await setMessageFindQuery(mounted, "needle");
     assert.equal(await counter.take(), 2);
-    assert.equal(count(), "1/1");
+    assert.equal(count(), "1/2");
 
     // 新しいmessage objectと配列でも、keyと本文の組は変わらない。
     await mounted.rerender({ messages: [{ ...second }, { ...first }], messageKeys: ["second", "first"] });
     assert.equal(await counter.take(), 0);
-    assert.equal(count(), "1/1");
+    assert.equal(count(), "1/2");
     const changed: Message = { ...first, text: "**absent** first" };
     assert.equal(first.text.length, changed.text.length);
     await mounted.rerender({ messages: [second, changed], messageKeys: ["second", "first"] });
     assert.equal(await counter.take(), 1);
-    assert.equal(count(), "0/0");
+    assert.equal(count(), "1/1");
     const third: Message = { role: "assistant", text: "needle third" };
     const keys = ["second", "first", "third"];
     let messages = [second, changed, third];
     await mounted.rerender({ messages, messageKeys: keys });
     assert.equal(await counter.take(), 1);
-    assert.equal(count(), "1/1");
+    assert.equal(count(), "1/2");
 
     await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "source" });
     assert.equal(await counter.take(), 0);
@@ -1855,17 +2017,17 @@ test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴
     assert.equal(await counter.take(), 0);
     await mounted.rerender({ messages, messageKeys: keys, messageViewMode: "preview" });
     assert.equal(await counter.take(), 1);
-    assert.equal(count(), "1/1");
+    assert.equal(count(), "1/2");
 
     await mounted.rerender({ messages: messages.slice(0, 2), messageKeys: keys.slice(0, 2) });
     assert.equal(await counter.take(), 0);
-    assert.equal(count(), "0/0");
+    assert.equal(count(), "1/1");
     await mounted.rerender({ messages, messageKeys: keys });
     assert.equal(await counter.take(), 1);
-    assert.equal(count(), "1/1");
+    assert.equal(count(), "1/2");
     await mounted.rerender({ sessionId: "another-owner", messages, messageKeys: keys });
     assert.equal(await counter.take(), 3);
-    assert.equal(count(), "1/1");
+    assert.equal(count(), "1/2");
     await mounted.rerender({ sessionId: "session-1", messages, messageKeys: keys });
     assert.equal(await counter.take(), 3);
 
@@ -1874,7 +2036,7 @@ test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴
     assert.equal(count(), "0/0");
     await setMessageFindQuery(mounted, "needle");
     assert.equal(await counter.take(), 3);
-    assert.equal(count(), "1/1");
+    assert.equal(count(), "1/2");
   } finally {
     await counter.stop();
     await mounted.cleanup();
@@ -2106,7 +2268,19 @@ test("承認の詳細開閉と解除を通してFindは本文の一致だけを�
   }
 });
 
-test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序で数え現在位置をclampする", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "同じmessageの表示一致・原文一致の次にpending一致へ移動し、message削除後は残るpendingへ現在位置をclampする"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/887" }
+// fault = "表示と原文の別出現を失う、pendingを誤順序で数える、または結果減少後に選択を失う"
+// observable = "件数、現在highlightの所属node、原文抜粋のmark、message削除後の件数とhighlight"
+// observation_boundary = "component-behavior"
+// scope = "local chat Findの混在順序と現在位置clamp"
+// lifecycle = "permanent"
+// impact = "保存前後のチャット検索で結果の前後関係と移動先を維持する"
+// distinction = "matcher単体はpendingとの合流とReact再描画後のclampを通らない。短い1messageとpendingの遷移を検証する"
+// @end-test-value
+test("SessionMessageColumn の検索は表示・原文とpendingを順に数え現在位置をclampする", async () => {
   class TestHighlight {
     readonly ranges: Range[] = [];
 
@@ -2161,7 +2335,7 @@ test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序�
       input.dispatchEvent(propertyChange);
     });
 
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/2");
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/3");
     assert.equal(highlights.get("withmate-find-match")?.ranges.length, 2);
     assert.equal(
       highlights.get("withmate-find-current")?.ranges[0]?.startContainer.parentElement?.tagName,
@@ -2173,7 +2347,11 @@ test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序�
     await act(async () => {
       nextButton.click();
     });
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/2");
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/3");
+    assert.equal(mounted.container.querySelector(".message-source-match mark")?.textContent, "needle");
+    assert.equal(highlights.get("withmate-find-current")?.ranges.length ?? 0, 0);
+    await act(async () => nextButton.click());
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "3/3");
     assert.equal(
       highlights.get("withmate-find-current")?.ranges[0]?.startContainer.parentElement?.tagName,
       "P",
