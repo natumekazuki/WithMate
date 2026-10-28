@@ -38,7 +38,7 @@ import { MainProviderFacade } from "../../src-electron/app/main-provider-facade.
 import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import { SessionElicitationService } from "../../src-electron/session/session-elicitation-service.js";
-import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
 
@@ -1501,10 +1501,14 @@ describe("SessionRuntimeService", () => {
     let stored = createSession({ provider: "claude", workspacePath: process.cwd(), approvalMode: "on-request" });
     let current = "old";
     const seen: Options[] = [];
-    const makeAdapter = () => new ClaudeAdapter({ query: (({ options }: { options: Options }) => {
+    const makeAdapter = () => new ClaudeAdapter({ query: (({ options, prompt }: { options: Options; prompt: AsyncIterable<SDKUserMessage> }) => {
       seen.push(options);
-      return (async function* () { yield { type: "result", subtype: "success", is_error: false, result: "done", session_id: "fresh-thread",
-        usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {} } as SDKMessage; })();
+      return (async function* () {
+        const sent = await prompt[Symbol.asyncIterator]().next();
+        assert.ok(!sent.done);
+        yield { type: "result", subtype: "success", is_error: false, result: "done", session_id: "fresh-thread",
+          user_message_uuid: sent.value.uuid, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {} } as SDKMessage;
+      })();
     }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
     let adapter = makeAdapter();
     const service = createTestRuntime({

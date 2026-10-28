@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { spawn } from "node:child_process";
 import { it } from "node:test";
-import type { Options, ResolvedSettings, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { Options, ResolvedSettings, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
 import { ProviderTurnError, type RunBackgroundStructuredPromptInput, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
@@ -17,8 +20,15 @@ function fakeQuery(
   capture: (options: Options, prompt: unknown) => void = () => undefined,
 ): typeof import("@anthropic-ai/claude-agent-sdk").query {
   return (({ options, prompt }: { options: Options; prompt: unknown }) => {
-    capture(options, prompt);
-    return produce(options);
+    return (async function* () {
+      const submitted = typeof prompt === "string" ? undefined
+        : (await (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]().next()).value;
+      capture(options, submitted ?? prompt);
+      for await (const message of produce(options)) {
+        yield message.type === "result" && submitted?.uuid && !message.origin && !message.user_message_uuid && !message.user_message_uuids
+          ? { ...message, user_message_uuid: submitted.uuid } : message;
+      }
+    })();
   }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query;
 }
 
@@ -416,6 +426,114 @@ function result(sessionId: string, overrides: Record<string, unknown> = {}): SDK
 }
 
 // @test-value v2
+// kind = "contract"
+// claim = "Claude codingはテキスト・画像の送信UUIDに対応する結果まで入力を保持し、通知・他送信の結果では完了せず、対応する空の正常結果も保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: ClaudeAdapter; Issue #885" }
+// fault = "最初の通知resultで終了する、SDK入力を先に閉じる、他送信の結果を採用する、または空の正常結果を失敗にする"
+// observable = "SDK入力messageと入力iteratorの完了時点、runSessionTurnの本文・usage"
+// observation_boundary = "public-boundary"
+// scope = "Claude coding input/result correlation and bidirectional lifetime"
+// lifecycle = "permanent"
+// impact = "Aux/Mainの再開時にユーザー送信が空の成功として消え、承認やhookへの応答経路が切れる"
+// distinction = "既存のresume・permission testは通知側resultの先行と入力EOFを組み合わせない。型検査では時系列を検出できず、通信なしの小さいfixtureで継続確認する"
+// @end-test-value
+it("Claude codingは送信UUIDの結果まで入力を保持する", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "withmate-claude-input-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const image = join(dir, "input.png");
+  const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=", "base64");
+  await writeFile(image, imageBytes);
+  for (const withImage of [false, true]) {
+    for (const useUuidList of [false, true]) {
+      for (const text of ["Actual response", ""]) {
+        let inputEnd: Promise<IteratorResult<SDKUserMessage>> | undefined;
+        let inputClosed = false;
+        const adapter = new ClaudeAdapter({ query: (({ prompt }: { prompt: string | AsyncIterable<SDKUserMessage> }) => {
+          assert.notEqual(typeof prompt, "string");
+          const iterator = (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]();
+          return (async function* () {
+            const first = await iterator.next();
+            assert.ok(!first.done);
+            const sent = first.value;
+            assert.match(sent.uuid!, /^[0-9a-f-]{36}$/);
+            assert.equal(sent.parent_tool_use_id, null);
+            assert.deepEqual(sent.message.content, [
+              { type: "text", text: "# User Input\n\nhello" },
+              ...(withImage ? [{ type: "image", source: { type: "base64", media_type: "image/png", data: imageBytes.toString("base64") } }] : []),
+            ]);
+            inputEnd = iterator.next();
+            void inputEnd.then(() => { inputClosed = true; });
+            yield result("saved-thread", { origin: { kind: "task-notification" }, result: "", num_turns: 0 });
+            yield result("saved-thread", { user_message_uuid: "another-send", result: "Not this response" });
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            assert.equal(inputClosed, false, "input must stay open for the queried turn's controls");
+            yield result("saved-thread", { result: text, ...(useUuidList
+              ? { user_message_uuid: "last-batched-send", user_message_uuids: [sent.uuid, "last-batched-send"] }
+              : { user_message_uuid: sent.uuid }) });
+          })();
+        }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
+        const request = input("saved-thread");
+        if (withImage) request.attachments = [{ id: "image", kind: "image", source: "markdown-image", absolutePath: image,
+          displayPath: "input.png", workspaceRelativePath: null, isOutsideWorkspace: true }];
+        const liveTexts: string[] = [];
+        const completed = await adapter.runSessionTurn(request, (state) => { liveTexts.push(state.assistantText); });
+        assert.equal(completed.assistantText, text);
+        assert.equal(completed.usage?.outputTokens, 5);
+        assert.ok(liveTexts.every((body) => !body.includes("Not this response")));
+        assert.ok(inputEnd);
+        assert.deepEqual(await inputEnd, { done: true, value: undefined });
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeは通知resultの後でも対応結果前EOF・実失敗・取消を区別し、取得済み本文を保持して入力streamを解放する。UUIDなし起動失敗も失敗として返す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: ClaudeAdapter; docs/adr/002-provider-turn-terminal-and-cancellation.md; Issue #885" }
+// fault = "通知を成功終端として保存する、起動失敗を無視して待つ、取消を失敗へ変える、途中本文を落とす、または入力generatorを停止したまま残す"
+// observable = "ProviderTurnErrorのmessage・canceled・partialResult、SDK入力iteratorの終了"
+// observation_boundary = "public-boundary"
+// scope = "Claude correlated terminal failure/cancellation/EOF cleanup"
+// lifecycle = "permanent"
+// impact = "失敗と取消が空の正常終了に化け、応答途中の内容と再送可能な終了状態を利用者が失う"
+// distinction = "既存EOF/cancel testには先行通知resultがなく、UUIDなしstartup failureと入力stream解放を観測しない。SDK通信を行わない小さいfixtureで境界を保持する"
+// @end-test-value
+it("Claude codingは通知後の失敗・取消・EOFと起動失敗を保持する", async () => {
+  for (const outcome of ["eof", "failed", "canceled", "startup"] as const) {
+    const controller = new AbortController();
+    let inputEnd: Promise<IteratorResult<SDKUserMessage>> | undefined;
+    const adapter = new ClaudeAdapter({ query: (({ prompt }: { prompt: string | AsyncIterable<SDKUserMessage> }) => {
+      const iterator = (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]();
+      return (async function* () {
+        const first = await iterator.next();
+        assert.ok(!first.done);
+        inputEnd = iterator.next();
+        if (outcome === "startup") {
+          yield result("saved-thread", { subtype: "error_during_execution", is_error: true, errors: ["Startup failed"] });
+          return;
+        }
+        yield result("saved-thread", { origin: { kind: "task-notification" }, result: "", num_turns: 0 });
+        yield sdkMessage({ type: "assistant", uuid: "partial", parent_tool_use_id: null,
+          message: { content: [{ type: "text", text: "Retained partial" }] } });
+        if (outcome === "failed") yield result("saved-thread", { user_message_uuid: first.value.uuid, is_error: true, result: "Actual API failure" });
+        if (outcome === "canceled") controller.abort();
+      })();
+    }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
+    await assert.rejects(adapter.runSessionTurn(input("saved-thread", controller.signal)), (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, outcome === "canceled");
+      assert.equal(error.partialResult.assistantText, outcome === "startup" ? "" : "Retained partial");
+      assert.match(error.message, outcome === "startup" ? /Startup failed/ : outcome === "failed" ? /Actual API failure/
+        : outcome === "canceled" ? /Canceled/ : /stream ended before a result/);
+      return true;
+    });
+    assert.ok(inputEnd);
+    assert.deepEqual(await inputEnd, { done: true, value: undefined });
+  }
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "Claudeの長い本文はprogressへ全量配送して成功結果にも保持する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
@@ -585,8 +703,9 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
       assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}|Affect ${old}`));
       assert.ok(!system.append!.includes(`C:/Character Data/${old}/icon.png`));
     }
-    assert.equal(seen[index].prompt, adapter.composePrompt(request).inputBodyText);
-    assert.equal(seen[index].prompt, "# User Input\n\nhello");
+    const sent = seen[index].prompt as SDKUserMessage;
+    assert.deepEqual(sent.message.content, [{ type: "text", text: adapter.composePrompt(request).inputBodyText }]);
+    assert.deepEqual(sent.message.content, [{ type: "text", text: "# User Input\n\nhello" }]);
     request.session.threadId = completed.threadId!;
     if (index < 2) assert.equal(completed.assistantText, "Hello");
   }
