@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import type { MarkdownLinkContextMenuRequest } from "../../../src-shared/window/markdown-link-context-menu.js";
+import type { HtmlPreviewSource } from "../../../src-shared/window/html-preview.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { HtmlPreview } from "../html-preview/HtmlPreview.js";
 import { LoadingIndicator } from "../loading-indicator.js";
@@ -18,6 +19,7 @@ export function MarkdownHtmlPreview({ path, href, title, children }: MarkdownFil
     [contextKey],
   );
   const key = JSON.stringify([contextKey, path, revision]);
+  const source = useMemo<HtmlPreviewSource>(() => ({ kind: "link", request: { ...fileContext!, target: path } }), [fileContext, path]);
   const current = state?.key === key ? state : null;
   let filePath = path;
   if (/^file:/iu.test(path)) {
@@ -50,7 +52,7 @@ export function MarkdownHtmlPreview({ path, href, title, children }: MarkdownFil
     <MarkdownFilePreviewFrame path={path} href={href} title={title} link={children} format="HTML"
       loading={loading} onReload={unavailable ? undefined : () => setRevision((value) => value + 1)}>
       {error ? <span className="message-file-preview-placeholder" role="alert">{error}</span>
-        : current?.html !== undefined ? <HtmlPreview html={current.html} title={title || current.fileName || path} onFind={onFind} />
+        : current?.html !== undefined ? <HtmlPreview html={current.html} source={source} title={title || current.fileName || path} onFind={onFind} />
         : <span className="message-file-preview-placeholder"><LoadingIndicator label="Loading HTML preview" /></span>}
     </MarkdownFilePreviewFrame>
   );

@@ -76,6 +76,7 @@ providerごとの差は次。
   - current sliceはCopilot-onlyで、taskのcreate/list/control RPCまでは吸収しない。Codex adapterは同等のTasks UIへ接続していない
 - `ClaudeAdapter`
   - 公式SDK `0.3.285`と未改変の公式native実行物 `2.1.285`を使い、Windows / macOSの対象architecture向け実行物を配布物へ同梱する。CLIの既存ログインをSDKに任せ、WithMateはcredentialを読取・コピーせず、独自OAuthを行わない。SDKの認証・課金に関わる環境変数や設定の優先順位を上書きしない
+  - 認証失敗や利用枠不足を、別の認証・モデル・providerへの自動切替で回避しない
   - `query()`で1 turnを実行し、保存済みの明示session IDを`resume`へ渡す。履歴全件の再送、暗黙の最新会話`continue`は行わない。取消時はSDKの公開spawn hookで子プロセスの実終了を追跡し、実終了までprovider Promiseを保持してruntimeの再送guardにつなぐ。正常なterminal result後のcleanupは[ADR 002](../adr/002-provider-turn-terminal-and-cancellation.md)のbounded graceに従う
   - coding入力は画像の有無によらずUUID付き`SDKUserMessage`のasync streamで送り、そのUUIDに対応する`user_message_uuid`／`user_message_uuids`のresultをturn終端とする。再開時の内部通知など別入力のresultでは終了せず、そのusageも採用しない。対応result・失敗・取消まで入力streamを保持し、SDKのhook・承認応答用channelを先に閉じない。送信に紐づかないsession全体の失敗は失敗として扱い、対応result前のEOFでも受信済み本文・操作を保持する。空本文だけで正常結果を失敗へ変更しない
   - modelとDepth候補はSDKから取得する。WithMateのApprovalとReviewerの組合せをSDKの6 permission modeへ写像し、Speedは`Standard / Fast`へ対応する。Codexのsandbox選択は提供しない

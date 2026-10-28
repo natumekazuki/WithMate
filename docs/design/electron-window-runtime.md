@@ -149,16 +149,22 @@ node-ptyはタブごとのElectron utility process内で起動要求時にload�
 
 ## HTML Preview Isolation
 
-中央・独立File PreviewとCodexのチャット内visualizeは`HtmlPreview`と`HtmlPreviewService`を共用する。信頼済みrendererのmain frameだけが自分のWindow用のHTML文書URLを登録・破棄でき、HTMLへアプリのpreloadやIPCは公開しない。
+中央・独立File PreviewとCodexのチャット内visualizeは`HtmlPreview`と`HtmlPreviewService`を共用する。信頼済みrendererのmain frameだけが、自分のWindowで認可されたresourceまたはlocal linkを出自として登録・破棄できる。HTMLへアプリのpreload、Node.js、WithMate IPCは公開しない。
 
-- HTMLは`sandbox="allow-scripts"`のiframeで実行する。同一origin、popup、top navigation、download等の追加sandbox許可は付与しない。Windowは`nodeIntegration: false`、`nodeIntegrationInSubFrames: false`、`contextIsolation: true`を維持する。アプリ本体のsandbox設定とpreloadは変更しない。
-- 認可済みの本文だけを専用の`withmate-html-preview:` protocolでメモリー配信する。文書ごとに異なるhostを発行し、固定CSPとiframeのsandboxで親とは別origin・別renderer processへ分離する。Session／File Preview entryのframe-srcはこのschemeと同梱PDF readerの`withmate-pdf://reader`だけを許可する。main processはURLとowner webContentsを照合し、そのsubframeの初回GETだけを許可する。URLは永続化せず、`file:` URLを直接loadしたり、相対資源・外部CDNを代理取得したりしない。
-- 固定response CSPの`sandbox allow-scripts`でopaque originにし、inline CSS／JSとdata／blobの埋込みimage／media、data fontだけを許可する。frame、worker、object、form、base URLは許可しない。iframeのsandboxとPermissions-Policyはpopup、top navigation、download、camera／microphone／geolocation／display capture／clipboard／USB等の権限を許可しない。WebRTC等を含む通信の完全遮断は保証しない。HTML内の情報や入力内容が通信で送られる可能性を許容し、アプリ権限の隔離とoffline保証を区別する。
-- 原本を書き換えず、UTF-8換算50 MiBを超える実行入力は明示的に拒否する。初回document loadは15秒で打ち切り、File PreviewのSourceと文字コード切替は既存経路を維持する。読込後は対象frameに副作用のない固定scriptの応答を確認し、実行失敗・frame破棄・15秒の応答timeoutを失敗として通知する。確認は直前の応答から5秒後に1件ずつ行い、preview破棄時に監視を解放する。JavaScriptの総実行時間やDOM容量に上限を保証するものではない。
-- iframeは通常のDOMとしてscroll clipと重なり順へ参加し、アプリの浮動操作・通知・tooltip・modal・dimを覆わない。別の操作領域を確保せず、一時surfaceの表示でHTML全体を隠さない。画面外、Source切替、unmountではiframeを外して文書URLを破棄し、ownerのdocument navigation／終了でもURLを失効する。再表示ではHTMLを再実行し、内部状態は永続化しない。15秒の初回load timeoutやload失敗ではiframeを外して理由を表示し、Sourceへ戻れる。
-- HTML自身のJavaScriptによる表示・操作を対象とする。公式visualizeのhost CSS、`window.openai`、Tweak、状態保存や会話送信の互換bridgeは提供しない。
+- HTMLはDOM内の`webview`で実行し、mountごとに一意な非永続partitionと文書hostを発行する。main processがowner、partition、初回URLを照合してguestを受け入れ、`sandbox: true`、`contextIsolation: true`、`webSecurity: true`、Node integration無効、preloadなしを強制する。アプリ本体のpreloadや権限とは別のWeb環境である。
+- Web CSS／JavaScript、外部CDN、fetch／WebSocket等の通信、worker、iframe、Web storageは通常のブラウザー規則に従って利用する。CORS、mixed content、secure context、OS権限、Electronが対応するdevice API等の制約は緩めない。任意のWeb APIや機器の動作を保証せず、通信遮断やoffline実行の保証もしない。HTML内の情報や入力内容が通信で送られる可能性がある。
+- 元HTMLを書き換えず、復号した本文を`withmate-html-preview:`から配信する。local資源はHTMLのdirectory構造を保って配信し、CSSの入れ子の参照やmodule importも同じURL解決を使う。root付きresourceでは同じconfigured root内、absolute resourceではcanonicalな親directory内に限定し、open時にroot identityとrealpath containmentを確認する。任意の`file:`への直接読込は許可しない。Git resourceの資源は同じrepository／root／commitのregular blobだけを読み、symlinkや存在しない資源を現在の作業treeで補わない。外部CDNはブラウザーが取得し、local資源resolverで代理取得しない。
+- プレビュー内の権限要求は要求元と対象・選択肢を信頼済みhost UIへ表示し、明示回答を得る。子Windowと外部protocolは明示確認し、downloadはElectronの保存dialogで保存先を選択する。子WindowにもNode／preloadを公開せず、同じ隔離と寿命の管理を適用する。OS側の権限やdevice制限は、アプリ内で許可しても別に適用される。
+- 画面共有は画面／Windowを明示選択し、システム音声はElectronのloopback対応範囲であるWindowsで別途確認する。USB／HIDは要求frameを表示する。Serial／Bluetoothの選択eventはElectronが要求frameを渡さないため、pageと埋込みoriginを併記し、特定frameからの要求と断定しない。USB／HIDのorigin単位のchooser可否確認は、mount内の有効なframeに存在するoriginだけを受け入れ、機器への実アクセスはElectronが保持する利用者選択済み機器の許可に従う。
+- 選択済み機器の許可は同一origin・同一mount内で維持する。Electronの機器許可には文書単位で取り消す公開APIがなく、通常の遷移やフォーム・子Windowの状態を維持するため、文書遷移で機器許可を失効させない。Reload、Source切替、画面外破棄、unmount、owner終了ではpartitionを非再利用とし、以前の機器許可へ到達できなくする。その他のアプリ内許可と回答待ちの要求は文書遷移・終了で失効し、子Window由来の確認もhost queueから取り消す。外部protocolは承認後の起動直前にも要求元の有効性を照合する。
+- File System Access APIの選択済みhandleによる読書きは、現在のpermission checkで拒否される。Electron 44.1.1はこのcheckに要求元webContentsを渡さず、通常pickerのnative許可もアプリのpermission request handlerを通らないため、非同期host確認へ選択済みpathを引き継げない。Electron自体のAPI未対応とは区別する。通常の`input[type=file]`による明示選択ファイルの読込みは利用できる。
+- UTF-8換算50 MiBのHTML上限は、復号・IPC転送・メモリー使用を安定させるために維持する。security境界やJavaScriptの総実行時間・DOM容量の上限ではない。初回load時間の固定打切りやJavaScript実行による応答pollingは行わず、guest webContentsのload失敗、unresponsive、renderer crashを失敗として通知する。Sourceの文字コード切替と原文を保持し、描画失敗からSource／Reloadで回復できる。
+- webviewはscroll clipとDOMの重なり順へ参加し、アプリの浮動操作・通知・tooltip・modal・dimを覆わない。別の操作領域を確保せず、一時surfaceのためにHTML全体を隠したり再実行したりしない。権限等のhost確認は本文を背後に残すdim overlayで示し、guestをinertにしてkeyboard focusを確認内に保つ。
+- 画面外、Source切替、unmount、ownerのdocument navigation／終了ではguest、子Window、保留中の確認、権限、partition storageと接続を破棄する。再表示／Reloadは新partitionを発行し、以前の許可や内部状態を引き継がない。公式visualizeのhost CSS、`window.openai`、Tweak、会話送信やhost状態保存の互換bridgeは提供しない。
 
-チャットのHTML読込は`readSessionHtmlPreview`専用IPCで既存local link resolverを利用する。所有Session／preview baseと送信main frameを読込前後で確認し、`.html`／`.htm`のtextとrevision固定chunkだけを読む。汎用file readのroot認可を緩めず、Additional Directoryやprovider権限を追加しない。
+[Electron公式のwebview注意事項](https://www.electronjs.org/docs/latest/api/webview-tag#warning)は、Chromiumの変更が描画・navigation・event routingの安定性に影響するため代替方式の検討を勧めている。本機能では独立したguest sessionとブラウザー動作を管理しながら、既存のscroll clipとoverlayの重なりをDOMで維持する必要があるためwebviewを使用する。native `WebContentsView`はDOMのclip・重なりに直接参加せず、位置・clip・一時surfaceとの調整を別に持つ必要がある。webviewの配置・重なり・入力とguest lifecycleは、Electron更新時も実描画と操作で確認する。
+
+チャットのHTML読込は`readSessionHtmlPreview`専用IPCで既存local link resolverを利用する。所有Session／preview baseと送信main frameを読込前後で確認し、`.html`／`.htm`のtextとrevision固定chunkだけを読む。mountと資源取得でも出自の認可を確認し、汎用file readのroot認可を緩めず、Additional Directoryやprovider権限を追加しない。
 
 ## URL Resolution
 

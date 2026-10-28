@@ -14,10 +14,11 @@ import { HTML_PREVIEW_MAX_BYTES } from "../../src-shared/file-explorer/session-h
 // lifecycle = "permanent"
 // @end-test-value
 test("HTML preview mount validates identity and UTF-8 byte length", () => {
-  assert.doesNotThrow(() => assertHtmlPreviewMount({ id: "preview-1", html: "<p>日本語</p>" }));
-  assert.throws(() => assertHtmlPreviewMount({ id: "../other", html: "" }), /invalid/);
+  const source = { kind: "link" as const, request: { sessionId: "session", target: "preview.html" } };
+  assert.doesNotThrow(() => assertHtmlPreviewMount({ id: "preview-1", html: "<p>日本語</p>", source }));
+  assert.throws(() => assertHtmlPreviewMount({ id: "../other", html: "", source }), /invalid/);
   const withinLimit = "x".repeat(HTML_PREVIEW_MAX_BYTES);
-  assert.doesNotThrow(() => assertHtmlPreviewMount({ id: "limit", html: withinLimit }));
-  assert.throws(() => assertHtmlPreviewMount({ id: "limit", html: withinLimit + "x" }), /50 MiB/);
-  assert.throws(() => assertHtmlPreviewMount({ id: "multibyte", html: "語".repeat(Math.ceil(HTML_PREVIEW_MAX_BYTES / 3)) }), /50 MiB/);
+  assert.doesNotThrow(() => assertHtmlPreviewMount({ id: "limit", html: withinLimit, source }));
+  assert.throws(() => assertHtmlPreviewMount({ id: "limit", html: withinLimit + "x", source }), /50 MiB/);
+  assert.throws(() => assertHtmlPreviewMount({ id: "multibyte", html: "語".repeat(Math.ceil(HTML_PREVIEW_MAX_BYTES / 3)), source }), /50 MiB/);
 });

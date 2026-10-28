@@ -2168,6 +2168,32 @@ export class FileRootGitChangesService {
     );
   }
 
+  async readHtmlPreviewHistoryFile(request: SessionFileGitCommitResourceRequest): Promise<Uint8Array> {
+    normalizeHistoryObjectIdParser(request.commitId);
+    normalizeGitRelativePathParser(request.relativePath);
+    return runWorkspaceGitOperationWithAdmission(
+      `${request.sessionId}:${request.repositoryId}:history:html:${request.commitId}:${request.relativePath}`,
+      this.#operationTimeoutMs,
+      async (signal) => {
+        const pendingCleanupError = await this.#cleanupPendingResources();
+        if (pendingCleanupError) throw pendingCleanupError;
+        const operation = await this.#resolveHistoryOperation(request, signal);
+        if (!("workspacePath" in operation)) throw new Error(operation.message);
+        try {
+          const prefix = await this.#readWorkspacePrefix(operation);
+          const { entry } = await this.#resolveHistoryFile(operation, request, prefix);
+          if (entry.mode !== "100644" && entry.mode !== "100755") {
+            throw new Error("HTML preview cannot load symbolic links from a Git commit.");
+          }
+          return Uint8Array.from(await this.#readHistoryFileBlob(operation, entry));
+        } finally {
+          const cleanupError = await this.#closeOperation(operation);
+          if (cleanupError) throw cleanupError;
+        }
+      },
+    );
+  }
+
   async #resolveHistoryFilePreviewRequest(
     request: SessionFileGitCommitResourceRequest,
     signal: AbortSignal,

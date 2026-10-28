@@ -1,106 +1,43 @@
 # WithMate
-WithMate は、Codex、GitHub Copilot、Claude Agent、OpenCode の coding agent を、キャラクターと一緒に使う Electron デスクトップアプリです。ワークスペースを選んでセッションを開始し、チャット、コマンド実行の確認、ファイル参照、差分確認までを一つのアプリで扱います。
-対応 runtime は Electron です。Vite の画面をブラウザーだけで利用する構成はサポートしていません。
+
+WithMateは、Codex、GitHub Copilot、Claude Agent、OpenCodeのcoding agentを、キャラクターと一緒に使うElectronデスクトップアプリです。ワークスペースを選んでセッションを開始し、チャット、コマンド実行の確認、ファイル参照、差分確認までを一つのアプリで扱います。
+
+対応runtimeはElectronです。ブラウザー単体での利用はサポートしていません。
 
 ## 主な機能
 
-- Codex、GitHub Copilot、Claude Agent、OpenCode から選んで coding session を作成、再開。Codex が既定で、Claude AgentとOpenCodeは Settings で有効化した場合だけ利用可能
-- Character catalog からセッションごとのキャラクターを選択
-- approval、sandbox、model、depth など、provider が対応する実行オプションの変更
-- Markdown、添付ファイル、`@path` 参照を使った作業チャット
-- 実行中・直近turnのコマンドと応答Detailsの確認
-- Workspace、Session Folder、Additional Directory のファイル参照
-- Git の作業差分とcommit履歴の確認
-- checkout単位のRepository Glossaryの表示と検索
-- セッション、Character、Memory、SDKから取得したmodel候補などのローカル永続化
+- Codex、GitHub Copilot、Claude Agent、OpenCodeを選んでセッションを作成・再開
+- セッションごとのCharacter選択と、Character定義・icon・themeの編集
+- approval、sandbox、model、depthなど、providerが対応する実行オプションの変更
+- Markdown、添付ファイル、`@path`参照を使ったチャットと、コマンド・応答Detailsの確認
+- Workspace、Session Folder、Additional Directoryのファイル参照と、HTML・PDFなどのプレビュー
+- Codexの`visualize`で指定されたHTML／PDFのチャット内表示
+- Gitの作業差分・commit履歴の確認と、Repository Glossaryの表示・検索
+- セッション、Character、Memory、SDKから取得したmodel候補などのローカル保存
 
-providerごとの対応状況は[対応機能一覧](docs/design/coding-agent-capability-matrix.md)を参照してください。
+Codexが既定のproviderです。Claude AgentとOpenCodeはSettingsで有効化した場合に利用できます。providerごとの対応状況は[対応機能一覧](docs/design/coding-agent-capability-matrix.md)を参照してください。
 
 Model候補とDepthは各providerのSDK／native一覧から取得します。SessionのModelを開くと検索でき、候補更新は現在の選択や実行中の設定を変更しません。詳細は[Provider Model Discovery](docs/design/model-catalog.md)を参照してください。
 
+Homeからセッションの作成・再開やCharacterの管理を行い、Session Windowで作業します。画面構成と操作は[Desktop UI](docs/design/desktop-ui.md)、機能別の使い方は[Feature Guides](docs/features/README.md)を参照してください。
+
+## 利用上の注意
+
 OpenCodeは同梱の公式CLI／client `2.1.4`を使います。Settingsの`OpenCode Go API Key`（未設定時は`OPENCODE_API_KEY`）からGo用keyを渡し、通常のOpenCode設定はnative経路で読み込みます。`opencode-go/...`、`opencode/...`、`openai/...`等のnative modelを同じOpenCode Sessionで扱いますが、一覧の取得は認証ではありません。native DBをWithMateのuser data・build channel別に分離するため、別DBを使うOpenCodeデスクトップ版のChatGPT等のログイン状態を自動共有しません。WithMate内のOAuth接続UI・アカウント選択は未提供です。利用前に自身の契約・設定・課金経路を確認してください。詳細は[modelと認証](docs/design/model-catalog.md#opencodeのmodelと認証)を参照してください。
 
-Claude Agent は公式 Claude Agent SDK に付属する未改変の実行物を使い、利用者自身が Claude CLI でログインした認証状態を SDK が利用します。WithMate は認証情報を読み取り・コピーせず、独自 OAuth も提供しません。Claude Pro で `claude-opus-5-5` の実接続を確認していますが、SDK が参照する環境変数・設定によって認証先や課金経路が変わり得ます。利用前に自身の契約・設定・課金経路を確認してください。認証失敗や利用枠不足を別の認証・モデル・provider へ自動切替しません。Claude の SDK transcript は WithMate の会話履歴とは別に Claude 側へ保存され、WithMate はそれを管理・削除しません。
+Claude Agentは公式Claude Agent SDKに付属する未改変の実行物を使い、利用者自身がClaude CLIでログインした認証状態をSDKが利用します。WithMateは認証情報を読み取り・コピーせず、独自OAuthも提供しません。SDKが参照する環境変数・設定によって認証先や課金経路が変わり得るため、利用前に自身の契約・設定・課金経路を確認してください。認証失敗や利用枠不足を別の認証・モデル・providerへ自動切替しません。ClaudeのSDK transcriptはWithMateの会話履歴とは別にClaude側へ保存され、WithMateはそれを管理・削除しません。認証・実行の詳細は[Provider Adapter](docs/design/provider-adapter.md)を参照してください。
 
-## 画面構成
-
-### Home Window
-
-セッションとCharacterを管理する入口です。
-
-- 共通ヘッダーからSessionとCharacterを検索し、`RecentSessions`から既存セッションを再開
-- `NewSession`でtitle、workspace、provider、Characterを選択
-- `SessionMonitor`で開いているセッションの状態を確認
-- `Previews`で独立したFile Preview／Graph WindowをSession別に一覧し、前面化、個別Close、Session単位のCloseを実行
-- `Characters`からCharacterの作成、編集を開始
-- Settings Windowと独立したSession Monitor Windowを開く
-
-### Session Window
-
-coding agentと作業する中心画面です。
-
-- チャットの送信、応答のstreaming表示、実行中turnのcancel
-- Main／Auxiliaryの`Send`から次Turnを予約し、チャットの予約項目からCodexの現在Turnへ追加入力できる。予約は受付順に実行し、個別取消できる
-- approval、model、depthなどの実行オプションを変更
-- `LatestCommand`、Copilotのbackground tasks、usage情報を確認
-- Terminal、session title変更、session削除へ移動
-- 下部パネルの`Prompt / Terminal`切り替えでローカルシェルを操作。外部Terminalの起動も利用可能
-- File Explorer、Repository Glossary、File Preview、Git Diffを同じ作業面から利用
-
-### File ExplorerとFile Preview
-
-Session WindowのFile Explorerには次のタブがあります。
-
-- `Files`: Workspace、Session Folder、許可済みAdditional Directoryのファイルを参照
-- `Changes`: Gitの作業ツリー差分を表示
-- `History`: repositoryのcommit履歴とcommit時点のファイル、差分を表示
-
-ファイルは中央の作業面または独立したFile Preview Windowで開けます。テキスト、Markdown、Mermaid（`.mmd`）、JSON、JSONC、YAML、画像、SVG、HTML（`.html`／`.htm`）、PDFに対応し、未対応のバイナリファイルは内容を展開せずに表示します。PDFは閲覧専用で、ページ移動、連続・単ページ・見開き、倍率・回転、全文検索、文字選択、目次・サムネイル・レイヤー・添付文書・文書情報を扱います。パスワード付きPDFは入力して開けますが、パスワードは保存しません。編集・保存・印刷・OCR・電子署名の検証は行わず、XFAフォームを含むPDFは対応していない理由を表示します。Git差分はSplitとInlineを切り替えられます。
-
-Codexの応答に`visualize`で指定されたローカルHTML／PDFは、会話本文内でも同じ隔離されたプレビューで閲覧できます。元ファイルのリンクから通常のFile Previewへ開くこともできます。通常リンク・file citation・未対応形式の成果物はリンクとして表示します。
-
-HTMLは自己完結したCSS／JavaScriptを隔離して表示し、Sourceへ切り替えられます。外部スクリプトや相対ファイルの読込、WithMate APIは利用できません。通信の完全遮断を保証する機能ではありません。公式visualize runtimeとの互換機能ではありません。
-
-### Repository Glossary
-
-Git checkoutの`.withmate/glossary.yaml`にある用語、別名、定義をSession Windowで表示、検索します。checkoutに用語集がない場合やschemaが不正な場合は、その状態をpane内に表示します。
-
-### Character Editor Window
-
-Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編集します。通常のMain／Auxiliaryでは、active Characterの`character.md`の変更を次の送信開始時に反映します。CharacterのID、表示名、説明、icon、themeは保存済みの値を維持します。archived Characterでは保存済み定義を使い続けます。
-
-### Settings Window
-
-次のapp共通設定を管理します。
-
-- app起動、turn完了通知、Session Windowの表示動作
-- coding agent providerの有効化とprovider file settings
-- Memory API、managed Skill、CLI shim、logのdiagnostics
-- Repository Glossaryの自動追加上限
-- Memory file quotaと古いsessionの削除
-- keyboard shortcut
-
-### その他のWindow
-
-- `Session Monitor Window`: 開いているセッションを常時手前で確認するcompact window
-- `Diff Window`: 長い差分を広い領域で比較する独立window
-
-画面ごとの責務は[Window Architecture](docs/design/window-architecture.md)、現在のUI仕様は[Desktop UI](docs/design/desktop-ui.md)を参照してください。
+HTMLはアプリ権限から隔離して実行しますが、外部への通信を行う場合があります。利用条件・制約は[HTML Preview Isolation](docs/design/electron-window-runtime.md#html-preview-isolation)を参照してください。
 
 ## ソースから起動する
 
-### 必要な環境
-
-- Node.js
-- npm
-
-依存関係をインストールします。
+Node.jsとnpmが必要です。依存関係をインストールします。
 
 ```bash
 npm install
 ```
 
-開発時は、最初のターミナルでVite rendererを起動します。
+最初のターミナルでVite rendererを起動します。
 
 ```bash
 npm run dev
@@ -112,114 +49,53 @@ Viteが`http://localhost:4173`で起動したら、別のターミナルでElect
 npm run electron:dev
 ```
 
-`electron:dev`はElectron mainとMemory CLIをbuildしてから、開発用Electronを起動します。
-
-PDF readerは開発時も専用buildを使います。`electron:dev`は起動前に`build:pdf-reader`を実行し、`build:renderer`は通常rendererとPDF readerの両方をbuildします。`src/pdf-reader/`の変更はHMRでは反映されないため、`npm run build:pdf-reader`で再buildし、File Previewの`Reload`で読み直してください。
-
-Windowsで作業branchのsmoke / 目視確認を行う場合は、下記の[分離したvisual check](#分離したvisual-check)の起動手順を使用してください。
+`electron:dev`はElectron main、Memory CLI、PDF readerをbuildしてから、開発用Electronを起動します。PDF readerの変更には専用buildが必要です。[開発時の更新方法](docs/design/window-architecture.md#pdf-readerの隔離境界)を参照してください。
 
 ## 開発と検証
 
-### 型チェック
-
-```bash
-npm run typecheck
-```
-
-`typecheck`はSQLite実行ownerと依存方向のcheckも実行します。依存方向checkは`src/`、`src-shared/`、`src-electron/`、`src-cli/`全体のimport・re-export・dynamic importをtype-onlyも含めて検査します。RendererとsharedからNode/Electron/Provider SDKへの依存、sharedからReactへの依存、および実行環境の境界を逆流する相対importを拒否します。preloadはpreload内とshared、CLIはCLI内とsharedおよび限定したMainのplatform adapterを参照できます。Storage Workerの検証済みhandler entryだけは動的解決を許可し、実際のentry解決をWorker testで確認します。
-
-### テスト
-
-```bash
-npm test
-```
-
-テストは`tests/`内の`*.test.ts`・`*.test.tsx`を再帰列挙し、Node test runnerで実行します。helperやfixtureはテストファイルのsuffixを持たないため、実行対象には含まれません。通常実行とshardは同じ列挙・選択経路を使います。
-test失敗、空の実行対象、不正なshard指定は非zero終了となり、CIで成功扱いにしません。
-
-```bash
-# 実行対象の一覧（testは実行しない）
-npm test -- --list
-# CIと同じ3分割のうち1番目
-npm run test:shard -- --shard=1/3
-# 対象を絞った実行
-node --import tsx --test tests/main/session-storage.test.ts
-# testとhelper/fixtureを含む型検査（実行時transpileとは別）
-npm run typecheck:tests
-```
-
-Windows PowerShellで`--`以降の引数を渡す場合は、`npm.ps1`による区切りの消費を避けるため、`npm.cmd test -- --list`、`npm.cmd run test:shard -- --shard=1/3`のように`npm.cmd`を使います。Windows CIも同じ呼び方です。
-
-`typecheck`はproduction・階層化した開発scriptに加え、`typecheck:tests`によるtest全体とhelper/fixtureの型検査も実行します。runtime validationを確認する意図的な不正入力は、通常のfixtureと区別し、検査対象を除外したり型検査の抑止で不整合を隠したりしないでください。
-
-### 本番向けbuild
-
-```bash
-npm run build
-```
-
-renderer、Electron main、Memory CLIをbuildします。本番向けbuildとローカル起動をまとめて行う場合は、次を実行します。
-
-```bash
-npm run electron:start
-```
-
-### 分離したvisual check
-
-Windowsで作業branchのsmoke / 目視確認を行う場合は、対象Worktreeのrootから次のスクリプトで起動します。現在のWorktreeをbuildし、専用のuser dataでElectronを起動します。
-
-```powershell
-& .\scripts\start-withmate-visual-check.ps1
-
-# 初回にデータを持ち込まず、初期状態で起動
-& .\scripts\start-withmate-visual-check.ps1 -DataMode Fresh
-
-# インストール版のデータから検証用データを再作成して起動
-& .\scripts\start-withmate-visual-check.ps1 -DataMode Copy
-```
-
-このスクリプトは`%APPDATA%\WithMate-visual-check`を使用します。安全に識別できる既存のvisual check processがある場合は差し替えますが、インストール版WithMateは停止しません。データの扱いは`-DataMode`で選択します。
-
-| モード | データの扱い |
+| コマンド | 内容 |
 | --- | --- |
-| `Reuse`（既定） | 検証用ディレクトリを再コピーせず、そのデータで起動します。対象ディレクトリがなければ停止し、`Fresh`または`Copy`を案内します。必要なマイグレーション・初期化は通常のアプリ起動処理が行います |
-| `Fresh` | 検証用ディレクトリが不存在または空の場合だけ、コピー元のデータを持ち込まず初期状態で起動します。隠しファイルを含めて何か残っている場合は、削除・上書きせず停止します |
-| `Copy` | `%APPDATA%\WithMate`をコピー元として、検証用データを再作成します。通常ファイルをコピーし、SQLiteはbackup APIで整合したsnapshotを作成します。コピー元は変更しません |
+| `npm run typecheck` | production・開発script・testの型検査と依存境界のcheck |
+| `npm test` | test全体の実行 |
+| `npm run build` | renderer、PDF reader、Electron main、Memory CLIのbuild |
+| `npm run electron:start` | 本番向けbuildとローカル起動 |
 
-`Fresh`と`Reuse`にはコピー元の`%APPDATA%\WithMate`は不要です。`Fresh`で既存データがある場合や、`Copy`で検証用データを残したい場合は、必要なデータを事前に退避してください。自動退避や強制削除のオプションはありません。`Reuse`でもマイグレーション等による検証用データの更新は発生します。
-
-全モードで現在のWorktreeをbuildします。`-ValidateOnly`は選択モードの条件確認とbuildまでを行い、検証用プロセスの停止、データの準備、Electron起動は行いません。依存関係が不足する場合は準備します。`Get-Help .\scripts\start-withmate-visual-check.ps1 -Detailed`でも選択方法を確認できます。
-
-agentが実行する場合は、選択モード、プロセスの差し替え、`Copy`では検証用データの置き換えを事前に明示します。
-
-ブラウザー用の検証手段で実rendererを確認する場合は、`-RemoteDebuggingPort 0`を明示すると分離アプリだけにloopback用のdebug portを開きます。portは検証用user dataの`DevToolsActivePort`から確認できます。通常の起動ではこの指定を付けません。検証後はdebug port付きのプロセスを終了し、継続利用用には指定なしで起動し直します。
-
-起動・終了時は次のルールを守ってください。
-
-- 検証用環境の起動はスクリプト経由に統一し、Electronや`release/win-unpacked/WithMate.exe`の直接起動で代替しません。手動で`WITHMATE_USER_DATA_PATH`や`--withmate-visual-check`を付けても、同じ管理対象になるとは限りません。配布物自体の検証は別目的として扱い、この検証用user dataを共用しません。
-- Electronが見つからない場合も別の実行ファイルへ独断で切り替えません。スクリプトは`package-lock.json`指定versionのElectronを探索・準備します。失敗した場合はその原因を確認し、既存データの保持が必要でスクリプトを使えない場合は、その制約を報告して起動方法を確認します。
-- ロックが残って停止した場合は、使用中のプロセスの実行ファイルpath、引数、user dataを照合し、対象を安全に特定できた場合だけ終了します。アプリ名だけで一括終了したり、`lockfile`を削除して起動を強行したりしません。対象を特定できない場合は停止したまま確認を依頼します。
-- 検証終了時は、自分が起動した検証用アプリだけを終了し、ロック解放を確認します。ユーザーが継続利用するために残す場合は、起動中であることと終了対象を引き継ぎます。インストール版WithMateには触れません。
+Windowsで作業branchのsmoke・目視確認を行う場合は、インストール版とデータを分離する[visual check手順](docs/runbooks/development-workflow.md#分離したvisual-check)を使用してください。testの絞り込み、shard、PowerShellの引数指定などは[Development Workflowの検証手順](docs/runbooks/development-workflow.md#検証)を参照してください。
 
 ## 配布物をbuildする
 
 `electron-builder`で配布物を作成します。
 
-```bash
-# current platformの既定target
-npm run dist
-
-# Windows NSIS installer
-npm run dist:win
-
-# macOS DMG
-npm run dist:mac
-
-# unpacked directory
-npm run dist:dir
-```
+| コマンド | 配布物 |
+| --- | --- |
+| `npm run dist` | current platformの既定target |
+| `npm run dist:win` | Windows NSIS installer |
+| `npm run dist:mac` | macOS DMG |
+| `npm run dist:dir` | unpacked directory |
 
 macOS向けの実buildにはmacOS環境またはmacOS CI runnerが必要です。packagingの詳細は[Distribution Packaging](docs/design/distribution-packaging.md)を参照してください。
+
+## Repository構成
+
+- `src/`: React renderer、UI state
+- `src-shared/`: Main、preload、renderer、CLIで共有する契約・正規化・定数
+- `src-electron/`: Electron main、preload、IPC、永続化、provider連携
+- `src-cli/`: 配布物に含めるMemory／Glossary CLIの入力ソース
+- `scripts/`: build、生成、migration、検証用script
+- `tests/`: Node test runner用test
+- `docs/`: 機能ガイド、現行設計、運用手順、ADR、リリースノート
+- `build/`: icon、installer、CLIなどのpackaging入力
+
+## 開発への参加
+
+コード変更・検証・Git操作は[Development Workflow](docs/runbooks/development-workflow.md)に従ってください。課題・不具合・レビュー残件・作業計画はGitHub Issue／PR、対応予定はGitHub Milestoneで管理します。[課題の対応予定と完了運用](docs/runbooks/development-workflow.md#課題の対応予定とmilestone)を参照してください。
+
+## ドキュメント
+
+- [Feature Guides](docs/features/README.md): 利用者向けの機能別ガイド
+- [Documentation Map](docs/design/documentation-map.md): 現行設計・運用文書の一覧と保存規則
+- [ADR](docs/adr/): 設計判断の背景、代替案、採否と適用状態
+- [Release Notes](docs/releases/README.md): versionごとの変更、互換性、検証結果
 
 ## ライセンスと利用上の注意
 
@@ -230,66 +106,3 @@ WithMateのソースコードは[ISC License](LICENSE)で提供します。
 導入前に、ソースコード、設定、依存関係、同梱物、および接続先サービスを自身で確認してください。本ソフトウェアの利用、改変、配布、外部サービスへの接続、およびデータの取り扱いは、利用者自身の判断と責任で行ってください。
 
 この節は利用上の注意をまとめたものです。ライセンス条件は[LICENSE](LICENSE)を参照してください。
-
-## Repository構成
-
-- `src/`: React renderer、UI state
-- `src-shared/`: Main、preload、renderer、CLIで共有する副作用のない契約・正規化・定数
-- `src-electron/`: Electron main、preload、IPC、永続化、provider連携
-- `src-cli/`: 配布物に含めるMemory／Glossary CLIの入力ソース
-- `scripts/`: build、生成、migration、検証用script
-- `tests/`: Node test runner用test
-- `docs/design/`: 現行設計の正本とdomain detail
-- `docs/features/`: 利用者向けの機能別ガイド
-- `docs/runbooks/`: 現在の運用・診断・復旧手順
-- `docs/adr/`: 過去の判断や置換関係を含む設計判断の履歴
-- `docs/releases/`: ADRとは別枠で恒久保存するリリースノートと索引
-- `build/`: icon、installer、CLIなどのpackaging入力
-
-Main、preload、renderer、CLIの境界をまたぐ型・定数・正規化処理は、`src-shared/`のIPC、session、settings、character、memoryなどのdomainを正本とします。利用側は必要なdomainから直接importし、共有層へReact・DOM・Electron・filesystem・DBの実装を持ち込みません。
-
-Chat layout preferenceの型・既定値・検証は`src-shared/settings/chat-layout-preference.ts`に置き、保存APIを呼ぶrenderer adapterは`src/chat/chat-layout-preference.ts`に置きます。URLからsessionやdiffの識別子を読む処理は`src/app/session-location.ts`が担当します。
-
-一般文書には、現行実装について正しく、現在の利用・開発・保守に必要な情報だけを残します。設計判断の履歴はADR、リリースの履歴はリリースノートと索引に分け、古い判断や当時のリリース内容を現在の仕様で上書きしません。それ以外の過去情報はGit履歴、課題・作業計画はGitHub Issue／PR、一時的な棚卸しや検証記録はSessionFolder等のrepository外で扱います。
-
-一般の作業文書や未実装の構想は、進行中・採用済みであっても保存対象にしません。Archiveや移転案内として残したり、ADR・リリースノートへ改名して温存したりしません。保存・更新規則は[Documentation Map](docs/design/documentation-map.md#文書の保存区分)を参照してください。
-
-## 課題の対応予定とMilestone
-
-課題・不具合・レビュー残件・作業計画はGitHub Issue／PRで管理します。対応予定の正本はGitHub Milestoneとし、正式版`vX.Y.Z`ごとに1件を作ります。その版のpreviewで扱う課題も同じMilestoneに含め、preview別のMilestoneや版別ラベル、repository内の予定表は設けません。期限は合意された日付がある場合だけ設定します。
-
-IssueをMilestoneへ割り当てるのは、その版で扱うことが明示的に決まった場合だけです。未割当ては対応版未決定を意味し、不採用や着手禁止を意味しません。ブランチ名、package version、調査対象のpreview tagだけから対応予定を決めません。既に固定されたリリース範囲をMilestoneへの移行だけで拡張せず、個々の予定をIssue本文やラベルへ二重記録しません。
-
-Milestoneは予定であり、実装・レビュー・対象ブランチへの統合・課題完了・公開とは別の状態です。Issueの完了は次の運用で判断します。
-
-- 要求された実装・レビュー・変更範囲に必要な検証・対象ブランチへの統合が完了したIssueは、リリース後の動作確認だけを理由にOpenを維持せず、原則としてCloseします。実機での通常利用や環境・操作条件を広げた確認は、リリース後に別途行います。
-- previewリリースをしばらく利用し、ユーザーから問題ないとの報告・判断を得た場合、そのpreviewに収録されたIssueをすべて完了とみなします。全確認項目・全環境の個別消化は求めず、利用期間の固定日数も設けません。経過時間や報告がないことだけで問題なしとは推定しません。
-- 収録範囲はリリースタグ、リリースノート、統合commit／PRで確認します。同じMilestoneにあるだけの未実装・未統合Issueや、具体的な修正残件を完了扱いしません。非ブロッカーの後追い課題は独立して追跡し、元Issueの完了条件へ戻しません。
-- Closeやpreviewの受入判断と個々の検証結果は別に扱います。結果と利用上の注意の記載は[Development Workflowの報告方針](docs/runbooks/development-workflow.md#報告)に従います。
-
-不具合が見つかった場合は、Open／Closedを含めて既存Issueを検索し、同じ現象・原因を扱うIssueへ追記するか、新規Issueを作成します。元Issueを継続して扱う場合は必要に応じて再Openし、新規Issueでは重複・原因になったIssueを関連付けます。発生したバージョン、再現条件、影響、判明している原因を記録し、推測と確認済みの事実を分けます。
-
-重複・不採用によるクローズは修正完了と区別します。予定変更時は理由と変更後の扱いをIssue／PRへ記録し、残件を隠すために移動・クローズしません。
-
-リリース範囲の確定時と公開判断時は、対象Milestoneの未完了Issueに加え、未割当ての関連Issueの取りこぼしを確認します。preview tagではMilestoneを閉じず、正式版の公開と対象Issueの完了・正当な延期を確認してから閉じます。タグとリリースノート、互換性境界は[Release Notes](docs/releases/README.md)の規則に従います。
-
-## 関連ドキュメント
-
-### 現在の利用・開発・保守
-
-- [Feature Guides](docs/features/README.md): 利用者向けの機能別ガイド
-- [Product Direction](docs/design/product-direction.md): プロダクトの優先順位と判断基準
-- [Documentation Map](docs/design/documentation-map.md): 現行設計文書の分類と入口
-- [Window Architecture](docs/design/window-architecture.md): Window間の責務とlifecycle
-- [UI Design Guidelines](docs/design/ui-design-guidelines.md): 画面横断のデザイン原則と共通パターン
-- [Desktop UI](docs/design/desktop-ui.md): 現在の画面構成と操作
-- [Settings UI](docs/design/settings-ui.md): Settings Windowの責務
-- [Coding Agent Capability Matrix](docs/design/coding-agent-capability-matrix.md): providerごとの対応機能
-- [Provider Adapter](docs/design/provider-adapter.md): coding agentのadapter境界
-- [Database Schema](docs/design/database-schema.md): SQLiteとfile storageの保存構造
-- [Session Local Files](docs/design/session-local-files.md): Session Folderと添付ファイル
-
-### 設計判断とリリースの履歴
-
-- [ADR](docs/adr/): 設計判断の背景、代替案、採否、結果、置換関係。現在の適用状態は各ADRで区別
-- [Release Notes](docs/releases/README.md): versionごとの追加機能、変更、互換性、当時の検証結果を恒久保存

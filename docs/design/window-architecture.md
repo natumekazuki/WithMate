@@ -23,7 +23,7 @@ Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編�
 
 readerからのselectionとlink messageだけではホストAPIを実行しない。Copy／Quoteはホストbuttonから既存callbackを呼び、文書外linkはホストが対象を表示してユーザーがOpenした後にだけ、元resourceを基準として既存の`openSessionFilePreviewWindow`へ渡す。添付はreader内で対応形式を閲覧し、外部実行・保存経路を作らない。既存のfile認可、50MiB確認、Git snapshotのread-only境界は変更しない。利用者向け操作・制約は[Desktop UI](desktop-ui.md)を参照する。
 
-PDF readerは`src/pdf-reader/`を`vite.pdf-reader.config.ts`で独立buildし、PDF.js worker、cMap、font、WASM、ICC、画像を同梱する。開発時も同じ配信経路を使い、HMRは使わず再buildとPreviewのReloadで更新する。起動・build手順は[README](../../README.md#ソースから起動する)を参照する。
+PDF readerは`src/pdf-reader/`を`vite.pdf-reader.config.ts`で独立buildし、PDF.js worker、cMap、font、WASM、ICC、画像を同梱する。開発時も同じ配信経路を使う。`electron:dev`は起動前に`build:pdf-reader`を実行し、`build:renderer`は通常rendererとPDF readerの両方をbuildする。`src/pdf-reader/`の変更はHMRでは反映されないため、`npm run build:pdf-reader`で再buildし、File Previewの`Reload`で読み直す。基本の起動・build手順は[README](../../README.md#ソースから起動する)を参照する。
 
 ## Home rendererの実装方針
 
@@ -49,4 +49,4 @@ Homeはapp起動時の管理Windowとして扱う。Sessionは同じSession ID�
 
 HomeのPreviewsはMainのSession Window mapとFile Preview／Session GraphのWindow registryを親Session単位に投影し、Main／Auxiliaryから開いたpreviewを同じ親へまとめる。Mainの投影は開いているSessionをWindow map順に置き、previewが0件でも残す。その後ろへSession Windowが閉じていてpreviewが残る親を加える。Home専用hookはこの投影を現在のPreview Window数の降順に並べ、同数では投影の順序を維持する。previewの開閉通知による再取得でも件数と表示順を更新する。Recent Sessionsの取得範囲では一覧を制限しない。Homeからの前面化は既存Windowの表示内容を変更せず、個別Closeと親単位Closeはpreviewだけを閉じる。通常のCloseでSessionを終了済みにせず、後から同じresourceを再度開ける。Session削除等によるpreviewの終了・再open拒否とは区別する。
 
-独立Graphは閲覧ビューごとに生成し、同じ親・話題の複数Windowを許可する。`SessionGraphWindowService`がtokenと親Mainのincarnation・storage generationを保持し、read-only IPCを認可する。親Windowの通常Closeでは残し、Main削除・reset・app終了で失効する。中央と独立ビューは正本の更新通知を共有し、閲覧位置を同期しない。詳細は[Session Graph](session-graph.md#閲覧UI)を参照する。
+独立Graphは閲覧ビューごとに生成し、同じ親・話題の複数Windowを許可する。`SessionGraphWindowService`がtokenと親Mainのincarnation・storage generationを保持し、read-only IPCを認可する。親Windowの通常Closeでは残し、Main削除・reset・app終了で失効する。中央と独立ビューは正本の更新通知を共有し、閲覧位置を同期しない。詳細は[Session Graph](session-graph.md#閲覧ui)を参照する。

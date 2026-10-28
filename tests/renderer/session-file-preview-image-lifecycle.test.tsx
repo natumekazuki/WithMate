@@ -16,7 +16,7 @@ import type {
   SessionFileResourceRequest,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
-import type { WithMateHtmlPreviewApi } from "../../src-shared/window/html-preview.js";
+import type { HtmlPreviewMountRequest, WithMateHtmlPreviewApi } from "../../src-shared/window/html-preview.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -626,7 +626,7 @@ test("MMD File Preview はMermaid表示経路とSourceを切り替える", async
 // claim = "HTMLとHTMのFile PreviewはPreviewを既定とし、同内容のReloadでも隔離viewを再生成し、Findで原文Sourceへ切り替えてPreviewへ戻れる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 中央 file previewのHTML" }
 // fault = "HTMLを通常textへ流す、Reload後も以前のJS実行状態を保持する、Findで隔離viewのDOMを検索しようとする、またはSource原文を変える"
-// observable = "HTML display mode、mount/disposeのIDとHTML、Sourceのcode本文、Find barとSource内一致件数"
+// observable = "HTML display mode、mount/disposeのIDとHTMLとresource出自、Sourceのcode本文、Find barとSource内一致件数"
 // observation_boundary = "component-behavior"
 // scope = "SessionFilePreviewのHTML resourceからPreview/Sourceと検索への接続"
 // lifecycle = "permanent"
@@ -652,11 +652,12 @@ test("HTML File PreviewはReloadでviewを再生成し原文SourceとFindを保�
     };
     const source = '<!doctype html><style>h1 {color: red}</style><h1>Original &amp; Text</h1>';
     const api = createTextPreviewApi(request, name, source, "html-r1");
-    const mounts: Array<{ id: string; html: string }> = [];
+    const mounts: HtmlPreviewMountRequest[] = [];
     const disposed: string[] = [];
     const htmlApi: WithMateHtmlPreviewApi = {
-      async mountHtmlPreview(input) { mounts.push(input); return `withmate-html-preview://${input.id}/`; },
+      async mountHtmlPreview(input) { mounts.push(input); return { url: `withmate-html-preview://${input.id}/`, partition: input.id }; },
       async disposeHtmlPreview(id) { disposed.push(id); },
+      async respondHtmlPreview() {},
       subscribeHtmlPreviewEvents() { return () => {}; },
     };
     Object.defineProperty(dom.window, "withmate", { configurable: true, value: htmlApi });
@@ -669,6 +670,7 @@ test("HTML File PreviewはReloadでviewを再生成し原文SourceとFindを保�
       const mode = container.querySelector("[aria-label='HTML display mode']");
       assert.equal(mode?.querySelector(".is-active")?.textContent, "Preview");
       assert.equal(mounts.length, 1);
+      assert.deepEqual(mounts[0].source, { kind: "resource", resource: request });
       const reload = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Reload");
       assert.ok(reload);
       await act(async () => reload.click());

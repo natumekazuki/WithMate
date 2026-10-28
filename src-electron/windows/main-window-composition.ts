@@ -3,6 +3,7 @@ import type { AppBootStatus } from "../../src-shared/window/app-boot-state.js";
 import { WITHMATE_APP_BOOT_STATUS_EVENT } from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { resolveCursorAnchoredPosition } from "./window-placement.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
+import { configureHtmlPreviewHost } from "../files/html-preview-service.js";
 
 type WindowOptions = ConstructorParameters<typeof BrowserWindow>[0];
 
@@ -17,9 +18,10 @@ export class MainWindowComposition {
   public createBaseWindow(options: WindowOptions): BrowserWindow {
     const window = new BrowserWindow({
       backgroundColor: "#0e131b", autoHideMenuBar: true, show: false,
-      webPreferences: { preload: this.preloadPath, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, sandbox: false },
+      webPreferences: { preload: this.preloadPath, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false, sandbox: false, webviewTag: true },
       ...options,
     });
+    configureHtmlPreviewHost(window.webContents);
     this.attachLogHandlers(window);
     return window;
   }

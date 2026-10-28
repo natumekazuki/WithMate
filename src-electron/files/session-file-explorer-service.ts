@@ -850,6 +850,48 @@ export class SessionFileExplorerService {
     return this.inspectOpenedFile(request, opened);
   }
 
+  async createHtmlPreviewResourceRoot(request: SessionFileResourceRequest): Promise<{
+    relativePath: string;
+    open(relativePath: string): Promise<{ handle: ReadableFileHandle; byteLength: number }>;
+  }> {
+    const source = await this.openLocalFile(request);
+    try {
+      const rootPath = source.candidate.rootAbsolutePath;
+      const rootRealPath = source.candidate.rootRealPath;
+      const rootStats = await stat(rootRealPath, { bigint: true });
+      const relativePath = path.relative(rootRealPath, source.targetRealPath).split(path.sep).join("/");
+      return {
+        relativePath,
+        open: async (assetPath) => {
+          const normalized = normalizeRelativePath(assetPath, false);
+          // Re-resolve configured roots so a removed/reassigned root cannot retain access.
+          if (!isSessionFileAbsoluteResource(request)) {
+            const current = await this.resolveTargetCandidate(request, false);
+            if (pathKey(current.rootRealPath) !== pathKey(rootRealPath)) {
+              throw new Error("The HTML preview file root changed.");
+            }
+          }
+          const opened = await this.openAuthorizedCandidate({
+            rootAbsolutePath: rootPath,
+            rootRealPath,
+            unresolvedTargetPath: path.join(rootPath, ...normalized.split("/")),
+          }, "file");
+          try {
+            if (!isSameFileIdentity(rootStats, await stat(rootRealPath, { bigint: true }))) {
+              throw new Error("The HTML preview file root changed.");
+            }
+            return { handle: opened.handle, byteLength: Number(opened.stats.size) };
+          } catch (error) {
+            await opened.handle.close();
+            throw error;
+          }
+        },
+      };
+    } finally {
+      await source.handle.close();
+    }
+  }
+
   private async openLinkedFile(request: SessionImageResourceRequest | SessionPdfResourceRequest, kind: "image" | "PDF"): Promise<AuthorizedOpenedFile> {
     const context = await this.deps.getSessionContext(request.sessionId);
     if (!context) {

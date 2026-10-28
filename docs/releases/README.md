@@ -6,7 +6,7 @@ WithMateのrepository内リリースノートです。各リリースで利用�
 
 リリースノートには対象タグ・バージョン、変更内容、互換性・移行、実際の検証結果を記載し、下の一覧へ追加します。結果と利用上の注意の記載は[Development Workflowの報告方針](../runbooks/development-workflow.md#報告)に従います。ノートの作成だけではリリース済みと扱いません。
 
-リリース後の利用確認と収録Issueの完了は[READMEの完了運用](../../README.md#課題の対応予定とmilestone)に従います。preview利用後に問題なしと判断しても、公開時点の記載は書き換えず、受入結果や新たに見つかった不具合はIssue／PRへ記録します。IssueのCloseは正式公開やMilestone完了を意味しません。
+リリース後の利用確認と収録Issueの完了は[Development Workflowの完了運用](../runbooks/development-workflow.md#課題の対応予定とmilestone)に従います。preview利用後に問題なしと判断しても、公開時点の記載は書き換えず、受入結果や新たに見つかった不具合はIssue／PRへ記録します。IssueのCloseは正式公開やMilestone完了を意味しません。
 
 ## 保存と参照
 

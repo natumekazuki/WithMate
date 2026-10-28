@@ -6,7 +6,7 @@
 
 ## messageの縮小と展開
 
-縮小対象のmessageには、本文領域に操作buttonを表示します。操作buttonのsticky範囲は本文内で完結し、展開したDetailsやartifact領域には追従しません。縮小すると本文の代わりに短いpreviewを表示し、再度操作すると元の本文へ戻ります。
+縮小対象のmessageには、本文の横に操作button用の領域を確保し、本文内のリンクやプレビュー操作と重ならないようにします。操作buttonのsticky範囲は本文に対応する領域内で完結し、展開したDetailsやartifact領域には追従しません。縮小すると本文の代わりに短いpreviewを表示し、再度操作すると元の本文へ戻ります。
 
 個別操作buttonはaccessible nameと展開状態を持ち、hoverだけでなくkeyboard focusからも操作できます。
 
