@@ -10,10 +10,10 @@ import type { LiveSessionRunState } from "../../src-shared/session/runtime-state
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Session WindowのMain/Auxiliary live本文は選択中の会話へ届き、Auxiliaryのterminalは保存本文へ一度だけ収束する。本文だけの更新、Files tab変更、Glossary検索は無関係なAuxiliary一覧の全summaryを再投影せず、Auxiliary draftを保持する。FilesとDirectory追加は共有対象ラベルを表示し、Files取得ownerは送信先切替へ追従する"
+// claim = "Session WindowのMain/Auxiliary live本文は選択中の会話へ届き、Auxiliaryのterminalは保存本文へ一度だけ収束する。本文だけの更新、Files tab変更、Glossary検索は無関係なAuxiliary一覧の全summaryを再投影せず、Auxiliary draftを保持する。Directory追加は共有対象ラベルを表示し、Files取得ownerは送信先切替へ追従する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: UI Implementation Boundary; pending中のlive activity / streaming response; AgentのFile Explorer" }
 // fault = "rootが全文live snapshotやFiles tab/Glossary検索で一覧summaryを全件評価する、会話のlive購読が失われる、terminal後にliveと保存本文が二重表示される、補助機能の操作でAuxiliary draftが消える、共有対象ラベルを個別会話へ戻す、またはFiles取得ownerが送信先切替へ追従しない"
-// observable = "実AppのMain/Auxiliary会話本文、Glossary検索owner、Auxiliary composer draft、summary characterIconPath getter読取回数、Filesと追加dialogの対象文字列、Files取得APIのSession ID"
+// observable = "実AppのMain/Auxiliary会話本文、Glossary検索owner、Auxiliary composer draft、summary characterIconPath getter読取回数、追加dialogの対象文字列、Files取得APIのSession ID"
 // observation_boundary = "component-behavior"
 // scope = "SessionWindowApp conversation update boundariesとFiles／Directory追加対象。live本文は非同期の表示反映を待ち、terminal本文は直ちに確認する"
 // lifecycle = "permanent"
@@ -184,7 +184,6 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     assert.ok(openFiles);
     const beforeFileTab = summaryReads;
     await act(async () => { openFiles.click(); });
-    assert.equal(dom.window.document.querySelector(".session-file-explorer-scope")?.textContent, "Shared · Main + Auxiliary");
     assert.equal(fileOwners.at(-1), terminalTargetId);
     const changesTab = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-tabs button[role='tab']:nth-child(2)");
     assert.ok(changesTab);
@@ -196,7 +195,6 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
       .find((button) => button.textContent === "Main");
     assert.ok(mainTarget);
     await act(async () => { mainTarget.click(); });
-    assert.equal(dom.window.document.querySelector(".session-file-explorer-scope")?.textContent, "Shared · Main + Auxiliary");
     assert.equal(fileOwners.at(-1), "benchmark-main");
     const addByPath = dom.window.document.querySelector<HTMLButtonElement>('button[title="Add Directory By Path"]');
     assert.ok(addByPath);
@@ -204,7 +202,6 @@ test("Session Windowのlive本文は一覧投影を広げず会話へ届きtermi
     assert.equal(dom.window.document.querySelector(".additional-directory-scope")?.textContent, "Shared · Main + Auxiliary");
     await act(async () => { auxiliaryTarget.click(); });
     assert.equal(dom.window.document.querySelector('[role="dialog"][aria-label="Add Directory By Path"]'), null);
-    assert.equal(dom.window.document.querySelector(".session-file-explorer-scope")?.textContent, "Shared · Main + Auxiliary");
     assert.equal(fileOwners.at(-1), terminalTargetId);
     assert.equal(textarea.value, "auxiliary draft to keep");
 

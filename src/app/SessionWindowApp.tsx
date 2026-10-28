@@ -2337,7 +2337,6 @@ export default function AgentSessionWindowApp() {
         ref={filesFeatureRef}
         api={withmateApi}
         activeRunSessionId={activeRunSessionId}
-        directoryScopeLabel={directoryScopeLabel}
         prepareCentralSurfaceOpen={() => prepareCentralSurfaceOpenRef.current()}
         workspacePath={selectedSession.workspacePath}
         additionalDirectories={selectedSession.allowedAdditionalDirectories}

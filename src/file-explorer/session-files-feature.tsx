@@ -11,7 +11,6 @@ export type SessionFilesFeatureHandle = {
 export type SessionFilesFeatureProps = {
   api: WithMateWindowApi | null;
   activeRunSessionId: string | null;
-  directoryScopeLabel?: string;
   prepareCentralSurfaceOpen: () => boolean;
   workspacePath: string | null;
   additionalDirectories: readonly string[];
