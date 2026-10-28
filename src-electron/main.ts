@@ -3551,6 +3551,7 @@ async function savePastedSessionFile(request: SavePastedSessionFileRequest): Pro
     fileName: request.fileName,
     data: new Uint8Array(request.data),
     replaceExistingHash: request.replaceExistingHash,
+    saveAsCopy: request.saveAsCopy,
   });
 }
 

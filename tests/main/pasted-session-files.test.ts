@@ -10,7 +10,7 @@ import { resolveSessionFilesDirectory, saveSessionFile } from "../../src-electro
 // claim = "同名同内容は既存fileを無変更で再利用し、別内容は確認まで保持して承認後だけ同じpathへ保存する"
 // oracle = { type = "contract", ref = "docs/design/session-local-files.md: Composerと保存" }
 // fault = "同内容を再保存・採番する、別内容を無確認で上書きする、または承認後も古い内容を返す"
-// observable = "返却path/conflict、保存file内容・mtime・directory entry"
+// observable = "再利用statusとpath/conflict、保存file内容・mtime・directory entry"
 // observation_boundary = "public-boundary"
 // scope = "paste storage same-name hash and replacement"
 // lifecycle = "permanent"
@@ -26,12 +26,12 @@ test("paste storage reuses equal contents and replaces different contents only a
     if (typeof destination !== "string") throw new Error("Expected saved path");
     await utimes(destination, new Date(1000), new Date(1000));
     const before = await stat(destination);
-    assert.equal(await saveSessionFile(root, input), destination);
+    assert.deepEqual(await saveSessionFile(root, input), { status: "reused", path: destination });
     assert.equal((await stat(destination)).mtimeMs, before.mtimeMs);
     const different = { ...input, data: Buffer.alloc(150_000, 8) };
     const conflict = await saveSessionFile(root, different);
     assert.notEqual(typeof conflict, "string");
-    if (typeof conflict === "string") throw new Error("Expected conflict");
+    if (typeof conflict === "string" || conflict.status !== "conflict") throw new Error("Expected conflict");
     assert.equal(conflict.status, "conflict");
     assert.equal(conflict.fileName, "note.bin");
     assert.deepEqual(await readFile(destination), input.data);
@@ -60,10 +60,10 @@ test("paste storage asks again when contents changed during confirmation", async
     if (typeof destination !== "string") throw new Error("Expected saved path");
     const changed = { ...input, data: Buffer.from("replacement") };
     const conflict = await saveSessionFile(root, changed);
-    if (typeof conflict === "string") throw new Error("Expected conflict");
+    if (typeof conflict === "string" || conflict.status !== "conflict") throw new Error("Expected conflict");
     await writeFile(destination, "edited while deciding");
     const refreshed = await saveSessionFile(root, { ...changed, replaceExistingHash: conflict.existingHash });
-    if (typeof refreshed === "string") throw new Error("Expected renewed conflict");
+    if (typeof refreshed === "string" || refreshed.status !== "conflict") throw new Error("Expected renewed conflict");
     assert.notEqual(refreshed.existingHash, conflict.existingHash);
     assert.equal(await readFile(destination, "utf8"), "edited while deciding");
     assert.equal(await saveSessionFile(root, { ...changed, replaceExistingHash: refreshed.existingHash }), destination);

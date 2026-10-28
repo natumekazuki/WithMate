@@ -9,7 +9,7 @@ import { usePastedFileReplacement } from "../../src/chat/use-pasted-file-replace
 // claim = "添付先が切り替わるか入力欄が消えた後の遅い衝突結果は確認待ちを作らず、既存の確認待ちも取消として完了する"
 // oracle = { type = "contract", ref = "docs/design/session-local-files.md: 添付先の切替と入力欄の終了" }
 // fault = "古いcallbackが表示されないdialogのpromiseを未解決にするか、別の添付先で置換を承認する"
-// observable = "切替前callback・pending確認・unmount後callbackのfalse解決"
+// observable = "切替前callback・pending確認・unmount後callbackのcancel解決"
 // observation_boundary = "component-behavior"
 // scope = "paste conflict dialog owner lifecycle"
 // lifecycle = "permanent"
@@ -33,13 +33,13 @@ test("paste replacement cancels stale owners and settles on unmount", { timeout:
     await act(async () => root.render(<Harness owner="main" />));
     const main = controller!.confirmReplacement;
     await act(async () => root.render(<Harness owner="auxiliary" />));
-    assert.equal(await main(conflict), false);
+    assert.equal(await main(conflict), "cancel");
     const auxiliary = controller!.confirmReplacement;
-    let waiting: Promise<boolean>;
+    let waiting: ReturnType<typeof auxiliary>;
     await act(async () => { waiting = auxiliary(conflict); });
     await act(async () => root.unmount());
-    assert.equal(await waiting!, false);
-    assert.equal(await auxiliary(conflict), false);
+    assert.equal(await waiting!, "cancel");
+    assert.equal(await auxiliary(conflict), "cancel");
   } finally {
     await act(async () => root.unmount());
     if (previous) Object.defineProperty(globalThis, "window", previous); else Reflect.deleteProperty(globalThis, "window");

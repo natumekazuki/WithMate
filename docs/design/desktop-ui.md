@@ -501,7 +501,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - textarea 内の `@path` 参照
 - `@path` 入力中の workspace file path 候補表示は持たない
 - 手入力または paste された `@path` は送信時に検証し、存在しない path は composer feedback として表示して送信しない
-- ファイル／画像pasteは同名・同内容なら既存pathを挿入し、同名・別内容なら`Replace Pasted File`で置換の影響を確認する。`Cancel`を初期focusにし、`Replace File`だけが置換を確定する。通常Composerと質問自由回答で共通とし、比較範囲・保存・取消は[Session Local Files](session-local-files.md#composerと保存)に従う
+- ファイル／画像pasteは同名・同内容なら既存pathを挿入し、操作不要の通知で再利用を知らせる。同名・別内容なら`Replace Pasted File`で置換の影響を確認し、`Save a Copy`で元fileを残して両方を保存できる。`Cancel`を初期focusにし、`Replace File`だけが置換を確定する。通常Composerと質問自由回答で共通とし、比較範囲・保存・取消は[Session Local Files](session-local-files.md#composerと保存)に従う
 - picker で選んだ file / folder / image も textarea に `@path` を挿入する
 - 添付 picker は初回だけ workspace を開き、以後は最後に選んだディレクトリを開く
 - composer toolbar の `Add Directory` はフォルダーピッカーを開き、隣の `Add Directory By Path` は絶対パス入力dialogを開く。dialogの通常表示は操作名の見出し、可視label・placeholderのない入力欄、`Cancel`／`Add`のみとし、compactな角丸と余白を使い、背景をblurしない。dialogと入力欄は左右の余白を残してAction Dockの利用可能な横幅に追従し、狭幅ではみ出さない。入力幅を超える長いpathも値を省略・変形せず、選択・横スクロールで全体へ到達できる。入力欄のaccessible nameは維持する。パス入力はHomeのWorkspaceと共通部品・検証controllerを使い、入力停止から300ms後に検証する。検証待ち・確認中は入力内のspinnerとaccessible statusで示し、空欄・検証中・無効pathでは`Add`を無効にする。入力変更・閉鎖・対象切替後に古い検証結果を反映しない。Main／Auxiliaryとも、実在するアクセス可能なdirectoryを検証して既存の許可リストへ追加する。Windowsのパス入力はdrive付きまたはUNCの完全修飾pathを必要とする。drive未指定rooted path、相対path、不存在、file、利用不可、保存失敗では入力を保持してalertを表示し、再入力できる。追加時もパスを再検証し、追加処理中は `Add` を無効にして、dialog内のfocus移動、Enterで追加、Escape／Cancelで閉じた後のfocus復帰を維持する。追加処理中はdialogを閉じず、重複送信を防ぐ。横の `Dirs` toggle から `Additional Directories` 一覧を既定 closed で開閉できるようにする

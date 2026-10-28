@@ -9,6 +9,7 @@ export type SaveSessionFileInput = {
   fileName: string;
   data: Uint8Array;
   replaceExistingHash?: string;
+  saveAsCopy?: boolean;
 };
 
 const SESSION_FILES_ROOT = "session-files";
@@ -131,6 +132,18 @@ export async function saveSessionFile(userDataPath: string, input: SaveSessionFi
   await mkdir(directoryPath, { recursive: true });
   const fileName = safeFileName(input.fileName);
   const destination = path.join(directoryPath, fileName);
+  if (input.saveAsCopy) {
+    for (let index = 2; index < 10000; index += 1) {
+      const candidate = buildDestinationCandidate(directoryPath, fileName, index);
+      try {
+        await writeFile(candidate, input.data, { flag: "wx" });
+        return candidate;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
+    throw new Error("Could not choose a destination file name.");
+  }
   try {
     await writeFile(destination, input.data, { flag: "wx" });
     return destination;
@@ -150,7 +163,7 @@ export async function saveSessionFile(userDataPath: string, input: SaveSessionFi
   } finally {
     await existing.close();
   }
-  if (existingHash === createHash("sha256").update(input.data).digest("hex")) return destination;
+  if (existingHash === createHash("sha256").update(input.data).digest("hex")) return { status: "reused", path: destination };
   if (input.replaceExistingHash !== existingHash) return { status: "conflict", fileName, existingHash };
 
   const temporaryPath = path.join(directoryPath, `.paste-${randomUUID()}.tmp`);

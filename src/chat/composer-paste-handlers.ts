@@ -20,6 +20,8 @@ export type PastedClipboardFile = {
 
 export type PastedSessionAttachment = ComposerReferenceInput;
 
+export type PastedFileConflictDecision = "replace" | "copy" | "cancel";
+
 export type PastedClipboardFileItem = {
   kind: string;
   getAsFile(): PastedClipboardFile | null;
@@ -55,7 +57,8 @@ export async function collectPastedSessionAttachmentPaths(input: {
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
   sessionId: string;
-  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<boolean>;
+  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
+  onReuse?: (fileNames: string[]) => void;
 }): Promise<string[]> {
   return (await collectPastedSessionAttachments(input)).map((attachment) => attachment.path);
 }
@@ -93,7 +96,8 @@ export async function collectPastedSessionAttachments(input: {
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
   sessionId: string;
-  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<boolean>;
+  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
+  onReuse?: (fileNames: string[]) => void;
 }): Promise<PastedSessionAttachment[]> {
   const pastedFiles = collectPastedClipboardFiles(input.clipboardData);
   if (pastedFiles.length === 0) {
@@ -102,6 +106,7 @@ export async function collectPastedSessionAttachments(input: {
 
   input.preventDefault();
   const savedAttachments: PastedSessionAttachment[] = [];
+  const reused: string[] = [];
   for (const file of pastedFiles) {
     const buffer = await file.arrayBuffer();
     const fileName = resolvePastedFileName({ file, currentTimestampLabel: input.currentTimestampLabel });
@@ -111,18 +116,23 @@ export async function collectPastedSessionAttachments(input: {
       data: buffer,
     };
     let result = await input.savePastedSessionFile(request);
-    while (typeof result !== "string") {
+    while (typeof result !== "string" && result.status === "conflict") {
       if (!input.confirmReplacement) throw new Error(`Replacing "${result.fileName}" requires confirmation.`);
-      if (!await input.confirmReplacement(result)) break;
-      result = await input.savePastedSessionFile({ ...request, replaceExistingHash: result.existingHash });
+      const decision = await input.confirmReplacement(result);
+      if (decision === "cancel") break;
+      result = await input.savePastedSessionFile(decision === "copy"
+        ? { ...request, saveAsCopy: true }
+        : { ...request, replaceExistingHash: result.existingHash });
     }
-    if (typeof result !== "string") continue;
+    if (typeof result !== "string" && result.status === "conflict") continue;
+    if (typeof result !== "string") reused.push(fileName);
     savedAttachments.push({
-      path: result,
+      path: typeof result === "string" ? result : result.path,
       presentation: resolvePastedAttachmentPresentation(file, fileName),
     });
   }
 
+  if (reused.length) input.onReuse?.(reused);
   return savedAttachments;
 }
 
@@ -134,7 +144,8 @@ export function createPastedSessionAttachmentHandler(input: {
   getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null | undefined;
   getSessionId: () => string | null | undefined;
   insertAttachments: (attachments: PastedSessionAttachment[]) => void;
-  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<boolean>;
+  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
+  onReuse?: (fileNames: string[]) => void;
 }): (event: PastedSessionAttachmentEvent) => Promise<boolean> {
   return async (event) => {
     if (!input.canPaste()) {
@@ -155,6 +166,7 @@ export function createPastedSessionAttachmentHandler(input: {
         savePastedSessionFile,
         sessionId,
         confirmReplacement: input.confirmReplacement,
+        onReuse: input.onReuse,
       });
       if (savedAttachments.length === 0) {
         return false;

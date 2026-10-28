@@ -246,6 +246,7 @@ export type SavePastedSessionFileRequest = {
   fileName: string;
   data: ArrayBuffer;
   replaceExistingHash?: string;
+  saveAsCopy?: boolean;
 };
 
 export type PastedSessionFileConflict = {
@@ -254,7 +255,7 @@ export type PastedSessionFileConflict = {
   existingHash: string;
 };
 
-export type SavePastedSessionFileResult = string | PastedSessionFileConflict;
+export type SavePastedSessionFileResult = string | PastedSessionFileConflict | { status: "reused"; path: string };
 
 export type OpenPathOptions = {
   baseDirectory?: string | null;

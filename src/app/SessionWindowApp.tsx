@@ -1754,7 +1754,7 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const { confirmReplacement, replacementDialog } = usePastedFileReplacement(
+  const { confirmReplacement, replacementDialog, notifyReuse, reuseNotice } = usePastedFileReplacement(
     activeRunSessionId,
     !composerRegistry.isFrozen && !isSelectedSessionReadOnly && !isAuxiliaryTargetUnavailable,
   );
@@ -1779,6 +1779,7 @@ export default function AgentSessionWindowApp() {
     getSessionId: () => selectedSession?.id,
     insertAttachments: insertPastedAttachments,
     confirmReplacement,
+    onReuse: notifyReuse,
   });
 
   const handleAddAdditionalDirectory = async (directoryPath?: string) => {
@@ -2225,6 +2226,7 @@ export default function AgentSessionWindowApp() {
       onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
     >
       {replacementDialog}
+      {reuseNotice}
     </ChatSessionModals>
   );
   const chatShellSurface = chatShellFeature.buildSurface({

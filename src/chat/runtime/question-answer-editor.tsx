@@ -43,7 +43,7 @@ export function QuestionAnswerEditor({
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const { confirmReplacement, replacementDialog } = usePastedFileReplacement(sessionId, !disabled);
+  const { confirmReplacement, replacementDialog, notifyReuse, reuseNotice } = usePastedFileReplacement(sessionId, !disabled);
 
   useEffect(() => { setMenuOpen(false); }, [attachmentTarget]);
 
@@ -131,6 +131,7 @@ export function QuestionAnswerEditor({
             sessionId,
             currentTimestampLabel: () => new Date().toISOString(),
             confirmReplacement,
+            onReuse: (fileNames) => { if (isCurrent()) notifyReuse(fileNames); },
             savePastedSessionFile: (request) => {
               if (!isCurrent()) throw new Error("The input request is no longer available.");
               return api.savePastedSessionFile(request);
@@ -169,6 +170,7 @@ export function QuestionAnswerEditor({
       {busy ? <span className="visually-hidden" role="status">Attaching files</span> : null}
       {error ? <p className="live-approval-warning" role="alert">{error}</p> : null}
       {replacementDialog}
+      {reuseNotice}
     </div>
   );
 }
