@@ -29,8 +29,8 @@ function PastedFileReplacementDialog({ fileName, onResolve }: {
       </>}
     >
       <h2>Replace File?</h2>
-      <p><strong>{fileName}</strong> already exists with different contents.</p>
-      <p>Replacing it also changes the file used by earlier messages that reference this path. Cancel keeps the existing file and does not attach this pasted file.</p>
+      <p><strong>{fileName}</strong> has different contents.</p>
+      <p>This also changes the file used by earlier messages.</p>
     </LaunchDialogShell>,
     document.body,
   );
