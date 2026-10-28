@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { query, resolveSettings, type ElicitationRequest, type Options, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -171,9 +172,8 @@ function mcpElicitationRequest(requestId: string, request: ElicitationRequest): 
   return { requestId, provider: "claude", mode: "form", message: request.message, source: request.serverName, fields };
 }
 
-function buildImagePrompt(prompt: ProviderPromptComposition): Promise<string | AsyncIterable<SDKUserMessage>> {
-  if (prompt.imagePaths.length === 0) return Promise.resolve(prompt.inputBodyText);
-  return Promise.all(prompt.imagePaths.map(async (imagePath) => {
+async function buildUserMessage(prompt: ProviderPromptComposition, uuid: ReturnType<typeof randomUUID>): Promise<SDKUserMessage> {
+  const images = await Promise.all(prompt.imagePaths.map(async (imagePath) => {
     const suffix = extname(imagePath).toLowerCase();
     const mime: "image/png" | "image/webp" | "image/jpeg" | "image/gif" = suffix === ".png" ? "image/png"
       : suffix === ".webp" ? "image/webp"
@@ -181,15 +181,11 @@ function buildImagePrompt(prompt: ProviderPromptComposition): Promise<string | A
           : suffix === ".jpg" || suffix === ".jpeg" ? "image/jpeg"
             : (() => { throw new Error(`Unsupported Claude image type: ${suffix}`); })();
     return { type: "image" as const, source: { type: "base64" as const, media_type: mime, data: (await readFile(imagePath)).toString("base64") } };
-  })).then((images) => ({
-    async *[Symbol.asyncIterator]() {
-      yield {
-        type: "user" as const,
-        parent_tool_use_id: null,
-        message: { role: "user" as const, content: [{ type: "text" as const, text: prompt.inputBodyText }, ...images] },
-      };
-    },
   }));
+  return {
+    type: "user", uuid, parent_tool_use_id: null,
+    message: { role: "user", content: [{ type: "text", text: prompt.inputBodyText }, ...images] },
+  };
 }
 
 export function resolveClaudeBinaryPath(): string {
@@ -597,14 +593,30 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       ? await captureWorkspaceSnapshot(snapshotRoots).catch(() => createDisabledWorkspaceSnapshotCapture())
       : createDisabledWorkspaceSnapshotCapture();
     let iterator: ReturnType<ClaudeQuery> | null = null;
+    const userMessageId = randomUUID();
+    let releaseInput!: () => void;
+    const inputReleased = new Promise<void>((resolve) => { releaseInput = resolve; });
     try {
-      const sdkPrompt = await buildImagePrompt(prompt);
+      const userMessage = await buildUserMessage(prompt, userMessageId);
       if (controller.signal.aborted) throw new Error("Canceled");
-      iterator = this.runQuery({ prompt: sdkPrompt, options });
+      async function* sdkInput(): AsyncGenerator<SDKUserMessage> {
+        yield userMessage;
+        // A transcript-only notification can emit a result before this send runs.
+        // Do not let that result close the SDK's approval/hook input channel.
+        await inputReleased;
+      }
+      iterator = this.runQuery({ prompt: sdkInput(), options });
       let burst = 0;
       while (true) {
         const next = await signalRace(iterator.next(), controller.signal);
         if (next.done) break;
+        if (next.value.type === "result") {
+          const terminal = next.value;
+          const matchesInput = terminal.user_message_uuid === userMessageId || terminal.user_message_uuids?.includes(userMessageId);
+          const sessionFailure = !terminal.user_message_uuid && !terminal.user_message_uuids?.length && !terminal.origin
+            && (terminal.subtype !== "success" || terminal.is_error);
+          if (!matchesInput && !sessionFailure) continue;
+        }
         this.receive(next.value, trace, Boolean(input.session.threadId));
         if (next.value.type === "system" && next.value.subtype === "init") {
           if (next.value.permissionMode && next.value.permissionMode !== permissionMode) {
@@ -648,6 +660,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       trace.errorMessage = message;
       throw new ProviderTurnError(redactor.sanitizeText(message), this.result(input, trace), canceled, providerErrorReason(message, canceled));
     } finally {
+      releaseInput();
       input.signal?.removeEventListener("abort", abort);
       if (progressFailure !== undefined && childExited && input.onCleanupPending) {
         input.onCleanupPending(childExited);
