@@ -1,5 +1,6 @@
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { SetSessionTitleResult } from "../../../src-shared/session/session-mutation-contract.js";
+import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
 import {
   applyCopilotCustomAgentSelection,
   getSessionIncarnationId,
@@ -25,7 +26,7 @@ import {
 
 export type MainRuntimeOption =
   | { kind: "custom-agent"; value: string }
-  | { kind: "approval-mode"; value: ApprovalMode }
+  | { kind: "approval-mode"; value: ApprovalMode; confirmedReviewerChange?: ConfirmedReviewerChange }
   | { kind: "codex-sandbox-mode"; value: CodexSandboxMode }
   | { kind: "codex-speed"; value: CodexSpeed }
   | { kind: "codex-reviewer"; value: CodexReviewer }
@@ -37,7 +38,7 @@ export async function runMainRuntimeOptionOperation(input: {
   isReadOnly: boolean;
   providerCatalog: ModelCatalogProvider | null;
   option: MainRuntimeOption;
-  persist: (session: Session) => Promise<Session>;
+  persist: (session: Session, confirmedReviewerChange?: ConfirmedReviewerChange) => Promise<Session>;
   createTimestampLabel: () => string;
 }): Promise<Session | null> {
   const {
@@ -66,12 +67,15 @@ export async function runMainRuntimeOptionOperation(input: {
   }
 
   if (option.kind === "approval-mode") {
+    if (option.confirmedReviewerChange && (session.provider !== "claude"
+      || session.codexReviewer !== "auto-review"
+      || session.approvalMode !== option.confirmedReviewerChange.previousApprovalMode)) return null;
     const next = buildSessionWithApprovalMode(
       session,
       option.value,
       createTimestampLabel(),
     );
-    return next ? persist(next) : null;
+    return next ? persist(option.confirmedReviewerChange ? { ...next, codexReviewer: "user" } : next, option.confirmedReviewerChange) : null;
   }
 
   if (option.kind === "codex-sandbox-mode") {
@@ -94,7 +98,7 @@ export async function runMainRuntimeOptionOperation(input: {
   }
   if (option.kind === "codex-reviewer") {
     if (
-      session.provider !== "codex" ||
+      (session.provider !== "codex" && session.provider !== "claude") ||
       session.approvalMode === "never"
     )
       return null;

@@ -318,35 +318,51 @@ test("Claudeの不正Approvalを明示表示し有効値への操作で復旧す
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude composerはApprovalとReviewerの不正な組合せを明示修正でき、対応候補だけを選べてAuto Run中はReviewerを保持する"
+// claim = "Claude composerはApprovalを先に選べ、不適合なReviewerの変更は確認後のみ両方へ反映し、Auto Run中はReviewerを保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval; docs/design/provider-adapter.md#approval-modes" }
-// fault = "不正Reviewerを修正できないか非対応候補を有効表示するか、Auto Runへの変更でReviewerを上書きする"
-// observable = "実selectのdisabled・aria-invalid・値、Userへの変更後とAuto Run往復後の状態"
+// fault = "Approvalを選べない、確認前や取消時に設定が変わる、またはAuto Run往復でReviewerを失う"
+// observable = "実selectの候補と値、確認dialogの取消・承認・owner切替後のcallbackと両設定、Auto Run往復後の状態"
 // observation_boundary = "component-behavior"
 // scope = "shared composer Claude approval and reviewer"
 // lifecycle = "permanent"
 // impact = "承認方針を誤認して送信不能になり、復旧操作でも設定が失われる"
 // distinction = "候補生成とvalidationのtestは実controlのdisabledと修正callback、再描画を通らない"
 // @end-test-value
-test("Claudeの共通Reviewerは不正な組合せを修正できAuto Run往復で保持される", async () => {
+test("ClaudeのApprovalはReviewer切替を確認し、取消とAuto Runで選択を保持する", async () => {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  dom.window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
+  dom.window.HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   const root = createRoot(dom.window.document.getElementById("root")!);
+  const changes: Array<[ApprovalMode, ApprovalMode | undefined]> = [];
+  const registry = new ComposerControllerRegistry();
+  let changeOwner: (owner: string) => void = () => {};
+  let changeIdentity: (identity: string) => void = () => {};
   function Fixture() {
     const [approval, setApproval] = useState<ApprovalMode>("plan");
     const [reviewer, setReviewer] = useState<"user" | "auto-review">("auto-review");
+    const [owner, setOwner] = useState("first");
+    const [identity, setIdentity] = useState("incarnation-1");
+    changeOwner = setOwner;
+    changeIdentity = setIdentity;
     const options = buildRuntimeSelectionOptions({
       providerId: "claude", providerCatalog: null, models: [], selectedModel: "model",
       reasoningEfforts: [], selectedApprovalMode: approval, selectedCodexSandboxMode: "workspace-write",
       selectedCodexSpeed: "standard", selectedCodexReviewer: reviewer,
     });
     return React.createElement(SessionComposerExpanded, createComposerTestProps({
-      selectedApprovalMode: approval, approvalOptions: options.approvalChoiceOptions,
+      providerId: "claude", runtimeSelectionIdentity: identity, selectedApprovalMode: approval, approvalOptions: options.approvalChoiceOptions,
+      composerController: { owner: { kind: "main", id: owner }, registry },
       selectedCodexReviewer: reviewer, reviewerOptions: options.reviewerSelectOptions,
-      onChangeApprovalMode: setApproval, onChangeCodexReviewer: setReviewer,
+      onChangeApprovalMode: (value, confirmation) => {
+        changes.push([value, confirmation?.previousApprovalMode]);
+        setApproval(value);
+        if (confirmation) setReviewer("user");
+      },
+      onChangeCodexReviewer: setReviewer,
     }));
   }
   try {
@@ -365,13 +381,58 @@ test("Claudeの共通Reviewerは不正な組合せを修正できAuto Run往復�
     await select(approval, "on-request");
     assert.equal(reviewer.disabled, false);
     await select(reviewer, "auto-review");
-    assert.deepEqual([...approval.options].filter((option) => option.disabled).map((option) => option.value), ["accept-edits", "dont-ask", "plan"]);
+    assert.deepEqual([...approval.options].filter((option) => option.disabled).map((option) => option.value), []);
+    for (const value of ["accept-edits", "dont-ask", "plan"]) {
+      const count = changes.length;
+      await select(approval, value);
+      const dialog = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
+      assert.equal(dialog.open, true);
+      assert.equal(approval.value, "on-request");
+      assert.equal(reviewer.value, "auto-review");
+      assert.equal(changes.length, count);
+      assert.match(dialog.textContent ?? "", /requires Reviewer to be User/);
+      await act(async () => dialog.querySelector<HTMLButtonElement>("button")!.click());
+      assert.equal(dialog.open, false);
+      assert.equal(approval.value, "on-request");
+      assert.equal(reviewer.value, "auto-review");
+      assert.equal(changes.length, count);
+    }
+    await select(approval, "accept-edits");
+    const confirm = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
+    await act(async () => confirm.querySelectorAll<HTMLButtonElement>("button")[1]!.click());
+    assert.deepEqual(changes.at(-1), ["accept-edits", "on-request"]);
+    assert.equal(approval.value, "accept-edits");
+    assert.equal(reviewer.value, "user");
+    await select(approval, "on-request");
+    await select(reviewer, "auto-review");
     await select(approval, "never");
     assert.equal(reviewer.disabled, true);
     assert.equal(reviewer.value, "auto-review");
     await select(approval, "on-request");
     assert.equal(reviewer.disabled, false);
     assert.equal(reviewer.value, "auto-review");
+    await select(approval, "never");
+    await select(approval, "plan");
+    const dialog = dom.window.document.querySelector<HTMLDialogElement>('dialog[aria-label="Change Approval and Reviewer"]')!;
+    assert.equal(dialog.open, true);
+    await act(async () => dialog.querySelectorAll<HTMLButtonElement>("button")[1]!.click());
+    assert.deepEqual(changes.at(-1), ["plan", "never"]);
+    assert.equal(approval.value, "plan");
+    assert.equal(reviewer.value, "user");
+    assert.equal(reviewer.disabled, true);
+    await select(approval, "on-request");
+    await select(reviewer, "auto-review");
+    await select(approval, "accept-edits");
+    assert.equal(dialog.open, true);
+    const count = changes.length;
+    await act(async () => changeOwner("second"));
+    assert.equal(dialog.open, false);
+    assert.equal(changes.length, count);
+    await select(approval, "accept-edits");
+    assert.equal(dialog.open, true);
+    await act(async () => changeIdentity("incarnation-2"));
+    assert.equal(dialog.open, false);
+    assert.equal(changes.length, count);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

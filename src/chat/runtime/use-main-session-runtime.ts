@@ -10,6 +10,7 @@ import type { RunSessionTurnRequest } from "../../../src-shared/session/runtime-
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
+import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { ReadStatus } from "../../ui/loading-indicator.js";
 import type {
@@ -107,7 +108,7 @@ export function useMainSessionRuntime({
     [applySessions],
   );
 
-  const selectExecutionOptions = useCallback((session: Session) => {
+  const selectExecutionOptions = useCallback((session: Session, confirmedReviewerChange?: ConfirmedReviewerChange) => {
     const options = captureSessionExecutionOptions(session);
     const incarnationId = getSessionIncarnationId(session);
     const revision = ++selectionRequestRevisionRef.current;
@@ -115,7 +116,8 @@ export function useMainSessionRuntime({
     currentSessionRef.current = session;
     applySessions((current) => current.map((candidate) => candidate.id === session.id ? { ...candidate, ...options } : candidate));
     if (api) {
-      void api.setSessionExecutionOptions({ sessionId: session.id, incarnationId, executionOptions: options })
+      void api.setSessionExecutionOptions({ sessionId: session.id, incarnationId, executionOptions: options,
+        ...(confirmedReviewerChange ? { confirmedReviewerChange } : {}) })
         .then((result) => {
           if (result.status === "accepted" && !result.checkpointSaved) {
             void api.reportRendererLog({ level: "error", kind: "renderer.session-execution-options.failed", message: "Session execution options could not be saved", data: { sessionId: session.id } });

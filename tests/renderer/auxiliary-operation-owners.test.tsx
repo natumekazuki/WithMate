@@ -8,7 +8,7 @@ import type { AuxiliaryDraftRecord } from "../../src-shared/auxiliary/auxiliary-
 import type { SetExecutionOptionsResult } from "../../src-shared/session/session-mutation-contract.js";
 import type { RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
-import { AuxiliaryExecutionOptionsOwner } from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
+import { AuxiliaryExecutionOptionsOwner, runAuxiliaryApprovalModeChangeOperation } from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
 import { useAuxiliaryDraftPersistence } from "../../src/chat/auxiliary/use-auxiliary-draft-persistence.js";
 import { runMainSessionTurnOperation } from "../../src/chat/runtime/run-main-session-turn-operation.js";
 import { SessionTurnAcceptance } from "../../src/chat/runtime/session-turn-acceptance.js";
@@ -150,6 +150,38 @@ test("実行設定ownerは要求revisionと会話identityを照合してrollback
   assert.equal(requests.length, 5);
   assert.equal(binding.getSession()!.codexReviewer, "user");
   assert.equal(binding.getSession()!.model, "model-a");
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claude Auxiliaryの確認済みApproval変更はReviewerと確認情報を単一要求にまとめ、古い確認は反映しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval" }
+// fault = "Auto Run中のReviewer保持が確認済み変更を妨げるか、古い確認で別の選択を上書きする"
+// observable = "実行設定ownerの現在選択とIPC要求の件数・Approval・Reviewer・確認前Approval"
+// observation_boundary = "component-behavior"
+// scope = "Auxiliary confirmed approval change"
+// lifecycle = "permanent"
+// impact = "確認した権限を次送信用に反映できない、または別の選択を意図せず変更する"
+// distinction = "serviceとcomposerの個別testではAuxiliary ownerを通る選択と要求の配線を確認できない"
+// @end-test-value
+test("Auxiliaryは確認済みApprovalとReviewerを一括選択する", async () => {
+  const owner = new AuxiliaryExecutionOptionsOwner();
+  const { binding } = bindingFor({ ...session(), provider: "claude", approvalMode: "never", codexReviewer: "auto-review" });
+  const requests: Array<{ executionOptions: ReturnType<typeof captureSessionExecutionOptions>; confirmedReviewerChange?: { previousApprovalMode: string } }> = [];
+  const api: NonNullable<Parameters<typeof owner.update>[0]["api"]> = {
+    setAuxiliaryExecutionOptions: async (request) => { requests.push(request); return { status: "accepted", checkpointSaved: true }; },
+    getAuxiliarySession: async () => null,
+    reportRendererLog: () => {},
+  };
+  const update = (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: { previousApprovalMode: AuxiliarySession["approvalMode"] }) =>
+    owner.update({ api, binding, isReadOnly: false, recipe, confirmedReviewerChange, onFeedback: () => {} });
+  await runAuxiliaryApprovalModeChangeOperation({ approvalMode: "plan", confirmedReviewerChange: { previousApprovalMode: "on-request" }, updateActiveAuxiliarySession: update, createTimestampLabel: () => "now" });
+  assert.equal(requests.length, 0);
+  assert.equal(binding.getSession()?.approvalMode, "never");
+  await runAuxiliaryApprovalModeChangeOperation({ approvalMode: "plan", confirmedReviewerChange: { previousApprovalMode: "never" }, updateActiveAuxiliarySession: update, createTimestampLabel: () => "now" });
+  assert.equal(requests.length, 1);
+  assert.deepEqual([requests[0]?.executionOptions.approvalMode, requests[0]?.executionOptions.codexReviewer, requests[0]?.confirmedReviewerChange], ["plan", "user", { previousApprovalMode: "never" }]);
+  assert.deepEqual([binding.getSession()?.approvalMode, binding.getSession()?.codexReviewer], ["plan", "user"]);
 });
 
 function sendQueue(h: Awaited<ReturnType<typeof mountDrafts>>, state: ReturnType<typeof bindingFor>, input: {

@@ -144,9 +144,9 @@ function characterCandidates(): CharacterCatalogEntry[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude Auxiliaryは親Reviewerを継承して有効な承認方針だけ保存し、非対応値と作成・更新時の不正な組合せを拒否する"
+// claim = "Claude Auxiliaryは有効な承認方針だけ保存し、Reviewerを伴う変更は確認済みの場合に一括保存する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
-// fault = "対応する方針を作成できないか、親のAuto ReviewやReviewer保持による不正な組合せを保存するか、非対応値を受理する"
+// fault = "非対応や未確認の組合せを保存するか、確認済み変更を保存できない"
 // observable = "作成・更新APIのrejectとACK、SQLiteの作成件数・保存approvalMode・codexReviewer"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-explicit-claude-approval"
@@ -187,9 +187,10 @@ test("Claude Auxiliaryは非対応approvalを保存せず既定on-requestで作�
     });
     assert.equal(created.approvalMode, "on-request");
     assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "on-request");
-    const update = (approvalMode: SessionExecutionOptions["approvalMode"], codexReviewer: SessionExecutionOptions["codexReviewer"]) => service.setAuxiliaryExecutionOptions({
+    const update = (approvalMode: SessionExecutionOptions["approvalMode"], codexReviewer: SessionExecutionOptions["codexReviewer"], previousApprovalMode?: SessionExecutionOptions["approvalMode"]) => service.setAuxiliaryExecutionOptions({
       auxiliarySessionId: created.id, parentSessionId: main.id, createdAt: created.createdAt,
       executionOptions: { ...captureSessionExecutionOptions(created), approvalMode, codexReviewer },
+      ...(previousApprovalMode ? { confirmedReviewerChange: { previousApprovalMode } } : {}),
     });
     assert.deepEqual(await update("on-request", "auto-review"), { status: "accepted", checkpointSaved: true });
     assert.equal(storage.getAuxiliarySession(created.id)?.codexReviewer, "auto-review");
@@ -214,6 +215,11 @@ test("Claude Auxiliaryは非対応approvalを保存せず既定on-requestで作�
     await assert.rejects(update("plan", "user"), /reviewer is not supported with this approval mode/);
     assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "never");
     assert.equal(storage.getAuxiliarySession(created.id)?.codexReviewer, "auto-review");
+    await assert.rejects(update("plan", "user", "on-request"), /no longer valid/);
+    assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "never");
+    assert.deepEqual(await update("plan", "user", "never"), { status: "accepted", checkpointSaved: true });
+    assert.equal(storage.getAuxiliarySession(created.id)?.approvalMode, "plan");
+    assert.equal(storage.getAuxiliarySession(created.id)?.codexReviewer, "user");
   } finally {
     storage.close();
     sessionStorage.close();

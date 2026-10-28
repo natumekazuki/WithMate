@@ -6,6 +6,8 @@ import { focusRovingItemByKey } from "../../ui/a11y.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import type { ApprovalMode } from "../../../src-shared/settings/approval-mode.js";
+import { getApprovalReviewerOptionsForProvider } from "../../../src-shared/settings/provider-runtime-options.js";
+import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
 
 import type { CodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
 import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
@@ -117,6 +119,8 @@ export type SessionComposerExpandedProps = {
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string; disabled?: boolean }>;
+  providerId?: string;
+  runtimeSelectionIdentity?: string;
   selectedApprovalMode: ApprovalMode;
   reviewerOptions: Array<{ value: CodexReviewer; label: string; disabled?: boolean }>;
   selectedCodexReviewer: CodexReviewer;
@@ -155,7 +159,7 @@ export type SessionComposerExpandedProps = {
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
-  onChangeApprovalMode: (value: ApprovalMode) => void;
+  onChangeApprovalMode: (value: ApprovalMode, confirmedReviewerChange?: ConfirmedReviewerChange) => void;
   onChangeCodexReviewer: (value: CodexReviewer) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeCodexSpeed: (value: CodexSpeed) => void;
@@ -216,6 +220,8 @@ export function SessionComposerExpanded({
   sendButtonTitle,
   isComposerBlockedFeedbackActive,
   approvalOptions,
+  providerId,
+  runtimeSelectionIdentity,
   selectedApprovalMode,
   reviewerOptions = [],
   selectedCodexReviewer = "user",
@@ -341,6 +347,44 @@ export function SessionComposerExpanded({
   ].filter(Boolean).join(" ") || undefined;
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
+  const approvalSelectRef = useRef<HTMLSelectElement>(null);
+  const approvalDialogRef = useRef<HTMLDialogElement>(null);
+  const approvalCancelRef = useRef<HTMLButtonElement>(null);
+  const approvalDescriptionId = useId();
+  const [pendingApproval, setPendingApproval] = useState<{ value: ApprovalMode; previousApprovalMode: ApprovalMode; owner: string } | null>(null);
+  const approvalOwnerKey = `${errorOwnerKey}:${runtimeSelectionIdentity ?? ""}`;
+  const isPendingApprovalCurrent = !!pendingApproval && pendingApproval.owner === approvalOwnerKey
+    && pendingApproval.previousApprovalMode === selectedApprovalMode && selectedCodexReviewer === "auto-review"
+    && providerId === "claude" && !composerControlsDisabled && showExecutionModeControls;
+
+  useEffect(() => {
+    const dialog = approvalDialogRef.current;
+    if (!dialog) return;
+    if (isPendingApprovalCurrent && !dialog.open) {
+      dialog.showModal();
+      approvalCancelRef.current?.focus();
+    } else if (!isPendingApprovalCurrent && dialog.open) {
+      dialog.close();
+    }
+    if (pendingApproval && !isPendingApprovalCurrent) setPendingApproval(null);
+  }, [isPendingApprovalCurrent, pendingApproval]);
+
+  const dismissApprovalConfirmation = () => {
+    approvalDialogRef.current?.close();
+    setPendingApproval(null);
+    approvalSelectRef.current?.focus();
+  };
+
+  const selectApprovalMode = (value: ApprovalMode) => {
+    const reviewerConflict = selectedCodexReviewer === "auto-review"
+      && getApprovalReviewerOptionsForProvider(providerId, value)
+        .some((option) => option.value === "auto-review" && option.disabled);
+    if (reviewerConflict) {
+      setPendingApproval({ value, previousApprovalMode: selectedApprovalMode, owner: approvalOwnerKey });
+      return;
+    }
+    onChangeApprovalMode(value);
+  };
 
   useEffect(() => {
     if (!showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
@@ -724,7 +768,8 @@ export function SessionComposerExpanded({
                 label="Approval"
                 value={selectedApprovalMode}
                 options={approvalOptions}
-                onChange={(value) => onChangeApprovalMode(value as ApprovalMode)}
+                onChange={(value) => selectApprovalMode(value as ApprovalMode)}
+                selectRef={approvalSelectRef}
                 disabled={composerControlsDisabled}
                 invalid={approvalOptions.some((option) => option.value === selectedApprovalMode && option.disabled)}
               />
@@ -831,6 +876,19 @@ export function SessionComposerExpanded({
           ) : null}
         </span>
       </div>
+
+      <dialog ref={approvalDialogRef} className="session-recovery-conflict" aria-label="Change Approval and Reviewer" aria-describedby={approvalDescriptionId}
+        onCancel={(event) => { event.preventDefault(); dismissApprovalConfirmation(); }}>
+        <p id={approvalDescriptionId}>{approvalOptions.find((option) => option.value === pendingApproval?.value)?.label} requires Reviewer to be User. Switch from Auto Review to User and change Approval?</p>
+        <div className="session-recovery-conflict-actions">
+          <button ref={approvalCancelRef} className="drawer-toggle compact secondary" type="button" onClick={dismissApprovalConfirmation}>Cancel</button>
+          <button className="drawer-toggle compact" type="button" disabled={!isPendingApprovalCurrent} onClick={() => {
+            if (!pendingApproval || !isPendingApprovalCurrent) return;
+            onChangeApprovalMode(pendingApproval.value, { previousApprovalMode: pendingApproval.previousApprovalMode });
+            dismissApprovalConfirmation();
+          }}>Switch Reviewer and Approval</button>
+        </div>
+      </dialog>
     </div>
   );
 }

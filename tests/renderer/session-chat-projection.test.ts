@@ -823,6 +823,52 @@ test("session composer feature は Speed の値・route・running guard を維�
 
 // @test-value v2
 // kind = "contract"
+// claim = "確認済みのClaude Approval変更は対象のMainまたはAuxiliaryへ両設定と確認前の状態を渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: ClaudeのApproval" }
+// fault = "composer featureが確認情報を落とすか別の会話へ配送し、一括変更が拒否または誤適用される"
+// observable = "Main operationの値と確認情報、Auxiliary updateの適用結果と確認情報、composer surfaceのproviderと会話identity"
+// observation_boundary = "component-behavior"
+// scope = "confirmed approval composer target routing"
+// lifecycle = "permanent"
+// impact = "確認したApprovalとReviewerが次送信用に反映されない、または別の会話へ適用される"
+// distinction = "composerと各operationの個別testでは両者をつなぐfeatureのtarget別配送を検証できない"
+// @end-test-value
+test("composer featureは確認済みApproval変更を対象会話へ配送する", async () => {
+  await withReactDom(async (root) => {
+    const registry = new ComposerControllerRegistry();
+    const harness = await renderComposerHarness(root, createComposerInput(registry, { kind: "main", id: "main-session" }));
+    const feature = harness.getFeature()!;
+    const log: ComposerOperationLog = { mainDrafts: [], auxiliaryDrafts: [], mainSkills: [], auxiliarySkills: [], mainSpeedChanges: [], auxiliarySpeedChanges: [], mainSends: 0, auxiliarySends: 0 };
+    const confirmation = { previousApprovalMode: "never" as const };
+    const main = createComposerBridge(log, "main", false, { provider: "claude" });
+    main.session = { ...main.session, id: "main-session", incarnationId: "main-incarnation", codexReviewer: "auto-review" };
+    const mainCalls: unknown[] = [];
+    main.operations.runtimeOptions.runMain = (option) => { mainCalls.push(option); };
+    const mainSurface = feature.buildSurface(main).composer;
+    mainSurface.onChangeApprovalMode("plan", confirmation);
+    assert.equal(mainSurface.providerId, "claude");
+    assert.equal(mainSurface.runtimeSelectionIdentity, "main-incarnation");
+    assert.deepEqual(mainCalls, [{ kind: "approval-mode", value: "plan", confirmedReviewerChange: confirmation }]);
+
+    const auxiliarySession = { ...createAuxiliaryRuntimeSession(), provider: "claude", approvalMode: "never" as const, codexReviewer: "auto-review" as const };
+    const auxiliary = createComposerBridge(log, "auxiliary", false, { provider: "claude", auxiliarySession });
+    auxiliary.session = { ...auxiliary.session, id: auxiliarySession.id, incarnationId: auxiliarySession.createdAt, codexReviewer: "auto-review" };
+    const auxiliaryCalls: unknown[] = [];
+    auxiliary.operations.runtimeOptions.auxiliary.update = async (recipe, confirmed) => {
+      const next = recipe(auxiliarySession);
+      auxiliaryCalls.push([next.approvalMode, next.codexReviewer, confirmed]);
+    };
+    const auxiliarySurface = feature.buildSurface(auxiliary).composer;
+    auxiliarySurface.onChangeApprovalMode("accept-edits", confirmation);
+    await act(async () => await Promise.resolve());
+    assert.equal(auxiliarySurface.runtimeSelectionIdentity, auxiliarySession.createdAt);
+    assert.deepEqual(auxiliaryCalls, [["accept-edits", "user", confirmation]]);
+    assert.equal(mainCalls.length, 1);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "composer featureは同じ表示surfaceからmainとauxiliaryのdraft、skill、send操作を対象会話へrouteする"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md:73" }
 // fault = "auxiliaryの入力やskillがmainへ書き込まれる、またはmainの送信がauxiliaryへ流れる"

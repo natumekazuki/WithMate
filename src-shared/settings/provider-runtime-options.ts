@@ -1,6 +1,7 @@
 import { CODEX_APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE, approvalModeOptions, type ApprovalMode, type CodexApprovalPolicy } from "./approval-mode.js";
 import { codexSandboxModeOptions, type CodexSandboxMode } from "./codex-sandbox-mode.js";
-import { codexReviewerOptions, type CodexReviewer } from "./codex-reviewer.js";
+import { codexReviewerOptions, resolveCodexReviewerUpdate, type CodexReviewer } from "./codex-reviewer.js";
+import type { ConfirmedReviewerChange } from "../session/session-mutation-contract.js";
 
 export type RuntimeSelectOption<T extends string = string> = {
   value: T;
@@ -35,7 +36,6 @@ export function getDefaultApprovalModeForProvider(providerId: string | null | un
 
 export function getApprovalOptionsForProvider(
   providerId: string | null | undefined,
-  reviewer: CodexReviewer = "user",
 ): RuntimeSelectOption<ApprovalMode>[] {
   if (providerId === "opencode") {
     return approvalModeOptions
@@ -46,12 +46,7 @@ export function getApprovalOptionsForProvider(
     .filter((option) => providerId === "claude"
       ? Object.hasOwn(CLAUDE_PERMISSION_MODES, option.id)
       : CODEX_APPROVAL_MODE_VALUES.includes(option.id as CodexApprovalPolicy))
-    .map((option) => ({
-      value: option.id,
-      label: option.label,
-      ...(providerId === "claude" && reviewer === "auto-review" && option.id !== "never" && option.id !== "on-request"
-        ? { disabled: true } : {}),
-    }));
+    .map((option) => ({ value: option.id, label: option.label }));
 }
 
 export function getApprovalReviewerOptionsForProvider(
@@ -64,6 +59,26 @@ export function getApprovalReviewerOptionsForProvider(
     ...(providerId === "claude" && approvalMode !== "on-request" && approvalMode !== "never" && option.value === "auto-review"
       ? { disabled: true } : {}),
   }));
+}
+
+export function resolveExecutionOptionsReviewerUpdate(
+  current: { provider: string; approvalMode: ApprovalMode; codexReviewer: CodexReviewer },
+  requested: { approvalMode: ApprovalMode; codexReviewer: CodexReviewer },
+  confirmedChange?: ConfirmedReviewerChange,
+): CodexReviewer {
+  if (confirmedChange === undefined) {
+    return resolveCodexReviewerUpdate(current, requested.codexReviewer);
+  }
+  if (current.provider !== "claude"
+    || current.approvalMode !== confirmedChange?.previousApprovalMode
+    || current.codexReviewer !== "auto-review"
+    || requested.codexReviewer !== "user"
+    || !getApprovalOptionsForProvider(current.provider).some((option) => option.value === requested.approvalMode)
+    || !getApprovalReviewerOptionsForProvider(current.provider, requested.approvalMode)
+      .some((option) => option.value === "auto-review" && option.disabled)) {
+    throw new Error("The confirmed Approval and Reviewer change is no longer valid.");
+  }
+  return "user";
 }
 
 export function getSandboxOptionsForProvider(

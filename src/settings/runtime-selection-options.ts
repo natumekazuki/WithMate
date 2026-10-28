@@ -51,7 +51,7 @@ export function buildRuntimeSelectionOptions({
   selectedCodexReviewer: CodexReviewer;
 }): RuntimeSelectionOptions {
   const approvalChoiceOptions = (() => {
-    const options = getApprovalOptionsForProvider(providerId, selectedCodexReviewer);
+    const options = getApprovalOptionsForProvider(providerId);
     if (options.some((option) => option.value === selectedApprovalMode)) {
       return options;
     }

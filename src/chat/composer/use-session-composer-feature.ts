@@ -19,7 +19,7 @@ import type {
   ModelCatalogProvider,
   ModelReasoningEffort,
 } from "../../../src-shared/settings/model-catalog.js";
-import type { Session } from "../../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type Session } from "../../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { AuxiliaryDraftPersistence } from "../auxiliary/use-auxiliary-draft-persistence.js";
 import type {
@@ -69,6 +69,7 @@ import {
   buildOnDraftCompositionHandlers,
 } from "../composer-draft-handlers.js";
 import type { SessionComposerExpandedProps } from "./session-composer.js";
+import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
 import type { ChatWindowProps } from "../chat-window.js";
 import type { MainRuntimeOption } from "../runtime/main-session-mutation-operations.js";
 import { createEmptyComposerPreview } from "./composer-preview-config.js";
@@ -132,7 +133,7 @@ export type SessionComposerFeatureBridge = {
       runMain: (option: MainRuntimeOption) => void | Promise<void>;
       auxiliary: {
         session: AuxiliarySession | null;
-        update: (recipe: (current: AuxiliarySession) => AuxiliarySession) => Promise<void>;
+        update: (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: ConfirmedReviewerChange) => Promise<void>;
         timestamp: () => string;
       };
     };
@@ -359,8 +360,9 @@ export function useSessionComposerFeature(input: {
       onSendSelectedSession: bridge.operations.send.main,
     });
     const auxiliaryRuntime = bridge.operations.runtimeOptions.auxiliary;
-    const onAuxiliaryApproval = (approvalMode: Session["approvalMode"]) => runAuxiliaryApprovalModeChangeOperation({
+    const onAuxiliaryApproval = (approvalMode: Session["approvalMode"], confirmedReviewerChange?: ConfirmedReviewerChange) => runAuxiliaryApprovalModeChangeOperation({
       approvalMode,
+      confirmedReviewerChange,
       updateActiveAuxiliarySession: auxiliaryRuntime.update,
       createTimestampLabel: auxiliaryRuntime.timestamp,
     });
@@ -402,11 +404,13 @@ export function useSessionComposerFeature(input: {
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });
     };
-    const onChangeApprovalMode = buildAuxiliaryAwareRuntimeOptionChangeHandler({
-      shouldUseAuxiliary: isAuxiliaryTarget,
-      onAuxiliaryChange: onAuxiliaryApproval,
-      onSelectedSessionChange: (value) => bridge.operations.runtimeOptions.runMain({ kind: "approval-mode", value }),
-    });
+    const onChangeApprovalMode = (value: Session["approvalMode"], confirmedReviewerChange?: ConfirmedReviewerChange) => {
+      if (isAuxiliaryTarget) {
+        void onAuxiliaryApproval(value, confirmedReviewerChange);
+      } else {
+        void bridge.operations.runtimeOptions.runMain({ kind: "approval-mode", value, confirmedReviewerChange });
+      }
+    };
     const onChangeCodexSandboxMode = buildAuxiliaryAwareRuntimeOptionChangeHandler({
       shouldUseAuxiliary: isAuxiliaryTarget,
       onAuxiliaryChange: onAuxiliarySandbox,
@@ -563,6 +567,8 @@ export function useSessionComposerFeature(input: {
       sendButtonTitle,
       isComposerBlockedFeedbackActive,
       approvalOptions: runtimeOptions.approvalChoiceOptions,
+      providerId: bridge.session.provider,
+      runtimeSelectionIdentity: getSessionIncarnationId(bridge.session),
       selectedApprovalMode: bridge.session.approvalMode,
       reviewerOptions: runtimeOptions.reviewerSelectOptions,
       selectedCodexReviewer: bridge.session.codexReviewer,

@@ -4,6 +4,7 @@ import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
 import type { CodexReviewer } from "../../../src-shared/settings/codex-reviewer.js";
 import {
   applyAuxiliarySessionApprovalModeChange,
+  applyAuxiliarySessionRuntimeOptionsPatch,
   applyAuxiliarySessionCodexSandboxModeChange,
   applyAuxiliarySessionCodexSpeedChange,
   applyAuxiliarySessionCodexReviewerChange,
@@ -14,6 +15,7 @@ import {
 import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "../../../src-shared/settings/model-catalog.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import { captureSessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
+import type { ConfirmedReviewerChange } from "../../../src-shared/session/session-mutation-contract.js";
 import type { AuxiliarySessionBinding } from "../use-auxiliary-workspace.js";
 
 export class AuxiliaryExecutionOptionsOwner {
@@ -24,6 +26,7 @@ export class AuxiliaryExecutionOptionsOwner {
     binding: Pick<AuxiliarySessionBinding, "getSession" | "setExecutionSelection">;
     isReadOnly: boolean;
     recipe: (current: AuxiliarySession) => AuxiliarySession;
+    confirmedReviewerChange?: ConfirmedReviewerChange;
     onFeedback: (feedback: { ownerId: string; message: string } | null) => void;
   }): Promise<void> {
     const { api, binding } = input;
@@ -31,7 +34,10 @@ export class AuxiliaryExecutionOptionsOwner {
     if (!api || !current || input.isReadOnly) return;
     const next = input.recipe(current);
     if (next === current) return;
-    if (current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer) return;
+    if (input.confirmedReviewerChange && (current.provider !== "claude"
+      || current.codexReviewer !== "auto-review"
+      || current.approvalMode !== input.confirmedReviewerChange.previousApprovalMode)) return;
+    if (!input.confirmedReviewerChange && current.approvalMode === "never" && next.codexReviewer !== current.codexReviewer) return;
     const key = `${current.id}:${current.createdAt}`;
     const revision = (this.revisions.get(key) ?? 0) + 1;
     this.revisions.set(key, revision);
@@ -46,6 +52,7 @@ export class AuxiliaryExecutionOptionsOwner {
       parentSessionId: current.parentSessionId,
       createdAt: current.createdAt,
       executionOptions: captureSessionExecutionOptions(next),
+      ...(input.confirmedReviewerChange ? { confirmedReviewerChange: input.confirmedReviewerChange } : {}),
     }).then((result) => {
       if (result.status === "accepted" && !result.checkpointSaved) {
         void api.reportRendererLog({ level: "error", kind: "renderer.auxiliary-execution-options.failed", message: "Auxiliary execution options could not be saved", data: { auxiliarySessionId: current.id } });
@@ -65,16 +72,20 @@ export class AuxiliaryExecutionOptionsOwner {
 
 type UpdateActiveAuxiliarySession = (
   recipe: (current: AuxiliarySession) => AuxiliarySession,
+  confirmedReviewerChange?: ConfirmedReviewerChange,
 ) => Promise<void>;
 
 export async function runAuxiliaryApprovalModeChangeOperation(input: {
   approvalMode: ApprovalMode;
+  confirmedReviewerChange?: ConfirmedReviewerChange;
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
   createTimestampLabel: () => string;
 }): Promise<void> {
   await input.updateActiveAuxiliarySession((current) => (
-    applyAuxiliarySessionApprovalModeChange(current, input.approvalMode, input.createTimestampLabel())
-  ));
+    input.confirmedReviewerChange
+      ? applyAuxiliarySessionRuntimeOptionsPatch(current, { approvalMode: input.approvalMode, codexReviewer: "user" }, input.createTimestampLabel())
+      : applyAuxiliarySessionApprovalModeChange(current, input.approvalMode, input.createTimestampLabel())
+  ), input.confirmedReviewerChange);
 }
 
 export async function runAuxiliarySandboxModeChangeOperation(input: {
