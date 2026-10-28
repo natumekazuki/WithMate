@@ -50,6 +50,7 @@ import type {
   OpenSessionWindowIdsPageRequest,
   OpenSessionWindowIdsPageResult,
   SavePastedSessionFileRequest,
+  SavePastedSessionFileResult,
 } from "../src-shared/window/withmate-window-types.js";
 import {
   isSessionFileGitCommitResource,
@@ -3490,11 +3491,13 @@ async function pickSessionImageFile(targetWindow: BrowserWindow | null, sessionI
   return selectedPath && isPathInsideOrEqual(directoryPath, selectedPath) ? selectedPath : null;
 }
 
-async function savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string> {
+async function savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<SavePastedSessionFileResult> {
   return saveSessionFile(app.getPath("userData"), {
     sessionId: request.sessionId,
     fileName: request.fileName,
     data: new Uint8Array(request.data),
+    replaceExistingHash: request.replaceExistingHash,
+    saveAsCopy: request.saveAsCopy,
   });
 }
 

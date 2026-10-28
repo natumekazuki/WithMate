@@ -83,6 +83,95 @@ function pastedFile(name: string, type: string) {
   return { name, type, arrayBuffer: async () => new TextEncoder().encode(name).buffer };
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "質問回答の同名衝突は影響を表示し、取消では入力を保持して置換を送らず、Replaceだけが確認hashを送って参照を挿入する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md: Replace Pasted FileとCancel" }
+// fault = "衝突を無確認で置換する、影響説明を失う、取消を置換として送る、または確定結果を回答に挿入しない"
+// observable = "dialogの対象名・影響説明、取消後のtextareaとAPI要求、Replace後のhashとtextarea"
+// observation_boundary = "component-behavior"
+// scope = "question answer replacement dialog integration"
+// lifecycle = "permanent"
+// impact = "回答中の既存添付を意図せず変更することを防ぐ"
+// distinction = "collector単体では実formのdialog表示・button wiring・本文保持を保証できない"
+// @end-test-value
+test("LiveRequestSurface confirms file replacement and preserves input on cancel", async () => {
+  const mounted = await mountElicitation({ requestId: "replace", provider: "codex", mode: "form", message: "Answer", fields: [
+    { type: "text", name: "answer", title: "Answer", required: true },
+  ] }, { sessionId: "session-replace" });
+  const hashes: Array<string | undefined> = [];
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      async savePastedSessionFile(input: { replaceExistingHash?: string }) {
+        hashes.push(input.replaceExistingHash);
+        return input.replaceExistingHash ? "C:/session-files/note.txt" : { status: "conflict", fileName: "note.txt", existingHash: "existing" };
+      },
+    } });
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')!;
+    await enterText(mounted.dom, answer, "Keep this ");
+    answer.setSelectionRange(answer.value.length, answer.value.length);
+    await pasteFiles(mounted.dom, answer, [pastedFile("note.txt", "text/plain")]);
+    const dialog = mounted.dom.window.document.querySelector<HTMLElement>('[role="dialog"][aria-label="Replace Pasted File"]')!;
+    assert.ok(dialog);
+    assert.match(dialog.textContent!, /note\.txt.*different contents/);
+    assert.match(dialog.textContent!, /earlier messages/);
+    const button = (text: string) => [...mounted.dom.window.document.querySelectorAll<HTMLButtonElement>("button")].find((entry) => entry.textContent === text)!;
+    await act(async () => button("Cancel").click());
+    assert.equal(answer.value, "Keep this ");
+    assert.equal(answer.disabled, false);
+    assert.deepEqual(hashes, [undefined]);
+    assert.equal(mounted.dom.window.document.querySelector('[aria-label="Replace Pasted File"]'), null);
+    await pasteFiles(mounted.dom, answer, [pastedFile("note.txt", "text/plain")]);
+    await act(async () => button("Replace File").click());
+    assert.deepEqual(hashes, [undefined, undefined, "existing"]);
+    assert.equal(answer.value, "Keep this @C:/session-files/note.txt");
+    assert.equal(answer.disabled, false);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問回答の同内容貼付は操作不要の通知と参照を表示し、同名別内容ではコピーを選んで新しい参照を挿入できる"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md: 操作不要の通知とSave a Copy" }
+// fault = "再利用を無通知にする、通知で入力を停止する、コピーを置換として送る、保存先を回答に挿入しない"
+// observable = "通知文とdialogの有無、API要求、回答textareaの参照"
+// observation_boundary = "component-behavior"
+// scope = "question answer pasted file reuse and copy"
+// lifecycle = "permanent"
+// impact = "再利用を把握でき、元の添付を保持したまま異なる画像を回答へ追加できる"
+// distinction = "storageやcollector単体では質問formの通知表示・button配線・入力継続を確認できない"
+// @end-test-value
+test("LiveRequestSurface shows reuse notice and saves a conflict as a copy", async () => {
+  const mounted = await mountElicitation({ requestId: "copy", provider: "codex", mode: "form", message: "Answer", fields: [
+    { type: "text", name: "answer", title: "Answer", required: true },
+  ] }, { sessionId: "session-copy" });
+  const requests: Array<{ saveAsCopy?: boolean; replaceExistingHash?: string }> = [];
+  try {
+    Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      async savePastedSessionFile(input: { saveAsCopy?: boolean; replaceExistingHash?: string }) {
+        requests.push(input);
+        if (requests.length === 1) return { status: "reused", path: "C:/session-files/note.txt" };
+        return input.saveAsCopy ? "C:/session-files/note-2.txt" : { status: "conflict", fileName: "note.txt", existingHash: "existing" };
+      },
+    } });
+    const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer"]')!;
+    await enterText(mounted.dom, answer, "Draft ");
+    answer.setSelectionRange(answer.value.length, answer.value.length);
+    await pasteFiles(mounted.dom, answer, [pastedFile("note.txt", "text/plain")]);
+    assert.match(mounted.dom.window.document.querySelector('[role="status"].pasted-file-reuse-notice')!.textContent!, /Identical File Reused: note\.txt/);
+    assert.equal(mounted.dom.window.document.querySelector('[aria-label="Replace Pasted File"]'), null);
+    assert.equal(answer.disabled, false);
+    assert.equal(answer.value, "Draft @C:/session-files/note.txt");
+    answer.setSelectionRange(answer.value.length, answer.value.length);
+    await pasteFiles(mounted.dom, answer, [pastedFile("note.txt", "text/plain")]);
+    const copy = [...mounted.dom.window.document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Save a Copy")!;
+    await act(async () => copy.click());
+    assert.equal(requests[2].saveAsCopy, true);
+    assert.equal(requests[2].replaceExistingHash, undefined);
+    assert.match(answer.value, /@C:\/session-files\/note-2\.txt/);
+  } finally { await mounted.cleanup(); }
+});
+
 const approvalRequest: LiveApprovalRequest = {
   requestId: "approval-1",
   provider: "codex",

@@ -5,6 +5,7 @@ import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../settings/shortcut-registry.js";
 import { ComposerAttachmentMenu } from "../composer-attachment-menu.js";
 import { collectPastedClipboardFiles, collectPastedSessionAttachments } from "../composer-paste-handlers.js";
+import { usePastedFileReplacement } from "../use-pasted-file-replacement.js";
 import {
   buildComposerReferenceInsertionState,
   pickComposerReferencePath,
@@ -42,6 +43,7 @@ export function QuestionAnswerEditor({
   const [menuOpen, setMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const { confirmReplacement, replacementDialog, notifyReuse, reuseNotice } = usePastedFileReplacement(sessionId, !disabled);
 
   useEffect(() => { setMenuOpen(false); }, [attachmentTarget]);
 
@@ -128,6 +130,8 @@ export function QuestionAnswerEditor({
             preventDefault() {},
             sessionId,
             currentTimestampLabel: () => new Date().toISOString(),
+            confirmReplacement,
+            onReuse: (fileNames) => { if (isCurrent()) notifyReuse(fileNames); },
             savePastedSessionFile: (request) => {
               if (!isCurrent()) throw new Error("The input request is no longer available.");
               return api.savePastedSessionFile(request);
@@ -165,6 +169,8 @@ export function QuestionAnswerEditor({
       </>, attachmentTarget) : null}
       {busy ? <span className="visually-hidden" role="status">Attaching files</span> : null}
       {error ? <p className="live-approval-warning" role="alert">{error}</p> : null}
+      {replacementDialog}
+      {reuseNotice}
     </div>
   );
 }

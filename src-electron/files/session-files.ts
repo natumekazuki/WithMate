@@ -1,11 +1,15 @@
 import { constants, mkdirSync, type Dirent } from "node:fs";
-import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFile, lstat, mkdir, open, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { SavePastedSessionFileResult } from "../../src-shared/window/withmate-window-types.js";
 
 export type SaveSessionFileInput = {
   sessionId: string;
   fileName: string;
   data: Uint8Array;
+  replaceExistingHash?: string;
+  saveAsCopy?: boolean;
 };
 
 const SESSION_FILES_ROOT = "session-files";
@@ -86,23 +90,6 @@ function buildDestinationCandidate(directoryPath: string, requestedFileName: str
   return path.join(directoryPath, fileName);
 }
 
-async function writeUniqueFile(directoryPath: string, requestedFileName: string, data: Uint8Array): Promise<string> {
-  for (let index = 1; index < 10000; index += 1) {
-    const candidate = buildDestinationCandidate(directoryPath, requestedFileName, index);
-    try {
-      await writeFile(candidate, data, { flag: "wx" });
-      return candidate;
-    } catch (error) {
-      const code = error && typeof error === "object" ? (error as { code?: unknown }).code : null;
-      if (code !== "EEXIST") {
-        throw error;
-      }
-    }
-  }
-
-  throw new Error("Could not choose a destination file name.");
-}
-
 async function copyUniqueFile(directoryPath: string, sourcePath: string): Promise<string> {
   for (let index = 1; index < 10000; index += 1) {
     const candidate = buildDestinationCandidate(directoryPath, path.basename(sourcePath), index);
@@ -140,10 +127,53 @@ export async function copyFilesToSessionFiles(
   return savedPaths;
 }
 
-export async function saveSessionFile(userDataPath: string, input: SaveSessionFileInput): Promise<string> {
+export async function saveSessionFile(userDataPath: string, input: SaveSessionFileInput): Promise<SavePastedSessionFileResult> {
   const directoryPath = resolveSessionFilesDirectory(userDataPath, input.sessionId);
   await mkdir(directoryPath, { recursive: true });
-  return writeUniqueFile(directoryPath, input.fileName, input.data);
+  const fileName = safeFileName(input.fileName);
+  const destination = path.join(directoryPath, fileName);
+  if (input.saveAsCopy) {
+    for (let index = 2; index < 10000; index += 1) {
+      const candidate = buildDestinationCandidate(directoryPath, fileName, index);
+      try {
+        await writeFile(candidate, input.data, { flag: "wx" });
+        return candidate;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      }
+    }
+    throw new Error("Could not choose a destination file name.");
+  }
+  try {
+    await writeFile(destination, input.data, { flag: "wx" });
+    return destination;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+
+  if (!(await lstat(destination)).isFile()) {
+    throw new Error(`Cannot paste "${fileName}": the existing entry is not a regular file.`);
+  }
+  const existing = await open(destination, "r");
+  let existingHash: string;
+  try {
+    const hash = createHash("sha256");
+    for await (const chunk of existing.createReadStream({ autoClose: false })) hash.update(chunk);
+    existingHash = hash.digest("hex");
+  } finally {
+    await existing.close();
+  }
+  if (existingHash === createHash("sha256").update(input.data).digest("hex")) return { status: "reused", path: destination };
+  if (input.replaceExistingHash !== existingHash) return { status: "conflict", fileName, existingHash };
+
+  const temporaryPath = path.join(directoryPath, `.paste-${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporaryPath, input.data, { flag: "wx" });
+    await rename(temporaryPath, destination);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
+  return destination;
 }
 
 export async function deleteSessionFilesDirectory(userDataPath: string, sessionId: string): Promise<void> {

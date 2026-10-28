@@ -50,6 +50,7 @@ import type {
   ResetAppDatabaseRequest,
   ResetAppDatabaseResult,
   SavePastedSessionFileRequest,
+  SavePastedSessionFileResult,
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
   SessionMonitorPageRequest,
@@ -338,7 +339,7 @@ export type WithMateWindowPickerApi = {
     purpose?: ImageFilePickerPurpose,
   ): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
-  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
+  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<SavePastedSessionFileResult>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;
   openSessionFilesTerminal(sessionId: string): Promise<void>;
 };

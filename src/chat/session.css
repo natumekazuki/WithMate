@@ -3322,6 +3322,60 @@
   white-space: normal;
 }
 
+.pasted-file-replacement-modal {
+  padding: 16px;
+  backdrop-filter: none;
+}
+
+.pasted-file-replacement-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 20px;
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+
+.pasted-file-replacement-dialog .launch-panel {
+  gap: 12px;
+  padding: 0;
+}
+
+.pasted-file-replacement-dialog :is(h2, p) {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.pasted-file-replacement-dialog h2 {
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 500;
+}
+
+.pasted-file-replacement-dialog .launch-dialog-foot {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 20px;
+}
+
+.pasted-file-replacement-dialog .drawer-toggle.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+}
+
+.pasted-file-replacement-dialog .drawer-toggle.danger {
+  color: #fecaca;
+}
+
+.message-copy-toast.pasted-file-reuse-notice {
+  top: 72px;
+  bottom: auto;
+  max-width: min(440px, calc(100vw - 40px));
+  overflow-wrap: anywhere;
+  pointer-events: none;
+}
+
 .session-recovery-conflict {
   width: min(560px, calc(100vw - 64px));
   max-height: calc(100vh - 64px);

@@ -121,6 +121,7 @@ import type {
   DeleteSessionsResult,
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
+  SavePastedSessionFileResult,
   OpenPathResult,
   OpenSessionWindowIdsPageRequest,
   OpenSessionWindowIdsPageResult,
@@ -199,7 +200,7 @@ export type MainIpcWindowDepsArgs = {
     purpose: ImageFilePickerPurpose,
   ): Promise<string | null>;
   copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
-  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
+  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<SavePastedSessionFileResult>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;
   openSessionFilesTerminal(sessionId: string): Promise<void>;
   copySessionFilePreviewImage(

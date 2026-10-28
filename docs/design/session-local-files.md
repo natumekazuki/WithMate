@@ -12,7 +12,15 @@ Session Local Filesはcomposerの`@path` preview、Markdown local image、provid
 
 `Attach`の`File`／`Folder`／`Image`は元pathを参照する。`Session Files`の`Copy`は選択fileをmanaged directoryへコピーし、その保存先をcaret位置へ`@path`として挿入する。`File`はmanaged directoryを起点にpickerを開き、その配下で選択したfileだけを参照する。外部directoryへ移動して選んだfileを、managed directory内のfileとして受け入れない。
 
-textareaへの画像pasteはPNG、JPEG、GIF、WebP、BMP、SVGを保存してMarkdown image参照を挿入する。一般のfile pasteはmanaged directoryへコピーして`@path`を挿入する。basenameが重なれば採番する。Rendererはpaste bytesやsource pathを直接providerへ送らず、Mainのcopy／write APIを使う。
+textareaへの画像pasteはPNG、JPEG、GIF、WebP、BMP、SVGを保存してMarkdown image参照を挿入する。一般のfile pasteはmanaged directoryへ保存して`@path`を挿入する。Rendererはpaste bytesやsource pathを直接providerへ送らず、Mainのcopy／write APIを使う。
+
+pasteは保存先直下の同名fileが存在する場合だけSHA-256で内容を比較する。同名の判定は保存先filesystemに従い、一律の小文字化はしない。ハッシュが同じなら書込み・置換・採番をせず、既存fileのpathを挿入し、操作不要の通知で再利用を知らせる。ハッシュは比較時だけ計算し、保存台帳やキャッシュは持たない。既存fileはstreamで読み、異なる名前、外部path参照、subfolder、他Sessionを横断する内容検索は行わない。
+
+同名で内容が異なる場合は保存前に`Replace Pasted File`で対象名と過去の同じpathへの参照も変わることを示す。`Replace File`を選んだ場合だけ同じpathを置換し、参照を挿入する。`Save a Copy`は既存fileを残し、同directoryの空いている採番名へ新たに保存して参照を挿入する。`Cancel`、`Escape`、背景clickは今回のfileだけを見送り、既存fileと入力を保持する。確認中に既存内容が変わった場合は再比較して確認し直す。比較不能や通常file以外の同名entryは再利用・置換せずエラーとする。置換は同directoryの一時fileへの書込みが完了してからrenameし、既存fileを先に切り詰めない。
+
+同じpaste内の複数fileも順に同じ判定を受け、先に保存した同名fileを比較対象とする。別内容の同名fileを置換すると先に挿入する参照も同じpathを指す。pickerの`Session Files > Copy`はpasteとは別操作であり、同名時の採番を維持する。
+
+添付先の切替と入力欄の終了では確認待ちを取消として解決し、旧入力欄の遅い比較結果から確認dialogを開かない。
 
 会話内の質問の自由回答も同じ添付メニュー・保存・参照挿入を使い、質問を所有するSession IDのmanaged directoryを保存先とする。回答の送信形式と操作条件は[Question Forms](desktop-ui.md#question-forms)に従う。
 
