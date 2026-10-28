@@ -245,7 +245,16 @@ export type SavePastedSessionFileRequest = {
   sessionId: string;
   fileName: string;
   data: ArrayBuffer;
+  replaceExistingHash?: string;
 };
+
+export type PastedSessionFileConflict = {
+  status: "conflict";
+  fileName: string;
+  existingHash: string;
+};
+
+export type SavePastedSessionFileResult = string | PastedSessionFileConflict;
 
 export type OpenPathOptions = {
   baseDirectory?: string | null;

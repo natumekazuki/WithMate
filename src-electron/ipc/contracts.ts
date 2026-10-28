@@ -169,6 +169,7 @@ import {
   type SessionMonitorPageResult,
   type ResetAppDatabaseRequest,
   type SavePastedSessionFileRequest,
+  type SavePastedSessionFileResult,
   type SessionMonitorContextMenuRequest,
   type SessionMonitorContextMenuResult,
 } from "../../src-shared/window/withmate-window-types.js";
@@ -289,7 +290,7 @@ export type MainIpcWindowDeps = MainIpcEventWindowDeps &
       sessionId: string,
       sourcePaths: string[],
     ): Promise<string[]>;
-    savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
+    savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<SavePastedSessionFileResult>;
     openSessionFilesDirectory(sessionId: string): Promise<void>;
     openSessionFilesTerminal(sessionId: string): Promise<void>;
     openPathTarget(

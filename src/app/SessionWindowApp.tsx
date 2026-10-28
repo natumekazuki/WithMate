@@ -63,6 +63,7 @@ import {
 } from "../chat/auxiliary/auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen, type ChatErrorNotice } from "../chat/chat-window.js";
 import { ChatSessionModals } from "../chat/chat-session-modals.js";
+import { usePastedFileReplacement } from "../chat/use-pasted-file-replacement.js";
 import { useResourceDiscovery } from "../chat/use-resource-discovery.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "../chat/window-title.js";
 import {
@@ -1753,6 +1754,10 @@ export default function AgentSessionWindowApp() {
     });
   };
 
+  const { confirmReplacement, replacementDialog } = usePastedFileReplacement(
+    activeRunSessionId,
+    !composerRegistry.isFrozen && !isSelectedSessionReadOnly && !isAuxiliaryTargetUnavailable,
+  );
   const handleComposerPaste = createPastedSessionAttachmentHandler({
     alertError: (message) => window.alert(message),
     canPaste: () => {
@@ -1767,11 +1772,13 @@ export default function AgentSessionWindowApp() {
     getSavePastedSessionFile: () => {
       return withmateApi ? (request) => {
         if (composerRegistry.isFrozen) throw new Error("Attachments cannot be added while the window is closing.");
+        if (composerOwnerRef.current !== activeRunSessionId) throw new Error("The attachment target has changed.");
         return withmateApi.savePastedSessionFile(request);
       } : null;
     },
     getSessionId: () => selectedSession?.id,
     insertAttachments: insertPastedAttachments,
+    confirmReplacement,
   });
 
   const handleAddAdditionalDirectory = async (directoryPath?: string) => {
@@ -2217,6 +2224,7 @@ export default function AgentSessionWindowApp() {
       onCloseDiff={() => setSelectedDiff(null)}
       onOpenDiffWindow={(payload) => void handleOpenDiffWindow(payload)}
     >
+      {replacementDialog}
     </ChatSessionModals>
   );
   const chatShellSurface = chatShellFeature.buildSurface({

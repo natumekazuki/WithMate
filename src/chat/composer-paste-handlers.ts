@@ -1,4 +1,5 @@
 import type { WithMateWindowPickerApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { PastedSessionFileConflict } from "../../src-shared/window/withmate-window-types.js";
 import { isSupportedComposerImagePath } from "../../src-shared/files/composer-image-reference.js";
 import type { ComposerReferenceInput } from "./composer/session-composer-paths.js";
 
@@ -54,6 +55,7 @@ export async function collectPastedSessionAttachmentPaths(input: {
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
   sessionId: string;
+  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<boolean>;
 }): Promise<string[]> {
   return (await collectPastedSessionAttachments(input)).map((attachment) => attachment.path);
 }
@@ -91,6 +93,7 @@ export async function collectPastedSessionAttachments(input: {
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
   sessionId: string;
+  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<boolean>;
 }): Promise<PastedSessionAttachment[]> {
   const pastedFiles = collectPastedClipboardFiles(input.clipboardData);
   if (pastedFiles.length === 0) {
@@ -102,13 +105,20 @@ export async function collectPastedSessionAttachments(input: {
   for (const file of pastedFiles) {
     const buffer = await file.arrayBuffer();
     const fileName = resolvePastedFileName({ file, currentTimestampLabel: input.currentTimestampLabel });
-    const savedPath = await input.savePastedSessionFile({
+    const request = {
       sessionId: input.sessionId,
       fileName,
       data: buffer,
-    });
+    };
+    let result = await input.savePastedSessionFile(request);
+    while (typeof result !== "string") {
+      if (!input.confirmReplacement) throw new Error(`Replacing "${result.fileName}" requires confirmation.`);
+      if (!await input.confirmReplacement(result)) break;
+      result = await input.savePastedSessionFile({ ...request, replaceExistingHash: result.existingHash });
+    }
+    if (typeof result !== "string") continue;
     savedAttachments.push({
-      path: savedPath,
+      path: result,
       presentation: resolvePastedAttachmentPresentation(file, fileName),
     });
   }
@@ -124,6 +134,7 @@ export function createPastedSessionAttachmentHandler(input: {
   getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null | undefined;
   getSessionId: () => string | null | undefined;
   insertAttachments: (attachments: PastedSessionAttachment[]) => void;
+  confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<boolean>;
 }): (event: PastedSessionAttachmentEvent) => Promise<boolean> {
   return async (event) => {
     if (!input.canPaste()) {
@@ -143,6 +154,7 @@ export function createPastedSessionAttachmentHandler(input: {
         preventDefault: () => event.preventDefault(),
         savePastedSessionFile,
         sessionId,
+        confirmReplacement: input.confirmReplacement,
       });
       if (savedAttachments.length === 0) {
         return false;
