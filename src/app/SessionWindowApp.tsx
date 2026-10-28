@@ -1271,9 +1271,9 @@ export default function AgentSessionWindowApp() {
       isReadOnly: isSelectedSessionReadOnly,
       providerCatalog: selectedProviderCatalog,
       option,
-      persist: (nextSession) => {
+      persist: (nextSession, confirmedReviewerChange) => {
         setExecutionOptionsFeedback(null);
-        return Promise.resolve(selectMainExecutionOptions(nextSession));
+        return Promise.resolve(selectMainExecutionOptions(nextSession, confirmedReviewerChange));
       },
       createTimestampLabel: currentTimestampLabel,
     });
@@ -1304,11 +1304,12 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const updateAuxiliaryExecutionOptions = (recipe: (current: AuxiliarySession) => AuxiliarySession) => auxiliaryExecutionOptionsOwner.update({
+  const updateAuxiliaryExecutionOptions = (recipe: (current: AuxiliarySession) => AuxiliarySession, confirmedReviewerChange?: import("../../src-shared/session/session-mutation-contract.js").ConfirmedReviewerChange) => auxiliaryExecutionOptionsOwner.update({
     api: withmateApi,
     binding: auxiliaryBinding,
     isReadOnly: isSelectedSessionReadOnly,
     recipe,
+    confirmedReviewerChange,
     onFeedback: setExecutionOptionsFeedback,
   });
 

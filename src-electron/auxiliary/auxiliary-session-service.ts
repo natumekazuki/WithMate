@@ -4,7 +4,7 @@ import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-revi
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { APPROVAL_MODE_VALUES, DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
 import type {
   AuxiliaryRuntimeSelectionMode,
   AuxiliarySession,
@@ -444,7 +444,7 @@ export class AuxiliarySessionService {
       throw new Error("The Auxiliary Session provider is not in the model catalog.");
     }
     const options = { ...validateSessionExecutionOptions(request.executionOptions, provider),
-      codexReviewer: resolveCodexReviewerUpdate(fresh, request.executionOptions.codexReviewer) };
+      codexReviewer: resolveExecutionOptionsReviewerUpdate(fresh, request.executionOptions, request.confirmedReviewerChange) };
     if (options.codexReviewer !== request.executionOptions.codexReviewer) validateSessionExecutionOptions(options, provider);
     this.assertStorageIdentity(storage, identity);
     if (this.selectionRequestRevisions.get(selectionKey) !== revision) return { status: "superseded" };

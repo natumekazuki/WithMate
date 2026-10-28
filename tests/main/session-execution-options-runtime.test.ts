@@ -156,10 +156,10 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
 
 // @test-value v2
 // kind = "contract"
-// claim = "ClaudeのAuto Run中に保持したReviewerは復帰時も保持し、不正なApprovalとの組合せならcheckpoint前に拒否する"
+// claim = "ClaudeのAuto Run中のReviewerは通常更新では保持し、確認済みのApproval変更だけ両方を一括保存する"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#approval-modes" }
-// fault = "never中のReviewer保持をvalidation後に適用してPlan＋Auto Reviewを保存するか、復帰時にReviewerを暗黙変更する"
-// observable = "persistence assemblyの更新拒否・ACK、checkpoint件数とReviewer、現在選択"
+// fault = "未確認でReviewerを変更する、古い確認を受理する、または確認済み変更を保存できない"
+// observable = "persistence assemblyの更新拒否・ACK、checkpointと現在選択のApproval／Reviewer"
 // observation_boundary = "component-behavior"
 // scope = "Claude current execution selection and persistence"
 // lifecycle = "permanent"
@@ -177,6 +177,20 @@ it("ClaudeのReviewer保持後も組合せを検証して選択とcheckpointを�
   }), /reviewer is not supported with this approval mode/);
   assert.equal(checkpoints.length, 0);
   assert.deepEqual(captureSessionExecutionOptions(getCached()), captured);
+  await assert.rejects(persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "plan", codexReviewer: "user",
+  }, { previousApprovalMode: "on-request" }), /no longer valid/);
+  assert.equal(checkpoints.length, 0);
+  assert.deepEqual(await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "plan", codexReviewer: "user",
+  }, { previousApprovalMode: "never" }), { status: "accepted", checkpointSaved: true });
+  assert.equal(checkpoints.at(-1)?.approvalMode, "plan");
+  assert.equal(checkpoints.at(-1)?.codexReviewer, "user");
+  assert.deepEqual(captureSessionExecutionOptions(getCached()), { ...captured, approvalMode: "plan", codexReviewer: "user" });
+  await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
+    ...captured, approvalMode: "on-request", codexReviewer: "auto-review",
+  });
+  await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), captured);
   await persistence.setSessionExecutionOptions(session.id, getSessionIncarnationId(session), {
     ...captured, approvalMode: "on-request", codexReviewer: "user",
   });

@@ -216,8 +216,8 @@ Reviewerは`User / Auto Review`をCodexとClaudeで提供し、既定値は`user
 
 - `User`はproviderが要求した操作承認をWithMateの共通approval UIへ中継する。
 - `Auto Review`は確認対象の操作をproviderの自動審査へ任せる。Codexは`approvalsReviewer: "auto_review"`、ClaudeはApprovalが`on-request`の場合に`permissionMode: "auto"`へ写像する。審査方式・対象・利用条件の同一性は保証しない。providerが人の確認をなお要求した場合は共通UIへ中継する。
-- Claudeの`accept-edits / dont-ask / plan`はReviewerが`user`のときだけ選択可能。UIは組合せに対応しない候補をdisabledにし、送信時検証とAdapterも不正な組合せを拒否する。保存値が不正な組合せならinvalidを示し、Reviewerの明示変更で修正できる。
-- `never`ではReviewerを適用せず、controlをdisabledにして保存済み値を保持する。Reviewerが有効なApprovalへ戻した場合は以前の選択を再利用する。保存済みApprovalが`never`の間のReviewer更新は採用しない。
+- Claudeの`accept-edits / dont-ask / plan`はReviewerが`user`のときだけ有効。Auto Review中にこれらのApprovalを選ぶ場合は、UIでReviewerをUserへ変更する確認を求め、承認時に両方を一括変更する。送信時検証とAdapterは不正な組合せを拒否する。保存値が不正な組合せならinvalidを示し、Reviewerの明示変更で修正できる。
+- `never`ではReviewerを適用せず、controlをdisabledにして保存済み値を保持する。Reviewerが有効なApprovalへ戻した場合は以前の選択を再利用する。保存済みApprovalが`never`の間の通常のReviewer更新は採用しない。ClaudeでUserを要するApprovalへの変更を確認した場合に限り、変更前の選択を照合したうえで両方を一括変更する。
 - Auxiliary作成時のReviewerは既存どおり親Sessionから継承する。作成時に実際に保存するApprovalとの組合せをcommit前に検証し、非対応なら作成を拒否する。親や作成要求の設定をUserへ暗黙変更しない。
 - OpenCodeAdapterは`on-request`（既定）と`never`だけを選択可能にし、native askへそれぞれ共通UIの判断／今回だけ許可を返す。nativeの明示denyを上書きしない。
 

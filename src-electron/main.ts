@@ -1731,7 +1731,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateSession: async (session) => toConversationView(await requireMainSessionCommandFacade().updateSession(session)),
                 setSessionTitle: (request) => requireSessionPersistenceService().setSessionTitle(request.sessionId, request.incarnationId, request.title),
                 setSessionMessageBookmark: (request) => requireSessionPersistenceService().setSessionMessageBookmark(request.sessionId, request.incarnationId, request.messageIndex, request.isBookmarked),
-                setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions),
+                setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions, request.confirmedReviewerChange),
                 setSessionPinned: (request) => requireMainSessionCommandFacade().setSessionPinned(request),
                 deleteSession: async (sessionId) => {
                   await requireMainSessionCommandFacade().deleteSession(sessionId);
