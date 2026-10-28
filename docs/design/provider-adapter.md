@@ -80,8 +80,8 @@ providerごとの差は次。
   - modelとDepth候補はSDKから取得する。`permissionMode: "default"`と共通UIの`Provider Controlled`のみを用い、Codexのsandbox選択は提供しない
   - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affect / Memoryを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
   - SDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
-  - background planeは別の非永続sessionで構造化JSONを要求し、tools / MCP / hooksを無効化する。`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合、実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
-  - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。quotaはモデルを実行しないcontrol APIで取得し、Mainの非永続cacheへ保持する。token / cache usageはturn単位で扱う。API換算USDは実請求額として表示しない。backgroundの補助処理も解決された認証先の利用枠を消費する。同じ契約枠になる条件は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
+  - quotaはモデルを実行しないcontrol APIで取得し、Mainの非永続cacheへ保持する。取得用の非永続sessionはtools / MCP / hooksを無効化し、`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合は実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
+  - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。token / cache usageは通常turn単位で扱う。API換算USDは実請求額として表示しない。認証先と利用枠の対応は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
 
 - `OpenCodeAdapter`
   - 公式CLI／`@opencode/client`を`2.1.4`へexact pinし、turnごとに`serve --stdio --hostname 127.0.0.1 --port 0`を起動する。stdioの起動通知でloopback URLを検証し、Mainが生成したpasswordによるHTTP認証後にCLI版を照合する。Codexと共通の`providers/owned-process.ts`がWindows Job Object／POSIX process groupを所有し、cleanup未確認中は同一Session・workspace・threadの再実行を止める
