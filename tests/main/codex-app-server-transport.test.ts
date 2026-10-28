@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { PassThrough, Writable } from "node:stream";
 import { CodexAppServerTransport, CodexAppServerRpcError, type CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
-import { spawnOwnedCodexProcess } from "../../src-electron/providers/codex/owned-process.js";
+import { spawnOwnedProviderProcess as spawnOwnedCodexProcess } from "../../src-electron/providers/owned-process.js";
 
 const fixture = `
 import { createInterface } from 'node:readline';

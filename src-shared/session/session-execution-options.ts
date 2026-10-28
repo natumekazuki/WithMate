@@ -7,7 +7,6 @@ import { isModelReasoningEffort, type ModelCatalogProvider, type ModelReasoningE
 import type { Session } from "./session-state.js";
 
 export type SessionExecutionOptions = Readonly<{
-  catalogRevision: number;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
@@ -19,7 +18,6 @@ export type SessionExecutionOptions = Readonly<{
 
 export function captureSessionExecutionOptions(source: Pick<Session, keyof SessionExecutionOptions>): SessionExecutionOptions {
   return Object.freeze({
-    catalogRevision: source.catalogRevision,
     model: source.model,
     reasoningEffort: source.reasoningEffort,
     approvalMode: source.approvalMode,
@@ -33,24 +31,16 @@ export function captureSessionExecutionOptions(source: Pick<Session, keyof Sessi
 export function validateSessionExecutionOptions(
   value: unknown,
   providerCatalog: ModelCatalogProvider,
-  catalogRevision: number,
 ): SessionExecutionOptions {
   if (!value || typeof value !== "object") {
     throw new Error("Turn execution options are required.");
   }
   const candidate = value as Partial<SessionExecutionOptions>;
-  if (!Number.isInteger(candidate.catalogRevision) || candidate.catalogRevision !== catalogRevision || catalogRevision <= 0) {
-    throw new Error("The selected model catalog revision is invalid.");
-  }
   if (typeof candidate.model !== "string" || !candidate.model.trim()) {
     throw new Error("The selected model is invalid.");
   }
-  const model = providerCatalog.models.find((entry) => entry.id === candidate.model);
-  if (!model) {
-    throw new Error("The selected model is not in the model catalog.");
-  }
-  if (!isModelReasoningEffort(candidate.reasoningEffort) || !model.reasoningEfforts.includes(candidate.reasoningEffort)) {
-    throw new Error("The selected reasoning effort is not supported by this model.");
+  if (!isModelReasoningEffort(candidate.reasoningEffort)) {
+    throw new Error("The selected reasoning effort is invalid.");
   }
   if (!APPROVAL_MODE_VALUES.includes(candidate.approvalMode as ApprovalMode)) {
     throw new Error("The selected approval mode is invalid.");
@@ -75,7 +65,6 @@ export function validateSessionExecutionOptions(
     throw new Error("The selected custom agent is invalid.");
   }
   return Object.freeze({
-    catalogRevision,
     model: candidate.model,
     reasoningEffort: candidate.reasoningEffort,
     approvalMode: candidate.approvalMode as ApprovalMode,

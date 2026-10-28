@@ -2,8 +2,6 @@ import { getProviderAppSettings, type AppSettings } from "../../src-shared/setti
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   deleteOldSessions,
-  exportHomeModelCatalog,
-  importHomeModelCatalog,
   saveHomeSettings,
 } from "./settings-actions.js";
 import { resolveProviderRelativePathFromSelection } from "./settings-view-model.js";
@@ -27,8 +25,6 @@ type SettingsCommandHandlersContext = {
 
 export type SettingsCommandHandlers = Pick<
   HomeSettingsContentBaseProps,
-  | "onImportModelCatalog"
-  | "onExportModelCatalog"
   | "onOpenAppLogFolder"
   | "onOpenCrashDumpFolder"
   | "onInstallMemoryV6CliShim"
@@ -102,20 +98,6 @@ export function buildSettingsCommandHandlers({
   };
 
   return {
-    onImportModelCatalog: () => withApi("import-models", async (api, setSettingsFeedback) => {
-      try {
-        setSettingsFeedback(await importHomeModelCatalog(api));
-      } catch (error) {
-        setSettingsFeedback(error instanceof Error ? error.message : "Could not import the model catalog.", true);
-      }
-    }),
-    onExportModelCatalog: () => withApi("export-models", async (api, setSettingsFeedback) => {
-      try {
-        setSettingsFeedback(await exportHomeModelCatalog(api));
-      } catch (error) {
-        setSettingsFeedback(error instanceof Error ? error.message : "Could not export the model catalog.", true);
-      }
-    }),
     onOpenAppLogFolder: () => withApi("open-logs", async (api, setSettingsFeedback) => {
       try {
         await api.openAppLogFolder();

@@ -29,7 +29,6 @@ import {
 } from "../../src-electron/session/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
-import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character/character-affect-turn-settlement-storage.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
@@ -64,6 +63,8 @@ function createSession(overrides?: Partial<Session>): Session {
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
     }),
     ...overrides,
   };
@@ -175,7 +176,7 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     upsertSession(next) { stored = next; return next; },
     async resolveComposerPreview() { return { attachments: [], errors: [] }; },
     getAppSettings: () => normalizeAppSettings({}),
-    resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+    resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
     getProviderCodingAdapter: () => adapter,
     getSessionMemory: () => createSessionMemory(session.id),
     resolveProjectMemoryEntriesForPrompt: () => [],
@@ -314,7 +315,7 @@ it("承認の本文位置を受信時に固定してFIFOの交代まで保持す
 
 // @test-value v2
 // kind = "contract"
-// claim = "CodexとClaudeの正常・失敗turn終端で3秒後のquota更新を依頼し、Copilotの既存周期を維持する"
+// claim = "Codex・Claude・OpenCodeの正常・失敗turn終端で3秒後のquota更新を依頼し、Copilotの既存周期を維持する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
 // fault = "対象providerの終端で更新予約が欠けるかCopilotの予約周期を置き換える"
 // observable = "provider実行後にMainへ渡されるprovider IDとdelay配列"
@@ -325,7 +326,7 @@ it("承認の本文位置を受信時に固定してFIFOの交代まで保持す
 // distinction = "cache単体testはturn終端を通らず、この少数のfake turnでruntime接続を検査する"
 // @end-test-value
 it("turn終端でprovider別のquota更新を予約する", async () => {
-  for (const provider of ["codex", "claude", "copilot"]) {
+  for (const provider of ["codex", "claude", "opencode", "copilot"]) {
     for (const fails of [false, true]) {
       const session = createSession({ provider, approvalMode: "on-request" });
       const calls: Array<[string, number[]]> = [];
@@ -335,7 +336,7 @@ it("turn終端でprovider別のquota更新を予約する", async () => {
         return createPartialResult({ assistantText: "done" });
       }, {
         getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { [provider]: { enabled: true } } }),
-        resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [catalog] }, provider: catalog }),
+        resolveProviderCatalog: () => ({ snapshot: { providers: [catalog] }, provider: catalog }),
         scheduleProviderQuotaTelemetryRefresh: (id, delays) => { calls.push([id, delays]); },
       });
       const result = await runtime.runSessionTurn(session.id, { userMessage: "run", executionOptions: captureSessionExecutionOptions(session) });
@@ -438,7 +439,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
     getSession: () => current,
     upsertSession: (next) => { current = { ...next, ...captureSessionExecutionOptions(current), allowedAdditionalDirectories: [...current.allowedAdditionalDirectories] }; return current; },
     getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } }),
-    resolveProviderCatalog: () => ({ snapshot: { revision: session.catalogRevision, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") }),
+    resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") }),
     resetProviderSessionThread: () => undefined,
     assertCapturedComposerAttachmentsAvailable: async () => undefined,
     persistQueuedTurnStart: (next, count, _id, turn) => ({ session: next, turn: { ...turn, id: 42, userMessageSeq: count } }),
@@ -452,7 +453,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued実行は捕捉入力と開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
+// claim = "queued実行は候補一覧にない捕捉model/depthと開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Run Cancel; src-electron/session/session-running-turn-start.ts" }
 // fault = "本文を再previewするか捕捉設定を現在選択で置換し、開始を分割保存するかterminal応答でcleanup guardを解放する"
 // observable = "atomic開始payload・Provider request・onStarted identity・terminal待機中の返却と実guard/release通知"
@@ -477,7 +478,7 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
   runtime = createProgressRuntime(currentSession, async (input) => {
     assert.equal(input.session.threadId, "current-thread");
     assert.equal(input.userMessage, "captured message");
-    assert.deepEqual(input.executionOptions, { ...capturedOptions, catalogRevision: 2 });
+    assert.deepEqual(input.executionOptions, capturedOptions);
     assert.deepEqual(input.attachments, receipt.captured.attachments);
     input.onCleanupPending?.(cleanup.promise);
     return createPartialResult({ assistantText: "done" });
@@ -489,10 +490,10 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
       assert.equal(current.threadId, "current-thread");
       assert.deepEqual(attachments, receipt.captured.attachments);
     },
-    resolveProviderCatalog: (_, revision) => {
-      assert.equal(revision, undefined);
+    resolveProviderCatalog: () => {
       const provider = createProviderCatalog();
-      return { snapshot: { revision: 2, providers: [provider] }, provider };
+      provider.models = [];
+      return { snapshot: { providers: [provider] }, provider };
     },
     persistQueuedTurnStart: (next, count, id, turn) => {
       atomics += 1;
@@ -529,14 +530,14 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
   await draining;
   assert.equal(runtime.isRunInFlight(session.id), false);
   assert.ok(releases > 0);
-  assert.equal(receipt.captured.request.executionOptions.catalogRevision, 1);
+  assert.deepEqual(receipt.captured.request.executionOptions, capturedOptions);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued開始前にowner/provider/workspace/添付または捕捉modelが無効なら未開始の確定failedを返す"
+// claim = "queued開始前にowner/provider/workspace/添付が無効または捕捉modelが空なら未開始の確定failedを返す"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Delete; src-shared/session/session-execution-options.ts validateSessionExecutionOptions" }
-// fault = "変更されたowner/実行先や失われた添付を実行するか別modelへ自動切替する"
+// fault = "変更されたowner/実行先や失われた添付を実行するか空modelを既定値へ自動切替する"
 // observable = "failed返却、atomic開始とProviderの呼出し件数0"
 // observation_boundary = "public-boundary"
 // scope = "queued runtime pre-provider capture validation"
@@ -557,10 +558,10 @@ it("queued runtimeは無効になった捕捉入力を開始前にfailedで返�
       persistQueuedTurnStart: (next, _, __, turn) => { starts += 1; return { session: next, turn: { id: 1, ...turn } }; },
       resolveProviderCatalog: () => {
         const provider = createProviderCatalog();
-        if (stage === "model") provider.models = [];
-        return { snapshot: { revision: 2, providers: [provider] }, provider };
+        return { snapshot: { providers: [provider] }, provider };
       },
     });
+    if (stage === "model") receipt.captured.request.executionOptions = { ...receipt.captured.request.executionOptions, model: "" };
     const result = await runtime.runQueuedSessionTurn(receipt, async () => { assert.fail("Rejected start cannot be observed as started"); });
     assert.equal(result.state, "failed");
     assert.ok(result.reason);
@@ -789,7 +790,7 @@ describe("SessionRuntimeService", () => {
       service = createTestRuntime({
         getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
         resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-        resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+        resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
         getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
         createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, update) => { phases.push(update.phase); },
         setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
@@ -1056,7 +1057,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       upsertTerminalSession: async (next) => { saveStarted = true; await saveGate; stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
@@ -1132,7 +1133,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
@@ -1212,7 +1213,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1285,7 +1286,7 @@ describe("SessionRuntimeService", () => {
         throw new Error("append commit reply lost");
       },
       getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1338,7 +1339,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async (_session, text) => { if (text === "race") { previewStarted = true; await previewGate; } return { attachments: [], errors: [] }; }, getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1382,7 +1383,7 @@ describe("SessionRuntimeService", () => {
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
       getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }), resetProviderSessionThread: () => { resets += 1; },
@@ -1462,7 +1463,7 @@ describe("SessionRuntimeService", () => {
       upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
       getSessionMemory: (session) => createSessionMemory(session.id),
       resolveProjectMemoryEntriesForPrompt: () => [],
@@ -1522,7 +1523,7 @@ describe("SessionRuntimeService", () => {
         memory: { items: [], updatedAt: null } }),
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
-      resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
+      resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
       getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
@@ -1618,7 +1619,7 @@ describe("SessionRuntimeService", () => {
             return { attachments: [], errors: [] };
           },
           getAppSettings: () => normalizeAppSettings({}),
-          resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
+          resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
           getProviderCodingAdapter: () => adapter,
           getSessionMemory: (session) => createSessionMemory(session.id),
           resolveProjectMemoryEntriesForPrompt: () => [],
@@ -1706,17 +1707,14 @@ describe("SessionRuntimeService", () => {
       invalidateSessionThread: unexpectedAdapterCall,
       invalidateAllSessionThreads: unexpectedAdapterCall,
       runSessionTurn: unexpectedAdapterCall,
-      getBackgroundStructuredPromptPolicy: unexpectedAdapterCall,
-      extractSessionMemoryDelta: unexpectedAdapterCall,
-      runBackgroundStructuredPrompt: unexpectedAdapterCall,
     };
-    const catalog = { revision: 1, providers: [createProviderCatalog(), createProviderCatalog("custom")] };
+    const catalog = { providers: [createProviderCatalog(), createProviderCatalog("custom")] };
     const facade = new MainProviderFacade({
       codexAdapter: adapter,
       copilotAdapter: adapter,
       claudeAdapter: adapter,
+      opencodeAdapter: adapter,
       getModelCatalog: () => catalog,
-      ensureModelCatalogSeeded: () => catalog,
     });
     const unexpectedWrite = (): never => { writes += 1; throw new Error("Unexpected write"); };
     const service = createTestRuntime({
@@ -1724,7 +1722,7 @@ describe("SessionRuntimeService", () => {
       upsertSession: unexpectedWrite,
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { custom: { enabled: true } } }),
-      resolveProviderCatalog: (id, revision) => facade.resolveProviderCatalog(id, revision),
+      resolveProviderCatalog: (id) => facade.resolveProviderCatalog(id),
       getProviderCodingAdapter: (id) => facade.getProviderCodingAdapter(id),
       getProviderAgentRuntimeBinding: () => { bindingIssues += 1; return null; },
       getSessionMemory: () => createSessionMemory(session.id),
@@ -1754,20 +1752,19 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知を依頼してbackground settlementを待たず次turnを受け付ける"
-  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal / notifySessionTurnTerminalBestEffort / completeCompletedTurnAppraisalBestEffort; docs/design/session-run-lifecycle.md: Character Affect の完了後評価" }
-  // fault = "永続化前の通知またはbackground settlement待機により、通知先が未保存状態を読むか次turn受付が停止する"
-  // observable = "providerへ渡されたturnごとのCharacter context、terminal commit後の通知とready correlation順序、appraisal依頼回数、次turnの完了結果"
+  // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知して次turnを受け付ける"
+  // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal / notifySessionTurnTerminalBestEffort" }
+  // fault = "永続化前の通知により通知先が未保存状態を読むか、次turnが前turnの完了時刻を取得できない"
+  // observable = "providerへ渡されたturnごとのCharacter context、terminal commit後の通知順序、次turnの完了時刻snapshot"
   // observation_boundary = "public-boundary"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
   // @end-test-value
-  it("各turnで最新Character contextを取得し、terminal commit後はready・appraisalを待たずに返す", async () => {
+  it("各turnで最新Character contextを取得し、terminal commit後に通知して次turnを受け付ける", async () => {
     let storedSession = createSession();
     let contextVersion = 0;
     let turnId = 0;
     let completionNotificationCount = 0;
-    let appraisalRequestCount = 0;
     const callOrder: string[] = [];
     const timingCompletionSnapshots: Array<string | null> = [];
     let lastCommittedAt: string | null = null;
@@ -1850,7 +1847,7 @@ describe("SessionRuntimeService", () => {
       },
       resolveProviderCatalog() {
         const provider = createProviderCatalog();
-        return { snapshot: { revision: 1, providers: [provider] }, provider };
+        return { snapshot: { providers: [provider] }, provider };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -1868,19 +1865,6 @@ describe("SessionRuntimeService", () => {
       resolveCharacterContext() {
         contextVersion += 1;
         return context(contextVersion);
-      },
-      async queueCompletedTurnAppraisal(input) {
-        assert.equal(input.assistantMessageIndex, input.session.messageCount! - 1);
-        callOrder.push(`queued:${input.correlationId}`);
-      },
-      markCompletedTurnAppraisalReady(correlationId) {
-        callOrder.push(`pending-ready:${correlationId}`);
-      },
-      requireDurableCompletedTurnAppraisal: true,
-      async appraiseCompletedTurn() {
-        appraisalRequestCount++;
-        callOrder.push("appraisal-started");
-        await new Promise<void>(() => undefined);
       },
       createSessionTurn(input) {
         turnId += 1;
@@ -1924,7 +1908,6 @@ describe("SessionRuntimeService", () => {
     const firstCompletedAt = lastCommittedAt;
     assert.equal(service.isRunInFlight(storedSession.id), false);
     assert.equal(confirmedPreviewTexts[0], "完了");
-    assert.equal(callOrder.some((entry) => entry === `pending-ready:turn:${storedSession.id}:turn:1`), false);
     await service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
       userMessage: "second",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b2",
@@ -1932,289 +1915,19 @@ describe("SessionRuntimeService", () => {
     });
     callOrder.push("second-returned");
 
-    await waitForCondition(
-      () => appraisalRequestCount === 2,
-      "ready・appraisal・terminal turnがbackgroundで完了すること",
-    );
 
     assert.equal(contextVersion, 2);
     assert.deepEqual(composedCharacterContextVersions, ["affect-v1-1", "affect-v1-2"]);
-    assert.equal(appraisalRequestCount, 2);
-    assert.deepEqual(callOrder.filter((entry) => entry.startsWith("pending-ready:")), [
-      `pending-ready:turn:${storedSession.id}:turn:1`,
-      `pending-ready:turn:${storedSession.id}:turn:2`,
-    ]);
     assert.equal(timingCompletionSnapshots[0], null);
     assert.equal(timingCompletionSnapshots[1], firstCompletedAt);
     for (const [turnId, returned] of [
       [1, "first-returned"],
       [2, "second-returned"],
     ] as const) {
-      const correlationId = `turn:${storedSession.id}:turn:${turnId}`;
       assert.ok(callOrder.indexOf(`completed-upsert:${turnId}`) < callOrder.indexOf(`completion-notification:${turnId}`));
       assert.ok(callOrder.indexOf(`completion-notification:${turnId}`) < callOrder.indexOf(returned));
-      assert.ok(callOrder.indexOf(returned) < callOrder.indexOf(`pending-ready:${correlationId}`));
     }
-    assert.equal(callOrder.filter((entry) => entry === "appraisal-started").length, 2);
 
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "SessionRuntimeServiceへ注入したdurable appraisal queueがcompletedより先にpendingを永続化し、enqueue失敗・ready再試行・欠落pendingを適切に収束させる"
-  // oracle = { type = "contract", ref = "Session runtime persistence ordering contract" }
-  // fault = "completed sessionを先に保存してpendingを失う、enqueue失敗時もcompletedを保存する、またはready再試行・欠落pendingを誤ってappraisalする"
-  // observable = "pending enqueueとcompleted保存の順序、enqueue/readiness/appraisal結果、最終Session runState"
-  // observation_boundary = "public-boundary"
-  // scope = "SessionRuntimeService pending persistence and failure handling"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("注入したdurable appraisal queueはpendingをcompleted Sessionより先に永続化し、保存失敗時はcompletedにしない", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "withmate-mandatory-appraisal-"));
-    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "app.sqlite"));
-    const createService = (
-      initialSession: Session,
-      queueCompletedTurnAppraisal: NonNullable<SessionRuntimeServiceDeps["queueCompletedTurnAppraisal"]>,
-      beforeCompletedUpsert?: () => void | Promise<void>,
-      markCompletedTurnAppraisalReady?: NonNullable<SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"]>,
-      appraiseCompletedTurn?: NonNullable<SessionRuntimeServiceDeps["appraiseCompletedTurn"]>,
-    ) => {
-      let storedSession = initialSession;
-      const completedWrites: Session[] = [];
-      const callOrder: string[] = [];
-      const adapter: ProviderCodingAdapter = {
-        composePrompt() {
-          return {
-            systemBodyText: "system",
-            inputBodyText: "input",
-            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-            imagePaths: [],
-            additionalDirectories: [],
-          };
-        },
-        async getProviderQuotaTelemetry() {
-          return null;
-        },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-        async runSessionTurn() {
-          return createPartialResult({ assistantText: "完了" });
-        },
-      };
-      const service = createTestRuntime({
-        getSession(sessionId) {
-          return sessionId === storedSession.id ? storedSession : null;
-        },
-        async upsertSession(next) {
-          if (next.runState === "idle" && next.messages.at(-1)?.role === "assistant") {
-            await beforeCompletedUpsert?.();
-            completedWrites.push(next);
-            callOrder.push("completed-upsert");
-          }
-          storedSession = next;
-          return next;
-        },
-        async resolveComposerPreview() {
-          return { attachments: [], errors: [] };
-        },
-        getAppSettings() {
-          return normalizeAppSettings({});
-        },
-        resolveProviderCatalog() {
-          const provider = createProviderCatalog();
-          return { snapshot: { revision: 1, providers: [provider] }, provider };
-        },
-        getProviderCodingAdapter() {
-          return adapter;
-        },
-        getSessionMemory(session) {
-          return createSessionMemory(session.id);
-        },
-        resolveProjectMemoryEntriesForPrompt() {
-          return [];
-        },
-        queueCompletedTurnAppraisal(input) {
-          callOrder.push("pending-enqueue");
-          return queueCompletedTurnAppraisal(input);
-        },
-        markCompletedTurnAppraisalReady(correlationId) {
-          callOrder.push("pending-ready");
-          if (markCompletedTurnAppraisalReady) {
-            return markCompletedTurnAppraisalReady(correlationId);
-          }
-          storage.markReady(correlationId);
-        },
-        appraiseCompletedTurn,
-        requireDurableCompletedTurnAppraisal: true,
-        createSessionTurn(input) {
-          return createSessionTurnBase(input);
-        },
-        updateSessionTurn() {},
-        setLiveSessionRun() {},
-        getLiveSessionRun() {
-          return null;
-        },
-        waitForApprovalDecision() {
-        return "approve" as const;
-        },
-        waitForElicitationResponse() {
-          return { action: "cancel" };
-        },
-        setProviderQuotaTelemetry() {},
-        setSessionContextTelemetry() {},
-      async invalidateProviderSessionThread() {},
-        scheduleProviderQuotaTelemetryRefresh() {},
-        broadcastLiveSessionRun() {},
-        resolvePendingApprovalRequest() {},
-        resolvePendingElicitationRequest() {},
-        currentTimestampLabel,
-        appraisalReadyRetryMs: 0,
-      });
-      return { service, completedWrites, callOrder };
-    };
-
-    try {
-      const successfulSession = createSession();
-      const successful = createService(
-        successfulSession,
-        (input) => {
-          storage.enqueue({
-            correlationId: input.correlationId,
-            characterId: input.session.characterId,
-            sessionId: input.session.id,
-            userMessage: input.userMessage,
-            assistantMessage: input.assistantMessage,
-            assistantMessageIndex: input.assistantMessageIndex,
-            occurredAt: input.occurredAt,
-          });
-        },
-        () => {
-          assert.equal(storage.listPending().length, 1);
-          assert.deepEqual(storage.listReadyPending(), []);
-        },
-      );
-      const successfulResult = await successful.service.runSessionTurn(successfulSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "保存して",
-      });
-      await waitForCondition(
-        () => storage.listReadyPending().length === 1,
-        "terminal commit後にbackgroundでpendingがready化されること",
-      );
-      const pending = storage.listPending();
-
-      assert.equal(successfulResult.runState, "idle");
-      assert.equal(pending.length, 1);
-      assert.equal(pending[0]?.assistantMessage, "完了");
-      assert.notEqual(pending[0]?.readyAt, null);
-      assert.deepEqual(successful.callOrder, ["pending-enqueue", "completed-upsert", "pending-ready"]);
-
-      const failingSession = createSession();
-      const failing = createService(failingSession, () => {
-        throw new Error("settlement storage unavailable");
-      });
-      const failingResult = await failing.service.runSessionTurn(failingSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "保存に失敗して",
-      });
-
-      assert.equal(failingResult.runState, "error");
-      assert.equal(failing.completedWrites.length, 0);
-      assert.deepEqual(failing.callOrder, ["pending-enqueue"]);
-
-      const readinessFailureSession = createSession();
-      let appraisalCalls = 0;
-      let readinessAttempts = 0;
-      let releaseReadiness: () => void = () => undefined;
-      const readinessBarrier = new Promise<void>((resolve) => {
-        releaseReadiness = resolve;
-      });
-      const readinessFailure = createService(
-        readinessFailureSession,
-        (input) => {
-          storage.enqueue({
-            correlationId: input.correlationId,
-            characterId: input.session.characterId,
-            sessionId: input.session.id,
-            userMessage: input.userMessage,
-            assistantMessage: input.assistantMessage,
-            assistantMessageIndex: input.assistantMessageIndex,
-            occurredAt: input.occurredAt,
-          });
-        },
-        undefined,
-        async (correlationId) => {
-          readinessAttempts += 1;
-          if (readinessAttempts === 1) {
-            throw new Error("temporary readiness failure");
-          }
-          await readinessBarrier;
-          storage.markReady(correlationId);
-        },
-        () => {
-          appraisalCalls += 1;
-        },
-      );
-      let readinessRunResolved = false;
-      const readinessFailureRun = readinessFailure.service.runSessionTurn(readinessFailureSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "ready化に失敗しても完了を維持して",
-      });
-      void readinessFailureRun.then(() => {
-        readinessRunResolved = true;
-      });
-
-      await waitForCondition(() => readinessAttempts >= 2, "background ready retryが2回目へ進むこと");
-
-      assert.equal(readinessRunResolved, true);
-      assert.equal(appraisalCalls, 0);
-      assert.equal(storage.getPending(`turn:${readinessFailureSession.id}:turn:1`)?.readyAt, null);
-
-      releaseReadiness();
-      const readinessFailureResult = await readinessFailureRun;
-      await waitForCondition(() => appraisalCalls === 1, "ready成功後にappraisal schedulerが起動すること");
-
-      assert.equal(readinessFailureResult.runState, "idle");
-      assert.equal(readinessFailure.completedWrites.length, 1);
-      assert.equal(readinessAttempts, 2);
-      assert.equal(appraisalCalls, 1);
-      assert.equal(readinessFailureResult.messages.filter((message) => message.role === "assistant").length, 1);
-
-      const absentSession = createSession();
-      let absentReadyCalls = 0;
-      let absentAppraisalCalls = 0;
-      const absent = createService(
-        absentSession,
-        (input) => {
-          storage.enqueue({
-            correlationId: input.correlationId,
-            characterId: input.session.characterId,
-            sessionId: input.session.id,
-            userMessage: input.userMessage,
-            assistantMessage: input.assistantMessage,
-            assistantMessageIndex: input.assistantMessageIndex,
-            occurredAt: input.occurredAt,
-          });
-        },
-        undefined,
-        () => {
-          absentReadyCalls += 1;
-          return "absent";
-        },
-        () => {
-          absentAppraisalCalls += 1;
-        },
-      );
-      const absentResult = await absent.service.runSessionTurn(absentSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
-        userMessage: "削除済みpendingは終端して",
-      });
-      await waitForCondition(() => absentReadyCalls === 1, "missing pendingのready化が一度だけ試行されること");
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-      assert.equal(absentResult.runState, "idle");
-      assert.equal(absentReadyCalls, 1);
-      assert.equal(absentAppraisalCalls, 0);
-    } finally {
-      storage.close();
-      await rm(directory, { recursive: true, force: true });
-    }
   });
 
   // @test-value v2
@@ -2306,7 +2019,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2418,7 +2131,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2510,7 +2223,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2664,7 +2377,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -2789,7 +2502,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3030,7 +2743,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3147,7 +2860,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3254,7 +2967,7 @@ describe("SessionRuntimeService", () => {
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3391,7 +3104,7 @@ resolveComposer!({ attachments: [], errors: [] });
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3523,7 +3236,6 @@ resolveProvider!(createPartialResult());
     const session = createSession();
     let resolveProvider: (result: RunSessionTurnResult) => void = () => undefined;
     let notificationCount = 0;
-    let queuedAppraisalCount = 0;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -3563,7 +3275,7 @@ resolveProvider!(createPartialResult());
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3573,10 +3285,6 @@ resolveProvider!(createPartialResult());
       },
       resolveProjectMemoryEntriesForPrompt() {
         return [];
-      },
-      queueCompletedTurnAppraisal(input) {
-        queuedAppraisalCount += 1;
-        assert.equal(input.assistantMessageIndex, input.session.messages.length - 1);
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3619,7 +3327,6 @@ resolveProvider!(createPartialResult());
     assert.equal(result.runState, "idle");
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");
     assert.equal(notificationCount, 0);
-    assert.equal(queuedAppraisalCount, 1);
   });
 
   // @test-value v2
@@ -3676,7 +3383,7 @@ resolveProvider!(createPartialResult());
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -3816,7 +3523,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
+        return { snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -4013,7 +3720,7 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         return normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } });
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
+        return { snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -4065,10 +3772,10 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "usage_limit reasonは最小turnと応答の失敗理由へ利用制限と再開可能時刻を保存し、生成本文を保持する"
+  // claim = "usage_limit reasonは最小turnと応答の失敗理由へ利用制限と再開可能時刻を保存する"
   // oracle = { type = "contract", ref = "docs/design/provider-adapter.md: Error Handling" }
   // fault = "usage limitを通常provider failureとして表示し、利用者の制限理由を隠す"
-  // observable = "turn error fieldsとassistant runFailure、取得済みtext"
+  // observable = "turn error fieldsとassistant runFailure"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService usage limit failure mapping"
   // lifecycle = "permanent"
@@ -4123,7 +3830,7 @@ releaseSecondAttempt!();
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -4226,7 +3933,7 @@ releaseSecondAttempt!();
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -4275,105 +3982,108 @@ releaseSecondAttempt!();
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "not_foundを返したCodex turnは一回のerror Sessionとして返り、thread invalidationを一回依頼する"
+  // claim = "not_foundを返したCodex/OpenCode turnは再送せず、既知threadを保持したerror Sessionとして返る"
   // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal catch / invalidateProviderSessionThreadBestEffort; docs/design/provider-adapter.md: Error Handling" }
-  // fault = "Codexの汎用not_found errorを自動再実行する、error Sessionを保存しない、またはthread invalidationを省く"
-  // observable = "Codex adapter呼出数、返却SessionのrunState/runFailure、Session保存数とinvalidation対象"
+  // fault = "汎用not_found errorで入力を自動再送する、既知threadを消す、またはerror Session保存やinvalidationを省く"
+  // observable = "adapter呼出数、返却SessionのthreadId/runState/runFailure、Session保存数とinvalidation対象"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService provider error classification"
   // lifecycle = "permanent"
   // @end-test-value
   it("not_found 単独 code の provider error では internal retry しない", async () => {
-    const session = createSession({ provider: "codex", threadId: "thread-stale" });
-    const storedSessions: Session[] = [];
-    const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
-    let attempt = 0;
+    for (const providerId of ["codex", "opencode"]) {
+      const session = createSession({ provider: providerId, threadId: "thread-stale" });
+      const storedSessions: Session[] = [];
+      const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+      let attempt = 0;
 
-    const adapter: ProviderCodingAdapter = {
-      composePrompt() {
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-      async getProviderQuotaTelemetry() {
-        return null;
-      },
-      async invalidateSessionThread() {},
-      async invalidateAllSessionThreads() {},
-      async runSessionTurn() {
-        attempt += 1;
-        const error = new ProviderTurnError("resource not found", createPartialResult(), false) as ProviderTurnError & { code?: string };
-        error.code = "not_found";
-        throw error;
-      },
-    };
+      const adapter: ProviderCodingAdapter = {
+        composePrompt() {
+          return {
+            systemBodyText: "system",
+            inputBodyText: "input",
+            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+            imagePaths: [],
+            additionalDirectories: [],
+          };
+        },
+        async getProviderQuotaTelemetry() {
+          return null;
+        },
+        async invalidateSessionThread() {},
+        async invalidateAllSessionThreads() {},
+        async runSessionTurn() {
+          attempt += 1;
+          const error = new ProviderTurnError("resource not found", createPartialResult(), false) as ProviderTurnError & { code?: string };
+          error.code = "not_found";
+          throw error;
+        },
+      };
 
-    const service = createTestRuntime({
-      getSession() {
-        return session;
-      },
-      upsertSession(next) {
-        storedSessions.push(next);
-        return next;
-      },
-      async resolveComposerPreview() {
-        return { attachments: [], errors: [] };
-      },
-      async resolveSessionCharacter() {
-        return createCharacter();
-      },
-      getAppSettings() {
-        return normalizeAppSettings({});
-      },
-      resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
-      },
-      getProviderCodingAdapter() {
-        return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
-      createSessionTurn(input) {
-        return createSessionTurnBase(input);
-      },
-      updateSessionTurn() {},
-      setLiveSessionRun() {},
-      getLiveSessionRun() {
-        return null;
-      },
-      async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
-        return "approve" as const;
-      },
-      async waitForElicitationResponse() {
-        return { action: "cancel" } as const;
-      },
-      setProviderQuotaTelemetry() {},
-      setSessionContextTelemetry() {},
-      invalidateProviderSessionThread(providerId, retrySessionId) {
-        invalidated.push({ providerId, sessionId: retrySessionId });
-      },
-      scheduleProviderQuotaTelemetryRefresh() {},
-      broadcastLiveSessionRun() {},
-      resolvePendingApprovalRequest() {},
-      resolvePendingElicitationRequest() {},
-      currentTimestampLabel,
-    });
+      const service = createTestRuntime({
+        getSession() {
+          return session;
+        },
+        upsertSession(next) {
+          storedSessions.push(next);
+          return next;
+        },
+        async resolveComposerPreview() {
+          return { attachments: [], errors: [] };
+        },
+        async resolveSessionCharacter() {
+          return createCharacter();
+        },
+        getAppSettings() {
+          return normalizeAppSettings({ codingProviderSettings: { [providerId]: { enabled: true } } });
+        },
+        resolveProviderCatalog() {
+          return { snapshot: { providers: [createProviderCatalog(providerId)] }, provider: createProviderCatalog(providerId) };
+        },
+        getProviderCodingAdapter() {
+          return adapter;
+        },
+        getSessionMemory(current) {
+          return createSessionMemory(current.id);
+        },
+        resolveProjectMemoryEntriesForPrompt() {
+          return [];
+        },
+        createSessionTurn(input) {
+          return createSessionTurnBase(input);
+        },
+        updateSessionTurn() {},
+        setLiveSessionRun() {},
+        getLiveSessionRun() {
+          return null;
+        },
+        async waitForApprovalDecision(_sessionId, _request, _signal): Promise<LiveApprovalDecision> {
+          return "approve" as const;
+        },
+        async waitForElicitationResponse() {
+          return { action: "cancel" } as const;
+        },
+        setProviderQuotaTelemetry() {},
+        setSessionContextTelemetry() {},
+        invalidateProviderSessionThread(providerId, retrySessionId) {
+          invalidated.push({ providerId, sessionId: retrySessionId });
+        },
+        scheduleProviderQuotaTelemetryRefresh() {},
+        broadcastLiveSessionRun() {},
+        resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest() {},
+        currentTimestampLabel,
+      });
 
-    const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願いします" });
+      const result = await service.runSessionTurn(session.id, { executionOptions: { ...TEST_EXECUTION_OPTIONS, approvalMode: "on-request" }, userMessage: "お願いします" });
 
-    assert.equal(attempt, 1);
-    assert.equal(result.runState, "error");
-    assert.equal(result.messages.at(-1)?.runFailure, "resource not found");
-    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
-    assert.equal(storedSessions.length, 2);
+      assert.equal(attempt, 1);
+      assert.equal(result.runState, "error");
+      assert.equal(result.messages.at(-1)?.runFailure, "resource not found");
+      assert.equal(result.threadId, "thread-stale");
+      assert.deepEqual(invalidated, [{ providerId, sessionId: session.id }]);
+      assert.equal(storedSessions.length, 2);
+    }
   });
 
   // @test-value v2
@@ -4433,7 +4143,7 @@ releaseSecondAttempt!();
         return normalizeAppSettings({});
       },
       resolveProviderCatalog() {
-        return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        return { snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
       },
       getProviderCodingAdapter() {
         return adapter;

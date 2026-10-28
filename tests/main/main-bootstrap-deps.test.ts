@@ -39,13 +39,14 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     },
     async initializePersistentStores() {
       calls.push("initialize");
-      return { revision: 1, providers: [] };
+      return { providers: [] };
     },
     async recoverInterruptedSessions() {
       calls.push("recover");
     },
     broadcastModelCatalog(snapshot) {
-      calls.push(`broadcast:${snapshot.revision}`);
+      assert.deepEqual(snapshot, { providers: [] });
+      calls.push("broadcast");
     },
     ipcRegistration: {
       window: {
@@ -119,11 +120,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         openTerminalAtPath: async () => {},
       } satisfies MainIpcWindowDepsArgs,
       catalog: {
-        getModelCatalog: () => null,
-        importModelCatalogDocument: () => ({ revision: 1, providers: [] }),
-        importModelCatalogFromFile: async () => null,
-        exportModelCatalogDocument: () => null,
-        exportModelCatalogToFile: async () => null,
+        getModelCatalog: () => ({ providers: [] }),
       } satisfies MainIpcCatalogDepsArgs,
       settings: {
         getAppSettings: () =>
@@ -297,5 +294,5 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
     ).window.showSessionMonitorContextMenu,
     showSessionMonitorContextMenu,
   );
-  assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "broadcast:1", "openHomeIpc"]);
+  assert.deepEqual(calls, ["initialize", "registerIpcHandlers", "broadcast", "openHomeIpc"]);
 });

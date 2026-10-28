@@ -30,13 +30,18 @@ export function mapApprovalModeToClaudePermissionMode(approvalMode: ApprovalMode
 }
 
 export function getDefaultApprovalModeForProvider(providerId: string | null | undefined): ApprovalMode {
-  return providerId === "claude" ? "on-request" : DEFAULT_APPROVAL_MODE;
+  return providerId === "claude" || providerId === "opencode" ? "on-request" : DEFAULT_APPROVAL_MODE;
 }
 
 export function getApprovalOptionsForProvider(
   providerId: string | null | undefined,
   reviewer: CodexReviewer = "user",
 ): RuntimeSelectOption<ApprovalMode>[] {
+  if (providerId === "opencode") {
+    return approvalModeOptions
+      .filter((option) => option.id === "on-request" || option.id === "never")
+      .map((option) => ({ value: option.id, label: option.label }));
+  }
   return approvalModeOptions
     .filter((option) => providerId === "claude"
       ? Object.hasOwn(CLAUDE_PERMISSION_MODES, option.id)

@@ -18,7 +18,6 @@ import {
   normalizeCharacterRuntimeSnapshot,
 } from "../character/character-runtime-snapshot.js";
 import {
-  DEFAULT_CATALOG_REVISION,
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
   DEFAULT_REASONING_EFFORT,
@@ -463,7 +462,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     catalogRevision:
       typeof candidate.catalogRevision === "number" && Number.isInteger(candidate.catalogRevision) && candidate.catalogRevision > 0
         ? candidate.catalogRevision
-        : DEFAULT_CATALOG_REVISION,
+        : 1,
     workspaceLabel:
       typeof candidate.workspaceLabel === "string" && candidate.workspaceLabel.trim()
         ? candidate.workspaceLabel
@@ -687,7 +686,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     catalogRevision:
       typeof input.catalogRevision === "number" && Number.isInteger(input.catalogRevision) && input.catalogRevision > 0
         ? input.catalogRevision
-        : DEFAULT_CATALOG_REVISION,
+        : 1,
     workspaceLabel: input.workspaceLabel,
     workspacePath: input.workspacePath,
     branch: input.branch,

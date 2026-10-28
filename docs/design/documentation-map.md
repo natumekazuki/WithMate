@@ -45,7 +45,7 @@
 | [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
 | [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
 | [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |
-| [Model Catalog](model-catalog.md) | model catalogの保存と解決 |
+| [Provider Model Discovery](model-catalog.md) | SDK model一覧の取得、cache、選択と実行の境界 |
 | [Prompt Composition](prompt-composition.md) | providerへ渡すpromptの構成 |
 
 ### Character・Memory・永続化

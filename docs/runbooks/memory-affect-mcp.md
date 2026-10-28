@@ -166,32 +166,16 @@ read failureの`conversationMayContinue`は、状態なしで応答を続けら�
 
 ## 観測
 
-`withmate-memory character-metrics`は、transportとoperation別の呼び出し、成功、拒否、失敗、idempotent replay、version conflict、合計latency、拒否code、および`mcp->cli` fallback数を返す。lifecycleとモデル主導MCPの比率は、同じoperationの`lifecycle:`と`mcp:`を比較する。
+`withmate-memory character-metrics`は、transportとoperation別の呼び出し、成功、拒否、失敗、idempotent replay、version conflict、合計latency、拒否code、および`mcp->cli` fallback数を返す。context取得とモデル主導MCPは、同じoperationの`lifecycle:`と`mcp:`で区別する。
 
 metricsとapp logには会話本文、Memory本文、secretを記録しない。障害調査で本文が必要な場合も、権限のあるinspect/searchを明示的に使う。
 
 ## Turn lifecycle
 
-通常のWithMate Sessionは各turnの応答前にapplication serviceから最新context versionを取得し、Character Definitionとは別の最小envelopeをpromptへ注入する。応答後のCharacter自身の必須評価はlifecycleが実行するが、これはturn中の即時appraisalを禁止する単一mutation ownerではない。Agentが具体的な感情変化を認識した場合は、ユーザー向け応答でその場の反応を示した後、runtime binding付きの`character_affect.appraise`でできるだけ早く保存する。感情が後で解消、反転、減衰しても先行eventは残し、後続変化と意味の似たpost-turn評価は別eventとして追加できる。具体的なeventがないturnでMCP appraisalを儀式的に呼ぶ必要はない。
+通常のWithMate Sessionは各turnの応答前にapplication serviceから最新context versionを取得し、Character Definitionとは別の最小envelopeをpromptへ注入する。保存済みAffectとMemoryの取得、取得時のafterglow projectionは追加LLMを使わない。Agentが記録する意味のある感情変化を認識した場合は、通常turn中にruntime binding付きの`character_affect.appraise`で保存する。感情が後で解消、反転、減衰しても先行eventは残す。具体的なeventがないturnでMCP appraisalを儀式的に呼ぶ必要はない。
 
 同じturnの後続appraisalには直前の成功応答で返されたversionを渡す。別時点または別の根拠を持つeventはfamily、target、label、意味が似ていても新しいkeyを使う。同一requestのtimeout、response loss、client resendだけはrequestを変えず同じkeyで照合する。`effect: unknown`は同じrequestとkeyでreconcileし、未commitの`effect: none` version conflictは最新contextから再評価する。requestを変更した場合は新しいkeyを使う。linked Memory episodeは同じappraisalの`memoryEpisode`だけで保存し、別routeへ重複送信しない。
 
-post-turn appraisalは永続turn IDをcorrelationとし、Sessionをcompletedとして保存する前にpendingへ記録する。pendingにはassistant message indexも保存し、次回起動時は保存済みSessionの同じindexと本文が一致するrecordだけをcommit済みとして再評価する。Session保存前に停止したrecordはappraiseせず破棄する。cancelとprovider成功が競合してcompleted responseを保存する場合もenqueueは省略しない。appraiseのread-back後だけsettledにし、一時保存した会話本文を除去する。pendingはcursorで全件走査し、先頭batchの失敗で後続をstarvationさせない。version conflict時も古い候補をblind retryせず、最新contextで一度だけ再評価する。
+MCPを呼ばないturnも正常に完了でき、terminal保存はAffectの追加評価やenqueueに依存しない。呼出し省略・失敗・取消を別LLM評価、補完turn、変化なしeventで埋めない。turn中に保存が確定したevent／episodeは、その後の応答失敗・取消で巻き戻さない。Memory／Affectの利用説明は共通MCP instructionsとschemaを正本とし、provider別指示や専用Memory Skillへ複製しない。
 
-retryable failureは項目ごとに1分から6時間上限の指数backoffを永続化する。実際の試行が8回失敗した項目とretryableでないfailureはquarantineされ、通常drainから除外される。quarantineは未処理dataの破棄ではなく、会話payloadと保存済みevaluationを保持する隔離である。`character-affect.lifecycle.settlement-deferred`と`character-affect.lifecycle.settlement-quarantined`には本文を出さず、stage、code、error name、所要時間、入力長、試行回数、次回時刻または隔離時刻を記録する。Context内部の予期しないfailureは`character-context.application.unexpected-failure`でAffect状態取得、Memory検索、response組み立てを区別する。
-
-## Turn settlementのquarantine確認と解除
-
-利用者databaseへ操作する前にWithMateを完全に終了し、databaseと同directoryの`-wal`、`-shm`を含めてdirectory単位でbackupする。まずread-only inspectを実行する。出力はcorrelation ID、Session ID、試行回数、failure分類だけで、会話本文は含まない。
-
-```powershell
-npm run affect:settlement-recovery -- --db "<absolute-app-database-path>" --inspect
-```
-
-原因を修正したversionが適用済みで、再試行してよい対象を確認した後、correlation IDを一件ずつreleaseする。`--confirm-app-stopped`は、停止確認を省略して実行しないための明示guardである。
-
-```powershell
-npm run affect:settlement-recovery -- --db "<absolute-app-database-path>" --release "<correlation-id>" --confirm-app-stopped
-```
-
-成功時はread-backした`state: ready`、`attemptCount: 0`、`evaluationPersisted`を確認する。その後WithMateを起動し、`settlement-deferred`、`settlement-quarantined`、settled件数を確認する。複数件を一括releaseせず、同じfailure分類の少数から再開してprovider負荷と成功率を確認する。実databaseへのreleaseはincident対応のoperator判断であり、通常のupgrade処理では自動実行しない。
+旧Affect専用queueを含むV6 DBは、起動時のschema更新で`character_affect_turn_settlements`を削除する。pending、候補、retry、実行中、quarantineを再開せず、queue内の本文・候補を除去する。削除は再実行可能で、評価成功とは扱わない。保存済みevent／episode／一般Memoryとversion・idempotency情報は保持し、一部保存済みや保存結果不明の候補も再適用しない。queueの整理に旧lifecycleや回収処理を使わない。

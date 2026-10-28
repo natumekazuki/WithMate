@@ -1,10 +1,7 @@
-import type { BrowserWindow, OpenDialogOptions, OpenDialogReturnValue, SaveDialogOptions, SaveDialogReturnValue } from "electron";
+import type { BrowserWindow, OpenDialogOptions, OpenDialogReturnValue } from "electron";
 
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { ImageFilePickerPurpose } from "../../src-shared/window/withmate-window-types.js";
-import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
-const MODEL_CATALOG_JSON_FILTER = [{ name: "JSON", extensions: ["json"] }];
 const IMAGE_FILE_FILTER = [
   { name: "Images", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"] },
 ];
@@ -17,14 +14,6 @@ export type WindowDialogServiceDeps = {
     targetWindow: BrowserWindow | undefined,
     options: OpenDialogOptions,
   ): Promise<OpenDialogReturnValue>;
-  showSaveDialog(
-    targetWindow: BrowserWindow | undefined,
-    options: SaveDialogOptions,
-  ): Promise<SaveDialogReturnValue>;
-  readTextFile(filePath: string): Promise<string>;
-  writeTextFile(filePath: string, content: string): Promise<void>;
-  importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot>;
-  exportModelCatalogDocument(revision?: number | null): Awaitable<ModelCatalogDocument | null>;
 };
 
 function buildDefaultPathOption(defaultPath: string | null | undefined): { defaultPath?: string } {
@@ -88,39 +77,4 @@ export class WindowDialogService {
     return result.filePaths[0] ?? null;
   }
 
-  async importModelCatalogFromFile(targetWindow?: BrowserWindow | null): Promise<ModelCatalogSnapshot | null> {
-    const result = await this.deps.showOpenDialog(targetWindow ?? undefined, {
-      title: "Import Model Catalog",
-      properties: ["openFile"],
-      filters: [...MODEL_CATALOG_JSON_FILTER],
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return null;
-    }
-    const raw = await this.deps.readTextFile(result.filePaths[0]);
-    const document = JSON.parse(raw) as ModelCatalogDocument;
-    return await this.deps.importModelCatalogDocument(document);
-  }
-
-  async exportModelCatalogToFile(
-    revision: number | null | undefined,
-    targetWindow?: BrowserWindow | null,
-  ): Promise<string | null> {
-    const document = await this.deps.exportModelCatalogDocument(revision);
-    if (!document) {
-      return null;
-    }
-
-    const result = await this.deps.showSaveDialog(targetWindow ?? undefined, {
-      title: "Export Model Catalog",
-      defaultPath: "model-catalog.json",
-      filters: [...MODEL_CATALOG_JSON_FILTER],
-    });
-    if (result.canceled || !result.filePath) {
-      return null;
-    }
-
-    await this.deps.writeTextFile(result.filePath, `${JSON.stringify(document, null, 2)}\n`);
-    return result.filePath;
-  }
 }

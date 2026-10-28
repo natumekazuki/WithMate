@@ -77,6 +77,12 @@ agent-facing Memory contractはMCP `tools/list`、内部のrequest / response co
 - operator CLIはlocalhost APIを呼ぶthin clientとし、operator credentialと明示target / identityを使う。
 - agent-bound CLI fallbackはMCP initializeと`tools/list`取得後のtransport availability failureに限定し、MCP credential、binding、actor-relative schemaを維持する。operator modeへdowngradeしない。
 
+## Affectの更新とcontext
+
+Affect更新も通常turn内のAgentによる`character_affect.appraise`を使う。記録する意味のある感情変化だけを保存し、毎turnの必須呼出し、変化なしevent、別LLMによる後処理や補完turnは設けない。linked episodeは同じappraisalの`memoryEpisode`だけに送り、単独episodeだけを`character_memory.append_episode`で保存する。
+
+pre-turnのcontext取得・prompt注入と取得時のafterglow projectionは維持する。保存済みevent／episode／一般Memory、version、idempotency、authorityと`effect: unknown`の照合は既存application境界に従う。turn中に保存済みの更新は、後続の応答失敗・取消で巻き戻さない。旧Affect専用queueは[Database Schema](database-schema.md#起動時の移行とデータ保護)のschema更新で除去し、候補を再適用しない。
+
 ## Domain Model
 
 ### Memory Principal

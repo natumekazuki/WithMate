@@ -39,7 +39,7 @@ import type {
   UpdateCharacterDefinitionInput,
   UpdateCharacterMetadataInput,
 } from "../../src-shared/character/character-catalog.js";
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { ModelCatalogRequest, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { ChatLayoutPreferenceUpdate } from "../../src-shared/settings/chat-layout-preference.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type {
@@ -237,11 +237,7 @@ export type MainIpcWindowDepsArgs = {
 };
 
 export type MainIpcCatalogDepsArgs = {
-  getModelCatalog(revision: number | null): Awaitable<ModelCatalogSnapshot | null>;
-  importModelCatalogDocument(document: ModelCatalogDocument): Awaitable<ModelCatalogSnapshot>;
-  importModelCatalogFromFile(targetWindow?: MaybeWindow): Promise<ModelCatalogSnapshot | null>;
-  exportModelCatalogDocument(revision: number | null): Awaitable<ModelCatalogDocument | null>;
-  exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
+  getModelCatalog(request?: ModelCatalogRequest): Awaitable<ModelCatalogSnapshot | null>;
 };
 
 export type MainIpcSettingsDepsArgs = {

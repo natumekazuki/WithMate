@@ -599,7 +599,7 @@ test("buildLiveSessionComposerProps は owner の操作capabilityを保持する
     selectedCodexSpeed: "standard",
     sandboxOptions: [],
     selectedCodexSandboxMode: "workspace-write",
-    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
     selectedModel: "gpt-test",
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
@@ -713,7 +713,7 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     selectedCodexSpeed: "standard",
     sandboxOptions: [],
     selectedCodexSandboxMode: "workspace-write",
-    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
     selectedModel: "gpt-test",
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
@@ -798,7 +798,7 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
     isRunning: false,
     feedback: "",
-    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
     selectedModel: "gpt-test",
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
@@ -973,6 +973,18 @@ test("toConversationMessages は user 以外を assistant として共通 messag
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "hidden-controls text chatはidle時の入力と送信を許可しownerのfeedbackと送信labelを保持する"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts#createHiddenControlsTextChatComposerProps" }
+// fault = "idleの入力や送信を拒否するかownerのfeedbackと送信labelを失う"
+// observable = "composerのblocked/running/disabled/placeholder/sendButtonTitle/feedback"
+// observation_boundary = "public-boundary"
+// scope = "hidden controls text chat idle projection"
+// lifecycle = "permanent"
+// impact = "text chatで入力・送信できないか誤った操作説明になる"
+// distinction = "型検査ではadapterが返す値とowner入力の対応を検出できない"
+// @end-test-value
 test("createHiddenControlsTextChatComposerProps は text chat 用の送信可否と feedback を補う", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
   const composerProps = createHiddenControlsTextChatComposerProps({
@@ -982,7 +994,7 @@ test("createHiddenControlsTextChatComposerProps は text chat 用の送信可否
     isRunning: false,
     feedback: "準備できています",
     sendButtonTitleWhenEnabled: "メッセージを送信",
-    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
     selectedModel: "gpt-test",
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
@@ -1008,6 +1020,18 @@ test("createHiddenControlsTextChatComposerProps は text chat 用の送信可否
   });
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "cancelを提供しないhidden-controls text chatは実行中の入力と送信を止めCancel表示には切り替えない"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts#createHiddenControlsTextChatComposerProps" }
+// fault = "実行中に再送できるか未提供のCancel操作を表示する"
+// observable = "composerのisRunning/composerBlocked/isComposerDisabled/isSendDisabled"
+// observation_boundary = "public-boundary"
+// scope = "hidden controls text chat running projection"
+// lifecycle = "permanent"
+// impact = "重複実行または機能しないCancel操作を招く"
+// distinction = "型検査ではrunning状態の表示と操作制約の組合せを検出できない"
+// @end-test-value
 test("createHiddenControlsTextChatComposerProps は running 中も cancel 表示へ切り替えない", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
   const composerProps = createHiddenControlsTextChatComposerProps({
@@ -1016,7 +1040,7 @@ test("createHiddenControlsTextChatComposerProps は running 中も cancel 表示
     composerTextareaRef,
     isRunning: true,
     feedback: "",
-    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
     selectedModel: "gpt-test",
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
@@ -1034,6 +1058,18 @@ test("createHiddenControlsTextChatComposerProps は running 中も cancel 表示
   assert.equal(composerProps.isSendDisabled, true);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "hidden-controls text chatは明示した共通操作を再表示しcustom agentとskill操作は隠す"
+// oracle = { type = "contract", ref = "src/chat/chat-window-adapter.ts#createHiddenControlsTextChatComposerProps" }
+// fault = "ownerが指定した共通操作を隠すか未提供のcustom agentとskill操作を公開する"
+// observable = "attachment/additionalDirectory/executionMode/customAgent/skillの表示flagとapproval/sandbox候補"
+// observation_boundary = "public-boundary"
+// scope = "hidden controls text chat capability projection"
+// lifecycle = "permanent"
+// impact = "必要な共通操作が使えないか未提供操作を利用可能に見せる"
+// distinction = "型検査では実際のcapability flagの値を検出できない"
+// @end-test-value
 test("createHiddenControlsTextChatComposerProps は必要な共通操作だけを再表示できる", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
   const composerProps = createHiddenControlsTextChatComposerProps({
@@ -1042,7 +1078,7 @@ test("createHiddenControlsTextChatComposerProps は必要な共通操作だけ�
     composerTextareaRef,
     isRunning: false,
     feedback: "",
-    modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+    modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
     selectedModel: "gpt-test",
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],

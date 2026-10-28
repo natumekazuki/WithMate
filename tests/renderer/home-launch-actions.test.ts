@@ -259,7 +259,6 @@ describe("home-launch-actions", () => {
           openSessionWindowIdsLoadStatus: windowStatus,
           appSettings: createDefaultAppSettings(),
           modelCatalog: {
-            revision: 1,
             providers: [{
               id: "codex", label: "Codex", defaultModelId: "gpt-5.4",
               defaultReasoningEffort: "high",

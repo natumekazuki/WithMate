@@ -2,11 +2,8 @@ import type { AppSettings } from "../../src-shared/settings/provider-settings-st
 import type { ProviderLogicalPrompt, ProviderDiagnosticMetadata, ProviderUsage, ComposerAttachment, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
-import type { ProjectMemoryEntry, SessionMemory, SessionMemoryDelta } from "../../src-shared/memory/session-memory-state.js";
-import type { ModelReasoningEffort, ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
-import type { CodexSandboxMode } from "../../src-shared/settings/codex-sandbox-mode.js";
-import type { SessionMemoryExtractionPrompt } from "../session/session-memory-extraction.js";
+import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { ConversationTimingContext } from "../session/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
@@ -22,6 +19,11 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
+  runtimeOwner?: {
+    kind: "main" | "auxiliary";
+    id: string;
+    incarnationId: string;
+  };
   executionOptions: SessionExecutionOptions;
   executionWorkspacePath?: string;
   sessionFolderPath?: string;
@@ -85,51 +87,10 @@ export type GetProviderQuotaTelemetryInput = {
   signal?: AbortSignal;
 };
 
-export type ExtractSessionMemoryInput = {
-  session: Session;
+export type ListProviderModelsInput = {
   appSettings: AppSettings;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  timeoutMs: number;
-  prompt: SessionMemoryExtractionPrompt;
-};
-
-export type ExtractSessionMemoryResult = {
-  threadId: string | null;
-  rawText: string;
-  delta: SessionMemoryDelta | null;
-  rawItemsJson: string;
-  usage: ProviderUsage | null;
-  providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
-};
-
-export type RunBackgroundStructuredPromptInput = {
-  providerId: string;
   workspacePath: string;
-  appSettings: AppSettings;
-  model: string;
-  reasoningEffort: ModelReasoningEffort;
-  timeoutMs: number;
-  additionalDirectories?: string[];
-  approvalMode?: ApprovalMode;
-  codexSandboxMode?: CodexSandboxMode;
-  prompt: {
-    systemText: string;
-    userText: string;
-    outputSchema: unknown;
-  };
   signal?: AbortSignal;
-};
-
-export type RunBackgroundStructuredPromptResult<TOutput = unknown> = {
-  threadId: string | null;
-  rawText: string;
-  output: TOutput | null;
-  parsedJson?: unknown;
-  structuredOutput?: unknown;
-  rawItemsJson: string;
-  usage: ProviderUsage | null;
-  providerQuotaTelemetry?: ProviderQuotaTelemetry | null;
 };
 
 export type RunSessionTurnResult = {
@@ -171,6 +132,7 @@ export class ProviderTurnError extends Error {
 }
 
 export type ProviderCodingAdapter = {
+  listModels?(input: ListProviderModelsInput): Promise<ModelCatalogProvider>;
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
   invalidateSessionThread(sessionId: string): Promise<void>;
@@ -187,39 +149,4 @@ export type ProviderCodingAdapter = {
   ): Promise<RunSessionTurnResult>;
 };
 
-export type ProviderBackgroundAdapter = {
-  getBackgroundStructuredPromptPolicy(): ProviderBackgroundStructuredPromptPolicy;
-  extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult>;
-  runBackgroundStructuredPrompt<TOutput = unknown>(
-    input: RunBackgroundStructuredPromptInput,
-  ): Promise<RunBackgroundStructuredPromptResult<TOutput>>;
-};
-
-export type ProviderBackgroundStructuredPromptPolicy = {
-  allowsFileWrite: boolean;
-  allowsShellWrite: boolean;
-  allowsToolPermissionRequests: boolean;
-  structuredOutputOnly: boolean;
-  structuredOutputMode: "provider_schema" | "schema_submit_tool";
-};
-
-export const PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
-  allowsFileWrite: false,
-  allowsShellWrite: false,
-  allowsToolPermissionRequests: false,
-  structuredOutputOnly: true,
-  structuredOutputMode: "provider_schema",
-};
-
-export const SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY: ProviderBackgroundStructuredPromptPolicy = {
-  allowsFileWrite: false,
-  allowsShellWrite: false,
-  allowsToolPermissionRequests: false,
-  structuredOutputOnly: true,
-  structuredOutputMode: "schema_submit_tool",
-};
-
-export const BACKGROUND_STRUCTURED_PROMPT_POLICY =
-  PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY;
-
-export type ProviderTurnAdapter = ProviderCodingAdapter & ProviderBackgroundAdapter;
+export type ProviderTurnAdapter = ProviderCodingAdapter;

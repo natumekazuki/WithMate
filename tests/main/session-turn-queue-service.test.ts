@@ -8,7 +8,7 @@ const owner = { sessionId: "session", incarnationId: "incarnation" };
 function captured(id: string): SessionTurnQueueCapturedInput {
   return {
     request: { clientRequestId: id, userMessage: id, executionOptions: {
-      catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "on-request",
+      model: "model", reasoningEffort: "medium", approvalMode: "on-request",
       codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
     } }, attachments: [], provider: "codex", workspacePath: "workspace",
   };

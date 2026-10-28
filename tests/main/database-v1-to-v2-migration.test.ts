@@ -630,7 +630,7 @@ describe("V1 to V2 database migration write mode", () => {
       const lifecycle = new PersistentStoreLifecycleService({
         createModelCatalogStorage: () =>
           ({
-            ensureSeeded: () => ({ revision: 1, providers: [] }),
+            getCatalog: () => ({ providers: [] }),
             close() {},
           }) as never,
         createSessionStorage: () => {
@@ -660,7 +660,7 @@ describe("V1 to V2 database migration write mode", () => {
         },
       });
 
-      let bundle: PersistentStoreBundle | null = await lifecycle.initialize(v2DbPath, "model-catalog.json");
+      let bundle: PersistentStoreBundle | null = await lifecycle.initialize(v2DbPath);
       const sessionStorage = bundle.sessionStorage as SessionStorageV2;
 
       try {
@@ -695,7 +695,7 @@ describe("V1 to V2 database migration write mode", () => {
         assert.equal(runtimeSessions[0]?.messages.length, 2);
         assert.equal(runtimeSessions[0]?.messages[1]?.artifact?.title, "runtime artifact");
 
-        const recreated = await lifecycle.recreate(v2DbPath, "model-catalog.json", bundle);
+        const recreated = await lifecycle.recreate(v2DbPath, bundle);
         bundle = null;
         try {
           assert.deepEqual(truncatedWalPaths.map((filePath) => basename(filePath)), ["withmate-v2.db"]);

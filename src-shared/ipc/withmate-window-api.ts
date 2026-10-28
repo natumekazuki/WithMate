@@ -25,7 +25,7 @@ import type {
   PromptTemplate,
   UpdatePromptTemplateInput,
 } from "../prompt-template.js";
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../settings/model-catalog.js";
+import type { ModelCatalogRequest, ModelCatalogSnapshot } from "../settings/model-catalog.js";
 import type { RendererLogInput } from "../window/app-log-types.js";
 import type {
   MarkdownLinkContextMenuRequest,
@@ -169,11 +169,7 @@ export type WithMateWindowNavigationApi = {
 };
 
 export type WithMateWindowCatalogApi = {
-  getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null>;
-  importModelCatalog(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot>;
-  exportModelCatalog(revision?: number | null): Promise<ModelCatalogDocument | null>;
-  importModelCatalogFile(): Promise<ModelCatalogSnapshot | null>;
-  exportModelCatalogFile(revision?: number | null): Promise<string | null>;
+  getModelCatalog(request?: ModelCatalogRequest): Promise<ModelCatalogSnapshot | null>;
   getDiffPreview(token: string): Promise<DiffPreviewPayload | null>;
 };
 

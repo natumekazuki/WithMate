@@ -4,7 +4,7 @@
 
 V6 runtimeの正本は`<userData>/withmate-v6.db`である。旧DBをin-placeでV6へ書き換えない。起動時の選択・migrationは`src-electron/storage/app-database-path.ts`、V6 schemaのSQLと検証は`src-electron/storage/database-schema-v6.ts`を正本とする。[Database Schema](database-schema.md)は現在の保存領域と参照先を示す。
 
-旧DBからV6へ自動継続するのは、Character catalogと定義file・icon・theme・metadata、app／provider settings、model catalogなどV6の利用に必要な情報である。Character file rootは`<userData>/characters/<character-id>/`を継続する。V5以前のSession履歴、旧Memory、Growth、provider instruction projectionはV6の正本へ取り込まない。旧DBはmigration sourceまたはbackupとして扱い、通常のV6保存先にしない。
+旧DBからV6へ自動継続するのは、Character catalogと定義file・icon・theme・metadata、app／provider settingsなどV6の利用に必要な情報である。Model候補はSDKからcontext別に取得してcacheし、手管理catalogは継続対象にしない。Character file rootは`<userData>/characters/<character-id>/`を継続する。V5以前のSession履歴、旧Memory、Growth、provider instruction projectionはV6の正本へ取り込まない。旧DBはmigration sourceまたはbackupとして扱い、通常のV6保存先にしない。
 
 `app_settings.v4_to_v6_release_data_migrated_at`はV4からの継続データcopy完了markerである。validな空V6 bootstrap DBが先に存在しても、未移行のvalid V4があれば継続データを取り込む。marker済みなら再copyとmigration progress表示を行わない。既存invalid V6 DBを黙って上書きせず、source DBと共有file・blobをmigrationの副作用で破壊しない。
 
@@ -24,7 +24,7 @@ V6 schemaは設定・catalog、Project scope、Main／Auxiliary Session、messag
 
 通常のCharacter ContextはWorkerの`affect.getContextState`で軽量effective projectionと既存state versionを同じread transactionから取得する。layer別projection、寄与event ID、reasonは詳細取得だけで組み立て、通常Contextへ転送しない。version結果だけを最大32 owner scopeまでWorker内で保持し、SQLiteの`data_version`と同接続の`total_changes()`の変化で無効化する。履歴payloadと時間依存effectiveは保持せず、decayと別Sessionのafterglowは読取りごとに評価する。正本event、詳細inspection、version形式と楽観的競合検出は変更しない。
 
-`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完と、旧pending Affect settlementのowner解釈はschema更新で扱い、既存の本文やcorrelation fingerprintを変更しない。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
+`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完はschema更新で扱う。Affect専用queueは同じschema更新で削除し、候補を再適用しない。保存済みevent／episode／Memoryとversion・idempotency情報は保持する。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
 
 turn contextはMain SessionかAuxiliaryの一方をownerとし、`session_turns_v6`に最小実行情報とterminal markerを置く。保存済み本文と操作結果は通常履歴・artifactを正本とし、artifact detailを対象ごとに遅延取得する。live本文やstdout chunkごとの累積snapshotはDBへ保存しない。既存V6のschema更新では最小turnを継続し、Audit専用のinterim、provider output、legacy event tableを物理削除する。通常会話・artifact、Timing、Affect、Memoryの記録は保持し、過去詳細のバックフィルや既存artifactの全件書換えは行わない。既存artifactの操作結果の欠損は未記録として読み、成功やexitCode 0を補完しない。
 

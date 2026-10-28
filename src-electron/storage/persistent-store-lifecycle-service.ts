@@ -206,7 +206,7 @@ export type PersistentStoreBundleLike = {
 };
 
 type PersistentStoreLifecycleDeps = {
-  createModelCatalogStorage(dbPath: string, bundledModelCatalogPath: string): ModelCatalogStorage;
+  createModelCatalogStorage(dbPath: string): ModelCatalogStorage;
   createCharacterStorage?(dbPath: string, userDataPath: string): CharacterStorageAccess;
   createSessionStorage(dbPath: string): SessionStorage;
   createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
@@ -223,7 +223,6 @@ type PersistentStoreLifecycleDeps = {
   removeDirectory?(directoryPath: string): Promise<void>;
   createV6StorageWorker?(input: {
     dbPath: string;
-    bundledModelCatalogPath: string;
     userDataPath: string;
   }): V6StorageWorkerBundle;
 };
@@ -231,7 +230,7 @@ type PersistentStoreLifecycleDeps = {
 export class PersistentStoreLifecycleService {
   constructor(private readonly deps: PersistentStoreLifecycleDeps) {}
 
-  async initialize(dbPath: string, bundledModelCatalogPath: string, userDataPath?: string): Promise<PersistentStoreBundle> {
+  async initialize(dbPath: string, userDataPath?: string): Promise<PersistentStoreBundle> {
     // V6 ownership is selected by the established filename. Schema validation
     // and initialization happen inside the storage Worker, so Main does not
     // open a synchronous V6 connection merely to choose its owner.
@@ -248,9 +247,8 @@ export class PersistentStoreLifecycleService {
     const storageWorker = isV6Database
       ? (this.deps.createV6StorageWorker?.({
         dbPath,
-        bundledModelCatalogPath,
         userDataPath: resolvedUserDataPath,
-      }) ?? createV6StorageWorkerBundle({ dbPath, bundledModelCatalogPath, userDataPath: resolvedUserDataPath }))
+      }) ?? createV6StorageWorkerBundle({ dbPath, userDataPath: resolvedUserDataPath }))
       : undefined;
     let workerInitial: { activeModelCatalog: ModelCatalogSnapshot; sessions: Session[] } | null = null;
     if (storageWorker) {
@@ -263,8 +261,8 @@ export class PersistentStoreLifecycleService {
     }
     const modelCatalogStorage = storageWorker
       ? storageWorker.stores.catalog
-      : this.deps.createModelCatalogStorage(dbPath, bundledModelCatalogPath);
-    const activeModelCatalog = workerInitial?.activeModelCatalog ?? await modelCatalogStorage.ensureSeeded();
+      : this.deps.createModelCatalogStorage(dbPath);
+    const activeModelCatalog = workerInitial?.activeModelCatalog ?? await modelCatalogStorage.getCatalog();
     const sessionStorage = storageWorker
       ? storageWorker.stores.session
       : isV3Database
@@ -352,7 +350,6 @@ export class PersistentStoreLifecycleService {
 
   async recreate(
     dbPath: string,
-    bundledModelCatalogPath: string,
     bundle: PersistentStoreBundleLike,
     userDataPath?: string,
   ): Promise<PersistentStoreBundle> {
@@ -376,7 +373,7 @@ export class PersistentStoreLifecycleService {
       this.deps.ensureV2Schema?.(dbPath);
     }
 
-    return this.initialize(dbPath, bundledModelCatalogPath, userDataPath);
+    return this.initialize(dbPath, userDataPath);
   }
 
   private isV2DatabasePath(dbPath: string): boolean {
@@ -581,8 +578,7 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
 
 export function createPersistentStoreLifecycleService(): PersistentStoreLifecycleService {
   return new PersistentStoreLifecycleService({
-    createModelCatalogStorage: (dbPath, bundledModelCatalogPath) =>
-      new ModelCatalogStorage(dbPath, bundledModelCatalogPath),
+    createModelCatalogStorage: (dbPath) => new ModelCatalogStorage(dbPath),
     createCharacterStorage: (dbPath, userDataPath) => new CharacterStorage(dbPath, userDataPath),
     createSessionStorage: (dbPath) => new SessionStorage(dbPath),
     createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),

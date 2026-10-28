@@ -53,7 +53,6 @@ import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
-  modelCatalogRevisionLabel: string;
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDraftLoaded: boolean;
   memoryV6DiagnosticsLoadStatus: "loading" | "loaded" | "error";
@@ -86,14 +85,13 @@ export type HomeSettingsContentProps = {
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
+  onChangeProviderApiKey: (providerId: string, apiKey: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
   onChangeProviderInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
   onBrowseProviderSkillRootPath: (providerId: string) => void | Promise<void>;
   onBrowseProviderSkillRelativePath: (providerId: string) => void | Promise<void>;
   onBrowseProviderInstructionRelativePath: (providerId: string) => void | Promise<void>;
-  onImportModelCatalog: () => void | Promise<void>;
-  onExportModelCatalog: () => void | Promise<void>;
   onOpenAppLogFolder: () => void | Promise<void>;
   onOpenCrashDumpFolder: () => void | Promise<void>;
   onOpenMemoryV6Review: () => void | Promise<void>;
@@ -104,8 +102,6 @@ export type HomeSettingsContentProps = {
 };
 
 type SettingsActionKey =
-  | "import-models"
-  | "export-models"
   | "open-logs"
   | "open-crash-dumps"
   | "review-memory"
@@ -118,12 +114,12 @@ type SettingsActionKey =
   | "save-settings";
 
 function settingsActionsConflict(action: SettingsActionKey, pending: SettingsActionKey): boolean {
-  // Save and catalog import can update Session runtime settings; cleanup deletes those Sessions.
+  // Save can update Session runtime settings; cleanup deletes those Sessions.
   const updatesSettingsOrSessions = (key: SettingsActionKey) =>
-    key === "save-settings" || key === "import-models" || key === "delete-sessions";
+    key === "save-settings" || key === "delete-sessions";
   // Keep native file dialogs single-flight, including provider draft pickers.
   const opensFileDialog = (key: SettingsActionKey) =>
-    key.startsWith("browse-") || key === "import-models" || key === "export-models";
+    key.startsWith("browse-");
   const updatesCliShim = (key: SettingsActionKey) =>
     key === "install-cli-shim" || key === "uninstall-cli-shim";
   return action === pending
@@ -156,7 +152,6 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
-  modelCatalogRevisionLabel,
   memoryV6Diagnostics,
   settingsDraftLoaded,
   memoryV6DiagnosticsLoadStatus,
@@ -189,14 +184,13 @@ export function HomeSettingsContent({
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeProviderEnabled,
+  onChangeProviderApiKey,
   onChangeProviderSkillRootPath,
   onChangeProviderSkillRelativePath,
   onChangeProviderInstructionRelativePath,
   onBrowseProviderSkillRootPath,
   onBrowseProviderSkillRelativePath,
   onBrowseProviderInstructionRelativePath,
-  onImportModelCatalog,
-  onExportModelCatalog,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onOpenMemoryV6Review,
@@ -405,10 +399,25 @@ export function HomeSettingsContent({
                           Uses local Claude Code authentication and billing settings. Sign in with the official CLI before starting a session.
                         </p>
                       ) : null}
+                      {provider.id === "opencode" ? (
+                        <label className="settings-provider-input">
+                          <span>OpenCode Go API Key</span>
+                          <input
+                            type="password"
+                            value={settings.apiKey}
+                            onChange={(event) => onChangeProviderApiKey(provider.id, event.target.value)}
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </label>
+                      ) : null}
                       <div className="settings-provider-file-settings">
                         <div>
                           <strong>{SETTINGS_PROVIDER_FILE_SETTINGS_LABEL}</strong>
                           <p className="settings-help">{SETTINGS_PROVIDER_FILE_SETTINGS_HELP}</p>
+                          {provider.id === "opencode" ? (
+                            <p className="settings-help">Use the OpenCode config root with AGENTS.md and skills/&lt;name&gt;/SKILL.md. Custom paths are not registered with OpenCode automatically.</p>
+                          ) : null}
                         </div>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL}</span>
@@ -638,49 +647,6 @@ export function HomeSettingsContent({
                     busyLabel="Opening crash dumps."
                   >
                     {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
-                  </ButtonContent>
-                </SettingsActionButton>
-              </div>
-            </div>
-          </section>
-
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>Model Catalog</strong>
-              <p className="settings-help">ActiveRevision: {modelCatalogRevisionLabel}</p>
-              <div className="settings-actions">
-                <SettingsActionButton
-                  failure={settingsErrors.get("import-models")}
-                  actionLabel="Import Models"
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("import-models", onImportModelCatalog)}
-                  disabled={actionIsBlocked("import-models")}
-                  aria-busy={actionIsBusy("import-models")}
-                  aria-label={actionIsBusy("import-models") ? "Importing models" : "Import Models"}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("import-models")}
-                    busyLabel="Importing models."
-                  >
-                    Import Models
-                  </ButtonContent>
-                </SettingsActionButton>
-                <SettingsActionButton
-                  failure={settingsErrors.get("export-models")}
-                  actionLabel="Export Models"
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("export-models", onExportModelCatalog)}
-                  disabled={actionIsBlocked("export-models")}
-                  aria-busy={actionIsBusy("export-models")}
-                  aria-label={actionIsBusy("export-models") ? "Exporting models" : "Export Models"}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("export-models")}
-                    busyLabel="Exporting models."
-                  >
-                    Export Models
                   </ButtonContent>
                 </SettingsActionButton>
               </div>

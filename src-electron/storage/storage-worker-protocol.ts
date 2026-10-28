@@ -104,7 +104,6 @@ export type StorageWorkerEntryData = {
   handlerModule: string;
   handlerExport?: string;
   dbPath?: string;
-  bundledModelCatalogPath?: string;
   userDataPath?: string;
 };
 

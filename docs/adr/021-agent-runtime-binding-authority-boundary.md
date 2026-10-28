@@ -10,6 +10,8 @@ binding registry、generation、operation grant、turn capability、runtime owne
 
 ## Subsequent decisions
 
+[ADR 028](028-in-turn-affect-mcp-only.md)により、Affect専用background structured promptとunbound clientの利用に関する本文は現行運用の適用対象外とする。通常turnのbinding、authority、generation、redactionの境界は維持する。
+
 ADR 027は、新しいprovider → 共有localhost HTTP MCPの入口について、同一接続のidentity challengeを短命・turn限定credentialへ部分的に置換する実装へ適用した判断である。手動stdio MCP、内側のruntime exchange、CLIのchallengeは引き続き適用し、本ADRのbinding registry、generation、grant、actorとlogical turnの識別を維持する。適用範囲は[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)を参照する。
 
 CodexのSDK client / thread cacheと同一turn内stale-thread retryに関する本文は現行Codexには適用しない。CodexはturnごとのApp Server processにbinding environmentを明示し、保存済みthreadを`thread/resume`する。resume拒否で自動的に新threadへ切り替えない。binding registry、lease、generation、turn capability、redactionとbackgroundへのbinding非継承の判断は維持し、実行境界の現行契約は[Provider Adapter](../design/provider-adapter.md)を参照する。

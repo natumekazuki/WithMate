@@ -11,8 +11,6 @@ import type { SessionMessageColumnProps } from "./conversation/session-message-c
 import { setMessageBookmarked, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { mergeMessageBookmarkProjection } from "./runtime/session-submit-coordinator.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { applyExecutionOptionsCatalog } from "../../src-shared/session/execution-options-catalog.js";
-import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { subscribeSessionLiveEvents } from "./runtime/session-window-live-ingress.js";
 import { startConversationDetailSubscription, type SessionSummaryInvalidationSubscriptionApi } from "./runtime/session-summary-subscription.js";
@@ -60,7 +58,6 @@ export type AuxiliaryWorkspace = {
   refreshSummaries(): Promise<void>;
   touchRecency(id: string, updatedAt: string): void;
   getBinding(id: string | null): AuxiliarySessionBinding;
-  applyModelCatalog(catalog: ModelCatalogSnapshot): void;
   buildConcurrentChats(input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps;
 };
 
@@ -210,17 +207,16 @@ export function useAuxiliaryWorkspace(input: {
     pruneDetails();
   }, [pruneDetails]);
   const executionSelectionsRef = useRef(new Map<string, { createdAt: string; options: SessionExecutionOptions }>());
-  const activeCatalogRef = useRef<ModelCatalogSnapshot | null>(null);
   const mergeExecutionSelection = useCallback((session: AuxiliarySession): AuxiliarySession => {
     const selection = executionSelectionsRef.current.get(session.id);
-    if (!selection) return applyExecutionOptionsCatalog(session, activeCatalogRef.current);
+    if (!selection) return session;
     if (selection.createdAt !== session.createdAt) {
       executionSelectionsRef.current.delete(session.id);
-      return applyExecutionOptionsCatalog(session, activeCatalogRef.current);
+      return session;
     }
     const selected = Object.entries(selection.options).every(([key, value]) => session[key as keyof SessionExecutionOptions] === value)
       ? session : { ...session, ...selection.options };
-    return applyExecutionOptionsCatalog(selected, activeCatalogRef.current);
+    return selected;
   }, []);
   const loadRevisionRef = useRef(0);
   const listRevisionRef = useRef(0);
@@ -771,15 +767,6 @@ export function useAuxiliaryWorkspace(input: {
     return binding;
   }, [cacheDetail, mergeExecutionSelection, pruneDetails]);
 
-  const applyModelCatalog = useCallback((catalog: ModelCatalogSnapshot) => {
-    activeCatalogRef.current = catalog;
-    for (const session of [...detailsRef.current.values()]) {
-      const wasDirty = dirtyDetailsRef.current.has(session.id);
-      getBinding(session.id).setSession(session);
-      if (!wasDirty) dirtyDetailsRef.current.delete(session.id);
-    }
-    pruneDetails();
-  }, [getBinding, pruneDetails]);
 
   const auxiliaryItems = useMemo(() => summaries.map((summary) => ({
     id: summary.id,
@@ -859,7 +846,6 @@ export function useAuxiliaryWorkspace(input: {
     refreshSummaries,
     touchRecency,
     getBinding,
-    applyModelCatalog,
     buildConcurrentChats,
-  }), [addSession, applyModelCatalog, buildConcurrentChats, commitWidthRatio, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
+  }), [addSession, buildConcurrentChats, commitWidthRatio, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
 }

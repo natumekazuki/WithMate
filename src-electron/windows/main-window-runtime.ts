@@ -1,6 +1,4 @@
 import { BrowserWindow, dialog } from "electron";
-import { readFile, writeFile } from "node:fs/promises";
-import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import type { DraftFlushResult } from "../platform/draft-flush-coordinator.js";
@@ -17,11 +15,6 @@ import { SessionWindowRestoreStorage } from "./session-window-restore-storage.js
 import { AuxWindowService } from "../auxiliary/aux-window-service.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
 
-type SettingsCatalogPort = {
-  importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot>;
-  exportModelCatalogDocument(revision?: number | null): Promise<ModelCatalogDocument | null>;
-};
-
 export type MainWindowRuntimeDeps = {
   composition: MainWindowComposition;
   devServerUrl?: string;
@@ -30,7 +23,6 @@ export type MainWindowRuntimeDeps = {
   getSession(sessionId: string): Session | null;
   readSession(sessionId: string): Awaitable<Session | null>;
   getLiveSessionRunOwnerSessionId(sessionId: string): string | null;
-  getSettingsCatalog(): SettingsCatalogPort;
   isSessionRunInFlight(sessionId: string): boolean;
   getTerminalCloseConfirmationCount?(window: BrowserWindow): number;
   cancelInFlightSessionRuns(): void;
@@ -73,13 +65,6 @@ export class MainWindowRuntime {
       showOpenDialog: (targetWindow, options) => targetWindow
         ? dialog.showOpenDialog(targetWindow, options)
         : dialog.showOpenDialog(options),
-      showSaveDialog: (targetWindow, options) => targetWindow
-        ? dialog.showSaveDialog(targetWindow, options)
-        : dialog.showSaveDialog(options),
-      readTextFile: (filePath) => readFile(filePath, "utf8"),
-      writeTextFile: (filePath, content) => writeFile(filePath, content, "utf8"),
-      importModelCatalogDocument: (document) => deps.getSettingsCatalog().importModelCatalogDocument(document),
-      exportModelCatalogDocument: (revision) => deps.getSettingsCatalog().exportModelCatalogDocument(revision),
     });
     this.auxWindowService = new AuxWindowService({
       createWindow: (options) => options.homeBounds

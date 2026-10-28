@@ -3,9 +3,10 @@ import type { CodexSandboxMode } from "../../src-shared/settings/codex-sandbox-m
 import type { CodexSpeed } from "../../src-shared/settings/codex-speed.js";
 import type { CodexReviewer } from "../../src-shared/settings/codex-reviewer.js";
 import {
-  resolveModelChangeSelection,
+  resolveModelItemChangeSelection,
   resolveModelSelection,
   type ModelCatalogProvider,
+  type ModelCatalogItem,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
 } from "../../src-shared/settings/model-catalog.js";
@@ -27,13 +28,11 @@ type CodexReviewerSessionLike = {
 };
 
 type ModelRuntimeSessionLike = {
-  catalogRevision: number;
   model: string;
   reasoningEffort: ModelReasoningEffort;
 };
 
 type ModelRuntimeSessionPatch = {
-  catalogRevision: number;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   updatedAt: string;
@@ -106,12 +105,10 @@ export function buildSessionWithCodexReviewer<TSession extends CodexReviewerSess
 function buildSessionWithResolvedModelSelection<TSession extends ModelRuntimeSessionLike>(
   session: TSession,
   selection: ResolvedModelSelection,
-  catalogRevision: number,
   updatedAt: string,
 ): TSession & ModelRuntimeSessionPatch {
   return {
     ...session,
-    catalogRevision,
     model: selection.resolvedModel,
     reasoningEffort: selection.resolvedReasoningEffort,
     updatedAt,
@@ -120,24 +117,21 @@ function buildSessionWithResolvedModelSelection<TSession extends ModelRuntimeSes
 
 export function buildSessionWithModelChange<TSession extends ModelRuntimeSessionLike>(
   session: TSession,
-  providerCatalog: ModelCatalogProvider,
-  model: string,
-  catalogRevision: number,
+  model: ModelCatalogItem,
   updatedAt: string,
 ): TSession & ModelRuntimeSessionPatch {
-  const selection = resolveModelChangeSelection(providerCatalog, model, session.reasoningEffort);
-  return buildSessionWithResolvedModelSelection(session, selection, catalogRevision, updatedAt);
+  const selection = resolveModelItemChangeSelection(model, session.reasoningEffort);
+  return buildSessionWithResolvedModelSelection(session, selection, updatedAt);
 }
 
 export function buildSessionWithReasoningEffort<TSession extends ModelRuntimeSessionLike>(
   session: TSession,
   providerCatalog: ModelCatalogProvider,
   reasoningEffort: ModelReasoningEffort,
-  catalogRevision: number,
   updatedAt: string,
 ): TSession & ModelRuntimeSessionPatch {
   const selection = resolveModelSelection(providerCatalog, session.model, reasoningEffort);
-  return buildSessionWithResolvedModelSelection(session, selection, catalogRevision, updatedAt);
+  return buildSessionWithResolvedModelSelection(session, selection, updatedAt);
 }
 
 export function resolveRuntimeOptionValue<TValue>(

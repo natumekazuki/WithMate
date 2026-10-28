@@ -1,4 +1,6 @@
 import { type CSSProperties, type ReactNode, type RefObject } from "react";
+import type { ModelSelectOption } from "../settings/model-select-options.js";
+import type { ModelCatalogItem } from "../../src-shared/settings/model-catalog.js";
 
 import {
   ChatRightPaneShell,
@@ -34,7 +36,7 @@ export type TextChatWindowProjectionInput = {
   draft: string;
   placeholder?: string;
   sendButtonTitleWhenEnabled?: string;
-  modelOptions: ChatSelectOption[];
+  modelOptions: ModelSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
   reasoningOptions: ChatSelectOption[];
@@ -45,7 +47,7 @@ export type TextChatWindowProjectionInput = {
   onDraftChange: (value: string) => void;
   onCopyMessageText?: ChatWindowProps["messageColumnProps"]["onCopyMessageText"];
   onQuoteMessageText?: ChatWindowProps["messageColumnProps"]["onQuoteMessageText"];
-  onChangeModel: (model: string) => void;
+  onChangeModel: (model: ModelCatalogItem) => void;
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
   onToggleHeaderExpanded: () => void;

@@ -2,133 +2,49 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { describe, it } from "node:test";
+import { test } from "node:test";
+import { ModelCatalogStorage, type CachedProviderModels } from "../../src-electron/settings/model-catalog-storage.js";
 
-import { ModelCatalogStorage } from "../../src-electron/settings/model-catalog-storage.js";
-
-describe("ModelCatalogStorage", () => {
-  // @test-value v2
-  // kind = "contract"
-  // claim = "resetToBundledは同梱catalogのprovider一式へ戻し、Codexの既定model definitionを維持する"
-  // oracle = { type = "contract", ref = "public/model-catalog.json#providers; docs/design/model-catalog.md#seed-policy" }
-  // fault = "reset時に登録済みClaudeを除外するか、Codexのreasoning effort定義を失う"
-  // observable = "reset後にexportしたprovider ID集合とCodex GPT-5.6 SolのreasoningEfforts"
-  // observation_boundary = "public-boundary"
-  // scope = "model-catalog-reset-to-bundled"
-  // lifecycle = "permanent"
-  // impact = "reset後にClaudeのcatalog選択肢が欠落するか、既定Codex modelの有効なdepth選択が変わる"
-  // distinction = "database schemaと型は同梱catalogの内容やreset結果との一致を検証しない"
-  // @end-test-value
-  it("resetToBundled で bundled catalog の初期状態へ戻せる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-model-catalog-"));
-    const dbPath = path.join(tempDirectory, "withmate.db");
-    const bundledCatalogPath = path.resolve("public/model-catalog.json");
-
-    try {
-      const storage = new ModelCatalogStorage(dbPath, bundledCatalogPath);
-      const seeded = storage.ensureSeeded();
-      const seededDocument = storage.exportCatalogDocument(seeded.revision);
-      storage.importCatalogDocument({
-        providers: [
-          {
-            id: "codex",
-            label: "Codex Custom",
-            defaultModelId: "gpt-5-custom",
-            defaultReasoningEffort: "medium",
-            models: [
-              {
-                id: "gpt-5-custom",
-                label: "GPT-5 Custom",
-                reasoningEfforts: ["medium", "high"],
-              },
-            ],
-          },
-        ],
-      });
-
-      const reset = storage.resetToBundled();
-      const exported = storage.exportCatalogDocument(null);
-      storage.close();
-
-      assert.equal(reset.revision, 1);
-      assert.deepEqual(exported, seededDocument);
-      assert.deepEqual(new Set(exported?.providers.map((provider) => provider.id)), new Set(["codex", "claude", "copilot"]));
-      assert.deepEqual(
-        exported?.providers
-          .find((provider) => provider.id === "codex")
-          ?.models.find((model) => model.id === "gpt-5.6-sol")
-          ?.reasoningEfforts,
-        ["low", "medium", "high", "xhigh", "max", "ultra"],
-      );
-    } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
-
-  // @test-value v2
-  // kind = "contract"
-  // claim = "active catalogへのbundled provider補完はClaudeを追加し、既存Codex・Copilotの定義と履歴revisionを保持する"
-  // oracle = { type = "contract", ref = "accepted behavior: additive bundled provider seeding preserves active catalog entries; docs/design/model-catalog.md#seed-policy" }
-  // fault = "Claude追加時にcatalogをresetして利用者のCodex・Copilot設定を上書きするか、既存revisionを失う"
-  // observable = "ensureSeeded後のprovider定義、revision番号、および前revisionの取得結果"
-  // observation_boundary = "public-boundary"
-  // scope = "model-catalog-additive-seeding"
-  // lifecycle = "permanent"
-  // impact = "provider追加のアプリ更新によって利用者がimportしたmodel catalog設定が失われる"
-  // distinction = "schema validationはrevision間で既存providerの内容・履歴保持を比較しない"
-  // @end-test-value
-  it("既存 active catalog に不足 provider がある時は bundled catalog から補完する", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-model-catalog-"));
-    const dbPath = path.join(tempDirectory, "withmate.db");
-    const bundledCatalogPath = path.resolve("public/model-catalog.json");
-
-    try {
-      const storage = new ModelCatalogStorage(dbPath, bundledCatalogPath);
-      const imported = storage.importCatalogDocument({
-        providers: [
-          {
-            id: "codex",
-            label: "Codex Custom",
-            defaultModelId: "gpt-5-custom",
-            defaultReasoningEffort: "medium",
-            models: [
-              {
-                id: "gpt-5-custom",
-                label: "GPT-5 Custom",
-                reasoningEfforts: ["medium", "high"],
-              },
-            ],
-          },
-          {
-            id: "copilot",
-            label: "Copilot Custom",
-            defaultModelId: "copilot-custom",
-            defaultReasoningEffort: "low",
-            models: [
-              {
-                id: "copilot-custom",
-                label: "Copilot Custom Model",
-                reasoningEfforts: ["low", "medium"],
-              },
-            ],
-          },
-        ],
-      });
-
-      const ensured = storage.ensureSeeded();
-      const previousRevision = storage.getCatalog(imported.revision);
-      storage.close();
-
-      assert.deepEqual(
-        ensured.providers.map((provider) => provider.id).sort(),
-        ["claude", "codex", "copilot"],
-      );
-      assert.ok(ensured.revision > imported.revision);
-      assert.deepEqual(ensured.providers.find((provider) => provider.id === "codex"), imported.providers.find((provider) => provider.id === "codex"));
-      assert.deepEqual(ensured.providers.find((provider) => provider.id === "copilot"), imported.providers.find((provider) => provider.id === "copilot"));
-      assert.deepEqual(previousRevision, imported);
-    } finally {
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
+// @test-value v2
+// kind = "contract"
+// claim = "SDKモデルcacheはproviderと接続contextごとに保存され、再起動後も任意depthとSDK既定値を保持する"
+// oracle = { type = "contract", ref = "Issue #879: SDK discovered models are cached persistently per provider connection context" }
+// fault = "同providerの別contextを上書きするか、再open時にSDKモデルmetadataを失う"
+// observable = "reopen後のgetCachedProviders結果とprovider単位clear後の残存cache"
+// observation_boundary = "public-boundary"
+// scope = "provider-model-cache-persistence"
+// lifecycle = "permanent"
+// impact = "workspace切替または再起動後に別接続のモデル候補や不正なdepthを提示する"
+// distinction = "型検査とSQLite schema検査はJSON metadataの往復とcontext間の保存分離を検証しない"
+// @end-test-value
+test("モデルcacheは接続contextを分離してSDK metadataを再open後も保持する", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-model-cache-"));
+  const dbPath = path.join(directory, "withmate.db");
+  let storage = new ModelCatalogStorage(dbPath);
+  const first: CachedProviderModels = {
+    provider: {
+      id: "opencode", label: "OpenCode", defaultModelId: "sdk/model",
+      defaultReasoningEffort: "adaptive",
+      models: [{ id: "sdk/model", label: "SDK Model", sourceLabel: "SDK", reasoningEfforts: ["adaptive"], defaultReasoningEffort: "adaptive" }],
+    },
+    contextKey: "workspace-a", fetchedAt: "2026-10-27T00:00:00.000Z",
+  };
+  const second = { ...first, contextKey: "workspace-b", provider: { ...first.provider, models: [] } };
+  const other = { ...first, provider: { ...first.provider, id: "codex" } };
+  try {
+    assert.deepEqual(storage.getCatalog(), { providers: [] });
+    storage.upsertProvider(first);
+    storage.upsertProvider(second);
+    storage.upsertProvider(other);
+    storage.close();
+    storage = new ModelCatalogStorage(dbPath);
+    assert.deepEqual(storage.getCachedProviders(), [other, first, second]);
+    storage.clear("opencode");
+    assert.deepEqual(storage.getCachedProviders(), [other]);
+    storage.clear();
+    assert.deepEqual(storage.getCachedProviders(), []);
+  } finally {
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

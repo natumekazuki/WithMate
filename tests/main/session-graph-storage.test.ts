@@ -125,7 +125,6 @@ test("Session Graph Worker reads preserve context, pagination and current orderi
   try {
     const { dbPath } = await createOrVerifyV6FreshDatabase(temporary);
     bundle = createV6StorageWorkerBundle({ dbPath, userDataPath: temporary,
-      bundledModelCatalogPath: path.join(process.cwd(), "public/model-catalog.json"),
       workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
       handlerModule: new URL("../../src-electron/storage/storage-worker-bundle.ts", import.meta.url),
       workerOptions: { execArgv: ["--import", "tsx"] } });

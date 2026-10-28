@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-export type SupportedProviderBinary = "codex" | "copilot" | "claude";
+export type SupportedProviderBinary = "codex" | "copilot" | "claude" | "opencode";
 
 type ProviderBinarySpec = {
   packageSpecifier: string;
@@ -118,6 +118,12 @@ export function resolveProviderBinarySpec(
   arch: string = process.arch,
 ): ProviderBinarySpec | null {
   switch (provider) {
+    case "opencode":
+      if (!["win32", "darwin"].includes(platform) || !["x64", "arm64"].includes(arch)) return null;
+      return {
+        packageSpecifier: `@opencode/cli-${platform === "win32" ? "windows" : platform}-${arch}${arch === "x64" ? "-baseline" : ""}`,
+        binaryRelativePath: ["bin", platform === "win32" ? "opencode.exe" : "opencode"],
+      };
     case "codex":
       return resolveCodexSpec(platform, arch);
     case "copilot":
@@ -135,7 +141,7 @@ export function resolveProviderBinarySpec(
 
 export function listSupportedProviderBinaryPackageSpecifiers(): string[] {
   const specs = new Set<string>();
-  const providers: SupportedProviderBinary[] = ["codex", "copilot", "claude"];
+  const providers: SupportedProviderBinary[] = ["codex", "copilot", "claude", "opencode"];
   const platforms: Array<{ platform: NodeJS.Platform; arches: string[] }> = [
     { platform: "win32", arches: ["x64", "arm64"] },
     { platform: "darwin", arches: ["x64", "arm64"] },

@@ -897,13 +897,26 @@ describe("MateStorage", () => {
     }
   });
 
-  it("updateMateGrowthSettings は複数 modelPreferences と不正 depth を拒否する", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Mate growth設定は候補を1件に限定し、文字列でないdepthを保存前に拒否する"
+  // oracle = { type = "contract", ref = "src-electron/mate/mate-storage.ts#normalizeGrowthModelPreferences" }
+  // fault = "複数候補または型不正depthを保存し、既存の有効な設定を壊す"
+  // observable = "updateMateGrowthSettingsの例外とgetMateGrowthSettingsの変更前後の値"
+  // observation_boundary = "public-boundary"
+  // scope = "mate-growth-preference-input-validation"
+  // lifecycle = "permanent"
+  // distinction = "unknown入力が入る実行時境界とSQLiteへの非反映を型検査とは別に確認する"
+  // @end-test-value
+  it("updateMateGrowthSettings は複数 modelPreferences と文字列でない depth を拒否する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;
 
     try {
       storage = new MateStorage(dbPath, userDataPath);
       await storage.createMate({ displayName: "Mika" });
+
+      const before = storage.getMateGrowthSettings();
 
       assert.throws(
         () =>
@@ -926,18 +939,15 @@ describe("MateStorage", () => {
         /1 件だけ/,
       );
 
-      assert.throws(
-        () =>
-          storage!.updateMateGrowthSettings({
-            modelPreferences: [{
-              purpose: "memory_candidate",
-              provider: "codex",
-              model: "gpt-5.4",
-              depth: "deeper",
-            }],
+      for (const depth of [null, undefined, 1, false, {}]) {
+        assert.throws(
+          () => storage!.updateMateGrowthSettings({
+            modelPreferences: [{ purpose: "memory_candidate", provider: "codex", model: "gpt-5.4", depth: depth as never }],
           }),
-        /minimal \/ low \/ medium \/ high \/ xhigh/,
-      );
+          /depth は文字列/,
+        );
+      }
+      assert.deepEqual(storage.getMateGrowthSettings(), before);
     } finally {
       storage?.close();
       await cleanup();
@@ -970,7 +980,18 @@ describe("MateStorage", () => {
     }
   });
 
-  it("updateMateGrowthSettings は modelPreferences の provider/model/depth が空なら拒否する", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Mate growth設定は空provider/modelを拒否し、任意native depthと未指定の空文字を保存・読出しする"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#選択と実行; src-electron/mate/mate-storage.ts#normalizeGrowthModelPreferences" }
+  // fault = "実行先の空値を保存するか、固定enum以外のnative depthまたはdepthなしを拒否・別値へ置換する"
+  // observable = "provider/model検証の例外、更新結果とgetMateGrowthSettingsのdepth"
+  // observation_boundary = "public-boundary"
+  // scope = "mate-growth-native-depth-persistence"
+  // lifecycle = "permanent"
+  // distinction = "SDK一覧や型検査では保証できないSQLite write/readを通したnative値の保持を確認する"
+  // @end-test-value
+  it("updateMateGrowthSettings は空provider/modelを拒否しnative depthと空文字を保存する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: MateStorage | null = null;
 
@@ -1004,18 +1025,13 @@ describe("MateStorage", () => {
         /model/,
       );
 
-      assert.throws(
-        () =>
-          storage!.updateMateGrowthSettings({
-            modelPreferences: [{
-              purpose: "memory_candidate",
-              provider: "codex",
-              model: "gpt-5.4",
-              depth: " ",
-            }],
-          }),
-        /depth/,
-      );
+      for (const depth of ["native-deeper", "", " "]) {
+        const updated = storage.updateMateGrowthSettings({
+          modelPreferences: [{ purpose: "memory_candidate", provider: "codex", model: "gpt-5.4", depth }],
+        });
+        assert.equal(updated?.modelPreferences[0]?.depth, depth.trim());
+        assert.equal(storage.getMateGrowthSettings()?.modelPreferences[0]?.depth, depth.trim());
+      }
     } finally {
       storage?.close();
       await cleanup();

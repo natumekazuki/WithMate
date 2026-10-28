@@ -181,7 +181,7 @@ describe("migrate-database-v4-to-v6", () => {
       const report = createMigrationDryRunReport(fixture.v4Path);
 
       assert.equal(report.plannedV6Counts.appSettings, 4);
-      assert.equal(report.plannedV6Counts.modelCatalogModels, 1);
+      assert.equal(report.plannedV6Counts.modelCatalogModels, 0);
       assert.equal(report.plannedV6Counts.characters, 1);
       assert.equal(report.v4Counts.skippedAppSettings, 2);
       assert.equal(report.v4Counts.skippedSessions, 1);
@@ -194,7 +194,7 @@ describe("migrate-database-v4-to-v6", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "V4 to V6 writeは廃止microcopy設定をV6へコピーせず、現行settings/catalog/charactersだけを移行する"
+  // claim = "V4 to V6 writeは廃止microcopy設定をV6へコピーせず、現行settings/charactersだけを移行する"
   // oracle = { type = "contract", ref = "src-electron/storage/migrations/migrate-database-v4-to-v6.ts#copyReleaseData" }
   // fault = "write後のV6 DBにuser_microcopy_catalog_jsonが残るか、廃止行を含む件数を成功扱いする"
   // observable = "migrated countsとV6 app_settingsの廃止key値"
@@ -204,7 +204,7 @@ describe("migrate-database-v4-to-v6", () => {
   // impact = "V6起動後に廃止customデータが復活し、削除済み設定が再生される"
   // distinction = "dry-runの計画件数に加えて実write後のV6行を確認する"
   // @end-test-value
-  it("write で settings/catalog/characters だけを V6 DB へ移行する", async () => {
+  it("write で settings/characters だけを V6 DB へ移行する", async () => {
     const fixture = createFixture();
     try {
       createV4FixtureDatabase(fixture.v4Path);
@@ -215,7 +215,7 @@ describe("migrate-database-v4-to-v6", () => {
       });
 
       assert.equal(report.migratedV6Counts.appSettings, 4);
-      assert.equal(report.migratedV6Counts.modelCatalogRevisions, 1);
+      assert.equal(report.migratedV6Counts.modelCatalogRevisions, 0);
       assert.equal(report.migratedV6Counts.characters, 1);
       assert.equal(isValidV6Database(fixture.v6Path), true);
       assert.equal(readCount(fixture.v6Path, "app_settings"), 5);
@@ -223,7 +223,7 @@ describe("migrate-database-v4-to-v6", () => {
       assert.equal(readAppSetting(fixture.v6Path, "session_right_pane_visible"), "true");
       assert.equal(readAppSetting(fixture.v6Path, "user_microcopy_catalog_json"), null);
       assert.equal(hasV4ToV6ReleaseDataMigrationMarker(fixture.v6Path), true);
-      assert.equal(readCount(fixture.v6Path, "model_catalog_models"), 1);
+      assert.equal(readCount(fixture.v6Path, "provider_model_cache"), 0);
       assert.equal(readCount(fixture.v6Path, "characters"), 1);
       assert.equal(readCount(fixture.v6Path, "sessions_v6"), 0);
       assert.equal(tableExists(fixture.v6Path, "sessions"), false);

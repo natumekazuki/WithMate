@@ -9,7 +9,7 @@ export type QuotaRemainingWindow = {
 };
 
 export function providerQuotaName(providerId: string): string {
-  return ({ codex: "Codex", claude: "Claude", copilot: "Copilot" } as Record<string, string>)[providerId] ?? providerId;
+  return ({ codex: "Codex", claude: "Claude", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[providerId] ?? providerId;
 }
 
 function percentage(value: number): string {
@@ -30,7 +30,9 @@ export function projectQuotaRemaining(telemetry: ProviderQuotaTelemetry | null):
     const period = periodLabel(window.windowDurationMinutes);
     const summary = telemetry.provider === "claude"
       ? window.quotaKey === "five_hour" || window.quotaKey === "seven_day"
-      : telemetry.provider === "codex" && /^codex:(primary|secondary)$/.test(window.quotaKey);
+      : telemetry.provider === "opencode"
+        ? ["rolling", "weekly", "monthly"].includes(window.quotaKey)
+        : telemetry.provider === "codex" && /^codex:(primary|secondary)$/.test(window.quotaKey);
     return {
       key: window.quotaKey,
       label: summary ? period ?? window.label ?? window.quotaKey

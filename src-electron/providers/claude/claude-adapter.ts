@@ -8,32 +8,19 @@ import type { MessageArtifact } from "../../../src-shared/session/session-state.
 import { resolveModelSelection } from "../../../src-shared/settings/model-catalog.js";
 import { mapApprovalModeToClaudePermissionMode } from "../../../src-shared/settings/provider-runtime-options.js";
 import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
-import {
-  ProviderTurnError,
-  PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY,
-  resolveRunWorkspacePath,
-  type ExtractSessionMemoryInput,
-  type ExtractSessionMemoryResult,
-  type GetProviderQuotaTelemetryInput,
-  type ProviderPromptComposition,
-  type ProviderTurnAdapter,
-  type RunBackgroundStructuredPromptInput,
-  type RunBackgroundStructuredPromptResult,
-  type RunSessionTurnInput,
-  type RunSessionTurnProgressHandler,
-  type RunSessionTurnResult,
-} from "../provider-runtime.js";
-import { parseSessionMemoryDeltaText } from "../../session/session-memory-extraction.js";
+import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv, type ProviderAgentRuntimeBindingRedactor } from "../provider-agent-runtime-binding.js";
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
-import { PROVIDER_TEXT_PREVIEW_LIMIT, boundProviderRawItem, BoundedProviderRawItems, toProviderTextPreview } from "../../session/provider-payload-limits.js";
+import { PROVIDER_TEXT_PREVIEW_LIMIT, toProviderTextPreview } from "../../session/provider-payload-limits.js";
 import { buildArtifactFromOperations } from "../provider-artifact.js";
 import { captureWorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
 import { createDisabledWorkspaceSnapshotCapture, WORKSPACE_DIFF_CAPTURE_ENABLED } from "../../files/workspace-diff-policy.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../mcp-elicitation.js";
 import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
 import { projectClaudeQuotaTelemetry } from "./claude-quota-telemetry.js";
+import type { ListProviderModelsInput } from "../provider-runtime.js";
+import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
 
 const require = createRequire(import.meta.url);
 const CANCEL_GRACE_MS = 2_000;
@@ -55,7 +42,6 @@ type ClaudeTrace = {
   streamingId: string | null;
   steps: ProviderProgressMap<LiveRunStep>;
   operations: MessageOperation[];
-  rawItems: BoundedProviderRawItems | null;
   redactor: ProviderAgentRuntimeBindingRedactor;
   usage: ProviderUsage | null;
   result: SDKResultMessage | null;
@@ -98,9 +84,6 @@ function commandOf(name: string, input: unknown, redactor: ProviderAgentRuntimeB
     : preview;
 }
 
-function appendRaw(trace: ClaudeTrace, type: string, data: Record<string, unknown>): void {
-  trace.rawItems?.append(boundProviderRawItem(trace.redactor.sanitize({ type, data })));
-}
 
 function usageFromResult(result: SDKResultMessage, resumed: boolean): ProviderUsage {
   // modelUsage includes subagents, but its totals can include older turns after resume.
@@ -234,6 +217,61 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     return composeProviderPrompt(input);
   }
 
+  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    input.signal?.addEventListener("abort", abort, { once: true });
+    if (input.signal?.aborted) abort();
+    const timer = setTimeout(abort, 30_000);
+    let iterator: ReturnType<ClaudeQuery> | undefined;
+    let childExited: Promise<void> | undefined;
+    let closeInput!: () => void;
+    const inputClosed = new Promise<void>((resolve) => { closeInput = resolve; });
+    async function* emptyInput(): AsyncGenerator<SDKUserMessage> { await inputClosed; }
+    try {
+      controller.signal.throwIfAborted();
+      const settings = await signalRace(this.inspectSettings({ cwd: input.workspacePath, settingSources: [] }), controller.signal);
+      if (settings.sources.some((source) => source.source === "managed")) throw new Error("Managed settings prevent metadata-only discovery");
+      controller.signal.throwIfAborted();
+      iterator = this.runQuery({ prompt: emptyInput(), options: {
+        cwd: input.workspacePath, pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
+        env: mergeDefinedProviderEnv(process.env, {}),
+        tools: [], mcpServers: {}, strictMcpConfig: true,
+        settingSources: [], settings: { disableAllHooks: true }, persistSession: false,
+        abortController: controller,
+        spawnClaudeCodeProcess: (options) => {
+          const child = this.spawnProcess(options.command, options.args, {
+            cwd: options.cwd, env: options.env, signal: options.signal,
+            stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+          });
+          child.stderr?.on("error", () => undefined);
+          child.stderr?.resume();
+          childExited = new Promise<void>((resolve) => {
+            child.once("close", () => resolve());
+            child.once("error", () => { if (child.pid === undefined) resolve(); });
+          });
+          return child;
+        },
+      } });
+      const metadata = await signalRace(iterator.supportedModels(), controller.signal);
+      const models = metadata.map((model) => ({ id: model.value, label: model.displayName,
+        reasoningEfforts: model.supportsEffort ? model.supportedEffortLevels ?? [] : [], defaultReasoningEffort: "" }));
+      return { id: "claude", label: "Claude", models, defaultModelId: models[0]?.id ?? "", defaultReasoningEffort: "" };
+    } catch {
+      throw new Error(controller.signal.aborted ? "Claude model discovery canceled" : "Claude models could not be retrieved");
+    } finally {
+      clearTimeout(timer);
+      input.signal?.removeEventListener("abort", abort);
+      closeInput();
+      try { iterator?.close(); }
+      catch { throw new Error("Claude model discovery process cleanup failed"); }
+      finally {
+        controller.abort();
+        if (childExited) await childExited;
+      }
+    }
+  }
+
   async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput) {
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -287,16 +325,14 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   }
   async invalidateSessionThread(): Promise<void> { /* One process per turn; no cached thread. */ }
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
-  getBackgroundStructuredPromptPolicy() { return PROVIDER_SCHEMA_BACKGROUND_STRUCTURED_PROMPT_POLICY; }
 
-  private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null), diagnosticTrace = false): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], rawItems: diagnosticTrace ? new BoundedProviderRawItems() : null, redactor, usage: null, result: null, errorMessage: "" };
+  private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
+    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], redactor, usage: null, result: null, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
     if (message.type === "system" && message.subtype === "init") {
       trace.threadId = message.session_id;
-      appendRaw(trace, "session.init", { sessionId: message.session_id, model: message.model });
       return;
     }
     if (message.type === "stream_event" && !message.parent_tool_use_id) {
@@ -319,7 +355,6 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       if (text && !trace.messages.some((entry) => entry.id === message.uuid)) {
         trace.messages.push({ id: message.uuid, text });
         trace.operations.push({ id: message.uuid, type: "agent_message", summary: toProviderTextPreview(text, 300) ?? "", details: toProviderTextPreview(text), truncated: text.length > PROVIDER_TEXT_PREVIEW_LIMIT });
-        appendRaw(trace, "assistant.text", { id: message.uuid, text: toProviderTextPreview(text) ?? "" });
       }
       for (const block of content) {
         if (block.type !== "tool_use") continue;
@@ -328,7 +363,6 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         const step: LiveRunStep = { id: block.id, type: command === null ? "tool_call" : "command_execution", summary, status: "in_progress" };
         trace.steps.set(block.id, step);
         trace.operations.push(step);
-        appendRaw(trace, "tool.use", { id: block.id, name: block.name, summary });
       }
       if (text && trace.streamingId === message.message.id) {
         trace.streamingText = "";
@@ -352,7 +386,6 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           const index = trace.operations.findIndex((operation) => operation.id === step.id);
           if (index >= 0) trace.operations[index] = completed;
         }
-        appendRaw(trace, "tool.result", { id: block.tool_use_id, status: failed ? "failed" : "completed" });
       }
       return;
     }
@@ -362,7 +395,6 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       trace.usage = usageFromResult(message, resumed);
       if (message.subtype !== "success") trace.errorMessage = message.errors.join("\n") || message.subtype;
       else if (message.is_error) trace.errorMessage = message.result;
-      appendRaw(trace, "turn.result", { subtype: message.subtype, isError: message.is_error, terminalReason: message.terminal_reason ?? null });
     }
   }
 
@@ -455,7 +487,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
       env: mergeDefinedProviderEnv(process.env, buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding)),
       model: selection.resolvedModel,
-      effort: selection.resolvedReasoningEffort as Options["effort"],
+      ...(selection.resolvedReasoningEffort ? { effort: selection.resolvedReasoningEffort as Options["effort"] } : {}),
       permissionMode,
       allowDangerouslySkipPermissions: input.executionOptions.approvalMode === "never",
       settings: { fastMode: input.executionOptions.codexSpeed === "fast" },
@@ -631,79 +663,5 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     }
   }
 
-  async runBackgroundStructuredPrompt<TOutput = unknown>(input: RunBackgroundStructuredPromptInput): Promise<RunBackgroundStructuredPromptResult<TOutput>> {
-    if (input.signal?.aborted) throw new Error("Claude background request was canceled");
-    const controller = new AbortController();
-    const abort = () => controller.abort();
-    input.signal?.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(abort, input.timeoutMs);
-    // Managed hooks can run before the first prompt and cannot be disabled by
-    // disableAllHooks. Do not enter the background plane when policy sources exist.
-    let managedSettingsPresent = true;
-    try {
-      const resolved = await signalRace(this.inspectSettings({ cwd: input.workspacePath, settingSources: [] }), controller.signal);
-      managedSettingsPresent = resolved.sources.some((source) => source.source === "managed");
-    } catch {
-      clearTimeout(timer);
-      input.signal?.removeEventListener("abort", abort);
-      throw new Error("Claude background settings could not be verified");
-    }
-    if (managedSettingsPresent || controller.signal.aborted) {
-      clearTimeout(timer);
-      input.signal?.removeEventListener("abort", abort);
-      throw new Error(managedSettingsPresent ? "Claude background execution is unavailable with managed settings" : "Claude background request was canceled");
-    }
-    const trace = this.makeTrace(null, createProviderAgentRuntimeBindingRedactor(null), true);
-    const options: Options = {
-      cwd: input.workspacePath,
-      pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
-      title: "WithMate background",
-      env: mergeDefinedProviderEnv(process.env, {}),
-      model: input.model,
-      effort: input.reasoningEffort as Options["effort"],
-      systemPrompt: { type: "preset", preset: "claude_code", append: input.prompt.systemText, snapshot: false },
-      tools: [],
-      mcpServers: {},
-      strictMcpConfig: true,
-      settingSources: [],
-      settings: { disableAllHooks: true },
-      persistSession: false,
-      outputFormat: { type: "json_schema", schema: input.prompt.outputSchema as Record<string, unknown> },
-      abortController: controller,
-      canUseTool: async () => ({ behavior: "deny", message: "Background tools are disabled" }),
-    };
-    let iterator: ReturnType<ClaudeQuery> | null = null;
-    try {
-      iterator = this.runQuery({ prompt: input.prompt.userText, options });
-      while (true) {
-        const next = await signalRace(iterator.next(), controller.signal);
-        if (next.done) break;
-        this.receive(next.value, trace);
-        if (trace.result) break;
-      }
-      if (controller.signal.aborted) throw new Error("Canceled or timed out");
-      if (!trace.result || trace.result.subtype !== "success" || trace.result.is_error) throw new Error(trace.errorMessage || "Claude background response failed");
-      const rawText = assistantText(trace) || trace.result.result;
-      const structuredOutput = trace.result.structured_output;
-      if (structuredOutput === undefined || structuredOutput === null) throw new Error("Claude background structured output is missing");
-      return { threadId: trace.threadId, rawText, output: structuredOutput as TOutput, structuredOutput, parsedJson: structuredOutput, rawItemsJson: trace.rawItems?.stringify() ?? "[]", usage: trace.usage };
-    } finally {
-      clearTimeout(timer);
-      input.signal?.removeEventListener("abort", abort);
-      if (iterator) {
-        await closeQuery(iterator, controller.signal.aborted || !trace.result);
-      }
-      controller.abort();
-    }
-  }
 
-  async extractSessionMemoryDelta(input: ExtractSessionMemoryInput): Promise<ExtractSessionMemoryResult> {
-    const result = await this.runBackgroundStructuredPrompt<unknown>({
-      providerId: "claude", workspacePath: input.session.workspacePath, appSettings: input.appSettings,
-      model: input.model, reasoningEffort: input.reasoningEffort, timeoutMs: input.timeoutMs,
-      prompt: { systemText: input.prompt.systemText, userText: input.prompt.userText, outputSchema: input.prompt.outputSchema },
-    });
-    const structuredText = JSON.stringify(result.structuredOutput);
-    return { threadId: result.threadId, rawText: structuredText, delta: parseSessionMemoryDeltaText(structuredText), rawItemsJson: result.rawItemsJson, usage: result.usage };
-  }
 }

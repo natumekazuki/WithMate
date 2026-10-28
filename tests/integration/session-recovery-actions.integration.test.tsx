@@ -44,7 +44,13 @@ test("Main/AuxiliaryのResendとEditは前回依頼とdraftのownerを維持す�
     require: () => ({ contextBridge: { exposeInMainWorld: (_key: string, value: WithMateWindowApi) => { api = value; } } }),
     process: { argv: [] }, Buffer,
   });
-  const main = (await api.getSession("benchmark-main"))!;
+
+  const getModelCatalog = api.getModelCatalog;
+  api.getModelCatalog = async (request) => {
+    const snapshot = await getModelCatalog(request);
+    return snapshot ? { ...snapshot, workspacePath: request?.workspacePath } : snapshot;
+  };
+ const main = (await api.getSession("benchmark-main"))!;
   const auxiliary = (await api.getAuxiliarySession("benchmark-aux-1"))!;
   main.runState = "error";
   main.messages = [{ role: "user", text: "Previous Main request" }];

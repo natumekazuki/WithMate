@@ -39,6 +39,7 @@ const providerCatalog = {
     {
       id: "gpt-5.4-mini",
       label: "GPT-5.4 mini",
+      defaultReasoningEffort: "minimal",
       reasoningEfforts: ["minimal", "low"],
     },
   ],
@@ -300,6 +301,16 @@ test("applyAuxiliarySessionCodexSandboxModeChange は sandbox mode と updatedAt
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary model patchは指定modelとDepthと更新日時だけを変える"
+// oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+// fault = "model変更で既存session fieldを消すか更新を失う"
+// observable = "Auxiliary Session patch"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-model-selection-patch"
+// lifecycle = "permanent"
+// @end-test-value
 test("applyAuxiliarySessionModelSelectionPatch は model selection と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     catalogRevision: 1,
@@ -311,7 +322,6 @@ test("applyAuxiliarySessionModelSelectionPatch は model selection と updatedAt
     applyAuxiliarySessionModelSelectionPatch(
       session,
       {
-        catalogRevision: 2,
         model: "gpt-5.4-mini",
         reasoningEffort: "low",
       },
@@ -319,7 +329,6 @@ test("applyAuxiliarySessionModelSelectionPatch は model selection と updatedAt
     ),
     {
       ...session,
-      catalogRevision: 2,
       model: "gpt-5.4-mini",
       reasoningEffort: "low",
       updatedAt: "2026-01-02T00:00:00.000Z",
@@ -357,6 +366,16 @@ test("applyAuxiliarySessionCustomAgentPatch は custom agent と updatedAt だ�
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary明示model変更はSDK既定Depthへ切り替え他設定を維持する"
+// oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+// fault = "未対応Depthを継続するか他設定を消す"
+// observable = "Auxiliary Session patch"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-model-change"
+// lifecycle = "permanent"
+// @end-test-value
 test("applyAuxiliarySessionModelChange は model selection と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     catalogRevision: 1,
@@ -367,14 +386,11 @@ test("applyAuxiliarySessionModelChange は model selection と updatedAt だけ�
   assert.deepEqual(
     applyAuxiliarySessionModelChange(
       session,
-      providerCatalog,
-      "gpt-5.4-mini",
-      2,
+      providerCatalog.models.find((model) => model.id === "gpt-5.4-mini")!,
       "2026-01-02T00:00:00.000Z",
     ),
     {
       ...session,
-      catalogRevision: 2,
       model: "gpt-5.4-mini",
       reasoningEffort: "minimal",
       updatedAt: "2026-01-02T00:00:00.000Z",
@@ -382,6 +398,16 @@ test("applyAuxiliarySessionModelChange は model selection と updatedAt だけ�
   );
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary明示Depth変更はmodelと他設定を維持する"
+// oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+// fault = "Depth変更がmodelまたは他設定を変える"
+// observable = "Auxiliary Session patch"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-depth-change"
+// lifecycle = "permanent"
+// @end-test-value
 test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と updatedAt だけを更新する", () => {
   const session = createAuxiliarySession({
     catalogRevision: 1,
@@ -394,12 +420,10 @@ test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と update
       session,
       providerCatalog,
       "minimal",
-      2,
       "2026-01-02T00:00:00.000Z",
     ),
     {
       ...session,
-      catalogRevision: 2,
       model: "gpt-5.4-mini",
       reasoningEffort: "minimal",
       updatedAt: "2026-01-02T00:00:00.000Z",
@@ -409,42 +433,33 @@ test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と update
 
 // @test-value v2
 // kind = "contract"
-// claim = "applyAuxiliarySessionReasoningEffortChangeはmodel catalogと不一致のreasoning effortを拒否し、validation errorを維持する"
-// oracle = { type = "contract", ref = "Issue #731 Auxiliary settings validation feedback" }
-// fault = "model catalogに存在しないreasoning effortを受け入れるか、selected model/reasoning effortのvalidation理由を失う"
-// observable = "不一致modelとreasoning effort入力でthrowされるError.message"
+// claim = "Auxiliaryの明示model変更は表示時の候補定義でDepthを解決しDepth変更はSDK固有値を保持する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-ui" }
+// fault = "表示候補を最新一覧で拒否・置換するかSDK固有のDepthを拒否・置換する"
+// observable = "model変更のmodelとDepth、Depth変更のreasoningEffort"
 // observation_boundary = "public-boundary"
 // scope = "applyAuxiliarySessionReasoningEffortChange model catalog validation"
 // lifecycle = "permanent"
-// impact = "Auxiliary settingsで無効なmodel選択や推論強度を保存せず、修正理由を利用者へ伝える"
-// distinction = "正常なstate patch結果ではなく、model catalog境界の拒否理由を公開helperから直接確認する"
+// impact = "保存されたSDK固有のDepthを編集または再送できなくなる"
+// distinction = "rendererから利用する公開helper経由で候補の検証とSDK固有値の保持を確認する"
 // @end-test-value
-test("applyAuxiliarySessionReasoningEffortChange は model catalog validation error を維持する", () => {
+test("Auxiliaryの表示候補を確定しSDK固有Depthを保持する", () => {
   const session = createAuxiliarySession({
     model: "gpt-5.4-mini",
     reasoningEffort: "low",
   });
 
-  assert.throws(
-    () => applyAuxiliarySessionModelChange(
+  assert.deepEqual(
+    applyAuxiliarySessionModelChange(
       session,
-      providerCatalog,
-      "missing-model",
-      2,
+      { id: "displayed-model", label: "Displayed", reasoningEfforts: ["sdk-default"], defaultReasoningEffort: "sdk-default" },
       "2026-01-02T00:00:00.000Z",
     ),
-    /selected model/,
+    { ...session, model: "displayed-model", reasoningEffort: "sdk-default", updatedAt: "2026-01-02T00:00:00.000Z" },
   );
-  assert.throws(
-    () => applyAuxiliarySessionReasoningEffortChange(
-      session,
-      providerCatalog,
-      "xhigh",
-      2,
-      "2026-01-02T00:00:00.000Z",
-    ),
-    /selected reasoning effort/,
-  );
+  assert.equal(applyAuxiliarySessionReasoningEffortChange(
+    session, providerCatalog, "sdk-depth", "2026-01-02T00:00:00.000Z",
+  ).reasoningEffort, "sdk-depth");
 });
 
 test("buildAuxiliaryDraftSaveRequest は保存すべき draft request を作る", () => {

@@ -1,0 +1,32 @@
+CREATE TABLE IF NOT EXISTS character_affect_turn_settlements (
+  correlation_id TEXT PRIMARY KEY,
+  character_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  session_incarnation_id TEXT,
+  user_message TEXT NOT NULL,
+  assistant_message TEXT NOT NULL,
+  assistant_message_index INTEGER NOT NULL,
+  occurred_at TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'settled')),
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  ready_at TEXT,
+  evaluation_attempt INTEGER NOT NULL DEFAULT 0,
+  expected_version TEXT,
+  candidates_json TEXT,
+  last_effect TEXT NOT NULL DEFAULT 'none',
+  observed_effects_json TEXT NOT NULL DEFAULT '[]',
+  saved_candidate_indices_json TEXT NOT NULL DEFAULT '[]',
+  next_attempt_at TEXT,
+  attempt_started_at TEXT,
+  quarantined_at TEXT,
+  last_failure_code TEXT,
+  last_failure_stage TEXT,
+  last_error_name TEXT,
+  last_error_message TEXT,
+  last_duration_ms INTEGER,
+  settled_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_character_affect_turn_settlements_pending
+ON character_affect_turn_settlements(status, created_at, correlation_id);

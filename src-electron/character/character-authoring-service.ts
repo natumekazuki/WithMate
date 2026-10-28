@@ -25,6 +25,7 @@ export const CHARACTER_AUTHORING_SKILL_NAME = "withmate-character-authoring";
 const CODEX_WORKSPACE_SKILL_ROOT = ".agents/skills";
 const COPILOT_WORKSPACE_SKILL_ROOT = ".github/skills";
 const CLAUDE_WORKSPACE_SKILL_ROOT = ".claude/skills";
+const OPENCODE_WORKSPACE_SKILL_ROOT = ".opencode/skills";
 
 export async function resolveCharacterAuthoringRuntimeSessionForTurn(
   session: Session,
@@ -356,6 +357,7 @@ export class CharacterAuthoringService {
 
   private resolveWorkspaceSkillRoot(providerId: string): string {
     if (providerId === "claude") return CLAUDE_WORKSPACE_SKILL_ROOT;
+    if (providerId === "opencode") return OPENCODE_WORKSPACE_SKILL_ROOT;
     return providerId === "copilot" ? COPILOT_WORKSPACE_SKILL_ROOT : CODEX_WORKSPACE_SKILL_ROOT;
   }
 }

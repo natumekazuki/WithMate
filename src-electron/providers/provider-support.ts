@@ -5,19 +5,13 @@ import {
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import type {
-  ProviderBackgroundAdapter,
-  ProviderCodingAdapter,
-  ProviderTurnAdapter,
-} from "./provider-runtime.js";
+import type { ProviderCodingAdapter, ProviderTurnAdapter } from "./provider-runtime.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
 type ResolveProviderCatalogArgs = {
   providerId: string | null | undefined;
-  revision?: number | null;
-  getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
-  ensureSeeded(): Awaitable<ModelCatalogSnapshot>;
+  getModelCatalog(): Awaitable<ModelCatalogSnapshot | null>;
 };
 
 type ResolveProviderAdapterArgs = {
@@ -25,6 +19,7 @@ type ResolveProviderAdapterArgs = {
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
   claudeAdapter: ProviderTurnAdapter;
+  opencodeAdapter: ProviderTurnAdapter;
 };
 
 type FetchProviderQuotaTelemetryArgs = {
@@ -47,6 +42,7 @@ const PROVIDER_ADAPTER_KEYS = {
   codex: "codexAdapter",
   copilot: "copilotAdapter",
   claude: "claudeAdapter",
+  opencode: "opencodeAdapter",
 } as const;
 
 export function isProviderSupported(providerId: string): providerId is keyof typeof PROVIDER_ADAPTER_KEYS {
@@ -65,7 +61,8 @@ export async function resolveProviderCatalogOrThrow(
   args: ResolveProviderCatalogArgs,
 ): Promise<{ snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider }> {
   const providerId = requireSupportedProviderId(args.providerId);
-  const snapshot = (await args.getModelCatalog(args.revision)) ?? (await args.ensureSeeded());
+  const snapshot = await args.getModelCatalog();
+  if (!snapshot) throw new Error(`Provider ${providerId} model discovery is unavailable.`);
   const provider = snapshot.providers.find((entry) => entry.id === providerId);
   if (!provider) {
     throw new Error(`Provider ${providerId} is not available in the model catalog.`);
@@ -83,9 +80,6 @@ export function resolveProviderCodingAdapter(args: ResolveProviderAdapterArgs): 
   return resolveProviderAdapter(args);
 }
 
-export function resolveProviderBackgroundAdapter(args: ResolveProviderAdapterArgs): ProviderBackgroundAdapter {
-  return resolveProviderAdapter(args);
-}
 
 export async function fetchProviderQuotaTelemetry(
   args: FetchProviderQuotaTelemetryArgs,

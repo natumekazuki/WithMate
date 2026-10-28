@@ -32,7 +32,6 @@ import { formatTimestampLabel } from "../../src-shared/time-state.js";
 
 describe("HomeSettingsContent", () => {
   const modelCatalog: ModelCatalogSnapshot = {
-    revision: 1,
     providers: [
       {
         id: "codex",
@@ -73,7 +72,6 @@ describe("HomeSettingsContent", () => {
     <HomeSettingsContent
       settingsDraft={params?.settingsDraft ?? settingsDraft}
       providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
-      modelCatalogRevisionLabel={String(modelCatalog.revision)}
       memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
       memoryV6DiagnosticsLoadStatus="loaded"
       memoryV6DiagnosticsLoadError=""
@@ -106,14 +104,13 @@ describe("HomeSettingsContent", () => {
       onChangeGlossaryProactiveCreateLimit={noOp}
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
+      onChangeProviderApiKey={noOp}
       onChangeProviderSkillRootPath={noOp}
       onChangeProviderSkillRelativePath={noOp}
       onChangeProviderInstructionRelativePath={noOp}
       onBrowseProviderSkillRootPath={noOp}
       onBrowseProviderSkillRelativePath={noOp}
       onBrowseProviderInstructionRelativePath={noOp}
-      onImportModelCatalog={noOp}
-      onExportModelCatalog={noOp}
       onOpenAppLogFolder={noOp}
       onOpenCrashDumpFolder={noOp}
       onOpenMemoryV6Review={noOp}
@@ -348,6 +345,38 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "OpenCodeのprovider cardは保存済みGo keyをpassword入力で編集しnative file設定先を案内する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
+  // fault = "Go key入力がない、平文入力になる、または別providerのkeyを表示する"
+  // observable = "OpenCode cardのlabel、input type/value、native path案内"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-opencode-provider-card"
+  // lifecycle = "permanent"
+  // impact = "Go keyを設定できずOpenCodeを開始できないか、画面で資格情報が露出する"
+  // distinction = "設定型とdraft単体testでは実際のprovider cardのinput属性・表示を確認できない"
+  // @end-test-value
+  it("OpenCodeのGo keyとnative読込先をprovider cardに表示する", () => {
+    const draft = createDefaultAppSettings();
+    draft.codingProviderSettings.opencode = { enabled: true, apiKey: "go-key-fixture", skillRootPath: "" };
+    const catalog: ModelCatalogSnapshot = {
+      providers: [{ id: "opencode", label: "OpenCode", defaultModelId: "opencode-go/glm-5.3", defaultReasoningEffort: "high", models: [{ id: "opencode-go/glm-5.3", label: "GLM-5.3", reasoningEfforts: ["low", "high", "max"] }] }],
+    };
+    const html = renderSettings({ settingsDraft: draft, providerSettingRows: buildHomeProviderSettingRows(catalog, draft) });
+    const dom = new JSDOM(html);
+    try {
+      const card = dom.window.document.querySelector(".settings-provider-card")!;
+      const label = [...card.querySelectorAll("label")].find((element) => element.textContent?.includes("OpenCode Go API Key"));
+      const input = label?.querySelector("input");
+      assert.equal(input?.type, "password");
+      assert.equal(input?.value, "go-key-fixture");
+      assert.match(card.textContent ?? "", /OpenCode config root with AGENTS\.md and skills\/<name>\/SKILL\.md/);
+    } finally {
+      dom.window.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "Providerの各Browseはクリックした対象だけをbusyとして通知し、応答待ちの重複実行を抑止して完了後に操作を戻す"
   // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#ボタン" }
   // fault = "同じ種類の別Providerボタンへbusyを表示する、異なるBrowseを重複実行する、または応答後も操作を無効にする"
@@ -420,23 +449,21 @@ describe("HomeSettingsContent", () => {
   // kind = "contract"
   // claim = "Settings操作は設定・Session更新、native picker、CLI shimの実際の競合だけを排他し、独立した導線と日付編集を維持する"
   // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#操作とアクセシビリティ; docs/design/settings-ui.md#runtime-policy" }
-  // fault = "保存とimport等の競合を許可する、独立操作を停止する、重複要求を受け付ける、または競合待ちbuttonを実行中として通知する"
-  // observable = "設定保存・catalog・picker・Session削除・CLI shimの各操作buttonのdisabled/aria-busy/spinner、同一tickのcallback回数、Session削除日付の編集可否、完了後の解除"
+  // fault = "保存とSession削除の競合を許可する、独立操作を停止する、重複要求を受け付ける、または競合待ちbuttonを実行中として通知する"
+  // observable = "設定保存・picker・Session削除・CLI shimの各操作buttonのdisabled/aria-busy/spinner、同一tickのcallback回数、Session削除日付の編集可否、完了後の解除"
   // observation_boundary = "component-behavior"
   // scope = "HomeSettingsContent action conflicts"
   // lifecycle = "permanent"
-  // impact = "Settings・catalog・Session更新とpickerの競合を防ぎ、診断や回復の入口を利用できる状態に保つ"
+  // impact = "Settings・Session更新とpickerの競合を防ぎ、診断や回復の入口を利用できる状態に保つ"
   // distinction = "型・static markup・Main単体testでは分からない非同期callbackとbutton制御の接続を、少数の競合群で確認する"
   // @end-test-value
   it("操作の競合範囲だけをdisabledにし、実行したbuttonだけをbusyにする", async () => {
-    const updates = ["Save Settings", "Import Models", "Delete"];
-    const dialogs = ["Import Models", "Export Models", "Browse"];
+    const updates = ["Save Settings", "Delete"];
+    const dialogs = ["Browse"];
     const shim = ["Install CLI Shim", "Uninstall CLI Shim"];
     const cases = [
       { label: "Save Settings", blocked: updates },
-      { label: "Import Models", blocked: [...updates, ...dialogs] },
       { label: "Delete", blocked: updates },
-      { label: "Export Models", blocked: dialogs },
       { label: "Browse", blocked: dialogs },
       { label: "Install CLI Shim", blocked: shim },
       { label: "Uninstall CLI Shim", blocked: shim },
@@ -453,8 +480,6 @@ describe("HomeSettingsContent", () => {
           settingsDirty: true,
           sessionCleanupCutoffDate: "2026-01-01",
           onSaveSettings: pending,
-          onImportModelCatalog: pending,
-          onExportModelCatalog: pending,
           onDeleteSessionsLastActiveBefore: pending,
           onInstallMemoryV6CliShim: pending,
           onUninstallMemoryV6CliShim: pending,

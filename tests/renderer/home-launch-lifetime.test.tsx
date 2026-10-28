@@ -33,7 +33,7 @@ function button(container: Element, label: string) {
 // claim = "Cancelした開始要求の成功・失敗は再表示した入力とfocus、新しい試行のfeedbackとbusyを保持し、保存結果はHomeから再開できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog / GitHub Issue #753" }
 // fault = "古い完了が新しいdialogを閉じる、feedbackやbusyを書き換える、二重作成を許す、作成済みSessionを失うか無断でWindowを開く"
-// observable = "HomeAppのtitle・選択・focus・dialog表示、Startのdisabled/busy、作成要求数、結果通知とRecent Sessionsから開くID"
+// observable = "HomeAppのtitle・選択・focus・dialog表示、Start/Retryのdisabled/busyと失敗詳細、作成要求数、結果通知とRecent Sessionsから開くID"
 // observation_boundary = "component-behavior"
 // scope = "HomeApp Start→Cancel→再表示と遅延したSession作成の完了"
 // lifecycle = "permanent"
@@ -161,14 +161,24 @@ test("閉じた開始試行の完了を次のNew Sessionから分離する", asy
         assert.equal(button(dialog(), "Codex").getAttribute("aria-selected"), "true", label);
         assert.equal(opened.length, 0, label);
         assert.equal(requests.length, beforeRequests, label);
-        assert.equal(button(dialog(), "Start").disabled, nextState === "starting", label);
+        assert.equal(button(dialog(), nextState === "failed" ? "Retry" : "Start").disabled, nextState === "starting", label);
         if (nextState === "starting") {
           assert.equal(button(dialog(), "Start").getAttribute("aria-busy"), "true", label);
           await act(async () => button(dialog(), "Start").click());
           assert.equal(requests.length, beforeRequests, "古いfinallyで二重開始防止を解除しない");
           await act(async () => nextRequest!.response.reject(new Error("New attempt failed")));
         }
-        if (nextState !== "editing") assert.match(dialog().textContent ?? "", /New attempt failed/);
+        if (nextState !== "editing") {
+          assert.match(dialog().querySelector('[role="alert"]')?.textContent ?? "", /Check Recent Sessions before trying again/);
+          const details = dialog().querySelector<HTMLButtonElement>('[aria-label="Session Creation Error Details"]');
+          assert.ok(details);
+          await act(async () => details.click());
+          const panel = dom.window.document.querySelector('[role="dialog"][aria-label="Session Creation Error Details"]');
+          assert.ok(panel);
+          assert.match(panel.textContent ?? "", /New attempt failed/);
+          assert.doesNotMatch(panel.textContent ?? "", /Old attempt failed/);
+          await act(async () => details.click());
+        }
         await act(async () => button(dialog(), "Cancel").click());
         const result = Array.from(container.querySelectorAll(".home-session-list-feedback")).find((entry) =>
           entry.textContent?.includes(`Old ${label}`)

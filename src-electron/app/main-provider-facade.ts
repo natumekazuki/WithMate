@@ -1,20 +1,14 @@
-import { DEFAULT_PROVIDER_ID, type ModelCatalogProvider, type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
-import type { ProviderBackgroundAdapter, ProviderCodingAdapter, ProviderTurnAdapter } from "../providers/provider-runtime.js";
-import {
-  getProviderRuntimeCapabilities,
-  resolveProviderBackgroundAdapter,
-  resolveProviderCatalogOrThrow,
-  resolveProviderCodingAdapter,
-  type ProviderRuntimeCapabilities,
-} from "../providers/provider-support.js";
+import { DEFAULT_PROVIDER_ID, type ModelCatalogProvider, type ModelCatalogRequest, type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { ProviderCodingAdapter, ProviderTurnAdapter } from "../providers/provider-runtime.js";
+import { getProviderRuntimeCapabilities, resolveProviderCatalogOrThrow, resolveProviderCodingAdapter, type ProviderRuntimeCapabilities } from "../providers/provider-support.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 
 type MainProviderFacadeDeps = {
-  getModelCatalog(revision?: number | null): Awaitable<ModelCatalogSnapshot | null>;
-  ensureModelCatalogSeeded(): Awaitable<ModelCatalogSnapshot>;
+  getModelCatalog(request?: ModelCatalogRequest): Awaitable<ModelCatalogSnapshot>;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
   claudeAdapter: ProviderTurnAdapter;
+  opencodeAdapter: ProviderTurnAdapter;
   revokeProviderExecution?(sessionId: string, providerId: string): void;
   revokeAllProviderExecutions?(): void;
 };
@@ -22,19 +16,17 @@ type MainProviderFacadeDeps = {
 export class MainProviderFacade {
   constructor(private readonly deps: MainProviderFacadeDeps) {}
 
-  async getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null> {
-    return this.deps.getModelCatalog(revision);
+  async getModelCatalog(request?: ModelCatalogRequest): Promise<ModelCatalogSnapshot> {
+    return this.deps.getModelCatalog(request);
   }
 
   resolveProviderCatalog(
     providerId: string | null | undefined,
-    revision?: number | null,
+    workspacePath?: string,
   ): Promise<{ snapshot: ModelCatalogSnapshot; provider: ModelCatalogProvider }> {
     return resolveProviderCatalogOrThrow({
       providerId,
-      revision,
-      getModelCatalog: (nextRevision) => this.deps.getModelCatalog(nextRevision),
-      ensureSeeded: () => this.deps.ensureModelCatalogSeeded(),
+      getModelCatalog: () => this.deps.getModelCatalog({ ...(providerId ? { providerId } : {}), ...(workspacePath ? { workspacePath } : {}) }),
     });
   }
 
@@ -44,17 +36,10 @@ export class MainProviderFacade {
       codexAdapter: this.deps.codexAdapter,
       copilotAdapter: this.deps.copilotAdapter,
       claudeAdapter: this.deps.claudeAdapter,
+      opencodeAdapter: this.deps.opencodeAdapter,
     });
   }
 
-  getProviderBackgroundAdapter(providerId: string | null | undefined): ProviderBackgroundAdapter {
-    return resolveProviderBackgroundAdapter({
-      providerId,
-      codexAdapter: this.deps.codexAdapter,
-      copilotAdapter: this.deps.copilotAdapter,
-      claudeAdapter: this.deps.claudeAdapter,
-    });
-  }
 
   getProviderRuntimeCapabilities(providerId: string | null | undefined): ProviderRuntimeCapabilities {
     const resolvedProviderId = providerId ?? DEFAULT_PROVIDER_ID;
@@ -78,6 +63,7 @@ export class MainProviderFacade {
       this.deps.codexAdapter.invalidateAllSessionThreads(),
       this.deps.copilotAdapter.invalidateAllSessionThreads(),
       this.deps.claudeAdapter.invalidateAllSessionThreads(),
+      this.deps.opencodeAdapter.invalidateAllSessionThreads(),
     ]);
   }
 }

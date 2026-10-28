@@ -274,7 +274,6 @@ export function parseImageFilePickerPurpose(value: unknown): ImageFilePickerPurp
 export const ALL_RESET_APP_DATABASE_TARGETS = [
   "sessions",
   "appSettings",
-  "modelCatalog",
   "projectMemory",
 ] as const;
 

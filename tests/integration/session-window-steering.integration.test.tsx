@@ -51,7 +51,13 @@ test("Session Windowは現在turnへ入力しdraft revisionと対象を保護す
     require: () => ({ contextBridge: { exposeInMainWorld: (_key: string, value: WithMateWindowApi) => { api = value; } } }),
     process: { argv: ["--benchmark-auxiliary-count=1"] }, Buffer,
   });
-  const listeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
+
+  const getModelCatalog = api.getModelCatalog;
+  api.getModelCatalog = async (request) => {
+    const snapshot = await getModelCatalog(request);
+    return snapshot ? { ...snapshot, workspacePath: request?.workspacePath } : snapshot;
+  };
+ const listeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
   api.subscribeLiveSessionRun = (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   api.getLiveSessionRun = async () => null;
   api.listSessionFileRoots = async () => [];

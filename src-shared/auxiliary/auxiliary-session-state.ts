@@ -4,9 +4,10 @@ import { normalizeCodexSpeed, type CodexSpeed } from "../settings/codex-speed.js
 import { normalizeCodexReviewer, type CodexReviewer } from "../settings/codex-reviewer.js";
 import {
   isModelReasoningEffort,
-  resolveModelChangeSelection,
+  resolveModelItemChangeSelection,
   resolveModelSelection,
   type ModelCatalogProvider,
+  type ModelCatalogItem,
   type ModelReasoningEffort,
 } from "../settings/model-catalog.js";
 import { normalizeMessage, type Message } from "../session/session-state.js";
@@ -169,7 +170,7 @@ export function applyAuxiliarySessionCodexReviewerChange(
 
 export function applyAuxiliarySessionModelSelectionPatch(
   session: AuxiliarySession,
-  patch: Pick<AuxiliarySession, "catalogRevision" | "model" | "reasoningEffort">,
+  patch: Pick<AuxiliarySession, "model" | "reasoningEffort">,
   updatedAt: string,
 ): AuxiliarySession {
   return applyAuxiliarySessionPatch(session, patch, updatedAt);
@@ -177,16 +178,13 @@ export function applyAuxiliarySessionModelSelectionPatch(
 
 export function applyAuxiliarySessionModelChange(
   session: AuxiliarySession,
-  providerCatalog: ModelCatalogProvider,
-  model: string,
-  catalogRevision: number,
+  model: ModelCatalogItem,
   updatedAt: string,
 ): AuxiliarySession {
-  const selection = resolveModelChangeSelection(providerCatalog, model, session.reasoningEffort);
+  const selection = resolveModelItemChangeSelection(model, session.reasoningEffort);
   return applyAuxiliarySessionModelSelectionPatch(
     session,
     {
-      catalogRevision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
     },
@@ -198,14 +196,12 @@ export function applyAuxiliarySessionReasoningEffortChange(
   session: AuxiliarySession,
   providerCatalog: ModelCatalogProvider,
   reasoningEffort: ModelReasoningEffort,
-  catalogRevision: number,
   updatedAt: string,
 ): AuxiliarySession {
   const selection = resolveModelSelection(providerCatalog, session.model, reasoningEffort);
   return applyAuxiliarySessionModelSelectionPatch(
     session,
     {
-      catalogRevision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
     },

@@ -11,7 +11,7 @@ import {
 } from "./home-launch-state.js";
 
 export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
-export type HomeLaunchFeedbackSource = "launch" | "readiness";
+export type HomeLaunchFeedbackSource = "launch" | "readiness" | "creation-error";
 export type HomeLaunchResult = { title: string; message: string };
 
 export function resolveRandomHomeLaunchFeedback(
@@ -85,7 +85,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   let createdSessionId: string | null = null;
   const reportFailure = (message: string) => {
     if (input.isCurrentAttempt()) {
-      input.setLaunchFeedback(message);
+      input.setLaunchFeedback(message, "creation-error");
     } else {
       input.onDetachedResult({ title: input.draft.title, message });
     }
