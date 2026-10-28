@@ -690,7 +690,10 @@ function createIpcMainStub() {
   const handlers = new Map<string, Handler>();
   const ipcMain = {
     handle(channel: string, handler: Handler) {
-      handlers.set(channel, handler);
+      handlers.set(channel, (event, ...args) => handler({
+        sender: { session: {} },
+        ...(event as object),
+      }, ...args));
     },
     on() {},
   };

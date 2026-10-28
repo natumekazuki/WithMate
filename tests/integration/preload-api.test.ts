@@ -781,6 +781,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   const expectedKeys = [
     "mountHtmlPreview",
     "disposeHtmlPreview",
+    "respondHtmlPreview",
     "subscribeHtmlPreviewEvents",
     "readSessionHtmlPreview",
     "showSessionFilePreviewContextMenu",
