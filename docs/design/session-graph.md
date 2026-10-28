@@ -66,7 +66,7 @@ applyはtopic/record/relationのupsertとrelation解除を1transactionで処理�
 
 ## 閲覧UI
 
-Session headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ戻る。展開・折畳みのどちらでも入口を保ち、再度Graphを押しても閉じない。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
+展開したSession headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ戻る。再度Graphを押しても閉じない。Graphを開いた後にヘッダーを折り畳んだ場合、会話へ戻るとヘッダーの展開操作へfocusする。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
 
 中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。展開区間の履歴は各ビュー内に保持し、新しいWindowは選択記録の近傍または話題の俯瞰から開く。中央の会話復帰では入力、最後のGraph位置と展開区間を保持し、file/Templateとの切替は既存の離脱確認を通す。Main/Auxiliaryの選択や送信先は変えない。
 

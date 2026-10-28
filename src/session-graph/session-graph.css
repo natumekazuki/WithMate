@@ -343,8 +343,6 @@
 .session-graph-window { display: flex; flex-direction: column; height: 100vh; min-width: 0; padding: 0; }
 .session-graph-entry { position: relative; }
 .session-graph-entry-error { position: absolute; top: 100%; right: 0; z-index: 40; width: max-content; max-width: 320px; padding: 10px; background: var(--surface-strong); color: var(--ink); border: 1px solid var(--line); font-size: 12px; }
-.session-collapsed-header-actions { grid-area: top-split; z-index: 2; justify-self: end; align-self: center; margin-right: 12px; }
-.session-chat-layout:has(> .session-collapsed-header-actions) { grid-template-rows: var(--session-header-dock-row-height) 36px minmax(0, 1fr) var(--session-dock-splitter-size) var(--session-action-dock-row-height); }
 @media (max-width: 800px) {
   .session-graph-toolbar {
     flex-wrap: wrap;

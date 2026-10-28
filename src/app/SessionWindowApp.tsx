@@ -568,7 +568,7 @@ export default function AgentSessionWindowApp() {
   const graphMemoryRef = useRef<SessionGraphPreviewMemory | null>(null);
   const [graphWindowOpening, setGraphWindowOpening] = useState(false);
   const [graphWindowError, setGraphWindowError] = useState("");
-  const graphTriggerRefs = useRef(new Set<HTMLButtonElement>());
+  const graphTriggerRef = useRef<HTMLButtonElement>(null);
   const closeFilePreviews = useCallback(() => filesFeatureRef.current?.closePreviews(), []);
   const isCentralPreviewActive = isFilePreviewActive
     || isPromptTemplateWorkspaceOpen || isSessionGraphOpen;
@@ -1982,7 +1982,14 @@ export default function AgentSessionWindowApp() {
       initialState={graphStateRef.current} onStateChange={(state) => { graphStateRef.current = state; }}
       initialMemory={graphMemoryRef.current} onMemoryChange={(memory) => { graphMemoryRef.current = memory; }}
       onOpenWindow={(state) => void openGraphWindow(state)}
-      onClose={() => { closeCentralPreview(); requestAnimationFrame(() => [...graphTriggerRefs.current].find((element) => element.offsetParent !== null)?.focus()); }}
+      onClose={() => {
+        closeCentralPreview();
+        requestAnimationFrame(() => {
+          const trigger = graphTriggerRef.current;
+          if (trigger && !trigger.closest("[inert]")) trigger.focus();
+          else document.querySelector<HTMLButtonElement>('[aria-controls="session-header-dock"]')?.focus();
+        });
+      }}
       onOpenPath={(target) => void handleOpenInlinePath(target, selectedSession.id)} />
   ) : isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
@@ -1997,7 +2004,7 @@ export default function AgentSessionWindowApp() {
   ) : isFilePreviewActive ? <div ref={setFilesPreviewHost} className="session-feature-host" /> : undefined;
 
   const graphHeaderActions = <div className="session-window-control-group session-graph-entry" role="group" aria-label="Session Graph">
-    <button ref={(element) => { if (element) graphTriggerRefs.current.add(element); return () => { if (element) graphTriggerRefs.current.delete(element); }; }} type="button" className="drawer-toggle compact secondary" onClick={(event) => {
+    <button ref={graphTriggerRef} type="button" className="drawer-toggle compact secondary" onClick={(event) => {
       if (event.ctrlKey || event.metaKey) { void openGraphWindow(); return; }
       if (!isSessionGraphOpen && prepareCentralSurfaceOpen()) {
         closeFilePreviews();
@@ -2326,7 +2333,6 @@ export default function AgentSessionWindowApp() {
       <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
       <ChatWindow
         {...chatWindowProps}
-        collapsedHeaderActions={graphHeaderActions}
         errorNotices={[...(chatWindowProps.errorNotices ?? []), ...settingsReadErrors]}
         composerProps={{
           ...chatWindowProps.composerProps,

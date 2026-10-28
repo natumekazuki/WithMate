@@ -9,15 +9,15 @@ import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api
 
 // @test-value v2
 // kind = "contract"
-// claim = "MainとAuxiliaryのどちらを選んでも中央Graph参照の失敗理由を表示・dismissでき、成功時は解除し、親Main ownerと会話送信先を維持する"
+// claim = "MainとAuxiliaryのどちらを選んでも中央Graph参照の失敗理由を表示・dismissでき、成功時は解除し、親Main ownerと会話送信先を維持する。ヘッダーを閉じるとGraph入口を操作対象から外し、会話へ戻った後はヘッダー展開操作へfocusし、再展開からGraphを開ける"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
-// fault = "Auxiliary選択中のGraph参照エラーが隠れるかdismissできない、成功後もエラーが残る、参照ownerや送信先がAuxiliaryへ切り替わる"
-// observable = "実Appの失敗応答・例外後のalertとdismiss、成功後のalert解除、参照openのsessionId、選択中の送信先button"
+// fault = "Auxiliary選択中のGraph参照エラーが隠れるかdismissできない、成功後もエラーが残る、参照ownerや送信先がAuxiliaryへ切り替わる、折畳み時にGraph入口が操作可能に残る、または会話復帰後にfocusやGraphへの再到達を失う"
+// observable = "実Appの失敗応答・例外後のalertとdismiss、成功後のalert解除、参照openのsessionId、選択中の送信先button、折畳み時のinert境界、会話復帰後のfocusと再展開後のGraph表示"
 // observation_boundary = "component-behavior"
-// scope = "SessionWindowAppの中央Graph参照から共通error surfaceへの接続"
+// scope = "SessionWindowAppのヘッダー開閉と中央Graph参照から共通error surfaceへの接続"
 // lifecycle = "permanent"
-// impact = "開けない理由を利用者へ伝え、別の会話への誤送信と不適切なownerでの参照解決を防ぐ"
-// distinction = "Graph単体やfeedback投影testではrootの親ownerと選択中会話の接続差を検出できない"
+// impact = "開けない理由を利用者へ伝え、別の会話への誤送信、不適切なownerでの参照解決、ヘッダー折畳み後の意図しない操作とfocus喪失を防ぐ"
+// distinction = "Graph単体やfeedback投影testではrootの親ownerと選択中会話の接続差や、ヘッダー開閉後のfocus復帰・Graphへの再到達を検出できない"
 // @end-test-value
 test("Session Window shows Graph reference failures for Main and Auxiliary without changing owners", { timeout: 30_000 }, async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://withmate.test/session.html?sessionId=benchmark-main", pretendToBeVisual: true });
@@ -73,11 +73,29 @@ test("Session Window shows Graph reference failures for Main and Auxiliary witho
   const target = () => doc.querySelector(".concurrent-chat-target-dock button[aria-pressed='true']")?.textContent;
   try {
     await act(async () => root.render(<App />));
+    const expandHeader = button("Expand Header");
+    if (expandHeader) await click(expandHeader);
     for (const selection of ["Main", "Auxiliary"]) {
       if (selection === "Auxiliary") { await click(button("Open Auxiliary")); await click([...doc.querySelectorAll(".concurrent-chat-target-dock button")].find((element) => element.textContent === "Auxiliary")); }
       const previousTarget = target();
       assert.equal(previousTarget, selection);
       await click(button("Graph"));
+      if (selection === "Main") {
+        await click(button("Collapse Header"));
+        const header = doc.querySelector("#session-header-dock");
+        assert.equal(header?.getAttribute("aria-hidden"), "true");
+        assert.ok(header?.hasAttribute("inert"));
+        assert.equal([...doc.querySelectorAll(".session-graph-entry")].filter((entry) => !entry.closest("[inert]")).length, 0);
+        await click(button("Back To Chat"));
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+        assert.equal(doc.querySelector(".session-graph-preview"), null);
+        assert.equal(doc.activeElement, button("Expand Header"));
+        await click(button("Expand Header"));
+        assert.equal(header?.getAttribute("aria-hidden"), "false");
+        assert.equal(header?.hasAttribute("inert"), false);
+        await click(button("Graph"));
+        assert.ok(doc.querySelector(".session-graph-preview"));
+      }
       if (!doc.querySelector(".session-graph-details")) await click(doc.querySelector(".session-graph-node"));
       outcome = "failed";
       await click(doc.querySelector(".session-graph-references button"));
