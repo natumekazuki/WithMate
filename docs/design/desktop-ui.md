@@ -69,7 +69,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Implementation Boundary
 
-Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、吹き出しiconの`Back To Chat`で元の会話へ戻る。折畳み時も入口を残す。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。話題・関係を図から読み、record選択時だけ詳細を表示する閲覧専用面である。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
+Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、吹き出しiconの`Back To Chat`で元の会話へ戻る。入口はヘッダーの展開時に表示する。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。話題・関係を図から読み、record選択時だけ詳細を表示する閲覧専用面である。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
 
 Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。
 
@@ -362,7 +362,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - Promptではskill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。Terminalへ切り替えるとpickerを閉じ、非表示Promptの候補やfeedbackは共有パネルの折りたたみを妨げない。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
-  - Directoryの表示・追加・一覧は親Mainと配下の全Auxiliaryで共有し、File Explorer上部、パス追加dialog、追加済み一覧に`Shared · Main + Auxiliary`を表示する。送信先や選択Auxiliaryを変えても同じ一覧を使い、追加・削除は共通一覧へ反映する。削除可否は親MainのProviderに従う。認可境界は[Auxiliary Session](auxiliary-session.md#context-boundary)に従う
+  - Directoryの表示・追加・一覧は親Mainと配下の全Auxiliaryで共有し、パス追加dialog、追加済み一覧に`Shared · Main + Auxiliary`を表示する。送信先や選択Auxiliaryを変えても同じ一覧を使い、追加・削除は共通一覧へ反映する。削除可否は親MainのProviderに従う。認可境界は[Auxiliary Session](auxiliary-session.md#context-boundary)に従う
   - ヘッダーは既定の文字サイズで最小幅260pxから`Files / Changes / History`とPinフィルター・更新操作を1行に収める。文字サイズとラベルを維持し、横余白を抑え、操作領域は高さ28px以上とする。文字拡大等で収まらない場合は折り返しを許容し、操作を切り落とさない
   - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する

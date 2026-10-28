@@ -36,7 +36,6 @@ type SessionFileExplorerPaneProps = {
   api: FileExplorerApi | null;
   sessionId: string | null;
   enabled: boolean;
-  directoryScopeLabel?: string;
   visible?: boolean;
   refreshRevision?: number;
   rootsRevision: string;
@@ -124,7 +123,6 @@ export function SessionFileExplorerPane({
   api,
   sessionId,
   enabled,
-  directoryScopeLabel,
   visible = true,
   refreshRevision = 0,
   rootsRevision,
@@ -528,7 +526,6 @@ export function SessionFileExplorerPane({
   return (
     <aside className="session-file-explorer" aria-label="File explorer">
       <div className="session-file-explorer-header">
-        {directoryScopeLabel ? <div className="session-file-explorer-scope">{directoryScopeLabel}</div> : null}
         <div className="session-file-explorer-tabs" role="tablist" aria-label="File explorer view">
           <button
             id={`${tabPanelId}-files-tab`}
