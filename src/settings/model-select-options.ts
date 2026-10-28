@@ -5,6 +5,7 @@ export type ModelSelectOption = {
   value: string;
   label: string;
   sourceLabel?: string;
+  model: ModelCatalogItem | null;
 };
 
 export type ReasoningEffortSelectOption = {
@@ -19,10 +20,11 @@ export function buildModelSelectOptions(
   const options: ModelSelectOption[] = models.map((model) => ({
     value: model.id,
     label: modelOptionLabel(model),
+    model,
     ...(model.sourceLabel ? { sourceLabel: model.sourceLabel } : {}),
   }));
   if (selectedModelId && !options.some((option) => option.value === selectedModelId)) {
-    options.unshift({ value: selectedModelId, label: selectedModelId });
+    options.unshift({ value: selectedModelId, label: selectedModelId, model: null });
   }
 
   return options;

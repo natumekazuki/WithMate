@@ -30,18 +30,42 @@ const providerCatalog: ModelCatalogProvider = {
   models,
 };
 
+// @test-value v2
+// kind = "contract"
+// claim = "モデル選択肢は表示用value/labelと選択確定用の元Model定義を対応付ける"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-ui" }
+// fault = "選択肢の表示と確定用Model定義が別候補になるか定義を失う"
+// observable = "モデル選択肢のvalue/label/model"
+// observation_boundary = "public-boundary"
+// scope = "model option projection"
+// lifecycle = "permanent"
+// impact = "表示候補の選択で別Modelまたは別Depthが保存される"
+// distinction = "型検査では表示値と候補定義の対応値を確認できない"
+// @end-test-value
 test("buildModelSelectOptions は model catalog item を select option に変換する", () => {
   assert.deepEqual(buildModelSelectOptions(models), [
-    { value: "gpt-test", label: "GPT Test" },
-    { value: "gpt-other", label: "GPT Other" },
+    { value: "gpt-test", label: "GPT Test", model: models[0] },
+    { value: "gpt-other", label: "GPT Other", model: models[1] },
   ]);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "候補外の保存Modelは表示を保持し、候補定義がないことを明示する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#選択と実行" }
+// fault = "候補外の保存値を消すか別のModel定義を割り当てる"
+// observable = "保存Modelの選択肢とnull定義、取得済み候補の定義"
+// observation_boundary = "public-boundary"
+// scope = "saved model option projection"
+// lifecycle = "permanent"
+// impact = "現在選択の表示を失うか不正な別候補として再選択させる"
+// distinction = "型検査では候補外値とSDK候補の実際の対応を検出できない"
+// @end-test-value
 test("buildModelSelectOptions は catalog にない選択中 model を先頭に保持する", () => {
   assert.deepEqual(buildModelSelectOptions(models, "legacy-model"), [
-    { value: "legacy-model", label: "legacy-model" },
-    { value: "gpt-test", label: "GPT Test" },
-    { value: "gpt-other", label: "GPT Other" },
+    { value: "legacy-model", label: "legacy-model", model: null },
+    { value: "gpt-test", label: "GPT Test", model: models[0] },
+    { value: "gpt-other", label: "GPT Other", model: models[1] },
   ]);
 });
 
@@ -61,8 +85,8 @@ test("取得元とopaque model IDを保持して保存済み候補を残す", ()
   assert.deepEqual(buildModelSelectOptions([
     { id: "vendor/model.v1", label: "Model", sourceLabel: "Vendor", reasoningEfforts: [] },
   ], "saved/model"), [
-    { value: "saved/model", label: "saved/model" },
-    { value: "vendor/model.v1", label: "Model", sourceLabel: "Vendor" },
+    { value: "saved/model", label: "saved/model", model: null },
+    { value: "vendor/model.v1", label: "Model", sourceLabel: "Vendor", model: { id: "vendor/model.v1", label: "Model", sourceLabel: "Vendor", reasoningEfforts: [] } },
   ]);
 });
 

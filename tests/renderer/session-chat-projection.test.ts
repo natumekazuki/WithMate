@@ -611,7 +611,7 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
       isRunning: true,
       feedback: "",
       composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
-      modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+      modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
       selectedModel: "gpt-test",
       selectedModelFallbackLabel: "GPT Test",
       reasoningOptions: [{ value: "medium", label: "medium" }],

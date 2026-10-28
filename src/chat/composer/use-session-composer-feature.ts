@@ -367,13 +367,9 @@ export function useSessionComposerFeature(input: {
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });
     };
-    const onAuxiliaryModel = (model: string) => {
-      if (!bridge.runtime.providerCatalog) {
-        return;
-      }
+    const onAuxiliaryModel = (model: ModelCatalogItem) => {
       return runAuxiliaryModelChangeOperation({
         model,
-        providerCatalog: bridge.runtime.providerCatalog,
         updateActiveAuxiliarySession: auxiliaryRuntime.update,
         createTimestampLabel: auxiliaryRuntime.timestamp,
       });

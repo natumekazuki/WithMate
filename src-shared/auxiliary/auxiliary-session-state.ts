@@ -8,9 +8,10 @@ import { normalizeCodexSpeed, type CodexSpeed } from "../settings/codex-speed.js
 import { normalizeCodexReviewer, type CodexReviewer } from "../settings/codex-reviewer.js";
 import {
   isModelReasoningEffort,
-  resolveModelChangeSelection,
+  resolveModelItemChangeSelection,
   resolveModelSelection,
   type ModelCatalogProvider,
+  type ModelCatalogItem,
   type ModelReasoningEffort,
 } from "../settings/model-catalog.js";
 import { normalizeMessage, type Message } from "../session/session-state.js";
@@ -182,11 +183,10 @@ export function applyAuxiliarySessionModelSelectionPatch(
 
 export function applyAuxiliarySessionModelChange(
   session: AuxiliarySession,
-  providerCatalog: ModelCatalogProvider,
-  model: string,
+  model: ModelCatalogItem,
   updatedAt: string,
 ): AuxiliarySession {
-  const selection = resolveModelChangeSelection(providerCatalog, model, session.reasoningEffort);
+  const selection = resolveModelItemChangeSelection(model, session.reasoningEffort);
   return applyAuxiliarySessionModelSelectionPatch(
     session,
     {

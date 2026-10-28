@@ -64,7 +64,10 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       reviewerOptions: [option("user", "User"), option("auto-review", "Auto Review")],
       sandboxOptions: [option("workspace-write", "Workspace Write"), option("read-only", "Read Only")],
       reasoningOptions: [option("low", "Low"), option("high", "High")],
-      modelOptions: [option("gpt-5.4", "GPT-5.4"), option("vendor/model-b", "Model B")],
+      modelOptions: [
+        { ...option("gpt-5.4", "GPT-5.4"), model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } },
+        { ...option("vendor/model-b", "Model B"), model: { id: "vendor/model-b", label: "Model B", reasoningEfforts: [] } },
+      ],
       speedOptions: [option("standard", "Standard"), option("fast", "Fast")],
       ...selection,
       onChangeApprovalMode: (value) => change("selectedApprovalMode", value),
@@ -72,7 +75,7 @@ test("runtime設定は選択値の正式名に追従し、Model名と供給さ�
       onChangeCodexSandboxMode: (value) => change("selectedCodexSandboxMode", value),
       onChangeReasoningEffort: (value) => change("selectedReasoningEffort", value),
       onChangeCodexSpeed: (value) => change("selectedCodexSpeed", value),
-      onChangeModel: (value) => change("selectedModel", value),
+      onChangeModel: (model) => change("selectedModel", model.id),
     }));
   }
   const root = createRoot(dom.window.document.getElementById("root")!);
@@ -214,7 +217,7 @@ function createComposerTestProps(
     selectedCodexSandboxMode: "workspace-write",
     speedOptions: [],
     selectedCodexSpeed: "standard",
-    modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+    modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } }],
     selectedModel: "gpt-5.4",
     selectedModelFallbackLabel: "gpt-5.4",
     reasoningOptions: [{ value: "high", label: "high" }],
@@ -4091,7 +4094,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
       selectedCodexSandboxMode: "workspace-write",
-      modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+      modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } }],
       selectedModel: "gpt-5.4",
       selectedModelFallbackLabel: "gpt-5.4",
       reasoningOptions: [{ value: "high", label: "high" }],
@@ -4261,7 +4264,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       selectedCodexSpeed: "standard",
       sandboxOptions: [{ value: "workspace-write", label: "workspace-write" }],
       selectedCodexSandboxMode: "workspace-write",
-      modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+      modelOptions: [{ value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } }],
       selectedModel: "gpt-5.4",
       selectedModelFallbackLabel: "gpt-5.4",
       reasoningOptions: [{ value: "high", label: "high" }],
@@ -4664,8 +4667,8 @@ test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限�
           composerBlocked,
           composerController: { owner: { kind: "main", id: "main-1" }, registry },
           modelOptions: [
-            { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
-            { value: "gpt-5.4", label: "GPT-5.4" },
+            { value: "gpt-5.4-mini", label: "GPT-5.4 Mini", model: { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", reasoningEfforts: [] } },
+            { value: "gpt-5.4", label: "GPT-5.4", model: { id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: [] } },
           ],
           reasoningOptions: [{ value: "medium", label: "Medium" }, { value: "high", label: "High" }],
         })));

@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
+import { buildModelSelectOptions } from "../../src/settings/model-select-options.js";
+import type { ModelCatalogItem, ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
+import { normalizeAuxiliarySession, type AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { runMainRuntimeOptionOperation } from "../../src/chat/runtime/main-session-mutation-operations.js";
+import { runAuxiliaryModelChangeOperation } from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
+import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "../../src/chat/auxiliary-runtime-option-routing.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,9 +33,9 @@ test("Model picker virtualizes, freezes open options and preserves keyboard/IME 
   const { createRoot } = await import("react-dom/client");
   const { ModelPicker } = await import("../../src/chat/composer/model-picker.js");
   const root = createRoot(dom.window.document.getElementById("root")!);
-  const options = Array.from({ length: 5000 }, (_, index) => ({ value: `id-${index}`, label: `Model ${index}`, sourceLabel: "Source" }));
+  const options = buildModelSelectOptions(Array.from({ length: 5000 }, (_, index) => ({ id: `id-${index}`, label: `Model ${index}`, sourceLabel: "Source", reasoningEfforts: [] })));
   const selected: string[] = [];
-  const render = (items = options, value = "id-4500", disabled = false, discoveryStatus?: "idle" | "loading" | "ready" | "error", discoveryHasCache?: boolean) => root.render(<ModelPicker options={items} value={value} onChange={(next) => selected.push(next)} disabled={disabled} discoveryStatus={discoveryStatus} discoveryError="Provider is unavailable." discoveryHasCache={discoveryHasCache} />);
+  const render = (items = options, value = "id-4500", disabled = false, discoveryStatus?: "idle" | "loading" | "ready" | "error", discoveryHasCache?: boolean) => root.render(<ModelPicker options={items} value={value} onChange={(next) => selected.push(next.id)} disabled={disabled} discoveryStatus={discoveryStatus} discoveryError="Provider is unavailable." discoveryHasCache={discoveryHasCache} />);
   const trigger = () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
   const search = () => dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
   const key = async (name: string, isComposing = false) => act(async () => search().dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: name, isComposing, bubbles: true })));
@@ -47,7 +55,7 @@ test("Model picker virtualizes, freezes open options and preserves keyboard/IME 
     assert.ok(dom.window.document.querySelectorAll('[role="option"]').length < 30);
     assert.match(dom.window.document.querySelector('[aria-selected="true"]')!.textContent!, /Model 4500/);
     assert.ok(dom.window.document.querySelector<HTMLDivElement>('[role="listbox"]')!.scrollTop > 0);
-    await act(async () => render([{ value: "replacement", label: "Replacement", sourceLabel: "Other" }]));
+    await act(async () => render(buildModelSelectOptions([{ id: "replacement", label: "Replacement", sourceLabel: "Other", reasoningEfforts: [] }])));
     assert.match(dom.window.document.querySelector('[aria-selected="true"]')!.textContent!, /Model 4500/);
     await key("Enter", true);
     assert.deepEqual(selected, []);
@@ -94,7 +102,7 @@ test("Model picker virtualizes, freezes open options and preserves keyboard/IME 
     assert.equal(dom.window.document.activeElement, firstSearch);
     assert.equal(search().value, "Model 12");
     assert.match(dom.window.document.querySelector('[role="option"]')!.textContent!, /Model 12/);
-    await act(async () => render([{ value: "replacement", label: "Replacement", sourceLabel: "Other" }], "saved-model", false, "ready", true));
+    await act(async () => render(buildModelSelectOptions([{ id: "replacement", label: "Replacement", sourceLabel: "Other", reasoningEfforts: [] }]), "saved-model", false, "ready", true));
     assert.match(dom.window.document.querySelector('[role="option"]')!.textContent!, /Model 12/);
     await key("Escape");
     await act(async () => render([], "saved-model", false, "loading", false));
@@ -121,6 +129,95 @@ test("Model picker virtualizes, freezes open options and preserves keyboard/IME 
     assert.equal(dom.window.document.querySelector('.composer-model-empty')?.textContent, "No matching models.");
     assert.equal(dom.window.document.activeElement, search());
     assert.deepEqual(selected, ["id-12"]);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const key of globals) {
+      if (previous[key]) Object.defineProperty(globalThis, key, previous[key]!);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "開いたModel候補は背景更新で消失またはDepth定義が変わっても表示時の定義でMain/Auxiliaryへ確定し、現在DepthとAuxiliary draftを保持する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-ui" }
+// fault = "表示候補を最新一覧で再検索して拒否・Depth置換するか、古い会話状態を確定する"
+// observable = "popoverの候補とfocus、確定payload、両実operationが保存するmodel/Depth/draft、元のexecution capture"
+// observation_boundary = "component-behavior"
+// scope = "ModelPicker snapshotからMain/Auxiliaryの選択保存まで"
+// lifecycle = "permanent"
+// impact = "見えている候補を選べないか意図と異なるModel/Depthで次turnを送る"
+// distinction = "既存picker単体testはID callbackまで、operation単体testは確定済み入力からだけを検証し、更新中のsnapshotと両保存経路の結線を検出できない"
+// @end-test-value
+test("Model pickerは背景更新前の候補定義でMainとAuxiliaryの選択を確定する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+  const globals = ["window", "document", "Node", "HTMLElement", "HTMLInputElement", "Event", "MouseEvent", "KeyboardEvent"] as const;
+  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const { createRoot } = await import("react-dom/client");
+  const { ModelPicker } = await import("../../src/chat/composer/model-picker.js");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const target of ["main", "auxiliary"] as const) {
+      for (const change of ["removed", "depth-changed"] as const) {
+        const picked: ModelCatalogItem = { id: "vendor/picked", label: "Picked Model", sourceLabel: "vendor",
+          reasoningEfforts: change === "removed" ? ["low", "high"] : ["low"], defaultReasoningEffort: "low" };
+        const displayed = structuredClone(picked);
+        const original = { ...buildNewSession({ id: "main", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/workspace",
+          branch: "main", approvalMode: "on-request", characterId: "character", character: "Character", characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#654321" } }),
+          model: "vendor/current", reasoningEffort: "medium" };
+        const captured = captureSessionExecutionOptions(original);
+        let main: Session = original;
+        const initialAuxiliary = normalizeAuxiliarySession({ ...original, id: "auxiliary", parentSessionId: "main", status: "active" });
+        assert.ok(initialAuxiliary);
+        let auxiliary: AuxiliarySession = initialAuxiliary;
+        let latest: ModelCatalogProvider = { id: "opencode", label: "OpenCode", defaultModelId: "vendor/current", defaultReasoningEffort: "",
+          models: [{ id: "vendor/current", label: "Current Model", reasoningEfforts: ["medium", "high"] }, picked] };
+        let operation: Promise<unknown> | undefined;
+        let payload: ModelCatalogItem | undefined;
+        let writes = 0;
+        const onChange = buildAuxiliaryAwareRuntimeOptionChangeHandler<ModelCatalogItem>({
+          shouldUseAuxiliary: target === "auxiliary",
+          onSelectedSessionChange: (model) => {
+            payload = model;
+            operation = runMainRuntimeOptionOperation({ session: main, isReadOnly: false, providerCatalog: latest,
+              option: { kind: "model", value: model }, createTimestampLabel: () => "selected",
+              persist: async (next) => { writes++; main = next; return next; } });
+          },
+          onAuxiliaryChange: (model) => {
+            payload = model;
+            operation = runAuxiliaryModelChangeOperation({ model, createTimestampLabel: () => "selected",
+              updateActiveAuxiliarySession: async (recipe) => { writes++; auxiliary = recipe(auxiliary); } });
+          },
+        });
+        const render = () => root.render(<ModelPicker options={buildModelSelectOptions(latest.models)} value="vendor/current" onChange={onChange} discoveryStatus="ready" />);
+        await act(async () => { render(); });
+        const trigger = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
+        await act(async () => { trigger.click(); });
+        const search = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+        main = { ...main, reasoningEffort: "high" };
+        auxiliary = { ...auxiliary, reasoningEffort: "high", composerDraft: "latest draft" };
+        // The displayed definition must not share its mutable variant array with incoming data.
+        picked.reasoningEfforts.splice(0, picked.reasoningEfforts.length, "max");
+        latest = { ...latest, models: change === "removed" ? [] : [{ ...picked, defaultReasoningEffort: "max" }] };
+        await act(async () => { render(); });
+        assert.equal(dom.window.document.activeElement, search);
+        const option = [...dom.window.document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((item) => item.textContent?.includes("Picked Model"));
+        assert.ok(option);
+        await act(async () => { option.click(); await operation; render(); });
+        assert.equal(writes, 1, `${target}/${change}`);
+        assert.deepEqual(payload, displayed);
+        const selected = target === "main" ? main : auxiliary;
+        assert.equal(selected.model, "vendor/picked");
+        assert.equal(selected.reasoningEffort, change === "removed" ? "high" : "low");
+        if (target === "auxiliary") assert.equal(auxiliary.composerDraft, "latest draft");
+        assert.deepEqual(captureSessionExecutionOptions(original), captured);
+        assert.equal(dom.window.document.querySelector('[role="listbox"]'), null);
+        assert.equal(dom.window.document.activeElement, trigger);
+      }
+    }
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

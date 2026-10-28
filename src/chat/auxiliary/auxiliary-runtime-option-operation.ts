@@ -11,7 +11,7 @@ import {
   applyAuxiliarySessionReasoningEffortChange,
   type AuxiliarySession,
 } from "../../../src-shared/auxiliary/auxiliary-session-state.js";
-import type { ModelCatalogProvider, ModelReasoningEffort } from "../../../src-shared/settings/model-catalog.js";
+import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "../../../src-shared/settings/model-catalog.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import { captureSessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
 import type { AuxiliarySessionBinding } from "../use-auxiliary-workspace.js";
@@ -108,15 +108,13 @@ export async function runAuxiliaryCodexReviewerChangeOperation(input: {
 }
 
 export async function runAuxiliaryModelChangeOperation(input: {
-  model: string;
-  providerCatalog: ModelCatalogProvider;
+  model: ModelCatalogItem;
   updateActiveAuxiliarySession: UpdateActiveAuxiliarySession;
   createTimestampLabel: () => string;
 }): Promise<void> {
   await input.updateActiveAuxiliarySession((current) => (
     applyAuxiliarySessionModelChange(
       current,
-      input.providerCatalog,
       input.model,
       input.createTimestampLabel(),
     )

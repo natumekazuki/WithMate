@@ -11,6 +11,7 @@ import type { CodexSpeed } from "../../../src-shared/settings/codex-speed.js";
 import type { CodexReviewer } from "../../../src-shared/settings/codex-reviewer.js";
 import type {
   ModelCatalogProvider,
+  ModelCatalogItem,
   ModelReasoningEffort,
 } from "../../../src-shared/settings/model-catalog.js";
 import {
@@ -28,7 +29,7 @@ export type MainRuntimeOption =
   | { kind: "codex-sandbox-mode"; value: CodexSandboxMode }
   | { kind: "codex-speed"; value: CodexSpeed }
   | { kind: "codex-reviewer"; value: CodexReviewer }
-  | { kind: "model"; value: string }
+  | { kind: "model"; value: ModelCatalogItem }
   | { kind: "reasoning-effort"; value: ModelReasoningEffort };
 
 export async function runMainRuntimeOptionOperation(input: {
@@ -104,22 +105,11 @@ export async function runMainRuntimeOptionOperation(input: {
     );
     return next ? persist(next) : null;
   }
+  if (option.kind === "model") {
+    return persist(buildSessionWithModelChange(session, option.value, createTimestampLabel()));
+  }
   if (!providerCatalog) return null;
-  const next =
-    option.kind === "model"
-      ? buildSessionWithModelChange(
-          session,
-          providerCatalog,
-          option.value,
-          createTimestampLabel(),
-        )
-      : buildSessionWithReasoningEffort(
-          session,
-          providerCatalog,
-          option.value,
-          createTimestampLabel(),
-        );
-  return persist(next);
+  return persist(buildSessionWithReasoningEffort(session, providerCatalog, option.value, createTimestampLabel()));
 }
 
 export async function persistMainSession(input: {

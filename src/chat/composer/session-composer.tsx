@@ -19,6 +19,8 @@ import type { WorkspaceDirectoryValidationResult } from "../../../src-shared/win
 import { ComposerIcon } from "./composer-icon.js";
 import { ComposerSettingSelect } from "./composer-setting-select.js";
 import { ModelPicker } from "./model-picker.js";
+import type { ModelSelectOption } from "../../settings/model-select-options.js";
+import type { ModelCatalogItem } from "../../../src-shared/settings/model-catalog.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
 import {
   getComposerSendButtonTitle,
@@ -118,7 +120,7 @@ export type SessionComposerExpandedProps = {
   selectedCodexSandboxMode: CodexSandboxMode;
   speedOptions: Array<{ value: CodexSpeed; label: string }>;
   selectedCodexSpeed: CodexSpeed;
-  modelOptions: SessionSelectOption[];
+  modelOptions: ModelSelectOption[];
   modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
   modelDiscoveryError?: string;
   modelDiscoveryHasCache?: boolean;
@@ -153,7 +155,7 @@ export type SessionComposerExpandedProps = {
   onChangeCodexReviewer: (value: CodexReviewer) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeCodexSpeed: (value: CodexSpeed) => void;
-  onChangeModel: (value: string) => void;
+  onChangeModel: (model: ModelCatalogItem) => void;
   onModelPickerOpen?: () => void;
   onChangeReasoningEffort: (value: string) => void;
   onMessageViewModeChange?: (mode: MessageViewMode) => void;

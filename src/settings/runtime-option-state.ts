@@ -3,9 +3,10 @@ import type { CodexSandboxMode } from "../../src-shared/settings/codex-sandbox-m
 import type { CodexSpeed } from "../../src-shared/settings/codex-speed.js";
 import type { CodexReviewer } from "../../src-shared/settings/codex-reviewer.js";
 import {
-  resolveModelChangeSelection,
+  resolveModelItemChangeSelection,
   resolveModelSelection,
   type ModelCatalogProvider,
+  type ModelCatalogItem,
   type ModelReasoningEffort,
   type ResolvedModelSelection,
 } from "../../src-shared/settings/model-catalog.js";
@@ -116,11 +117,10 @@ function buildSessionWithResolvedModelSelection<TSession extends ModelRuntimeSes
 
 export function buildSessionWithModelChange<TSession extends ModelRuntimeSessionLike>(
   session: TSession,
-  providerCatalog: ModelCatalogProvider,
-  model: string,
+  model: ModelCatalogItem,
   updatedAt: string,
 ): TSession & ModelRuntimeSessionPatch {
-  const selection = resolveModelChangeSelection(providerCatalog, model, session.reasoningEffort);
+  const selection = resolveModelItemChangeSelection(model, session.reasoningEffort);
   return buildSessionWithResolvedModelSelection(session, selection, updatedAt);
 }
 

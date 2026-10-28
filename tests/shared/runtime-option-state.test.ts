@@ -124,8 +124,7 @@ test("buildSessionWithModelChange は model catalog selection を session patch 
 
   const nextSession = buildSessionWithModelChange(
     session,
-    providerCatalog,
-    "gpt-fast",
+    providerCatalog.models.find((model) => model.id === "gpt-fast")!,
     "2026-06-07T01:00:00.000Z",
   );
 
@@ -191,8 +190,7 @@ test("model / reasoning effort helper は同じ選択でも既存どおり patch
   assert.deepEqual(
     buildSessionWithModelChange(
       session,
-      providerCatalog,
-      "gpt-default",
+      providerCatalog.models.find((model) => model.id === "gpt-default")!,
       "2026-06-07T01:00:00.000Z",
     ),
     {
@@ -220,17 +218,17 @@ test("model / reasoning effort helper は同じ選択でも既存どおり patch
 
 // @test-value v2
 // kind = "contract"
-// claim = "明示model変更は候補外を拒否し、reasoning変更はSDK固有の文字列を保持する"
-// oracle = { type = "contract", ref = "src-shared/settings/model-catalog.ts#resolveModelSelection" }
-// fault = "候補外modelの明示変更を受理するか、SDK固有のreasoning値を拒否・置換する"
-// observable = "model変更の例外とreasoning変更の保存値"
+// claim = "明示model変更は表示時の候補定義でDepthを解決し、reasoning変更はSDK固有の文字列を保持する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-ui" }
+// fault = "表示候補を更新後一覧で拒否・置換するか、SDK固有のreasoning値を拒否・置換する"
+// observable = "model変更のmodelとDepth、reasoning変更の保存値"
 // observation_boundary = "public-boundary"
 // scope = "runtime option model catalog validation"
 // lifecycle = "permanent"
-// impact = "不正なmodel選択またはSDK固有のDepthを利用できなくなる"
+// impact = "表示中の候補を確定できないかSDK固有のDepthを利用できなくなる"
 // distinction = "rendererの明示変更helper経由で共有モデル契約の保存への伝播を確認する"
 // @end-test-value
-test("model helperは候補外を拒否しreasoning helperはSDK固有値を保持する", () => {
+test("model helperは選択候補の定義を使いreasoning helperはSDK固有値を保持する", () => {
   const session = {
     id: "session-1",
     model: "gpt-default",
@@ -238,14 +236,13 @@ test("model helperは候補外を拒否しreasoning helperはSDK固有値を保�
     updatedAt: "2026-06-07T00:00:00.000Z",
   };
 
-  assert.throws(
-    () => buildSessionWithModelChange(
+  assert.deepEqual(
+    buildSessionWithModelChange(
       session,
-      providerCatalog,
-      "missing-model",
+      { id: "displayed-model", label: "Displayed", reasoningEfforts: ["sdk-depth"], defaultReasoningEffort: "sdk-depth" },
       "2026-06-07T01:00:00.000Z",
     ),
-    /selected model/,
+    { ...session, model: "displayed-model", reasoningEffort: "sdk-depth", updatedAt: "2026-06-07T01:00:00.000Z" },
   );
   assert.equal(buildSessionWithReasoningEffort(
     session, providerCatalog, "xhigh", "2026-06-07T01:00:00.000Z",

@@ -115,8 +115,15 @@ export function resolveModelChangeSelection(
   if (!model) {
     throw new Error("The selected model is not in the discovered model list.");
   }
+  return resolveModelItemChangeSelection(model, requestedReasoningEffort);
+}
+
+export function resolveModelItemChangeSelection(
+  model: ModelCatalogItem,
+  requestedReasoningEffort: ModelReasoningEffort,
+): ResolvedModelSelection {
   return {
-    requestedModel,
+    requestedModel: model.id,
     resolvedModel: model.id,
     requestedReasoningEffort,
     resolvedReasoningEffort: model.reasoningEfforts.length === 0

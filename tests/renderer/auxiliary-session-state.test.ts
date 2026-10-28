@@ -439,8 +439,7 @@ test("applyAuxiliarySessionModelChange は model selection と updatedAt だけ�
   assert.deepEqual(
     applyAuxiliarySessionModelChange(
       session,
-      providerCatalog,
-      "gpt-5.4-mini",
+      providerCatalog.models.find((model) => model.id === "gpt-5.4-mini")!,
       "2026-01-02T00:00:00.000Z",
     ),
     {
@@ -487,30 +486,29 @@ test("applyAuxiliarySessionReasoningEffortChange は reasoning effort と update
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの明示model変更は候補外を拒否しDepth変更はSDK固有値を保持する"
-// oracle = { type = "contract", ref = "Issue #731 Auxiliary settings validation feedback" }
-// fault = "SDK固有のDepthを拒否または既定値へ置換する"
-// observable = "候補外model変更の例外と更新されたAuxiliaryのreasoningEffort"
+// claim = "Auxiliaryの明示model変更は表示時の候補定義でDepthを解決しDepth変更はSDK固有値を保持する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-ui" }
+// fault = "表示候補を最新一覧で拒否・置換するかSDK固有のDepthを拒否・置換する"
+// observable = "model変更のmodelとDepth、Depth変更のreasoningEffort"
 // observation_boundary = "public-boundary"
 // scope = "applyAuxiliarySessionReasoningEffortChange model catalog validation"
 // lifecycle = "permanent"
 // impact = "保存されたSDK固有のDepthを編集または再送できなくなる"
 // distinction = "rendererから利用する公開helper経由で候補の検証とSDK固有値の保持を確認する"
 // @end-test-value
-test("Auxiliaryの候補外modelを拒否しSDK固有Depthを保持する", () => {
+test("Auxiliaryの表示候補を確定しSDK固有Depthを保持する", () => {
   const session = createAuxiliarySession({
     model: "gpt-5.4-mini",
     reasoningEffort: "low",
   });
 
-  assert.throws(
-    () => applyAuxiliarySessionModelChange(
+  assert.deepEqual(
+    applyAuxiliarySessionModelChange(
       session,
-      providerCatalog,
-      "missing-model",
+      { id: "displayed-model", label: "Displayed", reasoningEfforts: ["sdk-default"], defaultReasoningEffort: "sdk-default" },
       "2026-01-02T00:00:00.000Z",
     ),
-    /selected model/,
+    { ...session, model: "displayed-model", reasoningEffort: "sdk-default", updatedAt: "2026-01-02T00:00:00.000Z" },
   );
   assert.equal(applyAuxiliarySessionReasoningEffortChange(
     session, providerCatalog, "sdk-depth", "2026-01-02T00:00:00.000Z",

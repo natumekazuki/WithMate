@@ -1,15 +1,18 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { searchModelPickerOptions, type ModelPickerOption } from "./model-picker-options.js";
+import { searchModelPickerOptions } from "./model-picker-options.js";
+import type { ModelSelectOption } from "../../settings/model-select-options.js";
+import type { ModelCatalogItem } from "../../../src-shared/settings/model-catalog.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
 const ROW_HEIGHT = 56;
+type PickerOption = ModelSelectOption & { disabled?: boolean };
 
 export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, disabled, invalid, discoveryStatus, discoveryError, discoveryHasCache }: {
-  options: readonly ModelPickerOption[];
+  options: readonly ModelSelectOption[];
   value: string;
   fallbackLabel?: string;
-  onChange: (value: string) => void;
+  onChange: (model: ModelCatalogItem) => void;
   onOpen?: () => void;
   disabled?: boolean;
   invalid?: boolean;
@@ -24,7 +27,7 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   const listRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const awaitingFirstResult = useRef(false);
-  const [snapshot, setSnapshot] = useState<ModelPickerOption[] | null>(null);
+  const [snapshot, setSnapshot] = useState<PickerOption[] | null>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(-1);
   const [scrollTop, setScrollTop] = useState(0);
@@ -48,9 +51,9 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   function show() {
     if (disabled) return;
     awaitingFirstResult.current = !(discoveryHasCache ?? options.length > 0) && discoveryStatus !== "ready";
-    const next = options.map((option) => ({ ...option }));
+    const next: PickerOption[] = options.map((option) => ({ ...structuredClone(option), disabled: !option.model }));
     if (!next.some((option) => option.value === value) && value) {
-      next.push({ value, label: fallbackLabel ?? value, disabled: true });
+      next.push({ value, label: fallbackLabel ?? value, model: null, disabled: true });
     }
     const sorted = searchModelPickerOptions(next, "");
     const style = window.getComputedStyle(triggerRef.current!);
@@ -68,8 +71,8 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   useEffect(() => {
     if (!open || !awaitingFirstResult.current || discoveryStatus !== "ready") return;
     awaitingFirstResult.current = false;
-    const next = options.map((option) => ({ ...option }));
-    if (value && !next.some((option) => option.value === value)) next.push({ value, label: fallbackLabel ?? value, disabled: true });
+    const next: PickerOption[] = options.map((option) => ({ ...structuredClone(option), disabled: !option.model }));
+    if (value && !next.some((option) => option.value === value)) next.push({ value, label: fallbackLabel ?? value, model: null, disabled: true });
     const nextVisible = searchModelPickerOptions(next, query);
     const previousActive = visible[active]?.value;
     const nextActive = nextVisible.findIndex((option) => option.value === (previousActive ?? value));
@@ -144,8 +147,8 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
 
   function choose(index: number) {
     const option = visible[index];
-    if (!option || option.disabled) return;
-    onChange(option.value);
+    if (!option?.model || option.disabled) return;
+    onChange(option.model);
     close(true);
   }
 

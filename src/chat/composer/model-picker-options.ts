@@ -14,7 +14,7 @@ export function compareModelPickerOptions(a: ModelPickerOption, b: ModelPickerOp
     || a.value.localeCompare(b.value, "en");
 }
 
-export function searchModelPickerOptions(options: readonly ModelPickerOption[], query: string): ModelPickerOption[] {
+export function searchModelPickerOptions<T extends ModelPickerOption>(options: readonly T[], query: string): T[] {
   const term = query.trim().toLocaleLowerCase("en");
   const rank = (option: ModelPickerOption): number => {
     const names = [option.label, option.value].map((text) => text.toLocaleLowerCase("en"));

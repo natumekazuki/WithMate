@@ -116,8 +116,7 @@ describe("runAuxiliaryModelChangeOperation", () => {
     let updated: AuxiliarySession | null = null;
 
     await runAuxiliaryModelChangeOperation({
-      model: "gpt-5.5",
-      providerCatalog,
+      model: providerCatalog.models[1]!,
 
       updateActiveAuxiliarySession: async (recipe) => {
         updated = recipe(current);
