@@ -1685,6 +1685,53 @@ test("chat Find shows raw-only link matches without replacing Markdown or duplic
 
 // @test-value v2
 // kind = "contract"
+// claim = "原文一致への移動後はDOM更新で読取位置を強制せず、別の一致を選択すれば再び移動できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findと結果への移動" }
+// fault = "一致選択後の本文更新や仮想行変更のたびに同じ原文一致へスクロールする"
+// observable = "原文一致へのスクロール要求回数と選択中の一致"
+// observation_boundary = "component-behavior"
+// scope = "SessionMessageColumnの原文一致とDOM更新"
+// lifecycle = "permanent"
+// impact = "検索結果を選択したまま会話を読む位置がstreaming中に戻される"
+// distinction = "共有matcherのtestではDOM更新と選択移動の接続を確認できない"
+// @end-test-value
+test("chat Find preserves the reading position on DOM updates after navigating to a source match", async () => {
+  const mounted = await mountSessionMessageColumn({
+    messages: [
+      { role: "assistant", text: "[first](C:/one/sample.md)" },
+      { role: "assistant", text: "[second](C:/two/sample.md)" },
+    ],
+    isRunning: true,
+    liveRunAssistantText: "streaming response",
+  });
+  let scrollRequests = 0;
+  mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () {
+    if (this.matches(".message-source-match mark")) scrollRequests += 1;
+  };
+  try {
+    await setMessageFindQuery(mounted, "sample.md");
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/2");
+    assert.equal(scrollRequests, 1);
+    await act(async () => {
+      const node = mounted.dom.window.document.createElement("span");
+      node.textContent = "unrelated update";
+      mounted.messageListRef.current!.appendChild(node);
+    });
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(scrollRequests, 1);
+    await mounted.rerender({ isRunning: true, liveRunAssistantText: "streaming response updated" });
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(scrollRequests, 1);
+    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/2");
+    assert.equal(scrollRequests, 2);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Main/Auxiliaryのpaged Findは保存原文一致・未保存tail・pendingを各1回数え、原文抜粋と履歴page移動を選択結果へ対応させる"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/887; docs/design/desktop-ui.md: 全履歴Find" }
 // fault = "保存結果ordinalを表示一致ordinalと誤解する、loaded保存本文を加算する、またはtail/pending原文一致の選択を失う"

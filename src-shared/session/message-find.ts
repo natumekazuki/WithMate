@@ -53,7 +53,7 @@ function mapTokens(raw: string, value: string, start: number, renderedStart: num
 
 function mapText(raw: string, value: string, start: number, renderedStart: number, runs: SourceRun[], kind: "text" | "literal" = "text"): void {
   const rawLines = raw.split(/\r\n|\r|\n/u);
-  const valueLines = value.split("\n");
+  const valueLines = value.split(/\r\n|\r|\n/u);
   if (rawLines.length !== valueLines.length) return;
   let sourceOffset = start;
   let valueOffset = renderedStart;
@@ -62,13 +62,17 @@ function mapText(raw: string, value: string, start: number, renderedStart: numbe
     const text = valueLines[index];
     const prefixLength = index === 0 ? 0 : /^[\t >]*/u.exec(line)![0].length;
     for (let prefix = 0; prefix <= prefixLength; prefix += 1) {
-      if (mapTokens(line.slice(prefix), text, sourceOffset + prefix, valueOffset, runs, kind)) break;
+      const content = line.slice(prefix);
+      if (mapTokens(content, text, sourceOffset + prefix, valueOffset, runs, kind)) break;
+      const trimmed = index < rawLines.length - 1 && kind === "text" ? content.replace(/[ \t]+$/u, "") : content;
+      if (trimmed !== content && mapTokens(trimmed, text, sourceOffset + prefix, valueOffset, runs, kind)) break;
     }
     const newlineLength = raw[sourceOffset - start + line.length] === "\r" && raw[sourceOffset - start + line.length + 1] === "\n" ? 2 : 1;
-    if (index < rawLines.length - 1) runs.push({ renderedStart: valueOffset + text.length, renderedEnd: valueOffset + text.length + 1,
+    const valueNewlineLength = value[valueOffset - renderedStart + text.length] === "\r" && value[valueOffset - renderedStart + text.length + 1] === "\n" ? 2 : 1;
+    if (index < rawLines.length - 1) runs.push({ renderedStart: valueOffset + text.length, renderedEnd: valueOffset + text.length + valueNewlineLength,
       sourceStart: sourceOffset + line.length, sourceEnd: sourceOffset + line.length + newlineLength });
     sourceOffset += line.length + newlineLength;
-    valueOffset += text.length + 1;
+    valueOffset += text.length + valueNewlineLength;
   }
 }
 
@@ -146,7 +150,7 @@ function mapPart(part: MessageRenderedSearchPart, source: string, renderedStart:
     }
   }
   if (part.type === "text" && raw === part.text) {
-    mapTokens(raw, part.text, part.sourceStart, renderedStart, runs);
+    runs.push({ renderedStart, renderedEnd: renderedStart + raw.length, sourceStart: part.sourceStart, sourceEnd: part.sourceEnd });
   } else if (part.type === "text") {
     mapText(raw, part.text, part.sourceStart, renderedStart, runs);
   } else if (part.type === "inlineCode") {

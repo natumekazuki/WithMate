@@ -550,6 +550,7 @@ export function SessionMessageColumn({
   const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
+  const scrolledSourceMatchRef = useRef<string | null>(null);
   const handledMessageJumpRequestIdRef = useRef<number | null>(null);
   const requestedMessageJumpIdRef = useRef<number | null>(null);
   const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
@@ -1032,10 +1033,18 @@ export function SessionMessageColumn({
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
     if (!isContentActive || !findOpen || !findQuery.trim() || !messageListElement) {
+      scrolledSourceMatchRef.current = null;
       return;
     }
     const ownerDocument = messageListElement.ownerDocument;
     const current = selectedFindMatch ?? null;
+    const sourceMatchKey = sourceMatch && current ? JSON.stringify([
+      conversationQueryOwner, findQuery, activeCurrentFindMatch, current.kind,
+      current.kind === "message" ? findHistoryIndex ?? messageKeys?.[current.messageIndex] ?? current.messageIndex : null,
+      current.occurrenceIndex,
+    ]) : null;
+    if (!sourceMatchKey) scrolledSourceMatchRef.current = null;
+    let sourceScrollFrame: number | null = null;
     const applyHighlights = () => {
       const resolvedMatches: RenderedTextMatch[] = [];
       let resolvedCurrentMatch: RenderedTextMatch | null = null;
@@ -1084,7 +1093,18 @@ export function SessionMessageColumn({
       }
       applyRenderedTextHighlights(ownerDocument, resolvedMatches, resolvedCurrentMatch);
       if (sourceMatch) {
-        messageListElement.querySelector<HTMLElement>(".message-source-match mark")?.scrollIntoView({ block: "center", inline: "nearest" });
+        const node = messageListElement.querySelector<HTMLElement>(".message-source-match mark")?.firstChild;
+        const view = ownerDocument.defaultView;
+        if (sourceMatchKey && scrolledSourceMatchRef.current !== sourceMatchKey && sourceScrollFrame === null && node?.nodeType === Node.TEXT_NODE && view) {
+          sourceScrollFrame = view.requestAnimationFrame(() => {
+            sourceScrollFrame = null;
+            const target = messageListElement.querySelector<HTMLElement>(".message-source-match mark")?.firstChild;
+            if (target?.nodeType !== Node.TEXT_NODE) return;
+            const text = target as Text;
+            scrollRenderedTextMatchIntoView({ startNode: text, startOffset: 0, endNode: text, endOffset: text.length }, messageListElement);
+            scrolledSourceMatchRef.current = sourceMatchKey;
+          });
+        }
       } else {
         scrollRenderedTextMatchIntoView(resolvedCurrentMatch, messageListElement);
       }
@@ -1094,15 +1114,19 @@ export function SessionMessageColumn({
     const observer = MutationObserverConstructor ? new MutationObserverConstructor(applyHighlights) : null;
     observer?.observe(messageListElement, { childList: true, characterData: true, subtree: true });
     return () => {
+      if (sourceScrollFrame !== null) ownerDocument.defaultView?.cancelAnimationFrame(sourceScrollFrame);
       observer?.disconnect();
       clearRenderedTextHighlights(ownerDocument);
     };
   }, [
     activeCurrentFindMatch,
+    conversationQueryOwner,
+    findHistoryIndex,
     findOpen,
     findQuery,
     isContentActive,
     messageFindMatches,
+    messageKeys,
     messages,
     messageViewMode,
     provider,

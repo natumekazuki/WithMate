@@ -41,6 +41,11 @@ test("変換されたMarkdownの元出現を対応付ける", () => {
   for (const [text, query, kinds] of [
     ["> alpha\n> needle", "needle", ["rendered"]],
     ["- alpha\n  needle", "needle", ["rendered"]],
+    ["foo \nbar", "foo", ["rendered"]],
+    ["- a\n- needle \n  bar", "needle", ["rendered"]],
+    ["foo\r\nneedle", "needle", ["rendered"]],
+    ["foo\r\nneedle", "foo\r\nneedle", ["rendered"]],
+    ["foo\r\nneedle \r\nbar", "needle", ["rendered"]],
     ["a \\*needle\\*", "needle", ["rendered"]],
     ["&amp;amp;", "amp", ["rendered", "source"]],
     ["`needle`", "needle", ["rendered"]],
