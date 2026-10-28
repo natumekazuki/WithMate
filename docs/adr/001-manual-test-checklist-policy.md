@@ -5,7 +5,7 @@
 
 ## 適用状態
 
-ユーザーが項目表を利用していないため、本ADRが定めるチェックリスト本体・運用方針・更新義務を廃止する。以下の本文は当時の判断として保持する。変更範囲に必要な検証は[Development Workflow](../runbooks/development-workflow.md#検証)、リリース後の利用確認と完了判断は[README](../../README.md#課題の対応予定とmilestone)に従う。
+ユーザーが項目表を利用していないため、本ADRが定めるチェックリスト本体・運用方針・更新義務を廃止する。以下の本文は当時の判断として保持する。変更範囲に必要な検証は[Development Workflow](../runbooks/development-workflow.md#検証)、リリース後の利用確認と完了判断は[Development Workflowの完了運用](../runbooks/development-workflow.md#課題の対応予定とmilestone)に従う。
 
 当時の文書は[項目表](https://github.com/natumekazuki/WithMate/blob/274af7da4d4259c517fc269a272796d7a28be5ba/docs/manual-test-checklist.md)と[運用方針](https://github.com/natumekazuki/WithMate/blob/274af7da4d4259c517fc269a272796d7a28be5ba/docs/design/manual-test-checklist.md)を参照する。
 

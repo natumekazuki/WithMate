@@ -16,7 +16,7 @@
 
 | 文書 | 内容 |
 | --- | --- |
-| [README](../../README.md) | 機能の入口、起動、開発・build手順 |
+| [README](../../README.md) | 製品概要、主要機能、起動・検証・buildの基本手順と文書への入口 |
 | [Feature Guides](../features/README.md) | 利用者向けの機能別ガイド |
 | [Memory / Affect MCP Runbook](../runbooks/memory-affect-mcp.md) | Memory / Affect MCPの運用・診断 |
 | [Repository Glossary Runbook](../runbooks/repository-glossary.md) | 用語集の運用・診断 |
@@ -65,7 +65,7 @@
 | 文書 | 内容 |
 | --- | --- |
 | [Agent Guide](../../AGENTS.md) | 作業内容に応じた参照先と、課題管理・互換性の入口 |
-| [Development Workflow](../runbooks/development-workflow.md) | 回答・コード変更・検証・Git操作の規則 |
+| [Development Workflow](../runbooks/development-workflow.md) | 回答・実装境界・検証手順・課題とMilestoneの完了運用・Git操作の規則 |
 | [Distribution Packaging](distribution-packaging.md) | installer、app bundle、配布build |
 
 ## 設計判断とリリースの履歴
