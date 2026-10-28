@@ -33,8 +33,7 @@ import type { WithMateWindowAuxiliaryApi } from "../../src-shared/ipc/withmate-w
 // @end-test-value
 test("新規Auxiliaryの初回draft保存からqueue受付まで成立する", async () => {
   const directory = await mkdtemp(join(tmpdir(), "withmate-fresh-auxiliary-"));
-  const bundle = createV6StorageWorkerBundle({ dbPath: join(directory, "withmate-v6.db"), userDataPath: directory,
-    bundledModelCatalogPath: join(process.cwd(), "public/model-catalog.json") });
+  const bundle = createV6StorageWorkerBundle({ dbPath: join(directory, "withmate-v6.db"), userDataPath: directory });
   const dom = new JSDOM("<div id='root'></div>");
   const globals = { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true };
   const originals = Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);

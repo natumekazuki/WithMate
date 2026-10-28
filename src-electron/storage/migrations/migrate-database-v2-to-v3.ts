@@ -5,7 +5,7 @@ import { openAppDatabaseReadOnly, openMigrationDatabase } from "../sqlite-connec
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE, normalizeApprovalMode } from "../../../src-shared/settings/approval-mode.js";
 import { DEFAULT_CODEX_SANDBOX_MODE, normalizeCodexSandboxMode } from "../../../src-shared/settings/codex-sandbox-mode.js";
-import { DEFAULT_CATALOG_REVISION, DEFAULT_MODEL_ID, DEFAULT_PROVIDER_ID, DEFAULT_REASONING_EFFORT } from "../../../src-shared/settings/model-catalog.js";
+import { DEFAULT_PROVIDER_ID } from "../../../src-shared/settings/model-catalog.js";
 import { normalizeSession } from "../../../src-shared/session/session-state.js";
 import { CREATE_V3_SCHEMA_SQL } from "../database-schema-v3.js";
 import { SessionStorageV3 } from "../../session/session-storage-v3.js";
@@ -316,14 +316,6 @@ function parseStringArray(value: string | null | undefined): string[] {
   return parseJsonArray(value).filter((entry): entry is string => typeof entry === "string");
 }
 
-function normalizeReasoningEffort(value: string): typeof DEFAULT_REASONING_EFFORT {
-  if (value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh") {
-    return value;
-  }
-
-  return DEFAULT_REASONING_EFFORT;
-}
-
 function rowToSession(row: SessionHeaderRow, messages: SessionMessageRow[]): Session {
   const session = normalizeSession({
     id: row.id,
@@ -331,7 +323,7 @@ function rowToSession(row: SessionHeaderRow, messages: SessionMessageRow[]): Ses
     status: row.status,
     updatedAt: row.updated_at,
     provider: row.provider || DEFAULT_PROVIDER_ID,
-    catalogRevision: row.catalog_revision || DEFAULT_CATALOG_REVISION,
+    catalogRevision: row.catalog_revision || 1,
     workspaceLabel: row.workspace_label,
     workspacePath: row.workspace_path,
     branch: row.branch,
@@ -346,8 +338,8 @@ function rowToSession(row: SessionHeaderRow, messages: SessionMessageRow[]): Ses
     runState: row.run_state,
     approvalMode: normalizeApprovalMode(row.approval_mode, DEFAULT_APPROVAL_MODE),
     codexSandboxMode: normalizeCodexSandboxMode(row.codex_sandbox_mode, DEFAULT_CODEX_SANDBOX_MODE),
-    model: row.model || DEFAULT_MODEL_ID,
-    reasoningEffort: normalizeReasoningEffort(row.reasoning_effort),
+    model: row.model || "gpt-5.4",
+    reasoningEffort: row.reasoning_effort ?? "high",
     customAgentName: row.custom_agent_name,
     allowedAdditionalDirectories: parseAllowedAdditionalDirectories(row.allowed_additional_directories_json),
     threadId: row.thread_id,

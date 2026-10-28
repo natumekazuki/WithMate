@@ -153,7 +153,7 @@ test("quota pollingとturn後の予約はclearAllとdisposeで停止する", asy
 
 // @test-value v2
 // kind = "contract"
-// claim = "CodexとClaudeの成功後60秒は取得をprovider別に集約し、連続turnでも期限を延期せず、Copilotの0/3/10秒取得は維持する"
+// claim = "Codex・Claude・OpenCodeの成功後60秒は取得をprovider別に集約し、連続turnでも期限を延期せず、Copilotの0/3/10秒取得は維持する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
 // fault = "短いturnごとに取得する、後続turnで期限を延期する、別providerやCopilotへ抑制を波及させる"
 // observable = "fake clock上のprovider別取得時刻と抑制中に返るcache"
@@ -174,17 +174,20 @@ test("quota成功後の取得はprovider別の固定期限に集約する", asyn
   };
   const codexRefresh = refresh("codex");
   const claudeRefresh = refresh("claude");
+  const opencodeRefresh = refresh("opencode");
   const copilotRefresh = refresh("copilot");
   await service.refreshProviderQuotaTelemetry("codex", codexRefresh);
   const cached = service.getProviderQuotaTelemetry("codex");
   t.mock.timers.tick(1000);
   await service.refreshProviderQuotaTelemetry("claude", claudeRefresh);
+  await service.refreshProviderQuotaTelemetry("opencode", opencodeRefresh);
   assert.equal(service.getProviderQuotaTelemetry("claude")?.status, "unsupported");
   service.scheduleProviderQuotaTelemetryRefresh("copilot", [0, 3000, 10000], copilotRefresh);
   t.mock.timers.tick(0); await flushQuotaTasks();
   for (let elapsed = 1000; elapsed <= 59000; elapsed += 1000) {
     service.scheduleProviderQuotaTelemetryRefresh("codex", [3000], codexRefresh);
     service.scheduleProviderQuotaTelemetryRefresh("claude", [3000], claudeRefresh);
+    service.scheduleProviderQuotaTelemetryRefresh("opencode", [3000], opencodeRefresh);
     assert.equal(await service.refreshProviderQuotaTelemetry("codex", codexRefresh), cached);
     t.mock.timers.tick(1000); await flushQuotaTasks();
   }
@@ -193,8 +196,9 @@ test("quota成功後の取得はprovider別の固定期限に集約する", asyn
   assert.deepEqual(calls.filter(([id]) => id === "copilot"), [["copilot", 1000], ["copilot", 4000], ["copilot", 11000]]);
   t.mock.timers.tick(1000); await flushQuotaTasks();
   assert.deepEqual(calls.filter(([id]) => id === "claude"), [["claude", 1000], ["claude", 61000]]);
+  assert.deepEqual(calls.filter(([id]) => id === "opencode"), [["opencode", 1000], ["opencode", 61000]]);
   t.mock.timers.tick(60000); await flushQuotaTasks();
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 9);
 });
 
 // @test-value v2

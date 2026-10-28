@@ -8,7 +8,6 @@ import { buildHomeLaunchProjection, inferWorkspaceFromPath } from "../../src/hom
 
 function createCatalog(): ModelCatalogSnapshot {
   return {
-    revision: 1,
     providers: [
       {
         id: "codex",

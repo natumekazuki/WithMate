@@ -53,7 +53,13 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     process: { argv: ["--benchmark-auxiliary-count=100", "--benchmark-history=long"] },
     Buffer,
   });
-  let summaryReads = 0;
+
+  const getModelCatalog = api.getModelCatalog;
+  api.getModelCatalog = async (request) => {
+    const snapshot = await getModelCatalog(request);
+    return snapshot ? { ...snapshot, workspacePath: request?.workspacePath } : snapshot;
+  };
+ let summaryReads = 0;
   api.getProviderQuotaTelemetry = async () => null;
   api.subscribeProviderQuotaTelemetry = () => () => {};
   let notifyAppSettings: Parameters<WithMateWindowApi["subscribeAppSettings"]>[0] | undefined;

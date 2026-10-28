@@ -125,7 +125,7 @@ export class SessionObservabilityService {
     this.providerQuotaTrailingTimers.delete(providerId);
     const controller = new AbortController();
     const attemptStartedAt = Date.now();
-    const tracksStatus = providerId === "codex" || providerId === "claude";
+    const tracksStatus = providerId === "codex" || providerId === "claude" || providerId === "opencode";
     const current = this.getProviderQuotaTelemetry(providerId);
     const operation = { controller, promise: Promise.resolve<ProviderQuotaTelemetry | null>(null) };
     operation.promise = Promise.resolve().then(() => controller.signal.aborted ? null : refresh(controller.signal)).then((telemetry) => {

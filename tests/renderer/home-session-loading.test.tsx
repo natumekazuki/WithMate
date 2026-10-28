@@ -538,7 +538,7 @@ test("RecentとPinnedの単独失敗を分離し、Randomは使用中Character�
 // claim = "使用履歴の未完了・失敗中はRandomのStartが無効で、回復後と固定Character選択では開始でき、一覧回復は別の作成失敗を消さない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md New Session dialog / docs/adr/004-launch-character-random-selection.md Decision / GitHub Issues #754 and #755" }
 // fault = "履歴未準備のRandomでStartを有効にするか、回復後も無効にするか、一覧の状態変化で無関係な作成失敗を消す"
-// observable = "Startのdisabled、createSession呼出件数とcharacterId、dialogの閉鎖と作成失敗feedback"
+// observable = "Startのdisabled、createSession呼出件数とcharacterId、dialogの閉鎖と作成失敗feedback・詳細の保持"
 // observation_boundary = "component-behavior"
 // scope = "HomeAppの履歴取得とNew Session開始"
 // lifecycle = "permanent"
@@ -583,7 +583,13 @@ test("履歴未準備時のStart無効化と回復後の開始、作成失敗fee
     await act(async () => button(dialog, "Start").click());
     assert.equal(home.requests.length, 2);
     assert.equal(home.requests[1]?.characterId, "used");
-    assert.match(dialog.textContent ?? "", /Create failed/);
+    assert.match(dialog.querySelector('[role="alert"]')?.textContent ?? "", /Check Recent Sessions before trying again/);
+    const details = dialog.querySelector<HTMLButtonElement>('[aria-label="Session Creation Error Details"]');
+    assert.ok(details);
+    await act(async () => details.click());
+    const errorPanel = home.element.ownerDocument.querySelector('[role="dialog"][aria-label="Session Creation Error Details"]');
+    assert.ok(errorPanel);
+    assert.match(errorPanel.textContent ?? "", /Create failed/);
 
     home.setListPage(async (request) => {
       if (request.scope === "recent") throw new Error("Recent unavailable during launch");
@@ -592,12 +598,14 @@ test("履歴未準備時のStart無効化と回復後の開始、作成失敗fee
     home.setUsage(async () => [{ characterId: "used", sessionKind: "default" }]);
     await home.focus();
     assert.match(home.element.querySelector(".home-session-list-feedback")?.textContent ?? "", /Recent unavailable during launch/);
-    assert.match(dialog.textContent ?? "", /Create failed/);
+    assert.equal(errorPanel.isConnected, true);
+    assert.match(errorPanel.textContent ?? "", /Create failed/);
     assert.doesNotMatch(dialog.textContent ?? "", /Recent unavailable during launch/);
     home.setListPage(async (request) => page(request.scope === "open" ? [session("open")] : []));
     await home.focus();
     assert.equal(home.element.querySelector(".home-session-list-feedback"), null);
-    assert.match(dialog.textContent ?? "", /Create failed/);
+    assert.equal(errorPanel.isConnected, true);
+    assert.match(errorPanel.textContent ?? "", /Create failed/);
   } finally {
     await home.close();
   }

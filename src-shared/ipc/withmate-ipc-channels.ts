@@ -66,10 +66,6 @@ export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL =
   "withmate:get-file-root-git-history-diff";
 export const WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL = "withmate:get-session-message-artifact";
 export const WITHMATE_GET_MODEL_CATALOG_CHANNEL = "withmate:get-model-catalog";
-export const WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL = "withmate:import-model-catalog";
-export const WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL = "withmate:export-model-catalog";
-export const WITHMATE_IMPORT_MODEL_CATALOG_FILE_CHANNEL = "withmate:import-model-catalog-file";
-export const WITHMATE_EXPORT_MODEL_CATALOG_FILE_CHANNEL = "withmate:export-model-catalog-file";
 export const WITHMATE_GET_DIFF_PREVIEW_CHANNEL = "withmate:get-diff-preview";
 export const WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL = "withmate:list-auxiliary-sessions";
 export const WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL =

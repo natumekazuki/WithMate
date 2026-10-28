@@ -111,7 +111,7 @@ test("Sessionの設定とcatalogを独立して再試行し会話とdraftを保�
     await act(async () => { button("Retry Model Catalog").click(); });
     assert.deepEqual(calls, { settings: 2, catalog: 2, conversation: 1 });
     assert.equal(button("Send").disabled, true);
-    await act(async () => { catalogRead.resolve({ revision: 1, providers: [{
+    await act(async () => { catalogRead.resolve({ workspacePath: "benchmark-workspace", providers: [{
       id: "codex", label: "Codex", defaultModelId: "gpt-5.4-mini", defaultReasoningEffort: "medium",
       models: [{ id: "gpt-5.4-mini", label: "GPT-5.4 Mini", reasoningEfforts: ["medium"] }],
     }] }); });

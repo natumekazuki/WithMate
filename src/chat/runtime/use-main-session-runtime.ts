@@ -10,8 +10,6 @@ import type { RunSessionTurnRequest } from "../../../src-shared/session/runtime-
 import type { Session } from "../../../src-shared/session/session-state.js";
 import { getSessionIncarnationId } from "../../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
-import { applyExecutionOptionsCatalog } from "../../../src-shared/session/execution-options-catalog.js";
-import type { ModelCatalogSnapshot } from "../../../src-shared/settings/model-catalog.js";
 import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-api.js";
 import type { ReadStatus } from "../../ui/loading-indicator.js";
 import type {
@@ -64,16 +62,15 @@ export function useMainSessionRuntime({
   });
   const currentSessionRef = useRef<Session | null>(null);
   const localSelectionRef = useRef<{ id: string; incarnationId: string; options: SessionExecutionOptions } | null>(null);
-  const activeCatalogRef = useRef<ModelCatalogSnapshot | null>(null);
   const selectionRequestRevisionRef = useRef(0);
   const mergeLocalSelection = useCallback((next: Session): Session => {
     const selection = localSelectionRef.current;
-    if (!selection || selection.id !== next.id) return applyExecutionOptionsCatalog(next, activeCatalogRef.current);
+    if (!selection || selection.id !== next.id) return next;
     if (selection.incarnationId !== getSessionIncarnationId(next)) {
       localSelectionRef.current = null;
-      return applyExecutionOptionsCatalog(next, activeCatalogRef.current);
+      return next;
     }
-    return applyExecutionOptionsCatalog({ ...next, ...selection.options }, activeCatalogRef.current);
+    return { ...next, ...selection.options };
   }, []);
   const applySessions = useCallback((update: SetStateAction<Session[]>) => {
     setSessionsBase((previous) => {
@@ -83,10 +80,6 @@ export function useMainSessionRuntime({
       return merged;
     });
   }, [mergeLocalSelection, selectedId]);
-  const applyModelCatalog = useCallback((catalog: ModelCatalogSnapshot) => {
-    activeCatalogRef.current = catalog;
-    applySessions((current) => current);
-  }, [applySessions]);
   const mutationRevisionRef = useRef(new StateMutationRevision());
   const projectionRevisionRef = useRef(new StateMutationRevision());
   const refetchRevisionRef = useRef(new LatestRequestRevision());
@@ -335,7 +328,6 @@ export function useMainSessionRuntime({
     readStatus: readState.ownerId === selectedId ? readState.status : "loading" as const,
     readError: readState.ownerId === selectedId ? readState.error : "",
     retryRead: () => setReadRevision((current) => current + 1),
-    applyModelCatalog,
     getCurrentSession: () => currentSessionRef.current,
     selectExecutionOptions,
     updateSessionProjection: (sessionId: string, patch: (current: Session) => Session) => {

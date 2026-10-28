@@ -28,13 +28,13 @@ test("実行中Mainは次送信用の対応設定を編集できる", async () =
     { option: { kind: "codex-sandbox-mode", value: "danger-full-access" }, field: "codexSandboxMode", expected: "danger-full-access" },
     { option: { kind: "codex-speed", value: "fast" }, field: "codexSpeed", expected: "fast" },
     { option: { kind: "codex-reviewer", value: "auto-review" }, field: "codexReviewer", expected: "auto-review" },
-    { option: { kind: "model", value: "model-b" }, field: "model", expected: "model-b" },
+    { option: { kind: "model", value: { id: "model-b", label: "B", reasoningEfforts: ["medium", "high"] } }, field: "model", expected: "model-b" },
     { option: { kind: "reasoning-effort", value: "high" }, field: "reasoningEffort", expected: "high" },
   ];
   const input: Omit<Parameters<typeof runMainRuntimeOptionOperation>[0], "option"> = { session, isReadOnly: false,
     providerCatalog: { id: "codex", label: "Codex", defaultModelId: "model-a", defaultReasoningEffort: "medium",
       models: [{ id: "model-a", label: "A", reasoningEfforts: ["medium", "high"] }, { id: "model-b", label: "B", reasoningEfforts: ["medium", "high"] }] },
-    catalogRevision: 2, persist: async (next) => { writes += 1; return next; }, createTimestampLabel: () => "now" };
+    persist: async (next) => { writes += 1; return next; }, createTimestampLabel: () => "now" };
   for (const { option, field, expected } of cases) {
     assert.equal((await runMainRuntimeOptionOperation({ ...input, option }))?.[field], expected);
   }

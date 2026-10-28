@@ -17,7 +17,6 @@ import {
 
 function createSnapshot(): ModelCatalogSnapshot {
   return {
-    revision: 1,
     providers: [
       {
         id: "codex",
@@ -34,7 +33,17 @@ function createSnapshot(): ModelCatalogSnapshot {
 }
 
 describe("home-settings-view-model", () => {
-  it("provider row は model / reasoning の resolved 値を持つ", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "provider設定表示はSDK候補にない保存modelとDepthを保持する"
+  // oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+  // fault = "保存modelをcatalog既定値へ置換する"
+  // observable = "provider rowのmodelとDepth"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-saved-model-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("provider row はcatalog未収録の保存選択を保持する", () => {
     const settings = createDefaultAppSettings();
     settings.memoryExtractionProviderSettings.codex = {
       model: "missing-model",
@@ -45,25 +54,45 @@ describe("home-settings-view-model", () => {
 
     const rows = buildHomeProviderSettingRows(createSnapshot(), settings);
 
-    assert.equal(rows[0]?.resolvedMemoryExtractionModel, "gpt-5.4");
+    assert.equal(rows[0]?.resolvedMemoryExtractionModel, "missing-model");
     assert.equal(rows[0]?.resolvedMemoryExtractionReasoningEffort, "high");
     assert.equal(rows[0]?.memoryExtractionSettings.timeoutSeconds, 240);
   });
 
-  it("normalized settings は resolved 値を provider ごとに再構成する", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "未選択のmemory設定はSDK候補の既定モデルを創作せず保存する"
+  // oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+  // fault = "未選択modelやDepthをSDK候補から自動補完する"
+  // observable = "memory設定modelとDepth"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-unselected-model"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("保存settingsはproviderごとの値を保持する", () => {
     const rows = buildHomeProviderSettingRows(createSnapshot(), createDefaultAppSettings());
 
     assert.deepEqual(buildNormalizedMemoryExtractionProviderSettings(rows), {
       codex: {
-        model: "gpt-5.4",
-        reasoningEffort: "high",
+        model: "",
+        reasoningEffort: "",
         outputTokensThreshold: 300000,
         timeoutSeconds: 180,
       },
     });
   });
 
-  it("persisted settings は resolved provider settings を埋め込む", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "App設定保存は候補外memory modelと独立した設定値を保持する"
+  // oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+  // fault = "設定保存時に候補外modelを消すか無関係な設定を上書きする"
+  // observable = "保存用App設定のmodelとtoggle値"
+  // observation_boundary = "public-boundary"
+  // scope = "settings-persisted-model"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("persisted settings はcatalog未収録の選択を保持する", () => {
     const draft = createDefaultAppSettings();
     draft.autoCollapseActionDockOnSend = false;
     draft.scrollToLatestOnSend = false;
@@ -80,7 +109,7 @@ describe("home-settings-view-model", () => {
     assert.equal(persisted.autoCollapseActionDockOnSend, false);
     assert.equal(persisted.scrollToLatestOnSend, false);
     assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {
-      model: "gpt-5.4",
+      model: "missing-model",
       reasoningEffort: "high",
       outputTokensThreshold: 333,
       timeoutSeconds: 240,

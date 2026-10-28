@@ -23,7 +23,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - Session Monitor Window
 - Session の coding agent 作業 UI
 - Diff Window の閲覧 UI
-- Settings Window と model catalog 操作
+- Settings Window
 
 ## UI Source Of Truth Boundary
 
@@ -31,7 +31,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## 読込と表示言語の適用
 
-- Sessionは基本情報からheaderとFilesを表示し、会話は独立して読み込む。会話取得が成功するまで会話全体を必要とする編集・送信を行わない。Homeの一覧はapp stateの取得を待たず、Settingsの設定draft、Model Catalog、Diagnosticsはそれぞれの取得状態を持つ。
+- Sessionは基本情報からheaderとFilesを表示し、会話は独立して読み込む。会話取得が成功するまで会話全体を必要とする編集・送信を行わない。Homeの一覧はapp stateの取得を待たず、Settingsの設定draftとDiagnostics、SessionのSDK model候補はそれぞれの取得状態を持つ。
 - 現役6 HTML entryのshellは`lang="en"`とする。
 
 ## Windows Session Notifications
@@ -40,7 +40,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 質問は`item/tool/requestUserInput`のblocking／nonblocking両方と、`agentMessage`の`delivery = async`かつ`questions`を持つ通知を対象とし、質問フォームを表示する時点で通知する。同一itemの開始・完了で二重通知しない。通常の会話本文を質問と推測せず、MCP elicitation・承認待ち・他providerの質問はこの通知に含めない。Monitorの分類は通知設定とは独立して入力待ちを反映する。
 - 質問通知はtitleを`WithMate`、bodyを`<Session名>: Codex has a question.`とし、Character icon、通知の識別・置換、クリック時の会話復帰は既存のturn通知を共有する。質問文・選択肢・入力値・会話本文はOS通知へ出さず、`Notification Response Preview`は成功したturnの完了通知だけに適用する。
 - 回答、取消、server側解決、runtime resetで質問通知を撤去する。解決後に設定読込みが完了しても古い通知を表示せず、同じ会話の後続通知を古い質問の解決で撤去しない。通知の作成・配送・撤去失敗は診断として扱い、質問への回答やprovider実行を失敗させない。
-- `Session Approval Notification`は承認待ち専用の設定で、既定は有効。Codex／Copilot／Claudeの共通承認要求を対象とし、Main／Auxiliaryとも親Session Windowが開いていて非focusの場合に通知する。閉じたWindowは対象外とし、Auxiliaryでは親Windowのfocusを使う。
+- `Session Approval Notification`は承認待ち専用の設定で、既定は有効。Codex／Copilot／Claude／OpenCodeの共通承認要求を対象とし、Main／Auxiliaryとも親Session Windowが開いていて非focusの場合に通知する。閉じたWindowは対象外とし、Auxiliaryでは親Windowのfocusを使う。
 - 承認要求をlive stateへ公開した時に`<Session名>: approval required.`を通知する。Session名以外の本文、command、path、details、warningは表示せず、通知から直接approve／denyしない。クリックで対象Main／Auxiliaryへ戻り、対象が失われていた場合はHomeへ戻る。
 - 同一会話・同一requestの重複callbackは通知を増やさず、解決・abort・cancel・resetで通知を撤去する。設定取得中に解決した古い通知は表示しない。通知の識別・後続通知への置換・削除時の撤去は既存の会話単位の基盤を使い、古い要求の解決で後続通知を消さない。通知失敗は承認decisionやproviderの結果を変更しない。
 - 同一会話の承認要求はFIFOで先頭1件だけを既存の承認cardへ表示し、表示した要求だけ通知する。判断後に次へ進み、Monitorは未解決要求がある間も会話単位で数える。要求の識別と取消の契約は[Session Run Lifecycle](session-run-lifecycle.md#sessionapprovalservice)を参照する。
@@ -206,6 +206,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - model / depth / approval / sandbox / Reviewer / Speed / custom agent は dialog には出さず、Main Process が作成直前に provider ごとの現在選択を優先して解決する。現在選択がなければ保存済みの直近 Session 一件を参照する。詳細は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する
   - open 時は dialog 内の最初の主要入力へ focus する。Home の `New Session` は入力途中の意図しないdismissを避けるため、footerの`Cancel`で閉じ、backdrop clickや`Escape`では閉じない
   - 開始中も`Cancel`で閉じられるが、送信済みのSession作成は取り消さない。開始要求はそのdialog表示に所属し、閉じた要求の成功・失敗・busy解除で再表示後の入力・選択・feedback・開始中状態・focusを変更しない。同じ表示内の開始要求は同時に一つだけ受け付ける
+  - Model取得を含むSession作成要求の失敗では入力・選択を保持し、footerにerror詳細のiconと成否不明時のRecent Sessions確認の注意を表示する。診断全文は非modal popoverで開き、`Retry`は同じ入力で作成要求を明示再試行する。validationや開始前の取得待ちを作成失敗へ変換せず、自動再送しない。詳細はEscape・閉じる操作で入口へfocusを戻し、外側の操作ではfocusを奪わない
   - 閉じた要求がSessionを作成した場合はRecent Sessionsへ反映し、Windowは自動で開かない。作成結果・確認不能の失敗はtitle付きの独立した結果通知としてHome Window内のRecent Sessionsに保持し、利用者が`Dismiss`するまで表示する。通知自体はWindowをまたいで永続化しない。別のNew Session表示中は通知を保留し、閉じた後に表示する。`Dismiss`は通知だけを消し、Sessionを削除しない。結果不明の自動再送やrollbackは行わない
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
   - provider の single-select chip は矢印キーで選択を移動できる
@@ -220,7 +221,6 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - `Prompt Context` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える。sectionやproviderを装飾cardで入れ子にしない
   - `Diagnostics`
-  - `Model Catalog` import / export
   - `Repository Glossary` の自動追加上限
   - `Storage Maintenance` の古いSession削除
   - 縦が小さいときも overlay 内スクロールで末尾まで操作できる
@@ -507,8 +507,11 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - composer下のruntime settingsはshared chat composerを正本とし、providerの対応範囲で`Approval / Sandbox / Model / Depth`を表示する。CodexとClaudeでは`Approval`の直後にcompactな`Reviewer`（`User / Auto Review`）、同じ列に`Speed`（`Standard / Fast`）を表示し、Session単位で保持する。Approvalは承認方針、Reviewerは判断担当とするWithMate共通の定義とnative写像は[Provider Adapter](provider-adapter.md#approval-modes)を正本とする。`Reviewer`はread-only、blocked、入力凍結、またはApprovalが`never`の間は現在値を保持したまま変更できず、その他のruntime optionもproviderの対応範囲と編集制約に従う
   - CodexとCopilotのApproval候補は`Auto Run / Provider Controlled / Safety Focused`
   - ClaudeのApproval候補は`Auto Run / Provider Controlled / Accept Edits / Preapproved Only / Plan`。既定は`Provider Controlled + User`。Auto ReviewはReviewerで選び、Provider Controlledとの組合せで有効になる。Auto RunではReviewerを適用せず保存値を保持する。Accept Edits／Preapproved Only／PlanとAuto Reviewの組合せは無効で、両selectは現在の相手側の選択に対応しない候補をdisabledにする。ReviewerがUserしか選べない正常状態ではcontrol全体をdisabledにするが、不正な保存組合せではinvalidを示してUserへの変更を受け付ける。保存Approval自体が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーの明示選択で修正でき、黙って権限設定を置き換えない
-  - runtime設定のnative selectは、Main／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
-  - runtime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。Electronのcustomizable selectでmenuに6px、各選択肢に上下8px・左右12pxの余白を設け、viewport内へ収める。常設の項目名は省略し、Approval / Reviewer / Sandbox / Model / Depth / Speedの現在値を文字で表示する。項目名はtooltipとaccessible nameに残し、disabled・invalid・focusの状態を維持する。候補はprovider・model設定に従う。幅が不足するときは文字や余白を縮めず設定群を折り返す
+  - runtime設定は、Main／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
+  - OpenCodeのApprovalは`Provider Controlled`（既定）と`Auto Run`を選べる。`Safety Focused`、Sandbox／Reviewer／Speedは提供しない。OpenCodeのform質問は共通Question Formsで回答し、実行中の`Steer`とCopilot専用`Tasks`は表示しない
+  - ModelはSessionの固定providerのSDK候補を検索するpopoverとする。通常は表示名の自然順昇順、同名は配信元・ID順とし、検索結果は名前／IDの完全一致、前方一致、部分一致、配信元だけの一致を優先する。選択中modelにcheckを付け、識別用の配信元とIDを併記する。大量候補はvirtualizeし、開いている候補はsnapshotとして保持する。矢印／Page移動、Enterで選択、Escapeで取消とfocus復帰、IME変換中のEnter抑止を提供する。providerやsortの追加UIは置かない
+  - Modelはcacheを先に表示し、古い一覧はbackground更新する。取得中・取得失敗・正常empty・検索0件を区別し、候補の更新で現在選択、draft、threadを変更しない。候補から消えた現在modelも表示する。Depthは独立した選択とし、modelがadvertiseする任意の値を表示する。Depth候補が空なら隠す。取得・実行の境界は[Provider Model Discovery](model-catalog.md)を参照する
+  - Model以外のruntime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。Electronのcustomizable selectでmenuに6px、各選択肢に上下8px・左右12pxの余白を設け、viewport内へ収める。常設の項目名は省略し、Approval / Reviewer / Sandbox / Model / Depth / Speedの現在値を文字で表示する。項目名はtooltipとaccessible nameに残し、disabled・invalid・focusの状態を維持する。幅が不足するときは文字や余白を縮めず設定群を折り返す
 - session title は mate `main`
 - assistant本文はgradientを使わず、`main`の細い左線とavatarの縁、控えめな背景色で周囲から区別する。user本文は控えめなsurfaceで区別し、通常のassistantとuserの枠は同じ丸みを持つ。pendingとAuxiliary groupの状態表現は維持する
 - composer settings は独立したaccent背景を持たず、周囲のsurfaceと同じ背景を使う
@@ -573,5 +576,5 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Session は mate の `main / sub` theme color snapshot を保持し、現在は header title、assistant / pending bubble、`Send / Cancel`、artifact block、Session から開く Diff の `titlebar / subbar / pane header` の限定的な accent に使う
 - theme 由来の前景色決定は輝度閾値ではなく共通 contrast helper を正本にし、Home / Character Editor / Session / Diff で同じ WCAG AA 基準を使う
 - 保存済み会話は SQLite を正本とし、表示中の実行設定は現在選択を使う。Send はその時点の選択値を捕捉し、checkpoint の完了を待たない
-- model catalog は DB の active revision を読む
+- model候補はprovider／workspace／設定・認証context別のSDK cacheを読み、一覧更新は実行設定や履歴のmigrationを行わない
 - message list follow mode は assistantText streaming / pending bubble 更新に反応し、command 監視は right pane の `Latest Command` へ分離する

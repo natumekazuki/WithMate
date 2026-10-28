@@ -2,8 +2,6 @@ import { getSessionIncarnationId, type Session } from "../../src-shared/session/
 import { CurrentExecutionSelections } from "../session/current-execution-selections.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
-import type { CharacterAffectTurnDrainCursor } from "../character/character-affect-turn-drain.js";
-import type { CharacterAffectTurnSettlementStorage } from "../character/character-affect-turn-settlement-storage.js";
 import type { MateProfileItemStorage } from "../mate/mate-profile-item-storage.js";
 import type { PromptTemplateStorage } from "../prompt-templates/prompt-template-storage.js";
 import type { V6StorageWorkerBundle } from "../storage/storage-worker-bundle.js";
@@ -30,8 +28,6 @@ export class MainStoreContext {
     dbPath: string;
     diagnostics: AppDatabaseDiagnostics | null;
     memoryStatus: MemoryV6Diagnostics["runtime"]["status"];
-    settlement: CharacterAffectTurnSettlementStorage | V6StorageWorkerBundle["stores"]["settlement"] | null;
-    drainCursor: CharacterAffectTurnDrainCursor | undefined;
     walTimer: ReturnType<typeof setInterval> | null;
   } = {
     sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null,
@@ -39,7 +35,7 @@ export class MainStoreContext {
     sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null,
     storageWorker: null, promptTemplateStorage: null, mateStorage: null,
     mateProfileItemStorage: null, dbPath: "", diagnostics: null, memoryStatus: "stopped",
-    settlement: null, drainCursor: undefined, walTimer: null,
+    walTimer: null,
   };
 
   public get sessions() { return this.state.sessions; }
@@ -59,14 +55,11 @@ export class MainStoreContext {
   public get dbPath() { return this.state.dbPath; }
   public get appDatabaseDiagnostics() { return this.state.diagnostics; }
   public get memoryV6RuntimeStatus() { return this.state.memoryStatus; }
-  public get characterAffectTurnSettlementStorage() { return this.state.settlement; }
-  public get characterAffectTurnDrainCursor() { return this.state.drainCursor; }
   public get walMaintenanceTimer() { return this.state.walTimer; }
 
   public setDbPath(value: string): void { this.state.dbPath = value; }
   public setDatabaseDiagnostics(value: AppDatabaseDiagnostics | null): void { this.state.diagnostics = value; }
   public setMemoryRuntimeStatus(value: MemoryV6Diagnostics["runtime"]["status"]): void { this.state.memoryStatus = value; }
-  public setDrainCursor(value: CharacterAffectTurnDrainCursor | undefined): void { this.state.drainCursor = value; }
   public setSessions(value: Session[]): void {
     const nextById = new Map(value.map((session) => [session.id, session]));
     for (const previous of this.state.sessions) {
@@ -102,12 +95,9 @@ export class MainStoreContext {
     this.state.owner = null;
     this.stopWalMaintenance();
     if (!worker) {
-      await this.state.settlement?.close();
       await this.state.promptTemplateStorage?.close();
       await this.state.mateProfileItemStorage?.close();
     }
-    this.state.settlement = null;
-    this.state.drainCursor = undefined;
     await lifecycleClose({
       storageWorker: worker,
       modelCatalogStorage: this.state.modelCatalogStorage,
@@ -124,7 +114,6 @@ export class MainStoreContext {
   }
   public setPromptTemplateStorage(value: PromptTemplateStorage | V6StorageWorkerBundle["stores"]["prompt"] | null): void { this.state.promptTemplateStorage = value; }
   public setMateProfileItemStorage(value: MateProfileItemStorage | null): void { this.state.mateProfileItemStorage = value; }
-  public setSettlementStorage(value: CharacterAffectTurnSettlementStorage | V6StorageWorkerBundle["stores"]["settlement"] | null): void { this.state.settlement = value; }
   public setCharacterStorage(value: CharacterStorageAccess | null): void { this.state.characterStorage = value; }
 
   public activate(bundle: PersistentStoreBundle): void {
@@ -133,7 +122,6 @@ export class MainStoreContext {
     this.state.storageWorker = bundle.storageWorker ?? null;
     this.state.promptTemplateStorage = this.state.storageWorker?.stores.prompt ?? null;
     this.state.mateProfileItemStorage = null;
-    this.state.settlement = this.state.storageWorker?.stores.settlement ?? null;
     this.state.modelCatalogStorage = bundle.modelCatalogStorage;
     this.state.characterStorage = bundle.characterStorage;
     this.state.sessionStorage = bundle.sessionStorage;
@@ -148,6 +136,6 @@ export class MainStoreContext {
 
   public clearReferences(): void {
     this.executionSelections.clear();
-    this.state = { ...this.state, sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null, projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null, sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null, storageWorker: null, promptTemplateStorage: null, mateStorage: null, mateProfileItemStorage: null, settlement: null, drainCursor: undefined, walTimer: null };
+    this.state = { ...this.state, sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null, projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null, sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null, storageWorker: null, promptTemplateStorage: null, mateStorage: null, mateProfileItemStorage: null, walTimer: null };
   }
 }

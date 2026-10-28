@@ -128,7 +128,7 @@ export type AuxiliaryIdentityPatchInput = {
 };
 
 export type AuxiliaryExecutionOptions = Pick<AuxiliarySession,
-  "provider" | "catalogRevision" | "model" | "reasoningEffort" | "approvalMode"
+  "provider" | "model" | "reasoningEffort" | "approvalMode"
   | "codexSandboxMode" | "codexSpeed" | "codexReviewer" | "customAgentName">;
 
 export type AuxiliaryCredentialThreadInfo = Pick<AuxiliarySession,
@@ -916,9 +916,9 @@ export class AuxiliarySessionStorage {
   updateAuxiliaryExecutionOptionsIfMatches(input: AuxiliaryIdentityPatchInput & { options: AuxiliaryExecutionOptions }): boolean {
     const options = input.options;
     return this.updateScalarIfMatches(input,
-      `provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?, approval_mode = ?,
+      `provider_id = ?, model_id = ?, reasoning_effort = ?, approval_mode = ?,
         codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, custom_agent_name = ?`,
-      [options.provider, options.catalogRevision, options.model, options.reasoningEffort,
+      [options.provider, options.model, options.reasoningEffort,
         options.approvalMode, options.codexSandboxMode, options.codexSpeed, options.codexReviewer, options.customAgentName]);
   }
 

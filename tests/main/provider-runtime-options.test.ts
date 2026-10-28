@@ -48,25 +48,42 @@ test("Claude は自動実行と承認待ちを選択でき、新規Sessionの既
 test("Claude permission options pass execution validation only for their supported provider", () => {
   const catalog = { id: "claude", label: "Claude", defaultModelId: "model", defaultReasoningEffort: "high" as const,
     models: [{ id: "model", label: "Model", reasoningEfforts: ["high" as const] }] };
-  const options = { catalogRevision: 1, model: "model", reasoningEffort: "high", approvalMode: "on-request",
+  const options = { model: "model", reasoningEffort: "high", approvalMode: "on-request",
     codexSandboxMode: "workspace-write", codexSpeed: "fast", codexReviewer: "user", customAgentName: "" };
   for (const approvalMode of ["never", "on-request", "accept-edits", "dont-ask", "plan"]) {
-    assert.deepEqual(validateSessionExecutionOptions({ ...options, approvalMode }, catalog, 1), { ...options, approvalMode });
+    assert.deepEqual(validateSessionExecutionOptions({ ...options, approvalMode }, catalog), { ...options, approvalMode });
   }
-  assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode: "untrusted" }, catalog, 1), /not supported by this provider/);
+  assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode: "untrusted" }, catalog), /not supported by this provider/);
   for (const approvalMode of ["never", "on-request"]) {
     const selected = { ...options, approvalMode, codexReviewer: "auto-review" };
-    assert.deepEqual(validateSessionExecutionOptions(selected, catalog, 1), selected);
+    assert.deepEqual(validateSessionExecutionOptions(selected, catalog), selected);
   }
   for (const approvalMode of ["accept-edits", "dont-ask", "plan"]) {
-    assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode, codexReviewer: "auto-review" }, catalog, 1), /reviewer is not supported with this approval mode/);
+    assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode, codexReviewer: "auto-review" }, catalog), /reviewer is not supported with this approval mode/);
   }
   for (const provider of ["codex", "copilot"]) {
     assert.deepEqual(getApprovalOptionsForProvider(provider).map(({ value }) => value), ["never", "on-request", "untrusted"]);
     for (const approvalMode of ["accept-edits", "dont-ask", "plan"]) {
-      assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode }, { ...catalog, id: provider }, 1), /not supported by this provider/);
+      assert.throws(() => validateSessionExecutionOptions({ ...options, approvalMode }, { ...catalog, id: provider }), /not supported by this provider/);
     }
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeの承認選択肢はon-requestとneverで、既定値はon-requestになる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
+// fault = "native API非対応のmodeを選べるか、未承認で自動実行を既定にする"
+// observable = "approval option value一覧とprovider既定mode"
+// observation_boundary = "public-boundary"
+// scope = "opencode-approval-options"
+// lifecycle = "permanent"
+// impact = "承認の意味がnative runtimeと一致せず、意図しない自動実行または実行失敗になる"
+// distinction = "共通approval型は全providerのmodeを許すためprovider固有の許可集合を検出できない"
+// @end-test-value
+test("OpenCode はProvider ControlledとAuto Runを提供し承認待ちを既定にする", () => {
+  assert.deepEqual(getApprovalOptionsForProvider("opencode").map((option) => option.value), ["never", "on-request"]);
+  assert.equal(getDefaultApprovalModeForProvider("opencode"), "on-request");
 });
 
 test("getSandboxOptionsForProvider は Codex provider に Sandbox 選択肢を返す", () => {

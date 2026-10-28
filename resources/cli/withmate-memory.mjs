@@ -26118,6 +26118,7 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
 	"Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
 	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
+	"Use character_affect.appraise during the normal turn when the exchange meaningfully changes the Character's own affect. It is optional, not a per-turn requirement or a final-response checklist. Do not submit unchanged-state events just to call the tool; skipping or failing this update does not trigger a separate evaluation or replacement generation.",
 	"Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
 	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
 	"Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",

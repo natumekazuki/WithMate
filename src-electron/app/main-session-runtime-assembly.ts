@@ -3,14 +3,11 @@ import type { CharacterContextResponse, CharacterContextErrorResponse } from "..
 import { isCharacterContextError } from "../../src-shared/character-context/character-context-contract.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
-import type { CharacterAffectTurnSettlementStorage } from "../character/character-affect-turn-settlement-storage.js";
-import { getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { resolveConversationTimingContext, type ConversationTimingContext, type ConversationTimingStorageSnapshot } from "../session/conversation-timing.js";
 import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
 
 type CreateSessionTurnInput = Parameters<NonNullable<SessionRuntimeServiceDeps["createSessionTurn"]>>[0];
-type AppraisalInput = Parameters<NonNullable<SessionRuntimeServiceDeps["queueCompletedTurnAppraisal"]>>[0];
 
 export type MainSessionRuntimeAssemblyDeps = {
   owner: {
@@ -34,10 +31,6 @@ export type MainSessionRuntimeAssemblyDeps = {
     getCharacterContextService?: () => Pick<CharacterContextApplicationService, "getContext"> | null;
     onCharacterContextFailure: (session: Session, error: CharacterContextErrorResponse) => void;
     getConversationTimingSnapshot?: (sessionId: string, observedAt: string) => Promise<ConversationTimingStorageSnapshot | null>;
-  };
-  character: {
-    getSettlementStorage: () => CharacterAffectTurnSettlementStorage;
-    requestAppraisal?: () => void;
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
@@ -85,37 +78,6 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     return result;
   };
 
-  const queueCompletedTurnAppraisal = async (input: AppraisalInput): Promise<void> => {
-    assertOwner("appraisal enqueue");
-    if (input.session.sessionKind === "default" && input.session.characterId) {
-      await deps.character.getSettlementStorage().enqueue({
-        correlationId: input.correlationId,
-        characterId: input.session.characterId,
-        sessionId: input.session.id,
-        sessionIncarnationId: getSessionIncarnationId(input.session),
-        userMessage: input.userMessage,
-        assistantMessage: input.assistantMessage,
-        assistantMessageIndex: input.assistantMessageIndex,
-        occurredAt: input.occurredAt,
-      });
-    }
-    assertOwner("appraisal enqueue");
-  };
-
-  const markCompletedTurnAppraisalReady = async (correlationId: string): Promise<"ready" | "absent" | void> => {
-    if (!deps.owner.isActive()) return "absent";
-    assertOwner("appraisal ready");
-    try {
-      const result = await deps.character.getSettlementStorage().markReady(correlationId);
-      if (!deps.owner.isActive()) return "absent";
-      assertOwner("appraisal ready");
-      return result.updated ? "ready" : "absent";
-    } catch (error) {
-      if (!deps.owner.isActive()) return "absent";
-      throw error;
-    }
-  };
-
   const assembled: SessionRuntimeServiceDeps = {
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
@@ -158,10 +120,6 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
       }
       : undefined,
     resolveCharacterContext,
-    queueCompletedTurnAppraisal,
-    markCompletedTurnAppraisalReady,
-    requireDurableCompletedTurnAppraisal: true,
-    appraiseCompletedTurn: deps.character.requestAppraisal ? () => { deps.character.requestAppraisal!(); } : undefined,
     createSessionTurn: (entry: CreateSessionTurnInput) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
     updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },

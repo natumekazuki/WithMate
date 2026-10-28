@@ -15,22 +15,10 @@ import {
 } from "../../src-shared/window/withmate-window-types.js";
 
 export type HomeSettingsApi = {
-  importModelCatalogFile: () => Promise<{ revision: number } | null>;
-  exportModelCatalogFile: () => Promise<string | null>;
   updateAppSettings: (settings: AppSettings) => Promise<AppSettings>;
   resetAppDatabase: (request: ResetAppDatabaseRequest) => Promise<ResetAppDatabaseResult>;
   deleteSessionsLastActiveBefore: (request: DeleteSessionsLastActiveBeforeRequest) => Promise<DeleteSessionsResult>;
 };
-
-export async function importHomeModelCatalog(api: HomeSettingsApi): Promise<string> {
-  const snapshot = await api.importModelCatalogFile();
-  return snapshot ? `Loaded model catalog revision ${snapshot.revision}.` : "Model catalog import canceled.";
-}
-
-export async function exportHomeModelCatalog(api: HomeSettingsApi): Promise<string> {
-  const savedPath = await api.exportModelCatalogFile();
-  return savedPath ? `Saved the model catalog to ${savedPath}.` : "Model catalog export canceled.";
-}
 
 export async function saveHomeSettings(
   api: HomeSettingsApi,

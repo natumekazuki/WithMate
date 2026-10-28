@@ -76,7 +76,7 @@ import type {
   UpdateMateInput,
 } from "../../src-shared/mate/mate-state.js";
 import type {
-  ModelCatalogDocument,
+  ModelCatalogRequest,
   ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
 import { type ChatLayoutPreferenceUpdate } from "../../src-shared/settings/chat-layout-preference.js";
@@ -305,21 +305,8 @@ export type MainIpcWindowDeps = MainIpcEventWindowDeps &
 export type MainIpcCatalogDeps = MainIpcEventWindowDeps &
   MainIpcHomeWindowDeps & {
     getModelCatalog(
-      revision: number | null,
+      request?: ModelCatalogRequest,
     ): Awaitable<ModelCatalogSnapshot | null>;
-    importModelCatalogDocument(
-      document: ModelCatalogDocument,
-    ): Awaitable<ModelCatalogSnapshot>;
-    importModelCatalogFromFile(
-      targetWindow?: MaybeWindow,
-    ): Promise<ModelCatalogSnapshot | null>;
-    exportModelCatalogDocument(
-      revision: number | null,
-    ): Awaitable<ModelCatalogDocument | null>;
-    exportModelCatalogToFile(
-      revision: number | null,
-      targetWindow?: MaybeWindow,
-    ): Promise<string | null>;
   };
 
 export type MainIpcSettingsDeps = MainIpcEventWindowDeps &

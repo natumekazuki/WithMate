@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -9,17 +8,95 @@ import {
 } from "../../src/settings/model-catalog-subscription.js";
 
 const modelCatalogSnapshot: ModelCatalogSnapshot = {
-  revision: 1,
+  discovery: { codex: { status: "idle" } },
   providers: [],
 };
 
 const nextModelCatalogSnapshot: ModelCatalogSnapshot = {
-  revision: 2,
+  discovery: { codex: { status: "ready" } },
   providers: [],
 };
 
 const flushPromises = () => new Promise<void>((resolve) => {
   queueMicrotask(resolve);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Sessionのworkspaceを要求しWindowsのslash・case・末尾区切り差を同一視し、別workspaceの通知は候補を上書きしない"
+// oracle = { type = "contract", ref = "Issue #879 workspace-scoped model discovery" }
+// fault = "path表記差のある同一workspaceを拒否する、または別workspace通知を反映し初回結果を破棄する"
+// observable = "getModelCatalog requestとapplyModelCatalogへ渡されたsnapshot"
+// observation_boundary = "public-boundary"
+// scope = "workspace-scoped model catalog subscription"
+// lifecycle = "permanent"
+// impact = "他workspaceの認証・設定に基づくモデル候補がSessionへ混入する"
+// distinction = "型検査ではworkspaceの実行時照合と通知・初回結果の競合を検出できない"
+// @end-test-value
+test("workspace catalog は他workspaceの通知を無視し初回cacheと同workspaceの更新を反映する", async () => {
+  const updates: Array<ModelCatalogSnapshot | null> = [];
+  const requests: unknown[] = [];
+  let resolveInitial: (snapshot: ModelCatalogSnapshot) => void = () => undefined;
+  const control: { listener?: (snapshot: ModelCatalogSnapshot) => void } = {};
+  const cached: ModelCatalogSnapshot = { workspacePath: "c:\\PROJECT\\", providers: [], discovery: { codex: { status: "loading" } } };
+  const refreshed: ModelCatalogSnapshot = { ...cached, workspacePath: "C:/Project/", discovery: { codex: { status: "ready" } } };
+  const cleanup = startModelCatalogSubscription({
+    api: {
+      getModelCatalog: (request) => {
+        requests.push(request);
+        return new Promise((resolve) => { resolveInitial = resolve; });
+      },
+      subscribeModelCatalog: (listener) => {
+        control.listener = listener;
+        return () => undefined;
+      },
+    },
+    enabled: true,
+    subscribe: true,
+    workspacePath: "C:/project",
+    applyModelCatalog: (snapshot) => updates.push(snapshot),
+  });
+  control.listener?.({ ...refreshed, workspacePath: "C:/other" });
+  resolveInitial(cached);
+  await flushPromises();
+  control.listener?.(refreshed);
+  cleanup();
+  assert.deepEqual(requests, [{ workspacePath: "C:/project" }]);
+  assert.deepEqual(updates, [cached, refreshed]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "workspace指定の初回応答もcontextを照合し、別workspaceのsnapshotは反映しない"
+// oracle = { type = "contract", ref = "Issue #879 workspace-scoped model discovery" }
+// fault = "初回応答だけworkspace照合を省略し別contextの候補を表示する"
+// observable = "初回応答と同workspace通知後にapplyModelCatalogへ渡るsnapshot列"
+// observation_boundary = "public-boundary"
+// scope = "initial model catalog workspace boundary"
+// lifecycle = "permanent"
+// impact = "別workspaceの認証・設定から得た候補が現在のSessionへ混入する"
+// distinction = "通知filterだけでは初回応答のcontext誤りを検出できない"
+// @end-test-value
+test("別workspaceの初回snapshotを拒否し同workspace通知を受け取る", async () => {
+  const updates: Array<ModelCatalogSnapshot | null> = [];
+  const control: { listener?: (snapshot: ModelCatalogSnapshot) => void } = {};
+  const expected: ModelCatalogSnapshot = { workspacePath: "C:/Work/", providers: [] };
+  const cleanup = startModelCatalogSubscription({
+    api: {
+      getModelCatalog: async () => ({ workspacePath: "C:/Other", providers: [] }),
+      subscribeModelCatalog: (listener) => {
+        control.listener = listener;
+        return () => undefined;
+      },
+    },
+    enabled: true, subscribe: true, workspacePath: "c:/work",
+    applyModelCatalog: (snapshot) => updates.push(snapshot),
+  });
+  await flushPromises();
+  assert.deepEqual(updates, []);
+  control.listener?.(expected);
+  cleanup();
+  assert.deepEqual(updates, [expected]);
 });
 
 test("startModelCatalogSubscription は api 不在なら no-op cleanup を返す", () => {
@@ -97,7 +174,7 @@ test("startModelCatalogSubscription は初回取得と購読更新を反映す�
   await flushPromises();
   if (control.subscribedListener) control.subscribedListener(nextModelCatalogSnapshot);
   cleanup();
-  if (control.subscribedListener) control.subscribedListener({ revision: 3, providers: [] });
+  if (control.subscribedListener) control.subscribedListener({ discovery: { codex: { status: "loading" } }, providers: [] });
 
   assert.deepEqual(updates, [
     modelCatalogSnapshot,
@@ -108,15 +185,15 @@ test("startModelCatalogSubscription は初回取得と購読更新を反映す�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "購読はrevisionが下がるresetも反映し、購読後の遅い初回取得はrevisionの大小にかかわらずactive catalogを上書きしない"
-// oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
-// fault = "revision比較でreset通知を破棄するか、遅い初回取得が購読済snapshotを上書きする"
+// claim = "購読したsnapshotは状態遷移を反映し、遅い初回取得で上書きしない"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#cacheと更新" }
+// fault = "遅い初回取得が購読済snapshotを上書きする"
 // observable = "applied snapshot sequence"
 // observation_boundary = "public-boundary"
 // scope = "model-catalog-stale-initial"
 // lifecycle = "permanent"
 // @end-test-value
-test("startModelCatalogSubscription は購読更新後に遅い初回取得で古い revision へ戻さない", async () => {
+test("startModelCatalogSubscription は購読更新後に遅い初回取得で古い状態へ戻さない", async () => {
   const updates: Array<ModelCatalogSnapshot | null> = [];
   let resolveInitialSnapshot: (snapshot: ModelCatalogSnapshot | null) => void = () => undefined;
   const control: { subscribedListener: ((snapshot: ModelCatalogSnapshot) => void) | null } = { subscribedListener: null };
@@ -138,7 +215,7 @@ test("startModelCatalogSubscription は購読更新後に遅い初回取得で�
   });
   if (control.subscribedListener) control.subscribedListener(nextModelCatalogSnapshot);
   if (control.subscribedListener) control.subscribedListener(modelCatalogSnapshot);
-  resolveInitialSnapshot({ revision: 4, providers: [] });
+  resolveInitialSnapshot({ discovery: { codex: { status: "loading" } }, providers: [] });
   await flushPromises();
   cleanup();
 
@@ -310,25 +387,4 @@ test("startModelCatalogSubscription は cleanup 後の初回取得結果を反�
   await flushPromises();
 
   assert.deepEqual(updates, []);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "Session Window Appはmodel catalogの購読を有効化してprovider model更新を受け取る"
-// oracle = { type = "contract", ref = "src/app/SessionWindowApp.tsx model catalog subscription" }
-// fault = "Appがmodel catalog subscriptionを無効化し、初回snapshot後の更新を反映しない"
-// observable = "SessionWindowApp source内のstartModelCatalogSubscription呼び出しとsubscribe設定"
-// observation_boundary = "declaration"
-// scope = "model-catalog-subscription SessionWindowApp integration"
-// lifecycle = "permanent"
-// @end-test-value
-test("App は model catalog subscription を有効にする", async () => {
-  const source = await readFile(new URL("../../src/app/SessionWindowApp.tsx", import.meta.url), "utf8");
-  const subscriptionIndex = source.indexOf("startModelCatalogSubscription({");
-
-  assert.notEqual(subscriptionIndex, -1);
-  assert.match(
-    source.slice(subscriptionIndex, subscriptionIndex + 220),
-    /subscribe: true/,
-  );
 });

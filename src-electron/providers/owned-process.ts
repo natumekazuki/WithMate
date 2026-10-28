@@ -28,62 +28,62 @@ process.once("message", (message) => {
     process.exit(71);
   }
   child.once("spawn", () => {
-    process.send?.({ kind: "codex_spawned" }, () => process.disconnect());
+    process.send?.({ kind: "provider_spawned" }, () => process.disconnect());
   });
   child.once("error", () => process.exit(71));
   child.once("exit", (code) => process.exit(code ?? 1));
 });
 `;
 
-export type CodexProcessLaunchOptions = Readonly<{
+export type ProviderProcessLaunchOptions = Readonly<{
   executable: string;
   arguments: readonly string[];
   cwd?: string;
   env?: NodeJS.ProcessEnv;
 }>;
 
-export type OwnedCodexProcessDependencies = Readonly<{
+export type OwnedProviderProcessDependencies = Readonly<{
   platform?: NodeJS.Platform;
   spawnProcess?: typeof spawn;
   createJobObject?: typeof createWindowsJobObject;
 }>;
 
-export type OwnedCodexProcess = Readonly<{
+export type OwnedProviderProcess = Readonly<{
   child: ChildProcessWithoutNullStreams;
   ready: Promise<void>;
   terminate: () => void;
   release: () => void;
 }>;
 
-export type OwnedCodexProcessCleanupOwner = Readonly<{
+export type OwnedProviderProcessCleanupOwner = Readonly<{
   child?: ChildProcessWithoutNullStreams;
   terminate: () => void;
   release: () => void;
 }>;
 
-export class OwnedCodexProcessAcquisitionError extends Error {
-  readonly owner: OwnedCodexProcessCleanupOwner;
+export class OwnedProviderProcessAcquisitionError extends Error {
+  readonly owner: OwnedProviderProcessCleanupOwner;
 
-  constructor(owner: OwnedCodexProcessCleanupOwner, options?: ErrorOptions) {
-    super("Codex process ownership was only partially acquired.", options);
-    this.name = "OwnedCodexProcessAcquisitionError";
+  constructor(owner: OwnedProviderProcessCleanupOwner, options?: ErrorOptions) {
+    super("Provider process ownership was only partially acquired.", options);
+    this.name = "OwnedProviderProcessAcquisitionError";
     this.owner = owner;
   }
 }
 
-export function spawnOwnedCodexProcess(
-  options: CodexProcessLaunchOptions,
-  dependencies: OwnedCodexProcessDependencies = {},
-): OwnedCodexProcess {
+export function spawnOwnedProviderProcess(
+  options: ProviderProcessLaunchOptions,
+  dependencies: OwnedProviderProcessDependencies = {},
+): OwnedProviderProcess {
   return (dependencies.platform ?? process.platform) === "win32"
-    ? spawnWindowsCodexProcess(options, dependencies)
-    : spawnPosixCodexProcess(options, dependencies);
+    ? spawnWindowsProviderProcess(options, dependencies)
+    : spawnPosixProviderProcess(options, dependencies);
 }
 
-function spawnPosixCodexProcess(
-  options: CodexProcessLaunchOptions,
-  dependencies: OwnedCodexProcessDependencies,
-): OwnedCodexProcess {
+function spawnPosixProviderProcess(
+  options: ProviderProcessLaunchOptions,
+  dependencies: OwnedProviderProcessDependencies,
+): OwnedProviderProcess {
   const child = (dependencies.spawnProcess ?? spawn)(options.executable, [...options.arguments], {
     cwd: options.cwd,
     env: options.env,
@@ -100,16 +100,16 @@ function spawnPosixCodexProcess(
   };
 }
 
-function spawnWindowsCodexProcess(
-  options: CodexProcessLaunchOptions,
-  dependencies: OwnedCodexProcessDependencies,
-): OwnedCodexProcess {
+function spawnWindowsProviderProcess(
+  options: ProviderProcessLaunchOptions,
+  dependencies: OwnedProviderProcessDependencies,
+): OwnedProviderProcess {
   let job: WindowsJobObject;
   try {
     job = (dependencies.createJobObject ?? createWindowsJobObject)();
   } catch (error) {
     if (error instanceof WindowsJobObjectAcquisitionError) {
-      throw new OwnedCodexProcessAcquisitionError(partialWindowsOwner(error.owner), { cause: error });
+      throw new OwnedProviderProcessAcquisitionError(partialWindowsOwner(error.owner), { cause: error });
     }
     throw error;
   }
@@ -124,12 +124,12 @@ function spawnWindowsCodexProcess(
     if (child.pid === undefined) throw new Error("Windows process supervisor has no identity.");
     job.assignProcess(child.pid);
   } catch (error) {
-    throw new OwnedCodexProcessAcquisitionError(partialWindowsOwner(job, child), { cause: error });
+    throw new OwnedProviderProcessAcquisitionError(partialWindowsOwner(job, child), { cause: error });
   }
 
   return {
     child,
-    ready: launchCodexFromSupervisor(child, options),
+    ready: launchProviderFromSupervisor(child, options),
     terminate: () => job.terminate(),
     release: () => job.close(),
   };
@@ -138,7 +138,7 @@ function spawnWindowsCodexProcess(
 function partialWindowsOwner(
   job: WindowsJobObject,
   child?: ChildProcessWithoutNullStreams,
-): OwnedCodexProcessCleanupOwner {
+): OwnedProviderProcessCleanupOwner {
   return {
     ...(child === undefined ? {} : { child }),
     terminate() {
@@ -157,9 +157,9 @@ function partialWindowsOwner(
   };
 }
 
-function launchCodexFromSupervisor(
+function launchProviderFromSupervisor(
   supervisor: ChildProcessWithoutNullStreams,
-  options: CodexProcessLaunchOptions,
+  options: ProviderProcessLaunchOptions,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -173,10 +173,10 @@ function launchCodexFromSupervisor(
       else reject(error);
     };
     const onMessage = (message: unknown) => {
-      if (isCodexSpawnedMessage(message)) finish();
+      if (isProviderSpawnedMessage(message)) finish();
     };
     const onError = () => finish(new Error("Windows process supervisor failed."));
-    const onExit = () => finish(new Error("Windows process supervisor exited before Codex started."));
+    const onExit = () => finish(new Error("Windows process supervisor exited before Provider started."));
     supervisor.on("message", onMessage);
     supervisor.once("error", onError);
     supervisor.once("exit", onExit);
@@ -205,7 +205,7 @@ function waitForSpawn(child: ChildProcessWithoutNullStreams): Promise<void> {
     };
     const onError = () => {
       child.off("spawn", onSpawn);
-      reject(new Error("Codex process could not be spawned."));
+      reject(new Error("Provider process could not be spawned."));
     };
     child.once("spawn", onSpawn);
     child.once("error", onError);
@@ -221,13 +221,13 @@ function terminatePosixProcessGroup(pid: number | undefined): void {
   }
 }
 
-function isCodexSpawnedMessage(value: unknown): boolean {
+function isProviderSpawnedMessage(value: unknown): boolean {
   return (
     typeof value === "object" &&
     value !== null &&
     Object.getPrototypeOf(value) === Object.prototype &&
     Object.keys(value).length === 1 &&
     "kind" in value &&
-    value.kind === "codex_spawned"
+    value.kind === "provider_spawned"
   );
 }

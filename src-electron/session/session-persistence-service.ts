@@ -27,7 +27,6 @@ import type {
   DeleteSessionsResult,
 } from "../../src-shared/window/withmate-window-types.js";
 import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage-errors.js";
-import type { RunCharacterAffectTurnOwnershipExclusive } from "../character/character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SetExecutionOptionsResult, SetSessionTitleResult } from "../../src-shared/session/session-mutation-contract.js";
@@ -40,6 +39,7 @@ import type {
 import type { SessionRuntimeMetadataPatchInput, SessionRuntimeMetadataPatchResult, SessionThreadPatchInput, SessionThreadPatchResult } from "./session-storage-v6.js";
 import type { SessionMetadataResult, SessionSteerAppendInput, SessionTerminalAppendInput, SessionRunMetadataCheckpointInput } from "./session-runtime-storage-contract.js";
 import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import type { RunProviderRuntimeOperationExclusive } from "../providers/provider-runtime-operation-coordinator.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -51,6 +51,7 @@ function logSessionRunStuckInvestigation(
 }
 
 export type SessionPersistenceServiceDeps = {
+  runProviderRuntimeOperationExclusive?: RunProviderRuntimeOperationExclusive;
   getSessions(): Session[];
   setSessions(nextSessions: Session[]): void;
   getSession(sessionId: string): Session | null;
@@ -83,7 +84,7 @@ export type SessionPersistenceServiceDeps = {
   deleteStoredSession?(sessionId: string): Awaitable<void>;
   deleteStoredSessions?(sessionIds: readonly string[]): Awaitable<void>;
   getAppSettings: () => Awaitable<AppSettings>;
-  getModelCatalogSnapshot(): Awaitable<ModelCatalogSnapshot>;
+  getModelCatalogSnapshot(workspacePath?: string, providerId?: string): Awaitable<ModelCatalogSnapshot>;
   createCharacterRuntimeSnapshot?(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
@@ -93,7 +94,6 @@ export type SessionPersistenceServiceDeps = {
   closeSessionWindow(sessionId: string): void;
   discardSessionWindow?(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>, detailChanged?: false): void;
-  runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
 function isRunningSession(session: Session): boolean {
@@ -159,19 +159,19 @@ export class SessionPersistenceService {
     }
 
     const appSettings = await this.deps.getAppSettings();
-    const snapshot = await this.deps.getModelCatalogSnapshot();
+    const snapshot = await this.deps.getModelCatalogSnapshot(input.workspacePath,
+      input.model ? undefined : input.provider ?? DEFAULT_PROVIDER_ID);
     const provider = this.resolveEnabledProviderCatalog(
       snapshot,
       appSettings,
       input.provider,
       input.sessionKind === "character-authoring",
     );
-    const requestedModel = input.provider && input.provider !== provider.id
-      ? provider.defaultModelId
-      : input.model ?? provider.defaultModelId;
-    const requestedReasoningEffort = input.provider && input.provider !== provider.id
-      ? provider.defaultReasoningEffort
-      : input.reasoningEffort ?? provider.defaultReasoningEffort;
+    const requestedModel = input.model ?? provider.defaultModelId;
+    if (!requestedModel.trim()) {
+      throw new Error(`Provider ${provider.id} has no available model. Complete model discovery before creating a Session.`);
+    }
+    const requestedReasoningEffort = input.reasoningEffort ?? provider.defaultReasoningEffort;
     const selection = resolveModelSelection(
       provider,
       requestedModel,
@@ -180,7 +180,6 @@ export class SessionPersistenceService {
     const created = buildNewSession({
       ...input,
       provider: provider.id,
-      catalogRevision: snapshot.revision,
       model: selection.resolvedModel,
       reasoningEffort: selection.resolvedReasoningEffort,
       characterRuntimeSnapshot:
@@ -312,9 +311,9 @@ export class SessionPersistenceService {
     const fresh = this.deps.overlayCurrentExecutionOptions?.(current) ?? current;
     const provider = catalog.providers.find((entry) => entry.id === fresh.provider);
     if (!provider) throw new Error("The Session provider is not in the model catalog.");
-    const validated = { ...validateSessionExecutionOptions(options, provider, catalog.revision),
+    const validated = { ...validateSessionExecutionOptions(options, provider),
       codexReviewer: resolveCodexReviewerUpdate(fresh, options.codexReviewer) };
-    if (validated.codexReviewer !== options.codexReviewer) validateSessionExecutionOptions(validated, provider, catalog.revision);
+    if (validated.codexReviewer !== options.codexReviewer) validateSessionExecutionOptions(validated, provider);
     this.deps.rememberExecutionOptions?.(fresh, validated);
     this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
       ? { ...session, ...validated } : session));
@@ -351,21 +350,21 @@ export class SessionPersistenceService {
   }
 
   async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
-    const committed = await this.runCharacterAffectTurnOwnershipExclusive(
-      () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false }),
-    );
+    const commit = () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false });
+    const committed = await (this.deps.runProviderRuntimeOperationExclusive?.(commit) ?? commit());
     return this.finishSessionDeletion(committed);
   }
 
   async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<DeleteSessionsResult> {
-    const committed = await this.runCharacterAffectTurnOwnershipExclusive(async () => {
+    const commit = async () => {
       const sessionIds = this.deps.listStoredSessionIdsLastActiveBefore
         ? await this.deps.listStoredSessionIdsLastActiveBefore(cutoff)
         : (await this.deps.listStoredSessions())
             .filter((session) => Date.parse(session.updatedAt) < cutoff.cutoffTimestampMs)
             .map((session) => session.id);
       return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
-    });
+    };
+    const committed = await (this.deps.runProviderRuntimeOperationExclusive?.(commit) ?? commit());
     return this.finishSessionDeletion(committed);
   }
 
@@ -407,7 +406,6 @@ export class SessionPersistenceService {
         current &&
         getSessionIncarnationId(current) === input.incarnationId &&
         current.provider === input.expected.provider &&
-        current.catalogRevision === input.expected.catalogRevision &&
         current.model === input.expected.model &&
         current.reasoningEffort === input.expected.reasoningEffort &&
         current.threadId === input.expected.threadId
@@ -438,10 +436,6 @@ export class SessionPersistenceService {
       throw new AggregateError(failures, "The Session was deleted, but post-deletion projection or provider thread cleanup failed.");
     }
     return committed.result;
-  }
-
-  private runCharacterAffectTurnOwnershipExclusive<T>(operation: () => Promise<T>): Promise<T> {
-    return this.deps.runCharacterAffectTurnOwnershipExclusive?.(operation) ?? operation();
   }
 
   private async deleteSessionsByIds(
@@ -834,7 +828,7 @@ export class SessionPersistenceService {
     },
   ): Promise<Session[]> {
     return this.enqueueSessionMutation(
-      () => this.runCharacterAffectTurnOwnershipExclusive(() => this.replaceAllSessionsNow(nextSessions, options)),
+      () => this.replaceAllSessionsNow(nextSessions, options),
     );
   }
 
@@ -926,38 +920,14 @@ export class SessionPersistenceService {
     requestedProviderId?: string | null,
     requireRequestedProvider = false,
   ): ModelCatalogProvider {
-    const normalizedRequestedProviderId = requestedProviderId?.trim() ?? "";
-    const requestedProvider = requireRequestedProvider
-      ? snapshot.providers.find((provider) => provider.id === normalizedRequestedProviderId) ?? null
-      : requestedProviderId
-        ? getProviderCatalog(snapshot.providers, requestedProviderId)
-        : null;
-    if (requestedProvider && getProviderAppSettings(appSettings, requestedProvider.id).enabled) {
-      return requestedProvider;
+    const providerId = requestedProviderId?.trim() || (requireRequestedProvider ? "" : DEFAULT_PROVIDER_ID);
+    if (!providerId) throw new Error("Select a provider for Character authoring.");
+    const provider = getProviderCatalog(snapshot.providers, providerId);
+    if (!provider) throw new Error(`Provider ${providerId} model discovery is unavailable.`);
+    if (!getProviderAppSettings(appSettings, providerId).enabled) {
+      throw new Error(`Provider ${providerId} is disabled in Settings.`);
     }
-    if (requireRequestedProvider) {
-      if (!normalizedRequestedProviderId) {
-        throw new Error("Select a provider for Character authoring.");
-      }
-      if (!requestedProvider) {
-        throw new Error("The selected Character authoring provider is not in the model catalog.");
-      }
-      throw new Error("The selected Character authoring provider is disabled in Settings.");
-    }
-
-    const defaultProvider = snapshot.providers.find((provider) => provider.id === DEFAULT_PROVIDER_ID) ?? null;
-    if (defaultProvider && getProviderAppSettings(appSettings, defaultProvider.id).enabled) {
-      return defaultProvider;
-    }
-
-    const firstEnabledProvider = snapshot.providers.find((provider) =>
-      getProviderAppSettings(appSettings, provider.id).enabled
-    );
-    if (firstEnabledProvider) {
-      return firstEnabledProvider;
-    }
-
-    throw new Error("No enabled provider is available in Settings.");
+    return provider;
   }
 
   private syncStoredSession(stored: Session): void {

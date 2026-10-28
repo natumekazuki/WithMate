@@ -356,7 +356,7 @@ function createComposerBridge(
               log.auxiliarySpeedChanges.push(recipe(options.auxiliarySession).codexSpeed);
             }
           },
-          catalogRevision: null,
+
           timestamp: () => "2026-09-22T00:00:00.000Z",
         },
       },
@@ -476,6 +476,7 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
     title: "Auxiliary session",
     provider: "codex",
     catalogRevision: 1,
+
     model: "gpt-test",
     reasoningEffort: "medium",
     approvalMode: "never",
@@ -603,7 +604,7 @@ test("context pane owner は runtime/composition 経由で ChatWindow の Latest
       isRunning: true,
       feedback: "",
       composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
-      modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+      modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
       selectedModel: "gpt-test",
       selectedModelFallbackLabel: "GPT Test",
       reasoningOptions: [{ value: "medium", label: "medium" }],

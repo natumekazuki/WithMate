@@ -11,7 +11,7 @@ import {
   type MateMemoryGenerationProviderSettings,
   type ProviderAppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
-import { coerceModelSelection, type ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import { resolveModelChangeSelection, type ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 
 export function updateMemoryGenerationEnabled(
@@ -299,7 +299,7 @@ export function updateMemoryExtractionModel(
   model: string,
 ): Record<string, MemoryExtractionProviderSettings> {
   const currentSettings = getMemoryExtractionProviderSettings(draft, providerId);
-  const selection = coerceModelSelection(providerCatalog, model, currentSettings.reasoningEffort);
+  const selection = resolveModelChangeSelection(providerCatalog, model, currentSettings.reasoningEffort);
   return {
     ...draft.memoryExtractionProviderSettings,
     [providerId]: {
@@ -470,7 +470,7 @@ export function updateMateMemoryGenerationPriorityModelDraft(
   model: string,
 ): AppSettings {
   const currentPriority = getResolvedMateMemoryGenerationPriority(draft, index);
-  const selection = coerceModelSelection(providerCatalog, model, currentPriority.reasoningEffort);
+  const selection = resolveModelChangeSelection(providerCatalog, model, currentPriority.reasoningEffort);
   return updateMateMemoryGenerationPriorityAt(draft, index, {
     ...currentPriority,
     provider: providerId,

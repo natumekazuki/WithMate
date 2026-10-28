@@ -61,23 +61,6 @@ const MIGRATED_APP_SETTING_KEYS = new Set([
 const V4_TO_V6_RELEASE_DATA_MIGRATED_AT_KEY = "v4_to_v6_release_data_migrated_at";
 
 const APP_SETTING_COLUMNS = ["setting_key", "setting_value", "updated_at"] as const;
-const MODEL_CATALOG_REVISION_COLUMNS = ["revision", "source", "imported_at", "is_active"] as const;
-const MODEL_CATALOG_PROVIDER_COLUMNS = [
-  "revision",
-  "provider_id",
-  "label",
-  "default_model_id",
-  "default_reasoning_effort",
-  "sort_order",
-] as const;
-const MODEL_CATALOG_MODEL_COLUMNS = [
-  "revision",
-  "provider_id",
-  "model_id",
-  "label",
-  "reasoning_efforts_json",
-  "sort_order",
-] as const;
 const CHARACTER_COLUMNS = [
   "id",
   "name",
@@ -254,6 +237,9 @@ function readCounts(db: DatabaseSync): V4ToV6MigrationCounts {
 function zeroSkippedCounts(counts: V4ToV6MigrationCounts): V4ToV6MigrationCounts {
   return {
     ...counts,
+    modelCatalogRevisions: 0,
+    modelCatalogProviders: 0,
+    modelCatalogModels: 0,
     skippedAppSettings: 0,
     skippedSessions: 0,
     skippedLegacyMemoryEntries: 0,
@@ -359,19 +345,9 @@ function copyReleaseData(sourceDb: DatabaseSync, targetDb: DatabaseSync): Pick<
     ` WHERE setting_key IN (${Array.from(MIGRATED_APP_SETTING_KEYS).map(() => "?").join(", ")})`,
     Array.from(MIGRATED_APP_SETTING_KEYS),
   );
-  const modelCatalogRevisions = copyTableRows(
-    sourceDb,
-    targetDb,
-    "model_catalog_revisions",
-    MODEL_CATALOG_REVISION_COLUMNS,
-  );
-  const modelCatalogProviders = copyTableRows(
-    sourceDb,
-    targetDb,
-    "model_catalog_providers",
-    MODEL_CATALOG_PROVIDER_COLUMNS,
-  );
-  const modelCatalogModels = copyTableRows(sourceDb, targetDb, "model_catalog_models", MODEL_CATALOG_MODEL_COLUMNS);
+  const modelCatalogRevisions = 0;
+  const modelCatalogProviders = 0;
+  const modelCatalogModels = 0;
   const characters = copyTableRows(sourceDb, targetDb, "characters", CHARACTER_COLUMNS);
   return { appSettings, modelCatalogRevisions, modelCatalogProviders, modelCatalogModels, characters };
 }

@@ -33,7 +33,7 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
         },
         broadcastModelCatalog(payload: ModelCatalogSnapshot) {
           payloads.catalog = payload;
-          calls.push(`catalog:${payload.revision}`);
+          calls.push("catalog");
         },
         broadcastAppSettings(payload: AppSettings) {
           payloads.settings = payload;
@@ -48,7 +48,7 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
           calls.push(`windows:${payload.length}`);
         },
       }) as never,
-    getModelCatalog: async () => ({ revision: 3, providers: [] }),
+    getModelCatalog: async () => ({ providers: [] }),
     getAppSettings: async () =>
       ({
         providers: {},
@@ -66,8 +66,8 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
     await facade.broadcastPromptTemplates();
     facade.broadcastOpenSessionWindowIds();
 
-    assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog:3", "settings", "templates:1", "windows:2"]);
-    assert.deepEqual(payloads.catalog, { revision: 3, providers: [] });
+    assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog", "settings", "templates:1", "windows:2"]);
+    assert.deepEqual(payloads.catalog, { providers: [] });
     assert.deepEqual(payloads.settings, {
       providers: {},
       codingProviderSettings: {},
@@ -95,7 +95,7 @@ test("MainBroadcastFacade は invalidation ID の上限超過を all に収束�
     getWindowBroadcastService: () => ({
       broadcastSessionInvalidation: (payload: SessionSummaryInvalidation) => payloads.push(payload),
     }) as never,
-    getModelCatalog: () => null,
+    getModelCatalog: () => ({ providers: [] }),
     getAppSettings: () => ({}) as never,
     listPromptTemplates: () => [],
     listOpenSessionWindowIds: () => [],

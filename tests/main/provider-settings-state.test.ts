@@ -102,15 +102,27 @@ describe("provider-settings-state", () => {
     assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 1800);
   });
 
-  it("mate memory generation settings の default と trigger interval は 60 分", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Mate memory生成設定はSDK取得前のmodel/depthを未選択とし、timeoutと60分のintervalを既定にする"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#選択と実行; src-shared/settings/provider-settings-state.ts#DEFAULT_MATE_MEMORY_GENERATION_SETTINGS" }
+  // fault = "未取得model/depthを固定値で選択済みにするか既定の実行間隔・timeoutを変更する"
+  // observable = "createDefaultAppSettingsのmateMemoryGenerationSettings"
+  // observation_boundary = "public-boundary"
+  // scope = "mate-memory-generation-default-selection"
+  // lifecycle = "permanent"
+  // distinction = "型では区別できない未選択状態と具体的な既定設定を公開factoryで確認する"
+  // @end-test-value
+  it("mate memory generation settings はmodel/depth未選択でtrigger intervalは60分", () => {
     const settings = createDefaultAppSettings();
 
+    assert.equal(DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES, 60);
     assert.deepEqual(settings.mateMemoryGenerationSettings, {
       priorityList: [
         {
           provider: "codex",
-          model: "gpt-5.4",
-          reasoningEffort: "high",
+          model: "",
+          reasoningEffort: "",
           timeoutSeconds: DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
         },
       ],
@@ -118,14 +130,25 @@ describe("provider-settings-state", () => {
     });
   });
 
-  it("mate memory generation settings は normalize で clamp される", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Mate memory生成設定のnormalizeはmodel未選択と任意native depthを保持し、timeoutとintervalを範囲内へ制限する"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#選択と実行; src-shared/settings/provider-settings-state.ts#normalizeMateMemoryGenerationProviderSettings" }
+  // fault = "空modelや任意depthを固定model/depthへ置換するか実行時間設定の下限を無視する"
+  // observable = "normalizeAppSettingsのprovider/model/reasoningEffort/timeoutSeconds/triggerIntervalMinutes"
+  // observation_boundary = "public-boundary"
+  // scope = "mate-memory-generation-normalization"
+  // lifecycle = "permanent"
+  // distinction = "unknown設定入力から保存・実行用設定への実行時正規化を型検査とは別に確認する"
+  // @end-test-value
+  it("mate memory generation settings は未選択modelとnative depthを保持し時間をclampする", () => {
     const settings = normalizeAppSettings({
       mateMemoryGenerationSettings: {
         priorityList: [
           {
             provider: "copilot",
             model: "",
-            reasoningEffort: "invalid",
+            reasoningEffort: "native-deeper",
             timeoutSeconds: 5,
           },
         ],
@@ -134,8 +157,8 @@ describe("provider-settings-state", () => {
     });
 
     assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].provider, "copilot");
-    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].model, "gpt-5.4");
-    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "high");
+    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].model, "");
+    assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].reasoningEffort, "native-deeper");
     assert.equal(settings.mateMemoryGenerationSettings.priorityList[0].timeoutSeconds, 30);
     assert.equal(settings.mateMemoryGenerationSettings.triggerIntervalMinutes, 1);
   });

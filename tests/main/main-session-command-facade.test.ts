@@ -32,7 +32,6 @@ function createLaunchSelection(
 ): SessionLaunchSelection {
   return {
     provider: "codex",
-    catalogRevision: 3,
     model: "gpt-5.6",
     reasoningEffort: "high",
     approvalMode: "untrusted",
@@ -315,13 +314,15 @@ test("MainSessionCommandFacade は Session 削除失敗時に通知を撤去し�
 // @end-test-value
 test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID の session を永続化する", async () => {
   const calls: string[] = [];
+  const discoveryRequests: Array<{ workspacePath: string | undefined; capturedDefaults: SessionLaunchSelection | undefined }> = [];
   const persisted = { input: null as Parameters<SessionPersistenceService["createSession"]>[0] | null };
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
     runProviderRuntimeOperationExclusive,
-    resolveSessionLaunchSelection: async (providerId) => {
+    resolveSessionLaunchSelection: async (providerId, workspacePath, capturedDefaults) => {
+      discoveryRequests.push({ workspacePath, capturedDefaults });
       calls.push(`resolve:${providerId}`);
       return createLaunchSelection({
         model: "gpt-5.6-pro",
@@ -357,12 +358,17 @@ test("MainSessionCommandFacade は SessionFolder を作成してから同じ ID 
   await facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never);
 
   assert.deepEqual(calls, [
-    "resolve:codex",
     "issue-id",
     "mkdir:launch-managed",
     "resolve:codex",
+    "resolve:codex",
     "persist:launch-managed",
   ]);
+  assert.deepEqual(discoveryRequests.map((request) => request.workspacePath), [
+    "C:/WithMate/session-files/launch-managed", "C:/WithMate/session-files/launch-managed",
+  ]);
+  assert.equal(discoveryRequests[0]?.capturedDefaults, undefined);
+  assert.equal(discoveryRequests[1]?.capturedDefaults?.model, "gpt-5.6-pro");
   assert.deepEqual(
     {
       id: persisted.input?.id,
@@ -845,7 +851,7 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
   });
 
   await settingsPromise;
-  assert.deepEqual(events, ["selection:resolve", "folder:start", "settings:update", "settings:broadcast"]);
+  assert.deepEqual(events, ["folder:start", "settings:update", "settings:broadcast"]);
   releaseFolder.resolve();
   await persistenceEntered.promise;
   const nextSettingsPromise = settingsService.updateAppSettings({
@@ -858,11 +864,11 @@ test("Session 作成中は Settings 更新を同じ runtime 選択境界の完�
   await Promise.all([createPromise, nextSettingsPromise]);
 
   assert.deepEqual(events, [
-    "selection:resolve",
     "folder:start",
     "settings:update",
     "settings:broadcast",
     "folder:end",
+    "selection:resolve",
     "selection:resolve",
     "session:persist",
     "settings:update",
@@ -971,7 +977,6 @@ test("Character authoring Session も SessionFolder 準備後に provider 排他
 test("SessionFolder のcommit前再検証は selection と storage の変更を保存せず今回のfolderだけcleanupする", async () => {
   const selectionChanges: Partial<SessionLaunchSelection>[] = [
     { provider: "copilot" },
-    { catalogRevision: 4 },
     { model: "gpt-5.6-pro" },
     { reasoningEffort: "medium" },
     { approvalMode: "never" },
@@ -1235,7 +1240,19 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
   );
 });
 
-test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・SessionFolder 作成・永続化を行わない", async () => {
+// @test-value v2
+// kind = "invariant"
+// claim = "SessionFolder workspaceの起動選択取得失敗時はSessionを保存せず作成folderをcleanupする"
+// oracle = { type = "contract", ref = "accepted behavior: workspace discovery precedes Session persistence; failed preparation cleans up" }
+// fault = "discovery失敗でもSessionを保存するか準備したfolderを残す"
+// observable = "discovery失敗の拒否とfolder cleanup、Session保存呼出しなし"
+// observation_boundary = "public-boundary"
+// scope = "main-session-creation-discovery-failure"
+// lifecycle = "permanent"
+// impact = "作成失敗で空Sessionや孤児folderを残さない"
+// distinction = "provider単独の失敗testではMain作成副作用のcleanupを確認できない"
+// @end-test-value
+test("MainSessionCommandFacade は起動設定の取得失敗時に準備folderをcleanupし永続化しない", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
@@ -1265,6 +1282,7 @@ test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・
       calls.push("mkdir");
       return "C:/WithMate/session-files/launch-managed";
     },
+    cleanupSessionFilesDirectory: async () => { calls.push("cleanup"); },
     isSessionFilesWorkspace: () => false,
   });
 
@@ -1272,7 +1290,7 @@ test("MainSessionCommandFacade は起動設定の取得失敗時に ID 発行・
     facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
     /latest selection read failed/,
   );
-  assert.deepEqual(calls, ["resolve"]);
+  assert.deepEqual(calls, ["issue-id", "mkdir", "resolve", "cleanup"]);
 });
 
 // @test-value v2

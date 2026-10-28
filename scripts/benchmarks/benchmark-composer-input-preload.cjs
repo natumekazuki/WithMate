@@ -135,7 +135,7 @@ function resultFor(name, args) {
     mateMemoryGenerationSettings: { priorityList: [], triggerIntervalMinutes: 60 },
     codingProviderSettings: {}, memoryExtractionProviderSettings: {},
   };
-  if (name === "getModelCatalog") return { revision: 1, providers: [] };
+  if (name === "getModelCatalog") return { workspacePath: args[0]?.workspacePath, providers: [] };
   if (name === "getSessionGlossaryProjection") return { sessionId: "benchmark-main", revision: 0, state: { status: "ready", entries: [] } };
   if (name === "previewComposerInput") return { text: args[1] ?? "", attachments: [], errors: [] };
   if (name === "listSessionTurnQueueReceipts") return { receipts: [], nextCursor: null };

@@ -38,6 +38,7 @@ function makeAuxiliarySession(overrides: Partial<AuxiliarySession> = {}): Auxili
     title: "Auxiliary",
     provider: "codex",
     catalogRevision: 1,
+
     model: "gpt-5.4",
     reasoningEffort: "medium",
     approvalMode: "untrusted",
@@ -99,14 +100,23 @@ describe("runAuxiliarySandboxModeChangeOperation", () => {
 });
 
 describe("runAuxiliaryModelChangeOperation", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary model操作はmodelとDepthを対象updaterへ反映する"
+  // oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+  // fault = "変更が対象updaterへ渡らないか既存設定を消す"
+  // observable = "updaterのAuxiliary Session patch"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-model-operation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("model selection patch を active session updater に渡す", async () => {
     const current = makeAuxiliarySession();
     let updated: AuxiliarySession | null = null;
 
     await runAuxiliaryModelChangeOperation({
-      model: "gpt-5.5",
-      providerCatalog,
-      catalogRevision: 2,
+      model: providerCatalog.models[1]!,
+
       updateActiveAuxiliarySession: async (recipe) => {
         updated = recipe(current);
       },
@@ -115,7 +125,7 @@ describe("runAuxiliaryModelChangeOperation", () => {
 
     assert.deepEqual(updated, {
       ...current,
-      catalogRevision: 2,
+
       model: "gpt-5.5",
       reasoningEffort: "medium",
       updatedAt: "updated",
@@ -124,6 +134,16 @@ describe("runAuxiliaryModelChangeOperation", () => {
 });
 
 describe("runAuxiliaryReasoningEffortChangeOperation", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Auxiliary Depth操作はmodelを維持して指定Depthを対象updaterへ反映する"
+  // oracle = { type = "contract", ref = "Issue #879 discovered models and preserved execution selections" }
+  // fault = "Depthを置換するか対象modelを変える"
+  // observable = "updaterのAuxiliary Session patch"
+  // observation_boundary = "public-boundary"
+  // scope = "auxiliary-depth-operation"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("reasoning effort selection patch を active session updater に渡す", async () => {
     const current = makeAuxiliarySession({ model: "gpt-5.5" });
     let updated: AuxiliarySession | null = null;
@@ -131,7 +151,7 @@ describe("runAuxiliaryReasoningEffortChangeOperation", () => {
     await runAuxiliaryReasoningEffortChangeOperation({
       reasoningEffort: "high",
       providerCatalog,
-      catalogRevision: 3,
+
       updateActiveAuxiliarySession: async (recipe) => {
         updated = recipe(current);
       },
@@ -140,7 +160,7 @@ describe("runAuxiliaryReasoningEffortChangeOperation", () => {
 
     assert.deepEqual(updated, {
       ...current,
-      catalogRevision: 3,
+
       reasoningEffort: "high",
       updatedAt: "updated",
     });

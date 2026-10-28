@@ -8,10 +8,7 @@ import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
-import type { AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
-import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character/character-affect-turn-settlement-storage.js";
-import { settleCharacterAffectTurnWithRetry } from "../../src-electron/character/character-affect-turn-settler.js";
 import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/memory-v6-http-server.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { startMemoryV6RuntimeApi } from "../../src-electron/memory/memory-v6-runtime.js";
@@ -29,16 +26,16 @@ function outputBuffer() {
 describe("Character context CLI / MCP integration", () => {
   // @test-value v2
   // kind = "invariant"
-  // claim = "単一owner-bound runtimeでCLI・MCP・lifecycleのAffect保存と投影が同じclock・state・scope・versionへ収束し、未知familyを拒否する。Character Memoryのappend・correct・search・forgetがCLI/MCP間で反映され、storage障害を両adapterが失敗として返す"
+  // claim = "単一owner-bound runtimeでCLI・MCPのAffect保存と各context取得経路の投影が同じclock・state・scope・versionへ収束し、未知familyを拒否する。Character Memoryのappend・correct・search・forgetがCLI/MCP間で反映され、storage障害を両adapterが失敗として返す"
   // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
   // fault = "Affect投影がadapter間で不一致になる、未知familyを受理する、Character Memoryの訂正が検索へ反映されないか忘却のreadBackが成立しない、またはstorage障害を成功として返す"
   // observable = "CLI inspectのevent件数とfamily・target、各経路のaffect投影、未知familyのsaved空配列とinvalid_input、Memoryの追加・訂正結果と検索ID・scopeとforgetのreadBack、storage障害時のCLI終了codeとMCP isError・error code・effect"
   // observation_boundary = "public-boundary"
   // scope = "owner-bound Character context runtimeのAffect投影・入力拒否、Memory mutation/read-back、CLI/MCP storage error mapping"
   // lifecycle = "permanent"
-  // distinction = "個別adapterのschema検証と異なり、owner-bound runtimeへCLI・MCP・post-turn処理を接続する（InMemoryTransportによるMCP境界であり、実HTTP transportは対象外）"
+  // distinction = "個別adapterのschema検証と異なり、owner-bound runtimeへCLI・MCP・context取得を接続する（InMemoryTransportによるMCP境界であり、実HTTP transportは対象外）"
   // @end-test-value
-  it("owner-bound runtimeで通常Sessionの即時event列とpost-turn appraisalが同じstate、scope、versionへ収束する", async () => {
+  it("owner-bound runtimeで通常Sessionの即時event列が同じstate、scope、versionへ収束する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-character-runtime-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-character-discovery-"));
     const bindingRegistry = new AgentRuntimeBindingRegistry();
@@ -270,65 +267,6 @@ describe("Character context CLI / MCP integration", () => {
       assert.equal(laterFrustration.isError, undefined, JSON.stringify(laterFrustration));
       const laterFrustrationState = laterFrustration.structuredContent as Record<string, any>;
 
-      const settlementStorage = new CharacterAffectTurnSettlementStorage(runtime.dbPath);
-      const correlationId = "turn:session-a:audit:after-immediate-appraisal";
-      try {
-        settlementStorage.enqueue({
-          correlationId,
-          characterId: "character-a",
-          sessionId: "session-a",
-          userMessage: "Run the integration.",
-          assistantMessage: "The integration recovered.",
-          assistantMessageIndex: 1,
-          occurredAt: "2026-08-09T03:03:00.000Z",
-        });
-        const settlement = await settleCharacterAffectTurnWithRetry({
-          isCurrentGeneration: () => true,
-          correlationId,
-          getPending: () => settlementStorage.getPending(correlationId),
-          getContext: () => runtime.characterContextService.getContext({
-            schemaVersion: "withmate-character-context-v1",
-            characterId: "character-a",
-            sessionId: "session-a",
-          }, "lifecycle"),
-          async evaluate(_context, idempotencyPrefix): Promise<AffectEventInput[]> {
-            return [{
-              schemaVersion: "withmate-affect-v1",
-              characterId: "character-a",
-              userId: "local-user",
-              sessionId: "session-a",
-              layer: "session",
-              targetType: "task",
-              targetId: "mcp-post-turn",
-              family: "relief",
-              value: { label: "relief", valence: 0.5 },
-              intensity: 0.4,
-              reason: "The completed turn was appraised after immediate events.",
-              evidence: "Post-turn settlement used the latest context.",
-              occurredAt: "2026-08-09T03:03:00.000Z",
-              idempotencyKey: `${idempotencyPrefix}:0`,
-            }];
-          },
-          persistEvaluation(input) {
-            settlementStorage.saveEvaluation({ correlationId, ...input });
-          },
-          appraise: (expectedVersion, candidates) => runtime.characterContextService.appraise({
-            schemaVersion: "withmate-character-context-v1",
-            characterId: "character-a",
-            sessionId: "session-a",
-            expectedVersion,
-            authority: { kind: "conversation" },
-            candidates,
-          }, "lifecycle"),
-          recordAppraisalFailure: (input) => settlementStorage.recordAppraisalFailure({ correlationId, ...input }),
-          runAppraisalExclusive: async (operation) => await operation(),
-          markSettled: () => { settlementStorage.markSettled(correlationId); },
-        });
-        assert.equal(settlement.status, "settled", JSON.stringify(settlement));
-        assert.equal(settlementStorage.getPending(correlationId), null);
-      } finally {
-        settlementStorage.close();
-      }
 
       const inspectOutput = outputBuffer();
       assert.equal(await runCli([
@@ -342,16 +280,13 @@ describe("Character context CLI / MCP integration", () => {
         }),
       ], { env: operatorCliEnv, stdout: inspectOutput.stream, stderr: outputBuffer().stream }), 0);
       const inspection = inspectOutput.json();
-      assert.notEqual(inspection.version.version, laterFrustrationState.version);
-      assert.equal(inspection.events.length, 4);
+      assert.equal(inspection.version.version, laterFrustrationState.version);
+      assert.equal(inspection.events.length, 3);
       assert.equal(inspection.events.filter((event: Record<string, any>) => (
         event.targetId === "mcp-integration" && event.family === "frustration"
       )).length, 2);
       assert.equal(inspection.events.some((event: Record<string, any>) => (
         event.targetId === "mcp-integration" && event.family === "relief"
-      )), true);
-      assert.equal(inspection.events.some((event: Record<string, any>) => (
-        event.targetId === "mcp-post-turn" && event.family === "relief"
       )), true);
       const linkedEvent = inspection.events.find((event: Record<string, any>) => (
         event.id === frustrationState.saved[0].eventId

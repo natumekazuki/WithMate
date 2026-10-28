@@ -46,7 +46,13 @@ test("Mainの取消待ちでも次Turnを予約し、遅い取消ACKは後続run
     require: () => ({ contextBridge: { exposeInMainWorld: (_key: string, value: WithMateWindowApi) => { api = value; } } }),
     process: { argv: [] }, Buffer,
   });
-  let session: Session = { ...(await api.getSession("benchmark-main"))!, runState: "running", status: "running" };
+
+  const getModelCatalog = api.getModelCatalog;
+  api.getModelCatalog = async (request) => {
+    const snapshot = await getModelCatalog(request);
+    return snapshot ? { ...snapshot, workspacePath: request?.workspacePath } : snapshot;
+  };
+ let session: Session = { ...(await api.getSession("benchmark-main"))!, runState: "running", status: "running" };
   const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRun"]>[0]>();
   const sessionListeners = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
   let live: LiveSessionRunState | null = {

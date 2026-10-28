@@ -1,10 +1,10 @@
 # WithMate
-WithMate は、Codex、GitHub Copilot、Claude Agent の coding agent を、キャラクターと一緒に使う Electron デスクトップアプリです。ワークスペースを選んでセッションを開始し、チャット、コマンド実行の確認、ファイル参照、差分確認までを一つのアプリで扱います。
+WithMate は、Codex、GitHub Copilot、Claude Agent、OpenCode の coding agent を、キャラクターと一緒に使う Electron デスクトップアプリです。ワークスペースを選んでセッションを開始し、チャット、コマンド実行の確認、ファイル参照、差分確認までを一つのアプリで扱います。
 対応 runtime は Electron です。Vite の画面をブラウザーだけで利用する構成はサポートしていません。
 
 ## 主な機能
 
-- Codex、GitHub Copilot、Claude Agent から選んで coding session を作成、再開。Codex が既定で、Claude Agent は Settings で有効化した場合だけ利用可能
+- Codex、GitHub Copilot、Claude Agent、OpenCode から選んで coding session を作成、再開。Codex が既定で、Claude AgentとOpenCodeは Settings で有効化した場合だけ利用可能
 - Character catalog からセッションごとのキャラクターを選択
 - approval、sandbox、model、depth など、provider が対応する実行オプションの変更
 - Markdown、添付ファイル、`@path` 参照を使った作業チャット
@@ -12,9 +12,13 @@ WithMate は、Codex、GitHub Copilot、Claude Agent の coding agent を、キ�
 - Workspace、Session Folder、Additional Directory のファイル参照
 - Git の作業差分とcommit履歴の確認
 - checkout単位のRepository Glossaryの表示と検索
-- セッション、Character、Memory、model catalogなどのローカル永続化
+- セッション、Character、Memory、SDKから取得したmodel候補などのローカル永続化
 
 providerごとの対応状況は[対応機能一覧](docs/design/coding-agent-capability-matrix.md)を参照してください。
+
+Model候補とDepthは各providerのSDK／native一覧から取得します。SessionのModelを開くと検索でき、候補更新は現在の選択や実行中の設定を変更しません。詳細は[Provider Model Discovery](docs/design/model-catalog.md)を参照してください。
+
+OpenCodeは同梱の公式CLI／client `2.1.4`を使います。Settingsの`OpenCode Go API Key`（未設定時は`OPENCODE_API_KEY`）からGo用keyを渡し、通常のOpenCode設定はnative経路で読み込みます。`opencode-go/...`、`opencode/...`、`openai/...`等のnative modelを同じOpenCode Sessionで扱いますが、一覧の取得は認証ではありません。native DBをWithMateのuser data・build channel別に分離するため、別DBを使うOpenCodeデスクトップ版のChatGPT等のログイン状態を自動共有しません。WithMate内のOAuth接続UI・アカウント選択は未提供です。利用前に自身の契約・設定・課金経路を確認してください。詳細は[modelと認証](docs/design/model-catalog.md#opencodeのmodelと認証)を参照してください。
 
 Claude Agent は公式 Claude Agent SDK に付属する未改変の実行物を使い、利用者自身が Claude CLI でログインした認証状態を SDK が利用します。WithMate は認証情報を読み取り・コピーせず、独自 OAuth も提供しません。Claude Pro で `claude-opus-5-5` の実接続を確認していますが、SDK が参照する環境変数・設定によって認証先や課金経路が変わり得ます。利用前に自身の契約・設定・課金経路を確認してください。認証失敗や利用枠不足を別の認証・モデル・provider へ自動切替しません。Claude の SDK transcript は WithMate の会話履歴とは別に Claude 側へ保存され、WithMate はそれを管理・削除しません。
 
@@ -72,7 +76,6 @@ Characterのprofile、icon、theme、`character.md`、`character-notes.md`を編
 - app起動、turn完了通知、Session Windowの表示動作
 - coding agent providerの有効化とprovider file settings
 - Memory API、managed Skill、CLI shim、logのdiagnostics
-- model catalogのimport、export
 - Repository Glossaryの自動追加上限
 - Memory file quotaと古いsessionの削除
 - keyboard shortcut

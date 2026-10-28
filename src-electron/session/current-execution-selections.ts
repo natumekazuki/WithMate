@@ -1,8 +1,6 @@
 import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { getSessionIncarnationId, type SessionSummary } from "../../src-shared/session/session-state.js";
-import { applyExecutionOptionsCatalog } from "../../src-shared/session/execution-options-catalog.js";
-import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 
 type SelectionOwner = SessionSummary | AuxiliarySessionSummary;
 type CurrentSelection = {
@@ -21,11 +19,6 @@ function ownerIdentity(owner: SelectionOwner): string {
 /** Current UI selections for one persistent-store generation, independent of checkpoints. */
 export class CurrentExecutionSelections {
   private readonly entries = new Map<string, CurrentSelection>();
-  private catalog: ModelCatalogSnapshot | null = null;
-
-  setModelCatalog(catalog: ModelCatalogSnapshot): void {
-    this.catalog = catalog;
-  }
 
   remember(owner: SelectionOwner, executionOptions: SessionExecutionOptions): void {
     this.entries.delete(owner.id);
@@ -42,14 +35,13 @@ export class CurrentExecutionSelections {
     const selected = current && current.identity === ownerIdentity(owner) && current.provider === owner.provider
       ? { ...owner, ...current.executionOptions }
       : owner;
-    return applyExecutionOptionsCatalog(selected, this.catalog);
+    return selected;
   }
 
   latestForProvider(provider: string): SessionExecutionOptions | null {
     const current = Array.from(this.entries.values()).reverse().find((entry) => entry.provider === provider);
     if (!current) return null;
-    const { provider: _provider, ...options } = applyExecutionOptionsCatalog({ ...current.executionOptions, provider }, this.catalog);
-    return options;
+    return { ...current.executionOptions };
   }
 
   retainParents(sessions: readonly SessionSummary[]): void {
@@ -74,6 +66,5 @@ export class CurrentExecutionSelections {
 
   clear(): void {
     this.entries.clear();
-    this.catalog = null;
   }
 }

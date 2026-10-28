@@ -9,7 +9,6 @@ import { useMainSessionRuntime } from "../../src/chat/runtime/use-main-session-r
 import type { SetExecutionOptionsResult } from "../../src-shared/session/session-mutation-contract.js";
 import type { Session, SessionSummaryInvalidation } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 
 function session(reasoningEffort: Session["reasoningEffort"] = "medium"): Session {
   return {
@@ -30,64 +29,6 @@ function deferred<T>() {
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
-
-// @test-value v2
-// kind = "contract"
-// claim = "Mainの現在選択はcatalog import・rollback・revisionが下がるresetに追従し、旧再取得応答でもSend捕捉値をactive revisionに保つ"
-// oracle = { type = "contract", ref = "docs/design/model-catalog.md#現行の反映" }
-// fault = "rendererのlocal選択を旧revisionに固定するか、catalog正規化でrollback前の選択を消す"
-// observable = "hookの表示modelと現在Sessionから捕捉するexecutionOptions"
-// observation_boundary = "component-behavior"
-// scope = "main-selection-catalog"
-// lifecycle = "permanent"
-// @end-test-value
-test("Mainのcatalog更新は表示と次Sendの捕捉値を揃える", async () => {
-  const dom = new JSDOM("<div id='root'></div>", { url: "https://withmate.test" });
-  const previousWindow = globalThis.window;
-  Object.assign(globalThis, { window: dom.window, IS_REACT_ACT_ENVIRONMENT: true });
-  let invalidate: ((payload: SessionSummaryInvalidation) => void) | undefined;
-  const api = {
-    getSession: async () => session(),
-    subscribeSessionInvalidation: (listener: (payload: SessionSummaryInvalidation) => void) => { invalidate = listener; return () => undefined; },
-    setSessionExecutionOptions: async () => ({ status: "accepted", checkpointSaved: false }),
-    reportRendererLog: async () => undefined,
-  } as unknown as Parameters<typeof useMainSessionRuntime>[0]["api"];
-  const registry = new ComposerControllerRegistry();
-  let current: ReturnType<typeof useMainSessionRuntime> | null = null;
-  function Probe() {
-    current = useMainSessionRuntime({ api, selectedId: "session-1", composerRegistry: registry });
-    return null;
-  }
-  const root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-  const catalog: ModelCatalogSnapshot = { revision: 2, providers: [{
-    id: "codex", label: "Codex", defaultModelId: "imported", defaultReasoningEffort: "high",
-    models: [{ id: "imported", label: "Imported", reasoningEfforts: ["high"] }],
-  }] };
-  try {
-    await act(async () => { root.render(React.createElement(Probe)); });
-    await act(async () => { current!.selectExecutionOptions({ ...session(), model: "chosen" }); });
-    await act(async () => { current!.applyModelCatalog(catalog); });
-    assert.equal(current!.sessions[0]?.model, "imported");
-    await act(async () => { invalidate?.({ scope: "all" }); });
-    assert.deepEqual(captureSessionExecutionOptions(current!.getCurrentSession()!), {
-      ...captureSessionExecutionOptions(session()), catalogRevision: 2, model: "imported", reasoningEffort: "high",
-    });
-    await act(async () => { current!.applyModelCatalog({ ...catalog, revision: 3, providers: [{ ...catalog.providers[0]!,
-      models: [...catalog.providers[0]!.models, { id: "chosen", label: "Chosen", reasoningEfforts: ["medium"] }],
-    }] }); });
-    await act(async () => { invalidate?.({ scope: "all" }); });
-    assert.equal(current!.sessions[0]?.model, "chosen");
-    assert.equal(current!.getCurrentSession()?.catalogRevision, 3);
-    assert.equal(current!.getCurrentSession()?.reasoningEffort, "medium");
-    await act(async () => { current!.applyModelCatalog({ ...catalog, revision: 1 }); });
-    await act(async () => { invalidate?.({ scope: "all" }); });
-    assert.equal(current!.getCurrentSession()?.catalogRevision, 1);
-    assert.equal(current!.getCurrentSession()?.model, "imported");
-  } finally {
-    await act(async () => { root.unmount(); });
-    Object.assign(globalThis, { window: previousWindow });
-  }
-});
 
 // @test-value v2
 // kind = "invariant"

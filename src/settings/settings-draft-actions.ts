@@ -10,6 +10,7 @@ import {
   updateConversationTimingEnabled,
   updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
+  updateCodingProviderApiKeyDraft,
   updateCodingProviderInstructionRelativePathDraft,
   updateCodingProviderSkillRelativePathDraft,
   updateCodingProviderSkillRootPathDraft,
@@ -53,6 +54,13 @@ export function handleChangeProviderEnabled(input: SettingsDraftActionInput & {
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateCodingProviderEnabledDraft(current, input.providerId, input.enabled));
+}
+
+export function handleChangeProviderApiKey(input: SettingsDraftActionInput & {
+  providerId: string;
+  apiKey: string;
+}): void {
+  input.setSettingsDraft((current) => updateCodingProviderApiKeyDraft(current, input.providerId, input.apiKey));
 }
 
 export function handleChangeProviderSkillRootPath(input: SettingsDraftActionInput & {
@@ -248,8 +256,8 @@ export function handleAddMateMemoryGenerationPriority(input: ModelCatalogActionI
   const provider = input.modelCatalog?.providers[0];
   input.setSettingsDraft((current) => addMateMemoryGenerationPriorityDraft(current, {
     provider: provider?.id ?? "codex",
-    model: provider?.defaultModelId ?? "gpt-5.4",
-    reasoningEffort: provider?.defaultReasoningEffort ?? "low",
+    model: provider?.defaultModelId ?? "",
+    reasoningEffort: provider?.defaultReasoningEffort ?? "",
     timeoutSeconds: 180,
   }));
 }

@@ -252,7 +252,7 @@ function createChatWindowProps(
       isRunning: false,
       feedback: "",
       composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
-      modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+      modelOptions: [{ value: "gpt-test", label: "GPT Test", model: { id: "gpt-test", label: "GPT Test", reasoningEfforts: [] } }],
       selectedModel: "gpt-test",
       selectedModelFallbackLabel: "GPT Test",
       reasoningOptions: [{ value: "low", label: "low" }],

@@ -59,6 +59,16 @@ test("quotaは残率に統一し未知値と追加枠を分離する", () => {
     { ...snapshot, quotaKey: "chat", remainingPercentage: NaN },
   ] }).map(({ remaining, summary }) => [remaining, summary]), [["80%", false], ["65%", true], ["—", false]]);
   assert.deepEqual(projectQuotaRemaining(null), []);
+  const opencode: ProviderQuotaTelemetry = { provider: "opencode", updatedAt: null, snapshots: [], status: "ready", rateLimits: [
+    { quotaKey: "rolling", label: "5 hours", usedPercentage: 30, windowDurationMinutes: 300 },
+    { quotaKey: "weekly", label: "7 days", usedPercentage: 60, windowDurationMinutes: 10080 },
+    { quotaKey: "monthly", label: "1 month", usedPercentage: 10, resetDate: "2026-11-01T00:00:00Z" },
+  ] };
+  assert.deepEqual(projectQuotaRemaining(opencode).map(({ label, remaining, summary, resetDate }) => ({ label, remaining, summary, resetDate })), [
+    { label: "5h", remaining: "70%", summary: true, resetDate: undefined },
+    { label: "7d", remaining: "40%", summary: true, resetDate: undefined },
+    { label: "1 month", remaining: "90%", summary: true, resetDate: "2026-11-01T00:00:00Z" },
+  ]);
 });
 
 // @test-value v2

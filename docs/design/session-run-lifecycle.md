@@ -166,23 +166,11 @@ provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同
 
 削除 commit 後に window close や broadcast 等の同期投影が失敗しても、残りの親子投影と全対象の provider 後処理を試みる。投影失敗は成功扱いせず、ownership 外で provider 後処理の完了を待ってから、その失敗と合わせて AggregateError で返す。削除済み DB 行を復元しない。
 
-### Character Affect の完了後評価
+### Character Affect の通常turn内更新
 
-pending は Session incarnation を保存し、回収時と評価適用時に current owner と照合する。既存 V6 行は `legacy:<id>` へ移行し、incarnation 列のない旧 pending も同じ owner と解釈する。新規行には UUID を発行するため、旧 pending は同じ ID の再作成行に適用されない。既存の要求 fingerprint は変更しない。
+Affect更新は通常turn中のAgentによる`character_affect.appraise`を使い、具体的な感情変化がないturnでは呼出しを必須としない。turnのterminal保存・成功判定はAffect専用enqueueやsettlementに依存しない。失敗・取消後や起動・再接続・timerから専用LLM評価を開始せず、未記録分を補完turnや合成eventで埋めない。
 
-unready pendingの回収とready pendingの評価は、Session metadataと指定normalized indexのassistant role／textの専用queryを使用し、全履歴を取得しない。normalized indexと保存seqを区別し、対象queryで対応を解決する。unready pending の読取待ちでも storage identity を再確認し、交換された旧 storage への ready / discard を行わない。close / recreate 時には drain cursor も破棄する。readyのowner／message読取はattempt登録後に実施し、読取例外は既存の有限retry／quarantineで扱い、owner有効や削除とみなさない。
-
-completed 保存後の detached readiness 更新も捕捉した persistent store owner を確認し、失効後は `absent` として retry を終える。owner が現行のまま発生した一時障害は既存の retry を維持する。この待機は correlation ID と評価起動callbackだけを保持し、保存済みSessionの全履歴を捕捉しない。評価起動はdurable pendingを読み取るschedulerへの通知であり、全Session snapshotを渡さない。
-
-外部 Provider による Affect 評価は ownership coordinator を保持せずに実行する。無関係な Session の作成・削除を、評価完了待ちへ結合しない。
-
-新しい評価を保存する前と、appraise直前のownership境界内で、最新metadataと対象messageを再取得してSession生存、incarnation、Character owner、committed assistant role／textを確認する。適用直前の検証、既存 `expectedVersion` による appraise、settlement 確定を同じ ownership 境界に置く。評価中に owner が削除された場合は結果を破棄し、Affect を適用しない。同じ Character の競合は既存の version conflict / idempotency / bounded retry 契約で扱い、確定済みの通常 Turn を巻き戻さない。
-
-非同期処理中に settlement storage または Memory runtime の instance が交換された場合、その評価試行は `invalidated` とする。await 後と適用前に instance identity を確認し、閉じた storage へ評価結果や failure を書かず、新 instance の同名要求にも結果を引き継がない。
-
-Memory runtime だけが交換され、元の settlement storage がまだ current の場合は、その correlation の attempt を既存の中断回収処理へ戻す。旧試行の未保存評価・遅延応答は採用せず、閉じた storage を操作せず、current DB に試行中のまま残ることを防ぐ。
-
-交換前に durable pending へ保存済みの評価は、この失効だけでは破棄しない。appraise 開始前の ownership 待ち・owner 読取待ちで交換した場合も、次回 drain は同じ candidate 列・expected version・評価世代・idempotency key を使い、現 owner と version を再検証する。appraise dispatch 後に交換した場合は適用の有無を失効した応答から確定せず、同じ保存済み評価を再照合する。runtime 交換だけを理由に新しい key で再評価すると、既に commit した event を二重化し得る。新しい評価世代へ進むのは、既存 ADR 020 の `effect: none` version conflict で未commitを確認できた場合等の明示された遷移だけとする。
+pre-turn context取得とprompt注入、取得時のafterglowを維持する。通常MCPのactor、provider、captured turn、token、version、idempotency、effect certaintyは既存application boundaryに従う。turn中に保存済みのevent／episodeは、その後の応答失敗・取消で巻き戻さない。旧queueの整理と保存済み正本の保護は[Database Schema](database-schema.md#起動時の移行とデータ保護)に従う。
 
 ### Home Window Close
 

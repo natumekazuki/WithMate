@@ -30,6 +30,8 @@ function createSession(overrides?: Partial<Session>): Session {
       characterIconPath: "",
       characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
       approvalMode: DEFAULT_APPROVAL_MODE,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
     }),
     ...overrides,
   };
@@ -94,7 +96,7 @@ function createRuntimeDeps(
     getAppSettings: () => normalizeAppSettings({}),
     resolveProviderCatalog: () => {
       const provider = createProviderCatalog();
-      return { snapshot: { revision: 1, providers: [provider] }, provider };
+      return { snapshot: { providers: [provider] }, provider };
     },
     getProviderCodingAdapter: () => adapter,
     getSessionMemory: (current) => createSessionMemory(current.id),

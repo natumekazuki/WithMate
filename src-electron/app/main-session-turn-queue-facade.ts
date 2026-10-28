@@ -11,7 +11,7 @@ export type MainSessionTurnQueueFacadeDeps = {
   assertAccepting(): void;
   getSession(sessionId: string): Promise<Session | null>;
   validateWorkspace(session: Session): Promise<void>;
-  validateProvider(session: Session, revision: number): Promise<{ provider: ModelCatalogProvider; revision: number }>;
+  validateProvider(session: Session): Promise<{ provider: ModelCatalogProvider }>;
   preview(session: Session, userMessage: string): Promise<ComposerPreview>;
   store: SessionTurnQueueStore;
   service: SessionTurnQueueService;
@@ -61,8 +61,8 @@ export class MainSessionTurnQueueFacade {
       if (request.auxiliaryDraftDurableRevision !== undefined && (!Number.isSafeInteger(request.auxiliaryDraftDurableRevision) || request.auxiliaryDraftDurableRevision < 0)) throw new Error("The Auxiliary draft revision is invalid.");
       if (request.displayAnchorParentMessageCount !== undefined && (!Number.isSafeInteger(request.displayAnchorParentMessageCount) || request.displayAnchorParentMessageCount < 0)) throw new Error("The Auxiliary display anchor is invalid.");
       await this.deps.validateWorkspace(session);
-      const catalog = await this.deps.validateProvider(session, request.executionOptions.catalogRevision);
-      request.executionOptions = validateSessionExecutionOptions(request.executionOptions, catalog.provider, catalog.revision);
+      const catalog = await this.deps.validateProvider(session);
+      request.executionOptions = validateSessionExecutionOptions(request.executionOptions, catalog.provider);
       preview = await this.deps.preview(session, request.userMessage);
       if (preview.errors.length) throw new Error(preview.errors[0]);
       const current = await this.readSession(sessionId);
