@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
-import { createMessageRenderedSearchTextProjection, isMessageRenderedSearchTextNode } from "../../src/chat/conversation/message-rendered-search-text.js";
+import { createMessageSearchProjectionCache, isMessageRenderedSearchTextNode } from "../../src/chat/conversation/message-rendered-search-text.js";
 import { createRenderedTextSearchIndex } from "../../src/file-explorer/rendered-text-search.js";
 import { projectMessageRenderedSearchText } from "../../src-shared/session/message-search.js";
 import { resolveOpenPathTarget } from "../../src-electron/files/open-path.js";
@@ -123,10 +123,10 @@ test("assistant reference search matches preview while source and ordinary Markd
     assert.equal(ordinary.window.document.querySelector("a"), null);
     assert.equal(projectMessageRenderedSearchText(text), ordinary.window.document.querySelector(".rich-text")?.textContent);
 
-    const project = createMessageRenderedSearchTextProjection("codex");
-    assert.deepEqual(project([{ role: "assistant", text }, { role: "user", text }], ["a", "u"], "preview", true), [projected, projectMessageRenderedSearchText(text)]);
-    assert.deepEqual(project([{ role: "assistant", text }, { role: "user", text }], ["a", "u"], "source", true), [text, text]);
-    assert.deepEqual(project([{ role: "user", text }], ["a"], "preview", true), [projectMessageRenderedSearchText(text)]);
+    const project = createMessageSearchProjectionCache("codex");
+    assert.deepEqual(project([{ role: "assistant", text }, { role: "user", text }], ["a", "u"], "preview", true).map((value) => value.renderedText), [projected, projectMessageRenderedSearchText(text)]);
+    assert.deepEqual(project([{ role: "assistant", text }, { role: "user", text }], ["a", "u"], "source", true).map((value) => value.sourceText), [text, text]);
+    assert.deepEqual(project([{ role: "user", text }], ["a"], "preview", true).map((value) => value.renderedText), [projectMessageRenderedSearchText(text)]);
     const messages = [{ role: "assistant" as const, text }, { role: "user" as const, text }];
     const sources = [{ kind: "session" as const, messageIndex: 0 }, { kind: "auxiliary" as const, sessionId: "aux", messageIndex: 1, artifact: undefined }];
     let summaries = buildMessageCollapseTargets(messages, sources, ["a", "u"], [], "codex");
@@ -137,7 +137,7 @@ test("assistant reference search matches preview while source and ordinary Markd
         assert.equal(html.window.document.querySelector("a"), null);
         assert.equal(html.window.document.querySelector(".rich-text")?.textContent, text);
         assert.equal(projectMessageRenderedSearchText(text, provider), text);
-        assert.deepEqual(createMessageRenderedSearchTextProjection(provider)([{ role: "assistant", text }], ["a"], "preview", true), [text]);
+        assert.deepEqual(createMessageSearchProjectionCache(provider)([{ role: "assistant", text }], ["a"], "preview", true).map((value) => value.renderedText), [text]);
         summaries = buildMessageCollapseTargets(messages, sources, ["a", "u"], summaries, provider);
         assert.deepEqual(summaries.map((entry) => entry.preview), [text, text]);
       } finally {

@@ -15,9 +15,12 @@ type MarkdownSearchNode = {
   lang?: string | null;
   identifier?: string;
   children?: MarkdownSearchNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
 };
 
-function projectNodeText(node: MarkdownSearchNode): string {
+export type MessageRenderedSearchPart = { text: string; sourceStart: number; sourceEnd: number; type: string };
+
+function projectNodeText(node: MarkdownSearchNode, parts?: MessageRenderedSearchPart[], parent?: MarkdownSearchNode): string {
   if (
     node.type === "text"
     || node.type === "inlineCode"
@@ -30,13 +33,20 @@ function projectNodeText(node: MarkdownSearchNode): string {
     const value = node.type === "yaml"
       ? projectMarkdownFrontmatterText(node.value ?? "")
       : node.value ?? "";
-    return node.type === "text" || value.trim() ? value : "";
+    const text = node.type === "text" || value.trim() ? value : "";
+    if (text && parts) {
+      const position = node.position ?? parent?.position;
+      parts.push({ text, sourceStart: position?.start.offset ?? -1, sourceEnd: position?.end.offset ?? -1, type: node.type === "text" && !node.position ? "reference" : node.type });
+    }
+    return text;
   }
   if (node.type === "break") {
     return "";
   }
   if (node.type === "html") {
-    return node.value ?? "";
+    const text = node.value ?? "";
+    if (text && parts) parts.push({ text, sourceStart: node.position?.start.offset ?? -1, sourceEnd: node.position?.end.offset ?? -1, type: node.type });
+    return text;
   }
   if (
     node.type === "image"
@@ -49,7 +59,7 @@ function projectNodeText(node: MarkdownSearchNode): string {
   ) {
     return "";
   }
-  return node.children?.map(projectNodeText).join("") ?? "";
+  return node.children?.map((child) => projectNodeText(child, parts, node)).join("") ?? "";
 }
 
 function normalizeFootnoteIdentifier(identifier: string): string {
@@ -89,7 +99,7 @@ function hasSearchableFootnoteBackreferenceGap(definition: MarkdownSearchNode): 
   return tail?.type === "paragraph" && tail.children?.at(-1)?.type === "text";
 }
 
-export function projectMessageRenderedSearchText(markdown: string, responseProvider?: string): string {
+export function projectMessageRenderedSearchText(markdown: string, responseProvider?: string, parts?: MessageRenderedSearchPart[]): string {
   const providerExtensions = providerResponseMarkdownExtensions(responseProvider);
   const tree = fromMarkdown(markdown, {
     extensions: [frontmatter(), gfm(), math(), ...providerExtensions.extensions],
@@ -108,7 +118,7 @@ export function projectMessageRenderedSearchText(markdown: string, responseProvi
       referenceOrder.push(identifier);
     }
   }
-  const bodyText = projectNodeText(root);
+  const bodyText = projectNodeText(root, parts);
   const footnoteParts: string[] = [];
   for (let index = 0; index < referenceOrder.length; index += 1) {
     const identifier = referenceOrder[index];
@@ -124,9 +134,11 @@ export function projectMessageRenderedSearchText(markdown: string, responseProvi
         referenceOrder.push(nestedIdentifier);
       }
     }
-    const text = definition?.children?.map(projectNodeText).join("") ?? "";
+    const text = definition?.children?.map((child) => projectNodeText(child, parts, definition)).join("") ?? "";
     if (text) {
-      footnoteParts.push(`${text}${hasSearchableFootnoteBackreferenceGap(definition) ? " " : ""}`);
+      const gap = hasSearchableFootnoteBackreferenceGap(definition) ? " " : "";
+      if (gap && parts) parts.push({ text: gap, sourceStart: -1, sourceEnd: -1, type: "generated" });
+      footnoteParts.push(`${text}${gap}`);
     }
   }
   return `${bodyText}${footnoteParts.join("")}`;

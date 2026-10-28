@@ -1859,6 +1859,31 @@
   text-align: center;
 }
 
+.message-source-match {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--character-sub);
+  background: var(--surface-deep);
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+
+.message-source-match-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.message-source-match code {
+  white-space: pre-wrap;
+}
+
+.message-source-match mark {
+  background: #fb923c;
+  color: #111827;
+}
+
 .session-file-text-scroll,
 .session-file-markdown-scroll,
 .session-file-image-scroll {
