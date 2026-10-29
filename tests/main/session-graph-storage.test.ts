@@ -11,7 +11,7 @@ import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
-import type { SessionGraphIdentity, SessionGraphRecordInput } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphIdentity, SessionGraphRecordInput, SessionGraphRequest, SessionGraphOperationResult } from "../../src-shared/session-graph/session-graph-contract.js";
 
 function newSession(id: string, workspacePath: string) {
   return buildNewSession({ id, taskTitle: "Graph", workspaceLabel: "workspace", workspacePath,
@@ -189,17 +189,17 @@ test("Session Graph batches are atomic and preserve attribution", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "record読取はページ内で関係を切り詰めた場合だけrelationsTruncatedを返し、400件丁度の完全な関係と区別する"
+// claim = "40件pageと200件既知record refreshと詳細getで400関係を独立page取得でき、revision競合・stable IDの削除とendpoint変更を区別する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "400件丁度を欠落扱いするか401件目の切捨てを完全な接続として返す"
-// observable = "実SQLite get結果の関係件数・relationsTruncated・incomplete"
+// fault = "400件丁度を欠落扱いする、401件目へ到達できない、古いrevisionの続きが混在する、削除やendpoint変更が反映されない"
+// observable = "実SQLiteの各readのitems・関係ID・externalEndpoints・continuation flagと競合結果"
 // observation_boundary = "public-boundary"
-// scope = "SessionGraphStorageV6の関係読取上限"
+// scope = "SessionGraphStorageV6の関係page取得・atomic更新"
 // lifecycle = "permanent"
 // impact = "rendererとagentが不完全な接続を完全と判断することを防ぐ"
 // distinction = "型検査とrendererのmockでは保証できないSQL LIMITと返却flagの境界を確認する"
 // @end-test-value
-test("Session Graph reads distinguish exact relation capacity from truncation", async () => {
+test("Session Graph reads page relations within revision-bound record scopes", async () => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-graph-relations-"));
   const sessions = new SessionStorageV6(path.join(temporary, "withmate-v6.db"));
   let graph: SessionGraphStorageV6 | null = null;
@@ -207,10 +207,11 @@ test("Session Graph reads distinguish exact relation capacity from truncation", 
     const session = sessions.insertSession(newSession("main", temporary));
     const owner = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
     graph = new SessionGraphStorageV6(path.join(temporary, "withmate-v6.db"));
-    const records = [record("hub"), ...Array.from({ length: 401 }, (_, index) => record(`leaf-${index}`))];
+    const records = [record("hub"), ...Array.from({ length: 79 }, (_, index) => record(`isolated-${index}`)),
+      ...Array.from({ length: 401 }, (_, index) => record(`leaf-${index}`, "other"))];
     let revision = 0;
     for (let offset = 0; offset < records.length; offset += 200) graph.execute(owner, "apply", {
-      expectedRevision: revision++, topics: [{ id: "topic", title: "Topic" }], records: records.slice(offset, offset + 200),
+      expectedRevision: revision++, topics: [{ id: "topic", title: "Topic" }, { id: "other", title: "Other" }], records: records.slice(offset, offset + 200),
     }, identity);
     const relations = Array.from({ length: 401 }, (_, index) => ({ id: `edge-${index}`, fromId: "hub", toId: `leaf-${index}`, kind: "depends_on" as const }));
     graph.execute(owner, "apply", { expectedRevision: revision++, relations: relations.slice(0, 400) }, identity);
@@ -218,13 +219,52 @@ test("Session Graph reads distinguish exact relation capacity from truncation", 
     assert.equal(complete.status, "ok");
     if (complete.status === "ok") {
       assert.equal(complete.relations.length, 400); assert.equal(complete.relationsTruncated, false); assert.equal(complete.incomplete, false);
+      assert.equal(complete.relationOffset, 0); assert.equal(complete.relationsHasMore, false);
     }
-    graph.execute(owner, "apply", { expectedRevision: revision, relations: relations.slice(400) }, identity);
+    graph.execute(owner, "apply", { expectedRevision: revision++, relations: relations.slice(400) }, identity);
     const partial = graph.execute(owner, "get", { ids: ["hub"] });
     assert.equal(partial.status, "ok");
     if (partial.status === "ok") {
       assert.equal(partial.relations.length, 400); assert.equal(partial.relationsTruncated, true); assert.equal(partial.incomplete, true);
     }
+    const requests: Array<{ operation: "get_topic_view"; input: SessionGraphRequest<"get_topic_view"> } | { operation: "get"; input: SessionGraphRequest<"get"> }> = [
+      { operation: "get_topic_view", input: { topicId: "topic", limit: 40 } },
+      { operation: "get", input: { ids: ["hub", ...records.filter((entry) => entry.topicId === "other").slice(0, 199).map((entry) => entry.id)], limit: 200 } },
+      { operation: "get", input: { ids: ["hub"] } },
+    ];
+    for (const request of requests) {
+      const first: SessionGraphOperationResult<"get"> = graph.execute(owner, request.operation, { ...request.input, expectedRevision: revision });
+      const next: SessionGraphOperationResult<"get"> = graph.execute(owner, request.operation, { ...request.input, expectedRevision: revision, relationOffset: 400 });
+      assert.equal(first.status, "ok"); assert.equal(next.status, "ok");
+      if (first.status !== "ok" || next.status !== "ok") continue;
+      assert.equal(first.items.length, request.operation === "get_topic_view" ? 40 : request.input.ids.length);
+      assert.deepEqual(next.items, first.items);
+      assert.equal(first.relationsHasMore, true); assert.equal(next.relationsHasMore, false);
+      assert.equal(next.relationOffset, 400); assert.equal(next.relationsTruncated, false); assert.equal(next.incomplete, true);
+      assert.equal(next.relations.length, 1);
+      assert.deepEqual([...first.relations, ...next.relations].map((edge) => edge.id).sort(), relations.map((edge) => edge.id).sort());
+      assert.ok(next.externalEndpoints.every((endpoint) => !next.items.some((item) => item.id === endpoint.id)));
+    }
+    const moreRecords = graph.execute(owner, "get_topic_view", { topicId: "topic", limit: 40, offset: 40, expectedRevision: revision });
+    assert.equal(moreRecords.status, "ok");
+    if (moreRecords.status === "ok") {
+      assert.equal(moreRecords.items.length, 40); assert.equal(moreRecords.hasMore, false);
+      assert.equal(moreRecords.relationOffset, 0); assert.equal(moreRecords.relationsHasMore, false);
+      assert.deepEqual(moreRecords.relations, []);
+    }
+    const oldRevision = revision;
+    graph.execute(owner, "apply", { expectedRevision: revision++, removeRelationIds: ["edge-0"],
+      relations: [{ ...relations[1], fromId: "leaf-0", toId: "leaf-2" }] }, identity);
+    assert.deepEqual(graph.execute(owner, "get", { ids: ["hub"], relationOffset: 400, expectedRevision: oldRevision }), { status: "conflict", revision });
+    const updated = graph.execute(owner, "get", { ids: ["hub"], expectedRevision: revision });
+    assert.equal(updated.status, "ok");
+    if (updated.status === "ok") {
+      assert.equal(updated.relationsHasMore, false); assert.equal(updated.relations.length, 399);
+      assert.ok(updated.relations.every((edge) => edge.id !== "edge-0" && edge.id !== "edge-1"));
+    }
+    const moved = graph.execute(owner, "get", { ids: ["leaf-0"], expectedRevision: revision });
+    assert.equal(moved.status, "ok");
+    if (moved.status === "ok") assert.deepEqual(moved.relations, [{ ...relations[1], fromId: "leaf-0", toId: "leaf-2" }]);
   } finally { graph?.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); }
 });
 

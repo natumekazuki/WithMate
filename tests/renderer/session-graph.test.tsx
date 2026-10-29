@@ -51,7 +51,7 @@ test("graph topic paging rebuilds the loaded revision after renames without losi
         return { status: "ok", revision, items, total: topics.length, offset, hasMore: offset + items.length < topics.length, incomplete: offset > 0 || offset + items.length < topics.length };
       }
       return { status: "ok", revision, items: [{ ...record("record"), topicId: request.topicId ?? "t000", title: "Selected Record", detail: "Retained Detail" }],
-        total: 1, offset: 0, hasMore: false, incomplete: false, relationsTruncated: false, relations: [], externalEndpoints: [] };
+        total: 1, offset: 0, hasMore: false, incomplete: false, relationsTruncated: false, relationOffset: 0, relationsHasMore: false, relations: [], externalEndpoints: [] };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: (listener: (owner: string) => void) => { notify = listener; return () => {}; },
   };
@@ -151,7 +151,7 @@ test("graph preview keeps character ownership separate from content and adoption
       if (operation === "list_topics") return { status: "ok", revision, items: [{ id: "topic", title: "Topic" }], total: 1, offset: 0, hasMore: false, incomplete: false };
       const items = operation === "get" ? records.filter((item) => request.ids?.includes(item.id)) : records;
       return { status: "ok", revision, items, total: items.length, offset: 0, hasMore: false, incomplete: false,
-        relationsTruncated: false, relations: [], externalEndpoints: [] };
+        relationsTruncated: false, relationOffset: 0, relationsHasMore: false, relations: [], externalEndpoints: [] };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: (listener: (id: string) => void) => { notify = listener; return () => {}; },
   };
@@ -248,9 +248,9 @@ test("graph layout retains cyclic and disconnected records at readable nonoverla
 
 // @test-value v2
 // kind = "contract"
-// claim = "接続形状によらず図の幅を使って可読cardを複数列へ詰め、重ならずに表示する"
+// claim = "表示幅に応じて接続記録を複数列に配置し、可読cardが重ならずcanvas内へ収まる"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "連鎖を一列に固定して表示外の領域を増やすか、幅を超えたcardや重なりを作る"
+// fault = "連鎖を一列に固定するかcardを重ねるかcardの矩形をcanvas外へ切り落とす"
 // observable = "異なる表示幅での全記録の矩形、連鎖と並列群の列数とcanvas高さ"
 // observation_boundary = "consumer"
 // scope = "session-graph-responsive-layout"
@@ -264,21 +264,20 @@ test("graph layout packs chains and parallel records into the available width", 
   })), 960);
   const chainPoints = [...chain.positions.values()];
   assert.equal(new Set(chainPoints.map((point) => point.x)).size, 3);
-  assert.ok(chain.width <= 960);
-  assert.ok(chain.height <= 4 * 176);
+  assert.ok(chain.width >= Math.max(...chainPoints.map((point) => point.x + 240)));
+  assert.ok(chain.height >= Math.max(...chainPoints.map((point) => point.y + 112)));
 
   const branches = records.slice(1).map((item) => ({
     id: `branch-${item.id}`, fromId: records[0].id, toId: item.id, kind: "supports" as const,
   }));
   const narrow = layoutSessionGraph(records, branches, 640);
   const wide = layoutSessionGraph(records, branches, 960);
-  for (const [width, layout] of [[640, narrow], [960, wide]] as const) {
+  for (const layout of [narrow, wide]) {
     assert.equal(layout.positions.size, records.length);
-    assert.ok(layout.width <= width);
     const points = [...layout.positions.values()];
     for (let index = 0; index < points.length; index += 1) {
       const point = points[index];
-      assert.ok(point.x >= 0 && point.x + 240 <= width && point.y + 112 <= layout.height);
+      assert.ok(point.x >= 0 && point.x + 240 <= layout.width && point.y + 112 <= layout.height);
       for (const other of points.slice(index + 1))
         assert.ok(Math.abs(point.x - other.x) >= 240 || Math.abs(point.y - other.y) >= 112);
     }
@@ -402,7 +401,7 @@ test("graph preview retains expanded ranges across record and topic navigation",
       const total = operation === "get" ? items.length : source.length;
       const hasMore = offset + items.length < total;
       const edges = truncated ? [...relations, ...Array.from({ length: 400 - relations.length }, (_, index) => ({ id: `external-${index}`, fromId: "outside", toId: "unloaded", kind: "related" }))] : relations;
-      return { status: "ok", revision: 1, items, total, offset, hasMore, incomplete: truncated || hasMore || offset > 0, relations: edges, externalEndpoints: [other, records[0]], relationsTruncated: truncated };
+      return { status: "ok", revision: 1, items, total, offset, hasMore, incomplete: truncated || hasMore || offset > 0, relations: edges, externalEndpoints: [other, records[0]], relationsTruncated: truncated, relationOffset: 0, relationsHasMore: truncated };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
@@ -476,7 +475,7 @@ test("graph preview retains expanded ranges across record and topic navigation",
     await act(async () => render("truncated"));
     await click(".session-graph-load-more");
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 55);
-    assert.match(dom.window.document.querySelector(".session-graph-record-status")?.textContent ?? "", /Some Relations May Be Missing/);
+    assert.match(dom.window.document.querySelector(".session-graph-record-status")?.textContent ?? "", /Some Relations Are Unconfirmed/);
   } finally {
     await act(async () => root.unmount());
     for (const [key, descriptor] of descriptors) {
@@ -488,17 +487,17 @@ test("graph preview retains expanded ranges across record and topic navigation",
 
 // @test-value v2
 // kind = "contract"
-// claim = "大量直列Graphは全page取得後も集約でき、途中pageで関係が欠落した場合だけ警告と非集約表示を保持する"
+// claim = "大量直列Graphは累積400関係超でも集約でき、関係pageの未確認・失敗中は警告し、明示再取得で同scopeを完了する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "累積関係数400以上を欠落と誤認して集約を解除するか、後続pageが途中の関係欠落を消して不完全な図を集約する"
-// observable = "最終取得後の集約node数と個別node数、件数表示、関係欠落警告、保持memoryの関係数と完全性"
+// fault = "累積関係数400以上を欠落と誤認するか、未確認scopeを警告せず集約するか、失敗で既知関係を消すか、明示再試行に別scope・revision・offsetを使う"
+// observable = "集約node数、件数表示、未確認警告、保持memoryの関係数、関係追加取得のids/revision/offsetと局所alert"
 // observation_boundary = "component-behavior"
 // scope = "SessionGraphPreviewのpage結合と集約投影"
 // lifecycle = "permanent"
 // impact = "大量Graphの探索性と不完全な接続を完全と誤認しない閲覧契約を守る"
 // distinction = "型や投影単体testでは観測できない複数page応答の結合状態をcomponent経由で確認する"
 // @end-test-value
-test("graph preview retains overview beyond the per-page relation limit and remembers truncated pages", async () => {
+test("graph preview completes relation scopes explicitly beyond the per-page limit and retries failures", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
   const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   Object.defineProperties(globalThis, {
@@ -509,17 +508,29 @@ test("graph preview retains overview beyond the per-page relation limit and reme
   const { records, relations } = chainRecords(500);
   let memory: SessionGraphPreviewMemory | null = null;
   let truncatedOffset: number | null = null;
+  let failRelationPage = false;
+  const continuations: Array<{ ids: string[]; relationOffset: number; expectedRevision?: number }> = [];
   const api = {
-    readSessionGraph: (async (_id: string, operation: string, request: { offset?: number; limit?: number }) => {
+    readSessionGraph: (async (_id: string, operation: string, request: { ids?: string[]; offset?: number; limit?: number; relationOffset?: number; expectedRevision?: number }) => {
       if (operation === "list_topics") return { status: "ok", revision: 1, items: [{ id: "topic", title: "Topic" }], total: 1, offset: 0, hasMore: false, incomplete: false };
       const offset = request.offset ?? 0;
-      const items = records.slice(offset, offset + (request.limit ?? 40));
+      const items = operation === "get" ? records.filter((item) => request.ids?.includes(item.id)) : records.slice(offset, offset + (request.limit ?? 40));
       const ids = new Set(items.map((item) => item.id));
-      const hasMore = offset + items.length < records.length;
-      const relationsTruncated = offset === truncatedOffset;
+      const hasMore = operation !== "get" && offset + items.length < records.length;
+      const extra: SessionGraphRelation[] = truncatedOffset === null ? [] : Array.from({ length: 400 }, (_, index) => ({
+        id: `outside-${index}`, fromId: records[truncatedOffset!].id, toId: "outside", kind: "related",
+      }));
+      const scopedRelations = [...relations, ...extra].filter((edge) => ids.has(edge.fromId) || ids.has(edge.toId));
+      const relationOffset = request.relationOffset ?? 0;
+      const page = scopedRelations.slice(relationOffset, relationOffset + 400);
+      const relationsTruncated = relationOffset + page.length < scopedRelations.length;
+      if (relationOffset) {
+        continuations.push({ ids: request.ids!, relationOffset, expectedRevision: request.expectedRevision });
+        if (failRelationPage) { failRelationPage = false; throw new Error("Relation page unavailable"); }
+      }
       return { status: "ok", revision: 1, items, total: records.length, offset, hasMore,
-        incomplete: hasMore || offset > 0 || relationsTruncated, relationsTruncated,
-        relations: relations.filter((edge) => ids.has(edge.fromId) || ids.has(edge.toId)), externalEndpoints: [] };
+        incomplete: hasMore || offset > 0 || relationsTruncated, relationsTruncated, relationOffset, relationsHasMore: relationsTruncated,
+        relations: page, externalEndpoints: [{ id: "outside", topicId: "other", title: "Outside", kind: "requirement" }] };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
@@ -532,18 +543,32 @@ test("graph preview retains overview beyond the per-page relation limit and reme
       const view: SessionGraphPreviewMemory["view"] = (memory as SessionGraphPreviewMemory | null)?.view ?? null;
       assert.ok(view);
       assert.equal(view.items.length, 500);
-      assert.equal(view.relations.length, 499);
       assert.equal(view.hasMore, false);
-      assert.equal(view.incomplete, truncatedOffset !== null);
-      assert.equal(view.relationsTruncated, truncatedOffset !== null);
       assert.match(dom.window.document.querySelector(".session-graph-record-status")?.textContent ?? "", /500 \/ 500 Records Loaded/);
-      assert.equal(dom.window.document.body.textContent!.includes("Some Relations May Be Missing"), truncatedOffset !== null);
+      assert.equal(dom.window.document.body.textContent!.includes("Some Relations Are Unconfirmed"), truncatedOffset !== null);
       if (truncatedOffset === null) {
         assert.ok(dom.window.document.querySelector(".session-graph-group"));
         assert.ok(dom.window.document.querySelectorAll(".session-graph-node").length < 500);
       } else {
         assert.equal(dom.window.document.querySelectorAll(".session-graph-group").length, 0);
         assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 500);
+        const relationState = () => (memory as SessionGraphPreviewMemory | null)!.relationState;
+        const loaded = relationState().relations.length;
+        const moreRelations = () => [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Load More Relations");
+        assert.ok(moreRelations());
+        failRelationPage = true;
+        await act(async () => moreRelations()!.click());
+        assert.match(dom.window.document.querySelector(".session-graph-records [role='alert']")?.textContent ?? "", /Relation page unavailable/);
+        assert.equal(relationState().relations.length, loaded);
+        assert.ok(moreRelations());
+        await act(async () => moreRelations()!.click());
+        assert.deepEqual(continuations.at(-1), {
+          ids: records.slice(truncatedOffset, truncatedOffset + 40).map((item) => item.id).sort(), relationOffset: 400, expectedRevision: 1,
+        });
+        assert.equal(relationState().relations.length, 899);
+        assert.equal(moreRelations(), undefined);
+        assert.equal(dom.window.document.body.textContent!.includes("Some Relations Are Unconfirmed"), false);
+        assert.ok(dom.window.document.querySelector(".session-graph-group"));
       }
     }
   } finally {
@@ -586,7 +611,7 @@ test("graph page loading keeps the graph usable through busy, retry and completi
       });
       const items = records.slice(offset, offset + (request.limit ?? 40));
       const hasMore = offset + items.length < records.length;
-      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, incomplete: hasMore || offset > 0, relations, externalEndpoints: [], relationsTruncated: false };
+      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, incomplete: hasMore || offset > 0, relations, externalEndpoints: [], relationsTruncated: false, relationOffset: 0, relationsHasMore: false };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
@@ -715,10 +740,10 @@ test("graph detail markdown represents embedded media as text while keeping deli
 
 // @test-value v2
 // kind = "contract"
-// claim = "Graphは設定刻みのCtrl＋wheelとCtrl＋左dragで対象だけを操作し、通知・再表示・関連往復で選択と位置を保ち、別窓操作は元ビューを変えない"
+// claim = "Graphは設定刻みのCtrl＋wheelとCtrl＋左dragで対象だけを操作し、通常選択・詳細開閉・通知・再表示で全nodeと位置を保ち、画面外関係の方向・種類・labelを確認して関連往復でき、別窓操作は元ビューを変えない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "Ctrl＋wheelが全体zoomへ伝播するか設定刻みを無視し、通常dragでも移動するか無移動Ctrl clickを抑止し、pan後に選択・別窓を誤発火し、通知や関連往復で元状態やfalse値を失う"
-// observable = "wheelのcancelと伝播、倍率、pointer操作後のscrollと選択、自由項目、参照open引数、復帰・再表示の位置と追加取得範囲、別窓state、詳細開閉のfocus"
+// fault = "Ctrl操作が通常入力へ干渉するか、通常選択・詳細開閉で無関係nodeをfilter・再配置し、画面外関係の意味や行き先を隠すか、関連往復で元scope・位置・false値を失う"
+// observable = "wheelのcancelと伝播、倍率、pointer操作後のscroll、選択・詳細開閉前後のnode titleとstyle位置、外部関係badge・tooltip・詳細linkの向き/種類/label/行き先、自由項目、参照open引数、復帰・再表示の範囲・位置、別窓stateとfocus"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-preview-navigation"
 // lifecycle = "permanent"
@@ -788,6 +813,8 @@ test("graph preview preserves selection on notifications and navigates cross-top
     title: "Other Topic Observation",
     detail: "Cross Topic Detail",
   };
+  const sameTopic = { ...record("unloaded-same-topic"), title: "Unloaded Same Topic", detail: "Same Topic Detail" };
+  const sameTopicRelation: SessionGraphRelation = { id: "same-topic", fromId: "alpha", toId: sameTopic.id, kind: "related" };
   const api: Pick<
     WithMateWindowApi,
     "readSessionGraph" | "subscribeSessionGraph"
@@ -819,14 +846,16 @@ test("graph preview preserves selection on notifications and navigates cross-top
       return {
         status: "ok",
         revision,
-        items: [selected === "cross-topic" ? other : operation === "get_topic_view" && request.offset ? record("second-page") : alpha()],
+        items: [selected === "cross-topic" ? other : selected === sameTopic.id ? sameTopic : operation === "get_topic_view" && request.offset ? record("second-page") : alpha()],
         total: operation === "get_topic_view" && selected === "alpha" ? 2 : 1,
         offset: 0,
         hasMore: operation === "get_topic_view" && selected === "alpha" && !request.offset,
         incomplete: false,
-        relations: [relation],
-        externalEndpoints: [other],
+        relations: [relation, sameTopicRelation],
+        externalEndpoints: [other, sameTopic],
         relationsTruncated: false,
+        relationOffset: 0,
+        relationsHasMore: false,
       };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: (listener) => {
@@ -861,6 +890,13 @@ test("graph preview preserves selection on notifications and navigates cross-top
     assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Graph Topic");
     await click(dom.window.document.querySelector(".session-graph-load-more"));
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 2);
+    const nodePositions = () => [...dom.window.document.querySelectorAll<HTMLElement>(".session-graph-node")].map((node) => ({
+      title: node.querySelector(".session-graph-node-title")?.textContent, left: node.style.left, top: node.style.top,
+    }));
+    const overviewPositions = nodePositions();
+    const outside = dom.window.document.querySelector(".session-graph-outside-relations")!;
+    assert.match(outside.textContent ?? "", /2 Relations Outside This View/);
+    assert.match(outside.querySelector("[role='tooltip']")?.textContent ?? "", /→ Supports · Evidence · Other Topic Observation · Evidence/);
     const viewport = dom.window.document.querySelector<HTMLDivElement>(".session-graph-viewport")!;
     let parentWheels = 0;
     dom.window.document.getElementById("root")!.addEventListener("wheel", () => parentWheels++);
@@ -915,11 +951,17 @@ test("graph preview preserves selection on notifications and navigates cross-top
     assert.equal(windows.length, 0);
     assert.equal(dom.window.document.querySelector(".session-graph-details"), null);
     await click(dom.window.document.querySelector(".session-graph-node"));
-    const details = dom.window.document.querySelector<HTMLElement>(
+    assert.deepEqual(nodePositions(), overviewPositions, "normal selection preserves unrelated nodes and positions");
+    let details = dom.window.document.querySelector<HTMLElement>(
       ".session-graph-details",
     )!;
     assert.equal(dom.window.document.activeElement, details.querySelector("h2"));
     assert.match(details.textContent ?? "", /Decision At Revision 1/);
+    assert.match(details.querySelector(".session-graph-related button")?.textContent ?? "", /→ Supports · Evidence · Other Topic Observation/);
+    await click(details.querySelector("[aria-label='Close Record Details']"));
+    assert.deepEqual(nodePositions(), overviewPositions, "closing details preserves the overview positions");
+    await click(dom.window.document.querySelector(".session-graph-node"));
+    details = dom.window.document.querySelector<HTMLElement>(".session-graph-details")!;
     assert.deepEqual(
       Array.from(
         details.querySelectorAll(".session-graph-fields pre"),
@@ -969,6 +1011,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
         ?.textContent ?? "",
       /Cross Topic Detail/,
     );
+    assert.match(dom.window.document.querySelector(".session-graph-related button")?.textContent ?? "", /← Supports · Evidence · Shared Decision/);
     assert.match(dom.window.document.querySelector(".session-graph-back-link")?.textContent ?? "", /Back To Shared Decision/);
     const relatedState = latestState!;
     const relatedMemory = latestMemory!;
@@ -978,6 +1021,15 @@ test("graph preview preserves selection on notifications and navigates cross-top
     assert.equal(canvas.scrollLeft, 43);
     assert.equal(canvas.scrollTop, 91);
     assert.equal(dom.window.document.querySelector(".session-graph-navigation")?.textContent?.includes("110%"), true);
+    const beforeSameTopic = nodePositions();
+    const sameTopicLink = [...details.querySelectorAll<HTMLButtonElement>(".session-graph-related button")].find((button) => button.textContent?.includes(sameTopic.title));
+    assert.ok(sameTopicLink);
+    await click(sameTopicLink);
+    assert.match(dom.window.document.querySelector(".session-graph-details")?.textContent ?? "", /Same Topic Detail/);
+    assert.ok(nodePositions().some((node) => node.title === sameTopic.title));
+    await click(dom.window.document.querySelector(".session-graph-back-link"));
+    assert.deepEqual(nodePositions(), beforeSameTopic, "return from an unloaded same-topic endpoint restores the exact original nodes and positions");
+    assert.deepEqual([canvas.scrollLeft, canvas.scrollTop], [43, 91]);
     const savedState = latestState!;
     const savedMemory = latestMemory!;
     await act(async () => {

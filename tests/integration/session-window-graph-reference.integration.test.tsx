@@ -51,7 +51,7 @@ test("Session Window shows Graph reference failures for Main and Auxiliary witho
     references: [{ role: "evidence", label: "Open Reference", href: "https://example.com/evidence?q=a%2Fb#heading" }], createdAt: "2026-10-26T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z" };
   api.readSessionGraph = (async (_id: string, operation: string) => ({ status: "ok", revision: 1,
     items: operation === "list_topics" ? [{ id: "topic", title: "Topic" }] : [record], total: 1, offset: 0,
-    hasMore: false, incomplete: false, relations: [], externalEndpoints: [], relationsTruncated: false })) as WithMateWindowApi["readSessionGraph"];
+    hasMore: false, incomplete: false, relations: [], externalEndpoints: [], relationsTruncated: false, relationOffset: 0, relationsHasMore: false })) as WithMateWindowApi["readSessionGraph"];
   api.subscribeSessionGraph = () => () => {};
   let outcome: "failed" | "throw" | "opened" = "failed";
   const owners: string[] = [];

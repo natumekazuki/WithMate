@@ -55,6 +55,7 @@
   padding: 0 18px;
   font-size: 12px;
   color: var(--muted);
+  min-height: 32px;
 }
 .session-graph-load-status:not(:empty) { padding-block: 6px; min-height: 32px; }
 .session-graph-workspace {
@@ -108,16 +109,36 @@
   fill: currentColor;
   stroke: none;
 }
-.session-graph-edges text {
-  fill: var(--muted);
-  text-anchor: middle;
-  font-size: 11px;
-  paint-order: stroke;
-  stroke: var(--surface-deep);
-  stroke-width: 5px;
-  stroke-linejoin: round;
+.session-graph-label-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  left: 0;
+  top: 0;
 }
-.session-graph-edges .is-connected {
+.session-graph-edge-label {
+  position: absolute;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 280px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface-deep);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transform: translate(-50%, -50%);
+}
+.session-graph-label-measure .session-graph-edge-label {
+  position: static;
+  display: block;
+  transform: none;
+}
+.session-graph-edges .is-connected,
+.session-graph-edge-label.is-connected {
   color: var(--teal);
 }
 .session-graph-edges .is-grouped path { stroke-dasharray: 5 4; }
@@ -144,6 +165,41 @@
   outline: 2px solid var(--teal);
   outline-offset: 2px;
 }
+.session-graph-node.is-connected { border-color: var(--teal); border-width: 2px; }
+.session-graph-outside-relations {
+  position: absolute;
+  right: 6px;
+  top: -12px;
+  padding: 2px 5px;
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  background: var(--surface-deep);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.session-graph-relations-tooltip {
+  display: none;
+  position: absolute;
+  z-index: 5;
+  top: 100%;
+  right: 0;
+  width: max-content;
+  max-width: 280px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.session-graph-relations-tooltip > span { display: block; }
+.session-graph-outside-relations:hover .session-graph-relations-tooltip,
+.session-graph-node:focus-visible .session-graph-relations-tooltip { display: block; }
+.session-graph-preview.tooltips-dismissed .session-graph-relations-tooltip { display: none; }
+.session-graph-relations-incomplete { font-size: 12px; color: var(--muted); }
 .session-graph-node-title {
   grid-column: 2;
   grid-row: 1;
