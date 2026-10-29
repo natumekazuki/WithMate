@@ -27,6 +27,127 @@ import type { HtmlPreviewEvent, HtmlPreviewMountRequest } from "../../src-shared
 
 // @test-value v2
 // kind = "contract"
+// claim = "Main/Auxはqueueなし・receipt先着・回答先着のいずれでも保存済み質問回答を表示し、予約と同文でも回答を一度だけ表示する。履歴以前の遅いreceipt読込では合流待ちを解かず、最新照会後は回答・応答identityと予約順を保ち、後続予約のcanonical先着でも重複しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/907; docs/design/desktop-ui.md: Question Forms / 送信直後の先行表示" }
+// fault = "未実行予約で質問回答を隠し続ける、古い照会で通常予約を二重表示する、同文の回答を予約に誤結合する、または応答identity・予約順を変える"
+// observable = "実Column DOMのuser本文・順序・件数、応答node identity、Column messageKeys、submissionの残存request ID、queue操作API呼出"
+// observation_boundary = "component-behavior"
+// scope = "保存済み質問回答とqueue receiptを受け取るMain/Aux共有hook・Column。Provider配送や保存APIの実行は含まない"
+// lifecycle = "permanent"
+// impact = "回答済み入力が表示されず再送を誘発し、予約や会話の対応を見失う"
+// distinction = "既存handoff testは未実行予約中の独立した質問回答を通らない。小さいDOM fixtureで到着順を制御し、型検査では分からない表示とidentityを検証する"
+// @end-test-value
+test("conversation column shows question answers independently of queued submissions", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.requestAnimationFrame = () => 1;
+  dom.window.cancelAnimationFrame = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) {
+      for (const arrival of ["no-queue", "receipt-first", "answer-first"] as const) {
+        const store = new SessionTurnSubmissions();
+        const receipt = (sequence: number): SessionTurnQueueReceipt => ({
+          sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`, sequence,
+          state: "queued", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+          captured: { request: { clientRequestId: `request-${sequence}`, userMessage: sequence === 1 ? "same answer" : "later prompt",
+            executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+        });
+        const reserved = arrival === "no-queue" ? [] : [receipt(1), receipt(2)];
+        let active = arrival === "receipt-first" ? reserved : [];
+        const terminals = new Map<string, SessionTurnQueueReceipt>();
+        let holdReads = false;
+        const reads: (() => void)[] = [];
+        let changed: ((id: string) => void) | undefined;
+        const mutations: string[] = [];
+        const api: ConversationMessageColumnApi = {
+          listSessionTurnQueue: () => {
+            const snapshot = [...active];
+            return holdReads ? new Promise((resolve) => reads.push(() => resolve(snapshot))) : Promise.resolve(snapshot);
+          },
+          getSessionTurnQueueReceipt: async (_id, requestId) => terminals.get(requestId) ?? active.find((item) => item.requestId === requestId) ?? null,
+          onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+          cancelQueuedSessionTurn: async () => { mutations.push("cancel"); throw new Error("Unexpected queue mutation"); },
+          releaseInterruptedSessionTurn: async () => { mutations.push("release"); throw new Error("Unexpected queue mutation"); },
+          sendQueuedSessionInput: async () => { mutations.push("input"); throw new Error("Unexpected queue mutation"); },
+        };
+        let saved: SessionMessageColumnProps["messages"] = [{ role: "user", text: "current prompt", historyIndex: 0 }];
+        let live: LiveSessionRunState | null = { sessionId: kind, threadId: "thread", turnId: "current", runState: "running", assistantText: "current response", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+        let latest: SessionMessageColumnProps | null = null;
+        function View() {
+          latest = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" },
+            baseProps: { ...createBaseProps(kind), turnSubmissions: store }, messageSourceKind: kind, enabled: true, api, liveRun: live });
+          return latest ? <SessionMessageColumn {...latest} /> : null;
+        }
+        const render = () => act(async () => root.render(<View key={`${kind}-${arrival}`} />));
+        const column = () => { assert.ok(latest); return latest; };
+        const users = () => [...dom.window.document.querySelectorAll(".message-row.user .rich-text")].map((node) => node.textContent);
+        const finishReads = () => act(async () => { reads.splice(0).forEach((reply) => reply()); });
+        await render();
+        const responseNode = dom.window.document.querySelector(".message-row.assistant");
+        const responseKey = column().responsePresentationKey;
+        await act(async () => {
+          for (const item of reserved) {
+            store.start({ sessionId: kind, incarnationId: "inc", requestId: item.requestId, userMessage: item.captured.request.userMessage, historyMessageCount: 1, queuedBehindRun: true, error: "" });
+            if (arrival === "receipt-first") store.accept(item);
+          }
+        });
+        holdReads = true;
+        await act(async () => changed?.(kind));
+        const staleRead = reads.shift()!;
+        saved = [...saved, { role: "user", text: "same answer", historyIndex: 1 }];
+        await render();
+        await act(async () => staleRead());
+        if (reserved.length) assert.equal(column().messages.some((message) => message.role === "user" && message.historyIndex === 1), false, "a pre-history read cannot resolve this handoff");
+        await finishReads();
+        assert.deepEqual(users(), ["current prompt", "same answer", ...reserved.map((item) => item.captured.request.userMessage)], `${kind}/${arrival}: saved answer is not a queued prompt`);
+        const answerKey = column().messageKeys?.[1];
+        assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseNode);
+        assert.equal(column().responsePresentationKey, responseKey);
+        active = reserved;
+        await act(async () => { reserved.forEach((item) => store.accept(item)); changed?.(kind); });
+        await finishReads();
+        saved = [...saved, { role: "user", text: "second answer", historyIndex: 2 }];
+        await render();
+        await finishReads();
+        assert.deepEqual(users(), ["current prompt", "same answer", "second answer", ...reserved.map((item) => item.captured.request.userMessage)]);
+        assert.equal(column().messageKeys?.[1], answerKey);
+        assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseNode);
+        assert.deepEqual(store.getSnapshot().map((item) => item.requestId), reserved.map((item) => item.requestId));
+        saved = [...saved, { role: "assistant", text: "current response", historyIndex: 3 }];
+        live = null;
+        await render();
+        if (reserved.length) {
+          const queuedUserKey = column().messageKeys?.[4];
+          // Persisted user and bound receipt are committed together; only their delivery order differs.
+          terminals.set("request-1", { ...reserved[0], state: "completed", turnId: "next", userMessageSeq: 4 });
+          active = [reserved[1]];
+          saved = [...saved, { role: "user", text: "same answer", historyIndex: 4 }, { role: "assistant", text: "next response", historyIndex: 5 }];
+          await render();
+          assert.deepEqual(users(), ["current prompt", "same answer", "second answer", "same answer", "later prompt"], "canonical-first delivery does not duplicate the reserved prompt");
+          await finishReads();
+          assert.deepEqual(column().messages.filter((message) => message.role === "user").map((message) => message.text), ["current prompt", "same answer", "second answer", "same answer", "later prompt"]);
+          assert.equal(column().messageKeys?.[4], queuedUserKey);
+          assert.deepEqual(store.getSnapshot().map((item) => item.requestId), ["request-2"]);
+        }
+        assert.deepEqual(mutations, []);
+        assert.deepEqual(reserved, arrival === "no-queue" ? [] : [receipt(1), receipt(2)], "projection does not modify queued receipts");
+      }
+    }
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "MainとAuxiliaryのHTMLプレビューFind通知は一度でactive会話の検索を開き、非active列では検索を開かない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Ctrl+Fはactiveなchatを検索する" }
 // fault = "HTML consumerがFind callbackを渡さずfocus復帰だけになる、または非active列で検索を開く"

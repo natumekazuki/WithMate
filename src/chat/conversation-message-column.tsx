@@ -143,7 +143,8 @@ export function useConversationMessageColumn({
   }, Infinity);
   const unjoinedUser = canonicalUserSeqs.find((seq) => seq >= unboundBoundary && !queue.receipts.some((receipt) => receipt.userMessageSeq === seq));
   // Canonical history and its receipt are one display handoff, not two independent inserts.
-  const isHistoryHandoffPending = unjoinedUser !== undefined;
+  // A post-history receipt read also confirms unrelated inputs, such as answers to live questions.
+  const isHistoryHandoffPending = unjoinedUser !== undefined && !queue.historyReconciled;
   const tailMessages = isHistoryHandoffPending
     ? presentedHistory.current.owner === pageOwner ? presentedHistory.current.messages
       : incomingTailMessages.filter((message, index) => getMessageHistoryIndex(message, index) < unjoinedUser)
