@@ -1509,6 +1509,7 @@ describe("SessionRuntimeService", () => {
         assert.ok(!sent.done);
         yield { type: "result", subtype: "success", is_error: false, result: "done", session_id: "fresh-thread",
           user_message_uuid: sent.value.uuid, usage: { input_tokens: 1, output_tokens: 1 }, modelUsage: {} } as SDKMessage;
+        yield { type: "system", subtype: "session_state_changed", state: "idle", session_id: "fresh-thread" } as SDKMessage;
       })();
     }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
     let adapter = makeAdapter();
