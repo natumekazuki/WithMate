@@ -1,7 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphOperationResult, SessionGraphRecordInput, SessionGraphRecord, SessionGraphRelation, SessionGraphTopic, SessionGraphEndpoint } from "../../src-shared/session-graph/session-graph-contract.js";
 import { SESSION_GRAPH_RELATION_LIMIT } from "../../src-shared/session-graph/session-graph-contract.js";
-import { sessionGraphOperationRequestSchemas } from "../../src-shared/session-graph/session-graph-operation-schema.js";
+import { sessionGraphOperationRequestSchemas, sessionGraphRecordSchema } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
@@ -53,19 +53,29 @@ export class SessionGraphStorageV6 {
     for (const topic of input.topics ?? []) this.db.prepare(`INSERT INTO session_graph_topics_v6(session_id, id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(session_id, id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`).run(owner.sessionId, topic.id, topic.title, now, now);
     for (const record of input.records ?? []) {
-      this.validateRecordState(record);
       const oldRow = this.db.prepare("SELECT payload_json FROM session_graph_records_v6 WHERE session_id = ? AND id = ?").get(owner.sessionId, record.id) as JsonRow | undefined;
       const old = oldRow ? decode<SessionGraphRecord>(oldRow) : undefined;
-      let actorSnapshot: SessionGraphIdentity | undefined;
-      if ("sessionId" in record.actor) {
-        const actorId = record.actor.sessionId;
-        // Even unchanged actors must still belong to this parent at commit.
-        const candidate = snapshots.find((entry) => entry.sessionId === actorId) ?? (identity.sessionId === actorId ? identity : old?.actorSnapshot);
-        if (!candidate) throw new Error("Session Graph actor snapshot is required.");
-        this.validateIdentity(owner, candidate);
-        actorSnapshot = old && "sessionId" in old.actor && old.actor.sessionId === actorId ? old.actorSnapshot : candidate;
+      const merged: Record<string, unknown> = { ...old };
+      for (const key of ["actorSnapshot", "recordedBy", "createdAt", "updatedAt"]) delete merged[key];
+      for (const [key, value] of Object.entries(record)) {
+        if (value === null) delete merged[key];
+        else if (value !== undefined) merged[key] = value;
       }
-      const value: SessionGraphRecord = { ...record, ...(actorSnapshot ? { actorSnapshot } : {}), recordedBy: old?.recordedBy ?? identity, createdAt: old?.createdAt ?? now, updatedAt: now };
+      merged.actor ??= { sessionId: identity.sessionId };
+      if (old?.adoptionOrigin && record.adoption !== undefined && record.adoption !== old.adoption && record.adoptionOrigin === undefined) {
+        throw new Error("Changing adoption requires an explicit adoptionOrigin, or null to clear it.");
+      }
+      const content = sessionGraphRecordSchema.parse(merged);
+      this.validateRecordState(content);
+      const actorId = content.actor.sessionId;
+      const sameActor = old?.actor.sessionId === actorId;
+      // Retained snapshots do not exempt an actor from commit-time membership checks.
+      const candidate = snapshots.find((entry) => entry.sessionId === actorId)
+        ?? (identity.sessionId === actorId ? identity : sameActor ? old.actorSnapshot : undefined);
+      if (!candidate) throw new Error("Session Graph actor snapshot is required.");
+      this.validateIdentity(owner, candidate);
+      const actorSnapshot = sameActor ? old.actorSnapshot : candidate;
+      const value: SessionGraphRecord = { ...content, actorSnapshot, recordedBy: old?.recordedBy ?? identity, createdAt: old?.createdAt ?? now, updatedAt: now };
       this.db.prepare(`INSERT INTO session_graph_records_v6(session_id, id, topic_id, kind, payload_json, updated_at) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_id, id) DO UPDATE SET topic_id = excluded.topic_id, kind = excluded.kind, payload_json = excluded.payload_json, updated_at = excluded.updated_at`).run(owner.sessionId, record.id, record.topicId, record.kind, JSON.stringify(value), now);
     }
@@ -81,6 +91,7 @@ export class SessionGraphStorageV6 {
     if (record.progress !== undefined && record.kind !== "activity") throw new Error("Progress is only valid for activities.");
     if (record.resolution !== undefined && record.kind !== "issue") throw new Error("Resolution is only valid for issues.");
     if (record.result !== undefined && record.kind !== "activity" && record.kind !== "observation") throw new Error("Result is only valid for activities and observations.");
+    if (record.adoptionOrigin !== undefined && record.adoption !== "accepted" && record.adoption !== "declined") throw new Error("Adoption origin requires an accepted or declined decision.");
   }
 
   private read(owner: SessionGraphOwner, operation: SessionGraphOperation, request: unknown, revision: number) {

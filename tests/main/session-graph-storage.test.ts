@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { SessionGraphStorageV6 } from "../../src-electron/session-graph/session-graph-storage-v6.js";
+import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
+import { openAppDatabase } from "../../src-electron/storage/sqlite-connection.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
@@ -18,8 +20,127 @@ function newSession(id: string, workspacePath: string) {
 }
 const identity: SessionGraphIdentity = { sessionId: "main", sessionTitle: "Main", role: "main" };
 function record(id: string, topicId = "topic"): SessionGraphRecordInput {
-  return { id, topicId, kind: "requirement", title: id, detail: "Markdown **content**", scope: "feature", actor: { sessionId: "main" }, references: [] };
+  return { id, topicId, kind: "requirement", title: id, detail: "Markdown **content**", scope: "feature", origin: { type: "agent" }, references: [] };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "新規の担当は呼出元から解決し、別agentの通常更新とユーザー採用で担当snapshot・初回記録者・内容由来を保持し、明示担当変更と任意属性解除だけを反映する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md#記録" }
+// fault = "省略を欠損として保存する、採用で由来や担当を上書きする、同CharacterのSessionを同一視する、または所属を失った担当を保存する"
+// observable = "SQLite get/context/filterで返る担当・各由来・任意属性・記録者・snapshotと失敗後のrevision"
+// observation_boundary = "public-boundary"
+// scope = "SessionGraphStorageV6の新規と通常更新と明示変更"
+// lifecycle = "permanent"
+// impact = "共有要求や判断の帰属喪失と採用者の誤表示を防ぐ"
+// distinction = "型や入力schemaではDBの既存値とのmerge・所属検証・検索投影を保証できず、小規模な実DBで観測する"
+// @end-test-value
+test("Session Graph preserves responsibility and provenance across agent updates", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-graph-attribution-"));
+  const dbPath = path.join(temporary, "withmate-v6.db");
+  const sessions = new SessionStorageV6(dbPath);
+  const auxiliary = new AuxiliarySessionStorage(dbPath);
+  const db = openAppDatabase(dbPath);
+  const graph = new SessionGraphStorageV6(dbPath);
+  try {
+    const main = sessions.insertSession(newSession("main", temporary));
+    const owner = { sessionId: main.id, incarnationId: getSessionIncarnationId(main) };
+    db.prepare("INSERT INTO auxiliary_sessions(id, parent_session_id, status, created_at, updated_at) VALUES ('aux', 'main', 'active', 'time', 'time')").run();
+    const a: SessionGraphIdentity = { ...identity, character: { id: "same-character", name: "Character", icon: "original.png" } };
+    const b: SessionGraphIdentity = { ...a, sessionId: "aux", sessionTitle: "Auxiliary", role: "auxiliary" };
+    const body = { id: "proposal", topicId: "topic", kind: "decision" as const, title: "Proposal", detail: "Plan", scope: "feature", references: [] };
+    graph.execute(owner, "apply", { expectedRevision: 0, topics: [{ id: "topic", title: "Topic" }], records: [
+      { ...body, origin: { type: "agent" }, adoption: "proposed", actorRole: "Implementation", fields: { reason: "requested" } },
+      { ...record("request"), origin: { type: "user" } },
+      { ...record("external"), origin: { type: "external", label: "CI" } },
+    ] }, a);
+    graph.execute(owner, "apply", { expectedRevision: 1, records: [{ ...record("aux-request"), origin: { type: "user" } }] }, b);
+    graph.execute(owner, "apply", { expectedRevision: 2, records: [{ ...body, adoption: "accepted", adoptionOrigin: { type: "user" } }] }, b);
+    graph.execute(owner, "apply", { expectedRevision: 3, records: [{ ...body, title: "Accepted Proposal" }] }, b);
+    const read = () => {
+      const result = graph.execute(owner, "get", { ids: ["proposal"] });
+      assert.equal(result.status, "ok");
+      if (result.status !== "ok") throw new Error("Unexpected conflict");
+      return result.items[0];
+    };
+    const accepted = read();
+    assert.deepEqual(accepted.actor, { sessionId: "main" });
+    assert.deepEqual(accepted.actorSnapshot, a);
+    assert.deepEqual(accepted.recordedBy, a);
+    assert.deepEqual(accepted.origin, { type: "agent" });
+    assert.deepEqual(accepted.adoptionOrigin, { type: "user" });
+    assert.equal(accepted.adoption, "accepted");
+    assert.equal(accepted.actorRole, "Implementation");
+    assert.deepEqual(accepted.fields, { reason: "requested" });
+    for (const filter of [{ actorSessionId: "main" }, { recordedBySessionId: "main" }]) {
+      const context = graph.execute(owner, "context", filter);
+      assert.equal(context.status, "ok");
+      if (context.status === "ok") assert.deepEqual(context.items.map((item) => item.id).sort(), ["external", "proposal", "request"]);
+    }
+    const auxRecords = graph.execute(owner, "recent", { actorSessionId: "aux" });
+    if (auxRecords.status !== "ok") throw new Error("Unexpected conflict");
+    assert.deepEqual(auxRecords.items.map((item) => item.id), ["aux-request"]);
+    assert.deepEqual(auxRecords.items[0].actorSnapshot, b);
+    assert.throws(() => graph.execute(owner, "apply", { expectedRevision: 4, records: [{ ...body, adoption: "declined" }] }, b), /explicit adoptionOrigin/);
+    graph.execute(owner, "apply", { expectedRevision: 4, records: [{ ...body, actor: { sessionId: "aux" }, actorRole: null, fields: null }] }, b);
+    assert.deepEqual(read().actorSnapshot, b);
+    assert.deepEqual(read().recordedBy, a);
+    assert.equal(read().actorRole, undefined);
+    assert.equal(read().fields, undefined);
+    graph.execute(owner, "apply", { expectedRevision: 5, records: [{ ...body, adoption: "declined", adoptionOrigin: { type: "agent" } }] }, { ...a, character: { ...a.character!, name: "Renamed" } });
+    assert.deepEqual(read().actorSnapshot, b);
+    assert.deepEqual(read().adoptionOrigin, { type: "agent" });
+    graph.execute(owner, "apply", { expectedRevision: 6, records: [{ ...body, adoption: null, adoptionOrigin: null }] }, a);
+    assert.equal(read().adoption, undefined);
+    assert.equal(read().adoptionOrigin, undefined);
+    assert.throws(() => graph.execute(owner, "apply", { expectedRevision: 7, records: [{ ...body, id: "missing-origin" }] }, a), /origin/);
+    assert.throws(() => graph.execute(owner, "apply", { expectedRevision: 7, records: [{ ...body, adoptionOrigin: { type: "user" } }] }, a), /requires an accepted or declined/);
+    db.prepare("DELETE FROM auxiliary_sessions WHERE id = 'aux'").run();
+    assert.throws(() => graph.execute(owner, "apply", { expectedRevision: 7, records: [body] }, a), /outside the parent/);
+    const after = graph.execute(owner, "list_topics", {});
+    assert.equal(after.revision, 7);
+  } finally { graph.close(); db.close(); auxiliary.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "参照は新規・通常更新・未変更値の再保存で同じ形式検証を受け、正しいhrefは文字列を変えず保持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/894" }
+// fault = "更新だけ検証を迂回する、保存済みの不正hrefを例外受理する、またはquery/fragmentを改変する"
+// observable = "SQLite applyの拒否とgetのhrefおよびrevision"
+// observation_boundary = "public-boundary"
+// scope = "SessionGraphStorageV6 references保存境界"
+// lifecycle = "permanent"
+// impact = "相対参照による誤った対象の解決と保存値の意図しない変更を防ぐ"
+// distinction = "validator単体testでは保存時の適用漏れを検出できず、既存DB値を含む実保存経路を確認する"
+// @end-test-value
+test("Session Graph validates every reference on creation and update", async () => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "withmate-graph-href-"));
+  const dbPath = path.join(temporary, "withmate-v6.db");
+  const sessions = new SessionStorageV6(dbPath);
+  const graph = new SessionGraphStorageV6(dbPath);
+  const db = openAppDatabase(dbPath);
+  try {
+    const main = sessions.insertSession(newSession("main", temporary));
+    const owner = { sessionId: main.id, incarnationId: getSessionIncarnationId(main) };
+    const href = "https://example.com/review?q=a%2Fb#part%202";
+    const input = { ...record("reference"), references: [{ role: "evidence" as const, label: "Review", href }] };
+    graph.execute(owner, "apply", { expectedRevision: 0, topics: [{ id: "topic", title: "Topic" }], records: [input] }, identity);
+    graph.execute(owner, "apply", { expectedRevision: 1, records: [{ ...input, title: "Updated" }] }, identity);
+    const result = graph.execute(owner, "get", { ids: ["reference"] });
+    if (result.status !== "ok") throw new Error("Unexpected conflict");
+    assert.equal(result.items[0].references[0].href, href);
+    for (const invalid of ["report.md", "C:report.md", "//host/report", "https:"]) {
+      for (const id of ["new-record", "reference"]) assert.throws(() => graph.execute(owner, "apply", { expectedRevision: 2,
+        records: [{ ...input, id, references: [{ ...input.references[0], href: invalid }] }] }, identity), /absolute file path/);
+    }
+    db.prepare("UPDATE session_graph_records_v6 SET payload_json = json_set(payload_json, '$.references[0].href', 'relative.md') WHERE id = 'reference'").run();
+    const reread = graph.execute(owner, "get", { ids: ["reference"] });
+    if (reread.status !== "ok") throw new Error("Unexpected conflict");
+    assert.throws(() => graph.execute(owner, "apply", { expectedRevision: 2, records: [{ ...input, references: reread.items[0].references }] }, identity), /absolute file path/);
+    assert.equal(graph.execute(owner, "list_topics", {}).revision, 2);
+  } finally { graph.close(); db.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); }
+});
 
 // @test-value v2
 // kind = "contract"

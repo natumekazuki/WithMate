@@ -51,7 +51,7 @@ export class SessionGraphApplicationService {
       const actors: SessionGraphIdentity[] = [];
       if (operation === "apply") {
         for (const record of (parsed as SessionGraphRequest<"apply">).records ?? []) {
-          if (!("sessionId" in record.actor)) continue;
+          if (!record.actor) continue;
           const actor = await this.#deps.resolveSession(record.actor.sessionId);
           if (!actor || actor.generation !== captured.generation || !sameSessionGraphOwner(actor.owner, captured.owner)) {
             throw new Error("Session Graph actor is outside the parent Session.");

@@ -1,28 +1,43 @@
 import { z } from "zod";
+import { isSessionGraphReferenceHref } from "./session-graph-reference.js";
 
 const id = z.string().min(1).max(256);
 const text = z.string().max(100_000);
 export type SessionGraphJsonValue = string | number | boolean | null | SessionGraphJsonValue[] | { [key: string]: SessionGraphJsonValue };
 const json: z.ZodType<SessionGraphJsonValue> = z.lazy(() => z.union([z.string(), z.number().finite(), z.boolean(), z.null(), z.array(json), z.record(z.string(), json)]));
-export const sessionGraphActorSchema = z.union([
-  z.object({ sessionId: id }).strict(), z.object({ label: z.string().min(1).max(512) }).strict(),
-]);
-export const sessionGraphRecordInputSchema = z.object({
+export const sessionGraphActorSchema = z.object({ sessionId: id }).strict();
+export const sessionGraphOriginSchema = z.object({
+  type: z.enum(["agent", "user", "external"]), label: z.string().min(1).max(512).optional(),
+}).strict();
+export const sessionGraphRecordSchema = z.object({
   id, topicId: id, kind: z.enum(["requirement", "constraint", "decision", "activity", "observation", "issue"]),
   title: z.string().min(1).max(1024), detail: text, scope: z.string().max(4096), actor: sessionGraphActorSchema,
+  origin: sessionGraphOriginSchema,
+  adoptionOrigin: sessionGraphOriginSchema.optional(),
+  actorRole: z.string().min(1).max(512).optional(),
   target: z.object({ revision: z.string().max(1024), conditions: text, observedAt: z.string().datetime() }).strict().optional(),
-  references: z.array(z.object({ role: z.enum(["evidence", "artifact", "handoff"]), label: z.string().max(1024), href: z.string().min(1).max(8192) }).strict()).max(100),
+  references: z.array(z.object({ role: z.enum(["evidence", "artifact", "handoff"]), label: z.string().max(1024), href: z.string().min(1).max(8192).refine(isSessionGraphReferenceHref, "Use an absolute file path or a complete file/http/https/mailto/tel URL.") }).strict()).max(100),
   fields: z.record(z.string(), json).optional(),
   adoption: z.enum(["proposed", "accepted", "declined"]).optional(),
   progress: z.enum(["planned", "in_progress", "completed", "paused", "canceled"]).optional(),
   result: z.enum(["reported", "checked", "passed", "failed", "not_run", "unknown"]).optional(),
   resolution: z.enum(["open", "resolved"]).optional(), validity: z.enum(["superseded", "withdrawn"]).optional(),
 }).strict();
+// Omitted optional attributes survive updates; null explicitly removes them.
+export const sessionGraphRecordInputSchema = sessionGraphRecordSchema.extend({
+  actor: sessionGraphActorSchema.optional(), origin: sessionGraphOriginSchema.optional(),
+  adoptionOrigin: sessionGraphRecordSchema.shape.adoptionOrigin.nullable(),
+  actorRole: sessionGraphRecordSchema.shape.actorRole.nullable(),
+  target: sessionGraphRecordSchema.shape.target.nullable(), fields: sessionGraphRecordSchema.shape.fields.nullable(),
+  adoption: sessionGraphRecordSchema.shape.adoption.nullable(), progress: sessionGraphRecordSchema.shape.progress.nullable(),
+  result: sessionGraphRecordSchema.shape.result.nullable(), resolution: sessionGraphRecordSchema.shape.resolution.nullable(),
+  validity: sessionGraphRecordSchema.shape.validity.nullable(),
+});
 export const sessionGraphRelationSchema = z.object({ id, fromId: id, toId: id, kind: z.enum(["fulfills", "constrains", "supports", "checks", "depends_on", "supersedes", "related"]), label: z.string().max(1024).optional() }).strict();
 const page = { limit: z.number().int().min(1).max(200).optional(), offset: z.number().int().nonnegative().optional(), expectedRevision: z.number().int().nonnegative().optional() };
 const filters = { topicId: id.optional(), actorSessionId: id.optional(), recordedBySessionId: id.optional(),
-  kind: sessionGraphRecordInputSchema.shape.kind.optional(), adoption: sessionGraphRecordInputSchema.shape.adoption,
-  progress: sessionGraphRecordInputSchema.shape.progress, result: sessionGraphRecordInputSchema.shape.result, resolution: sessionGraphRecordInputSchema.shape.resolution };
+  kind: sessionGraphRecordSchema.shape.kind.optional(), adoption: sessionGraphRecordSchema.shape.adoption,
+  progress: sessionGraphRecordSchema.shape.progress, result: sessionGraphRecordSchema.shape.result, resolution: sessionGraphRecordSchema.shape.resolution };
 export const sessionGraphOperationRequestSchemas = {
   list_topics: z.object({ ...page }).strict(),
   recent: z.object({ ...page, ...filters }).strict(),

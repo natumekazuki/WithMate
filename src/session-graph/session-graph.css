@@ -125,7 +125,7 @@
   position: absolute;
   display: grid;
   grid-template-columns: 62px minmax(0, 1fr);
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 1fr auto auto;
   align-items: center;
   width: 240px;
   height: 112px;
@@ -148,14 +148,14 @@
   grid-column: 2;
   grid-row: 1;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
 }
-.session-graph-node > .session-graph-identity { grid-column: 1; grid-row: 1 / 3; }
+.session-graph-node > .session-graph-identity { grid-column: 1; grid-row: 1 / 4; }
 .session-graph-node-status {
   grid-column: 2;
   grid-row: 2;
@@ -175,15 +175,18 @@
 .session-graph-scope-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
 .session-graph-identity {
   display: inline-flex;
+  align-items: center;
+  gap: 8px;
   position: relative;
   flex-shrink: 0;
-  border-radius: 50%;
+  border-radius: 6px;
+  min-width: 0;
 }
-.session-graph-identity.is-label { align-items: center; gap: 8px; border-radius: 6px; color: var(--ink); min-width: 0; }
-.session-graph-actor-icon { flex-shrink: 0; width: 32px; height: 32px; }
 .session-graph-actor-name { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-.session-graph-node .session-graph-identity.is-label { flex-direction: column; gap: 4px; }
-.session-graph-node .session-graph-actor-name { max-height: 42px; overflow: hidden; text-align: center; }
+.session-graph-node .session-graph-identity { flex-direction: column; gap: 4px; }
+.session-graph-node .session-graph-actor-name { width: 62px; max-height: 30px; overflow: hidden; text-align: center; font-size: 11px; line-height: 1.35; }
+.session-graph-provenance { position: relative; display: flex; flex-wrap: wrap; gap: 0 6px; font-size: 10px; line-height: 1.35; color: var(--muted); }
+.session-graph-node > .session-graph-provenance { grid-column: 2; grid-row: 3; }
 .session-graph-identity-tooltip {
   display: none;
   position: absolute;
@@ -204,6 +207,7 @@
 }
 .session-graph-identity:hover .session-graph-identity-tooltip,
 .session-graph-identity:focus .session-graph-identity-tooltip,
+.session-graph-node:has(.session-graph-provenance:hover) .session-graph-identity-tooltip,
 .session-graph-node:focus-visible .session-graph-identity-tooltip {
   display: block;
 }

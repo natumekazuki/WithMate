@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { sessionGraphOperationRequestSchemas, sessionGraphRecordInputSchema, sessionGraphRelationSchema } from "./session-graph-operation-schema.js";
+import type { sessionGraphOperationRequestSchemas, sessionGraphRecordInputSchema, sessionGraphRecordSchema, sessionGraphRelationSchema } from "./session-graph-operation-schema.js";
 
 export type SessionGraphOwner = { sessionId: string; incarnationId: string };
 export const SESSION_GRAPH_RELATION_LIMIT = 400;
@@ -8,8 +8,8 @@ export type SessionGraphIdentity = {
   character?: { id: string; name: string; icon?: string };
 };
 export type SessionGraphRecordInput = z.infer<typeof sessionGraphRecordInputSchema>;
-export type SessionGraphRecord = SessionGraphRecordInput & {
-  actorSnapshot?: SessionGraphIdentity;
+export type SessionGraphRecord = z.infer<typeof sessionGraphRecordSchema> & {
+  actorSnapshot: SessionGraphIdentity;
   recordedBy: SessionGraphIdentity;
   createdAt: string; updatedAt: string;
 };
