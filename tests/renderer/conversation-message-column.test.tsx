@@ -160,6 +160,127 @@ test("conversation column shows question answers independently of queued submiss
 
 // @test-value v2
 // kind = "contract"
+// claim = "Main/Auxは次予約のstartingまたはrunningが旧保存履歴より先着しても、本文未受信の旧応答面と次応答面を分離して保持し、同一turnへのSteer入力を挟んだ場合も各保存応答へ同じDOMを引き継ぐ。liveがreceipt照会より先に届く場合も所属を推測せず、同一requestの初回liveでは元の待機面へ接続する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 通常応答のrequest/turn表示identity、確定応答の取得待ち" }
+// fault = "次開始時に旧待機DOMを捨てる、後着旧履歴を次応答へ結合する、または同じ保存応答を重複表示する"
+// observable = "実Columnのassistant DOM・avatar・card identity、取得待ちstatus、保存本文と行順、submission消費"
+// observation_boundary = "component-behavior"
+// scope = "Main/Aux共有Columnのqueue receipt・live・canonical履歴の合流。Providerや保存処理はmock境界"
+// lifecycle = "permanent"
+// impact = "連続送信で待機面が消失・再生成され、どのpromptへの応答かと閲覧位置が揺れる"
+// distinction = "既存連続queue testは旧live本文があるhook propsを検証する。本文なしの旧待機面を実DOMで検証し、型検査や既存handoffでは検出できない順序を小さいfixtureで固定する"
+// @end-test-value
+test("conversation column retains empty responses when the next turn starts before history", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.requestAnimationFrame = () => 1;
+  dom.window.cancelAnimationFrame = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) for (const [nextState, liveFirst, withInput] of [["starting", false, false], ["running", false, false], ["running", true, false], ["running", true, true]] as const) {
+      const store = new SessionTurnSubmissions();
+      const receipt = (sequence: number): SessionTurnQueueReceipt => ({
+        sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`, sequence,
+        state: "queued", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+        captured: { request: { clientRequestId: `request-${sequence}`, userMessage: `prompt-${sequence}`, executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+      });
+      let active = [receipt(1), receipt(2)];
+      const terminals = new Map<string, SessionTurnQueueReceipt>();
+      let changed: ((id: string) => void) | undefined;
+      const api: ConversationMessageColumnApi = {
+        listSessionTurnQueue: async () => active,
+        getSessionTurnQueueReceipt: async (_id, requestId) => terminals.get(requestId) ?? active.find((item) => item.requestId === requestId) ?? null,
+        onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
+      };
+      for (const item of active) {
+        store.start({ sessionId: kind, incarnationId: "inc", requestId: item.requestId, userMessage: item.captured.request.userMessage, historyMessageCount: 0, queuedBehindRun: item.sequence > 1, error: "" });
+        store.accept(item);
+      }
+      let saved: SessionMessageColumnProps["messages"] = [];
+      let live: LiveSessionRunState | null = null;
+      function View() {
+        const props = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" }, baseProps: { ...createBaseProps(kind), turnSubmissions: store }, messageSourceKind: kind, enabled: true, api, liveRun: live });
+        return props ? <SessionMessageColumn {...props} /> : null;
+      }
+      const viewKey = `${kind}-${nextState}-${liveFirst}-${withInput}`;
+      const nextUserSeq = withInput ? 3 : 2;
+      const thirdUserSeq = nextUserSeq + 2;
+      const render = () => act(async () => root.render(<View key={viewKey} />));
+      const responses = () => [...dom.window.document.querySelectorAll(".message-row.assistant")];
+      await render();
+      const first = responses()[0];
+      assert.ok(first);
+      const firstAvatar = first.querySelector(".message-avatar");
+      const firstCard = first.querySelector(".message-card");
+      terminals.set("request-1", { ...receipt(1), state: "completed", turnId: "turn-1", userMessageSeq: 0 });
+      active = [{ ...receipt(2), state: nextState, turnId: nextState === "running" ? "turn-2" : null, userMessageSeq: nextState === "running" ? nextUserSeq : null }];
+      const nextLive: LiveSessionRunState = { sessionId: kind, threadId: "thread", turnId: "turn-2", runState: "running", assistantText: "response-2", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      if (liveFirst) live = nextLive;
+      await act(async () => {
+        if (withInput) {
+          const input = { ...receipt(3), state: "completed" as const, inputTurnId: "turn-1", turnId: "turn-1", userMessageSeq: 1 };
+          terminals.set(input.requestId, input);
+          store.start({ sessionId: kind, incarnationId: "inc", requestId: input.requestId, userMessage: "prompt-3", historyMessageCount: 0, queuedBehindRun: true, error: "" });
+          store.accept(input);
+        }
+        changed?.(kind); root.render(<View key={viewKey} />);
+      });
+      assert.ok(first.isConnected && responses()[0] === first, `${kind}/${nextState}: the old waiting surface survives the next start`);
+      assert.equal(responses().length, 2);
+      assert.match(first.textContent ?? "", /Loading response/);
+      const second = responses()[1];
+      if (nextState === "running") {
+        live = nextLive;
+        await render();
+        assert.ok(responses()[0] === first && responses()[1] === second, "the next live body belongs to the next response surface");
+      }
+      saved = [{ role: "user", text: "prompt-1", historyIndex: 0 }];
+      if (withInput) saved.push({ role: "user", text: "prompt-3", historyIndex: 1 });
+      saved.push({ role: "assistant", text: "final-1", historyIndex: nextUserSeq - 1 });
+      await render();
+      assert.ok(responses()[0] === first && responses()[1] === second, "old canonical arrival cannot replace either response surface");
+      assert.ok(first.querySelector(".message-avatar") === firstAvatar && first.querySelector(".message-card") === firstCard);
+      assert.match(first.textContent ?? "", /final-1/);
+      assert.doesNotMatch(second.textContent ?? "", /final-1/);
+      assert.deepEqual(store.getSnapshot().map((item) => item.requestId), ["request-2"]);
+      terminals.set("request-2", { ...receipt(2), state: "completed", turnId: "turn-2", userMessageSeq: nextUserSeq }); active = []; live = null;
+      await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
+      saved = [...saved, { role: "user", text: "prompt-2", historyIndex: nextUserSeq }, { role: "assistant", text: "final-2", historyIndex: nextUserSeq + 1 }];
+      await render();
+      assert.ok(responses()[0] === first && responses()[1] === second);
+      assert.deepEqual([...dom.window.document.querySelectorAll(".message-row .rich-text")].map((node) => node.textContent), ["prompt-1", ...(withInput ? ["prompt-3"] : []), "final-1", "prompt-2", "final-2"]);
+      assert.equal(store.getSnapshot().length, 0);
+      active = [receipt(4)];
+      await act(async () => {
+        store.start({ sessionId: kind, incarnationId: "inc", requestId: "request-4", userMessage: "prompt-4", historyMessageCount: thirdUserSeq, queuedBehindRun: false, error: "" });
+        store.accept(active[0]); changed?.(kind);
+      });
+      const third = responses().at(-1);
+      assert.ok(third && third !== second);
+      active = [{ ...receipt(4), state: "running", turnId: "turn-3", userMessageSeq: thirdUserSeq }];
+      live = { ...nextLive, turnId: "turn-3", assistantText: "" };
+      await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
+      assert.ok(responses().at(-1) === third, "a request's own first live cannot replace its pending surface");
+      live = { ...live, runState: "completed", assistantText: "final-3" };
+      terminals.set("request-4", { ...active[0], state: "completed" }); active = [];
+      saved = [...saved, { role: "user", text: "prompt-4", historyIndex: thirdUserSeq }, { role: "assistant", text: "final-3", historyIndex: thirdUserSeq + 1 }];
+      await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
+      assert.ok(responses().at(-1) === third);
+    }
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "MainとAuxiliaryのHTMLプレビューFind通知は一度でactive会話の検索を開き、非active列では検索を開かない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Ctrl+Fはactiveなchatを検索する" }
 // fault = "HTML consumerがFind callbackを渡さずfocus復帰だけになる、または非active列で検索を開く"

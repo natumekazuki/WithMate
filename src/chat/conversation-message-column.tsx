@@ -105,7 +105,7 @@ export function useConversationMessageColumn({
   const mounted = useRef(true);
   const displayedBridge = useRef<{ owner: string; projection: LiveAssistantProjection; turnId?: string } | null>(null);
   const retainedBridges = useRef<{ owner: string; projections: LiveAssistantProjection[] }>({ owner: "", projections: [] });
-  const stableMessageKeys = useRef<{ owner: string; keys: Map<number, { role: "user" | "assistant"; key: string }> }>({ owner: "", keys: new Map() });
+  const stableMessageKeys = useRef<{ owner: string; keys: Map<number, { role: "user" | "assistant"; key: string }>; responses: Map<string, string> }>({ owner: "", keys: new Map(), responses: new Map() });
   const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
   const responsePresentation = useRef<{ owner: string; requestId?: string; turnId?: string; key: string } | null>(null);
   const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
@@ -279,9 +279,18 @@ export function useConversationMessageColumn({
   }, [api, enabled, liveRunOverride, pageOwner, sessionId, refresh, liveReadRevision]);
 
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
+  const previousResponse = responsePresentation.current;
+  // An empty request surface cannot identify an unbound live turn; resolve the receipt before attaching its body or forms.
+  const isResponseBindingPending = !!api?.listSessionTurnQueue && !!liveRun?.turnId
+    && previousResponse?.owner === pageOwner && !!previousResponse.requestId
+    && !(displayedBridge.current?.owner === pageOwner && displayedBridge.current.projection.text)
+    && queue.receipts.some((receipt) => receipt.requestId === previousResponse.requestId
+      && (receipt.state === "queued" || receipt.state === "starting" || receipt.state === "running"))
+    && !queue.receipts.some((receipt) => receipt.turnId === liveRun.turnId && !receipt.inputTurnId);
+  useEffect(() => { if (isResponseBindingPending) queue.reload(); }, [pageOwner, liveRun?.turnId, isResponseBindingPending, queue.reload]);
   const isCancelRequested = baseProps.pendingCancelSessionIds?.has(sessionId) ?? false;
   const hasActiveRun = isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun);
-  const assistantText = api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
+  const assistantText = isResponseBindingPending ? "" : api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
   const queuedResponseIndex = queue.receipts.reduce((index, receipt) => {
     const ownsRun = receipt.state === "running" && !receipt.inputTurnId
       || receipt.state === "completed" && !!receipt.inputTurnId && receipt.inputTurnId === liveRun?.turnId;
@@ -289,7 +298,7 @@ export function useConversationMessageColumn({
   }, 0);
   const tail = tailMessages.at(-1);
   if (!liveRun) liveResponseOwner.current = null;
-  else if (liveRun.runState === "running" && api?.listSessionTurnQueue) {
+  else if (!isResponseBindingPending && liveRun.runState === "running" && api?.listSessionTurnQueue) {
     if (liveResponseOwner.current?.owner !== pageOwner || liveResponseOwner.current.turnId !== liveRun.turnId) {
       // 新runは保存済み応答を再利用しない。user未着なら次のuserと応答の位置を開始時に確保する。
       liveResponseOwner.current = {
@@ -346,23 +355,28 @@ export function useConversationMessageColumn({
   const bridgeKey = bridge
     ? buildLiveAssistantProjectionKey(bridge.sessionId, bridge.threadId, bridge.messageIndex)
     : null;
-  if (stableMessageKeys.current.owner !== pageOwner) stableMessageKeys.current = { owner: pageOwner, keys: new Map() };
+  if (stableMessageKeys.current.owner !== pageOwner) stableMessageKeys.current = { owner: pageOwner, keys: new Map(), responses: new Map() };
   const stableKeys = stableMessageKeys.current.keys;
+  const responseKeys = stableMessageKeys.current.responses;
+  const previousPresentation = responsePresentation.current;
+  if (enabled && previousPresentation?.owner === pageOwner && previousPresentation.requestId) responseKeys.set(previousPresentation.requestId, previousPresentation.key);
   for (const receipt of queue.receipts) if (receipt.userMessageSeq !== null) stableKeys.set(receipt.userMessageSeq, { role: "user", key: `turn-submission-${receipt.incarnationId}-${receipt.requestId}` });
   if (bridge && enabled) stableKeys.set(bridge.messageIndex, { role: "assistant", key: bridgeKey! });
-  // A turn can finish before any live text arrives. Bind its pending surface before selecting the next turn.
-  const previousPresentation = responsePresentation.current;
-  const completedPresentationReceipt = previousPresentation?.owner === pageOwner
-    ? queue.receipts.find((receipt) => receipt.requestId === previousPresentation.requestId && receipt.state === "completed" && !receipt.inputTurnId)
-    : undefined;
-  if (completedPresentationReceipt?.userMessageSeq != null) {
+  // Keep each observed response identity until its saved body arrives, even if the next turn starts first.
+  for (const receipt of queue.receipts) {
+    const key = responseKeys.get(receipt.requestId);
+    if (!key || receipt.state !== "completed" || receipt.inputTurnId || receipt.userMessageSeq === null) continue;
+    const nextUserSeq = queue.receipts.reduce((boundary, next) => next.sequence > receipt.sequence && !next.inputTurnId && next.userMessageSeq !== null
+      ? Math.min(boundary, next.userMessageSeq) : boundary, Infinity);
     const savedResponseIndex = messages.findIndex((message, index) => message.role === "assistant"
-      && getMessageHistoryIndex(message, index) > completedPresentationReceipt.userMessageSeq!);
+      && getMessageHistoryIndex(message, index) > receipt.userMessageSeq! && getMessageHistoryIndex(message, index) < nextUserSeq);
     if (savedResponseIndex >= 0) {
       const historyIndex = getMessageHistoryIndex(messages[savedResponseIndex], savedResponseIndex);
-      if (!stableKeys.has(historyIndex)) stableKeys.set(historyIndex, { role: "assistant", key: previousPresentation!.key });
+      if (!stableKeys.has(historyIndex)) stableKeys.set(historyIndex, { role: "assistant", key });
     }
   }
+  for (const requestId of responseKeys.keys()) if (!queue.receipts.some((receipt) => receipt.requestId === requestId)) responseKeys.delete(requestId);
+  const responseKeySignature = [...responseKeys].map(([requestId, key]) => `${requestId}:${key}`).join(",");
   const loadedIndexes = new Set(messages.map((message, index) => getMessageHistoryIndex(message, index)));
   for (const index of stableKeys.keys()) if (!loadedIndexes.has(index) && !queue.receipts.some((receipt) => receipt.userMessageSeq === index)
     && index !== bridge?.messageIndex && !retainedBridges.current.projections.some((candidate) => candidate.messageIndex === index)) stableKeys.delete(index);
@@ -397,7 +411,7 @@ export function useConversationMessageColumn({
   }, [currentLiveProjection, retainedSignature, messages, sessionId, bridgeKey, bridge?.text, isBrowsing]);
   const queuedProjection = useMemo(() => projectSessionTurnQueue(liveProjection, isBrowsing ? [] : queue.receipts, {
     sessionId, incarnationId: queueIncarnationId,
-  }, { submissions: isBrowsing ? [] : submissions, hasActiveRun }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, submissions, hasActiveRun]);
+  }, { submissions: isBrowsing ? [] : submissions, hasActiveRun: hasActiveRun && !isResponseBindingPending, responseKeys }), [liveProjection, queue.receipts, isBrowsing, sessionId, queueIncarnationId, submissions, hasActiveRun, isResponseBindingPending, responseKeySignature]);
   const projection = queuedProjection.projection;
   const searchTailMessages = useMemo(() => {
     const missingBridges = [...retainedBridges.current.projections, ...(bridge ? [bridge] : [])]
@@ -422,7 +436,7 @@ export function useConversationMessageColumn({
     && (liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
     && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
     ? bridgeKey : null;
-  const responseTurnId = hasActiveRun ? liveRun?.turnId : undefined;
+  const responseTurnId = isResponseBindingPending ? previousResponse?.turnId : hasActiveRun ? liveRun?.turnId : undefined;
   const responseReceipt = queuedProjection.activeReceipt;
   const previous = responsePresentation.current;
   const receiptTurnId = responseReceipt?.turnId
@@ -796,18 +810,18 @@ export function useConversationMessageColumn({
     collapsedMessageKeys,
     messageJumpRequest: conversation.messageJumpRequest,
     isRunning: !isBrowsing && hasActiveRun,
-    responsePending: !isBrowsing && !hasActiveRun && (!!queuedProjection.activeReceipt || !!queuedProjection.pendingSubmission && !queuedProjection.pendingSubmission.error),
+    responsePending: !isBrowsing && (isResponseBindingPending || !hasActiveRun && (!!queuedProjection.activeReceipt || !!queuedProjection.pendingSubmission && !queuedProjection.pendingSubmission.error)),
     submissionError: queuedProjection.pendingSubmission?.error ?? "",
     submissionUncertain: queuedProjection.pendingSubmission?.uncertain ?? false,
     pendingRunIndicatorAnnouncement: liveRun?.cancellationState
       ? liveRun.cancellationState === "terminating" ? "Waiting for the run to stop" : "Canceling run"
-      : isCancelRequested ? "Canceling run" : messageSourceKind === "session" ? baseProps.pendingRunIndicatorAnnouncement : "Running",
+      : isCancelRequested ? "Canceling run" : isResponseBindingPending ? "Waiting for response" : messageSourceKind === "session" ? baseProps.pendingRunIndicatorAnnouncement : "Running",
     liveRunAssistantText: assistantText,
     hasLiveRunAssistantText: assistantText.length > 0,
-    liveApprovalRequest: api ? liveRun?.approvalRequest ?? null : baseProps.liveApprovalRequest,
-    liveElicitationRequest: api ? liveRun?.elicitationRequest ?? null : baseProps.liveElicitationRequest,
-    liveElicitationRequests: api ? liveRun?.elicitationRequests : baseProps.liveElicitationRequests,
-    liveElicitationRecords: api ? liveRun?.elicitationRecords : baseProps.liveElicitationRecords,
+    liveApprovalRequest: isResponseBindingPending ? null : api ? liveRun?.approvalRequest ?? null : baseProps.liveApprovalRequest,
+    liveElicitationRequest: isResponseBindingPending ? null : api ? liveRun?.elicitationRequest ?? null : baseProps.liveElicitationRequest,
+    liveElicitationRequests: isResponseBindingPending ? [] : api ? liveRun?.elicitationRequests : baseProps.liveElicitationRequests,
+    liveElicitationRecords: isResponseBindingPending ? [] : api ? liveRun?.elicitationRecords : baseProps.liveElicitationRecords,
     elicitationInputAvailable: api ? liveRun?.inputAvailable === true && !liveRun.cancellationState && !isCancelRequested : baseProps.elicitationInputAvailable,
     approvalActionRequestId: conversation.approvalRequestId,
     approvalActionDecision: conversation.approvalDecision,
