@@ -529,7 +529,7 @@ export async function parseWithMateMemoryCliArgs(
 
   return {
     command,
-    body: normalizeProjectPathTargets(body),
+    body,
     ...(validateCommand ? { validateCommand } : {}),
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
@@ -880,26 +880,6 @@ function buildShorthandBody(
   throw usageError(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
 }
 
-function normalizeProjectPathTargets(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => normalizeProjectPathTargets(item));
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  const record = value as Record<string, unknown>;
-  const normalized: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(record)) {
-    normalized[key] = normalizeProjectPathTargets(item);
-  }
-
-  if (record.type === "path" && typeof record.path === "string") {
-    normalized.path = normalizeCliProjectPath(record.path);
-  }
-  return normalized;
-}
-
 function requireOptionValue(args: readonly string[], index: number, option: string): string {
   const value = args[index];
   if (!value || value.startsWith("--")) {
@@ -943,9 +923,9 @@ function formatAuditOutput(value: unknown, format: "json" | "jsonl" | "markdown"
   for (const targetAudit of report.targets) {
     const inventory = targetAudit.target ?? {};
     const selector = inventory.target ?? {};
-    const label = inventory.project?.displayName ?? inventory.character?.displayName ?? `${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`;
-    lines.push(`## ${String(label).replace(/\r?\n/g, " ")}`, "");
-    lines.push(`- Target: ${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`);
+    const label = `${selector.kind ?? "unknown"}${selector.project ? ` (${selector.project.id})` : ""}`.replace(/\r?\n/g, " ");
+    lines.push(`## ${label}`, "");
+    lines.push(`- Target: ${label}`);
     lines.push(`- Entries: ${inventory.entryCount ?? 0}`);
     lines.push(`- Tags: ${inventory.tagCount ?? 0}`);
     lines.push(`- Last updated: ${inventory.lastUpdatedAt ?? "n/a"}`, "");

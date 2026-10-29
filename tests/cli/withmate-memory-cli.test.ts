@@ -1981,7 +1981,7 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
   // claim = "project.pathの相対pathはCLIで拒否する"
   // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
   // fault = "project.pathの相対pathはCLIで拒否するという公開契約に反する結果を返す"
-  // observable = "usage終了code、CLI_USAGE error codeとabsolute pathを示すmessage"
+  // observable = "apiError終了code、共通INVALID_INPUT error codeとdispatch前の入力拒否"
   // observation_boundary = "public-boundary"
   // scope = "Memory CLI public input and runtime exchange"
   // lifecycle = "permanent"
@@ -2007,9 +2007,8 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
         },
       });
 
-      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
-      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
-      assert.match(stdout.json().error.message, /absolute path/);
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_INVALID_INPUT");
     } finally {
       process.chdir(previousCwd);
       await rm(tempDirectory, { recursive: true, force: true });
@@ -2460,10 +2459,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       staleBefore: "2026-05-11T00:00:00.000Z",
       targets: [{
         target: {
-          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
-          owner: "project",
-          scope: "project",
-          project: { id: "project-a", displayName: "Project A" },
+          target: { kind: "project", project: { type: "id", id: "project-a" } },
           entryCount: 1,
           tagCount: 1,
           lastUpdatedAt: "2026-01-01T00:00:00.000Z",
@@ -2496,7 +2492,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
       if (format === "markdown") {
         assert.match(stdout.text(), /# WithMate Memory audit/);
-        assert.match(stdout.text(), /Project A/);
+        assert.match(stdout.text(), /## project \(project-a\)/);
         assert.match(stdout.text(), /context: 1/);
         assert.match(stdout.text(), /topic:memory — 1/);
         assert.match(stdout.text(), /pr opened — mem-a, mem-b/);
@@ -2510,7 +2506,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
           staleBefore: response.staleBefore,
           nextCursor: "next-page",
         });
-        assert.equal(JSON.parse(stdout.lines()[1]).target.project.displayName, "Project A");
+        assert.deepEqual(JSON.parse(stdout.lines()[1]).target, response.targets[0].target);
       }
     }
   });

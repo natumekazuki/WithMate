@@ -17,6 +17,73 @@ const env = {
 
 // @test-value v2
 // kind = "contract"
+// claim = "raw JSONのproject pathは両入口で元入力の絶対path条件と1000文字上限を検証し、local validateは元表記を保持、dispatch時だけ共通正規化する"
+// oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+// fault = "CLIが公開schema前にpathを短縮して上限超過を受理するか、validate結果又は通常dispatchがMCPと異なる"
+// observable = "SDK MCPとCLIのlocal validate結果、通常操作の受理・拒否、runtime request件数とproject path"
+// observation_boundary = "public-boundary"
+// scope = "memory-cli-mcp-raw-project-path"
+// lifecycle = "permanent"
+// distinction = "共通schema単体では観測できないCLI JSON parserの事前変換をSDK入口との比較で検出する"
+// @end-test-value
+it("raw JSONのproject path検証とdispatch正規化を両入口で揃える", async () => {
+  const operations: WithMateMemoryRuntimeOperation[] = [];
+  const runtimeCall = async (_connection: unknown, operation: WithMateMemoryRuntimeOperation) => {
+    operations.push(operation);
+    return { ok: true, status: 200, value: { schemaVersion: "withmate-memory-v1", items: [] } };
+  };
+  const server = createWithMateMemoryMcpServer({ env, runtimeCall });
+  const client = new Client({ name: "path-parity-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const oversizedPath = "C:/" + "a/../".repeat(201) + "x";
+  assert.equal(oversizedPath.length, 1009);
+  const cases = [
+    { path: oversizedPath, normalized: undefined },
+    { path: ".", normalized: undefined },
+    { path: "C:\\repo\\..\\x", normalized: "C:/x" },
+    { path: "C:/repo", normalized: "C:/repo" },
+  ];
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    for (const sample of cases) {
+      const input = { targets: [{ kind: "project", project: { type: "path", path: sample.path } }], query: "review" };
+      let output = "";
+      const stdout = { write: (value: string | Uint8Array) => { output += value; return true; } };
+      const local = await client.callTool({ name: "memory.validate", arguments: { command: "search", input } });
+      const validationExit = await runWithMateMemoryCli(["validate", "--command", "search", "--json", JSON.stringify(input)], { env, runtimeCall, stdout });
+      assert.deepEqual(JSON.parse(output), local.structuredContent);
+      assert.equal(validationExit, sample.normalized === undefined ? 3 : 0);
+      if (sample.normalized === undefined) {
+        assert.equal((local.structuredContent as { error: { code: string } }).error.code, "WITHMATE_MEMORY_INVALID_INPUT");
+      } else {
+        assert.deepEqual((local.structuredContent as { value: unknown }).value, input);
+      }
+      assert.equal(operations.length, 0, "local validation must not dispatch");
+      const result = await client.callTool({ name: "memory.search", arguments: input });
+      output = "";
+      const exit = await runWithMateMemoryCli(["search", "--json", JSON.stringify(input)], { env, runtimeCall, stdout });
+      assert.equal(exit, sample.normalized === undefined ? 3 : 0);
+      if (sample.normalized === undefined) {
+        assert.equal(result.isError, true);
+        assert.equal(operations.length, 0, "invalid raw paths must not dispatch");
+      } else {
+        assert.deepEqual(JSON.parse(output), result.structuredContent);
+        assert.equal(operations.length, 2);
+        const expected = { method: "POST", path: "/v1/search", body: { ...input, targets: [{ kind: "project", project: { type: "path", path: sample.normalized } }], schemaVersion: "withmate-memory-v1" } };
+        assert.deepEqual(operations[0], expected);
+        assert.deepEqual(operations[1], expected);
+      }
+      operations.length = 0;
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "CLIとMCPは同じ公開入力から同じruntime operationを送り、拒否結果のschema/code/effectを同じ値で返す"
 // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md CLI/MCP公開操作" }
 // fault = "一方だけが別route、default、caller identity又は異なるdomain error mappingを使う"

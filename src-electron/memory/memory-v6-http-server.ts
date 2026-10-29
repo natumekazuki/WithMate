@@ -2,7 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { createMemoryErrorResponse, type MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
+import { createMemoryErrorResponse, type MemoryAuditResponse, type MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import {
@@ -1037,7 +1037,17 @@ function projectAgentBoundResponse(
     }
     return projected;
   };
-  const projected = projectValue(result);
+  let projected: unknown;
+  if (route === "audit") {
+    const audit = result as MemoryAuditResponse;
+    const targets = audit.targets.map((targetAudit) => {
+      const inventory = projectValue(targetAudit.target);
+      return inventory === projectionFailure ? projectionFailure : { ...targetAudit, target: inventory };
+    });
+    projected = targets.includes(projectionFailure) ? projectionFailure : { ...audit, targets };
+  } else {
+    projected = projectValue(result);
+  }
   return projected !== projectionFailure ? projected : createMemoryErrorResponse({
     code: "MEMORY_FORBIDDEN",
     message: "Memory response target is outside the bound actor authority.",

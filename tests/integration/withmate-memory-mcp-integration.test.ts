@@ -354,6 +354,72 @@ describe("general Memory MCP runtime integration", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "auditは全owner/scopeのinventory集計と公開targetをCLIとMCPに保持し、Markdownも同じ集計を表示する"
+  // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#CLI-commandとMCP公開範囲" }
+  // fault = "auditのinventory wrapperをselectorとして拒否または置換し、集計を欠落させるかformatterが内部selectorを期待する"
+  // observable = "実SQLiteへ保存後のCLI/MCP auditのtarget別件数・tag数・更新日時・公開selectorとMarkdown表示、無binding Character要求の拒否"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-audit-cli-mcp-runtime-projection"
+  // lifecycle = "permanent"
+  // distinction = "service単体やstub parityと異なり両入口から実HTTP projectionと実storageを通り、consumerへ届いた監査結果を観測する"
+  // @end-test-value
+  it("auditのinventoryと集計をCLI/MCPおよびMarkdownまで保持する", async () => {
+    const fixture = await createRuntimeFixture();
+    try {
+      const targets = [
+        { kind: "user-global" },
+        actorProjectTarget({ type: "id", id: PROJECT_ID }),
+        { kind: "character" },
+        { kind: "character+project", project: { type: "id", id: PROJECT_ID } },
+      ];
+      const expectedInventories = [];
+      for (const [index, target] of targets.entries()) {
+        const appended = await fixture.client.callTool({ name: "memory.append", arguments: {
+          target, kind: "note", title: `Audit target ${index}`, body: "Audit inventory content.",
+          preview: "Audit inventory preview.", tags: [{ type: "topic", value: "audit" }],
+          idempotencyKey: `audit-inventory-${index}`,
+        } });
+        assert.equal(appended.isError, undefined, JSON.stringify(appended));
+        expectedInventories.push({ target, entryCount: 1, tagCount: 1,
+          lastUpdatedAt: (appended.structuredContent as any).entry.updatedAt });
+      }
+      const request = { targets, staleBefore: "2000-01-01T00:00:00.000Z" };
+      const mcp = await fixture.client.callTool({ name: "memory.audit", arguments: request });
+      assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+      const mcpReport = mcp.structuredContent as any;
+      assert.deepEqual(mcpReport.targets.map((item: any) => item.target), expectedInventories);
+      assert.deepEqual(mcpReport.targets.map((item: any) => item.countsByKind), targets.map(() => ({ note: 1 })));
+
+      const boundFixture = { ...fixture, cliEnv: fixture.env };
+      const cli = await callCli(boundFixture, "audit", request);
+      assert.equal(cli.exitCode, 0, JSON.stringify(cli.value));
+      assert.deepEqual(cli.value.targets, mcpReport.targets);
+      const unbound = await callCli(fixture, "audit", { ...request, targets: targets.slice(0, 2) });
+      assert.equal(unbound.exitCode, 0, JSON.stringify(unbound.value));
+      assert.deepEqual(unbound.value.targets, mcpReport.targets.slice(0, 2));
+      const forbidden = await callCli(fixture, "audit", { targets: [targets[2]] });
+      assert.notEqual(forbidden.exitCode, 0);
+      assert.equal(forbidden.value.error.effect, "none");
+
+      let markdown = "";
+      const markdownExit = await runWithMateMemoryCli(["audit", "--json", JSON.stringify(request), "--format", "markdown"], {
+        env: fixture.env, stdout: { write: (chunk) => { markdown += String(chunk); return true; } },
+      });
+      assert.equal(markdownExit, 0);
+      for (const label of ["user-global", `project (${PROJECT_ID})`, "character", `character+project (${PROJECT_ID})`]) {
+        assert.ok(markdown.includes(`## ${label}\n`), label);
+        assert.ok(markdown.includes(`- Target: ${label}\n`), label);
+      }
+      assert.equal(markdown.match(/- Entries: 1/g)?.length, 4);
+      assert.equal(markdown.match(/- Tags: 1/g)?.length, 4);
+      for (const inventory of expectedInventories) assert.ok(markdown.includes(`- Last updated: ${inventory.lastUpdatedAt}`));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "CLIとbound MCPの明示public targetは同じMemory application stateを相互参照し、CLI path入力とMCP ID入力は同じprojectへ解決する"
   // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
   // fault = "CLI/MCPが別runtimeまたは別project targetへ分岐するか、片側の保存responseが他方から読めない"

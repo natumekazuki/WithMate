@@ -23716,18 +23716,18 @@ var GENERAL_MEMORY_COMMANDS = /* @__PURE__ */ new Set([
 function isAbsolutePath(value) {
 	return path.isAbsolute(value) || path.win32.isAbsolute(value);
 }
-function normalizeProjectPathTargets$1(value) {
-	if (Array.isArray(value)) return value.map((item) => normalizeProjectPathTargets$1(item));
+function normalizeProjectPathTargets(value) {
+	if (Array.isArray(value)) return value.map((item) => normalizeProjectPathTargets(item));
 	if (!value || typeof value !== "object") return value;
 	const record = value;
-	const normalized = Object.fromEntries(Object.entries(record).map(([key, item]) => [key, normalizeProjectPathTargets$1(item)]));
+	const normalized = Object.fromEntries(Object.entries(record).map(([key, item]) => [key, normalizeProjectPathTargets(item)]));
 	if (record.type === "path" && typeof record.path === "string" && isAbsolutePath(record.path)) normalized.path = path.win32.isAbsolute(record.path) ? path.win32.normalize(record.path).replace(/\\/g, "/") : path.resolve(record.path);
 	return normalized;
 }
 function buildWithMateMemoryMcpRuntimeBody(command, publicInput) {
 	if (command === "file_usage") return {};
 	if (!publicInput || typeof publicInput !== "object" || Array.isArray(publicInput)) return publicInput;
-	const input = normalizeProjectPathTargets$1(publicInput);
+	const input = normalizeProjectPathTargets(publicInput);
 	if (GENERAL_MEMORY_COMMANDS.has(command)) return {
 		...input,
 		schemaVersion: MEMORY_V6_SCHEMA_VERSION
@@ -25867,7 +25867,7 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 	if (outputFormat && command !== "audit") throw usageError("--format is only supported by audit.");
 	return {
 		command,
-		body: normalizeProjectPathTargets(body),
+		body,
 		...validateCommand ? { validateCommand } : {},
 		...apiUrl ? { apiUrl } : {},
 		...discoveryFilePath ? { discoveryFilePath } : {},
@@ -26055,15 +26055,6 @@ function buildShorthandBody(command, options) {
 	if (command === "forget" && options.dryRun) throw usageError("forget --dry-run requires --json, --file, @file, or --stdin with the forget request.");
 	throw usageError(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
 }
-function normalizeProjectPathTargets(value) {
-	if (Array.isArray(value)) return value.map((item) => normalizeProjectPathTargets(item));
-	if (!value || typeof value !== "object") return value;
-	const record = value;
-	const normalized = {};
-	for (const [key, item] of Object.entries(record)) normalized[key] = normalizeProjectPathTargets(item);
-	if (record.type === "path" && typeof record.path === "string") normalized.path = normalizeCliProjectPath(record.path);
-	return normalized;
-}
 function requireOptionValue(args, index, option) {
 	const value = args[index];
 	if (!value || value.startsWith("--")) throw usageError(`${option} requires a value.`);
@@ -26092,9 +26083,9 @@ function formatAuditOutput(value, format) {
 	for (const targetAudit of report.targets) {
 		const inventory = targetAudit.target ?? {};
 		const selector = inventory.target ?? {};
-		const label = inventory.project?.displayName ?? inventory.character?.displayName ?? `${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`;
-		lines.push(`## ${String(label).replace(/\r?\n/g, " ")}`, "");
-		lines.push(`- Target: ${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`);
+		const label = `${selector.kind ?? "unknown"}${selector.project ? ` (${selector.project.id})` : ""}`.replace(/\r?\n/g, " ");
+		lines.push(`## ${label}`, "");
+		lines.push(`- Target: ${label}`);
 		lines.push(`- Entries: ${inventory.entryCount ?? 0}`);
 		lines.push(`- Tags: ${inventory.tagCount ?? 0}`);
 		lines.push(`- Last updated: ${inventory.lastUpdatedAt ?? "n/a"}`, "");
