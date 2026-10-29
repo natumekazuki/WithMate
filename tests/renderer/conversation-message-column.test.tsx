@@ -160,17 +160,18 @@ test("conversation column shows question answers independently of queued submiss
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxは次予約のstartingまたはrunningが旧保存履歴より先着しても、本文未受信の旧応答面と次応答面を分離して保持し、同一turnへのSteer入力を挟んだ場合も各保存応答へ同じDOMを引き継ぐ。liveがreceipt照会より先に届く場合も所属を推測せず、同一requestの初回liveでは元の待機面へ接続する"
+// claim = "Main/Auxは次予約のstartingまたはrunningが旧保存履歴より先着しても、本文未受信の旧応答面と次応答面を分離して保持し、同一turnへのSteer入力を挟んだ場合も各保存応答へ同じDOMを引き継ぐ。starting snapshotと次liveが交差しても、本文・質問・承認の所属をreceiptで確定してから次面へ接続し、同一requestの初回liveでは元の待機面へ接続する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 通常応答のrequest/turn表示identity、確定応答の取得待ち" }
 // fault = "次開始時に旧待機DOMを捨てる、後着旧履歴を次応答へ結合する、または同じ保存応答を重複表示する"
-// observable = "実Columnのassistant DOM・avatar・card identity、取得待ちstatus、保存本文と行順、submission消費"
+// observable = "実Columnのassistant DOM・avatar・card identity、取得待ちstatus、保存本文と行順、質問・承認の所属、key一意性、submission消費"
 // observation_boundary = "component-behavior"
 // scope = "Main/Aux共有Columnのqueue receipt・live・canonical履歴の合流。Providerや保存処理はmock境界"
 // lifecycle = "permanent"
 // impact = "連続送信で待機面が消失・再生成され、どのpromptへの応答かと閲覧位置が揺れる"
 // distinction = "既存連続queue testは旧live本文があるhook propsを検証する。本文なしの旧待機面を実DOMで検証し、型検査や既存handoffでは検出できない順序を小さいfixtureで固定する"
 // @end-test-value
-test("conversation column retains empty responses when the next turn starts before history", async () => {
+test("conversation column retains empty responses when the next turn starts before history", async (t) => {
+  const consoleErrors = t.mock.method(console, "error");
   const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
   const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
   const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -183,7 +184,7 @@ test("conversation column retains empty responses when the next turn starts befo
   });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    for (const kind of ["session", "auxiliary"] as const) for (const [nextState, liveFirst, withInput] of [["starting", false, false], ["running", false, false], ["running", true, false], ["running", true, true]] as const) {
+    for (const kind of ["session", "auxiliary"] as const) for (const [nextState, liveFirst, withInput] of [["starting", false, false], ["starting", true, false], ["running", false, false], ["running", true, false], ["running", true, true]] as const) {
       const store = new SessionTurnSubmissions();
       const receipt = (sequence: number): SessionTurnQueueReceipt => ({
         sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`, sequence,
@@ -204,8 +205,11 @@ test("conversation column retains empty responses when the next turn starts befo
       }
       let saved: SessionMessageColumnProps["messages"] = [];
       let live: LiveSessionRunState | null = null;
+      let latest: SessionMessageColumnProps | null = null;
       function View() {
         const props = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" }, baseProps: { ...createBaseProps(kind), turnSubmissions: store }, messageSourceKind: kind, enabled: true, api, liveRun: live });
+        latest = props;
+        if (props) assert.equal(new Set(props.messageKeys).size, props.messageKeys?.length, "projected row keys stay unique");
         return props ? <SessionMessageColumn {...props} /> : null;
       }
       const viewKey = `${kind}-${nextState}-${liveFirst}-${withInput}`;
@@ -221,6 +225,10 @@ test("conversation column retains empty responses when the next turn starts befo
       terminals.set("request-1", { ...receipt(1), state: "completed", turnId: "turn-1", userMessageSeq: 0 });
       active = [{ ...receipt(2), state: nextState, turnId: nextState === "running" ? "turn-2" : null, userMessageSeq: nextState === "running" ? nextUserSeq : null }];
       const nextLive: LiveSessionRunState = { sessionId: kind, threadId: "thread", turnId: "turn-2", runState: "running", assistantText: "response-2", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      if (nextState === "starting" && liveFirst) {
+        nextLive.approvalRequest = { requestId: "approval-2", provider: "codex", kind: "command", title: "Approve next task", summary: "Next task approval", decisionMode: "direct-decision" };
+        nextLive.elicitationRequest = { requestId: "question-2", provider: "codex", turnId: "turn-2", kind: "question", delivery: "user-message", mode: "form", message: "Next task question", fields: [{ type: "text", name: "answer", title: "Next answer", required: true }] };
+      }
       if (liveFirst) live = nextLive;
       await act(async () => {
         if (withInput) {
@@ -235,6 +243,8 @@ test("conversation column retains empty responses when the next turn starts befo
       assert.equal(responses().length, 2);
       assert.match(first.textContent ?? "", /Loading response/);
       const second = responses()[1];
+      const secondAvatar = second.querySelector(".message-avatar");
+      const secondCard = second.querySelector(".message-card");
       if (nextState === "running") {
         live = nextLive;
         await render();
@@ -249,11 +259,24 @@ test("conversation column retains empty responses when the next turn starts befo
       assert.match(first.textContent ?? "", /final-1/);
       assert.doesNotMatch(second.textContent ?? "", /final-1/);
       assert.deepEqual(store.getSnapshot().map((item) => item.requestId), ["request-2"]);
+      if (nextState === "starting" && liveFirst) {
+        assert.equal((latest as unknown as SessionMessageColumnProps).isRunning, true, "binding wait does not fake an idle runtime");
+        assert.doesNotMatch(dom.window.document.body.textContent ?? "", /response-2|Next answer|Next task approval/);
+        active = [{ ...receipt(2), state: "running", turnId: "turn-2", userMessageSeq: nextUserSeq }];
+        await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
+        assert.ok(responses()[0] === first && responses()[1] === second, "receipt binding keeps both response surfaces");
+        assert.match(second.textContent ?? "", /response-2/);
+        assert.match(second.textContent ?? "", /Next answer/);
+        assert.match(second.textContent ?? "", /Next task approval/);
+        assert.doesNotMatch(first.textContent ?? "", /response-2|Next answer|Next task approval/);
+      }
       terminals.set("request-2", { ...receipt(2), state: "completed", turnId: "turn-2", userMessageSeq: nextUserSeq }); active = []; live = null;
       await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
       saved = [...saved, { role: "user", text: "prompt-2", historyIndex: nextUserSeq }, { role: "assistant", text: "final-2", historyIndex: nextUserSeq + 1 }];
       await render();
       assert.ok(responses()[0] === first && responses()[1] === second);
+      assert.ok(first.querySelector(".message-avatar") === firstAvatar && first.querySelector(".message-card") === firstCard);
+      assert.ok(second.querySelector(".message-avatar") === secondAvatar && second.querySelector(".message-card") === secondCard);
       assert.deepEqual([...dom.window.document.querySelectorAll(".message-row .rich-text")].map((node) => node.textContent), ["prompt-1", ...(withInput ? ["prompt-3"] : []), "final-1", "prompt-2", "final-2"]);
       assert.equal(store.getSnapshot().length, 0);
       active = [receipt(4)];
@@ -264,7 +287,7 @@ test("conversation column retains empty responses when the next turn starts befo
       const third = responses().at(-1);
       assert.ok(third && third !== second);
       active = [{ ...receipt(4), state: "running", turnId: "turn-3", userMessageSeq: thirdUserSeq }];
-      live = { ...nextLive, turnId: "turn-3", assistantText: "" };
+      live = { ...nextLive, turnId: "turn-3", assistantText: "", approvalRequest: null, elicitationRequest: null };
       await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
       assert.ok(responses().at(-1) === third, "a request's own first live cannot replace its pending surface");
       live = { ...live, runState: "completed", assistantText: "final-3" };
@@ -273,6 +296,7 @@ test("conversation column retains empty responses when the next turn starts befo
       await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
       assert.ok(responses().at(-1) === third);
     }
+    assert.equal(consoleErrors.mock.calls.filter((call) => /same key|unique.*key/i.test(String(call.arguments[0]))).length, 0, "React receives no duplicate response keys");
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

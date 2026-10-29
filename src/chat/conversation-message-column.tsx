@@ -284,8 +284,8 @@ export function useConversationMessageColumn({
   const isResponseBindingPending = !!api?.listSessionTurnQueue && !!liveRun?.turnId
     && previousResponse?.owner === pageOwner && !!previousResponse.requestId
     && !(displayedBridge.current?.owner === pageOwner && displayedBridge.current.projection.text)
-    && queue.receipts.some((receipt) => receipt.requestId === previousResponse.requestId
-      && (receipt.state === "queued" || receipt.state === "starting" || receipt.state === "running"))
+    && queue.receipts.some((receipt) => !receipt.inputTurnId && (receipt.state === "starting"
+      || receipt.requestId === previousResponse.requestId && (receipt.state === "queued" || receipt.state === "running")))
     && !queue.receipts.some((receipt) => receipt.turnId === liveRun.turnId && !receipt.inputTurnId);
   useEffect(() => { if (isResponseBindingPending) queue.reload(); }, [pageOwner, liveRun?.turnId, isResponseBindingPending, queue.reload]);
   const isCancelRequested = baseProps.pendingCancelSessionIds?.has(sessionId) ?? false;
@@ -436,7 +436,7 @@ export function useConversationMessageColumn({
     && (liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
     && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
     ? bridgeKey : null;
-  const responseTurnId = isResponseBindingPending ? previousResponse?.turnId : hasActiveRun ? liveRun?.turnId : undefined;
+  const responseTurnId = hasActiveRun && !isResponseBindingPending ? liveRun?.turnId : undefined;
   const responseReceipt = queuedProjection.activeReceipt;
   const previous = responsePresentation.current;
   const receiptTurnId = responseReceipt?.turnId
