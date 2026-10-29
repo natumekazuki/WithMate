@@ -64,14 +64,20 @@ export async function collectPastedSessionAttachmentPaths(input: {
   return (await collectPastedSessionAttachments(input)).map((attachment) => attachment.path);
 }
 
-function resolvePastedFileName(input: {
+async function resolvePastedFileName(input: {
   currentTimestampLabel: () => string;
   file: PastedClipboardFile;
-  useGeneratedName: boolean;
-}): string {
+  data: ArrayBuffer;
+  useContentName: boolean;
+}): Promise<string> {
   const trimmedName = input.file.name.trim();
   const mimeExtension = SUPPORTED_IMAGE_MIME_EXTENSIONS.get(input.file.type?.toLocaleLowerCase() ?? "");
-  if (trimmedName && !input.useGeneratedName) {
+  if (input.useContentName && mimeExtension) {
+    const digest = await crypto.subtle.digest("SHA-256", input.data);
+    const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `pasted-${hash}.${mimeExtension}`;
+  }
+  if (trimmedName) {
     if (mimeExtension && !isSupportedComposerImagePath(trimmedName)) {
       return `${trimmedName}.${mimeExtension}`;
     }
@@ -111,18 +117,18 @@ export async function collectPastedSessionAttachments(input: {
   const savedAttachments: PastedSessionAttachment[] = [];
   const reused: string[] = [];
   for (const file of pastedFiles) {
-    const useGeneratedName = SUPPORTED_IMAGE_MIME_EXTENSIONS.has(file.type?.toLocaleLowerCase() ?? "")
+    const useContentName = SUPPORTED_IMAGE_MIME_EXTENSIONS.has(file.type?.toLocaleLowerCase() ?? "")
       && !input.isFileBacked(file);
     const buffer = await file.arrayBuffer();
-    const fileName = resolvePastedFileName({ file, useGeneratedName, currentTimestampLabel: input.currentTimestampLabel });
+    const fileName = await resolvePastedFileName({ file, data: buffer, useContentName, currentTimestampLabel: input.currentTimestampLabel });
     const request = {
       sessionId: input.sessionId,
       fileName,
       data: buffer,
     };
     let result = await input.savePastedSessionFile(request);
-    if (useGeneratedName && typeof result !== "string" && result.status === "conflict") {
-      result = await input.savePastedSessionFile({ ...request, saveAsCopy: true });
+    if (useContentName && typeof result !== "string" && result.status === "conflict") {
+      throw new Error(`Cannot reuse "${fileName}": the saved image has different contents.`);
     }
     while (typeof result !== "string" && result.status === "conflict") {
       if (!input.confirmReplacement) throw new Error(`Replacing "${result.fileName}" requires confirmation.`);

@@ -14,9 +14,9 @@ Session Local Filesはcomposerの`@path` preview、Markdown local image、provid
 
 textareaへの画像pasteはPNG、JPEG、GIF、WebP、BMP、SVGを保存してMarkdown image参照を挿入する。一般のfile pasteはmanaged directoryへ保存して`@path`を挿入する。Rendererはpaste bytesやsource pathを直接providerへ送らず、Mainのcopy／write APIを使う。
 
-実ファイルに由来しない対応画像は、clipboardの`image.png`等の仮名を使わず、`pasted-{日時}.{MIMEに対応する拡張子}`で保存する。由来はpreloadのElectron `webUtils.getPathForFile`で判別し、rendererへは実ファイルの有無だけを返す。同じ日時名が別内容で衝突した場合は、確認を挟まず既存fileを残して採番コピーを保存する。実ファイル由来の画像・通常fileは元の名前を使い、`image.png`という名前だけでは仮名と判定しない。日時名の異なる画像は内容検索・スキップを行わず、それぞれ保存する。
+実ファイルに由来しない対応画像は、clipboardの`image.png`等の仮名を使わず、`pasted-{画像bytesのSHA-256全64桁}.{MIMEに対応する拡張子}`で保存する。由来はpreloadのElectron `webUtils.getPathForFile`で判別し、rendererへは実ファイルの有無だけを返す。RendererがWeb Cryptoで内容由来の名前を決め、Mainが既存候補の実内容も比較する。同じbytes・画像形式は時刻やpaste順によらず既存fileを再利用し、別内容は別fileとして保存する。候補の内容不一致・比較不能は再利用・置換・採番コピーで救済せずエラーとする。見た目の類似判定は行わない。実ファイル由来の画像・通常fileは元の名前を使い、`image.png`という名前だけでは仮名と判定しない。
 
-pasteは保存先直下の同名fileが存在する場合だけSHA-256で内容を比較する。同名の判定は保存先filesystemに従い、一律の小文字化はしない。ハッシュが同じなら書込み・置換・採番をせず、既存fileのpathを挿入し、操作不要の通知で再利用を知らせる。ハッシュは比較時だけ計算し、保存台帳やキャッシュは持たない。既存fileはstreamで読み、異なる名前、外部path参照、subfolder、他Sessionを横断する内容検索は行わない。
+pasteは保存先直下の同名fileが存在する場合にSHA-256で内容を比較する。同名の判定は保存先filesystemに従い、一律の小文字化はしない。ハッシュが同じなら書込み・置換・採番をせず、既存fileのpathを挿入し、操作不要の通知で再利用を知らせる。ハッシュは画像命名・比較の都度計算し、保存台帳やキャッシュは持たない。既存fileはstreamで読み、異なる名前、外部path参照、subfolder、他Sessionを横断する内容検索は行わない。既存の保存名や過去メッセージの参照は書き換えない。
 
 元の名前を使うfileの同名・別内容衝突は、保存前に`Replace Pasted File`で対象名と過去の同じpathへの参照も変わることを示す。`Replace File`を選んだ場合だけ同じpathを置換し、参照を挿入する。`Save a Copy`は既存fileを残し、同directoryの空いている採番名へ新たに保存して参照を挿入する。`Cancel`、`Escape`、背景clickは今回のfileだけを見送り、既存fileと入力を保持する。確認中に既存内容が変わった場合は再比較して確認し直す。比較不能や通常file以外の同名entryは再利用・置換せずエラーとする。置換は同directoryの一時fileへの書込みが完了してからrenameし、既存fileを先に切り詰めない。
 
