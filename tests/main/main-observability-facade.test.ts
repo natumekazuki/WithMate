@@ -6,6 +6,7 @@ import { MainObservabilityFacade } from "../../src-electron/app/main-observabili
 import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { OpenCodeAdapter } from "../../src-electron/providers/opencode/opencode-adapter.js";
+import type { OpenCodeClient } from "@opencode/client";
 
 function createService() {
   return new SessionObservabilityService({
@@ -18,9 +19,9 @@ function createService() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "有効化したOpenCodeのquota取得が未対応なら、実adapterのnull結果を残量なしのunsupportedとして公開する"
+// claim = "有効化したOpenCodeの正常取得でGo枠がなければ、実adapterのnull結果を枠なしのunsupportedとして公開する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md" }
-// fault = "OpenCodeをpoll対象から除外するか、未対応の取得結果をreadyや残量の数値へ変換する"
+// fault = "OpenCodeをpoll対象から除外するか、Go枠なしの取得結果をreadyや残量の数値へ変換する"
 // observable = "実OpenCode adapterの取得回数と、Main cacheが公開するstatus、updatedAt、snapshots、rateLimits"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode quota facade lifecycle"
@@ -28,14 +29,17 @@ function createService() {
 // impact = "取得不能を有効な残量と誤表示してprovider選択や利用判断を誤らせる"
 // distinction = "実adapterとMainのpolling/cache経路を通し、nullがrenderer向けのunsupported状態となる境界を検証する"
 // @end-test-value
-test("OpenCode quotaの未対応を実adapterからMain cacheへ投影する", async (t) => {
+test("OpenCode Go枠なしを実adapterからMain cacheへ投影する", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout", "setInterval"], now: 1000 });
   const service = createService();
   t.after(() => service.dispose());
   const settings = createDefaultAppSettings();
   settings.codingProviderSettings.codex.enabled = false;
   settings.codingProviderSettings.opencode = { enabled: true, apiKey: "", skillRootPath: "" };
-  const adapter = new OpenCodeAdapter();
+  const adapter = new OpenCodeAdapter({ createTransport: () => ({
+    start: async () => ({ experimental: { usage: { limits: async () => ({ data: null }) } } }) as unknown as OpenCodeClient,
+    close: async () => {}, whenClosed: () => Promise.resolve(),
+  }) });
   const fetchQuota = t.mock.method(adapter, "getProviderQuotaTelemetry");
   const facade = new MainObservabilityFacade({
     getSessionObservabilityService: () => service,

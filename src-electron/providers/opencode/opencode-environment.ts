@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { access, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
-export const OPENCODE_VERSION = "2.1.4";
+export const OPENCODE_VERSION = "2.2.1";
 
 export type OpenCodeEnvironmentOptions = {
   cwd: string;

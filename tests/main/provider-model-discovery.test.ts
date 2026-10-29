@@ -235,7 +235,7 @@ it("Claude and OpenCode discovery sanitize metadata failures and close their own
   const client = { model: { list: async () => { throw new Error("secret-token"); }, default: async () => ({ data: null }) } } as unknown as OpenCodeClient;
   const openCode = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"),
     createTransport: () => ({ start: async () => client, close: async () => { openCodeClosed++; }, whenClosed: async () => undefined }) });
-  await assert.rejects(openCode.listModels(input()), { message: "OpenCode models could not be retrieved. Check the installed OpenCode 2.1.4 CLI and its standalone provider configuration." });
+  await assert.rejects(openCode.listModels(input()), { message: "OpenCode models could not be retrieved. Check the installed OpenCode 2.2.1 CLI and its standalone provider configuration." });
   assert.equal(openCodeClosed, 1);
 });
 

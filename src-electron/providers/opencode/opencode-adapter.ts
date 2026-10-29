@@ -10,12 +10,14 @@ import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { resolveDevelopmentProviderBinaryPath, resolvePackagedProviderBinaryPath } from "../provider-binary-paths.js";
 import { ProviderTurnError, resolveRunWorkspacePath, type GetProviderQuotaTelemetryInput, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
 import { OpenCodeTransport, type OpenCodeTransportOptions } from "./opencode-transport.js";
+import { OPENCODE_VERSION } from "./opencode-environment.js";
 import { resolveOpenCodeModelRef, validateOpenCodeModel } from "./opencode-model.js";
 import { OpenCodeTurnProjection } from "./opencode-events.js";
 import { buildOpenCodeElicitation } from "./opencode-interactions.js";
 import { migrateOpenCodeThread, sameOpenCodeOwner } from "./opencode-thread-migration.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
 import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
+import type { ProviderQuotaTelemetry } from "../../../src-shared/session/runtime-state.js";
 
 const require = createRequire(import.meta.url);
 type Transport = Pick<OpenCodeTransport, "start" | "close" | "whenClosed"> & { readonly secrets?: readonly string[] };
@@ -115,7 +117,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       return { id: "opencode", label: "OpenCode", models,
         defaultModelId: models.find((model) => model.id === preferredId)?.id ?? models[0]?.id ?? "", defaultReasoningEffort: "" };
     } catch {
-      throw new Error(signal.aborted ? "OpenCode model discovery canceled" : "OpenCode models could not be retrieved. Check the installed OpenCode 2.1.4 CLI and its standalone provider configuration.");
+      throw new Error(signal.aborted ? "OpenCode model discovery canceled" : `OpenCode models could not be retrieved. Check the installed OpenCode ${OPENCODE_VERSION} CLI and its standalone provider configuration.`);
     } finally {
       try { await transport.close(); }
       catch {
@@ -127,8 +129,44 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       }
     }
   }
-  async getProviderQuotaTelemetry(_input: GetProviderQuotaTelemetryInput) {
-    return null;
+  async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null> {
+    const workspace = process.cwd();
+    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    this.assertCleanupComplete(workspace);
+    const transport = (this.options.createTransport ?? ((options) => new OpenCodeTransport(options)))({
+      executable: this.options.executable, cwd: workspace,
+      env: mergeDefinedProviderEnv(process.env, {}),
+    });
+    try {
+      const client = await transport.start(signal);
+      const response = await client.experimental.usage.limits({ location: { directory: workspace } }, { signal });
+      signal.throwIfAborted();
+      const go = response.data?.go;
+      if (!go) return null;
+      const rateLimits = (["rolling", "weekly", "monthly"] as const).map((quotaKey) => {
+        const meter = go[quotaKey];
+        const reset = new Date(meter.resetsAt);
+        if (!Number.isFinite(meter.percent) || meter.percent < 0 || meter.percent > 100 || !Number.isFinite(reset.getTime())) {
+          throw new Error("Invalid OpenCode Go allowance");
+        }
+        return { quotaKey, label: quotaKey === "monthly" ? "Monthly" : quotaKey === "weekly" ? "7d" : "5h",
+          usedPercentage: meter.percent, resetDate: reset.toISOString(),
+          ...(quotaKey === "monthly" ? {} : { windowDurationMinutes: quotaKey === "weekly" ? 10080 : 300 }) };
+      });
+      return { provider: "opencode", updatedAt: new Date().toISOString(), snapshots: [], rateLimits, status: "ready" };
+    } catch {
+      throw new Error(signal.aborted ? "OpenCode Go quota retrieval canceled" : "OpenCode Go quota could not be retrieved");
+    } finally {
+      try { await transport.close(); }
+      catch {
+        const id = randomUUID();
+        const completion = transport.whenClosed();
+        this.pendingCleanups.set(id, { workspace: path.resolve(workspace), threadId: "", completion });
+        void completion.then(() => this.pendingCleanups.delete(id));
+        throw new Error("OpenCode Go quota process cleanup failed");
+      }
+    }
   }
   private assertCleanupComplete(workspacePath: string, sessionId?: string, threadId?: string | null): void {
     for (const [ownerId, cleanup] of this.pendingCleanups) {

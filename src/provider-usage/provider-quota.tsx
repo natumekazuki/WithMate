@@ -20,10 +20,12 @@ export function ProviderQuota({ api, providerId, showProviderName = false }: {
   const summary = windows.filter((window) => window.summary);
   const loading = readStatus === "loading" || telemetry?.status === "loading";
   const failed = readStatus === "error" || telemetry?.status === "error";
+  if (providerId === "opencode" && telemetry?.status === "unsupported" && !loading && !failed) return null;
+  const named = showProviderName || providerId === "opencode";
   const status = failed ? "Update Failed" : telemetry?.status === "unsupported" ? "Not Supported"
     : windows.length ? "" : "Not Yet Available";
   return (
-    <div className={`provider-quota${showProviderName ? " provider-quota-named" : ""}`}>
+    <div className={`provider-quota${named ? " provider-quota-named" : ""}`}>
       <button type="button" className="provider-quota-details-button" popoverTarget={id}
         aria-label={`${name} quota details`} title={`${name} Quota Details`}
         onClick={(event) => {
@@ -34,7 +36,7 @@ export function ProviderQuota({ api, providerId, showProviderName = false }: {
             ...(rect.top > window.innerHeight / 2 ? { bottom: window.innerHeight - rect.top + 8, top: "auto" }
               : { top: rect.bottom + 8, bottom: "auto" }) });
         }}><span aria-hidden="true">i</span></button>
-      {showProviderName ? <span className="provider-quota-name">{name}</span> : null}
+      {named ? <span className="provider-quota-name">{name}</span> : null}
       <span className="provider-quota-values" aria-label={`${name} remaining quota`} tabIndex={showProviderName ? undefined : 0}>
         {summary.length ? summary.map((window, index) => (
           <span key={window.key}>{index ? <span aria-hidden="true"> · </span> : null}{window.label} {window.remaining}</span>

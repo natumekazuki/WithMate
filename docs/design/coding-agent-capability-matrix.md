@@ -1,6 +1,6 @@
 # Coding Agent Capability Matrix
 
-WithMateが現在のSession UIから利用できるprovider機能を示す。provider APIの一般的な対応表ではなく、WithMateのadapterとUIに接続済みの範囲である。Codexは公式CLIのApp Server、CopilotとClaudeは公式SDK、OpenCodeはPCのPATH上の公式CLI `2.1.4`と同梱client `2.1.4`を使用する。実行・認可の責務は[Provider Adapter](provider-adapter.md)を参照する。
+WithMateが現在のSession UIから利用できるprovider機能を示す。provider APIの一般的な対応表ではなく、WithMateのadapterとUIに接続済みの範囲である。Codexは公式CLIのApp Server、CopilotとClaudeは公式SDK、OpenCodeはPCのPATH上の公式CLI `2.2.1`と同梱client `2.2.1`を使用する。実行・認可の責務は[Provider Adapter](provider-adapter.md)を参照する。
 
 | 機能 | Codex | GitHub Copilot | Claude Agent | OpenCode | WithMateの境界 |
 | --- | --- | --- | --- | --- | --- |
@@ -19,7 +19,7 @@ WithMateが現在のSession UIから利用できるprovider機能を示す。pro
 | Memory・Affect MCP | 対応 | 対応 | 対応 | managed HTTP MCP | 通常turn内で既存application serviceを使う。Affectの専用post-turn評価、通常Memoryの背景抽出は行わない |
 | 実行中の追加入力 | 対応 | 未対応 | 未対応 | 未対応 | Codexの現在turnへexpectedTurnId付きturn/steerを送る。terminal後・turn不一致では拒否する |
 | background task snapshot | UI表示なし | 対応 | UI表示なし | UI表示なし | CopilotのTasks tabに現在のsessionのsnapshotを表示する |
-| usage・quota・context情報 | turn usage、契約quotaの定期取得・Monitor／Action Dock表示 | 取得可能な情報を表示 | token／cache usage、契約quotaの定期取得・Monitor／Action Dock表示 | token／context、quotaは未対応 | 契約残量とtoken消費を混同しない。ClaudeのAPI換算額は実請求額として表示しない。OpenCodeの取得不能を残量0や100%へ変換しない |
+| usage・quota・context情報 | turn usage、契約quotaの定期取得・Monitor／Action Dock表示 | 取得可能な情報を表示 | token／cache usage、契約quotaの定期取得・Monitor／Action Dock表示 | token／context、OpenCode Go枠の定期取得・Monitor／Action Dock表示 | 契約残量とtoken消費を混同しない。ClaudeのAPI換算額は実請求額として表示しない。OpenCodeの取得不能を残量0や100%へ変換しない |
 
 OpenCodeの一覧とturnは既存native設定・DB・API key／OAuth認証を同じstandalone経路で利用する。WithMateは共有serviceの状態や設定を変更せず、認証UIと専用Go key設定を提供しない。service専用のmanaged環境変数はstandaloneへ適用されない。保存済みの専用DB上のthreadはID・owner・履歴を維持して公式export／importで移し、失敗時に新規threadへ切り替えない。
 
