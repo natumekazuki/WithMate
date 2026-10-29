@@ -350,6 +350,19 @@ export function useConversationMessageColumn({
   const stableKeys = stableMessageKeys.current.keys;
   for (const receipt of queue.receipts) if (receipt.userMessageSeq !== null) stableKeys.set(receipt.userMessageSeq, { role: "user", key: `turn-submission-${receipt.incarnationId}-${receipt.requestId}` });
   if (bridge && enabled) stableKeys.set(bridge.messageIndex, { role: "assistant", key: bridgeKey! });
+  // A turn can finish before any live text arrives. Bind its pending surface before selecting the next turn.
+  const previousPresentation = responsePresentation.current;
+  const completedPresentationReceipt = previousPresentation?.owner === pageOwner
+    ? queue.receipts.find((receipt) => receipt.requestId === previousPresentation.requestId && receipt.state === "completed" && !receipt.inputTurnId)
+    : undefined;
+  if (completedPresentationReceipt?.userMessageSeq != null) {
+    const savedResponseIndex = messages.findIndex((message, index) => message.role === "assistant"
+      && getMessageHistoryIndex(message, index) > completedPresentationReceipt.userMessageSeq!);
+    if (savedResponseIndex >= 0) {
+      const historyIndex = getMessageHistoryIndex(messages[savedResponseIndex], savedResponseIndex);
+      if (!stableKeys.has(historyIndex)) stableKeys.set(historyIndex, { role: "assistant", key: previousPresentation!.key });
+    }
+  }
   const loadedIndexes = new Set(messages.map((message, index) => getMessageHistoryIndex(message, index)));
   for (const index of stableKeys.keys()) if (!loadedIndexes.has(index) && !queue.receipts.some((receipt) => receipt.userMessageSeq === index)
     && index !== bridge?.messageIndex && !retainedBridges.current.projections.some((candidate) => candidate.messageIndex === index)) stableKeys.delete(index);

@@ -27,7 +27,7 @@ import type { HtmlPreviewEvent, HtmlPreviewMountRequest } from "../../src-shared
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxはqueueなし・receipt先着・回答先着のいずれでも保存済み質問回答を表示し、予約と同文でも回答を一度だけ表示する。履歴以前の遅いreceipt読込では合流待ちを解かず、最新照会後は回答・応答identityと予約順を保ち、後続予約のcanonical先着でも重複しない"
+// claim = "Main/Auxはqueueなし・receipt先着・回答先着のいずれでも保存済み質問回答を表示し、予約と同文でも回答を一度だけ表示する。履歴以前の遅いreceipt読込では合流待ちを解かず、最新照会後は回答・応答identityと予約順を保つ。後続予約がlive通知なしで完了しても、receipt/canonicalの到着順によらず待機DOMを保存済み応答へ継承する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/907; docs/design/desktop-ui.md: Question Forms / 送信直後の先行表示" }
 // fault = "未実行予約で質問回答を隠し続ける、古い照会で通常予約を二重表示する、同文の回答を予約に誤結合する、または応答identity・予約順を変える"
 // observable = "実Column DOMのuser本文・順序・件数、応答node identity、Column messageKeys、submissionの残存request ID、queue操作API呼出"
@@ -125,9 +125,15 @@ test("conversation column shows question answers independently of queued submiss
         await render();
         if (reserved.length) {
           const queuedUserKey = column().messageKeys?.[4];
+          const queuedResponseNode = dom.window.document.querySelector(".pending-row");
           // Persisted user and bound receipt are committed together; only their delivery order differs.
           terminals.set("request-1", { ...reserved[0], state: "completed", turnId: "next", userMessageSeq: 4 });
           active = [reserved[1]];
+          if (arrival === "receipt-first") {
+            await act(async () => changed?.(kind));
+            await finishReads();
+            assert.ok(queuedResponseNode && dom.window.document.querySelector(".pending-row") === queuedResponseNode);
+          }
           saved = [...saved, { role: "user", text: "same answer", historyIndex: 4 }, { role: "assistant", text: "next response", historyIndex: 5 }];
           await render();
           assert.deepEqual(users(), ["current prompt", "same answer", "second answer", "same answer", "later prompt"], "canonical-first delivery does not duplicate the reserved prompt");
@@ -135,6 +141,12 @@ test("conversation column shows question answers independently of queued submiss
           assert.deepEqual(column().messages.filter((message) => message.role === "user").map((message) => message.text), ["current prompt", "same answer", "second answer", "same answer", "later prompt"]);
           assert.equal(column().messageKeys?.[4], queuedUserKey);
           assert.deepEqual(store.getSnapshot().map((item) => item.requestId), ["request-2"]);
+          const savedResponse = () => [...dom.window.document.querySelectorAll(".message-row.assistant")].find((node) => node.textContent?.includes("next response"));
+          assert.ok(queuedResponseNode && savedResponse() === queuedResponseNode, `${kind}/${arrival}: fast completion retains the pending response DOM`);
+          assert.ok(dom.window.document.querySelector(".pending-row") && dom.window.document.querySelector(".pending-row") !== queuedResponseNode, "the next queued turn owns a separate pending response");
+          await act(async () => changed?.(kind));
+          await finishReads();
+          assert.ok(savedResponse() === queuedResponseNode, "the saved response keeps its DOM after the consumed receipt is removed");
         }
         assert.deepEqual(mutations, []);
         assert.deepEqual(reserved, arrival === "no-queue" ? [] : [receipt(1), receipt(2)], "projection does not modify queued receipts");
