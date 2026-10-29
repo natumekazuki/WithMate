@@ -4,7 +4,7 @@ import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.
 
 export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: { submissions: readonly SessionTurnSubmission[]; hasActiveRun: boolean }) {
   const owned = receipts.filter((receipt) => receipt.sessionId === owner.sessionId && receipt.incarnationId === owner.incarnationId)
-    .sort((left, right) => left.sequence - right.sequence);
+    .sort((left, right) => left.queuePosition - right.queuePosition);
   const metadata = new Map<string, SessionTurnQueueReceipt>();
   const projection: MessageListProjection = { messages: [...history.messages], keys: [...history.keys], sources: [...history.sources], groups: [...history.groups] };
   const tail: SessionTurnQueueReceipt[] = [];

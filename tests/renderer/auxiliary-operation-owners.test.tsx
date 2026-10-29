@@ -218,7 +218,7 @@ function sendQueue(h: Awaited<ReturnType<typeof mountDrafts>>, state: ReturnType
 }
 
 function queueReceipt(request: RunSessionTurnRequest): SessionTurnQueueReceipt {
-  return { sessionId: "aux-1", incarnationId: "creation-1", id: "receipt", requestId: request.clientRequestId!, sequence: 1, state: "queued",
+  return { sessionId: "aux-1", incarnationId: "creation-1", id: "receipt", requestId: request.clientRequestId!, sequence: 1, queuePosition: 1, state: "queued",
     captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: "codex", workspacePath: "workspace" },
     turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
 }

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeSessionTurnClientRequestId } from "../../src-shared/session/runtime-state.js";
-import type { SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt, SessionTurnQueueReceiptPage, SessionTurnQueueState } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt, SessionTurnQueueReceiptPage, SessionTurnQueueState, SessionTurnQueueReorderResult } from "../../src-shared/session/session-turn-queue.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { consumeAuxiliaryDraftInTransaction, hasWritableAuxiliaryParent } from "../auxiliary/auxiliary-session-storage.js";
@@ -10,13 +10,13 @@ type QueueRow = {
   id: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; request_id: string; sequence: number;
   state: SessionTurnQueueState; captured_json: string; turn_id: string | null; user_message_seq: number | null;
   reason: string | null; released_at: string | null; created_at: string; updated_at: string;
-  input_turn_id: string | null;
+  input_turn_id: string | null; queue_position: number;
 };
 
 function toReceipt(row: QueueRow): SessionTurnQueueReceipt {
   return {
     id: row.id, sessionId: row.auxiliary_session_id ?? row.session_id, incarnationId: row.incarnation_id, requestId: row.request_id,
-    sequence: row.sequence, state: row.state, captured: JSON.parse(row.captured_json) as SessionTurnQueueCapturedInput,
+    sequence: row.sequence, queuePosition: row.queue_position, state: row.state, captured: JSON.parse(row.captured_json) as SessionTurnQueueCapturedInput,
     turnId: row.turn_id, userMessageSeq: row.user_message_seq, reason: row.reason, releasedAt: row.released_at,
     inputTurnId: row.input_turn_id,
     createdAt: row.created_at, updatedAt: row.updated_at,
@@ -82,6 +82,7 @@ export class SessionTurnQueueStorageV6 {
         (id, session_id, auxiliary_session_id, incarnation_id, request_id, state, captured_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)`).run(id, auxiliary?.parent_session_id ?? owner.sessionId,
           auxiliary ? owner.sessionId : null, owner.incarnationId, requestId, json, now, now);
+      this.db.prepare("UPDATE session_turn_queue_v6 SET queue_position = sequence WHERE id = ?").run(id);
       return this.required(owner, id);
     });
   }
@@ -96,7 +97,7 @@ export class SessionTurnQueueStorageV6 {
 
   listActive(owner: SessionTurnQueueOwner): SessionTurnQueueReceipt[] {
     return this.withOwner(owner, () => (this.db.prepare(`SELECT * FROM session_turn_queue_v6
-      WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ? AND state IN ('queued', 'starting', 'running', 'failed', 'interrupted') ORDER BY sequence`)
+      WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ? AND state IN ('queued', 'starting', 'running', 'failed', 'interrupted') ORDER BY queue_position, sequence`)
       .all(owner.sessionId, owner.incarnationId) as QueueRow[]).map(toReceipt));
   }
 
@@ -131,7 +132,7 @@ export class SessionTurnQueueStorageV6 {
       if (this.db.prepare(`SELECT 1 FROM session_turn_queue_v6 WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ?
         AND (state IN ('starting', 'running') OR (state = 'interrupted' AND released_at IS NULL)) LIMIT 1`).get(owner.sessionId, owner.incarnationId)) return null;
       const row = this.db.prepare(`SELECT * FROM session_turn_queue_v6 WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ?
-        AND state = 'queued' ORDER BY sequence LIMIT 1`).get(owner.sessionId, owner.incarnationId) as QueueRow | undefined;
+        AND state = 'queued' ORDER BY queue_position, sequence LIMIT 1`).get(owner.sessionId, owner.incarnationId) as QueueRow | undefined;
       if (!row) return null;
       this.db.prepare("UPDATE session_turn_queue_v6 SET state = 'starting', updated_at = ? WHERE id = ?")
         .run(new Date().toISOString(), row.id);
@@ -202,6 +203,30 @@ export class SessionTurnQueueStorageV6 {
       if (this.required(owner, id).state !== "queued") throw new Error("Only a queued receipt can be canceled.");
       this.db.prepare("UPDATE session_turn_queue_v6 SET state = 'canceled', updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
       return this.required(owner, id);
+    });
+  }
+
+  reorderQueued(owner: SessionTurnQueueOwner, expectedQueuedIds: string[], queuedIds: string[]): SessionTurnQueueReorderResult {
+    if (!Array.isArray(expectedQueuedIds) || !Array.isArray(queuedIds)
+      || expectedQueuedIds.some((id) => typeof id !== "string" || !id.trim())
+      || queuedIds.some((id) => typeof id !== "string" || !id.trim())
+      || new Set(expectedQueuedIds).size !== expectedQueuedIds.length
+      || new Set(queuedIds).size !== queuedIds.length || expectedQueuedIds.length !== queuedIds.length
+      || queuedIds.some((id) => !expectedQueuedIds.includes(id))) throw new Error("The queued order must contain the same unique identities.");
+    return this.withOwner(owner, () => {
+      const read = () => (this.db.prepare(`SELECT * FROM session_turn_queue_v6
+        WHERE COALESCE(auxiliary_session_id, session_id) = ? AND incarnation_id = ?
+          AND state IN ('queued', 'starting', 'running', 'failed', 'interrupted') ORDER BY queue_position, sequence`)
+        .all(owner.sessionId, owner.incarnationId) as QueueRow[]).map(toReceipt);
+      const receipts = read();
+      const queued = receipts.filter((receipt) => receipt.state === "queued");
+      if (queued.length !== expectedQueuedIds.length || queued.some((receipt, index) => receipt.id !== expectedQueuedIds[index])) {
+        return { outcome: "conflict", receipts };
+      }
+      const update = this.db.prepare("UPDATE session_turn_queue_v6 SET queue_position = ?, updated_at = ? WHERE id = ?");
+      const now = new Date().toISOString();
+      queuedIds.forEach((id, index) => update.run(queued[index]!.queuePosition, now, id));
+      return { outcome: "reordered", receipts: read() };
     });
   }
 

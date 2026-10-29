@@ -1718,6 +1718,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   listSessionTurnQueue: (sessionId) => requireMainSessionTurnQueueFacade().listSessionTurnQueue(sessionId),
                   listSessionTurnQueueReceipts: (sessionId, options) => requireMainSessionTurnQueueFacade().listSessionTurnQueueReceipts(sessionId, options),
                   cancelQueuedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurn(sessionId, id),
+                  reorderQueuedSessionTurns: (sessionId, request) => requireMainSessionTurnQueueFacade().reorderQueuedSessionTurns(sessionId, request),
                   releaseInterruptedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().releaseInterruptedSessionTurn(sessionId, id),
                 },
                 getAuxiliarySessionStatus: (sessionId) => requireAuxiliarySessionService().getAuxiliarySessionStatus(sessionId),

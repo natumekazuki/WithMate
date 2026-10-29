@@ -4439,6 +4439,25 @@
   min-height: 28px;
 }
 
+.session-turn-queue-move {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 4px;
+}
+
+.session-turn-queue-move-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  padding: 4px;
+}
+
+.session-turn-queue-status:focus-visible,
+.session-turn-queue-status button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
 .session-turn-queue-reason {
   flex-basis: 100%;
   text-align: left;

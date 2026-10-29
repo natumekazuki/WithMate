@@ -8,7 +8,7 @@ import { projectSessionTurnQueue } from "../../src/chat/conversation/session-tur
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
 function receipt(overrides: Partial<SessionTurnQueueReceipt> = {}): SessionTurnQueueReceipt {
-  return { sessionId: "session", incarnationId: "incarnation", id: "item", requestId: "request", sequence: 1, state: "running",
+  return { sessionId: "session", incarnationId: "incarnation", id: "item", requestId: "request", sequence: 1, queuePosition: overrides.sequence ?? 1, state: "running",
     captured: { request: { clientRequestId: "request", userMessage: "original prompt", executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
     turnId: "turn", userMessageSeq: 42, reason: null, releasedAt: null, createdAt: "2026-10-10T00:00:00Z", updatedAt: "2026-10-10T00:00:00Z", ...overrides };
 }

@@ -123,7 +123,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
   session_file_pins_v6: ["session_id", "root_kind", "root_path", "relative_path", "relative_path_key", "kind", "root_label"],
-  session_turn_queue_v6: ["sequence", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
+  session_turn_queue_v6: ["sequence", "queue_position", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
   auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at"],
   auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
   session_turns_v6: [
@@ -1312,6 +1312,7 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
 export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_turn_queue_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    queue_position INTEGER NOT NULL DEFAULT 0 CHECK (queue_position >= 0),
     id TEXT NOT NULL UNIQUE,
     session_id TEXT NOT NULL,
     auxiliary_session_id TEXT,
@@ -1514,9 +1515,9 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     db.exec("DROP INDEX IF EXISTS idx_v6_session_turn_queue_owner_state");
     db.exec(CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL);
     db.exec(`INSERT INTO session_turn_queue_v6
-      (sequence, id, session_id, incarnation_id, request_id, state, captured_json, turn_id,
+      (sequence, queue_position, id, session_id, incarnation_id, request_id, state, captured_json, turn_id,
         user_message_seq, reason, released_at, created_at, updated_at)
-      SELECT sequence, id, session_id, incarnation_id, request_id, state, captured_json, turn_id,
+      SELECT sequence, sequence, id, session_id, incarnation_id, request_id, state, captured_json, turn_id,
         user_message_seq, reason, released_at, created_at, updated_at FROM session_turn_queue_previous_v6`);
     db.exec("DROP TABLE session_turn_queue_previous_v6");
     if (previousSequence) {
@@ -1527,6 +1528,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     }
   }
   db.exec(CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL);
+  if (!tableColumnNames(db, "session_turn_queue_v6").has("queue_position")) {
+    db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0 CHECK (queue_position >= 0)");
+    db.exec("UPDATE session_turn_queue_v6 SET queue_position = sequence");
+  }
   cleanupForbiddenV6Tables(db);
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");

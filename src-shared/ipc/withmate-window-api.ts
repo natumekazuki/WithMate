@@ -260,6 +260,7 @@ export type WithMateWindowSessionApi = {
   listSessionTurnQueue(sessionId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt[]>;
   listSessionTurnQueueReceipts(sessionId: string, options?: { cursor?: number; limit?: number }): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceiptPage>;
   cancelQueuedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
+  reorderQueuedSessionTurns(sessionId: string, request: import("../session/session-turn-queue.js").ReorderQueuedSessionTurnsRequest): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReorderResult>;
   releaseInterruptedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
   steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelSessionRun(sessionId: string): Promise<void>;

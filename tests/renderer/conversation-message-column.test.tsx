@@ -248,7 +248,7 @@ test("finite Find counts accepted Steer bridge once before and after canonical a
   ];
   let canonical = false;
   let active: SessionTurnQueueReceipt[] = [{
-    sessionId: "aux", incarnationId: "inc", id: "steer", requestId: "request", sequence: 1, state: "queued", turnId: null, userMessageSeq: null,
+    sessionId: "aux", incarnationId: "inc", id: "steer", requestId: "request", sequence: 1, queuePosition: 1, state: "queued", turnId: null, userMessageSeq: null,
     captured: { request: { userMessage: "needle", clientRequestId: "request", executionOptions: {
       model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
     } }, attachments: [], provider: "codex", workspacePath: "workspace" },
@@ -415,7 +415,7 @@ test("queued images load through their Main or Auxiliary conversation context", 
       },
     } });
     const queued: SessionTurnQueueReceipt = {
-      sessionId, incarnationId: "inc", id: "queued", requestId: "request", sequence: 1, state: "queued", turnId: null, userMessageSeq: null,
+      sessionId, incarnationId: "inc", id: "queued", requestId: "request", sequence: 1, queuePosition: 1, state: "queued", turnId: null, userMessageSeq: null,
       captured: { request: { userMessage: "![queued image](./queued.svg)\n\nnext request", clientRequestId: "request", executionOptions: {
         model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
       } }, attachments: [], provider: "codex", workspacePath: "C:/workspace" },
@@ -682,7 +682,7 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
         onSessionTurnQueueChanged: (listener) => { changed = listener; return () => { changed = undefined; }; },
       };
       const receipt = (sequence: number): SessionTurnQueueReceipt => ({
-        sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`, sequence, state: "running", turnId: `turn-${sequence}`, userMessageSeq: (sequence - 1) * 2,
+        sessionId: kind, incarnationId: "inc", id: `receipt-${sequence}`, requestId: `request-${sequence}`, sequence, queuePosition: sequence, state: "running", turnId: `turn-${sequence}`, userMessageSeq: (sequence - 1) * 2,
         captured: { request: { clientRequestId: `request-${sequence}`, userMessage: `prompt-${sequence}`, executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
         reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
       });
@@ -832,6 +832,79 @@ test("conversation column はMain/Auxの取消終了待ちで応答面を保持�
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実runなしの先頭queuedとtail間を移動してもMain/Auxiliaryの対象receiptへfocusを戻し、待機中に別controlへ移したfocusは奪わない"
+// oracle = { type = "contract", ref = "Issue #912: 上下操作後も対象focusを保持する採用方針" }
+// fault = "本文とtailの再mountで行ローカルfocus refを失う、または保存応答が利用者の次操作からfocusを奪う"
+// observable = "実columnのreceipt本文順、移動前buttonの切断、activeElementのreceipt所属と方向"
+// observation_boundary = "consumer"
+// scope = "queue reorder across virtualized head and queue tail"
+// lifecycle = "permanent"
+// impact = "待機中の会話でもkeyboardで対象を見失わず並べ替えを継続できる"
+// distinction = "hookと全tail row fixtureでは別subtree間の再mountを再現できない。実columnを2件の待機列で通す"
+// @end-test-value
+test("queue move retains focus across the active queued head and tail", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.HTMLElement.prototype.scrollTo = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { get: () => 600 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", { get: () => 800 });
+  const intersection = installIntersectionObserver();
+  let items: SessionTurnQueueReceipt[] = [];
+  let finish!: () => void;
+  const api: ConversationMessageColumnApi = {
+    listSessionTurnQueue: async () => items,
+    reorderQueuedSessionTurns: async (_id, request) => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      items = request.queuedIds.map((id, index) => ({ ...items.find((item) => item.id === id)!, queuePosition: index + 1 }));
+      return { outcome: "reordered", receipts: items };
+    },
+  };
+  function View({ id }: { id: string }) {
+    const props = useConversationMessageColumn({ session: { id, incarnationId: "inc", messages: [], runState: "idle" }, baseProps: createBaseProps(id), enabled: true, api, liveRun: null, messageSourceKind: id === "aux" ? "auxiliary" : "session" });
+    return <><button id="outside">Other control</button>{props ? <SessionMessageColumn {...props} /> : null}</>;
+  }
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const button = (position: number, direction: string) => dom.window.document.querySelector<HTMLButtonElement>(`button[aria-label="Move queued turn ${position} ${direction}"]`)!;
+  const active = () => dom.window.document.activeElement;
+  try {
+    for (const id of ["main", "aux"]) {
+      const session = buildNewSession({ taskTitle: "Queue", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "character", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" });
+      items = ["A", "B"].map((item, index) => ({ sessionId: id, incarnationId: "inc", id: item, requestId: item, sequence: index + 1, queuePosition: index + 1, state: "queued", captured: { request: { clientRequestId: item, userMessage: `Queued ${item}`, executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: "codex", workspacePath: "workspace" }, turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" }));
+      await act(async () => root.render(<View key={id} id={id} />));
+      const original = button(2, "up");
+      original.focus();
+      await act(async () => original.click());
+      await act(async () => finish());
+      assert.equal(original.isConnected, false, "the head and tail are different component subtrees");
+      assert.equal(active()?.getAttribute("aria-label"), "Queued turn 1 of 2");
+      assert.match(active()?.closest("article")?.textContent ?? "", /Queued B/);
+      const down = button(1, "down");
+      down.focus();
+      await act(async () => down.click());
+      await act(async () => finish());
+      assert.equal(active()?.getAttribute("aria-label"), "Queued turn 2 of 2");
+      assert.match(active()?.closest("article")?.textContent ?? "", /Queued B/);
+      await act(async () => { button(2, "up").focus(); button(2, "up").click(); });
+      const outside = dom.window.document.getElementById("outside")!;
+      outside.focus();
+      await act(async () => finish());
+      assert.equal(active(), outside, "an explicit focus change wins over late save completion");
+    }
+  } finally {
+    await act(async () => root.unmount());
+    intersection.restore();
+    dom.window.close();
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
   }
 });
 
@@ -995,7 +1068,7 @@ test("conversation column は保存本文が遅れても次Turnの応答を所�
     const earlyResponseKey = column().messageKeys?.[2];
     assert.equal(column().pendingResponseMessageKey, earlyResponseKey);
     assert.notEqual(earlyResponseKey, oldResponseKey);
-    receipts = [{ sessionId: "aux", incarnationId: "inc", id: "next", requestId: "request", sequence: 2, state: "running", turnId: "2", userMessageSeq: 2,
+    receipts = [{ sessionId: "aux", incarnationId: "inc", id: "next", requestId: "request", sequence: 2, queuePosition: 2, state: "running", turnId: "2", userMessageSeq: 2,
       captured: { request: { userMessage: "second", clientRequestId: "request", executionOptions: {
         model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "read-only", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
       } }, attachments: [], provider: "codex", workspacePath: "workspace" },
@@ -1021,11 +1094,11 @@ test("conversation column は保存本文が遅れても次Turnの応答を所�
     assert.equal(column().messages.length, 4);
     const thirdUser = [...saved, { role: "user" as const, text: "third" }];
     terminalReceipts.set(receipts[0].requestId, { ...receipts[0], state: "completed" });
-    receipts = [{ ...receipts[0], id: "third", requestId: "third-request", sequence: 3, turnId: "3", userMessageSeq: 4,
+    receipts = [{ ...receipts[0], id: "third", requestId: "third-request", sequence: 3, queuePosition: 3, turnId: "3", userMessageSeq: 4,
       captured: { ...receipts[0].captured, request: { ...receipts[0].captured.request, clientRequestId: "third-request", userMessage: "third" } } }];
     await act(async () => { changed?.("aux"); root?.render(React.createElement(Probe, { live: run("third response", "third"), saved: thirdUser })); });
     assert.equal(column().pendingResponseMessageKey, column().messageKeys?.[5]);
-    const inputReceipt: SessionTurnQueueReceipt = { ...receipts[0], id: "steer", requestId: "steer-request", sequence: 4, state: "queued", turnId: null, userMessageSeq: null,
+    const inputReceipt: SessionTurnQueueReceipt = { ...receipts[0], id: "steer", requestId: "steer-request", sequence: 4, queuePosition: 4, state: "queued", turnId: null, userMessageSeq: null,
       captured: { ...receipts[0].captured, request: { ...receipts[0].captured.request, clientRequestId: "steer-request", userMessage: "steer" } } };
     receipts = [...receipts, inputReceipt];
     await act(async () => changed?.("aux"));
@@ -1359,7 +1432,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
   };
   const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
   const terminal: SessionTurnQueueReceipt = {
-    sessionId: session.id, incarnationId: session.incarnationId, id: "receipt", requestId, sequence: 1,
+    sessionId: session.id, incarnationId: session.incarnationId, id: "receipt", requestId, sequence: 1, queuePosition: 1,
     state: "completed", turnId: "turn", userMessageSeq: 0, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
     captured: { request: { clientRequestId: requestId, userMessage: "prompt", executionOptions: captureSessionExecutionOptions(session) },
       attachments: [], provider: session.provider, workspacePath: session.workspacePath },
@@ -1373,7 +1446,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
     getReceipt: async () => terminal, listActive: async () => [], claimNext: async () => null,
     enqueue: unexpected, listReceipts: unexpected, listPendingOwners: unexpected, markStarted: unexpected,
     settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected, releaseInterrupted: unexpected,
-    claimForInput: unexpected, restoreQueuedInput: unexpected,
+    claimForInput: unexpected, restoreQueuedInput: unexpected, reorderQueued: unexpected,
   };
   let listener: ((id: string) => void) | undefined;
   const notifications: Array<() => void> = [];
@@ -1495,7 +1568,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       const pendingCount = () => dom.window.document.querySelectorAll(".pending-row").length;
       const start = () => store.start({ sessionId: kind, incarnationId: "inc", requestId: "request", userMessage: "captured prompt", historyMessageCount: 0, queuedBehindRun: false, error: "" });
       const receipt: SessionTurnQueueReceipt = {
-        sessionId: kind, incarnationId: "inc", id: "receipt", requestId: "request", sequence: 1, state: "queued",
+        sessionId: kind, incarnationId: "inc", id: "receipt", requestId: "request", sequence: 1, queuePosition: 1, state: "queued",
         captured: { request: { clientRequestId: "request", userMessage: "captured prompt", executionOptions: {
           model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
         } }, attachments: [], provider: "codex", workspacePath: "workspace" },
@@ -1559,7 +1632,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.match(dom.window.document.body.textContent!, /streamed answer/);
       assert.equal(dom.window.document.body.textContent?.includes("streamed answer changed"), false, "terminal flushes the latest replacement without waiting for the next interval");
       assert.equal(dom.window.document.querySelector(".message-row.assistant"), responseRow);
-      const nextReceipt = { ...receipt, id: "next-receipt", requestId: "next-request", sequence: 2,
+      const nextReceipt = { ...receipt, id: "next-receipt", requestId: "next-request", sequence: 2, queuePosition: 2,
         captured: { ...receipt.captured, request: { ...receipt.captured.request, clientRequestId: "next-request", userMessage: "next reserved prompt" } } };
       active = [nextReceipt];
       await act(async () => {
@@ -1609,9 +1682,9 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.equal([...dom.window.document.querySelectorAll(".message-row.assistant")].at(-1), fastResponseRow, "canonical-first completion preserves the initial response row");
       assert.equal(store.getSnapshot().length, 0);
 
-      const interrupted = { ...receipt, id: "interrupted", requestId: "interrupted-request", sequence: 4, state: "interrupted" as const,
+      const interrupted = { ...receipt, id: "interrupted", requestId: "interrupted-request", sequence: 4, queuePosition: 4, state: "interrupted" as const,
         captured: { ...receipt.captured, request: { ...receipt.captured.request, clientRequestId: "interrupted-request", userMessage: "first interrupted prompt" } } };
-      const held = { ...nextReceipt, id: "held", requestId: "held-request", sequence: 5,
+      const held = { ...nextReceipt, id: "held", requestId: "held-request", sequence: 5, queuePosition: 5,
         captured: { ...nextReceipt.captured, request: { ...nextReceipt.captured.request, clientRequestId: "held-request", userMessage: "second held prompt" } } };
       saved = [];
       active = [held, interrupted];
@@ -1627,7 +1700,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.deepEqual(column().messages, [], "an ACK-waiting local send respects the same interruption barrier");
       assert.deepEqual(queueOrder(), ["first interrupted prompt", "second held prompt", "third held prompt"]);
       assert.equal(pendingCount(), 0);
-      const third = { ...held, id: "third", requestId: local.requestId, sequence: 6,
+      const third = { ...held, id: "third", requestId: local.requestId, sequence: 6, queuePosition: 6,
         captured: { ...held.captured, request: { ...held.captured.request, clientRequestId: local.requestId, userMessage: local.userMessage } } };
       active = [interrupted, held, third];
       await act(async () => { store.accept(third); changed?.(kind); });

@@ -24,7 +24,7 @@ const request = {
   executionOptions: { catalogRevision: 1, model: "model", reasoningEffort: "medium" as const, approvalMode: "on-request" as const, codexSandboxMode: "workspace-write" as const, codexSpeed: "standard" as const, codexReviewer: "user" as const, customAgentName: "" },
 };
 function receipt(overrides: Partial<SessionTurnQueueReceipt> = {}): SessionTurnQueueReceipt {
-  return { sessionId: owner.id, incarnationId: request.incarnationId, id: "item", requestId: request.clientRequestId, sequence: 1, state: "queued",
+  return { sessionId: owner.id, incarnationId: request.incarnationId, id: "item", requestId: request.clientRequestId, sequence: 1, queuePosition: overrides.sequence ?? 1, state: "queued",
     captured: { request, attachments: [], provider: "codex", workspacePath: "workspace" }, turnId: null, userMessageSeq: null, reason: null,
     releasedAt: null, createdAt: "2026-10-10T00:00:00Z", updatedAt: "2026-10-10T00:00:00Z", ...overrides };
 }

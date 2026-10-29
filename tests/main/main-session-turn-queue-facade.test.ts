@@ -8,6 +8,38 @@ import type { ComposerPreview, RunSessionTurnRequest } from "../../src-shared/se
 import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 
 const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
+// @test-value v2
+// kind = "contract"
+// claim = "順変更APIは現行の書込可能ownerだけを許可し、捕捉済み本文/添付を再解決せず競合結果を返す"
+// oracle = { type = "contract", ref = "GitHub Issue #912: incarnationと未開始列の照合、捕捉内容不変" }
+// fault = "旧incarnationやread-only ownerを順変更へ渡す、または順変更で本文/添付のpreflightを再実行する"
+// observable = "storeへのowner/ID列と呼出回数、返却conflict、preflight回数、旧owner/read-only拒否"
+// observation_boundary = "public-boundary"
+// scope = "MainSessionTurnQueueFacade.reorderQueuedSessionTurnsのowner境界"
+// lifecycle = "permanent"
+// impact = "再作成または参照専用会話の変更と受付済み指示の変質を防ぐ"
+// distinction = "storage testは公開facadeでのread-onlyと要求incarnation検証を通らない"
+// @end-test-value
+test("順変更facadeはownerを照合して捕捉内容を再解決しない", async () => {
+  const f = fixture();
+  let calls = 0;
+  f.deps.store.reorderQueued = async (owner, before, after) => {
+    calls += 1;
+    assert.deepEqual(owner, { sessionId: f.session.id, incarnationId: f.session.incarnationId });
+    assert.deepEqual(before, ["a", "b"]);
+    assert.deepEqual(after, ["b", "a"]);
+    return { outcome: "conflict", receipts: [] };
+  };
+  const request = { incarnationId: f.session.incarnationId, expectedQueuedIds: ["a", "b"], queuedIds: ["b", "a"] };
+  assert.deepEqual(await f.facade.reorderQueuedSessionTurns(f.session.id, request), { outcome: "conflict", receipts: [] });
+  await assert.rejects(f.facade.reorderQueuedSessionTurns(f.session.id, { ...request, incarnationId: "old" }), /identity changed/);
+  f.deps.getSession = async () => ({ ...f.session, accessMode: "legacy_readonly" });
+  await assert.rejects(f.facade.reorderQueuedSessionTurns(f.session.id, request), /read-only/);
+  assert.equal(calls, 1);
+  assert.deepEqual(f.calls, { preview: 0, provider: 0, workspace: 0, acceptance: 0 });
+  await f.service.close();
+});
+
 function fixture() {
   const session = {
     ...buildNewSession({ taskTitle: "Queue", workspaceLabel: "workspace", workspacePath: "C:/workspace",
@@ -21,10 +53,11 @@ function fixture() {
   const calls = { preview: 0, provider: 0, workspace: 0, acceptance: 0 };
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected queue operation"); };
   const store: SessionTurnQueueStore = {
+    reorderQueued: unexpected,
     enqueue: async (owner, captured) => {
       calls.acceptance += 1;
       const receipt: SessionTurnQueueReceipt = { ...owner, id: "durable-id", requestId: captured.request.clientRequestId,
-        sequence: 1, state: "queued", captured: structuredClone(captured), turnId: null, userMessageSeq: null,
+        sequence: 1, queuePosition: 1, state: "queued", captured: structuredClone(captured), turnId: null, userMessageSeq: null,
         reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" };
       rows.push(receipt);
       return receipt;

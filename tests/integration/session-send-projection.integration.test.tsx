@@ -167,7 +167,7 @@ test("MainとAuxiliaryのqueue受付は独立してcanonicalへ接続する", as
     assert.equal(view.registry.get({ kind: "auxiliary", id: auxiliary.id }).draft, "auxiliary prompt");
     await act(async () => {
       for (const [id, request] of requests) {
-        const receipt: SessionTurnQueueReceipt = { sessionId: id, incarnationId: request.incarnationId, id: id + "-queue", requestId: request.clientRequestId!, sequence: 1,
+        const receipt: SessionTurnQueueReceipt = { sessionId: id, incarnationId: request.incarnationId, id: id + "-queue", requestId: request.clientRequestId!, sequence: 1, queuePosition: 1,
           state: "starting", captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: main.provider, workspacePath: main.workspacePath },
           turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: main.updatedAt, updatedAt: main.updatedAt };
         receipts.set(id, receipt); runs.get(id)!.resolve(receipt);
@@ -245,7 +245,7 @@ test("Auxiliaryは切替後も不明受付の元IDと新draftを保護して回�
     const original = requests[0];
     view.api.enqueueSessionTurn = async (_id, request) => {
       requests.push(request);
-      receipt = { sessionId: initial.id, incarnationId: original.incarnationId, id: "aux-queue", requestId: original.clientRequestId!, sequence: 1,
+      receipt = { sessionId: initial.id, incarnationId: original.incarnationId, id: "aux-queue", requestId: original.clientRequestId!, sequence: 1, queuePosition: 1,
         state: "starting", captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: initial.provider, workspacePath: "workspace" },
         turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: initial.updatedAt, updatedAt: initial.updatedAt };
       return receipt;
@@ -450,7 +450,7 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
             auxiliary = { ...auxiliary, runState: "running", messages: [...auxiliary.messages, { role: "user", text: request.userMessage }] };
             emitTerminal(id);
           }
-          const receipt: SessionTurnQueueReceipt = { sessionId, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: 1, state: "running",
+          const receipt: SessionTurnQueueReceipt = { sessionId, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: 1, queuePosition: 1, state: "running",
             captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: main.provider, workspacePath: main.workspacePath },
             turnId: "turn", userMessageSeq: (target === "Main" ? main : auxiliary).messages.length - 1, reason: null, releasedAt: null, createdAt: main.updatedAt, updatedAt: main.updatedAt };
           receipts.set(id, receipt); notifyQueue(id);
