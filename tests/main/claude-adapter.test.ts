@@ -18,6 +18,7 @@ import { PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider
 function fakeQuery(
   produce: (options: Options) => AsyncGenerator<SDKMessage, void>,
   capture: (options: Options, prompt: unknown) => void = () => undefined,
+  automaticIdle = true,
 ): typeof import("@anthropic-ai/claude-agent-sdk").query {
   return (({ options, prompt }: { options: Options; prompt: unknown }) => {
     return (async function* () {
@@ -25,6 +26,7 @@ function fakeQuery(
         : (await (prompt as AsyncIterable<SDKUserMessage>)[Symbol.asyncIterator]().next()).value;
       capture(options, submitted ?? prompt);
       for await (const message of produce(options)) {
+        if (automaticIdle && message.type === "result") yield sessionState("idle");
         yield message.type === "result" && submitted?.uuid && !message.origin && !message.user_message_uuid && !message.user_message_uuids
           ? { ...message, user_message_uuid: submitted.uuid } : message;
       }
@@ -90,6 +92,20 @@ function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
 }
 
 function sdkMessage(value: Record<string, unknown>): SDKMessage { return value as SDKMessage; }
+
+function sessionState(state: "running" | "requires_action" | "idle"): SDKMessage {
+  return sdkMessage({ type: "system", subtype: "session_state_changed", state, session_id: "thread" });
+}
+
+function backgroundSnapshot(ids: string[], ambient = false): SDKMessage {
+  return sdkMessage({ type: "system", subtype: "background_tasks_changed", tasks: ids.map((id) => ({
+    task_id: id, task_type: "local_agent", description: `Agent ${id}`, ambient,
+  })) });
+}
+
+function taskNotification(id: string, status = "completed"): SDKMessage {
+  return sdkMessage({ type: "system", subtype: "task_notification", task_id: id, status, summary: `Report ${id}` });
+}
 
 // @test-value v2
 // kind = "contract"
@@ -489,6 +505,7 @@ it("Claude codingは送信UUIDの結果まで入力を保持する", async (t) =
             yield result("saved-thread", { user_message_uuid: "another-send", result: "Not this response" });
             await new Promise<void>((resolve) => setImmediate(resolve));
             assert.equal(inputClosed, false, "input must stay open for the queried turn's controls");
+            yield sessionState("idle");
             yield result("saved-thread", { result: text, ...(useUuidList
               ? { user_message_uuid: "last-batched-send", user_message_uuids: [sent.uuid, "last-batched-send"] }
               : { user_message_uuid: sent.uuid }) });
@@ -507,6 +524,164 @@ it("Claude codingは送信UUIDの結果まで入力を保持する", async (t) =
       }
     }
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeは入力対応resultとSDK idleの両方までqueryと入力を保ち、空snapshot後の複数子報告と親の取りまとめを一度ずつ回収する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: ClaudeAdapter; https://github.com/natumekazuki/WithMate/issues/906" }
+// fault = "入力resultか子0件で早期終了する、idleとresultの順序を固定する、または通知・別入力のresultを最終結果へ採用する"
+// observable = "入力iteratorの生存、runSessionTurn本文・usage・lastNonEmptyAssistantMessageText、progressとdeltaのbackgroundTasks"
+// observation_boundary = "public-boundary"
+// scope = "Claude background child report collection and terminal correlation"
+// lifecycle = "permanent"
+// impact = "子を中断して報告を失う、親の統合応答を保存できない、別の結果を返す"
+// distinction = "既存入力相関testは対応result後の子報告・idleを検査しない。通信なしの短い列でSDKの順序境界を継続検査する"
+// @end-test-value
+it("Claudeは複数の子報告と親の取りまとめ後のidleまで待つ", async () => {
+  for (const resultFirst of [true, false]) {
+    let inputEnd: Promise<IteratorResult<SDKUserMessage>> | undefined;
+    let inputClosed = false;
+    let closed = false;
+    const states: Array<{ ids: string[]; statuses: string[]; upserts: string[]; removes: string[] }> = [];
+    const adapter = new ClaudeAdapter({ query: (({ prompt, options }: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => {
+      assert.equal(options.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS, "1");
+      assert.equal(options.env?.CLAUDE_CODE_BG_TASKS_REPORT_RUNNING, "1");
+      const iterator = prompt[Symbol.asyncIterator]();
+      return (async function* () {
+        try {
+          const first = await iterator.next();
+          assert.ok(!first.done);
+          inputEnd = iterator.next();
+          void inputEnd.then(() => { inputClosed = true; });
+          yield sessionState("idle");
+          yield result("thread", { origin: { kind: "task-notification" }, result: "Old notification" });
+          yield sessionState("running");
+          yield backgroundSnapshot(["a", "b"]);
+          yield sdkMessage({ type: "assistant", uuid: "interim", message: { content: [{ type: "text", text: "Waiting" }] } });
+          if (resultFirst) yield result("thread", { user_message_uuid: first.value.uuid });
+          yield backgroundSnapshot(["a"]);
+          yield taskNotification("b");
+          yield result("thread", { origin: { kind: "task-notification" }, result: "", num_turns: 0 });
+          yield backgroundSnapshot([]);
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          assert.equal(inputClosed, false);
+          assert.equal(options.abortController?.signal.aborted, false);
+          yield result("thread", { user_message_uuid: "unrelated", result: "Wrong response" });
+          yield taskNotification("a");
+          const summary = sdkMessage({ type: "assistant", uuid: "summary", message: { content: [{ type: "text", text: "Combined a + b" }] } });
+          yield summary;
+          yield summary;
+          yield result("thread", { origin: { kind: "task-notification" }, result: "Not the input result",
+            usage: { input_tokens: 999, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 999 } });
+          yield sessionState("idle");
+          if (!resultFirst) yield result("thread", { user_message_uuid: first.value.uuid });
+          throw new Error("read past terminal");
+        } finally { closed = true; }
+      })();
+    }) as unknown as typeof import("@anthropic-ai/claude-agent-sdk").query });
+    const completed = await adapter.runSessionTurn(input("thread"), (state, changes) => {
+      states.push({ ids: state.backgroundTasks.map((task) => task.id), statuses: state.backgroundTasks.map((task) => task.status),
+        upserts: changes.backgroundTasks.upserts.map((task) => task.id), removes: changes.backgroundTasks.removes });
+    });
+    assert.equal(completed.assistantText, "Waiting\n\nCombined a + b");
+    assert.equal(completed.lastNonEmptyAssistantMessageText, "Combined a + b");
+    assert.equal(completed.usage?.outputTokens, 5);
+    assert.ok(states.some((state) => state.ids.join() === "a,b" && state.statuses.every((status) => status === "running")));
+    assert.ok(states.some((state) => state.removes.includes("a")));
+    assert.ok(states.some((state) => state.upserts.includes("b") && state.statuses.includes("completed")));
+    assert.deepEqual(await inputEnd, { done: true, value: undefined });
+    assert.equal(closed, true);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeは子の失敗・停止、親の報告回収失敗とidle前EOF・stream失敗・取消を成功へ変えず、取得済み親本文をpartialに保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: ClaudeAdapter; https://github.com/natumekazuki/WithMate/issues/906" }
+// fault = "先行入力resultだけで成功を返すか、取消を失敗に変えるか、子失敗表示と取得済み本文を捨てる"
+// observable = "ProviderTurnErrorのcanceled・message・partialResultとprogressの失敗task"
+// observation_boundary = "public-boundary"
+// scope = "Claude background failures and incomplete stream"
+// lifecycle = "permanent"
+// impact = "未回収の子報告や異常終了を正常完了と表示し再試行判断を誤る"
+// distinction = "既存EOF・取消testは入力対応result受信前だけ。短いfake streamで終端後待機を検査する"
+// @end-test-value
+it("Claudeはバックグラウンド待機中の失敗と取消を区別する", async () => {
+  for (const outcome of ["failed", "stopped", "started-first", "report-error", "report-is-error", "eof", "stream", "canceled"] as const) {
+    const controller = new AbortController();
+    let failedTask = false;
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      yield sessionState("running");
+      if (outcome === "started-first") {
+        yield sdkMessage({ type: "system", subtype: "task_started", task_id: "a", task_type: "local_agent", is_backgrounded: true, description: "Agent a" });
+      } else yield backgroundSnapshot(["a"]);
+      yield sdkMessage({ type: "assistant", uuid: "partial", message: { content: [{ type: "text", text: "Partial" }] } });
+      yield result("thread");
+      if (outcome === "canceled") controller.abort();
+      if (outcome === "stream") throw new Error("Transport failed");
+      if (outcome === "report-error" || outcome === "report-is-error") {
+        yield taskNotification("a");
+        yield result("thread", { origin: { kind: "task-notification" }, is_error: true,
+          ...(outcome === "report-error" ? { subtype: "error_max_turns", errors: ["Report failed"] } : { result: "Report failed" }) });
+        yield sessionState("idle");
+      }
+      if (outcome === "failed" || outcome === "stopped" || outcome === "started-first") {
+        yield backgroundSnapshot([]);
+        yield taskNotification("a", outcome === "started-first" ? "failed" : outcome);
+        yield sessionState("idle");
+      }
+    }, undefined, false) });
+    await assert.rejects(adapter.runSessionTurn(input("", controller.signal), (state) => {
+      failedTask ||= state.backgroundTasks.some((task) => task.status === "failed");
+    }), (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, outcome === "canceled");
+      assert.equal(error.partialResult.assistantText, "Partial");
+      assert.match(error.message, outcome === "canceled" ? /Canceled/ : outcome === "stream" ? /Transport failed/
+        : outcome === "eof" ? /before session idle/ : outcome.startsWith("report-") ? /Report failed/ : /background task (failed|stopped)/);
+      return true;
+    });
+    assert.equal(failedTask, outcome === "failed" || outcome === "stopped" || outcome === "started-first");
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeの子待機中も承認channelを保持し、ambient監視が残っていてもSDK idleと入力resultで終了する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: ClaudeAdapter; https://github.com/natumekazuki/WithMate/issues/906" }
+// fault = "親resultで承認経路を閉じる、requires_actionを終端とする、またはambientを活動待機条件へ加える"
+// observable = "onApprovalRequestでの未abort signal、canUseToolのallow結果、progressと返却本文"
+// observation_boundary = "public-boundary"
+// scope = "Claude background approval and ambient exclusion"
+// lifecycle = "permanent"
+// impact = "子の承認が回答不能になるか常駐監視で依頼が完了しない"
+// distinction = "既存承認testに入力result後のrequires_actionやambient snapshotがない。SDK通信不要で継続確認できる"
+// @end-test-value
+it("Claudeは子の承認を中継しambient監視を完了待ちに含めない", async () => {
+  let approved = false;
+  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* (options) {
+    yield sessionState("running");
+    yield result("thread");
+    yield sessionState("requires_action");
+    const permission = await options.canUseTool!("Bash", { command: "read-only check" }, {
+      signal: options.abortController!.signal, toolUseID: "child-tool", requestId: "child-approval",
+    });
+    assert.equal(permission?.behavior, "allow");
+    yield backgroundSnapshot(["watcher"], true);
+    yield sessionState("idle");
+    throw new Error("read past idle");
+  }, undefined, false) });
+  const request = input();
+  request.onApprovalRequest = (approval, signal) => {
+    assert.equal(approval.requestId, "child-tool");
+    assert.equal(signal?.aborted, false);
+    approved = true;
+    return "approve";
+  };
+  const completed = await adapter.runSessionTurn(request, (state) => { assert.deepEqual(state.backgroundTasks, []); });
+  assert.equal(approved, true);
+  assert.equal(completed.assistantText, "Final");
 });
 
 // @test-value v2

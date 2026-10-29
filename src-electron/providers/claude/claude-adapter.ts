@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { extname } from "node:path";
 import { query, resolveSettings, type ElicitationRequest, type Options, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { MessageOperation, ProviderUsage, LiveElicitationField, LiveElicitationRequest, LiveRunStep } from "../../../src-shared/session/runtime-state.js";
+import type { MessageOperation, ProviderUsage, LiveBackgroundTask, LiveElicitationField, LiveElicitationRequest, LiveRunStep } from "../../../src-shared/session/runtime-state.js";
 import type { MessageArtifact } from "../../../src-shared/session/session-state.js";
 import { resolveModelSelection } from "../../../src-shared/settings/model-catalog.js";
 import { mapApprovalModeToClaudePermissionMode } from "../../../src-shared/settings/provider-runtime-options.js";
@@ -42,6 +42,9 @@ type ClaudeTrace = {
   streamingText: string;
   streamingId: string | null;
   steps: ProviderProgressMap<LiveRunStep>;
+  backgroundTasks: ProviderProgressMap<LiveBackgroundTask>;
+  backgroundTaskInfo: Map<string, Pick<LiveBackgroundTask, "kind" | "title">>;
+  backgroundFailure: string;
   operations: MessageOperation[];
   redactor: ProviderAgentRuntimeBindingRedactor;
   usage: ProviderUsage | null;
@@ -323,10 +326,46 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
 
   private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), operations: [], redactor, usage: null, result: null, errorMessage: "" };
+    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
+    if (message.type === "system" && message.subtype === "task_started") {
+      if (message.is_backgrounded && !message.ambient && !message.skip_transcript) {
+        trace.backgroundTaskInfo.set(message.task_id, { kind: message.task_type === "local_bash" ? "shell" : "agent", title: message.description });
+      }
+      return;
+    }
+    if (message.type === "system" && message.subtype === "background_tasks_changed") {
+      const active = new Set<string>();
+      for (const task of message.tasks) {
+        if (task.ambient) {
+          trace.backgroundTaskInfo.delete(task.task_id);
+          trace.backgroundTasks.delete(task.task_id);
+          continue;
+        }
+        active.add(task.task_id);
+        const info = { kind: task.task_type === "local_bash" ? "shell" as const : "agent" as const, title: task.description };
+        trace.backgroundTaskInfo.set(task.task_id, info);
+        trace.backgroundTasks.set(task.task_id, { id: task.task_id, ...info, status: "running", updatedAt: new Date().toISOString() });
+      }
+      for (const [id, task] of trace.backgroundTasks) {
+        if (task.status === "running" && !active.has(id)) trace.backgroundTasks.delete(id);
+      }
+      return;
+    }
+    if (message.type === "system" && message.subtype === "task_notification") {
+      const info = trace.backgroundTaskInfo.get(message.task_id);
+      if (message.ambient || message.skip_transcript || !info) return;
+      trace.backgroundTasks.set(message.task_id, { id: message.task_id, ...info,
+        status: message.status === "completed" ? "completed" : "failed",
+        details: toProviderTextPreview(trace.redactor.sanitizeText(message.summary)), updatedAt: new Date().toISOString() });
+      if (message.status !== "completed") {
+        trace.backgroundFailure ||= `Claude background task ${message.status}: ${message.summary}`;
+        trace.errorMessage = trace.backgroundFailure;
+      }
+      return;
+    }
     if (message.type === "system" && message.subtype === "init") {
       trace.threadId = message.session_id;
       return;
@@ -464,24 +503,29 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     const progress = (): Promise<void> => {
       if (controller.signal.aborted || !onProgress) return Promise.resolve();
       const steps = trace.steps.takeProgress(redactor);
+      const backgroundTasks = trace.backgroundTasks.takeProgress(redactor);
       const state = {
         sessionId: input.session.id,
         threadId: trace.threadId ?? "",
         assistantText: redactor.sanitizeText(liveText(trace)),
         steps: steps.snapshot,
-        backgroundTasks: [],
+        backgroundTasks: backgroundTasks.snapshot,
         usage: trace.usage,
         errorMessage: redactor.sanitizeText(trace.errorMessage),
         approvalRequest: redactor.sanitize(approvalRequest),
         elicitationRequest: redactor.sanitize(elicitationRequest),
       };
-      return progressDelivery.deliver(state, { steps: steps.changes, backgroundTasks: { upserts: [], removes: [] } });
+      return progressDelivery.deliver(state, { steps: steps.changes, backgroundTasks: backgroundTasks.changes });
     };
     const options: Options = {
       cwd: workspacePath,
       title: input.session.taskTitle || "WithMate session",
       pathToClaudeCodeExecutable: resolveClaudeBinaryPath(),
-      env: mergeDefinedProviderEnv(process.env, buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding)),
+      env: mergeDefinedProviderEnv(process.env, {
+        ...buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding),
+        CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
+        CLAUDE_CODE_BG_TASKS_REPORT_RUNNING: "1",
+      }),
       model: selection.resolvedModel,
       ...(selection.resolvedReasoningEffort ? { effort: selection.resolvedReasoningEffort as Options["effort"] } : {}),
       permissionMode,
@@ -596,6 +640,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     const userMessageId = randomUUID();
     let releaseInput!: () => void;
     const inputReleased = new Promise<void>((resolve) => { releaseInput = resolve; });
+    let sessionState: "idle" | "running" | "requires_action" | undefined;
+    let terminalReceived = false;
     try {
       const userMessage = await buildUserMessage(prompt, userMessageId);
       if (controller.signal.aborted) throw new Error("Canceled");
@@ -610,11 +656,19 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       while (true) {
         const next = await signalRace(iterator.next(), controller.signal);
         if (next.done) break;
+        if (next.value.type === "system" && next.value.subtype === "session_state_changed") {
+          sessionState = next.value.state;
+        }
         if (next.value.type === "result") {
           const terminal = next.value;
           const matchesInput = terminal.user_message_uuid === userMessageId || terminal.user_message_uuids?.includes(userMessageId);
           const sessionFailure = !terminal.user_message_uuid && !terminal.user_message_uuids?.length && !terminal.origin
             && (terminal.subtype !== "success" || terminal.is_error);
+          const reportFailure = trace.result && trace.backgroundTaskInfo.size > 0
+            && !terminal.user_message_uuid && !terminal.user_message_uuids?.length
+            && terminal.origin?.kind === "task-notification" && !terminal.origin.subkind
+            && (terminal.subtype !== "success" || terminal.is_error);
+          if (reportFailure) throw new Error(terminal.subtype === "success" ? terminal.result : terminal.errors.join("\n") || terminal.subtype);
           if (!matchesInput && !sessionFailure) continue;
         }
         this.receive(next.value, trace, Boolean(input.session.threadId));
@@ -627,13 +681,20 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           }
         }
         await signalRace(progress(), controller.signal);
-        if (trace.result) break;
+        // The input result can precede background reports. SDK idle, not an empty
+        // task snapshot, confirms that their parent turn has finished processing.
+        if (trace.result && (trace.result.subtype !== "success" || trace.result.is_error || sessionState === "idle")) {
+          terminalReceived = true;
+          break;
+        }
         if (++burst >= 32) { burst = 0; await signalRace(new Promise<void>(resolve => setImmediate(resolve)), controller.signal); }
       }
       if (progressFailure) throw progressFailure;
       if (controller.signal.aborted) throw new Error("Canceled");
       if (!trace.result) throw new Error("Claude stream ended before a result");
       if (trace.result.subtype !== "success" || trace.result.is_error) throw new Error(trace.errorMessage || "Claude turn failed");
+      if (!terminalReceived) throw new Error("Claude stream ended before session idle");
+      if (trace.backgroundFailure) throw new Error(trace.backgroundFailure);
       const result = this.result(input, trace);
       const after = WORKSPACE_DIFF_CAPTURE_ENABLED
         ? await captureWorkspaceSnapshot(snapshotRoots).catch(() => createDisabledWorkspaceSnapshotCapture())
@@ -666,7 +727,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         input.onCleanupPending(childExited);
       }
       try {
-        if (iterator) await closeQuery(iterator, controller.signal.aborted || !trace.result);
+        if (iterator) await closeQuery(iterator, controller.signal.aborted || !terminalReceived);
       } finally {
         controller.abort();
         if (childExited && (input.signal?.aborted || (progressFailure !== undefined && !input.onCleanupPending))) {
