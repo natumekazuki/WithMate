@@ -94,10 +94,12 @@ export function sessionGraphStatuses(record: SessionGraphRecord): string[] {
 function Identity({
   identity,
   actorRole,
+  tooltipDetails,
   focusable = true,
 }: {
   identity: SessionGraphIdentity;
   actorRole?: string;
+  tooltipDetails?: string;
   focusable?: boolean;
 }) {
   const name = identity.character?.name ?? identity.sessionTitle;
@@ -120,6 +122,7 @@ function Identity({
       <span className="session-graph-actor-name">{name}</span>
       <span className="session-graph-identity-tooltip" role="tooltip">
         {text}
+        {tooltipDetails ? <><br />{tooltipDetails}</> : null}
       </span>
     </span>
   );
@@ -129,12 +132,14 @@ function originText(origin: SessionGraphRecord["origin"]): string {
   return `${label(origin.type)}${origin.label ? ` · ${origin.label}` : ""}`;
 }
 
+function provenanceText(record: SessionGraphRecord): string {
+  return `Origin: ${originText(record.origin)}${record.adoptionOrigin ? `; Adoption Origin: ${originText(record.adoptionOrigin)}` : ""}`;
+}
+
 function Provenance({ record }: { record: SessionGraphRecord }) {
-  const text = `Origin: ${originText(record.origin)}${record.adoptionOrigin ? `; Adoption Origin: ${originText(record.adoptionOrigin)}` : ""}`;
-  return <span className="session-graph-provenance" aria-label={text}>
+  return <span className="session-graph-provenance" aria-label={provenanceText(record)}>
     <span>From {label(record.origin.type)}</span>
     {record.adoptionOrigin ? <span>Adoption: {label(record.adoptionOrigin.type)}</span> : null}
-    <span className="session-graph-identity-tooltip" role="tooltip">{text}</span>
   </span>;
 }
 
@@ -696,6 +701,7 @@ export function SessionGraphPreview({
                           focusable={false}
                           identity={record.actorSnapshot}
                           actorRole={record.actorRole}
+                          tooltipDetails={provenanceText(record)}
                       />
                         <span className="session-graph-node-status">
                           {sessionGraphStatuses(record).map(label).join(" · ")}

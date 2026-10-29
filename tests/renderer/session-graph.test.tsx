@@ -119,15 +119,15 @@ function record(id: string): SessionGraphRecord {
 
 // @test-value v2
 // kind = "contract"
-// claim = "agent・user・external由来に関わらず担当Character名と対応画像を表示し、採否由来・任意役割・初回記録者を区別し、画像失敗後の明示担当変更では新画像を描画する"
+// claim = "agent・user・external由来に関わらず担当Character名と対応画像を表示し、担当・役割と両由来の全文をnodeの単一tooltipにまとめ、初回記録者を区別し、画像失敗後の明示担当変更では新画像を描画する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md: 記録・閲覧UI; GitHub Issues #889/#893/#897" }
-// fault = "由来や採用に応じて担当画像をUser/記録者画像へ切り替える、役割をCharacter名へ混ぜる、画像失敗状態を次の担当へ持ち越す"
-// observable = "各nodeの可視担当名・img src・由来、詳細の由来・採否由来・役割・記録者、採用通知前後のimg同一性と担当変更後のimg src"
+// fault = "由来や採用に応じて担当画像をUser/記録者画像へ切り替える、役割をCharacter名へ混ぜる、補足全文を落とすか複数tooltipへ分断する、画像失敗状態を次の担当へ持ち越す"
+// observable = "各nodeの可視担当名・img src・由来、node tooltipの件数と担当・役割・両由来の全文、詳細の由来・採否由来・役割・記録者、採用通知前後のimg同一性と担当変更後のimg src"
 // observation_boundary = "component-behavior"
 // scope = "SessionGraphPreviewの担当identityと由来表示・CharacterAvatar更新"
 // lifecycle = "permanent"
-// impact = "要求者や採否判断者を担当と誤認せず、画像読込失敗後も別担当を識別できる"
-// distinction = "schemaやstorage testではrendererの由来による画像選択・Avatar失敗stateの再利用を検出できない。少数recordのDOM操作で継続確認する"
+// impact = "要求者や採否判断者を担当と誤認せず、補足を一箇所で参照でき、画像読込失敗後も別担当を識別できる"
+// distinction = "schemaやstorage testではrendererの画像選択・補足内容・Avatar失敗stateの再利用を検出できない。少数recordのDOM操作で継続確認し、tooltipの描画・重なりは別途実描画で確認する"
 // @end-test-value
 test("graph preview keeps character ownership separate from content and adoption origins", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
@@ -170,6 +170,9 @@ test("graph preview keeps character ownership separate from content and adoption
     await act(async () => notify("main"));
     assert.equal(nodes()[0].querySelector("img"), originalImage);
     assert.match(nodes()[0].querySelector(".session-graph-provenance")?.textContent ?? "", /Adoption: User/);
+    const tooltips = nodes()[0].querySelectorAll("[role='tooltip']");
+    assert.equal(tooltips.length, 1);
+    assert.equal(tooltips[0].textContent, "Character agent · Auxiliary · agent Session · Role: ReviewerOrigin: Agent · agent source; Adoption Origin: User · Project Owner");
     await act(async () => nodes()[0].click());
     const detail = doc.querySelector(".session-graph-details")!;
     const fields = [...detail.querySelectorAll(".session-graph-fields dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]);

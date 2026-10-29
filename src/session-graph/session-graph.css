@@ -207,7 +207,7 @@
 }
 .session-graph-identity:hover .session-graph-identity-tooltip,
 .session-graph-identity:focus .session-graph-identity-tooltip,
-.session-graph-provenance:hover .session-graph-identity-tooltip,
+.session-graph-node:has(.session-graph-provenance:hover) .session-graph-identity-tooltip,
 .session-graph-node:focus-visible .session-graph-identity-tooltip {
   display: block;
 }
