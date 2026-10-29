@@ -4,8 +4,7 @@ type Point = { x: number; y: number };
 export type SessionGraphLabelSize = { width: number; height: number };
 type Rect = Point & SessionGraphLabelSize;
 export type SessionGraphEdgeRoute = {
-  path: string;
-  points: Point[];
+  segments: Point[][];
   labelX: number;
   labelY: number;
   labelWidth: number;
@@ -16,6 +15,7 @@ type Component = Rect & {
   columns: number;
   columnStep: number;
   rowHeights: number[];
+  nodeOffsets: number[];
 };
 export type SessionGraphLayout = {
   positions: Map<string, Point>;
@@ -38,19 +38,67 @@ export function sessionGraphCapacity(width: number, height: number) {
 }
 
 function overlaps(a: Rect, b: Rect, gap = 0) {
+  if (!a.width || !a.height || !b.width || !b.height) return false;
   return a.x < b.x + b.width + gap && a.x + a.width + gap > b.x &&
     a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
 }
 
-function edgeRoute(points: Point[], label: Rect): SessionGraphEdgeRoute {
+export function sessionGraphRoutePath(points: Point[]) {
+  return points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
+}
+
+function edgeRoute(segments: Point[][], label: Rect): SessionGraphEdgeRoute {
   return {
-    points,
-    path: points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" "),
+    segments,
     labelX: label.x + label.width / 2,
     labelY: label.y + label.height / 2,
     labelWidth: label.width,
     labelHeight: label.height,
   };
+}
+
+function segmentHitsRect(from: Point, to: Point, rect: Rect) {
+  if (!rect.width || !rect.height) return false;
+  let first = 0;
+  let last = 1;
+  for (const [start, delta, low, high] of [
+    [from.x, to.x - from.x, rect.x + 0.000001, rect.x + rect.width - 0.000001],
+    [from.y, to.y - from.y, rect.y + 0.000001, rect.y + rect.height - 0.000001],
+  ]) {
+    if (Math.abs(delta) < 0.000001) {
+      if (start <= low || start >= high) return false;
+    } else {
+      const a = (low - start) / delta;
+      const b = (high - start) / delta;
+      first = Math.max(first, Math.min(a, b));
+      last = Math.min(last, Math.max(a, b));
+      if (first >= last) return false;
+    }
+  }
+  return first < last;
+}
+
+function routeHitsRect(route: SessionGraphEdgeRoute, rect: Rect) {
+  return route.segments.some((points) => points.slice(1).some((point, index) => segmentHitsRect(points[index], point, rect)));
+}
+
+function labelRect(route: SessionGraphEdgeRoute): Rect {
+  return { x: route.labelX - route.labelWidth / 2, y: route.labelY - route.labelHeight / 2,
+    width: route.labelWidth, height: route.labelHeight };
+}
+
+function straightRoute(from: Point, to: Point, size: SessionGraphLabelSize) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const clip = Math.min(CARD_WIDTH / 2 / Math.abs(dx), CARD_HEIGHT / 2 / Math.abs(dy));
+  const center = { x: (from.x + to.x + CARD_WIDTH) / 2, y: (from.y + to.y + CARD_HEIGHT) / 2 };
+  const start = { x: from.x + CARD_WIDTH / 2 + dx * clip, y: from.y + CARD_HEIGHT / 2 + dy * clip };
+  const end = { x: to.x + CARD_WIDTH / 2 - dx * clip, y: to.y + CARD_HEIGHT / 2 - dy * clip };
+  const label = { x: center.x - size.width / 2, y: center.y - size.height / 2, ...size };
+  if (!size.width || !size.height) return edgeRoute([[start, end]], label);
+  const gap = Math.min((size.width / 2 + 6) / Math.abs(dx), (size.height / 2 + 6) / Math.abs(dy));
+  return edgeRoute([[start, { x: center.x - dx * gap, y: center.y - dy * gap }],
+    [{ x: center.x + dx * gap, y: center.y + dy * gap }, end]], label);
 }
 
 // Vertical corridor segments can pass other rows' label bands. Detour around
@@ -125,75 +173,130 @@ export function layoutSessionGraph(
   for (const ids of groups) {
     const idSet = new Set(ids);
     const componentEdges = edges.filter((edge) => idSet.has(edge.fromId)).sort((a, b) => a.id.localeCompare(b.id));
-    const outgoing = new Map(ids.map((id) => [id, componentEdges.filter((edge) => edge.fromId === id)]));
-    const incoming = new Map(ids.map((id) => [id, componentEdges.filter((edge) => edge.toId === id)]));
-    const maxOut = Math.max(0, ...[...outgoing.values()].map((items) => items.length));
-    const maxIn = Math.max(0, ...[...incoming.values()].map((items) => items.length));
     const old = previous?.components.find((component) => component.ids.some((id) => idSet.has(id)));
-    const columnStep = Math.max(COLUMN_STEP, CARD_WIDTH + 24 + (maxOut + maxIn) * 4, old?.columnStep ?? 0);
-    const columns = Math.min(ids.length, old?.columns ?? Math.max(1, Math.floor(Math.max(COLUMN_STEP, availableWidth) / columnStep)));
+    const direct = new Set(componentEdges.filter((edge) => edge.fromId !== edge.toId &&
+      componentEdges.filter((other) => (other.fromId === edge.fromId && other.toId === edge.toId) ||
+        (other.fromId === edge.toId && other.toId === edge.fromId)).length === 1).map((edge) => edge.id));
+    const directWidth = Math.max(0, ...componentEdges.filter((edge) => direct.has(edge.id)).map((edge) => labelSizes.get(edge.id)?.width ?? 0));
+    const maxOut = Math.max(0, ...ids.map((id) => componentEdges.filter((edge) => edge.fromId === id).length));
+    const maxIn = Math.max(0, ...ids.map((id) => componentEdges.filter((edge) => edge.toId === id).length));
+    const columnStep = Math.max(COLUMN_STEP, CARD_WIDTH + directWidth + GAP * 2,
+      CARD_WIDTH + 24 + (maxOut + maxIn) * 4, old?.columnStep ?? 0);
+    const columns = Math.min(ids.length, old?.columns ?? Math.max(1,
+      Math.floor((Math.max(COLUMN_STEP, availableWidth) - PADDING * 2 + columnStep - CARD_WIDTH) / columnStep)));
     const rows = Math.ceil(ids.length / columns);
     const slots = new Map(ids.map((id, index) => [id, { row: Math.floor(index / columns), column: index % columns }]));
-    type RoutedEdge = { edge: SessionGraphRelation; row: number; lane: number; label: Rect; sourceX: number; targetX: number };
-    const routed: RoutedEdge[] = [];
-    const lanes: Array<Array<{ height: number; intervals: Array<[number, number]> }>> = Array.from({ length: rows }, () => []);
-    let minX = componentEdges.length ? -32 - Math.max(0, maxIn - 1) * 4 : 0;
-    let maxX = (columns - 1) * columnStep + CARD_WIDTH;
-    for (const edge of componentEdges) {
-      const source = slots.get(edge.fromId)!;
-      const target = slots.get(edge.toId)!;
-      const sourceX = source.column * columnStep + CARD_WIDTH + 12 + outgoing.get(edge.fromId)!.indexOf(edge) * 4;
-      const targetX = target.column * columnStep - 12 - incoming.get(edge.toId)!.indexOf(edge) * 4;
-      const size = labelSizes.get(edge.id) ?? { width: 0, height: 0 };
-      const labelX = (sourceX + targetX) / 2 - size.width / 2;
-      const left = Math.min(sourceX, targetX, labelX) - GAP;
-      const right = Math.max(sourceX, targetX, labelX + size.width) + GAP;
-      const row = Math.min(source.row, target.row);
-      let lane = lanes[row].findIndex((candidate) => candidate.intervals.every(([a, b]) => right < a || left > b));
-      if (lane < 0) {
-        lane = lanes[row].length;
-        lanes[row].push({ height: 0, intervals: [] });
+    // Removing a blocked straight candidate adds only that edge to the detour
+    // lanes. Each retry removes at least one candidate and therefore terminates.
+    let localPositions = new Map<string, Point>();
+    let localRoutes = new Map<string, SessionGraphEdgeRoute>();
+    let rowHeights: number[] = [];
+    let nodeOffsets: number[] = [];
+    let minX = 0;
+    let maxX = 0;
+    while (true) {
+      const detours = componentEdges.filter((edge) => !direct.has(edge.id));
+      const outgoing = new Map(ids.map((id) => [id, detours.filter((edge) => edge.fromId === id)]));
+      const incoming = new Map(ids.map((id) => [id, detours.filter((edge) => edge.toId === id)]));
+      const maxIn = Math.max(0, ...[...incoming.values()].map((items) => items.length));
+      type RoutedEdge = { edge: SessionGraphRelation; row: number; lane: number; label: Rect; sourceX: number; targetX: number };
+      const routed: RoutedEdge[] = [];
+      const lanes: Array<Array<{ height: number; intervals: Array<[number, number]> }>> = Array.from({ length: rows }, () => []);
+      minX = detours.length ? -32 - Math.max(0, maxIn - 1) * 4 : 0;
+      maxX = (columns - 1) * columnStep + CARD_WIDTH;
+      for (const edge of detours) {
+        const source = slots.get(edge.fromId)!;
+        const target = slots.get(edge.toId)!;
+        const sourceX = source.column * columnStep + CARD_WIDTH + 12 + outgoing.get(edge.fromId)!.indexOf(edge) * 4;
+        const targetX = target.column * columnStep - 12 - incoming.get(edge.toId)!.indexOf(edge) * 4;
+        const size = labelSizes.get(edge.id) ?? { width: 0, height: 0 };
+        const labelX = (sourceX + targetX) / 2 - size.width / 2;
+        const left = Math.min(sourceX, targetX, labelX) - GAP;
+        const right = Math.max(sourceX, targetX, labelX + size.width) + GAP;
+        const row = Math.min(source.row, target.row);
+        let lane = lanes[row].findIndex((candidate) => candidate.intervals.every(([a, b]) => right < a || left > b));
+        if (lane < 0) {
+          lane = lanes[row].length;
+          lanes[row].push({ height: 0, intervals: [] });
+        }
+        lanes[row][lane].height = Math.max(lanes[row][lane].height, size.height ? size.height + 28 : 20);
+        lanes[row][lane].intervals.push([left, right]);
+        routed.push({ edge, row, lane, label: { x: labelX, y: 0, ...size }, sourceX, targetX });
+        minX = Math.min(minX, left - 8);
+        maxX = Math.max(maxX, right + 8);
       }
-      lanes[row][lane].height = Math.max(lanes[row][lane].height, size.height ? size.height + 28 : 20);
-      lanes[row][lane].intervals.push([left, right]);
-      routed.push({ edge, row, lane, label: { x: labelX, y: 0, ...size }, sourceX, targetX });
-      minX = Math.min(minX, left - 8);
-      maxX = Math.max(maxX, right + 8);
+      const rowGaps = Array.from({ length: rows }, () => 48);
+      const nodeBands = Array.from({ length: rows }, () => CARD_HEIGHT);
+      for (const edge of componentEdges.filter((edge) => direct.has(edge.id))) {
+        const source = slots.get(edge.fromId)!;
+        const target = slots.get(edge.toId)!;
+        const height = labelSizes.get(edge.id)?.height ?? 0;
+        if (source.row === target.row) nodeBands[source.row] = Math.max(nodeBands[source.row], height);
+        else for (let row = Math.min(source.row, target.row); row < Math.max(source.row, target.row); row += 1) {
+          rowGaps[row] = Math.max(rowGaps[row], height + GAP * 2);
+        }
+      }
+      nodeOffsets = lanes.map((items, index) => Math.max(
+        (items.length ? GAP + items.reduce((sum, lane) => sum + lane.height, 0) : 0) + (nodeBands[index] - CARD_HEIGHT) / 2,
+        old?.nodeOffsets[index] ?? 0));
+      rowHeights = nodeOffsets.map((offset, index) => Math.max(
+        offset + CARD_HEIGHT + (nodeBands[index] - CARD_HEIGHT) / 2 + (index < rows - 1 ? rowGaps[index] : 0),
+        old?.rowHeights[index] ?? 0));
+      const rowTops = rowHeights.map((_, index) => rowHeights.slice(0, index).reduce((sum, height) => sum + height, 0));
+      const nodeYs = nodeOffsets.map((offset, index) => rowTops[index] + offset);
+      localPositions = new Map(ids.map((id) => {
+        const slot = slots.get(id)!;
+        return [id, { x: slot.column * columnStep - minX, y: nodeYs[slot.row] }];
+      }));
+      for (const route of routed) {
+        const bandTop = rowTops[route.row];
+        route.label.x -= minX;
+        route.label.y = bandTop + lanes[route.row].slice(0, route.lane).reduce((sum, lane) => sum + lane.height, 0) + 12;
+      }
+      const labels = routed.map((route) => route.label);
+      localRoutes = new Map<string, SessionGraphEdgeRoute>();
+      for (const route of routed) {
+        const from = localPositions.get(route.edge.fromId)!;
+        const to = localPositions.get(route.edge.toId)!;
+        const out = outgoing.get(route.edge.fromId)!;
+        const ins = incoming.get(route.edge.toId)!;
+        const startY = from.y + 20 + (CARD_HEIGHT - 40) * (out.indexOf(route.edge) + 1) / (out.length + 1);
+        const endY = to.y + 20 + (CARD_HEIGHT - 40) * (ins.indexOf(route.edge) + 1) / (ins.length + 1);
+        const laneY = route.label.y + route.label.height + 8;
+        const sourceX = route.sourceX - minX;
+        const targetX = route.targetX - minX;
+        const points = [
+          { x: from.x + CARD_WIDTH, y: startY }, { x: sourceX, y: startY },
+          { x: sourceX, y: laneY }, { x: targetX, y: laneY },
+          { x: targetX, y: endY }, { x: to.x, y: endY },
+        ];
+        localRoutes.set(route.edge.id, edgeRoute([avoidLabels(points, labels)], route.label));
+      }
+      const nodeRects = [...localPositions.values()].map((point) => ({ ...point, width: CARD_WIDTH, height: CARD_HEIGHT }));
+      const accepted: SessionGraphEdgeRoute[] = [];
+      let blocked = false;
+      for (const edge of componentEdges.filter((edge) => direct.has(edge.id))) {
+        const route = straightRoute(localPositions.get(edge.fromId)!, localPositions.get(edge.toId)!, labelSizes.get(edge.id) ?? { width: 0, height: 0 });
+        const rect = labelRect(route);
+        if (nodeRects.some((node) => overlaps(rect, node) || routeHitsRect(route, node)) ||
+            labels.some((label) => overlaps(rect, label, GAP) || routeHitsRect(route, label)) ||
+            [...localRoutes.values()].some((other) => routeHitsRect(other, rect)) ||
+            accepted.some((other) => overlaps(rect, labelRect(other), GAP) || routeHitsRect(route, labelRect(other)) || routeHitsRect(other, rect))) {
+          direct.delete(edge.id);
+          blocked = true;
+        } else {
+          accepted.push(route);
+          localRoutes.set(edge.id, route);
+        }
+      }
+      if (blocked) continue;
+      break;
     }
-    const rowHeights = lanes.map((items, index) => Math.max(ROW_STEP,
-      CARD_HEIGHT + GAP + items.reduce((sum, lane) => sum + lane.height, 0), old?.rowHeights[index] ?? 0));
-    const rowTops = rowHeights.map((_, index) => rowHeights.slice(0, index).reduce((sum, height) => sum + height, 0));
-    const nodeYs = rowHeights.map((height, index) => rowTops[index] + height - CARD_HEIGHT);
-    const localPositions = new Map(ids.map((id) => {
-      const slot = slots.get(id)!;
-      return [id, { x: slot.column * columnStep - minX, y: nodeYs[slot.row] }];
-    }));
-    for (const route of routed) {
-      const bandTop = rowTops[route.row];
-      route.label.x -= minX;
-      route.label.y = bandTop + lanes[route.row].slice(0, route.lane).reduce((sum, lane) => sum + lane.height, 0) + 12;
-    }
-    const labels = routed.map((route) => route.label);
-    const localRoutes = new Map<string, SessionGraphEdgeRoute>();
-    for (const route of routed) {
-      const from = localPositions.get(route.edge.fromId)!;
-      const to = localPositions.get(route.edge.toId)!;
-      const out = outgoing.get(route.edge.fromId)!;
-      const ins = incoming.get(route.edge.toId)!;
-      const startY = from.y + 20 + (CARD_HEIGHT - 40) * (out.indexOf(route.edge) + 1) / (out.length + 1);
-      const endY = to.y + 20 + (CARD_HEIGHT - 40) * (ins.indexOf(route.edge) + 1) / (ins.length + 1);
-      const laneY = route.label.y + route.label.height + 8;
-      const sourceX = route.sourceX - minX;
-      const targetX = route.targetX - minX;
-      const points = [
-        { x: from.x + CARD_WIDTH, y: startY }, { x: sourceX, y: startY },
-        { x: sourceX, y: laneY }, { x: targetX, y: laneY },
-        { x: targetX, y: endY }, { x: to.x, y: endY },
-      ];
-      localRoutes.set(route.edge.id, edgeRoute(avoidLabels(points, labels), route.label));
-    }
-    const component: Component = { ids, columns, columnStep, rowHeights,
-      x: PADDING, y: PADDING, width: maxX - minX, height: rowHeights.reduce((sum, height) => sum + height, 0) };
+    const labelBounds = [...localRoutes.values()].filter((route) => route.labelWidth && route.labelHeight).map(labelRect);
+    const contentLeft = Math.min(0, ...labelBounds.map((rect) => rect.x - GAP));
+    const contentRight = Math.max(maxX - minX, ...labelBounds.map((rect) => rect.x + rect.width + GAP));
+    const component: Component = { ids, columns, columnStep, rowHeights, nodeOffsets,
+      x: PADDING, y: PADDING, width: contentRight - contentLeft, height: rowHeights.reduce((sum, height) => sum + height, 0) };
     // Pack whole connected components into two dimensions. Existing origins are
     // preferred on live updates; only actual collisions require displacement.
     const candidates = [{ x: old?.x ?? PADDING, y: old?.y ?? PADDING }, { x: PADDING, y: PADDING },
@@ -222,10 +325,10 @@ export function layoutSessionGraph(
       return left.occupancy - right.occupancy || left.area - right.area || a.y - b.y || a.x - b.x;
     })[0]);
     components.push(component);
-    for (const [id, point] of localPositions) positions.set(id, { x: point.x + component.x, y: point.y + component.y });
+    for (const [id, point] of localPositions) positions.set(id, { x: point.x + component.x - contentLeft, y: point.y + component.y });
     for (const [id, route] of localRoutes) {
-      edgeRoutes.set(id, edgeRoute(route.points.map((point) => ({ x: point.x + component.x, y: point.y + component.y })), {
-        x: route.labelX - route.labelWidth / 2 + component.x,
+      edgeRoutes.set(id, edgeRoute(route.segments.map((points) => points.map((point) => ({ x: point.x + component.x - contentLeft, y: point.y + component.y }))), {
+        x: route.labelX - route.labelWidth / 2 + component.x - contentLeft,
         y: route.labelY - route.labelHeight / 2 + component.y,
         width: route.labelWidth, height: route.labelHeight,
       }));

@@ -24,7 +24,7 @@ import { CharacterAvatar } from "../ui/ui-utils.js";
 import { IMAGE_ZOOM_MIN, IMAGE_ZOOM_MAX, IMAGE_ZOOM_STEP, useCtrlWheelZoom, type ImageZoom } from "../ui/image-viewport.js";
 import { useViewportPan } from "../ui/viewport-pan.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
-import { layoutSessionGraph, sessionGraphCapacity, type SessionGraphLayout, type SessionGraphLabelSize } from "./graph-layout.js";
+import { layoutSessionGraph, sessionGraphCapacity, sessionGraphRoutePath, type SessionGraphLayout, type SessionGraphLabelSize } from "./graph-layout.js";
 import { projectSessionGraph, type GraphOverviewNode } from "./graph-overview.js";
 import { applyGraphRead, applyGraphReadBatch, createGraphReadState, graphReadIsIncomplete, graphReadPendingScopes, type GraphReadState } from "./graph-read-state.js";
 
@@ -739,10 +739,11 @@ export function SessionGraphPreview({
                         key={edge.id}
                         className={`${edge.fromId === `record:${selectedId}` || edge.toId === `record:${selectedId}` ? "is-connected" : ""}${edge.grouped ? " is-grouped" : ""}`}
                       >
-                        <path
-                          d={route.path}
-                          markerEnd={`url(#${markerId})`}
-                        />
+                        {route.segments.map((points, index) => <path
+                          key={index}
+                          d={sessionGraphRoutePath(points)}
+                          markerEnd={index === route.segments.length - 1 ? `url(#${markerId})` : undefined}
+                        />)}
                       </g>
                     );
                   })}
