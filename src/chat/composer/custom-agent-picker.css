@@ -1,0 +1,63 @@
+.composer-agent-popover {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.composer-agent-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 8px 8px;
+  font-size: 0.84rem;
+}
+
+.composer-agent-heading button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.composer-agent-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+}
+
+.composer-agent-option {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-agent-check { flex: 0 0 16px; }
+.composer-agent-copy { display: grid; min-width: 0; gap: 3px; font-size: 0.85rem; overflow-wrap: anywhere; }
+.composer-agent-copy small { color: var(--muted); font-size: 0.73rem; line-height: 1.4; }
+.composer-agent-option:hover,
+.composer-agent-option[aria-selected="true"] { background: color-mix(in srgb, var(--character-main) 20%, var(--surface-deep)); }
+.composer-agent-popover :focus-visible { outline: 2px solid var(--character-main); outline-offset: 2px; }

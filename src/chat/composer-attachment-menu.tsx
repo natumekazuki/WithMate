@@ -187,6 +187,7 @@ export function ComposerAttachmentMenu({
     }
     if (event.key === "Tab") {
       onOpenChange(false);
+      triggerRef.current?.focus();
       return;
     }
     focusRovingItemByKey(event, { orientation: "both" });

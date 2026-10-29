@@ -1,4 +1,5 @@
 @import "./composer/model-picker.css";
+@import "./composer/custom-agent-picker.css";
 
 .session-feature-host {
   display: contents;

@@ -351,6 +351,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Agent Sessionは最上段操作欄に送信対象providerの期間別残率を表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭へ置き、専用段は増やさない。詳細iconは残量表示の左端に固定し、provider名とRemaining labelは常時表示しない。残量部分は1行を保ち、狭ければ横scrollする。操作欄全体が収まらない場合は既存操作の折り返しを許容する。Main／Auxiliary切替時は送信対象へ追従し、最小限の詳細と取得状態は[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - Agent Sessionでは`Preview / Source`の右に同じ表示形式の`Prompt / Terminal`切替を置き、押したmodeを展開する。初期選択はPrompt。既定shortcutはWindows／Linuxの`Ctrl+Shift+T`、macOSの`Cmd+Shift+T`で、Settingsから変更できる。composerと端末本文のどちらにfocusがあっても切り替えられ、IME変換中とkey repeatでは発火しない
   - PromptとTerminalは同時表示せず、非表示側をinertにしてmountを維持する。Promptのdraft・selectionとTerminalのタブ・出力・PTYを保持し、Promptへ戻るとcomposerへ、Terminalを選ぶと選択端末へfocusする。splitterで再展開した時は選択modeを維持する。Quote／参照挿入などcomposerを開く操作はPromptへ戻す
+  - Promptの添付・Agent・Model・診断詳細の一時表示は、Terminalへの切替・compact化で閉じ、Promptへ戻っても再表示しない。対象会話を切り替えた時も以前の会話の候補や診断を残さず、下書きと選択値は各会話のownerで維持する
   - compact では末尾移動とmessage表示切替を必要に応じて操作列に残す。draft入力と`Send`はPromptのexpandedで表示し、実行中indicatorはmessage listに置く
   - `Preview / Source`は同じ本文の表現変更として、選択buttonを即時反映し、本文だけを70msのfade-out、表現の交換、110msのfade-inでつなぐ。行・avatar・質問入力・実行状態は維持し、検索と文字選択は実際の本文表現へ合わせる。読み返しのmessage anchorとoffset、末尾追従を維持し、連続操作は最新選択を優先する。会話切替・非表示・reduced motionでは旧演出を取消し、最新選択へ直接切り替える
   - compact / expanded の上段操作列には `Main / Auxiliary` の直前に `Cancel` 用の40px固定幅領域を常時予約し、非実行中は不可視にする。Sendは下段右端の40×40pxの円形buttonと約20pxの紙飛行機iconで表示し、busy中は同寸法のspinnerへ切り替える。設定群が狭幅で折り返してもSendを独立した右列に保ち、開閉やMain / Auxiliary切替で主操作の位置を変えない
@@ -495,6 +496,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる
   - popover の `Session Files` section は session local files を扱う `Copy / File / Folder / Image` を1行にまとめる
   - `Skill` は別カテゴリの単独 button として区別する
+  - Copilotの`Custom Agent`は入口に現在値のtooltipとaccessible nameを持ち、候補はDockの寸法を変えない非modal popoverで開く。画面内に収めた一覧に名前・説明・選択checkを表示し、多い候補は内部でscrollする。開くと選択中、なければ先頭候補へfocusし、矢印／Home／Endで移動、Enter／Spaceで選択する。Escape／Closeは変更せず閉じて入口へ戻し、選択時も入口にfocusを保つ。Tab／Shift+Tabは入口を基点にComposerの操作順へ戻り、外側の操作はfocusを奪わず閉じる。Main／Auxiliaryの既存の保存・実行設定経路を使う
+  - 添付popoverをTab／Shift+Tabで抜ける時も、入口を基点にComposerの操作順を継続する
 - 添付 toolbar は Agent の作業 chat 用であり、メイトークでは表示しない
   - Add DirectoryとAdd Directory By Pathは隣接した1group内の直接操作とし、中間menuを挟まない。追加済み一覧は別のfolder iconと件数を持つDirs toggleへ分離する
 - composer と textarea の間に独立した attachment tray / chip list は置かない。添付はpopover、paste、textareaへの `@path` 挿入から送信時の解決へ渡す既存経路を維持する

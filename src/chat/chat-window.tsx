@@ -825,6 +825,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              isActive={isActionDockExpanded && !isTerminalMode}
               recoveryActions={isActionDockExpanded && !isTerminalMode ? recoveryControls : null}
               providerQuota={isActionDockExpanded && !isTerminalMode ? providerQuota : null}
               externalErrorDescriptionIds={[composerProps.externalErrorDescriptionIds, composerErrorDescriptionIds].filter(Boolean).join(" ") || undefined}
