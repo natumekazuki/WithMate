@@ -9,7 +9,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import {
   WITHMATE_MEMORY_FALLBACK_ADMISSION_ADAPTER_KIND,
   WITHMATE_MEMORY_FALLBACK_ADMISSION_CREDENTIAL_SCHEMA_VERSION,
@@ -46,7 +45,7 @@ const PROJECT_ID = "project-general-memory";
 type RuntimeFixture = {
   baseUrl: string;
   env: NodeJS.ProcessEnv;
-  operatorEnv: NodeJS.ProcessEnv;
+  cliEnv: NodeJS.ProcessEnv;
   client: Client;
   close(): Promise<void>;
 };
@@ -157,7 +156,7 @@ async function createRuntimeFixture(options: {
     WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
     WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
   };
-  const operatorEnv = {
+  const cliEnv = {
     WITHMATE_MEMORY_API_URL: baseUrl,
     WITHMATE_MEMORY_API_SECRET: API_SECRET,
     WITHMATE_MEMORY_OPERATOR_API_SECRET: OPERATOR_SECRET,
@@ -176,7 +175,7 @@ async function createRuntimeFixture(options: {
   return {
     baseUrl,
     env,
-    operatorEnv,
+    cliEnv,
     client,
     async close() {
       await client.close();
@@ -203,7 +202,7 @@ async function callCli(
     "--api-url",
     fixture.baseUrl,
   ], {
-    env: fixture.operatorEnv,
+    env: fixture.cliEnv,
     stdout: { write: (chunk) => { output += String(chunk); return true; } },
     stderr: { write: () => true },
   });
@@ -228,10 +227,6 @@ async function callFallbackCli(
     stderr: { write: () => true },
   });
   return { exitCode, value: JSON.parse(output) };
-}
-
-function operatorProjectTarget(ref: { type: "id"; id: string } | { type: "path"; path: string }) {
-  return { owner: "project" as const, scope: "project" as const, project: ref };
 }
 
 function actorProjectTarget(ref: { type: "id"; id: string } | { type: "path"; path: string }) {
@@ -300,7 +295,7 @@ describe("general Memory MCP runtime integration", () => {
   // @test-value v2
   // kind = "security"
   // claim = "tools/list後のtransport failureはMCPへ渡した公開tool引数を変更しない同一binding・turnのCLI fallbackだけを許可する"
-  // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
+  // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#cliでのinspectとrecovery" }
   // fault = "tags省略やMCP内部fieldと公開CLI bodyの差で正当なfallbackを拒否する、またはadmissionを変更bodyへ横流ししてMemoryを更新する"
   // observable = "MCPのfallbackEligible、同一入力CLIの保存結果、変更入力CLIの拒否code"
   // observation_boundary = "public-boundary"
@@ -343,7 +338,8 @@ describe("general Memory MCP runtime integration", () => {
         schemaVersion: "attacker-controlled",
       });
       assert.notEqual(internalField.exitCode, 0);
-      assert.equal(internalField.value.error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.equal(internalField.value.error.code, "WITHMATE_MEMORY_INVALID_INPUT");
+      assert.equal(internalField.value.error.effect, "none");
 
       const changed = await callFallbackCli(fixture, "append", {
         ...body,
@@ -356,11 +352,79 @@ describe("general Memory MCP runtime integration", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "operator CLI explicit targetとbound MCP actor-relative targetは同じMemory application stateを相互参照する"
-  // oracle = { type = "adr", ref = "ADR-024 operator and agent-facing target boundary" }
-  // failure_mode = "CLI/MCPが別runtimeまたは別canonical targetへ分岐し、相互read-backできない"
+  // claim = "auditは全owner/scopeのinventory集計と公開targetをCLIとMCPに保持し、Markdownも同じ集計を表示する"
+  // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#CLI-commandとMCP公開範囲" }
+  // fault = "auditのinventory wrapperをselectorとして拒否または置換し、集計を欠落させるかformatterが内部selectorを期待する"
+  // observable = "実SQLiteへ保存後のCLI/MCP auditのtarget別件数・tag数・更新日時・公開selectorとMarkdown表示、無binding Character要求の拒否"
+  // observation_boundary = "public-boundary"
+  // scope = "memory-audit-cli-mcp-runtime-projection"
+  // lifecycle = "permanent"
+  // distinction = "service単体やstub parityと異なり両入口から実HTTP projectionと実storageを通り、consumerへ届いた監査結果を観測する"
+  // @end-test-value
+  it("auditのinventoryと集計をCLI/MCPおよびMarkdownまで保持する", async () => {
+    const fixture = await createRuntimeFixture();
+    try {
+      const targets = [
+        { kind: "user-global" },
+        actorProjectTarget({ type: "id", id: PROJECT_ID }),
+        { kind: "character" },
+        { kind: "character+project", project: { type: "id", id: PROJECT_ID } },
+      ];
+      const expectedInventories = [];
+      for (const [index, target] of targets.entries()) {
+        const appended = await fixture.client.callTool({ name: "memory.append", arguments: {
+          target, kind: "note", title: `Audit target ${index}`, body: "Audit inventory content.",
+          preview: "Audit inventory preview.", tags: [{ type: "topic", value: "audit" }],
+          idempotencyKey: `audit-inventory-${index}`,
+        } });
+        assert.equal(appended.isError, undefined, JSON.stringify(appended));
+        expectedInventories.push({ target, entryCount: 1, tagCount: 1,
+          lastUpdatedAt: (appended.structuredContent as any).entry.updatedAt });
+      }
+      const request = { targets, staleBefore: "2000-01-01T00:00:00.000Z" };
+      const mcp = await fixture.client.callTool({ name: "memory.audit", arguments: request });
+      assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+      const mcpReport = mcp.structuredContent as any;
+      assert.deepEqual(mcpReport.targets.map((item: any) => item.target), expectedInventories);
+      assert.deepEqual(mcpReport.targets.map((item: any) => item.countsByKind), targets.map(() => ({ note: 1 })));
+
+      const boundFixture = { ...fixture, cliEnv: fixture.env };
+      const cli = await callCli(boundFixture, "audit", request);
+      assert.equal(cli.exitCode, 0, JSON.stringify(cli.value));
+      assert.deepEqual(cli.value.targets, mcpReport.targets);
+      const unbound = await callCli(fixture, "audit", { ...request, targets: targets.slice(0, 2) });
+      assert.equal(unbound.exitCode, 0, JSON.stringify(unbound.value));
+      assert.deepEqual(unbound.value.targets, mcpReport.targets.slice(0, 2));
+      const forbidden = await callCli(fixture, "audit", { targets: [targets[2]] });
+      assert.notEqual(forbidden.exitCode, 0);
+      assert.equal(forbidden.value.error.effect, "none");
+
+      let markdown = "";
+      const markdownExit = await runWithMateMemoryCli(["audit", "--json", JSON.stringify(request), "--format", "markdown"], {
+        env: fixture.env, stdout: { write: (chunk) => { markdown += String(chunk); return true; } },
+      });
+      assert.equal(markdownExit, 0);
+      for (const label of ["user-global", `project (${PROJECT_ID})`, "character", `character+project (${PROJECT_ID})`]) {
+        assert.ok(markdown.includes(`## ${label}\n`), label);
+        assert.ok(markdown.includes(`- Target: ${label}\n`), label);
+      }
+      assert.equal(markdown.match(/- Entries: 1/g)?.length, 4);
+      assert.equal(markdown.match(/- Tags: 1/g)?.length, 4);
+      for (const inventory of expectedInventories) assert.ok(markdown.includes(`- Last updated: ${inventory.lastUpdatedAt}`));
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "CLIとbound MCPの明示public targetは同じMemory application stateを相互参照し、CLI path入力とMCP ID入力は同じprojectへ解決する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "CLI/MCPが別runtimeまたは別project targetへ分岐するか、片側の保存responseが他方から読めない"
+  // observable = "CLI appendとreadの終了code、MCP readとappendのisError、相互read-backしたentry IDとpublic target、file_usageのobjectCountとget_fileの未実装error"
+  // observation_boundary = "public-boundary"
   // scope = "general-memory-cli-mcp-parity"
   // lifecycle = "permanent"
   // @end-test-value
@@ -368,8 +432,7 @@ describe("general Memory MCP runtime integration", () => {
     const fixture = await createRuntimeFixture();
     try {
       const cliAppend = await callCli(fixture, "append", {
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        target: operatorProjectTarget({ type: "path", path: PROJECT_PATH }),
+        target: actorProjectTarget({ type: "path", path: PROJECT_PATH }),
         kind: "decision",
         title: "Runtime boundary",
         body: "CLI and MCP share one Memory V6 application service.",
@@ -405,13 +468,12 @@ describe("general Memory MCP runtime integration", () => {
       assert.equal(mcpAppend.isError, undefined);
 
       const cliRead = await callCli(fixture, "get-entry", {
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: (mcpAppend.structuredContent as any).entry.id,
-        target: { owner: "user", scope: "global" },
+        target: { kind: "user-global" },
       });
       assert.equal(cliRead.exitCode, 0);
       assert.equal(cliRead.value.entry.id, (mcpAppend.structuredContent as any).entry.id);
-      assert.equal(cliRead.value.entry.owner.type, "user");
+      assert.deepEqual(cliRead.value.entry.target, { kind: "user-global" });
 
       const fileUsage = await fixture.client.callTool({ name: "memory.file_usage", arguments: {} });
       assert.equal(fileUsage.isError, undefined, JSON.stringify(fileUsage));

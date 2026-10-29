@@ -127,12 +127,17 @@ export type GlossaryOperationErrorCode =
 
 export type GlossaryCheckoutSelector =
   | { kind: "primary" }
-  | { kind: "checkout"; checkoutId: string };
+  | { kind: "checkout"; checkoutId: string }
+  | { kind: "repository"; path: string };
 
-export type GlossaryCheckoutTarget = {
+export type GlossaryCheckoutTarget = ({
   checkoutId: string;
   selector: Extract<GlossaryCheckoutSelector, { kind: "checkout" }>;
   isPrimary: true;
+} | {
+  selector: Extract<GlossaryCheckoutSelector, { kind: "repository" }>;
+  isPrimary: false;
+}) & {
   repositoryName: string;
   branch: string;
   pathLabel: string;

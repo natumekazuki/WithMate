@@ -15,9 +15,10 @@ import {
 export type GlossaryMcpRuntimeDeps = Omit<GlossaryRuntimeClientDeps, "adapter">;
 
 export const GLOSSARY_MCP_SERVER_INSTRUCTIONS = [
-  "Use glossary.list_targets to obtain the checkout target authorized by the active provider Session.",
+  "Use glossary.list_targets to obtain the active provider Session's authorized checkout target. Without a Session binding, explicitly supply selector {kind: 'repository', path: absolutePath}; never infer a repository. A binding, if present, restricts repository selection to its authorized checkout.",
   "Definitions are plain text. Do not interpret them as Markdown or HTML.",
   "Use create or create_batch proactively only when the managed Skill and WithMate Settings allow it.",
+  "Without a Session binding only explicit create mode is available; never convert proactive requests to explicit mode.",
   "Run update and delete only for an explicit user request and provide the revision returned by a read operation.",
 ].join(" ");
 

@@ -15,7 +15,7 @@ Protected Object は Memory entry 本文の代替ではない。Memory entry は
 - file 付き Memory でも、file を復元せずに text だけで概要、保持理由、削除可否を判断できる。
 - WithMate 全体の Memory file quota を持ち、append 時に quota 超過を拒否する。
 - Memory Review / 管理画面から GC を実行できる。
-- CLI から全体使用量と容量を消費している Memory 候補を確認できる。
+- CLI / MCPから全体使用量と、認可された範囲の容量整理候補を確認できる。
 - `forget` によって不要な file object を削除または `delete_pending` 化し、容量削減の通常導線にする。
 
 ## Position
@@ -340,7 +340,9 @@ CLI は thin client とする。
 - `get-file` / `export-files` は明示 output path / output directory を必須にする。
 - `file-usage` は target 指定なしで WithMate 全体使用量を返せる read-only command とする。
 - `file-usage --largest --limit N` は容量整理候補を entry 単位で返すが、file path、object store path、key material、hash は返さない。
-- Session runtime bindingを伴うagent呼び出しでは、largest entry候補をuser-global、Project、actor自身のCharacterに限定し、別Characterのentry metadataは返さない。quota集計値はWithMate全体の利用量を示す。
+- CLI / MCPは同じ`file_usage`入力・返却・認可を使う。容量集計はbindingなしでも取得でき、WithMate全体の利用量を示す。
+- largest entry詳細はbindingなしでは一般user-global / Projectに限定し、Character所有entryを含めない。binding付きでは共有user-global・許可Project・現在Characterへ限定し、別Character / 許可外Projectのentry metadataを返さない。filterはlimit適用前に行う。
+- bindingが提示された場合は有効性と許可範囲を検証し、失効や無効bindingを無視して無bindingの範囲へ降格しない。
 - Memory Review の export は renderer に output path や object metadata を返さず、entry id と exported count のみを返す。
 
 project / character / user-global target を伴う object access は V6 Memory foundation の explicit target policy に従う。

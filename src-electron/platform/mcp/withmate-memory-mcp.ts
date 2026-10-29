@@ -15,6 +15,7 @@ import {
   createMemoryRuntimeDiscoveryError,
   createMemoryRuntimeError,
   isMemoryErrorResponse,
+  mapWithMateMemoryDiscoveryCode,
   mapRuntimeHttpFailureToCharacterContext,
   mapRuntimeHttpFailureToMemory,
   resolveAgentRuntimeBindingReference,
@@ -47,10 +48,16 @@ import {
 import {
   GENERAL_MEMORY_MCP_TOOL_DEFINITIONS,
   registerGeneralMemoryMcpTools,
+  memoryTargetSchema,
 } from "./withmate-memory-mcp-general.js";
 import { buildWithMateMemoryMcpRuntimeBody } from "./withmate-memory-mcp-operation.js";
 
 export type McpRuntimeDeps = {
+  adapter?: "mcp" | "cli";
+  apiUrl?: string;
+  discoveryFilePath?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
   env?: NodeJS.ProcessEnv;
   connection?: WithMateMemoryRuntimeConnection;
   runtimeCall?: (
@@ -700,7 +707,8 @@ export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
   "Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
   "Brief everyday topics, small preferences, and actually shared exchanges can be notes or episodes: an explicit remember request, a major achievement, strong affect, or certainty of future usefulness is not a prerequisite for every save. Use general Memory for semantic facts/preferences, standalone Character episodes for shared events, and character_affect.appraise.memoryEpisode only for an episode linked to that affect event; do not duplicate the same record across routes.",
   "Current user input and Character Definition take precedence over past Memory. Do not store speculation as fact, secrets, private paths, raw logs, or repository contracts/implementation state as a replacement for their source of truth. Follow the host agent's permission rules; these usage examples do not grant authority.",
-  "Agent CLI fallback is available only when this MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true. Then invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; the runtime consumes the matching short-lived admission. Initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback.",
+  "The regular withmate-memory CLI exposes the same public inputs and operations without requiring an MCP failure. Character context, Affect, and Character-owned Memory require a valid Session binding; explicit user-global and Project Memory and runtime diagnostics use local runtime authentication without requiring one. Any supplied binding is validated and limits authority; an invalid binding never downgrades to unbound access.",
+  "The explicit --fallback-from mcp recovery mode is available only when this MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true. Invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; the runtime consumes the matching short-lived admission. Initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback in this explicit recovery mode. These admission requirements do not restrict ordinary CLI use.",
 ].join("\n");
 
 export const CHARACTER_MCP_TOOL_DEFINITIONS = [
@@ -737,9 +745,17 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
 ] as const;
 
 export const WITHMATE_MEMORY_MCP_TOOL_DEFINITIONS = [
+  ...["memory.audit", "memory.characters", "memory.status", "memory.instances", "character_context.metrics", "character_affect.inspect", "character_affect.correct", "character_affect.reset"].map((name) => ({ name })),
   ...CHARACTER_MCP_TOOL_DEFINITIONS,
   ...GENERAL_MEMORY_MCP_TOOL_DEFINITIONS,
+  { name: "memory.schema" },
+  { name: "memory.validate" },
 ] as const;
+
+const publicOperationOutputSchema = z.object({
+  schemaVersion: z.enum(["withmate-memory-v1", CHARACTER_CONTEXT_SCHEMA_VERSION]).optional(),
+  error: z.object({ code: z.string(), message: z.string(), effect: z.enum(["none", "unknown", "partial"]) }).passthrough().optional(),
+}).passthrough().meta({ oneOf: [{ not: { required: ["error"] } }, { required: ["schemaVersion", "error"] }] });
 
 async function callRuntime(
   path: string,
@@ -764,9 +780,16 @@ async function callRuntime(
     throw error;
   }
   let resolution;
+  if (!runtimeSelectorsMatchBinding(deps, bindingReference)) {
+    return createCharacterContextError("authority_denied", "Explicit runtime selectors do not match the Session binding owner.", { retryable: false, conversationMayContinue: true, effect: "none" });
+  }
   try {
     resolution = deps.connection ? { kind: "selected" as const, connection: deps.connection } : await resolveWithMateMemoryApi({
-      adapter: "mcp",
+      adapter: deps.adapter ?? "mcp",
+      apiUrl: deps.apiUrl,
+      discoveryFilePath: deps.discoveryFilePath,
+      applicationInstanceId: deps.applicationInstanceId,
+      runtimeGenerationId: deps.runtimeGenerationId,
       env: deps.env,
       readFile: deps.readFile,
       fetch: deps.fetch,
@@ -846,9 +869,16 @@ async function callMemoryRuntime(
     throw error;
   }
   let resolution;
+  if (!runtimeSelectorsMatchBinding(deps, bindingReference)) {
+    return createMemoryRuntimeError("WITHMATE_RUNTIME_SELECTOR_INVALID", "Explicit runtime selectors do not match the Session binding owner.", { retryable: false, conversationMayContinue: true, effect: "none" });
+  }
   try {
     resolution = deps.connection ? { kind: "selected" as const, connection: deps.connection } : await resolveWithMateMemoryApi({
-      adapter: "mcp",
+      adapter: deps.adapter ?? "mcp",
+      apiUrl: deps.apiUrl,
+      discoveryFilePath: deps.discoveryFilePath,
+      applicationInstanceId: deps.applicationInstanceId,
+      runtimeGenerationId: deps.runtimeGenerationId,
       env: deps.env,
       readFile: deps.readFile,
       fetch: deps.fetch,
@@ -864,6 +894,9 @@ async function callMemoryRuntime(
     });
   }
   if (resolution.kind === "error") {
+    if (operation.path === "/v1/runtime_instances" && !bindingReference) {
+      return { schemaVersion: "withmate-memory-v1", instances: resolution.candidates, selection: { status: "error", discoveryCode: mapWithMateMemoryDiscoveryCode(resolution.code) } };
+    }
     return createMemoryRuntimeDiscoveryError(resolution);
   }
   const connection = resolution.connection;
@@ -885,7 +918,15 @@ async function callMemoryRuntime(
       turnCapability,
     });
     dispatched = true;
-    return mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
+    const value = mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
+    if (operation.path === "/v1/runtime_instances" && !isMemoryErrorResponse(value) && "candidates" in resolution) {
+      return { schemaVersion: "withmate-memory-v1", instances: bindingReference ? [resolution.candidate] : resolution.candidates, selection: { status: "selected", applicationInstanceId: resolution.candidate.applicationInstanceId, runtimeGenerationId: resolution.candidate.runtimeGenerationId } };
+    }
+    if (operation.path === "/v1/runtime_instances" && !isMemoryErrorResponse(value)) {
+      const candidate = { source: "explicit", applicationInstanceId: connection.api.applicationInstanceId ?? null, runtimeGenerationId: connection.api.runtimeGenerationId, buildChannel: "unknown", pid: null, leaseState: "explicit", active: true };
+      return { schemaVersion: "withmate-memory-v1", instances: [candidate], selection: { status: "selected", applicationInstanceId: candidate.applicationInstanceId, runtimeGenerationId: candidate.runtimeGenerationId } };
+    }
+    return value;
   } catch (error) {
     const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError
       ? error.dispatched
@@ -936,7 +977,44 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   const fallbackAdmission = deps.fallbackAdmission ?? createMcpFallbackAdmission(deps);
   const server = new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery);
   const runtimeDeps = { ...deps, fallbackAdmission };
+  registerWithMateMemoryTools(server, runtimeDeps);
+  return server;
+}
+
+function runtimeSelectorsMatchBinding(deps: McpRuntimeDeps, bindingReference: string | undefined): boolean {
+  if (!bindingReference) return true;
+  const env = deps.env ?? process.env;
+  return (!deps.applicationInstanceId || deps.applicationInstanceId === env.WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID)
+    && (!deps.runtimeGenerationId || deps.runtimeGenerationId === env.WITHMATE_MEMORY_RUNTIME_GENERATION_ID);
+}
+
+function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, runtimeDeps: McpRuntimeDeps): void {
   const definitions = new Map(CHARACTER_MCP_TOOL_DEFINITIONS.map((definition) => [definition.name, definition]));
+
+  const extraTools = [
+    { name: "memory.audit", command: "audit", path: "/v1/audit", schema: z.object({ allTargets: z.boolean().optional(), targets: z.array(memoryTargetSchema).min(1).max(5).optional(), staleBefore: z.string().min(1).max(64).optional(), limit: z.number().int().min(1).max(200).optional(), cursor: z.string().min(1).max(500).optional() }).strict().refine((value) => Boolean(value.allTargets) !== Boolean(value.targets), "Specify allTargets or targets."), write: false },
+    { name: "memory.characters", command: "characters", path: "/v1/characters", schema: z.object({}).strict(), write: false },
+    { name: "memory.status", command: "status", path: "/v1/runtime_status", schema: z.object({ all: z.boolean().optional() }).strict(), write: false },
+    { name: "memory.instances", command: "instances", path: "/v1/runtime_instances", schema: z.object({}).strict(), write: false },
+    { name: "character_context.metrics", command: "character_metrics", path: "/v1/character_context/metrics", schema: z.object({}).strict(), write: false },
+    { name: "character_affect.inspect", command: "affect_inspect", path: "/v1/character_affect/inspect", schema: z.object({}).strict(), write: false },
+    { name: "character_affect.correct", command: "affect_correct", path: "/v1/character_affect/correct", schema: z.object({ eventId: z.string().min(1), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true), reason: z.string().min(1), replacement: affectCandidateSchema.omit({ memoryEpisode: true }) }).strict(), write: true },
+    { name: "character_affect.reset", command: "affect_reset", path: "/v1/character_affect/reset", schema: z.object({ layer: z.enum(["session", "relationship"]), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true), reason: z.string().min(1), resetAt: z.string().min(1), idempotencyKey: z.string().min(1) }).strict(), write: true },
+  ] as const;
+  for (const definition of extraTools) {
+    server.registerTool(definition.name, {
+      description: definition.name.startsWith("character_affect.") || definition.command === "characters"
+        ? `Run ${definition.name} for the Character and Session selected by a valid Session binding.${definition.write ? " Requires explicitUserRequest=true, a concrete reason, and the current expectedVersion." : ""}`
+        : definition.command === "audit"
+        ? "Audit explicit user-global or Project targets using local runtime authentication. Character targets and allTargets require a valid Session binding. A supplied binding always limits authority."
+        : `Read ${definition.name} using local runtime authentication. A Session binding is not required, but any supplied binding is validated and limits authority.`,
+      inputSchema: definition.schema,
+      outputSchema: publicOperationOutputSchema,
+      annotations: { readOnlyHint: !definition.write, destructiveHint: definition.write, idempotentHint: true, openWorldHint: false },
+    }, async (input: unknown) => toolResult(definition.command.startsWith("affect_")
+      ? await callRuntime(definition.path, buildWithMateMemoryMcpRuntimeBody(definition.command, input), definition.write ? "write" : "read", runtimeDeps)
+      : await callMemoryRuntime({ method: definition.command === "audit" ? "POST" : "GET", path: definition.command === "status" && (input as { all?: boolean }).all ? "/v1/runtime_instances" : definition.path, body: buildWithMateMemoryMcpRuntimeBody(definition.command, input), operationKind: "read" }, runtimeDeps)));
+  }
 
   server.registerTool("character_context.get", {
     ...definitions.get("character_context.get")!,
@@ -1035,5 +1113,43 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
     toolResult,
   );
 
-  return server;
+  const localAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
+  server.registerTool("memory.schema", { description: "Describe public Memory tool inputs locally; this does not authorize runtime access.", inputSchema: z.object({}).strict(), outputSchema: publicOperationOutputSchema, annotations: localAnnotations }, async () => toolResult(describeWithMateMemoryPublicTools()));
+  server.registerTool("memory.validate", { description: "Validate public tool input locally without dispatch or authority checks.", inputSchema: z.object({ command: z.string().min(1), input: z.unknown() }).strict(), outputSchema: publicOperationOutputSchema, annotations: localAnnotations }, async ({ command, input }) => toolResult(validateWithMateMemoryPublicInput(command, input)));
+
+}
+
+export type WithMateMemoryPublicTool = {
+  inputSchema: z.ZodType;
+  handler: (input: unknown) => Promise<ReturnType<typeof toolResult>>;
+};
+
+/** Transport-independent tool definitions used by MCP registration and the CLI. */
+export function createWithMateMemoryPublicTools(deps: McpRuntimeDeps = {}): Map<string, WithMateMemoryPublicTool> {
+  const tools = new Map<string, WithMateMemoryPublicTool>();
+  const registerTool = (name: string, config: { inputSchema: z.ZodType }, handler: WithMateMemoryPublicTool["handler"]) => {
+    tools.set(name, { inputSchema: config.inputSchema, handler });
+  };
+  registerWithMateMemoryTools({ registerTool } as Pick<McpServer, "registerTool">, deps);
+  return tools;
+}
+
+export function withMateMemoryToolName(command: string): string {
+  if (command.includes(".")) return command;
+  if (command === "context_get") return "character_context.get";
+  if (command === "character_metrics") return "character_context.metrics";
+  if (command.startsWith("affect_")) return `character_affect.${command.slice(7)}`;
+  if (command.startsWith("character_memory_")) return `character_memory.${command.slice(17)}`;
+  return `memory.${command}`;
+}
+
+export function describeWithMateMemoryPublicTools(): unknown {
+  return { schemaVersion: "withmate-memory-v1", tools: [...createWithMateMemoryPublicTools()].map(([name, tool]) => ({ name, inputSchema: z.toJSONSchema(tool.inputSchema, { unrepresentable: "any" }) })) };
+}
+
+export function validateWithMateMemoryPublicInput(command: string, input: unknown): unknown {
+  const tool = createWithMateMemoryPublicTools().get(withMateMemoryToolName(command));
+  const result = tool?.inputSchema.safeParse(input);
+  if (!result?.success) return createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", result ? result.error.message : "Unknown Memory command.", { retryable: false, conversationMayContinue: true, effect: "none" });
+  return { schemaVersion: "withmate-memory-v1", valid: true, command, value: result.data };
 }

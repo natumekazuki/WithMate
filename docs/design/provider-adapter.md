@@ -108,7 +108,7 @@ Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)
 - OpenCodeは確定workspaceのlocationへ`mcp.add`で当turnのHTTP設定を登録し、必要なmanaged MCPの接続を`mcp.list`で確認してからpromptを送る。第三者MCPと永続設定は変更しない。
 - tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
-- HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。operator CLIとadmission付きagent CLI fallbackは別経路で維持する。
+- HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。CLIは同じ公開操作・認可の明示入口として利用でき、admission付きの同一要求再照合は通常CLIとは別の限定経路として扱う。
 
 provider adapterは通常turn実行を所有する。Affect専用の背景生成経路は持たず、Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
 

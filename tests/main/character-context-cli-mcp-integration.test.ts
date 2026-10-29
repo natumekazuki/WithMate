@@ -29,7 +29,7 @@ describe("Character context CLI / MCP integration", () => {
   // claim = "単一owner-bound runtimeでCLI・MCPのAffect保存と各context取得経路の投影が同じclock・state・scope・versionへ収束し、未知familyを拒否する。Character Memoryのappend・correct・search・forgetがCLI/MCP間で反映され、storage障害を両adapterが失敗として返す"
   // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
   // fault = "Affect投影がadapter間で不一致になる、未知familyを受理する、Character Memoryの訂正が検索へ反映されないか忘却のreadBackが成立しない、またはstorage障害を成功として返す"
-  // observable = "CLI inspectのevent件数とfamily・target、各経路のaffect投影、未知familyのsaved空配列とinvalid_input、Memoryの追加・訂正結果と検索ID・scopeとforgetのreadBack、storage障害時のCLI終了codeとMCP isError・error code・effect"
+  // observable = "CLI inspectのevent件数とfamily・target、各経路のaffect投影、未知familyのinvalid input error、Memoryの追加・訂正結果と検索ID・scopeとforgetのreadBack、storage障害時のCLI終了codeとMCP isError・error code・effect"
   // observation_boundary = "public-boundary"
   // scope = "owner-bound Character context runtimeのAffect投影・入力拒否、Memory mutation/read-back、CLI/MCP storage error mapping"
   // lifecycle = "permanent"
@@ -94,8 +94,10 @@ describe("Character context CLI / MCP integration", () => {
       operationGrants: getMemoryV6AgentRuntimeOperations(),
     });
     const turn = turns.begin({ actorSessionId: "session-a", providerId: "codex" });
-    const operatorCliEnv = {
+    const cliEnv = {
       WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath,
+      WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+      WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
     };
     const mcpEnv = {
       WITHMATE_MEMORY_DISCOVERY_FILE: runtime.mcpDiscoveryFilePath,
@@ -124,18 +126,18 @@ describe("Character context CLI / MCP integration", () => {
         "context-get",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
-          sessionId: "session-a",
+
+
+
         }),
-      ], { env: operatorCliEnv, stdout: beforeOutput.stream, stderr: outputBuffer().stream });
+      ], { env: cliEnv, stdout: beforeOutput.stream, stderr: outputBuffer().stream });
       assert.equal(beforeExitCode, 0, JSON.stringify(beforeOutput.json()));
       const before = beforeOutput.json();
 
       const metricsOutput = outputBuffer();
       const metricsExitCode = await runCli([
         "character-metrics",
-      ], { env: operatorCliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream });
+      ], { env: cliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream });
       assert.equal(metricsExitCode, 0, JSON.stringify(metricsOutput.json()));
       assert.equal(metricsOutput.json().metrics.fallbacks["mcp->cli"] ?? 0, 0);
 
@@ -144,16 +146,16 @@ describe("Character context CLI / MCP integration", () => {
         "affect-appraise",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
-          sessionId: "session-a",
+
+
+
           expectedVersion: before.affect.version,
-          authority: { kind: "operator", reason: "Unknown family integration check." },
+
           candidates: [{
             schemaVersion: "withmate-affect-v1",
-            characterId: "character-a",
-            userId: "local-user",
-            sessionId: "session-a",
+
+
+
             layer: "session",
             targetType: "task",
             targetId: "unknown-family",
@@ -166,10 +168,10 @@ describe("Character context CLI / MCP integration", () => {
             idempotencyKey: "cli-unknown-family",
           }],
         }),
-      ], { env: operatorCliEnv, stdout: rejectedCliOutput.stream, stderr: outputBuffer().stream });
-      assert.equal(rejectedCliExitCode, 0, JSON.stringify(rejectedCliOutput.json()));
-      assert.equal(rejectedCliOutput.json().saved.length, 0);
-      assert.equal(rejectedCliOutput.json().rejected[0].code, "invalid_input");
+      ], { env: cliEnv, stdout: rejectedCliOutput.stream, stderr: outputBuffer().stream });
+      assert.equal(rejectedCliExitCode, 3, JSON.stringify(rejectedCliOutput.json()));
+      assert.equal(rejectedCliOutput.json().error.code, "WITHMATE_MEMORY_INVALID_INPUT");
+      assert.equal(rejectedCliOutput.json().error.effect, "none");
 
       const frustrationRequest = {
         name: "character_affect.appraise",
@@ -273,12 +275,12 @@ describe("Character context CLI / MCP integration", () => {
         "affect-inspect",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
-          sessionId: "session-a",
-          authority: { kind: "operator", reason: "Integration inspection." },
+
+
+
+
         }),
-      ], { env: operatorCliEnv, stdout: inspectOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: inspectOutput.stream, stderr: outputBuffer().stream }), 0);
       const inspection = inspectOutput.json();
       assert.equal(inspection.version.version, laterFrustrationState.version);
       assert.equal(inspection.events.length, 3);
@@ -304,11 +306,11 @@ describe("Character context CLI / MCP integration", () => {
         "context-get",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
-          sessionId: "session-a",
+
+
+
         }),
-      ], { env: operatorCliEnv, stdout: cliContextOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: cliContextOutput.stream, stderr: outputBuffer().stream }), 0);
       const cliContext = cliContextOutput.json();
       const lifecycleContext = await runtime.characterContextService.getContext({
         schemaVersion: "withmate-character-context-v1",
@@ -335,10 +337,10 @@ describe("Character context CLI / MCP integration", () => {
         "character-memory-append-episode",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
-          sessionId: "session-a",
-          authority: { kind: "operator", reason: "CLI integration write." },
+
+
+
+
           idempotencyKey: "cli-episode-1",
           episode: {
             title: "CLI and MCP shared state",
@@ -348,7 +350,7 @@ describe("Character context CLI / MCP integration", () => {
             observedFact: "The integration test completed the CLI write.",
           },
         }),
-      ], { env: operatorCliEnv, stdout: appendOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: appendOutput.stream, stderr: outputBuffer().stream }), 0);
       const appended = appendOutput.json();
 
       const correctOutput = outputBuffer();
@@ -356,10 +358,10 @@ describe("Character context CLI / MCP integration", () => {
         "character-memory-correct",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
+
+
           entryId: appended.entry.id,
-          authority: { kind: "conversation" },
+
           reason: "Integration correction.",
           idempotencyKey: "cli-episode-correct-1",
           replacement: {
@@ -370,7 +372,7 @@ describe("Character context CLI / MCP integration", () => {
             observedFact: "The CLI correction completed.",
           },
         }),
-      ], { env: operatorCliEnv, stdout: correctOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: correctOutput.stream, stderr: outputBuffer().stream }), 0);
       const corrected = correctOutput.json();
 
       const search = await client.callTool({
@@ -406,13 +408,13 @@ describe("Character context CLI / MCP integration", () => {
         "character-memory-search",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
+
+
           query: "server failure",
           scope: { scope: "character" },
           limit: 3,
         }),
-      ], { env: operatorCliEnv, stdout: failedCliSearchOutput.stream, stderr: outputBuffer().stream }), 3);
+      ], { env: cliEnv, stdout: failedCliSearchOutput.stream, stderr: outputBuffer().stream }), 3);
       assert.equal(failedCliSearchOutput.json().error.code, "storage_unavailable");
       assert.equal(failedCliSearchOutput.json().error.effect, "none");
 

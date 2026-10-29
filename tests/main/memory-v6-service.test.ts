@@ -118,6 +118,40 @@ function assertError<T extends object>(value: T | MemoryErrorResponse): asserts 
 
 describe("MemoryV6Service", () => {
   // @test-value v2
+  // kind = "security"
+  // claim = "SessionのCharacter一覧と全target監査は現在Character・許可Project・共有Memoryだけを返す"
+  // oracle = { type = "contract", ref = "Issue #905 Session binding authorization" }
+  // fault = "allTargets監査またはCharacter一覧が別Character・許可外Projectを返す"
+  // observable = "charactersのIDとaudit targetsのowner/scope ID"
+  // observation_boundary = "public-boundary"
+  // scope = "Session-bound Memory service inventory and audit"
+  // lifecycle = "permanent"
+  // impact = "認証済みSessionへの別scopeのMemory情報漏洩を防ぐ"
+  // distinction = "既存CRUD認可と異なりtarget指定を省略するinventory・全件監査のstorage列挙を検証する"
+  // @end-test-value
+  it("Sessionの一覧とallTargets監査は許可範囲だけを返す", async () => {
+    await withService(async ({ service }) => {
+      const local = createLocalUserMemoryPrincipal();
+      for (const target of [
+        { owner: "user", scope: "global" },
+        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        { owner: "project", scope: "project", project: { type: "id", id: "project-b" } },
+        { owner: "character", scope: "character", character: { type: "id", id: "character-a" } },
+        { owner: "character", scope: "character", character: { type: "id", id: "character-b" } },
+      ]) assertSuccess(await service.append(local, appendRequest({ target })));
+      const principal = createSessionBindingPrincipal("character-a", ["project-a"]);
+      const characters = await service.listCharacters(principal);
+      assertSuccess(characters);
+      assert.deepEqual(characters.characters.map((character) => character.id), ["character-a"]);
+      const audit = await service.audit(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION, allTargets: true });
+      assertSuccess(audit);
+      assert.equal(audit.targets.length, 3);
+      assert.deepEqual(audit.targets.map((item) => item.target.target.owner).sort(), ["character", "project", "user"]);
+      assert.equal(JSON.stringify(audit).includes("project-b"), false);
+      assert.equal(JSON.stringify(audit).includes("character-b"), false);
+    });
+  });
+  // @test-value v2
   // kind = "contract"
   // claim = "明示target付きMemory操作とcharacter一覧の公開shapeを返す"
   // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md" }
@@ -504,9 +538,9 @@ describe("MemoryV6Service", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "bound SessionのlargestEntriesに他Characterを含めない"
+  // claim = "largestEntriesはbound Sessionの現Character/許可Projectに限定し、無bindingではCharacter詳細を含めない"
   // oracle = { type = "adr", ref = "docs/adr/021-agent-runtime-binding-authority-boundary.md" }
-  // fault = "他Characterのlargest entryをlargestEntriesへ返す"
+  // fault = "他Characterまたは許可外Projectのlargest entryをSessionへ返すか、無bindingでCharacter詳細を返す"
   // observable = "file usage response"
   // observation_boundary = "public-boundary"
   // scope = "memory-v6-service"
@@ -514,7 +548,7 @@ describe("MemoryV6Service", () => {
   // impact = "scope isolation"
   // distinction = "bound session実動作を確認する"
   // @end-test-value
-  it("bound Sessionのfile usageは他Characterのlargest entry候補を返さない", async () => {
+  it("file usageのlargest entry詳細をCharacterとProjectの許可範囲に限定する", async () => {
     await withService(async ({ service, dbPath }) => {
       const appendEntry = async (title: string, target: Record<string, unknown>, idempotencyKey: string) => {
         const result = await service.append(createLocalUserMemoryPrincipal(), appendRequest({
@@ -543,6 +577,9 @@ describe("MemoryV6Service", () => {
         scope: "project",
         project: { type: "id", id: "project-a" },
       }, "file-usage-project");
+      const otherProjectEntryId = await appendEntry("Other Project", {
+        owner: "project", scope: "project", project: { type: "id", id: "project-b" },
+      }, "file-usage-other-project");
 
       const db = new DatabaseSync(dbPath);
       try {
@@ -556,6 +593,7 @@ describe("MemoryV6Service", () => {
           ["b".repeat(32), otherCharacterEntryId, "Other Character", 8192],
           ["a".repeat(32), ownCharacterEntryId, "Own Character", 4096],
           ["c".repeat(32), projectEntryId, "Project", 2048],
+          ["d".repeat(32), otherProjectEntryId, "Other Project", 16384],
         ] as const) {
           insert.run(objectId, entryId, `${title} file`, bytes, bytes, "2026-07-04T00:00:00.000Z", "2026-07-04T00:00:00.000Z");
         }
@@ -563,7 +601,7 @@ describe("MemoryV6Service", () => {
         db.close();
       }
 
-      const usage = await service.fileUsage(createSessionBindingPrincipal("character-a"), {
+      const usage = await service.fileUsage(createSessionBindingPrincipal("character-a", ["project-a"]), {
         includeLargestEntries: true,
         largestLimit: 10,
       });
@@ -573,6 +611,9 @@ describe("MemoryV6Service", () => {
         ownCharacterEntryId,
         projectEntryId,
       ]);
+      const unbound = await service.fileUsage(createLocalUserMemoryPrincipal(), { includeLargestEntries: true });
+      assertSuccess(unbound);
+      assert.deepEqual(unbound.largestEntries?.map((entry) => entry.entryId), [otherProjectEntryId, projectEntryId]);
     });
   });
 

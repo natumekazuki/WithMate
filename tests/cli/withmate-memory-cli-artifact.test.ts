@@ -67,13 +67,15 @@ function normalizeLineEndings(value: string): string {
 describe("withmate-memory bundled helper", () => {
   const helperPath = path.resolve("resources", "cli", "withmate-memory.mjs");
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "canonical sourceから再生成したCLI artifactはrepositoryに同梱するartifactと一致する"
   // oracle = { type = "adr", ref = "ADR-024 canonical CLI artifact path" }
-  // failure_mode = "配布artifactがcanonical sourceから乖離し、runtimeと異なる契約を公開する"
   // scope = "bundled-memory-cli-artifact"
   // lifecycle = "permanent"
+  // fault = "配布artifactがcanonical sourceから乖離し、runtimeと異なる契約を公開する"
+  // observable = "test本文がassertするCLI終了code、JSON response、送信operationまたは生成artifact"
+  // observation_boundary = "public-boundary"
   // @end-test-value
   it("canonical CLI source から生成された current artifact である", async () => {
     const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-build-"));
@@ -88,13 +90,15 @@ describe("withmate-memory bundled helper", () => {
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "生成CLI artifactはrepository依存のない配布先でもschemaとMCP initializeを提供する"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI boundary" }
-  // failure_mode = "配布artifactがnode_modulesまたはrepository sourceへ暗黙依存して単体起動できない"
   // scope = "bundled-memory-cli-artifact"
   // lifecycle = "permanent"
+  // fault = "配布artifactがnode_modulesまたはrepository sourceへ暗黙依存して単体起動できない"
+  // observable = "source, /from\\s+[\"'](?:@modelcontextprotocol\\/sdk|zod)[\"']/);; JSON.parse(stdout).tools.some((tool: { name: string }) => tool.name === \"memory.status\"));; initialized.name, \"withmate-character-context\");"
+  // observation_boundary = "public-boundary"
   // @end-test-value
   it("依存のないisolated directoryでも生成CLIを起動できる", async () => {
     const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-isolated-"));
@@ -106,7 +110,7 @@ describe("withmate-memory bundled helper", () => {
         cwd: outputDirectoryPath,
         env: process.env,
       });
-      assert.equal(JSON.parse(stdout).commands.includes("mcp-server"), true);
+      assert.ok(JSON.parse(stdout).tools.some((tool: { name: string }) => tool.name === "memory.status"));
       const initialized = await initializeIsolatedMcpServer(isolatedHelperPath, outputDirectoryPath);
       assert.equal(initialized.name, "withmate-character-context");
     } finally {
@@ -114,14 +118,16 @@ describe("withmate-memory bundled helper", () => {
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "compatibility"
 // claim = "生成済みCLIはlegacy discovery runtimeもidentity preflight後に利用できる"
 // oracle = { type = "adr", ref = "ADR-023" }
-// failure_mode = "registry移行後に有効なlegacy runtimeを発見できない、またはchallenge前にoperationを送る"
 // scope = "bundled-memory-cli"
 // lifecycle = "characterization"
 // review_when = "legacy pointer compatibility is removed"
+// fault = "registry移行後に有効なlegacy runtimeを発見できない、またはchallenge前にoperationを送る"
+// observable = "identity確認後のexchangeが認証情報と/v1/runtime_statusを送り、CLI JSONが選択したruntimeInstanceIdを返す"
+// observation_boundary = "public-boundary"
 // @end-test-value
 it("runtime directory のlegacy discovery pathでidentity検証後にstatusできる", async () => {
     const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-root-"));
@@ -164,7 +170,7 @@ it("runtime directory のlegacy discovery pathでidentity検証後にstatusで�
         const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
         assert.equal(payload.apiSecret, apiSecret);
         assert.equal(payload.adapterSecret, operatorApiSecret);
-        assert.equal(payload.operation.path, "/v1/status");
+        assert.equal(payload.operation.path, "/v1/runtime_status");
         response.setHeader("Content-Type", "application/json");
         response.end(JSON.stringify({
           schemaVersion: "withmate-memory-v1",
@@ -216,13 +222,15 @@ it("runtime directory のlegacy discovery pathでidentity検証後にstatusで�
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "生成済みCLIはruntime不在をcanonical discovery codeで返す"
 // oracle = { type = "adr", ref = "ADR-023" }
-// failure_mode = "配布CLIだけがlegacy not-running codeを正本として返す"
 // scope = "bundled-memory-cli"
 // lifecycle = "permanent"
+// fault = "配布CLIだけがlegacy not-running codeを正本として返す"
+// observable = "execError.code, 3);; JSON.parse(stdout).error.code, \"WITHMATE_RUNTIME_UNAVAILABLE\");"
+// observation_boundary = "public-boundary"
 // @end-test-value
 it("current CLI command namesを受け付け、未起動時はcanonical JSON errorを返す", async () => {
   const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-unavailable-"));
@@ -231,7 +239,7 @@ it("current CLI command namesを受け付け、未起動時はcanonical JSON err
       helperPath,
       "get-entry",
       "--json",
-      '{"schemaVersion":"withmate-memory-v1","entryId":"entry-1","target":{"owner":"project","scope":"project","project":{"type":"id","id":"project-a"}}}',
+      '{"entryId":"entry-1","target":{"kind":"project","project":{"type":"id","id":"project-a"}}}',
     ], {
       env: unboundHelperEnv({
         LOCALAPPDATA: tempRootPath,
@@ -239,7 +247,7 @@ it("current CLI command namesを受け付け、未起動時はcanonical JSON err
       }),
     }).catch((error: unknown) => {
       const execError = error as { code?: number; stdout?: string };
-      assert.equal(execError.code, 2);
+      assert.equal(execError.code, 3);
       return { stdout: execError.stdout ?? "" };
     });
 
@@ -249,13 +257,15 @@ it("current CLI command namesを受け付け、未起動時はcanonical JSON err
   }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "生成済みCLIは到達不能な明示runtimeをcanonical unavailableへ写像する"
 // oracle = { type = "adr", ref = "ADR-023" }
-// failure_mode = "stale endpointをlegacy codeまたは別instance fallbackとして扱う"
 // scope = "bundled-memory-cli"
 // lifecycle = "permanent"
+// fault = "stale endpointをlegacy codeまたは別instance fallbackとして扱う"
+// observable = "execError.code, 3);; JSON.parse(stdout).error.code, \"WITHMATE_RUNTIME_UNAVAILABLE\");"
+// observation_boundary = "public-boundary"
 // @end-test-value
 it("stale discovery endpointへ接続できない場合はcanonical unavailableを返す", async () => {
     const { stdout } = await execFileAsync(process.execPath, [
@@ -270,20 +280,22 @@ it("stale discovery endpointへ接続できない場合はcanonical unavailable�
       }),
     }).catch((error: unknown) => {
       const execError = error as { code?: number; stdout?: string };
-      assert.equal(execError.code, 2);
+      assert.equal(execError.code, 3);
       return { stdout: execError.stdout ?? "" };
     });
 
     assert.equal(JSON.parse(stdout).error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
-// claim = "生成済みCLI schemaはmulti-instance operator commandを列挙する"
+// claim = "生成済みCLI schemaは診断とdomain操作のpublic input schemaを列挙する"
 // oracle = { type = "adr", ref = "ADR-023" }
-// failure_mode = "配布artifactのcapabilityからinstancesが欠落する"
 // scope = "bundled-memory-cli"
 // lifecycle = "permanent"
+// fault = "配布artifactのcapabilityからinstancesが欠落する"
+// observable = "append.inputSchema.properties.kind.enum.includes(\"decision\"));; append.inputSchema.required.includes(\"idempotencyKey\"));; tools.some((tool) => tool.name === \"character_affect.inspect\"));; tools.some((tool) => tool.name === \"memory.instances\"));"
+// observation_boundary = "public-boundary"
 // @end-test-value
 it("schema は helper 単体で capability を返す", async () => {
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "schema"], {
@@ -291,55 +303,28 @@ it("schema は helper 単体で capability を返す", async () => {
     });
 
     const schema = JSON.parse(stdout);
-    assert.deepEqual(schema.commands, [
-      "help",
-      "instances",
-      "status",
-      "characters",
-      "file-usage",
-      "list-targets",
-      "list-entries",
-      "audit",
-      "search",
-      "get-entry",
-      "get-file",
-      "export-files",
-      "list-tags",
-      "append",
-      "forget",
-      "move-entry",
-      "context-get",
-      "affect-appraise",
-      "affect-inspect",
-      "affect-correct",
-      "affect-reset",
-      "character-memory-search",
-      "character-memory-append-episode",
-      "character-memory-correct",
-      "character-memory-forget",
-      "character-metrics",
-      "mcp-server",
-      "schema",
-      "validate",
-    ]);
-    assert.deepEqual(schema.requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
-    assert(schema.entryKinds.includes("decision"));
-    assert(schema.forgetReasons.includes("user_request"));
+    const tools = schema.tools as Array<{ name: string; inputSchema: Record<string, any> }>;
+    const append = tools.find((tool) => tool.name === "memory.append")!;
+    assert.ok(append.inputSchema.properties.kind.enum.includes("decision"));
+    assert.ok(append.inputSchema.required.includes("idempotencyKey"));
+    assert.ok(tools.some((tool) => tool.name === "character_affect.inspect"));
+    assert.ok(tools.some((tool) => tool.name === "memory.instances"));
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "standalone CLIは標準入力からrequest bodyを受け取りcanonical validatorへ渡す"
   // oracle = { type = "contract", ref = "withmate-memory CLI request input contract" }
-  // failure_mode = "配布CLIで--stdin入力だけが欠落または別形式へ変換される"
   // scope = "bundled-memory-cli-input"
   // lifecycle = "permanent"
+  // fault = "配布CLIで--stdin入力だけが欠落または別形式へ変換される"
+  // observable = "response.valid, true);; response.value.kinds, [\"decision\"]);; response.value.limit, 20);; response.value.cursor, \"cursor-a\");"
+  // observation_boundary = "public-boundary"
   // @end-test-value
   it("--stdin は standalone helper の process stdin から request body を読む", () => {
     const request = JSON.stringify({
-      schemaVersion: "withmate-memory-v1",
       targets: [
-        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        { kind: "project", project: { type: "id", id: "project-a" } },
       ],
       query: "release",
       kinds: ["decision"],
@@ -365,23 +350,25 @@ it("schema は helper 単体で capability を返す", async () => {
     assert.equal(response.value.cursor, "cursor-a");
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "standalone CLIはappend requestのdomain validation errorをcanonical codeとfieldで返す"
+  // claim = "standalone CLIはinvalid kindをpublic validation errorとfieldを示すmessageで返す"
   // oracle = { type = "contract", ref = "withmate-memory CLI validation contract" }
-  // failure_mode = "配布CLIのvalidatorがinvalid kindを受理するか非canonical errorへ変換する"
   // scope = "bundled-memory-cli-validation"
   // lifecycle = "permanent"
+  // fault = "配布CLIのvalidatorがinvalid kindを受理するか非canonical errorへ変換する"
+  // observable = "execError.code, 3);; error.code, \"WITHMATE_MEMORY_INVALID_INPUT\");; error.message, /kind/);"
+  // observation_boundary = "public-boundary"
   // @end-test-value
   it("validate は helper 単体で request を検証する", async () => {
     const request = JSON.stringify({
-      schemaVersion: "withmate-memory-v1",
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       kind: "investigation",
       title: "Invalid",
       body: "Invalid",
       preview: "Invalid",
       tags: [],
+      idempotencyKey: "artifact-append-a",
     });
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "validate", "--command", "append", "--json", request], {
       env: process.env,
@@ -392,17 +379,19 @@ it("schema は helper 単体で capability を返す", async () => {
     });
 
     const error = JSON.parse(stdout).error;
-    assert.equal(error.code, "MEMORY_INVALID_FIELD");
-    assert.equal(error.field, "kind");
+    assert.equal(error.code, "WITHMATE_MEMORY_INVALID_INPUT");
+    assert.match(error.message, /kind/);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
   // claim = "standalone CLI validatorはruntimeと同じunknown field、target、required field制約を拒否する"
   // oracle = { type = "contract", ref = "withmate-memory request validation contract" }
-  // failure_mode = "CLIとruntimeのvalidationが分裂し、CLI経由だけ不正requestを受理する"
   // scope = "bundled-memory-cli-validation-parity"
   // lifecycle = "permanent"
+  // fault = "CLIとruntimeのvalidationが分裂し、CLI経由だけ不正requestを受理する"
+  // observable = "execError.code, 3, testCase.name);; response.error.code, testCase.code, testCase.name);; response.error.message.includes(testCase.field), testCase.name);"
+  // observation_boundary = "public-boundary"
   // @end-test-value
   it("validate は helper 側でも runtime validation と同じ失敗ケースを拒否する", async () => {
     const invalidCases = [
@@ -410,81 +399,78 @@ it("schema は helper 単体で capability を返す", async () => {
         name: "unknown append field",
         command: "append",
         request: {
-          schemaVersion: "withmate-memory-v1",
-          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+              target: { kind: "project", project: { type: "id", id: "project-a" } },
           kind: "decision",
           title: "Title",
           body: "Body",
           preview: "Preview",
           tags: [],
+      idempotencyKey: "artifact-append-a",
           extra: true,
         },
-        code: "MEMORY_UNKNOWN_FIELD",
-        field: "request.extra",
+        code: "WITHMATE_MEMORY_INVALID_INPUT",
+        field: "extra",
       },
       {
         name: "invalid target shape",
         command: "append",
         request: {
-          schemaVersion: "withmate-memory-v1",
-          target: { owner: "project", scope: "project", project: { type: "id", id: "" } },
+              target: { kind: "project", project: { type: "id", id: "" } },
           kind: "decision",
           title: "Title",
           body: "Body",
           preview: "Preview",
           tags: [],
+      idempotencyKey: "artifact-append-a",
         },
-        code: "MEMORY_INVALID_FIELD",
-        field: "target.project.id",
+        code: "WITHMATE_MEMORY_INVALID_INPUT",
+        field: "id",
       },
       {
         name: "empty title",
         command: "append",
         request: {
-          schemaVersion: "withmate-memory-v1",
-          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+              target: { kind: "project", project: { type: "id", id: "project-a" } },
           kind: "decision",
-          title: " ",
+          title: "",
           body: "Body",
           preview: "Preview",
           tags: [],
+      idempotencyKey: "artifact-append-a",
         },
-        code: "MEMORY_INVALID_FIELD",
+        code: "WITHMATE_MEMORY_INVALID_INPUT",
         field: "title",
       },
       {
         name: "invalid tag object",
         command: "append",
         request: {
-          schemaVersion: "withmate-memory-v1",
-          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+              target: { kind: "project", project: { type: "id", id: "project-a" } },
           kind: "decision",
           title: "Title",
           body: "Body",
           preview: "Preview",
           tags: [{ type: "Topic", value: "CLI", extra: true }],
         },
-        code: "MEMORY_UNKNOWN_FIELD",
-        field: "tags[0].extra",
+        code: "WITHMATE_MEMORY_INVALID_INPUT",
+        field: "extra",
       },
       {
         name: "forget requires target",
         command: "forget",
         request: {
-          schemaVersion: "withmate-memory-v1",
-          entryIds: ["entry-a"],
+              entryIds: ["entry-a"],
         },
-        code: "MEMORY_INVALID_FIELD",
+        code: "WITHMATE_MEMORY_INVALID_INPUT",
         field: "target",
       },
       {
         name: "get-entry requires target",
         command: "get-entry",
         request: {
-          schemaVersion: "withmate-memory-v1",
-          entryId: "entry-a",
+              entryId: "entry-a",
         },
-        code: "MEMORY_INVALID_FIELD",
+        code: "WITHMATE_MEMORY_INVALID_INPUT",
         field: "target",
       },
     ];
@@ -507,28 +493,28 @@ it("schema は helper 単体で capability を返す", async () => {
 
       const response = JSON.parse(stdout);
       assert.equal(response.error.code, testCase.code, testCase.name);
-      assert.equal(response.error.field, testCase.field, testCase.name);
+      assert.ok(response.error.message.includes(testCase.field), testCase.name);
     }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
-  // claim = "standalone CLI validatorはappend requestをruntimeと同じcanonical representationへ正規化する"
+  // claim = "standalone CLI validatorは任意tagsを省略したpublic append入力を受理し、入力のtitleとtargetを保持する"
   // oracle = { type = "contract", ref = "withmate-memory request normalization contract" }
-  // failure_mode = "CLIとruntimeでproject、tag、supersedesの正規化結果が分裂する"
   // scope = "bundled-memory-cli-validation-parity"
   // lifecycle = "permanent"
+  // fault = "配布CLIが任意tags省略を拒否するか、public append入力のtitleとtargetを変更する"
+  // observable = "validate responseのvalid、target.project.id、title、省略されたtags"
+  // observation_boundary = "public-boundary"
   // @end-test-value
-  it("validate は helper 側でも append request を正規化する", async () => {
+  it("validate は helper 側でもtags省略のpublic append入力を保持して受理する", async () => {
     const request = JSON.stringify({
-      schemaVersion: "withmate-memory-v1",
-      target: { owner: "project", scope: "project", project: { type: "id", id: " project-a " } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       kind: "decision",
-      title: " Title ",
-      body: " Body ",
-      preview: " Preview ",
-      tags: [{ type: "Topic", value: " Release " }, { type: "topic", value: "release" }],
-      supersedes: [" entry-a ", "entry-a"],
+      title: "Title",
+      body: "Body",
+      preview: "Preview",
+      idempotencyKey: "artifact-default-tags-a",
     });
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "validate", "--command", "append", "--json", request], {
       env: process.env,
@@ -538,33 +524,30 @@ it("schema は helper 単体で capability を返す", async () => {
     assert.equal(response.valid, true);
     assert.equal(response.value.target.project.id, "project-a");
     assert.equal(response.value.title, "Title");
-    assert.deepEqual(response.value.tags, [{
-      type: "Topic",
-      value: "Release",
-      canonicalType: "topic",
-      canonicalValue: "release",
-    }]);
-    assert.deepEqual(response.value.supersedes, ["entry-a"]);
+    assert.equal(response.value.tags, undefined);
+
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "contract"
   // claim = "standalone CLI validatorはprotected object metadataを含むappend requestを保持して受理する"
   // oracle = { type = "contract", ref = "withmate-memory protected object contract" }
-  // failure_mode = "CLI artifact移設によりprotected object付きappendだけが拒否または欠落する"
   // scope = "bundled-memory-cli-protected-object"
   // lifecycle = "permanent"
+  // fault = "CLI artifact移設によりprotected object付きappendだけが拒否または欠落する"
+  // observable = "response.valid, true);; response.value.files, [{"
+  // observation_boundary = "public-boundary"
   // @end-test-value
   it("validate は helper 側でも protected object 付き append を受け付ける", async () => {
     const filePath = path.resolve("artifact.bin");
     const request = JSON.stringify({
-      schemaVersion: "withmate-memory-v1",
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       kind: "context",
       title: "Artifact",
       body: "Artifact context.",
       preview: "Artifact preview.",
       tags: [],
+      idempotencyKey: "artifact-append-a",
       files: [{
         path: filePath,
         role: "artifact",
@@ -591,13 +574,15 @@ it("schema は helper 単体で capability を返す", async () => {
     }]);
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "compatibility"
 // claim = "生成済みCLIのread shorthandはcanonical discovery failureでも入力構築を維持する"
 // oracle = { type = "contract", ref = "withmate-memory CLI shorthand contract" }
-// failure_mode = "bundle更新でread shorthandがusageまたはtransport errorへ退行する"
 // scope = "bundled-memory-cli"
 // lifecycle = "permanent"
+// fault = "bundle更新でread shorthandがusageまたはtransport errorへ退行する"
+// observable = "execError.code, 3);; JSON.parse(stdout).error.code, \"WITHMATE_RUNTIME_UNAVAILABLE\");"
+// observation_boundary = "public-boundary"
 // @end-test-value
 it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailableを返す", async () => {
   const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-unavailable-"));
@@ -609,7 +594,7 @@ it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailabl
       }),
     }).catch((error: unknown) => {
       const execError = error as { code?: number; stdout?: string };
-      assert.equal(execError.code, 2);
+      assert.equal(execError.code, 3);
       return { stdout: execError.stdout ?? "" };
     });
 
@@ -619,13 +604,15 @@ it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailabl
   }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "compatibility"
-  // claim = "配布CLIのusage errorはPATHから呼ぶoperator command形式だけを案内する"
+  // claim = "配布CLIのusage errorはPATHから呼ぶcommand形式だけを案内する"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI boundary" }
-  // failure_mode = "移設前の内部artifact pathがusageへ露出し、利用者を廃止済み経路へ誘導する"
   // scope = "bundled-memory-cli-usage"
   // lifecycle = "permanent"
+  // fault = "移設前の内部artifact pathがusageへ露出し、利用者を廃止済み経路へ誘導する"
+  // observable = "execError.code, 1);; error.code, \"WITHMATE_MEMORY_CLI_USAGE\");; error.message, /^Usage: withmate-memory /);; error.message, /node bin\\/withmate-memory\\.mjs/);"
+  // observation_boundary = "public-boundary"
   // @end-test-value
   it("usage error は PATH CLI command 形式を案内する", async () => {
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "nope"], {

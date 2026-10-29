@@ -6,6 +6,8 @@ Accepted
 
 ## 適用状態
 
+[ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI専用operator mode、一般Memoryの一律binding必須、通常CLIをMCP障害時に限定する判断は現行運用の適用対象外とする。actor-relative schemaをCLIにも共通化し、Characterを必要としない明示targetはbindingなしで扱う。runtime認証、binding指定時のscope、current turnと保存契約は維持する。以下の本文は当時の判断として保持する。
+
 [ADR 028](028-in-turn-affect-mcp-only.md)により、post-turn lifecycle evaluatorとMCP event-time appraisalを別event producerとして維持する判断は現行運用の適用対象外とする。Affect更新は通常turn内MCPへ統一する。actor-relative schema、runtime binding、認証・authority、application boundary、effect certainty、idempotency、identity-free context、linked episodeのmutation ownerは維持する。以下の本文は当時の判断として保持する。
 
 [ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの接続認証とfallback reporterの所有者を部分的に置換する実装へ適用した判断である。手動stdio MCPは引き続き適用する。actor-relative schema、CLI authority分離、tools/list正常送出後のfallback admission、内側のruntime exchange、effect certaintyは維持する。

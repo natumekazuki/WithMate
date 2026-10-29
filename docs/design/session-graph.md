@@ -27,7 +27,7 @@ actorは同じ親Graphに属する担当Main/Auxiliaryの`{ sessionId }`であ�
 
 `origin`は`{ type: "agent" | "user" | "external", label?: string }`で内容の由来を示す。新規recordでは必須で、担当や記録者から推測しない。labelは最大512文字の任意の補足（外部サービス名など）。decisionの`adoptionOrigin`は同じ形式でaccepted/declinedの判断の由来を別に保持する。agent提案をuserが採用する場合は元のactor/originを保持し、adoptionとadoptionOriginを変更する。acceptedだけでuser採用を推測しない。由来はagentが内容を記録する属性であり、本人の直接編集の証明や実行承認・権限ではない。
 
-ユーザー向けの書込UIは設けず、agentがMCPから記録する。初回記録者`recordedBy`と担当`actorSnapshot`はWithMateが信頼済みSessionから付与し、入力では受け付けない。初回記録者・作成時刻と、同じ担当のsnapshotは更新でも保持する。他Auxiliaryによる更新やCharacterの後の変更で帰属を付け替えない。担当を明示変更した場合だけ新担当のsnapshotを取得する。snapshotのiconは既存Character資産への参照であり、画像fileの複製・永久保存はしない。
+ユーザー向けの書込UIは設けず、agentがMCPまたはCLIから記録する。初回記録者`recordedBy`と担当`actorSnapshot`はWithMateが信頼済みSessionから付与し、入力では受け付けない。初回記録者・作成時刻と、同じ担当のsnapshotは更新でも保持する。他Auxiliaryによる更新やCharacterの後の変更で帰属を付け替えない。担当を明示変更した場合だけ新担当のsnapshotを取得する。snapshotのiconは既存Character資産への参照であり、画像fileの複製・永久保存はしない。
 
 任意のtargetは対象revision、実施条件、観測日時をまとめて保持する。これはサーバーが付ける作成・更新日時と区別する。referencesは`evidence` / `artifact` / `handoff`の役割、表示名、参照先を持ち、全recordへ一律のSource欄を要求しない。
 
@@ -51,16 +51,30 @@ Relationだけで状態を自動変更しない。置換では後継との関係
 
 ## MCPと更新
 
-`withmate-session-graph`はMemory・Glossaryと同じmanaged HTTP MCP hostを利用する。Codex、Copilot、Claudeのprovider turnへ専用endpointを渡し、既存binding・turn capabilityから呼出元と親scopeを解決する。入力で親Session、記録者、Character、権限を選ばせない。書込みは有効なturnに限り、Workerのtransactionでownerのincarnation・actorの所属・turn失効を再確認してcommitする。
+`withmate-session-graph`はMCPとCLIで同じ6操作を公開し、入力意味・結果・エラー・保存契約を共有する。MCPはMemory・Glossaryと同じmanaged HTTP MCP hostを利用し、Codex、Copilot、Claudeのprovider turnへ専用endpointを渡す。CLIも同じ起動中runtimeへの認証・instance/generation照合とextension exchangeを通り、application service／Storage Workerへ操作を送る。CLIがDBやSessionFolderを直接更新する経路はない。
 
-| tool | 用途 |
-| --- | --- |
-| `session_graph.list_topics` | 話題を列挙する |
-| `session_graph.recent` | 検索語なしで最近作成・更新されたrecordを読む。`limit: 1`は最新1件 |
-| `session_graph.context` | 現行の要求・制約・採用判断・未解決issue・未完了activityと、必要な依存・根拠を読む |
-| `session_graph.get` | 既知IDの詳細と関係を読む |
-| `session_graph.search` | title/detailを文字列検索する |
-| `session_graph.apply` | expectedRevision付きの原子的batch更新 |
+両入口とも既存Session bindingから呼出元と親scopeを解決し、bindingなし・無効・失効を別Sessionや無bindingアクセスへ置き換えない。入力で親Session、呼出元、記録者、Character、権限を選ばせない。書込みは有効なturnに限り、同じturn capabilityを使用し、Workerのtransactionでownerのincarnation・actorの所属・turn失効を再確認してcommitする。
+
+| MCP tool | CLI command | 用途 |
+| --- | --- | --- |
+| `session_graph.list_topics` | `list-topics` / `list_topics` | 話題を列挙する |
+| `session_graph.recent` | `recent` | 検索語なしで最近作成・更新されたrecordを読む。`limit: 1`は最新1件 |
+| `session_graph.context` | `context` | 現行の要求・制約・採用判断・未解決issue・未完了activityと、必要な依存・根拠を読む |
+| `session_graph.get` | `get` | 既知IDの詳細と関係を読む |
+| `session_graph.search` | `search` | title/detailを文字列検索する |
+| `session_graph.apply` | `apply` | expectedRevision付きの原子的batch更新 |
+
+CLIは`--json <json>`、`--file <path>`、`@file`、`--stdin`のいずれか1つから入力し、MCPと同じshared schemaで検証する。`help`は操作方法、`schema`は6操作のJSON入力schemaをruntime接続なしで返す。runtimeの接続先選択は親Graphの選択ではなく、選択後もSession bindingのscopeを維持する。
+
+```sh
+withmate-session-graph list-topics
+withmate-session-graph recent --json '{"limit":1}'
+withmate-session-graph get --json '{"ids":["known-record-id"]}'
+withmate-session-graph apply --file graph-request.json
+withmate-session-graph schema
+```
+
+CLIの入力不正とMCP SDKの入力検証エラーは、保存前の入力エラーとして扱う。runtimeからの失敗・revision conflictは両入口で同じ結果として返し、成功として扱わない。通信失敗は`SESSION_GRAPH_TRANSPORT_ERROR`となり、readまたは未dispatchのapplyは`effect: "none"`、dispatch済みapplyの応答喪失など保存を確定できない場合は`effect: "unknown"`を返す。結果不明を未保存へ置き換えて再送しない。
 
 recent/context/searchはtopic、actorSessionId、recordedBySessionId、kind、種別ごとの状態で任意に絞れる。これらは認可済み親scope内の読取条件であり、共有権限を増やさない。SQL、独自query言語、自由項目の任意path条件は提供しない。
 

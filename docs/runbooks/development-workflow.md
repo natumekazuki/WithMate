@@ -14,6 +14,12 @@ Main、preload、renderer、CLIの境界をまたぐ型・定数・正規化処�
 
 Chat layout preferenceの型・既定値・検証は`src-shared/settings/chat-layout-preference.ts`に置き、保存APIを呼ぶrenderer adapterは`src/chat/chat-layout-preference.ts`に置きます。
 
+### MCPとCLIの機能・操作契約
+
+WithMateが提供するMCPまたはCLIの機能を追加・変更・廃止するときは、対応するもう一方の入口も同じ論理変更で反映します。公開操作、入力の意味、対象Session、権限、返却情報、保存効果、エラーの意味を両入口で揃え、片側だけの実装で完了としません。表記形式やprotocolのbootstrapは異なっても、別機能による代替や権限の拡大を対応済みとは扱いません。
+
+業務ロジック・認証認可・保存は既存のapplication boundaryを利用します。実装・reviewの完了確認では全変更操作の対応、配布CLIの入口とhelp、MCP schemaと利用説明を照合し、両入口の実呼出経路で正常系と契約上必要な失敗系を確認します。
+
 ## 報告
 
 - 通常の作業報告とリリースノートは、実施した変更・観測した結果・利用者に必要な事実を中心に記載する。検証結果には、その意味を理解するために必要な対象・条件・実施内容を添え、未実施事項を網羅的に列挙しない。

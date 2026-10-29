@@ -134,6 +134,10 @@
       {
         "from": "build/cli/withmate-glossary.cmd",
         "to": "withmate-glossary.cmd"
+      },
+      {
+        "from": "build/cli/withmate-session-graph.cmd",
+        "to": "withmate-session-graph.cmd"
       }
     ],
     "win": {

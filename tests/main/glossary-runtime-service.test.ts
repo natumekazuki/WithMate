@@ -368,6 +368,75 @@ describe("Glossary runtime mutation policy", () => {
 
 describe("Glossary authenticated runtime exchange", () => {
   // @test-value v2
+  // kind = "security"
+  // claim = "認証済みCLI/MCPはbindingなしの明示repositoryで9操作を実行し、認証・binding scope・明示依頼・CASを迂回しない"
+  // oracle = { type = "contract", ref = "docs/runbooks/repository-glossary.md#Managed Skill、MCP、CLI" }
+  // fault = "repository指定を無認証で許可する、無効bindingを捨てる、または既存fileの競合を上書きする"
+  // observable = "実HTTP exchangeのstatus/code/outcomeと保存fileのentry値"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-authenticated-explicit-repository"
+  // lifecycle = "permanent"
+  // distinction = "mock parityでは検出できない実認証とruntime認可からapplication/file commitまでを両adapterで確認する"
+  // impact = "Sessionを持たない利用の権限逸脱と意図しないrepository上書きを防ぐ"
+  // @end-test-value
+  it("CLIとMCPは明示repositoryで同じ保存契約を使い認証とscopeを維持する", async () => {
+    const root = await createRepository();
+    const other = await createRepository();
+    const { actor, binding, registry, runtime } = await createRuntime(root);
+    const server = createMemoryV6HttpServer({
+      service: {} as MemoryV6Service, apiSecret: "api-secret", operatorApiSecret: "operator-secret", mcpApiSecret: "mcp-secret",
+      runtimeInstanceId: "runtime-a", agentRuntimeBindingRegistry: registry,
+      resolveActorSession: (id) => id === actor.id ? actor : null, routeAgentRuntimeExtension: (request) => runtime.route(request),
+    });
+    await server.start();
+    try {
+      const address = server.address(); assert.ok(address);
+      const api = { baseUrl: `http://127.0.0.1:${address.port}`, apiSecret: "api-secret", runtimeInstanceId: "runtime-a", runtimeGenerationId: "runtime-a" };
+      for (const adapter of ["cli", "mcp"] as const) {
+        const selector = { kind: "repository", path: other };
+        const exchange = async (operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS, body: Record<string, unknown> = {}, bindingReference?: string, secret?: string) => {
+          const response = await callWithMateMemoryRuntime({ api, credential: { adapter, adapterSecret: secret ?? (adapter === "cli" ? "operator-secret" : "mcp-secret") } }, {
+            method: "POST", path: GLOSSARY_RUNTIME_OPERATION_PATHS[operation], body: { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION, selector, ...body },
+          }, { signal: AbortSignal.timeout(10_000), exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH, bindingReference });
+          return { status: response.status, value: response.value as Record<string, unknown> };
+        };
+        assert.equal((await exchange("list", {}, undefined, "wrong-secret")).status, 401);
+        assert.equal((await exchange("list", {}, "invalid-binding")).value.code, "GLOSSARY_SESSION_BINDING_INVALID");
+        assert.equal((await exchange("list", {}, binding.bindingReference)).value.code, "GLOSSARY_SESSION_BINDING_FORBIDDEN");
+        assert.equal((await exchange("list", { selector: { kind: "primary" } })).value.code, "GLOSSARY_SESSION_BINDING_REQUIRED");
+        assert.equal((await exchange("list", { selector: { kind: "repository", path: "relative" } })).value.code, "GLOSSARY_TARGET_INVALID");
+        assert.equal((await exchange("create", { mode: "proactive", entry: { term: "Forbidden", definition: "no turn" } })).value.code, "GLOSSARY_SESSION_BINDING_REQUIRED");
+        assert.equal((await exchange("create", { selector: { kind: "repository", path: root }, mode: "explicit", entry: { term: "NoTurn", definition: "bound" } }, binding.bindingReference)).value.code, "GLOSSARY_SESSION_BINDING_INVALID");
+        const targets = await exchange("list_targets");
+        assert.equal(targets.status, 200);
+        assert.deepEqual((targets.value.targets as Array<{ selector: unknown }>)[0].selector, selector);
+        const term = `Term-${adapter}`;
+        const entry = { term, definition: "initial" };
+        assert.equal((await exchange("create", { mode: "explicit", entry })).value.outcome, "applied");
+        assert.equal((await exchange("create", { mode: "explicit", entry: { ...entry, definition: "overwrite" } })).value.code, "GLOSSARY_CONFLICT");
+        assert.equal((await exchange("create_batch", { mode: "explicit", entries: [{ term: `Batch-${adapter}`, definition: "batch" }] })).value.outcome, "applied");
+        assert.equal((await exchange("list")).value.ok, true);
+        assert.equal((await exchange("search", { query: term })).value.total, 1);
+        const read = await exchange("get", { termOrAlias: term });
+        const revision = read.value.revision;
+        assert.equal((await exchange("update", { expectedRevision: revision, targetTerm: term, entry: { ...entry, definition: "updated" } })).value.code, "GLOSSARY_INVALID_REQUEST");
+        assert.equal((await exchange("update", { expectedRevision: revision, targetTerm: term, entry: { ...entry, definition: "updated" }, explicitUserRequest: true })).value.outcome, "applied");
+        assert.equal((await exchange("update", { expectedRevision: revision, targetTerm: term, entry: { ...entry, definition: "stale" }, explicitUserRequest: true })).value.code, "GLOSSARY_CONFLICT");
+        const updated = await exchange("get", { termOrAlias: term });
+        assert.deepEqual(updated.value.entry, { ...entry, aliases: [], definition: "updated" });
+        assert.equal((await exchange("validate")).value.ok, true);
+        assert.equal((await exchange("delete", { expectedRevision: updated.value.revision, targetTerm: term })).value.code, "GLOSSARY_INVALID_REQUEST");
+        assert.equal((await exchange("delete", { expectedRevision: updated.value.revision, targetTerm: term, explicitUserRequest: true })).value.outcome, "applied");
+        assert.equal((await exchange("get", { termOrAlias: term })).value.code, "GLOSSARY_NOT_FOUND");
+      }
+      const stored = await readFile(path.join(other, ".withmate", "glossary.yaml"), "utf8");
+      assert.match(stored, /Batch-cli/); assert.match(stored, /Batch-mcp/);
+      assert.doesNotMatch(stored, /Forbidden|overwrite|stale/);
+      await assert.rejects(readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8"));
+    } finally { await server.stop(); }
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "Glossaryのauthenticated exchangeはMCP/CLI adapterへ同じapplication routeをdispatchし、direct HTTPを公開しない"
   // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }

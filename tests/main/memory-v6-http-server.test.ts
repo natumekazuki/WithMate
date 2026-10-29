@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
@@ -12,6 +13,7 @@ import {
   DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
   createMemoryV6HttpServer,
+  getMemoryV6AgentRuntimeOperations,
   isLoopbackListenHost,
   isLoopbackRemoteAddress,
   resolveMemoryV6RouteTimeoutMs,
@@ -22,12 +24,14 @@ import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory/memory-v6-storage.js";
+import type { CharacterContextApplicationService } from "../../src-electron/character/character-context-application-service.js";
 import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 
 const TEST_API_SECRET = "test-secret";
 const TEST_OPERATOR_API_SECRET = "test-operator-secret";
 const TEST_MCP_API_SECRET = "test-mcp-secret";
 const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
+const sessionCalls = new Map<string, (path: string, body: unknown, method?: "GET" | "POST") => Promise<{ status: number; json: any }>>();
 
 async function withMemoryApi<T>(
   runner: (input: { baseUrl: string; storage: MemoryV6Storage; server: MemoryV6HttpServer }) => T | Promise<T>,
@@ -37,6 +41,19 @@ async function withMemoryApi<T>(
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-http-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
   const storage = new MemoryV6Storage(dbPath);
+  const db = new DatabaseSync(dbPath);
+  db.exec(`INSERT INTO characters (id,name,created_at,updated_at) VALUES ('mika','Mika','2026-01-01','2026-01-01');
+    INSERT INTO sessions_v6 (id,title,state,provider_id,catalog_revision,model_id,approval_mode,character_id,character_snapshot_json,created_at,updated_at,last_active_at)
+    VALUES ('session-a','A','active','codex',1,'model','on-request','mika','{}','2026-01-01','2026-01-01','2026-01-01');`);
+  db.close();
+  const bindings = new AgentRuntimeBindingRegistry();
+  const turns = new ProviderAgentRuntimeTurnCoordinator();
+  const binding = bindings.issueOrReuse({
+    actorSessionId: "session-a", providerId: "codex",
+    authoritySnapshot: { userId: "local-user", characterId: "mika", allowedProjectIds: ["project-a"] },
+    operationGrants: getMemoryV6AgentRuntimeOperations(),
+  });
+  const turn = turns.begin({ actorSessionId: "session-a", providerId: "codex" });
   const service = new MemoryV6Service({
     storage,
     listCharacters: () => [{
@@ -66,6 +83,12 @@ async function withMemoryApi<T>(
     mcpApiSecret: TEST_MCP_API_SECRET,
     runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
     maxBodyBytes: 1024,
+    agentRuntimeBindingRegistry: bindings,
+    providerAgentRuntimeTurns: turns,
+    resolveActorSession: () => ({ id: "session-a", providerId: "codex", characterId: "mika" }),
+    resolveProjectById: (id) => ({ id, displayName: id }),
+    resolveProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a"
+      ? { id: "project-a", displayName: "Project A" } : null,
     ...serverOverrides,
   });
 
@@ -73,7 +96,18 @@ async function withMemoryApi<T>(
     await server.start();
     const address = server.address();
     assert.ok(address);
-    return await runner({ baseUrl: `http://127.0.0.1:${address.port}`, storage, server });
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    sessionCalls.set(baseUrl, async (path, body, method = "POST") => {
+      const response = await callWithMateMemoryRuntime({
+        api: { baseUrl, apiSecret: TEST_API_SECRET, runtimeGenerationId: TEST_RUNTIME_INSTANCE_ID, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID },
+        credential: { adapter: "cli", adapterSecret: TEST_OPERATOR_API_SECRET },
+      }, { method, path, body }, {
+        signal: new AbortController().signal, bindingReference: binding.bindingReference, turnCapability: turn.capability,
+      });
+      return { status: response.status, json: response.value };
+    });
+    try { return await runner({ baseUrl, storage, server }); }
+    finally { sessionCalls.delete(baseUrl); }
   } finally {
     await server.stop();
     storage.close();
@@ -82,6 +116,7 @@ async function withMemoryApi<T>(
 }
 
 async function postJson(baseUrl: string, path: string, body: unknown, apiSecret = TEST_API_SECRET): Promise<{ status: number; json: any }> {
+  if (apiSecret === TEST_API_SECRET) return sessionCalls.get(baseUrl)!(path, body);
   const response = await fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers: {
@@ -101,8 +136,7 @@ function appendRequest(overrides: Record<string, unknown> = {}): Record<string, 
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     target: {
-      owner: "project",
-      scope: "project",
+      kind: "project",
       project: { type: "path", path: "C:/workspace/project-a" },
     },
     kind: "decision",
@@ -110,11 +144,105 @@ function appendRequest(overrides: Record<string, unknown> = {}): Record<string, 
     body: "Memory localhost APIはservice境界を薄く包む。",
     preview: "localhost APIはservice境界を薄く包む。",
     tags: [{ type: "topic", value: "memory-api" }],
+    idempotencyKey: "append-default-key",
     ...overrides,
   };
 }
 
 describe("MemoryV6HttpServer", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "Affect inspect/correct/resetはbinding actorを補完し、訂正/resetには明示要求を必要とする"
+  // oracle = { type = "contract", ref = "Issue #905 context-dependent Affect authorization" }
+  // fault = "caller identityや明示要求なしの訂正がapplication serviceへ渡る"
+  // observable = "runtime拒否statusとapplication service境界で受信したactor identity・authority"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory HTTP Affect route authorization and actor injection"
+  // lifecycle = "permanent"
+  // impact = "別Sessionの感情状態変更と明示要求を伴わない訂正を防ぐ"
+  // distinction = "application service単体のauthority検証でなくruntimeが生成するrequestを観測する"
+  // @end-test-value
+  it("Affect保守操作はbinding actorと明示指示をapplication境界へ渡す", async () => {
+    const calls: Array<{ operation: string; body: any }> = [];
+    const receive = (operation: string) => async (body: unknown) => {
+      calls.push({ operation, body });
+      return { schemaVersion: "withmate-character-context-v1", accepted: true };
+    };
+    const characterContextService = {
+      inspectAffect: receive("inspect"), correctAffect: receive("correct"), resetAffect: receive("reset"),
+    } as unknown as CharacterContextApplicationService;
+    await withMemoryApi(async ({ baseUrl }) => {
+      const schemaVersion = "withmate-character-context-v1";
+      const inspect = await postJson(baseUrl, "/v1/character_affect/inspect", { schemaVersion });
+      assert.equal(inspect.status, 200);
+      assert.equal(calls[0].body.characterId, "mika");
+      assert.equal(calls[0].body.sessionId, "session-a");
+      for (const operation of ["correct", "reset"]) {
+        const path = `/v1/character_affect/${operation}`;
+        const denied = await postJson(baseUrl, path, { schemaVersion, reason: "user requested" });
+        assert.equal(denied.status, 422);
+        const accepted = await postJson(baseUrl, path, {
+          schemaVersion, reason: "user requested", explicitUserRequest: true,
+          ...(operation === "correct" ? { replacement: { label: "corrected" } } : {}),
+        });
+        assert.equal(accepted.status, 200);
+        const last = calls.at(-1)!;
+        assert.equal(last.body.characterId, "mika");
+        assert.equal(last.body.sessionId, "session-a");
+        assert.deepEqual(last.body.authority, { kind: "explicit_user_instruction", reason: "user requested" });
+        assert.equal(Object.hasOwn(last.body, "explicitUserRequest"), false);
+        if (operation === "correct") {
+          assert.equal(last.body.replacement.characterId, "mika");
+          assert.equal(last.body.replacement.sessionId, "session-a");
+          assert.equal(last.body.replacement.userId, "local-user");
+        }
+        const caller = await postJson(baseUrl, path, { schemaVersion, explicitUserRequest: true, reason: "reason", characterId: "other" });
+        assert.equal(caller.status, 422);
+      }
+      assert.equal(calls.length, 3);
+    }, {}, { characterContextService });
+  });
+  // @test-value v2
+  // kind = "security"
+  // claim = "認証済み無binding入口は一般Memoryを扱い、Character対象と無効bindingの降格を拒否する"
+  // oracle = { type = "contract", ref = "Issue #905 context-dependent binding authorization" }
+  // fault = "無binding Character要求を実行するか、提示された無効bindingを無視してlocal-userへ降格する"
+  // observable = "CLI/MCP credential経由のpublic target、拒否status、error effect、保存件数"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory runtime context-dependent binding"
+  // lifecycle = "permanent"
+  // impact = "一般Memoryを維持しながらCharacter/Session情報の不正参照を防ぐ"
+  // distinction = "型やschemaだけでは検出できないruntime認証・binding解決・storage結果を両transportで観測する"
+  // @end-test-value
+  it("CLIとMCPは一般Memoryを無bindingで扱いCharacter要求と無効bindingを拒否する", async () => {
+    await withMemoryApi(async ({ baseUrl, storage }) => {
+      for (const adapter of ["cli", "mcp"] as const) {
+        const connection = {
+          api: { baseUrl, apiSecret: TEST_API_SECRET, runtimeGenerationId: TEST_RUNTIME_INSTANCE_ID, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID },
+          credential: { adapter, adapterSecret: adapter === "cli" ? TEST_OPERATOR_API_SECRET : TEST_MCP_API_SECRET },
+        };
+        const call = (path: string, body: unknown, bindingReference?: string) => callWithMateMemoryRuntime(connection, {
+          method: "POST", path, body,
+        }, { signal: new AbortController().signal, ...(bindingReference === undefined ? {} : { bindingReference }) });
+        const appended = await call("/v1/append", appendRequest({ idempotencyKey: `unbound-${adapter}` }));
+        assert.equal(appended.status, 200);
+        assert.deepEqual((appended.value as any).entry.target, { kind: "project", project: { type: "id", id: "project-a" } });
+        for (const targets of [[{ kind: "character" }], [{ kind: "user-global" }, { kind: "character" }]]) {
+          const denied = await call("/v1/search", { schemaVersion: MEMORY_V6_SCHEMA_VERSION, query: "memory", targets });
+          assert.equal(denied.status, 401);
+          assert.equal((denied.value as any).error.effect, "none");
+        }
+        for (const path of ["/v1/list_targets", "/v1/audit"]) {
+          const denied = await call(path, { schemaVersion: MEMORY_V6_SCHEMA_VERSION, ...(path.endsWith("audit") ? { allTargets: true } : {}) });
+          assert.equal(denied.status, 401);
+        }
+        const invalid = await call("/v1/append", appendRequest({ idempotencyKey: `invalid-${adapter}` }), "invalid-binding");
+        assert.equal(invalid.status, 403);
+        assert.equal((invalid.value as any).error.effect, "none");
+      }
+      assert.equal(storage.listEntries({ target: { owner: { type: "project", id: "project-a" }, scope: { type: "project", id: "project-a" } }, limit: 50 }).items.length, 2);
+    });
+  });
   it("loopback addressだけを許可対象にする", () => {
     assert.equal(isLoopbackRemoteAddress("127.0.0.1"), true);
     assert.equal(isLoopbackRemoteAddress("127.12.0.1"), true);
@@ -134,11 +262,13 @@ describe("MemoryV6HttpServer", () => {
     assert.equal(resolveMemoryV6RouteTimeoutMs("file_usage", { requestTimeoutMs: 123 }), 123);
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "status challengeはapplication instanceとMemory generationを安全なmetadataとして返し、owner tupleをHMACで検証できる"
 // oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
-// failure_mode = "resolverが別instanceまたは別generationを同一runtimeと誤認し、credential送信前のidentity検証を通過させる"
+// fault = "resolverが別instanceまたは別generationを同一runtimeと誤認し、credential送信前のidentity検証を通過させる"
+// observable = "statusのowner tupleとnonce challenge HMAC"
+// observation_boundary = "public-boundary"
 // scope = "memory-runtime-identity-challenge"
 // lifecycle = "permanent"
 // @end-test-value
@@ -212,15 +342,17 @@ it("status はapplication instance、generation、build channelとowner challeng
     });
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "MCP credentialだけではagent-facing routeを実行できず、operator credentialとのroute境界も維持する"
+  // claim = "adapter認証が一般Memory実行の前提となり、Characterを暗黙に含む全target監査はbindingを要求する"
   // oracle = { type = "adr", ref = "ADR-024 general Memory binding policy" }
-  // failure_mode = "unbound MCPがlocal-userへdowngradeする、またはMCPからoperator-only routeへ到達する"
+  // fault = "adapter credentialなしで実行するか、無bindingの全target監査へCharacter情報を含める"
+  // observable = "adapter credential有無のHTTP statusとaudit拒否error code"
+  // observation_boundary = "public-boundary"
   // scope = "memory-http-adapter-authority"
   // lifecycle = "permanent"
   // @end-test-value
-  it("共通apiSecretだけでは実行できず、MCP credentialはbindingなしで公開routeへ到達しない", async () => {
+  it("共通apiSecretだけでは実行できずMCPの一般Memoryと全target監査を文脈で認可する", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const body = appendRequest({ idempotencyKey: "unauthorized-mcp-append" });
       const missingAdapter = await fetch(`${baseUrl}/v1/append`, {
@@ -243,7 +375,7 @@ it("status はapplication instance、generation、build channelとowner challeng
         },
         body: JSON.stringify(body),
       });
-      assert.equal(mcpAppend.status, 401);
+      assert.equal(mcpAppend.status, 200);
 
       const mcpAudit = await fetch(`${baseUrl}/v1/audit`, {
         method: "POST",
@@ -254,24 +386,26 @@ it("status はapplication instance、generation、build channelとowner challeng
         },
         body: JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, allTargets: true }),
       });
-      assert.equal(mcpAudit.status, 403);
-      assert.equal((await mcpAudit.json()).error.code, "MEMORY_FORBIDDEN");
+      assert.equal(mcpAudit.status, 401);
+      assert.equal((await mcpAudit.json()).error.code, "MEMORY_PRINCIPAL_REQUIRED");
 
       const search = await postJson(baseUrl, "/v1/search", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
         query: "localhost",
       });
       assert.equal(search.status, 200);
-      assert.equal(search.json.items.length, 0);
+      assert.equal(search.json.items.length, 1);
     });
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "bound MCPはactor-relative targetとcurrent turn capabilityを検証してから公開routeだけをdispatchする"
 // oracle = { type = "adr", ref = "ADR-024 actor-relative Memory target and turn capability" }
-// failure_mode = "caller identity、未許可Project、stale capabilityまたは非公開routeがapplication副作用へ到達する"
+// fault = "caller identity、未許可Project、stale capabilityまたは未grant操作がapplication副作用へ到達する"
+// observable = "runtime exchangeのstatusとfield・effectを含む拒否error"
+// observation_boundary = "public-boundary"
 // scope = "memory-runtime-mcp-exchange"
 // lifecycle = "permanent"
 // @end-test-value
@@ -398,16 +532,21 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
     turns.end(turn);
   });
 
-  it("append / search / get_entry / list_tags / forget をlocal_userとしてdispatchする", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Session-bound CLI credentialはactor-relative一般Memory CRUDと許可されたinventoryを同じruntimeで実行する"
+  // oracle = { type = "contract", ref = "Issue #905 Session-bound Memory runtime" }
+  // fault = "CLI transportがbindingを無視するかCRUDを異なるtargetへdispatchする"
+  // observable = "HTTP runtimeのstatus、返却target、検索ID、忘却後storage state"
+  // observation_boundary = "public-boundary"
+  // scope = "Session-bound Memory runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("append / search / get_entry / list_tags / forget をSessionとしてdispatchする", async () => {
     await withMemoryApi(async ({ baseUrl, storage }) => {
-      const characters = await fetch(`${baseUrl}/v1/characters`, {
-        headers: {
-          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
-          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
-        },
-      });
+      const characters = await sessionCalls.get(baseUrl)!("/v1/characters", {}, "GET");
       assert.equal(characters.status, 200);
-      const charactersJson = await characters.json();
+      const charactersJson = characters.json;
       assert.deepEqual(charactersJson.characters, [{
         id: "mika",
         name: "Mika",
@@ -417,36 +556,26 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
       assert.equal("iconFilePath" in charactersJson.characters[0], false);
       assert.equal("theme" in charactersJson.characters[0], false);
 
-      const fileUsage = await fetch(`${baseUrl}/v1/file-usage`, {
-        headers: {
-          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
-          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
-        },
-      });
+      const fileUsage = await sessionCalls.get(baseUrl)!("/v1/file-usage", {}, "GET");
       assert.equal(fileUsage.status, 200);
-      const fileUsageJson = await fileUsage.json();
+      const fileUsageJson = fileUsage.json;
       assert.equal(fileUsageJson.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
       assert.equal(fileUsageJson.usedBytes, 0);
       assert.equal(fileUsageJson.objectCount, 0);
 
-      const largestFileUsage = await fetch(`${baseUrl}/v1/file-usage?largest=1&limit=5`, {
-        headers: {
-          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
-          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
-        },
-      });
+      const largestFileUsage = await sessionCalls.get(baseUrl)!("/v1/file-usage?largest=1&limit=5", {}, "GET");
       assert.equal(largestFileUsage.status, 200);
-      const largestFileUsageJson = await largestFileUsage.json();
+      const largestFileUsageJson = largestFileUsage.json;
       assert.deepEqual(largestFileUsageJson.largestEntries, []);
 
       const append = await postJson(baseUrl, "/v1/append", appendRequest({ idempotencyKey: "append-key-http" }));
       assert.equal(append.status, 200);
       assert.equal(append.json.created, true);
-      assert.equal(append.json.entry.owner.id, "project-a");
+      assert.equal(append.json.entry.target.project.id, "project-a");
 
       const search = await postJson(baseUrl, "/v1/search", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
         query: "localhost",
       });
       assert.equal(search.status, 200);
@@ -455,14 +584,14 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
       const detail = await postJson(baseUrl, "/v1/get_entry", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: append.json.entry.id,
-        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
       });
       assert.equal(detail.status, 200);
-      assert.equal(detail.json.entry.source.providerId, "local-user");
+      assert.equal(detail.json.entry.source.providerId, "codex");
 
       const getFile = await postJson(baseUrl, "/v1/get_file", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
         objectId: "a".repeat(32),
         outputPath: "C:/exports/file.bin",
       });
@@ -471,7 +600,7 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
 
       const exportFiles = await postJson(baseUrl, "/v1/export_files", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
         entryId: append.json.entry.id,
         outputDirectoryPath: "C:/exports",
       });
@@ -480,14 +609,14 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
 
       const tags = await postJson(baseUrl, "/v1/list_tags", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
       });
       assert.equal(tags.status, 200);
       assert.deepEqual(tags.json.tags, [{ type: "topic", value: "memory-api" }]);
 
       const invalidTagCursor = await postJson(baseUrl, "/v1/list_tags", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
         cursor: "cursor-a",
       });
       assert.equal(invalidTagCursor.status, 422);
@@ -496,7 +625,7 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
       assert.equal(invalidTagCursor.json.error.effect, "none");
       const nonCanonicalTagCursor = await postJson(baseUrl, "/v1/list_tags", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
         cursor: "tag-v1:1:2026-08-13T00%3A00%3A00.000Z:topic:%6demory",
       });
       assert.equal(nonCanonicalTagCursor.status, 422);
@@ -505,9 +634,10 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
 
       const forget = await postJson(baseUrl, "/v1/forget", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
         entryIds: [append.json.entry.id],
         reason: "privacy",
+        idempotencyKey: "http-forget-key",
       });
       assert.equal(forget.status, 200);
       assert.deepEqual(forget.json.results, [{ entryId: append.json.entry.id, status: "forgotten" }]);
@@ -515,6 +645,16 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "認可済みfile appendのinspect失敗はHTTP domain errorとして返る"
+  // oracle = { type = "contract", ref = "Memory protected object importer error contract" }
+  // fault = "importerの入力失敗を500または成功へ変換する"
+  // observable = "HTTP status、error.code、error.field"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory runtime file import inspect failure"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("appendのimporter由来errorを500にせずdomain errorで返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const append = await postJson(baseUrl, "/v1/append", appendRequest({
@@ -544,6 +684,16 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "認可済みfile appendのprepare失敗はHTTP domain errorとして返る"
+  // oracle = { type = "contract", ref = "Memory protected object importer error contract" }
+  // fault = "importer prepare失敗を500または成功へ変換する"
+  // observable = "HTTP status、MEMORY_FILE_IMPORT_FAILED、files field"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory runtime file import prepare failure"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("appendのprepare失敗も500にせずfile import domain errorで返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const append = await postJson(baseUrl, "/v1/append", appendRequest({
@@ -574,6 +724,16 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Session-bound maintenance操作はinventory・listing・dry-run・moveをpublic target契約で実行する"
+  // oracle = { type = "contract", ref = "Issue #905 shared Memory runtime" }
+  // fault = "認可済みmaintenance要求が実行されないかdry-runが保存を変更する"
+  // observable = "runtimeのentryCount、listing ID、writeOccurred、移動先public target"
+  // observation_boundary = "public-boundary"
+  // scope = "Session-bound Memory maintenance routes"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("maintenance routesはinventory、listing、dry-run、moveをservice境界へ通す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const append = await postJson(baseUrl, "/v1/append", appendRequest({ idempotencyKey: "http-maintenance-append" }));
@@ -586,7 +746,7 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
 
       const entries = await postJson(baseUrl, "/v1/list_entries", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
       });
       assert.equal(entries.status, 200);
       assert.equal(entries.json.items[0].id, entryId);
@@ -594,9 +754,11 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
 
       const dryRun = await postJson(baseUrl, "/v1/forget", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        target: { kind: "project", project: { type: "id", id: "project-a" } },
         entryIds: [entryId],
         dryRun: true,
+        reason: "user_request",
+        idempotencyKey: "http-dryrun-key",
       });
       assert.equal(dryRun.status, 200);
       assert.equal(dryRun.json.writeOccurred, false);
@@ -604,13 +766,13 @@ it("MCP credentialは公開した一般Memory routeだけをruntime exchange経�
       const moved = await postJson(baseUrl, "/v1/move_entry", {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId,
-        from: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
-        to: { owner: "user", scope: "global" },
+        from: { kind: "project", project: { type: "id", id: "project-a" } },
+        to: { kind: "user-global" },
         reason: "move to user scope",
         idempotencyKey: "http-maintenance-move",
       });
       assert.equal(moved.status, 200);
-      assert.equal(moved.json.entry.owner.type, "user");
+      assert.equal(moved.json.entry.target.kind, "user-global");
     });
   });
 

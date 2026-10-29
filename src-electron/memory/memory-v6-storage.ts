@@ -1239,7 +1239,7 @@ export class MemoryV6Storage {
     };
   }
 
-  listLargestFileEntries(input: { limit: number; allowedCharacterId?: string }): MemoryV6LargestFileEntry[] {
+  listLargestFileEntries(input: { limit: number; allowedCharacterId?: string; allowedProjectIds?: readonly string[]; excludeCharacter?: boolean }): MemoryV6LargestFileEntry[] {
     const requestedLimit = Math.floor(input.limit);
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(50, requestedLimit)) : 20;
     const rows = this.db.prepare(`
@@ -1255,11 +1255,15 @@ export class MemoryV6Storage {
       WHERE o.state = 'active'
         AND e.state = 'active'
         AND (? IS NULL OR e.owner_type <> 'character' OR e.owner_id = ?)
+        AND (? = 0 OR e.owner_type <> 'character')
+        AND (? IS NULL OR e.scope_type <> 'project' OR e.scope_id IN (SELECT value FROM json_each(?)))
       GROUP BY e.id, e.title, e.preview, e.updated_at
       HAVING file_count > 0
       ORDER BY total_file_bytes DESC, e.updated_at DESC, e.id ASC
       LIMIT ?
-    `).all(input.allowedCharacterId ?? null, input.allowedCharacterId ?? null, limit) as Array<{
+    `).all(input.allowedCharacterId ?? null, input.allowedCharacterId ?? null, input.excludeCharacter ? 1 : 0,
+      input.allowedProjectIds === undefined ? null : JSON.stringify(input.allowedProjectIds),
+      JSON.stringify(input.allowedProjectIds ?? []), limit) as Array<{
       entry_id: string;
       title: string;
       preview: string;
