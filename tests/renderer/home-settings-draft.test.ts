@@ -11,8 +11,6 @@ import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-share
 import {
   updateAutoCollapseActionDockOnSend,
   updateScrollToLatestOnSend,
-  updateCodingProviderApiKey,
-  updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabled,
   updateCodingProviderEnabledDraft,
   updateCodingProviderInstructionRelativePath,
@@ -116,17 +114,23 @@ describe("home-settings-draft", () => {
     providers: [providerCatalog, copilotProviderCatalog],
   };
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "provider draftの有効化とfile設定を変更しても既存keyを保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "file設定更新時に他のprovider設定を初期化する"
+  // observable = "更新後のenabled、apiKey、rootとrelative path"
+  // observation_boundary = "component-behavior"
+  // scope = "coding-provider-settings-draft"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("coding provider draft を更新できる", () => {
     const draft = createDefaultAppSettings();
+    draft.codingProviderSettings.codex.apiKey = "existing-key";
 
     const enabled = updateCodingProviderEnabled(draft, "codex", false);
-    const apiKey = updateCodingProviderApiKey(
-      { ...draft, codingProviderSettings: enabled },
-      "codex",
-      "next-key",
-    );
     const skillRootPath = updateCodingProviderSkillRootPath(
-      { ...draft, codingProviderSettings: apiKey },
+      { ...draft, codingProviderSettings: enabled },
       "codex",
       "C:/skills",
     );
@@ -142,7 +146,7 @@ describe("home-settings-draft", () => {
     );
 
     assert.equal(instructionRelativePath.codex.enabled, false);
-    assert.equal(instructionRelativePath.codex.apiKey, "next-key");
+    assert.equal(instructionRelativePath.codex.apiKey, "existing-key");
     assert.equal(instructionRelativePath.codex.skillRootPath, "C:/skills");
     assert.equal(instructionRelativePath.codex.skillRelativePath, "skills/codex");
     assert.equal(instructionRelativePath.codex.instructionRelativePath, "AGENTS.md");
@@ -214,6 +218,16 @@ describe("home-settings-draft", () => {
     assert.equal(nextThreshold.codex.outputTokensThreshold, 300000);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "providerとMemoryのdraft更新はapp設定の変更を累積して保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#settings-runtime" }
+  // fault = "更新wrapperが以前のdraftへ戻して他の変更を失う"
+  // observable = "更新後のapp、provider、Memory設定の値"
+  // observation_boundary = "component-behavior"
+  // scope = "settings-draft-wrappers"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("draft wrapper は AppSettings 全体を更新する", () => {
     const draft = createDefaultAppSettings();
 
@@ -224,17 +238,13 @@ describe("home-settings-draft", () => {
             updateCodingProviderInstructionRelativePathDraft(
               updateCodingProviderSkillRelativePathDraft(
                 updateCodingProviderSkillRootPathDraft(
-                  updateCodingProviderApiKeyDraft(
-                    updateCodingProviderEnabledDraft(
-                      updateAutoCollapseActionDockOnSend(
-                        updateMemoryGenerationEnabled(draft, false),
-                        false,
-                      ),
-                      "codex",
+                  updateCodingProviderEnabledDraft(
+                    updateAutoCollapseActionDockOnSend(
+                      updateMemoryGenerationEnabled(draft, false),
                       false,
                     ),
                     "codex",
-                    "key",
+                    false,
                   ),
                   "codex",
                   "C:/skills",
@@ -262,7 +272,6 @@ describe("home-settings-draft", () => {
     assert.equal(next.memoryGenerationEnabled, false);
     assert.equal(next.autoCollapseActionDockOnSend, false);
     assert.equal(next.codingProviderSettings.codex.enabled, false);
-    assert.equal(next.codingProviderSettings.codex.apiKey, "key");
     assert.equal(next.codingProviderSettings.codex.skillRootPath, "C:/skills");
     assert.equal(next.codingProviderSettings.codex.skillRelativePath, "skills/codex");
     assert.equal(next.codingProviderSettings.codex.instructionRelativePath, "AGENTS.md");
@@ -411,24 +420,24 @@ describe("home-settings-draft", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "OpenCodeのenableとGo key編集handlerは同じdraftへ累積し他providerの設定を保持する"
-  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
-  // fault = "API keyを別providerへ保存するかenableや既存設定を巻き戻す"
+  // claim = "OpenCodeのenableとfile設定編集handlerは同じdraftへ累積し他providerの設定を保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "file設定を別providerへ保存するかenableや既存設定を巻き戻す"
   // observable = "Settings画面向けhandler適用後のcodingProviderSettings"
   // observation_boundary = "component-behavior"
-  // scope = "settings-opencode-credentials-draft"
+  // scope = "settings-opencode-provider-draft"
   // lifecycle = "permanent"
-  // impact = "credentialが誤ったproviderへ渡るかOpenCode有効化と認証設定が保存できない"
+  // impact = "OpenCodeの有効化やfile設定を保存できない"
   // distinction = "pure updaterでは画面handlerから適切なproviderと最新draftへ接続されることを確認できない"
   // @end-test-value
-  it("OpenCodeを有効化しGo keyを他provider設定と独立して編集できる", () => {
+  it("OpenCodeを有効化しfile設定を他provider設定と独立して編集できる", () => {
     const initialDraft = createDefaultAppSettings();
     const state = createDraftTracker(initialDraft);
     const handlers = buildSettingsDraftHandlers({ setSettingsDraft: state.setSettingsDraft });
     handlers.onChangeProviderEnabled("opencode", true);
-    handlers.onChangeProviderApiKey("opencode", "go-key-fixture");
+    handlers.onChangeProviderSkillRootPath("opencode", "C:/opencode-config");
     assert.equal(state.draft.codingProviderSettings.opencode?.enabled, true);
-    assert.equal(state.draft.codingProviderSettings.opencode?.apiKey, "go-key-fixture");
+    assert.equal(state.draft.codingProviderSettings.opencode?.skillRootPath, "C:/opencode-config");
     assert.deepEqual(state.draft.codingProviderSettings.codex, initialDraft.codingProviderSettings.codex);
   });
 

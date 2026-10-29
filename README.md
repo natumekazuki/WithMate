@@ -23,7 +23,7 @@ Homeからセッションの作成・再開やCharacterの管理を行い、Sess
 
 ## 利用上の注意
 
-OpenCodeは同梱の公式CLI／client `2.1.4`を使います。Settingsの`OpenCode Go API Key`（未設定時は`OPENCODE_API_KEY`）からGo用keyを渡し、通常のOpenCode設定はnative経路で読み込みます。`opencode-go/...`、`opencode/...`、`openai/...`等のnative modelを同じOpenCode Sessionで扱いますが、一覧の取得は認証ではありません。native DBをWithMateのuser data・build channel別に分離するため、別DBを使うOpenCodeデスクトップ版のChatGPT等のログイン状態を自動共有しません。WithMate内のOAuth接続UI・アカウント選択は未提供です。利用前に自身の契約・設定・課金経路を確認してください。詳細は[modelと認証](docs/design/model-catalog.md#opencodeのmodelと認証)を参照してください。
+OpenCodeはPCのPATH上にある公式CLI `2.1.4`と同梱client `2.1.4`を使います。既存のnative DB・設定・API key／OAuth認証を、公式standalone相当の専用processから利用し、起動済みの共有serviceは変更・停止しません。service専用のmanaged環境変数は適用されないため、必要な認証はstandalone側またはWithMateの起動元環境へ設定してください。CLI版が異なる場合はDBを開かず停止します。新しい版で使用済みのDBをdowngradeしないでください。WithMate専用のGo key設定・認証UIはなく、WithMateにだけGo keyを登録していた場合は利用者自身でOpenCode側へ登録する必要があります。`opencode-go/...`、`opencode/...`、`openai/...`等のnative modelを同じOpenCode Sessionで扱いますが、一覧取得は認証成功の確認ではありません。利用前に自身の契約・設定・課金経路を確認してください。詳細と既存会話の継続条件は[modelと認証](docs/design/model-catalog.md#opencodeのmodelと認証)を参照してください。
 
 Claude Agentは公式Claude Agent SDKに付属する未改変の実行物を使い、利用者自身がClaude CLIでログインした認証状態をSDKが利用します。WithMateは認証情報を読み取り・コピーせず、独自OAuthも提供しません。SDKが参照する環境変数・設定によって認証先や課金経路が変わり得るため、利用前に自身の契約・設定・課金経路を確認してください。認証失敗や利用枠不足を別の認証・モデル・providerへ自動切替しません。ClaudeのSDK transcriptはWithMateの会話履歴とは別にClaude側へ保存され、WithMateはそれを管理・削除しません。認証・実行の詳細は[Provider Adapter](docs/design/provider-adapter.md)を参照してください。
 

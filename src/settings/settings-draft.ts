@@ -178,17 +178,6 @@ export function updateCodingProviderEnabledDraft(
   };
 }
 
-export function updateCodingProviderApiKeyDraft(
-  draft: AppSettings,
-  providerId: string,
-  apiKey: string,
-): AppSettings {
-  return {
-    ...draft,
-    codingProviderSettings: updateCodingProviderApiKey(draft, providerId, apiKey),
-  };
-}
-
 export function updateCodingProviderSkillRootPathDraft(
   draft: AppSettings,
   providerId: string,
@@ -232,20 +221,6 @@ export function updateCodingProviderEnabled(
     [providerId]: {
       ...getProviderAppSettings(draft, providerId),
       enabled,
-    },
-  };
-}
-
-export function updateCodingProviderApiKey(
-  draft: AppSettings,
-  providerId: string,
-  apiKey: string,
-): Record<string, ProviderAppSettings> {
-  return {
-    ...draft.codingProviderSettings,
-    [providerId]: {
-      ...getProviderAppSettings(draft, providerId),
-      apiKey,
     },
   };
 }

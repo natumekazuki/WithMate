@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import path from "node:path";
-import type { OpenCodeClient, OpenCodeEvent, SessionInfo, SessionMessageInfo, SessionPromptInput, FormInfo1 } from "@opencode/client";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import type { OpenCodeClient, OpenCodeEvent, SessionInfo, SessionMessageInfo, SessionPromptInput, SessionTransferData, FormInfo1 } from "@opencode/client";
+import type { OpenCodeTransportOptions } from "../../src-electron/providers/opencode/opencode-transport.js";
 import { OpenCodeAdapter, buildOpenCodePermissions } from "../../src-electron/providers/opencode/opencode-adapter.js";
 import { resolveOpenCodeModelRef } from "../../src-electron/providers/opencode/opencode-model.js";
 import { buildOpenCodeElicitation } from "../../src-electron/providers/opencode/opencode-interactions.js";
@@ -74,10 +77,61 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
   } as unknown as OpenCodeClient;
   let release!: () => void;
   const closed = new Promise<void>((resolve) => { release = resolve; });
-  const adapter = new OpenCodeAdapter({ databasePath: path.join(process.cwd(), "unused.db"), executable: path.join(process.cwd(), "unused.exe"), createTransport: () => ({
+  const adapter = new OpenCodeAdapter({ executable: path.join(process.cwd(), "unused.exe"), createTransport: () => ({
     start: async () => client, close: async () => { calls.push("close"); if (options.cleanupPending) throw new Error("cleanup timeout"); release(); }, whenClosed: () => closed,
   }) });
-  return { adapter, calls, getPrompt: () => prompt, mcpRegistrations, release };
+  return { adapter, client, calls, getPrompt: () => prompt, mcpRegistrations, release };
+}
+
+async function migrationFixture(turn: RunSessionTurnInput) {
+  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "withmate-opencode-migration-"));
+  const databasePath = path.join(temporaryDirectory, "source.db");
+  await writeFile(databasePath, "");
+  const run = fixture(turn);
+  const calls: string[] = [];
+  const transports: OpenCodeTransportOptions[] = [];
+  const targetData = new Map<string, SessionTransferData>();
+  let pending = true;
+  let failing = false;
+  const root = await run.client.session.get({ sessionID: "root" });
+  const child = { ...root, id: "child", parentID: "root" };
+  const source = { session: {
+    get: async ({ sessionID }: { sessionID: string }) => { calls.push(`source:get:${sessionID}`); return sessionID === "root" ? root : child; },
+    inbox: { list: async ({ sessionID }: { sessionID: string }) => pending && sessionID === "root" ? [{ id: "old", type: "user", payload: { metadata: { withmateOwner: root.metadata!.withmateOwner, withmateRequestID: "old" } } }] : [],
+      cancel: async () => { calls.push("source:cancel"); pending = false; } },
+    active: async () => ({}),
+    list: async ({ parentID }: { parentID?: string | null }) => ({ data: parentID === "root" ? [child] : [], cursor: {} }),
+    export: async ({ sessionID }: { sessionID: string }): Promise<SessionTransferData> => {
+      calls.push(`source:export:${sessionID}`);
+      assert.equal(pending, false, "source preflight precedes export");
+      return { info: sessionID === "root" ? root : child, messages: [{ id: `history-${sessionID}`, type: "user", text: "saved conversation", time: { created: 1 } }] };
+    },
+  } } as unknown as OpenCodeClient;
+  run.client.session.get = async ({ sessionID }) => {
+    if (!targetData.has(sessionID)) throw { _tag: "SessionNotFoundError", sessionID, message: "missing" };
+    return targetData.get(sessionID)!.info;
+  };
+  run.client.session.import = async (data) => {
+    calls.push(`target:import:${data.info.id}`);
+    if (failing && data.info.id === "child") throw new Error("migration unavailable");
+    const stored = structuredClone({ info: data.info, messages: data.messages }) as SessionTransferData;
+    targetData.set(data.info.id, stored);
+    return stored.info;
+  };
+  const nativePrompt = run.client.session.prompt;
+  run.client.session.prompt = async (...args) => {
+    calls.push("target:prompt");
+    assert.ok(targetData.has("child"), "the family is transferred before admitting a turn");
+    return nativePrompt(...args);
+  };
+  const adapter = new OpenCodeAdapter({ legacyDatabasePath: databasePath, createTransport: (options) => {
+    transports.push(options);
+    const label = options.databasePath ? "source" : "target";
+    return { start: async () => { calls.push(`${label}:start`); return options.databasePath ? source : run.client; },
+      close: async () => { calls.push(`${label}:close`); }, whenClosed: () => Promise.resolve() };
+  } });
+  return { adapter, calls, transports, targetData, getPrompt: run.getPrompt, fail: (value: boolean) => { failing = value; },
+    dispose: () => rm(temporaryDirectory, { recursive: true, force: true }) };
 }
 
 
@@ -103,7 +157,7 @@ it("OpenCode completes only the current root request and replaces provisional te
   assert.ok(run.calls.indexOf("connected") < run.calls.indexOf("prompt"));
   assert.equal(run.getPrompt()!.text, run.adapter.composePrompt(turn).logicalPrompt.composedText);
   assert.equal(run.getPrompt()!.metadata?.withmateRequestID, run.getPrompt()!.id);
-  assert.equal(result.threadId, "root"); assert.equal(result.assistantText, "final");
+  assert.equal(result.threadId, "native:root"); assert.equal(result.assistantText, "final");
   assert.deepEqual(result.usage, { inputTokens: 12, cachedInputTokens: 2, outputTokens: 5, reasoningOutputTokens: 0, totalTokens: 17 });
   assert.equal(run.calls.at(-1), "close");
 });
@@ -121,9 +175,9 @@ it("OpenCode completes only the current root request and replaces provisional te
 // distinction = "正常終端testはEOF経路のpartial保存を通らない"
 // @end-test-value
 it("OpenCode preserves partial result and does not resend after stream EOF", async () => {
-  const turn = input("root"); const run = fixture(turn, { disconnect: true });
+  const turn = input("native:root"); const run = fixture(turn, { disconnect: true });
   await assert.rejects(run.adapter.runSessionTurn(turn), (error: unknown) => {
-    assert.ok(error instanceof ProviderTurnError); assert.equal(error.partialResult.threadId, "root"); assert.equal(error.partialResult.assistantText, "partial"); return true;
+    assert.ok(error instanceof ProviderTurnError); assert.equal(error.partialResult.threadId, "native:root"); assert.equal(error.partialResult.assistantText, "partial"); return true;
   });
   assert.equal(run.calls.filter((call) => call === "prompt").length, 1);
   assert.ok(run.calls.indexOf("interrupt") < run.calls.indexOf("close"));
@@ -144,7 +198,7 @@ it("OpenCode preserves partial result and does not resend after stream EOF", asy
 // distinction = "通常正常系と型は永続inboxの所有照合を検査しない"
 // @end-test-value
 it("OpenCode cancels only attributable pending inputs before the next prompt", async () => {
-  const turn = input("root"); const known = fixture(turn, { pendingInbox: true });
+  const turn = input("native:root"); const known = fixture(turn, { pendingInbox: true });
   await known.adapter.runSessionTurn(turn);
   assert.ok(known.calls.indexOf("cancel-inbox") < known.calls.indexOf("prompt"));
   for (const unknownInbox of ["synthetic", "owner-id", "incarnation"] as const) {
@@ -173,7 +227,7 @@ it("OpenCode retains its guard until actual process cleanup", async () => {
   await assert.rejects(run.adapter.runSessionTurn(turn), /terminating/);
   const sameWorkspace = input();
   await assert.rejects(run.adapter.runSessionTurn(sameWorkspace), /workspace or thread is still terminating/);
-  const sameThread = input("root");
+  const sameThread = input("native:root");
   sameThread.executionWorkspacePath = path.dirname(process.cwd());
   await assert.rejects(run.adapter.runSessionTurn(sameThread), /workspace or thread is still terminating/);
   run.release(); await pending;
@@ -293,4 +347,105 @@ it("OpenCode native conversions preserve model and permission boundaries", () =>
   assert.equal(field.type, "select");
   if (field.type === "select") assert.deepEqual(field.options, [{ value: "a", label: "A" }]);
   assert.throws(() => buildOpenCodeElicitation({ ...form, fields: [{ key: "x", type: "string", pattern: "a+" }] }, "request"));
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "旧raw threadはsource preflightとfamily移行後にnative環境で続行しnative参照を返す"
+// oracle = { type = "contract", ref = "docs/releases/README.md" }
+// fault = "旧DBの会話を移す前に送信するか移行後もraw IDを保存して次回接続先を誤る"
+// observable = "source取消・import・promptの順序、返却thread、transportのDB指定とclose"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode adapter migration orchestration"
+// lifecycle = "permanent"
+// impact = "公開済みSessionを更新後も同じ会話として続行できる"
+// distinction = "helper単体testではadapterのsource選択、preflightと送信の接続順、保存参照を検査できない"
+// @end-test-value
+it("OpenCode migrates raw threads before prompting in the native environment", async (context) => {
+  const turn = input("root");
+  const run = await migrationFixture(turn);
+  context.after(run.dispose);
+  const result = await run.adapter.runSessionTurn(turn);
+  assert.equal(result.threadId, "native:root");
+  assert.equal(result.assistantText, "final");
+  assert.ok(run.calls.indexOf("source:cancel") < run.calls.indexOf("target:import:root"));
+  assert.ok(run.calls.indexOf("target:import:root") < run.calls.indexOf("target:import:child"));
+  assert.ok(run.calls.indexOf("target:import:child") < run.calls.indexOf("target:prompt"));
+  assert.equal(run.getPrompt()?.sessionID, "root");
+  assert.equal(run.transports[0].databasePath, undefined);
+  assert.ok(run.transports[1].databasePath?.endsWith("source.db"));
+  assert.equal(run.calls.filter((call) => call === "source:close").length, 1);
+  assert.equal(run.calls.filter((call) => call === "target:close").length, 1);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "途中移行失敗はraw threadを維持し送信せず両transportを閉じ、次runで残りを移せる"
+// oracle = { type = "contract", ref = "docs/releases/README.md" }
+// fault = "移行失敗を新会話の成功へ置換するかnative参照へ早期更新して再試行不能にする"
+// observable = "ProviderTurnErrorのpartial thread、prompt不在、両transport closeと再試行結果"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode adapter migration failure recovery"
+// lifecycle = "permanent"
+// impact = "失敗後に公開済み会話の続きを失わず再試行できる"
+// distinction = "helper単体testはadapterのerror thread保存、送信停止、process終了を通らない"
+// @end-test-value
+it("OpenCode retains raw thread identity and closes both transports after migration failure", async (context) => {
+  const turn = input("root");
+  const run = await migrationFixture(turn);
+  context.after(run.dispose);
+  run.fail(true);
+  await assert.rejects(run.adapter.runSessionTurn(turn), (error: unknown) => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.partialResult?.threadId, "root");
+    return true;
+  });
+  assert.equal(run.getPrompt(), undefined);
+  assert.equal(run.calls.filter((call) => call === "source:close").length, 1);
+  assert.equal(run.calls.filter((call) => call === "target:close").length, 1);
+  run.fail(false);
+  const result = await run.adapter.runSessionTurn(turn);
+  assert.equal(result.threadId, "native:root");
+  assert.equal(run.calls.filter((call) => call === "target:import:root").length, 1);
+  assert.equal(run.calls.filter((call) => call === "target:prompt").length, 1);
+  assert.equal(run.calls.filter((call) => call === "source:close").length, 2);
+  assert.equal(run.calls.filter((call) => call === "target:close").length, 2);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "model一覧と通常turnは同じnative環境を使い保存Go keyで環境認証を上書きしない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/902" }
+// fault = "一覧だけ専用DBへ接続するか保存keyをturn環境へ投影して認証先を変える"
+// observable = "両transportへ渡すcwd・databasePath・環境keyと通常turnのnative参照"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode adapter model and turn environment consistency"
+// lifecycle = "permanent"
+// risk_tags = ["authentication"]
+// @end-test-value
+it("OpenCode model discovery and turns preserve the same native authentication environment", async () => {
+  const previousKey = process.env.OPENCODE_API_KEY;
+  process.env.OPENCODE_API_KEY = "synthetic-native-key";
+  try {
+    const turn = input();
+    turn.appSettings.codingProviderSettings.opencode = { ...turn.appSettings.codingProviderSettings.opencode, apiKey: "synthetic-saved-key" };
+    const run = fixture(turn);
+    run.client.model.default = async () => ({ location: { directory: turn.session.workspacePath }, data: (await run.client.model.list()).data[0] });
+    const transports: OpenCodeTransportOptions[] = [];
+    const adapter = new OpenCodeAdapter({ createTransport: (options) => {
+      transports.push(options);
+      return { start: async () => run.client, close: async () => {}, whenClosed: () => Promise.resolve() };
+    } });
+    await adapter.listModels({ workspacePath: turn.session.workspacePath, appSettings: turn.appSettings });
+    assert.equal((await adapter.runSessionTurn(turn)).threadId, "native:root");
+    assert.equal(transports.length, 2);
+    for (const options of transports) {
+      assert.equal(options.cwd, turn.session.workspacePath);
+      assert.equal(options.databasePath, undefined);
+      assert.equal(options.env?.OPENCODE_API_KEY, "synthetic-native-key");
+    }
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENCODE_API_KEY;
+    else process.env.OPENCODE_API_KEY = previousKey;
+  }
 });

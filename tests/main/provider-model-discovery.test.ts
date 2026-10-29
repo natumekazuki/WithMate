@@ -101,7 +101,7 @@ it("OpenCode discovery preserves enabled native provider IDs, variants and SDK d
     list: async (args: unknown) => { assert.deepEqual(args, { location }); return { data: rows }; },
     default: async () => ({ data: rows[1] }),
   } } as unknown as OpenCodeClient;
-  const adapter = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"), databasePath: path.resolve("opencode-test.db"),
+  const adapter = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"),
     createTransport: () => ({ start: async () => client, close: async () => { closed++; }, whenClosed: async () => undefined }) });
   const catalog = await adapter.listModels(input());
   assert.deepEqual(catalog.models, ["first", "second"].map((provider) => ({ id: `${provider}/shared`, label: "Label shared", sourceLabel: provider, reasoningEfforts: ["careful"], defaultReasoningEffort: "" })));
@@ -233,9 +233,9 @@ it("Claude and OpenCode discovery sanitize metadata failures and close their own
   assert.equal(claudeClosed, 1);
   let openCodeClosed = 0;
   const client = { model: { list: async () => { throw new Error("secret-token"); }, default: async () => ({ data: null }) } } as unknown as OpenCodeClient;
-  const openCode = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"), databasePath: path.resolve("opencode-test.db"),
+  const openCode = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"),
     createTransport: () => ({ start: async () => client, close: async () => { openCodeClosed++; }, whenClosed: async () => undefined }) });
-  await assert.rejects(openCode.listModels(input()), { message: "OpenCode models could not be retrieved" });
+  await assert.rejects(openCode.listModels(input()), { message: "OpenCode models could not be retrieved. Check the installed OpenCode 2.1.4 CLI and its standalone provider configuration." });
   assert.equal(openCodeClosed, 1);
 });
 
@@ -255,7 +255,7 @@ it("Model discovery rejects a catalog when owned process cleanup fails", async (
   const codex = new CodexAdapter(undefined, { createTransport: () => codexTransport(async () => ({ data: [codexModel("model")], nextCursor: null }), async () => { throw new Error("secret-token"); }) });
   await assert.rejects(codex.listModels(input()), { message: "Codex model discovery process cleanup failed" });
   const client = { model: { list: async () => ({ data: [openCodeModel("model", "provider")] }), default: async () => ({ data: null }) } } as unknown as OpenCodeClient;
-  const openCode = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"), databasePath: path.resolve("opencode-test.db"),
+  const openCode = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"),
     createTransport: () => ({ start: async () => client, close: async () => { throw new Error("secret-token"); }, whenClosed: async () => undefined }) });
   await assert.rejects(openCode.listModels(input()), { message: "OpenCode model discovery process cleanup failed" });
   const copilotClient = { start: async () => undefined, listModels: async () => [copilotModel("model")], stop: async () => [new Error("secret-token")],
@@ -295,7 +295,7 @@ it("All provider discovery adapters return a successful empty catalog with clean
       list: async () => ({ data: filteredOnly ? [openCodeModel("disabled", "provider", false)] : [] }),
       default: async () => { defaultCalls++; throw new Error("No default model exists"); },
     } } as unknown as OpenCodeClient;
-    const opencode = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"), databasePath: path.resolve("opencode-test.db"),
+    const opencode = new OpenCodeAdapter({ executable: path.resolve("opencode-test.exe"),
       createTransport: () => ({ start: async () => openCodeClient, close: async () => { closed.opencode++; }, whenClosed: async () => undefined }) });
     for (const adapter of [codex, claude, copilot, opencode]) {
       const catalog = await adapter.listModels(input());

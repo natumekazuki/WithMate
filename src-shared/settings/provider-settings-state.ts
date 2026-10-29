@@ -347,6 +347,9 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         providerSettingsValue,
         normalizedProviderId === DEFAULT_PROVIDER_ID,
       );
+      if (normalizedProviderId === "opencode") {
+        codingProviderSettings[normalizedProviderId].apiKey = "";
+      }
     }
   }
   if (rawMemoryExtractionProviderSettings) {

@@ -8,6 +8,13 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { OpenCodeTransport, parseOpenCodeServerUrl } from "../../src-electron/providers/opencode/opencode-transport.js";
 import type { ProviderProcessLaunchOptions } from "../../src-electron/providers/owned-process.js";
+import type { resolveOpenCodeEnvironment } from "../../src-electron/providers/opencode/opencode-environment.js";
+
+const resolveEnvironment: typeof resolveOpenCodeEnvironment = async options => ({
+  executable: options.executable ?? process.execPath,
+  databasePath: options.env?.OPENCODE_DB ?? path.join(options.cwd, "native.sqlite"),
+  env: options.env ?? {},
+});
 
 // @test-value v2
 // kind = "invariant"
@@ -30,8 +37,8 @@ test("OpenCode startup URL is restricted to owned IPv4 loopback", () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "専用DBの起動を直列化し、clientはランダムpasswordで認証し、通常設定を引き継ぎ、実closeだけでwhenClosedを解放する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
+// claim = "同じDBの起動を直列化し、native DB指定を追加せず、clientはランダムpasswordで認証し、通常設定を引き継ぎ、実closeだけでwhenClosedを解放する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/902" }
 // fault = "DB bootstrapを並行開始する、global passwordを継承する、通常設定を失う、cleanup timeoutで終了確認を成立させる"
 // observable = "spawn options、HTTP Authorization、spawn回数、close失敗とwhenClosed未解決後の実close解決"
 // observation_boundary = "public-boundary"
@@ -62,8 +69,9 @@ test("OpenCode authenticates, serializes bootstrap and preserves cleanup confirm
   };
   const options = { executable: process.execPath, cwd: directory, databasePath: path.join(directory, "native.sqlite"),
     env: { OPENCODE_CONFIG: "project.json", OPENCODE_CONFIG_CONTENT: "secret-config", OPENCODE_SERVER_PASSWORD: "inherited" }, closeTimeoutMs: 5 };
-  const first = new OpenCodeTransport(options, { spawnOwnedProcess });
-  const second = new OpenCodeTransport(options, { spawnOwnedProcess });
+  const first = new OpenCodeTransport(options, { spawnOwnedProcess, resolveEnvironment });
+  const second = new OpenCodeTransport(options, { spawnOwnedProcess, resolveEnvironment });
+  const native = new OpenCodeTransport({ cwd: directory, env: options.env, closeTimeoutMs: 5 }, { spawnOwnedProcess, resolveEnvironment });
   try {
     const one = first.start();
     const two = second.start();
@@ -82,6 +90,12 @@ test("OpenCode authenticates, serializes bootstrap and preserves cleanup confirm
     assert.notEqual(env.OPENCODE_SERVER_PASSWORD, launches[1].env!.OPENCODE_SERVER_PASSWORD);
     assert.equal(auth[0], `Basic ${Buffer.from(`opencode:${env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}`);
     assert.ok(first.secrets.includes(env.OPENCODE_SERVER_PASSWORD!));
+    const nativeStart = native.start();
+    while (children.length < 3) await new Promise(resolve => setTimeout(resolve, 1));
+    (children[2].stdout as PassThrough).write(JSON.stringify({ url: `http://127.0.0.1:${address.port}` }) + "\n");
+    await nativeStart;
+    assert.equal(Object.hasOwn(launches[2].env!, "OPENCODE_DB"), false);
+    assert.equal(launches[2].env!.OPENCODE_CONFIG_CONTENT, options.env.OPENCODE_CONFIG_CONTENT);
     let confirmed = false;
     void first.whenClosed().then(() => { confirmed = true; });
     await assert.rejects(first.close(), /cleanup failed/);
@@ -91,9 +105,11 @@ test("OpenCode authenticates, serializes bootstrap and preserves cleanup confirm
     assert.equal(confirmed, true);
     children[1].emit("close", 0, null);
     await second.whenClosed();
+    children[2].emit("close", 0, null);
+    await native.whenClosed();
   } finally {
     for (const child of children) child.emit("close", 0, null);
-    await Promise.allSettled([first.close(), second.close()]);
+    await Promise.allSettled([first.close(), second.close(), native.close()]);
     await new Promise<void>(resolve => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
   }
@@ -123,6 +139,7 @@ test("OpenCode startup failures are handled and release owned processes", async 
       let released = 0;
       const transport = new OpenCodeTransport({ executable: process.execPath, cwd: directory,
         databasePath: path.join(directory, `${event}.sqlite`), closeTimeoutMs: 500 }, {
+        resolveEnvironment,
         spawnOwnedProcess: () => {
           const child = new ChildProcess() as ChildProcessWithoutNullStreams;
           Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
@@ -150,4 +167,28 @@ test("OpenCode startup failures are handled and release owned processes", async 
     process.off("unhandledRejection", onUnhandled);
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "native環境の解決失敗はserverを起動せず所有外processを停止せずに利用側へ失敗を返す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/902" }
+// fault = "version不一致の環境解決失敗後にserverを起動するかcleanup対象を勝手に取得する"
+// observable = "startのreject、owned spawn呼出数、whenClosedの解決"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode native environment preflight"
+// lifecycle = "permanent"
+// impact = "対応外CLIによる既存DB変更やPC側processの停止が起きる"
+// distinction = "型検査では非同期環境解決失敗時のprocess副作用を検出できず、fake境界で高速に検証する"
+// @end-test-value
+test("OpenCode environment failure does not acquire a server process", async () => {
+  let spawned = 0;
+  const failure = new Error("OpenCode CLI 2.1.4 is required.");
+  const transport = new OpenCodeTransport({ cwd: process.cwd() }, {
+    resolveEnvironment: async () => { throw failure; },
+    spawnOwnedProcess: () => { spawned++; throw new Error("Unexpected spawn"); },
+  });
+  await assert.rejects(transport.start(), error => error === failure);
+  await transport.whenClosed();
+  assert.equal(spawned, 0);
 });
