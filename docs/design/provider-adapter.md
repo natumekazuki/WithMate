@@ -88,13 +88,13 @@ providerごとの差は次。
   - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。token / cache usageは通常turn単位で扱う。API換算USDは実請求額として表示しない。認証先と利用枠の対応は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
 
 - `OpenCodeAdapter`
-  - PATH上の公式CLIと同梱`@opencode/client`の対応版は厳密に`2.1.4`とする。`--version`をDBを開く前に照合し、不一致では停止する。既存DBをdowngradeせず、同梱CLIへの自動fallbackもしない。一覧取得・turn実行は公式standalone相当の`serve --stdio --hostname 127.0.0.1 --port 0`を起動し、stdioの起動通知でloopback URLを検証する。Mainが生成したpasswordによるHTTP認証後にもserver版を照合する。共有serviceへ接続・変更・停止は行わない。Codexと共通の`providers/owned-process.ts`がWindows Job Object／POSIX process groupを所有し、cleanup未確認中は同一Session・workspace・threadの再実行を止める
+  - PATH上の公式CLIと同梱`@opencode/client`の対応版は厳密に`2.2.1`とする。`--version`をDBを開く前に照合し、不一致では停止する。既存DBをdowngradeせず、同梱CLIへの自動fallbackもしない。一覧・quota取得・turn実行は公式standalone相当の`serve --stdio --hostname 127.0.0.1 --port 0`を起動し、stdioの起動通知でloopback URLを検証する。Mainが生成したpasswordによるHTTP認証後にもserver版を照合する。共有serviceへ接続・変更・停止は行わない。Codexと共通の`providers/owned-process.ts`がWindows Job Object／POSIX process groupを所有し、cleanup未確認中は同一Session・workspace・threadの再実行を止める
   - native DBは同じCLI・起動元環境の`debug paths db`で解決し、Main内でbootstrapを直列化する。DBの所有者はOpenCodeであり、adapterから直接SQLを実行しない。PATH／HOME、native global／project設定、AGENTS、skills、第三者MCPと既存のAPI key／OAuth認証を読み込む。service専用のmanaged環境変数はstandaloneには適用されず、必要な認証は起動元環境またはstandalone側へ利用者が設定する
   - 共通promptの`logicalPrompt.composedText`を毎turn送る。保存済みの明示thread IDを取得し、root・workspace・既存incarnation由来のownerを照合する。未配送inboxは同ownerとrequest IDを確認できる旧入力だけをcancelし、未知ownerや取消未確認はエラーにする。入力の自動再送やstale threadの自動resetはしない
   - event接続を確認してからpromptを1回だけ送る。admissionを完了とせず、当該入力の配送、root execution終端とmessageのidle outcomeを照合する。text deltaは確定messageで補正し、tool・usageはnative IDで重複を除く。失敗・取消では取得済み本文・操作・threadをpartial resultとして返す
   - 選択済みの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。Depth未指定はvariantを渡さない。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
   - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
-  - token／contextは実取得値を投影する。対応する公式quota APIはないためquota取得は`null`を返し、Mainの非永続cacheでは`unsupported`として扱う。残量0・100%やreadyへ変換せず、独自Go HTTP APIやcredential読出しは行わない。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
+  - token／contextは実取得値を投影する。quotaは公式`experimental.usage.limits`のGo枠だけを取得し、Mainの非永続cacheへ保持する。Go枠なしの正常応答は`null`から`unsupported`へ投影し、取得失敗とは区別する。独自Go HTTP APIやcredential読出しは行わない。詳細は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
 
 ## Provider実行とManaged MCP
 
@@ -175,7 +175,7 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 - sessionごとにprovider固有の会話IDを保持する。Codexはturnごとの新しいApp Serverで保存済み`threadId`を`thread/resume`へ渡し、未作成時は`thread/start`する。Claudeは同じ保存fieldの明示IDをSDK `resume`へ渡し、未作成時は新規`query()`を使う。OpenCodeは明示IDの`session.get()`、未作成時は`session.create()`を使う
 - Codexの`thread/resume`には`excludeTurns: true`を指定し、WithMateが利用しない過去turnの一括返送を省く。Codex側の会話履歴と保存済みIDは維持し、再開後の通知を処理する。新規`thread/start`には指定しない
 - 実行後にproviderが返した会話IDをsession storeへ保存する
-- OpenCodeはnative DB上のthread参照を`native:<ID>`として保存し、再開時に同じnative ID・workspace・incarnation由来のownerを照合する。公開済み`v6.3.29-preview.20`／`v6.3.29-preview.21`のWithMate専用DBにあるraw IDは、同梱CLI `2.1.4`で旧DBを開き、rootと全childを公式export／importでnative DBへ移す。ID、親子関係、owner、履歴を保持し、成功後にnative参照を保存する。旧DBとWithMateの会話は保持し、credentialを移さない。source／targetのowner・workspace・ID不一致、未解消pending、active thread、移行・再開失敗では送信せず明示エラーにし、新規threadを作って成功に置換しない
+- OpenCodeはnative DB上のthread参照を`native:<ID>`として保存し、再開時に同じnative ID・workspace・incarnation由来のownerを照合する。公開済み`v6.3.29-preview.20`／`v6.3.29-preview.21`のWithMate専用DBにあるraw IDは、同梱CLI `2.2.1`で旧DBを開き、rootと全childを公式export／importでnative DBへ移す。ID、親子関係、owner、履歴を保持し、成功後にnative参照を保存する。旧DBとWithMateの会話は保持し、credentialを移さない。source／targetのowner・workspace・ID不一致、未解消pending、active thread、移行・再開失敗では送信せず明示エラーにし、新規threadを作って成功に置換しない
 - model または reasoning depth を変更した場合も、その session の `threadId` は維持し、次回 turn は送信された runtime parameter で既存 thread / session の resume を試す
 - Codexは毎turnの`thread/start` / `thread/resume`と`turn/start`へ送信時の実行optionを渡す
 - Codex / Copilotのcoding credentialは`AppSettings.codingProviderSettings[providerId].apiKey`から解決する。Codexは設定値を優先し、未設定時は継承した`CODEX_API_KEY`を使う。キーがある場合だけApp Serverを`cli_auth_credentials_store="ephemeral"`で起動し、initialize後の`account/login/start`へ渡す。認証はprocess内に限定し、保存済みCLI認証を変更しない。キーがなければ既存CLI認証を使う。CopilotはSDK clientへ渡す。Claudeは既存CLI認証をSDKに任せ、WithMateのcredential設定へ取り込まない

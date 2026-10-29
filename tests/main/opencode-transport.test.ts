@@ -55,7 +55,7 @@ test("OpenCode authenticates, serializes bootstrap and preserves cleanup confirm
   const server = createServer((request, response) => {
     auth.push(request.headers.authorization ?? "");
     response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ version: "2.1.4", pid: 1, urls: [], paths: { tmp: directory } }));
+    response.end(JSON.stringify({ version: "2.2.1", pid: 1, urls: [], paths: { tmp: directory } }));
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -183,7 +183,7 @@ test("OpenCode startup failures are handled and release owned processes", async 
 // @end-test-value
 test("OpenCode environment failure does not acquire a server process", async () => {
   let spawned = 0;
-  const failure = new Error("OpenCode CLI 2.1.4 is required.");
+  const failure = new Error("OpenCode CLI 2.2.1 is required.");
   const transport = new OpenCodeTransport({ cwd: process.cwd() }, {
     resolveEnvironment: async () => { throw failure; },
     spawnOwnedProcess: () => { spawned++; throw new Error("Unexpected spawn"); },

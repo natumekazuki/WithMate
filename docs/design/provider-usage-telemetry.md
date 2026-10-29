@@ -10,13 +10,13 @@ Mainはproviderごとの同時取得を重複抑止する。WithMateの認証設
 
 未取得は`null`、取得中は`loading`、成功は`ready`、失敗は`error`、契約枠の適用外または取得未対応は`unsupported`とする。失敗時も最終成功値とその`updatedAt`を保持し、成功前の`updatedAt`は`null`にする。失敗直後のturn終端などでは再試行せず、当該取得開始から5分後以降に再試行する。取得不能を使用率0・残量100%・無制限へ変換しない。raw errorや認証情報はtelemetryへ載せない。
 
-Copilotの件数snapshotと、Codex・Claudeの`rateLimits`を分ける。後者は取得元の窓ID、0〜100の使用率、取得できる期間・reset時刻を持ち、総件数や未返却の窓・resetを補完しない。OpenCodeは対応する公式quota APIがないため`unsupported`を返し、契約残量を表示しない。
+Copilotの件数snapshotと、Codex・Claude・OpenCode Goの`rateLimits`を分ける。後者は取得元の窓ID、0〜100の使用率、取得できる期間・reset時刻を持ち、総件数や未返却の窓・resetを補完しない。
 
 ## 共通の残量表示
 
-HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率をcompactな横並びで表示する。監視一覧のscrollとは独立し、幅が足りなければproviderや期間表示の単位で折り返す。期間名と割合は分断しない。直下のclick専用splitterで残量一覧を開閉し、非表示でもcomponentとcache購読を維持して再表示へ反映する。詳細はprovider別popupで確認する。Session WindowはAction Dockの最上段操作欄に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭に置き、専用段は追加しない。常時表示ではprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。残量部分の幅が足りない場合はその部分だけ横scrollでき、keyboardからも到達できる。操作欄全体が収まらない狭幅では既存操作の折り返しを許容する。
+HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率をcompactな横並びで表示する。監視一覧のscrollとは独立し、幅が足りなければproviderや期間表示の単位で折り返す。期間名と割合は分断しない。直下のclick専用splitterで残量一覧を開閉し、非表示でもcomponentとcache購読を維持して再表示へ反映する。詳細はprovider別popupで確認する。Session WindowはAction Dockの最上段操作欄に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭に置き、専用段は追加しない。常時表示ではOpenCode Goを除くprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。残量部分の幅が足りない場合はその部分だけ横scrollでき、keyboardからも到達できる。操作欄全体が収まらない狭幅では既存操作の折り返しを許容する。
 
-`src/provider-usage/`がcache購読、残率projection、一覧と詳細popupを所有する。使用率は`100 - usedPercentage`へ変換し、既存の`remainingPercentage`はそのまま使う。不正値は`—`とし、0／100／無制限を推測しない。Codexの標準bucketとClaudeの5時間・週間を通常表示し、追加bucket・モデル別枠は詳細に分離する。OpenCodeは`—`と詳細の`Not Supported`を表示し、Goを含む契約残量を補完しない。詳細ではGoと他の接続先の契約残量が取得未対応であること、turnのtoken／costは残量を表さないことを説明する。CopilotはAI credits系を優先し、premium系等の主snapshotを通常表示する。返却されない期間を追加せず、別枠の合算をしない。
+`src/provider-usage/`がcache購読、残率projection、一覧と詳細popupを所有する。使用率は`100 - usedPercentage`へ変換し、既存の`remainingPercentage`はそのまま使う。不正値は`—`とし、0／100／無制限を推測しない。Codexの標準bucketとClaudeの5時間・週間を通常表示し、追加bucket・モデル別枠は詳細に分離する。OpenCode Goは5時間・週間・月間を通常表示する。月間は固定日数へ置換せず`Monthly`とする。CopilotはAI credits系を優先し、premium系等の主snapshotを通常表示する。返却されない期間を追加せず、別枠の合算をしない。
 
 詳細popupの通常表示はprovider、各枠の残率、有効なreset時刻に絞る。未取得のreset欄、繰り返しのRemaining label、取得経路の説明、通常時の更新日時は表示しない。未取得・loading・適用外・失敗は短い状態表示で識別し、失敗時に前回値があれば値・失敗indicator・前回値であること・最終成功時刻を併記する。cache read失敗時はRetryを維持する。詳細はkeyboardで開閉できる。
 
@@ -24,15 +24,15 @@ HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効
 
 - Codexは短命なApp Serverで`account/rateLimits/read`だけを呼び、thread・model turn・loginを作らない。複数bucketの応答を優先し、窓長は返却値を使う。WithMateまたは環境変数の`CODEX_API_KEY`が指定されている場合はChatGPT契約枠の適用外とし、既存ChatGPTログインへの切替取得をしない。[公式RPC仕様](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)に従う。
 - Claudeは固定SDKの`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`を空のstreaming inputで呼ぶ。モデルprompt、tools、MCP、hooks、session保存を使わず、managed設定がある場合は起動前に拒否する。5時間・週間・モデル別週間窓を投影し、`rate_limits_available: false`は適用外、有効な観測値のない不正応答は失敗とする。実験APIのため、固定SDK更新時には取得契約を再確認する。
-- OpenCodeは公式CLI／client `2.1.4`に対応するquota取得APIがないため、adapterは`null`を返す。Mainの有効化・周期取得経路でこれを`unsupported`へ投影し、`updatedAt: null`、空の`snapshots`とし、rate limitを生成しない。独自Go HTTP API、credential読出し、model／CLI process／Session起動は行わない。取得不能をready・残量0・残量100%へ置換しない。
+- OpenCodeは公式CLI／client `2.2.1`の`experimental.usage.limits`を短命なnative processで取得する。起動元の`process.cwd()`をlocationに使い、認証とConsole workspaceの解決はOpenCodeへ任せる。独自Go HTTP API、credential読出し、Session作成・model実行は行わない。正常応答の`go`だけを投影し、Console予算は含めない。応答の`data`が`null`または`go`がなければadapterは`null`を返し、Mainは空の`unsupported`へ投影する。API失敗・不正な使用率やreset・process cleanup失敗は取得失敗とする。実験APIのため固定版更新時には取得契約を再確認する。
 
-Codex・Claude・OpenCodeの実行中の部分通知はapp-wide cacheへ接続しない。workspaceごとに認証先が異なり得ることや、部分窓・単位を保証できないことから、Codex・Claudeは独立取得の完全snapshotを正本とする。OpenCodeは未対応の状態を維持する。通知のためだけの常駐processは作らない。
+Codex・Claude・OpenCodeの実行中の部分通知はapp-wide cacheへ接続しない。workspaceごとに認証先が異なり得ることや、部分窓・単位を保証できないことから、独立取得の完全snapshotを正本とする。通知のためだけの常駐processは作らない。
 
 ## OpenCodeの実行経路と契約枠
 
-WithMateの`opencode`は実行経路を表し、`opencode-go/...`、`opencode/...`、`openai/...`等のnative接続先を含む。OpenCode GoはConsoleのworkspace・memberに紐づく契約サービスであり、OpenCode経由の全接続先の使用量・残量ではない。[公式Go仕様](https://opencode.ai/v2/docs/console/go/)が示すGoの利用枠と、他接続先の契約残量を合算・相互代用しない。Goの5時間・週間・月間の`percent`は各窓のallowance使用率、`resetsAt`はreset時刻であり、残率やtoken数ではない（[上流schema](https://github.com/anomalyco/opencode/blob/82666b6612cdb2ba13a7a26e150b21e897a80373/packages/schema/src/usage-limits.ts)）。
+WithMateの`opencode`は実行経路を表し、`opencode-go/...`、`opencode/...`、`openai/...`等のnative接続先を含む。OpenCode GoはConsoleのworkspace・memberに紐づく契約サービスであり、OpenCode経由の全接続先の使用量・残量ではない。[公式Go仕様](https://opencode.ai/v2/docs/console/go/)が示すGoの利用枠と、他接続先の契約残量を合算・相互代用しない。Goの5時間・週間・月間の`percent`は各窓のallowance使用率、`resetsAt`はreset時刻であり、残率やtoken数ではない（[上流schema](https://github.com/anomalyco/opencode/blob/3ebcf9a32c7b28f658cfee80775448929361727a/packages/schema/src/usage-limits.ts)）。
 
-現在はGoを含む契約残量を取得しないため、MonitorとAction Dockのquota名は実行経路の`OpenCode`を維持する。選択modelやMain／Auxiliaryによらず同providerのapp-wideな未対応状態を表示し、Go契約の有無や認証の成否を推測しない。Goの値を全接続先の残量へ流用するprojectionは持たない。turnごとに取得できたtoken／costとSession contextは実行結果の観測であり、この未対応状態から補完せず、契約枠へ換算しない。
+MonitorとAction Dockのquota名は`OpenCode Go`と明示し、Action Dockでもこの名前を省略しない。実行provider名の`OpenCode`は変更しない。正常取得でGo枠が返らない場合だけquota行・詳細入口を非表示にし、購読は維持する。未取得・loading・取得失敗は枠なしと判定せず、既存の状態表示と失敗時の前回値保持を使う。Go以外のmodel選択だけで枠を消さず、Main／Auxiliaryで同じapp-wide cacheを参照する。各Sessionのproject設定で接続する全accountの残量を示すものではなく、他接続先へGo残量を流用しない。turnのtoken／costとSession contextは実行結果の観測であり、Go契約枠へ換算しない。
 
 ## Copilotの取得と更新
 

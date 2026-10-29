@@ -13,7 +13,7 @@ import type { ProviderQuotaApi } from "../../src/provider-usage/use-provider-quo
 
 function quota(provider = "codex", used = 20): ProviderQuotaTelemetry {
   return { provider, updatedAt: "2026-10-17T05:00:00Z", snapshots: [], status: "ready",
-    rateLimits: [{ quotaKey: provider === "claude" ? "five_hour" : "codex:primary", usedPercentage: used, windowDurationMinutes: 300 }] };
+    rateLimits: [{ quotaKey: provider === "claude" ? "five_hour" : provider === "opencode" ? "rolling" : "codex:primary", usedPercentage: used, windowDurationMinutes: 300 }] };
 }
 
 function deferred<T>() {
@@ -60,14 +60,21 @@ test("quotaは残率に統一し未知値と追加枠を分離する", () => {
   ] }).map(({ remaining, summary }) => [remaining, summary]), [["80%", false], ["65%", true], ["—", false]]);
   assert.deepEqual(projectQuotaRemaining(null), []);
   assert.deepEqual(projectQuotaRemaining({ provider: "opencode", updatedAt: null, snapshots: [], status: "unsupported" }), []);
+  const go = quota("opencode", 100);
+  go.rateLimits!.push(
+    { quotaKey: "weekly", usedPercentage: 25, windowDurationMinutes: 10080 },
+    { quotaKey: "monthly", label: "Monthly", usedPercentage: 0, resetDate: "2026-11-01T00:00:00Z" },
+  );
+  assert.deepEqual(projectQuotaRemaining(go).map(({ label, remaining, summary }) => [label, remaining, summary]),
+    [["5h", "0%", true], ["7d", "75%", true], ["Monthly", "100%", true]]);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "quota UIはcacheだけを購読し、通知優先とprovider切替の失効を守り、前回値・失敗・適用外を区別し、OpenCodeではGo等の契約残量とturn使用量を区別する"
+// claim = "quota UIは通知優先とprovider切替の失効を守り、OpenCode Goを明示して正常な枠なしだけを非表示にし、未取得・loading・失敗・前回値を区別する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
-// fault = "遅い初回readや旧provider通知が現在値を巻き戻す、Window表示やfocusでremote取得を要求する、失敗や適用外を100%と表示する、OpenCodeの未対応範囲がGoやturn使用量と混同される"
-// observable = "表示残率・popupの期間別残率/reset/前回値状態と時刻・不明表示・error indicator・OpenCodeの未対応範囲説明・cacheOnly引数・購読解除"
+// fault = "旧通知が現在値を巻き戻す、Window表示でremote取得する、Go失敗を枠なしとして隠す、Go枠が返った後も再表示しない、Goのlabelを省く"
+// observable = "表示残率・popupのreset/前回値/時刻・Go名と枠なし時のDOM不在・loading/error indicator・cacheOnly引数・購読解除"
 // observation_boundary = "component-behavior"
 // scope = "ProviderQuotaのsnapshot/通知/切替/unmount lifecycle"
 // lifecycle = "permanent"
@@ -136,16 +143,25 @@ test("quota UIは通知と送信先を優先し、失敗時も値と状態を区
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
 
     await act(async () => root.render(<ProviderQuota api={api} providerId="opencode" />));
-    assert.ok(element.querySelector('[aria-label="OpenCode quota update failed"]'));
-    assert.equal(element.querySelector(".provider-quota-note"), null);
+    assert.ok(element.querySelector('[aria-label="OpenCode Go quota update failed"]'));
     await emit("opencode", { provider: "opencode", updatedAt: null, snapshots: [], status: "unsupported" });
+    assert.equal(element.childElementCount, 0);
+    assert.equal(listeners.size, 1);
+    await emit("opencode", { provider: "opencode", updatedAt: null, snapshots: [], status: "loading" });
+    assert.ok(element.querySelector('[aria-label="OpenCode Go quota loading"]'));
+    await emit("opencode", null);
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
-    assert.equal(element.querySelector(".provider-quota-values span")?.getAttribute("title"), "Not Supported");
-    assert.equal(element.querySelector('[aria-label="OpenCode quota update failed"]'), null);
-    const openCodeDetail = element.querySelector('[aria-label="OpenCode quota details"][popover]')!;
-    assert.equal(openCodeDetail.querySelector("h3")?.textContent, "OpenCode");
-    assert.match(openCodeDetail.querySelector(".provider-quota-note")?.textContent ?? "", /OpenCode Go and other connected services/);
-    assert.match(openCodeDetail.querySelector(".provider-quota-note")?.textContent ?? "", /Per-turn token and cost usage does not indicate remaining quota/);
+    assert.match(element.querySelector("[popover]")?.textContent ?? "", /Not Yet Available/);
+    await emit("opencode", quota("opencode", 100));
+    assert.equal(element.querySelector(".provider-quota-name")?.textContent, "OpenCode Go");
+    assert.equal(element.querySelector(".provider-quota-values")?.textContent, "5h 0%");
+    assert.equal(element.querySelector('[aria-label="OpenCode Go quota details"][popover] h3')?.textContent, "OpenCode Go");
+    await emit("opencode", { ...quota("opencode", 100), status: "error" });
+    assert.equal(element.querySelector(".provider-quota-values")?.textContent, "5h 0%");
+    assert.ok(element.querySelector('[aria-label="OpenCode Go quota update failed"]'));
+    assert.match(element.querySelector("[popover]")?.textContent ?? "", /Update Failed · Previous Values/);
+    await emit("opencode", { provider: "opencode", updatedAt: null, snapshots: [], status: "unsupported" });
+    assert.equal(element.childElementCount, 0);
     assert.deepEqual(reads.at(-1), ["opencode", { cacheOnly: true }]);
   } finally {
     await act(async () => root.unmount());
