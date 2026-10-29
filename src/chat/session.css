@@ -4436,6 +4436,7 @@
 }
 
 .session-turn-queue-status .drawer-toggle {
+  width: auto;
   min-height: 28px;
 }
 
@@ -4445,11 +4446,12 @@
   margin-right: 4px;
 }
 
-.session-turn-queue-move-button {
+.session-turn-queue-status .drawer-toggle.session-turn-queue-move-button {
   display: inline-grid;
   place-items: center;
   width: 28px;
-  padding: 4px;
+  height: 28px;
+  padding: 0;
 }
 
 .session-turn-queue-status:focus-visible,

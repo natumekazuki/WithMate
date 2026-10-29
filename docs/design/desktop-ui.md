@@ -478,7 +478,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - right pane は run 中の command 安全確認面として扱い、full timeline や `Turn Inspector` は常設しない
 - 実行中は上段に `Cancel` を表示する。下段の主ボタンはMain／Auxiliaryとも常に単一の `Send` とし、入力欄を編集可能に保つ。通常送信shortcutも同じ永続受付を使い、実行中は次Turnを予約する。現在Turnが追加入力を受け付けないproviderや取消終了待ちでも予約を受け付け、実guard解放まで開始しない。quit／closeの入力凍結中は送信と添付を無効にする
 - Codexの現在Turnが入力受付可能な間はチャットの予約項目に `Steer` を表示する。捕捉した本文・添付を同じTurnへ一度だけ送り、開始準備中・取消中・終了後の操作を新Turnへ振り替えない。追加入力は実行中Turnの設定を維持する。独立した追加入力shortcutは現在のComposer下書きを直接送り、通常Sendとは混在させない
-- 予約は通常のuser bubbleとして現在Turnの応答より後へ保存済み実行順に置く。初期は受付順とし、Main／Auxiliaryとも未開始項目の`Move Up`／`Move Down`で1件ずつ移動できる。本文を主役にし、下部に右寄せの上下icon、個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順は上から下への配置で示し、開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅では操作を折り返し、本文を縮小しない
+- 予約は通常のuser bubbleとして現在Turnの応答より後へ保存済み実行順に置く。初期は受付順とし、Main／Auxiliaryとも未開始項目の`Move Up`／`Move Down`で1件ずつ移動できる。本文を主役にし、下部に右寄せの上下icon、個別`Cancel`と、利用可能な時だけ`Steer`を添える。待機順は上から下への配置で示し、開始・実行中の状態文字は表示しない。空queueに専用sectionは出さず、通常履歴と別のreceipt一覧や重複本文も表示しない。狭幅でも操作buttonは内容に合う幅を保ち、収まらない時だけ操作行を折り返す。本文を縮小しない
 - 上下操作はTabで到達しEnter／Spaceで実行できる。対象と方向のaccessible name、visible focus、busy stateを維持し、端を越える方向、read-only／入力凍結中は無効にする。保存後も先頭との入れ替えを含めて移動対象へfocusを保ち、端へ移動して元buttonが無効になった場合は同じ項目の操作groupへfocusを置く。待機中に利用者が別controlへ移したfocusは奪わない。保存済みの変更後位置はaccessible statusで通知する。受付IDと本文の対応は変えず、現在Turnへの入力・質問回答・取消とは別操作にする
 - 並べ替え中は取得済みの順序を保ち、保存確定後に反映する。追加・取消・開始等で待機列が変わっていたら変更せず、最新列を再取得して再操作を案内する。保存失敗・応答不明では成功表示や自動再送をせず、取得済み本文を保持して再取得手段を示す。開始済み項目と確定履歴は移動しない
 - 失敗・結果不明は対象bubbleに状態と理由を示し、必要な回復操作だけを近接表示する。結果不明の`Release Later Turns`は元要求を再実行しない。queue取得・操作の失敗は取得済み本文を保ち、理由と`Retry Queue`を表示する。受付応答が不明ならComposerに`Check Receipt`／同じIDの明示再試行を提示し、新しいIDへ自動置換しない。受付ACKは一致するdraft revisionだけを消す
