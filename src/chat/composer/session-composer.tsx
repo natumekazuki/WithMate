@@ -1,9 +1,7 @@
-import { useEffect, useId, useRef, useState, type ClipboardEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ClipboardEventHandler, type KeyboardEventHandler, type ReactNode, type RefObject } from "react";
 
 import { type MessageViewMode } from "../../ui/markdown/MessageRichText.js";
 
-import { focusRovingItemByKey } from "../../ui/a11y.js";
-import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import type { ApprovalMode } from "../../../src-shared/settings/approval-mode.js";
 import { getApprovalReviewerOptionsForProvider } from "../../../src-shared/settings/provider-runtime-options.js";
@@ -22,6 +20,7 @@ import { ComposerIcon } from "./composer-icon.js";
 import { ComposerErrorDetails } from "./composer-error-details.js";
 import { ComposerSettingSelect } from "./composer-setting-select.js";
 import { ModelPicker } from "./model-picker.js";
+import { CustomAgentPicker, type SessionCustomAgentItem } from "./custom-agent-picker.js";
 import type { ModelSelectOption } from "../../settings/model-select-options.js";
 import type { ModelCatalogItem } from "../../../src-shared/settings/model-catalog.js";
 import { useComposerController, type ComposerControllerRegistry, type ComposerOwner } from "../../chat/composer-controller.js";
@@ -38,15 +37,6 @@ export type SessionSelectOption = {
   label: string;
   sourceLabel?: string;
   disabled?: boolean;
-};
-
-type SessionCustomAgentItem = {
-  key: string;
-  value: string | null;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-  isSelected: boolean;
 };
 
 export type SessionSkillItem = {
@@ -68,6 +58,7 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
+  isActive?: boolean;
   directoryScopeLabel?: string;
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
   onRetryComposerSave?: () => void;
@@ -144,6 +135,7 @@ export type SessionComposerExpandedProps = {
   onPickSessionFolder?: () => void;
   onPickSessionImage?: () => void;
   onToggleAgentPicker: () => void;
+  onCloseAgentPicker?: () => void;
   onToggleSkillPicker: () => void;
   onOpenPromptTemplates?: () => void;
   onAddAdditionalDirectory: (directoryPath?: string) => void | Promise<void>;
@@ -170,6 +162,7 @@ export type SessionComposerExpandedProps = {
 };
 
 export function SessionComposerExpanded({
+  isActive = true,
   composerController,
   onRetryComposerSave,
   isRunning,
@@ -245,6 +238,7 @@ export function SessionComposerExpanded({
   onPickSessionFolder = () => {},
   onPickSessionImage = () => {},
   onToggleAgentPicker,
+  onCloseAgentPicker = onToggleAgentPicker,
   onToggleSkillPicker,
   onOpenPromptTemplates = () => {},
   onAddAdditionalDirectory,
@@ -281,7 +275,7 @@ export function SessionComposerExpanded({
   const composerFrozen = composerController?.registry.isFrozen === true;
   const composerSaveFailed = composerControllerState.saveState === "error";
   const canQueueTurn = isRunning && !!onQueueTurn;
-  const composerControlsDisabled = composerBlocked || composerFrozen || (isRunning && !canQueueTurn);
+  const composerControlsDisabled = !isActive || composerBlocked || composerFrozen || (isRunning && !canQueueTurn);
   const turnRecoveryBusyReason = turnRecoveryAction === "check" ? "Checking turn acceptance."
     : turnRecoveryAction === "retry" ? "Retrying the original turn." : "";
   const projectedComposerSendability = composerController
@@ -345,7 +339,6 @@ export function SessionComposerExpanded({
       ? "composer-sendability-feedback"
       : undefined,
   ].filter(Boolean).join(" ") || undefined;
-  const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const approvalSelectRef = useRef<HTMLSelectElement>(null);
   const approvalDialogRef = useRef<HTMLDialogElement>(null);
@@ -387,21 +380,15 @@ export function SessionComposerExpanded({
   };
 
   useEffect(() => {
-    if (!showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
+    if (!isActive || !showAttachmentControls || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen) {
       setIsAttachmentMenuOpen(false);
     }
-  }, [canSendInput, composerBlocked, composerFrozen, isRunning, onQueueTurn, showAttachmentControls]);
+  }, [isActive, canSendInput, composerBlocked, composerFrozen, isRunning, onQueueTurn, showAttachmentControls]);
 
+  useLayoutEffect(() => setIsAttachmentMenuOpen(false), [errorOwnerKey]);
   useEffect(() => {
-    if (!isAgentPickerOpen) {
-      return;
-    }
-
-    const nextFocusTarget =
-      customAgentListRef.current?.querySelector<HTMLElement>("[aria-selected=\"true\"]") ??
-      customAgentListRef.current?.querySelector<HTMLElement>("[role=\"option\"]");
-    nextFocusTarget?.focus();
-  }, [customAgentItems, isAgentPickerOpen]);
+    if (!isActive && isAgentPickerOpen) onCloseAgentPicker();
+  }, [isActive, isAgentPickerOpen, onCloseAgentPicker]);
 
   const showComposerToolbar =
     showAttachmentControls ||
@@ -426,8 +413,8 @@ export function SessionComposerExpanded({
           ) : null}
           {showAttachmentControls ? (
             <ComposerAttachmentMenu
-              disabled={(isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen}
-              isOpen={isAttachmentMenuOpen}
+              disabled={!isActive || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen}
+              isOpen={isActive && isAttachmentMenuOpen}
               onOpenChange={(isOpen) => {
                 if (isOpen) {
                   if (isAgentPickerOpen) {
@@ -477,28 +464,24 @@ export function SessionComposerExpanded({
             </button>
           ) : null}
           {showCustomAgentPicker ? (
-            <div className="composer-agent-toolbar">
-              <button
-                className={`drawer-toggle compact secondary composer-skill-button composer-icon-button${isAgentPickerOpen ? " is-open" : ""}`}
-                type="button"
-                onClick={() => {
-                  setIsAttachmentMenuOpen(false);
-                  if (isAdditionalDirectoryListOpen) {
-                    onToggleAdditionalDirectoryList();
-                  }
-                  onToggleAgentPicker();
-                }}
-                disabled={!canSelectCustomAgent || composerControlsDisabled}
-                aria-expanded={isAgentPickerOpen}
-                aria-haspopup="listbox"
-                aria-controls={isAgentPickerOpen ? "composer-agent-picker-list" : undefined}
-                aria-label="Select a Copilot custom agent"
-                title={selectedCustomAgentTitle}
-              >
-                <ComposerIcon name="agent" />
-                <span className="visually-hidden">{selectedCustomAgentLabel}</span>
-              </button>
-            </div>
+            <CustomAgentPicker
+              key={errorOwnerKey}
+              items={customAgentItems}
+              isOpen={isAgentPickerOpen}
+              loading={isCustomAgentListLoading}
+              label={selectedCustomAgentLabel}
+              title={selectedCustomAgentTitle}
+              disabled={!canSelectCustomAgent || composerControlsDisabled}
+              onSelect={onSelectCustomAgent}
+              onClose={onCloseAgentPicker}
+              onToggle={() => {
+                setIsAttachmentMenuOpen(false);
+                if (isAdditionalDirectoryListOpen) {
+                  onToggleAdditionalDirectoryList();
+                }
+                onToggleAgentPicker();
+              }}
+            />
           ) : null}
           {showSkillPicker ? (
             <button
@@ -515,7 +498,7 @@ export function SessionComposerExpanded({
               }}
               disabled={composerControlsDisabled}
               aria-expanded={isSkillPickerOpen}
-              aria-haspopup="listbox"
+              aria-haspopup="dialog"
               aria-controls={isSkillPickerOpen ? "composer-skill-picker-list" : undefined}
             >
               <ComposerIcon name="skill" />
@@ -641,45 +624,6 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      {showCustomAgentPicker && isAgentPickerOpen ? (
-        <div
-          id="composer-agent-picker-list"
-          ref={customAgentListRef}
-          className="composer-path-match-list composer-skill-picker-list"
-          role="listbox"
-          aria-label="Custom Agent options"
-          aria-busy={isCustomAgentListLoading || undefined}
-          aria-orientation="vertical"
-          onKeyDown={(event) => {
-            focusRovingItemByKey(event, { orientation: "vertical" });
-          }}
-        >
-          {isCustomAgentListLoading ? (
-            <div className="chat-skill-picker-state">
-              <LoadingIndicator label="Loading custom agents" />
-            </div>
-          ) : customAgentItems.length > 0 ? (
-            customAgentItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="option"
-                aria-selected={item.isSelected}
-                tabIndex={item.isSelected ? 0 : -1}
-                className={`composer-path-match${item.isSelected ? " active" : ""}`}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onSelectCustomAgent(item.value)}
-                disabled={composerFrozen}
-                title={item.title}
-              >
-                <span className="composer-path-match-primary">{item.primaryLabel}</span>
-                <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
-              </button>
-            ))
-          ) : null}
-        </div>
-      ) : null}
-
       <div className="composer-input-row">
         <div className={`composer-box${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
@@ -703,7 +647,7 @@ export function SessionComposerExpanded({
           {composerControllerState.saveState === "error" ? (
             <div id="composer-save-feedback" className="composer-save-feedback">
               <span role="status">Draft could not be saved. Retry before sending.</span>
-              <ComposerErrorDetails key={`${errorOwnerKey}:save:${composerControllerState.saveError}`} label="Draft Save Error Details" message={composerControllerState.saveError ?? "Draft could not be saved."} />
+              <ComposerErrorDetails key={`${errorOwnerKey}:save:${composerControllerState.saveError}`} isActive={isActive} label="Draft Save Error Details" message={composerControllerState.saveError ?? "Draft could not be saved."} />
               {onRetryComposerSave ? (
                 <button
                   className="composer-save-retry"
@@ -720,7 +664,7 @@ export function SessionComposerExpanded({
             <div className="composer-save-feedback composer-turn-recovery">
               <span>Turn acceptance is unknown. Your draft is preserved.</span>
               <span className="composer-turn-recovery-details" inert={!turnRecoveryError} aria-hidden={!turnRecoveryError}>
-                <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} label="Turn Recovery Error Details" message={turnRecoveryError ?? ""} />
+                <ComposerErrorDetails key={`${errorOwnerKey}:recovery:${turnRecoveryError}`} isActive={isActive} label="Turn Recovery Error Details" message={turnRecoveryError ?? ""} />
               </span>
               <button type="button" className="drawer-toggle compact secondary" onClick={onCheckTurnReceipt} disabled={queueTurnBusy || !!turnRecoveryAction} aria-busy={turnRecoveryAction === "check" || undefined}>
                 <ButtonContent busy={turnRecoveryAction === "check"}>Check Receipt</ButtonContent>
@@ -733,7 +677,7 @@ export function SessionComposerExpanded({
           {submissionError && !onCheckTurnReceipt ? (
             <div id={submissionErrorId} className="composer-save-feedback">
               <span role="status">Message could not be sent.</span>
-              <ComposerErrorDetails key={`${errorOwnerKey}:submission:${submissionError}`} label="Message Submission Error Details" message={submissionError} />
+              <ComposerErrorDetails key={`${errorOwnerKey}:submission:${submissionError}`} isActive={isActive} label="Message Submission Error Details" message={submissionError} />
             </div>
           ) : null}
           {displayedComposerSendability.isBusy && displayedComposerSendability.busyReason ? (
@@ -805,6 +749,7 @@ export function SessionComposerExpanded({
           ) : null}
 
           <ModelPicker
+            key={errorOwnerKey}
             options={modelOptions}
             discoveryStatus={modelDiscoveryStatus}
             discoveryError={modelDiscoveryError}

@@ -123,15 +123,15 @@ test("実行中のqueue Composerで次依頼を準備し、read-onlyと凍結は
 
 // @test-value v2
 // kind = "contract"
-// claim = "Prompt/Terminal切替はPreview/Sourceの右に置かれ、非表示入力をinertにしてdraft・selection・Terminal subtreeを保持し、compactから同じPromptを選んでもfocusし、quota入口を表示中の操作列へ1件だけ配置する"
+// claim = "Prompt/Terminal切替はPreview/Sourceの右に置かれ、非表示入力をinertにしてdraft・selection・Terminal subtreeを保持し、compactから同じPromptを選んでもfocusし、quota入口を表示中の操作列へ1件だけ配置し、Attachとエラー詳細は非表示化で閉じ、Main/Auxiliary切替はAttachとModelを閉じる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock Prompt / Terminal切替" }
-// fault = "mode切替で入力やTerminal subtreeを再mountする、非表示入力を操作可能に残す、Prompt復帰時にfocus・selectionを失う、quota入口を非表示面へ置くか複数mountする"
-// observable = "switchのDOM順序・aria-pressed、入力surfaceのinert、textarea同一性・値・selection・focus、Terminal subtreeの同一性、quota入口の所属surfaceと件数"
+// fault = "mode切替で入力やTerminal subtreeを再mountする、非表示入力を操作可能に残す、Prompt復帰時にfocus・selectionを失う、quota入口を非表示面へ置くか複数mountする、非表示または別ownerのComposerのpickerや診断を開いたまま残すか診断内容を失う"
+// observable = "switchのDOM順序・aria-pressed、入力surfaceのinert、textarea同一性・値・selection・focus、Terminal subtreeの同一性、quota入口の所属surfaceと件数、Attachのaria-expandedとmenuの有無、Model comboboxの有無、エラー詳細dialogの有無と再open時の本文"
 // observation_boundary = "component-behavior"
 // scope = "chat-window-action-dock-mode"
 // lifecycle = "permanent"
-// impact = "切替で作業中の入力を失うか、見えていない入力先を操作する"
-// distinction = "registry testとは異なり実ChatWindowのmode button操作と保持境界を確認する。PTY process自体の保持は主張しない"
+// impact = "切替で作業中の入力を失うか、見えていない入力先を操作する。pickerの閉鎖は非表示または別会話の設定・添付先を操作しないための継続契約である"
+// distinction = "registry testとは異なり実ChatWindowのmode button操作と保持境界を確認し、pointer外側dismissを通さず非表示化によるAttach閉鎖を確認する。PTY process自体の保持は主張しない"
 // @end-test-value
 test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", async () => {
   const dom = createChatDom('<!doctype html><html><body><div id="root"></div></body></html>');
@@ -142,13 +142,23 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { configurable: true, value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { configurable: true, value() {} });
   let root: Root | null = null;
+  const registry = new ComposerControllerRegistry();
   function Harness() {
     const [mode, setMode] = React.useState<"prompt" | "terminal">("prompt");
     const [expanded, setExpanded] = React.useState(true);
+    const [auxiliary, setAuxiliary] = React.useState(false);
     const props = createChatWindowProps({ messages: [] });
     props.composerProps.draft = "draft to retain";
+    props.composerProps.showAttachmentControls = true;
+    props.composerProps.submissionError = "Submission failed; retain this diagnostic.";
+    props.composerProps.composerController = {
+      owner: auxiliary ? { kind: "auxiliary", id: "auxiliary" } : { kind: "main", id: "main" },
+      registry,
+      initialDraft: "draft to retain",
+    };
     return React.createElement(React.Fragment, null,
       React.createElement("button", { "data-collapse-dock": true, onClick: () => setExpanded(false) }, "Collapse dock"),
+      React.createElement("button", { "data-switch-owner": true, onClick: () => setAuxiliary((value) => !value) }, "Switch owner"),
       React.createElement(ChatWindow, {
         ...props,
         isActionDockExpanded: expanded,
@@ -182,7 +192,13 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
     const buttons = switchGroup.querySelectorAll("button");
     assert.equal(buttons[0].getAttribute("aria-pressed"), "true");
     assert.equal(terminalSurface.hasAttribute("inert"), true);
+    const attach = promptSurface.querySelector<HTMLButtonElement>('[aria-label="Attach"]')!;
+    await act(async () => attach.click());
+    assert.equal(attach.getAttribute("aria-expanded"), "true");
+    assert.ok(document.querySelector(".composer-attachment-menu"));
     await act(async () => buttons[1].click());
+    assert.equal(document.querySelector(".composer-attachment-menu"), null);
+    assert.equal(attach.getAttribute("aria-expanded"), "false");
     assert.equal(promptSurface.hasAttribute("inert"), true);
     assert.equal(terminalSurface.hasAttribute("inert"), false);
     assertQuotaSurface(terminalSurface.querySelector(".session-action-dock-compact-row")!);
@@ -197,6 +213,7 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
     assert.equal(document.querySelector("[data-terminal-subtree]"), terminal);
     await act(async () => terminalSurface.querySelector<HTMLButtonElement>('[aria-label="Action dock mode"] button')!.click());
     assert.equal(promptSurface.hasAttribute("inert"), false);
+    assert.equal(document.querySelector(".composer-attachment-menu"), null);
     assertQuotaSurface(promptSurface.querySelector(".composer-attachments-toolbar")!);
     assert.equal(terminalSurface.hasAttribute("inert"), true);
     assert.equal(promptSurface.querySelector("textarea"), textarea);
@@ -205,13 +222,41 @@ test("Prompt/Terminal切替は両入力を保持し、Promptへfocusを戻す", 
     assert.equal(textarea.selectionEnd, 7);
     assert.equal(document.activeElement, textarea);
     assert.equal(document.querySelector("[data-terminal-subtree]"), terminal);
+    await act(async () => attach.click());
+    assert.equal(attach.getAttribute("aria-expanded"), "true");
     await act(async () => document.querySelector<HTMLButtonElement>("[data-collapse-dock]")!.click());
+    assert.equal(document.querySelector(".composer-attachment-menu"), null);
     const compactPrompt = document.querySelector<HTMLButtonElement>('.session-action-dock-compact-content [aria-label="Action dock mode"] button')!;
     compactPrompt.focus();
     await act(async () => compactPrompt.click());
+    assert.equal(attach.getAttribute("aria-expanded"), "false");
+    assert.equal(document.querySelector(".composer-attachment-menu"), null);
     assert.equal(document.activeElement, textarea);
     assert.equal(textarea.selectionStart, 2);
     assert.equal(textarea.selectionEnd, 7);
+    const switchOwner = async () => act(async () => document.querySelector<HTMLButtonElement>("[data-switch-owner]")!.click());
+    await act(async () => attach.click());
+    assert.equal(attach.getAttribute("aria-expanded"), "true");
+    await switchOwner();
+    assert.equal(document.querySelector(".composer-attachment-menu"), null);
+    await switchOwner();
+    assert.equal(attach.getAttribute("aria-expanded"), "false");
+    const model = promptSurface.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
+    await act(async () => model.click());
+    assert.ok(document.querySelector('[role="combobox"]'));
+    await switchOwner();
+    assert.equal(document.querySelector('[role="combobox"]'), null);
+    await switchOwner();
+    assert.equal(document.querySelector('[role="combobox"]'), null);
+    const details = promptSurface.querySelector<HTMLButtonElement>('[aria-label="Message Submission Error Details"]')!;
+    await act(async () => details.click());
+    assert.ok(document.querySelector('[role="dialog"][aria-label="Message Submission Error Details"]'));
+    await act(async () => buttons[1].click());
+    assert.equal(document.querySelector('[role="dialog"][aria-label="Message Submission Error Details"]'), null);
+    await act(async () => terminalSurface.querySelector<HTMLButtonElement>('[aria-label="Action dock mode"] button')!.click());
+    assert.equal(details.getAttribute("aria-expanded"), "false");
+    await act(async () => details.click());
+    assert.match(document.querySelector('[role="dialog"][aria-label="Message Submission Error Details"]')!.textContent!, /Submission failed; retain this diagnostic/);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

@@ -602,6 +602,7 @@ export function useSessionComposerFeature(input: {
         ? () => void bridge.operations.files.pickSessionImage?.()
         : undefined,
       onToggleAgentPicker: toggleAgentPicker,
+      onCloseAgentPicker: closeAgentPicker,
       onToggleSkillPicker: toggleSkillPicker,
       onOpenPromptTemplates: bridge.operations.layout.openPromptTemplates
         ? () => void bridge.operations.layout.openPromptTemplates?.()

@@ -3,17 +3,21 @@ import { createPortal } from "react-dom";
 
 import { ComposerIcon } from "./composer-icon.js";
 
-export function ComposerErrorDetails({ label, message }: { label: string; message: string }) {
+export function ComposerErrorDetails({ label, message, isActive = true }: { label: string; message: string; isActive?: boolean }) {
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
+  const [isOpen, setOpen] = useState(false);
+  const open = isOpen && isActive;
   const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
   const positioned = position.visibility !== "hidden";
   const close = (restoreFocus: boolean) => {
     setOpen(false);
     if (restoreFocus) triggerRef.current?.focus({ preventScroll: true });
   };
+  useEffect(() => {
+    if (!isActive) setOpen(false);
+  }, [isActive]);
 
   useLayoutEffect(() => {
     if (!open) {
