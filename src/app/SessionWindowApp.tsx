@@ -1771,6 +1771,7 @@ export default function AgentSessionWindowApp() {
     },
     currentTimestampLabel,
     fallbackErrorMessage: "Could not save the pasted file.",
+    isFileBacked: (file) => withmateApi!.isClipboardFileBacked(file),
     getSavePastedSessionFile: () => {
       return withmateApi ? (request) => {
         if (composerRegistry.isFrozen) throw new Error("Attachments cannot be added while the window is closing.");

@@ -56,6 +56,7 @@ export async function collectPastedSessionAttachmentPaths(input: {
   currentTimestampLabel: () => string;
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
+  isFileBacked: (file: PastedClipboardFile) => boolean;
   sessionId: string;
   confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
   onReuse?: (fileNames: string[]) => void;
@@ -66,10 +67,11 @@ export async function collectPastedSessionAttachmentPaths(input: {
 function resolvePastedFileName(input: {
   currentTimestampLabel: () => string;
   file: PastedClipboardFile;
+  useGeneratedName: boolean;
 }): string {
   const trimmedName = input.file.name.trim();
   const mimeExtension = SUPPORTED_IMAGE_MIME_EXTENSIONS.get(input.file.type?.toLocaleLowerCase() ?? "");
-  if (trimmedName) {
+  if (trimmedName && !input.useGeneratedName) {
     if (mimeExtension && !isSupportedComposerImagePath(trimmedName)) {
       return `${trimmedName}.${mimeExtension}`;
     }
@@ -95,6 +97,7 @@ export async function collectPastedSessionAttachments(input: {
   currentTimestampLabel: () => string;
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
+  isFileBacked: (file: PastedClipboardFile) => boolean;
   sessionId: string;
   confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
   onReuse?: (fileNames: string[]) => void;
@@ -108,14 +111,19 @@ export async function collectPastedSessionAttachments(input: {
   const savedAttachments: PastedSessionAttachment[] = [];
   const reused: string[] = [];
   for (const file of pastedFiles) {
+    const useGeneratedName = SUPPORTED_IMAGE_MIME_EXTENSIONS.has(file.type?.toLocaleLowerCase() ?? "")
+      && !input.isFileBacked(file);
     const buffer = await file.arrayBuffer();
-    const fileName = resolvePastedFileName({ file, currentTimestampLabel: input.currentTimestampLabel });
+    const fileName = resolvePastedFileName({ file, useGeneratedName, currentTimestampLabel: input.currentTimestampLabel });
     const request = {
       sessionId: input.sessionId,
       fileName,
       data: buffer,
     };
     let result = await input.savePastedSessionFile(request);
+    if (useGeneratedName && typeof result !== "string" && result.status === "conflict") {
+      result = await input.savePastedSessionFile({ ...request, saveAsCopy: true });
+    }
     while (typeof result !== "string" && result.status === "conflict") {
       if (!input.confirmReplacement) throw new Error(`Replacing "${result.fileName}" requires confirmation.`);
       const decision = await input.confirmReplacement(result);
@@ -142,6 +150,7 @@ export function createPastedSessionAttachmentHandler(input: {
   currentTimestampLabel: () => string;
   fallbackErrorMessage: string;
   getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null | undefined;
+  isFileBacked: (file: PastedClipboardFile) => boolean;
   getSessionId: () => string | null | undefined;
   insertAttachments: (attachments: PastedSessionAttachment[]) => void;
   confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
@@ -164,6 +173,7 @@ export function createPastedSessionAttachmentHandler(input: {
         currentTimestampLabel: input.currentTimestampLabel,
         preventDefault: () => event.preventDefault(),
         savePastedSessionFile,
+        isFileBacked: input.isFileBacked,
         sessionId,
         confirmReplacement: input.confirmReplacement,
         onReuse: input.onReuse,

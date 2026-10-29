@@ -399,6 +399,7 @@ export type WithMateWindowCharacterApi = {
 };
 
 export type WithMateWindowApi =
+  & { isClipboardFileBacked(file: unknown): boolean }
   & WithMateHtmlPreviewApi
   & import("../session-graph/session-graph-window-contract.js").SessionGraphWindowApi
   & WithMateWindowNavigationApi

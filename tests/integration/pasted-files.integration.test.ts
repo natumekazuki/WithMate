@@ -26,6 +26,7 @@ test("paste collector integrates reuse, replace and per-file cancel with real st
     const reused: string[][] = [];
     const file = (name: string, content: string) => ({ name, arrayBuffer: async () => new TextEncoder().encode(content).buffer });
     const attachments = await collectPastedSessionAttachments({
+      isFileBacked: () => true,
       sessionId: "session",
       clipboardData: { files: [
         file("note.txt", "first"), file("note.txt", "first"),
@@ -72,6 +73,7 @@ test("paste collector repeats confirmation for a changed file and allows cancel"
   const confirmed: string[] = [];
   const requests: Array<string | undefined> = [];
   const attachments = await collectPastedSessionAttachments({
+    isFileBacked: () => true,
     sessionId: "session",
     clipboardData: { files: [{ name: "note.txt", arrayBuffer: async () => new ArrayBuffer(1) }], items: [] },
     currentTimestampLabel: () => "now",
@@ -85,4 +87,59 @@ test("paste collector repeats confirmation for a changed file and allows cancel"
   assert.deepEqual(confirmed, ["old", "new"]);
   assert.deepEqual(requests, [undefined, "old"]);
   assert.deepEqual(attachments, []);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実ファイルでない画像は同じ仮名・日時でも別内容は別保存し、明示名の画像は同名確認と再利用を維持する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md: Composerと保存" }
+// fault = "仮名画像の確認を繰り返す、既存画像を書き換える、または実ファイルの同名確認を迂回する"
+// observable = "添付pathとpresentation、確認対象名、再利用通知、各保存先と既存image.pngの内容"
+// observation_boundary = "consumer"
+// scope = "clipboard image naming and actual session-file storage"
+// lifecycle = "permanent"
+// impact = "連続画像pasteを妨げず、過去メッセージと明示名fileの参照内容を保護する"
+// distinction = "通常fileの衝突testだけでは画像の由来別命名と同日時名の保護を検出できず、実描画確認より低コストで継続検証できる"
+// @end-test-value
+test("clipboard images get independent names while file-backed images keep conflict handling", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-paste-image-"));
+  try {
+    const image = (content: string, native = false) => ({
+      name: "image.png", type: "image/png", native,
+      arrayBuffer: async () => new TextEncoder().encode(content).buffer,
+    });
+    const directory = path.join(root, "session-files", "session");
+    await saveSessionFile(root, { sessionId: "session", fileName: "image.png", data: new TextEncoder().encode("original") });
+    const confirmations: string[] = [];
+    const reused: string[][] = [];
+    const paste = (files: ReturnType<typeof image>[]) => collectPastedSessionAttachments({
+      sessionId: "session",
+      clipboardData: { files, items: [] },
+      isFileBacked: (file) => files.find((candidate) => candidate === file)!.native,
+      currentTimestampLabel: () => "2026-10-29T13:00:00.000Z",
+      preventDefault() {},
+      savePastedSessionFile: (request) => saveSessionFile(root, { ...request, data: new Uint8Array(request.data) }),
+      confirmReplacement: async (conflict) => { confirmations.push(conflict.fileName); return "cancel"; },
+      onReuse: (names) => reused.push(names),
+    });
+    const first = await paste([image("first")]);
+    const second = await paste([image("second")]);
+    const batch = await paste([
+      image("third"),
+      { ...image("fourth"), name: "clipboard.jpeg", type: "image/jpeg" },
+    ]);
+    const generated = [...first, ...second, ...batch];
+    assert.equal(new Set(generated.map((attachment) => attachment.path)).size, 4);
+    assert.deepEqual(await Promise.all(generated.map((attachment) => readFile(attachment.path, "utf8"))), ["first", "second", "third", "fourth"]);
+    assert.ok(generated.every((attachment) => attachment.presentation === "image"));
+    assert.equal(path.basename(first[0]!.path), "pasted-2026-10-29T13-00-00.000Z.png");
+    assert.equal(path.extname(batch[1]!.path), ".jpg");
+    assert.deepEqual(confirmations, []);
+    assert.deepEqual(await paste([image("different", true)]), []);
+    assert.deepEqual(confirmations, ["image.png"]);
+    assert.deepEqual(await paste([image("original", true)]), [{ path: path.join(directory, "image.png"), presentation: "image" }]);
+    assert.deepEqual(reused, [["image.png"]]);
+    assert.equal(await readFile(path.join(directory, "image.png"), "utf8"), "original");
+    assert.equal((await readdir(directory)).length, 5);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
