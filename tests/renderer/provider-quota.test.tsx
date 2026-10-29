@@ -59,24 +59,15 @@ test("quotaは残率に統一し未知値と追加枠を分離する", () => {
     { ...snapshot, quotaKey: "chat", remainingPercentage: NaN },
   ] }).map(({ remaining, summary }) => [remaining, summary]), [["80%", false], ["65%", true], ["—", false]]);
   assert.deepEqual(projectQuotaRemaining(null), []);
-  const opencode: ProviderQuotaTelemetry = { provider: "opencode", updatedAt: null, snapshots: [], status: "ready", rateLimits: [
-    { quotaKey: "rolling", label: "5 hours", usedPercentage: 30, windowDurationMinutes: 300 },
-    { quotaKey: "weekly", label: "7 days", usedPercentage: 60, windowDurationMinutes: 10080 },
-    { quotaKey: "monthly", label: "1 month", usedPercentage: 10, resetDate: "2026-11-01T00:00:00Z" },
-  ] };
-  assert.deepEqual(projectQuotaRemaining(opencode).map(({ label, remaining, summary, resetDate }) => ({ label, remaining, summary, resetDate })), [
-    { label: "5h", remaining: "70%", summary: true, resetDate: undefined },
-    { label: "7d", remaining: "40%", summary: true, resetDate: undefined },
-    { label: "1 month", remaining: "90%", summary: true, resetDate: "2026-11-01T00:00:00Z" },
-  ]);
+  assert.deepEqual(projectQuotaRemaining({ provider: "opencode", updatedAt: null, snapshots: [], status: "unsupported" }), []);
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "quota UIはcacheだけを購読し、通知優先とprovider切替の失効を守り、前回値・失敗・適用外を区別する"
+// claim = "quota UIはcacheだけを購読し、通知優先とprovider切替の失効を守り、前回値・失敗・適用外を区別し、OpenCodeではGo等の契約残量とturn使用量を区別する"
 // oracle = { type = "contract", ref = "docs/design/provider-usage-telemetry.md#共通の残量表示" }
-// fault = "遅い初回readや旧provider通知が現在値を巻き戻す、Window表示やfocusでremote取得を要求する、失敗や適用外を100%と表示する"
-// observable = "表示残率・popupの期間別残率/reset/前回値状態と時刻・不明表示・error indicator・cacheOnly引数・購読解除"
+// fault = "遅い初回readや旧provider通知が現在値を巻き戻す、Window表示やfocusでremote取得を要求する、失敗や適用外を100%と表示する、OpenCodeの未対応範囲がGoやturn使用量と混同される"
+// observable = "表示残率・popupの期間別残率/reset/前回値状態と時刻・不明表示・error indicator・OpenCodeの未対応範囲説明・cacheOnly引数・購読解除"
 // observation_boundary = "component-behavior"
 // scope = "ProviderQuotaのsnapshot/通知/切替/unmount lifecycle"
 // lifecycle = "permanent"
@@ -143,6 +134,19 @@ test("quota UIは通知と送信先を優先し、失敗時も値と状態を区
     assert.equal(element.querySelector(".provider-quota-values")?.getAttribute("tabindex"), "0");
     await emit("claude", null);
     assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
+
+    await act(async () => root.render(<ProviderQuota api={api} providerId="opencode" />));
+    assert.ok(element.querySelector('[aria-label="OpenCode quota update failed"]'));
+    assert.equal(element.querySelector(".provider-quota-note"), null);
+    await emit("opencode", { provider: "opencode", updatedAt: null, snapshots: [], status: "unsupported" });
+    assert.equal(element.querySelector(".provider-quota-values")?.textContent, "—");
+    assert.equal(element.querySelector(".provider-quota-values span")?.getAttribute("title"), "Not Supported");
+    assert.equal(element.querySelector('[aria-label="OpenCode quota update failed"]'), null);
+    const openCodeDetail = element.querySelector('[aria-label="OpenCode quota details"][popover]')!;
+    assert.equal(openCodeDetail.querySelector("h3")?.textContent, "OpenCode");
+    assert.match(openCodeDetail.querySelector(".provider-quota-note")?.textContent ?? "", /OpenCode Go and other connected services/);
+    assert.match(openCodeDetail.querySelector(".provider-quota-note")?.textContent ?? "", /Per-turn token and cost usage does not indicate remaining quota/);
+    assert.deepEqual(reads.at(-1), ["opencode", { cacheOnly: true }]);
   } finally {
     await act(async () => root.unmount());
     assert.equal(listeners.size, 0);

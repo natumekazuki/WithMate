@@ -30,9 +30,7 @@ export function projectQuotaRemaining(telemetry: ProviderQuotaTelemetry | null):
     const period = periodLabel(window.windowDurationMinutes);
     const summary = telemetry.provider === "claude"
       ? window.quotaKey === "five_hour" || window.quotaKey === "seven_day"
-      : telemetry.provider === "opencode"
-        ? ["rolling", "weekly", "monthly"].includes(window.quotaKey)
-        : telemetry.provider === "codex" && /^codex:(primary|secondary)$/.test(window.quotaKey);
+      : telemetry.provider === "codex" && /^codex:(primary|secondary)$/.test(window.quotaKey);
     return {
       key: window.quotaKey,
       label: summary ? period ?? window.label ?? window.quotaKey

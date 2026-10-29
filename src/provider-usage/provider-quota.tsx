@@ -50,6 +50,9 @@ export function ProviderQuota({ api, providerId, showProviderName = false }: {
           {readStatus === "error" ? <button type="button" className="drawer-toggle compact secondary" onClick={retry}>Retry</button> : null}
           {loading ? <LoadingIndicator label={`${name} quota loading`} inline /> : null}
           {!loading && !failed && status ? <p>{status}</p> : null}
+          {!loading && !failed && providerId === "opencode" && telemetry?.status === "unsupported" ? <p className="provider-quota-note">
+            Quota reporting is unavailable for OpenCode Go and other connected services. Per-turn token and cost usage does not indicate remaining quota.
+          </p> : null}
           <dl className="provider-quota-detail-list" aria-label={`${name} remaining quota details`}>
             {windows.map((window) => <div key={window.key}>
               <dt>{window.label}</dt><dd>{window.remaining}</dd>
