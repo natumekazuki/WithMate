@@ -93,41 +93,49 @@ export function sessionGraphStatuses(record: SessionGraphRecord): string[] {
 }
 function Identity({
   identity,
-  name,
+  actorRole,
   focusable = true,
 }: {
-  identity?: SessionGraphIdentity;
-  name?: string;
+  identity: SessionGraphIdentity;
+  actorRole?: string;
   focusable?: boolean;
 }) {
-  const text = identity
-    ? `${identity.character?.name ?? identity.sessionTitle} · ${label(identity.role)} · ${identity.sessionTitle}`
-    : (name ?? "Unknown Actor");
+  const name = identity.character?.name ?? identity.sessionTitle;
+  const text = `${name} · ${label(identity.role)} · ${identity.sessionTitle}${actorRole ? ` · Role: ${actorRole}` : ""}`;
   return (
     <span
-      className={`session-graph-identity${!identity ? " is-label" : ""}`}
+      className="session-graph-identity"
       role="img"
       tabIndex={focusable ? 0 : undefined}
       aria-label={text}
     >
-      {identity ? <CharacterAvatar
+      <CharacterAvatar
+        key={`${identity.sessionId}:${identity.character?.id ?? ""}:${identity.character?.icon ?? ""}`}
         character={{
-          name: identity?.character?.name ?? name ?? "?",
-          iconPath: identity?.character?.icon ?? "",
+          name,
+          iconPath: identity.character?.icon ?? "",
         }}
         size="small"
-      /> : <>
-        <svg className="session-graph-actor-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-          <circle cx="12" cy="7" r="4" />
-          <path d="M4 21v-3a8 8 0 0 1 16 0v3" />
-        </svg>
-        <span className="session-graph-actor-name">{text}</span>
-      </>}
+      />
+      <span className="session-graph-actor-name">{name}</span>
       <span className="session-graph-identity-tooltip" role="tooltip">
         {text}
       </span>
     </span>
   );
+}
+
+function originText(origin: SessionGraphRecord["origin"]): string {
+  return `${label(origin.type)}${origin.label ? ` · ${origin.label}` : ""}`;
+}
+
+function Provenance({ record }: { record: SessionGraphRecord }) {
+  const text = `Origin: ${originText(record.origin)}${record.adoptionOrigin ? `; Adoption Origin: ${originText(record.adoptionOrigin)}` : ""}`;
+  return <span className="session-graph-provenance" aria-label={text}>
+    <span>From {label(record.origin.type)}</span>
+    {record.adoptionOrigin ? <span>Adoption: {label(record.adoptionOrigin.type)}</span> : null}
+    <span className="session-graph-identity-tooltip" role="tooltip">{text}</span>
+  </span>;
 }
 
 export function SessionGraphPreview({
@@ -687,15 +695,12 @@ export function SessionGraphPreview({
                       <Identity
                           focusable={false}
                           identity={record.actorSnapshot}
-                          name={
-                            "label" in record.actor
-                              ? record.actor.label
-                              : undefined
-                          }
+                          actorRole={record.actorRole}
                       />
                         <span className="session-graph-node-status">
                           {sessionGraphStatuses(record).map(label).join(" · ")}
                         </span>
+                      <Provenance record={record} />
                     </button>
                   );
                 })}
@@ -795,11 +800,7 @@ export function SessionGraphPreview({
                 <div className="session-graph-detail-meta">
                   <Identity
                     identity={selectedRecord.actorSnapshot}
-                    name={
-                      "label" in selectedRecord.actor
-                        ? selectedRecord.actor.label
-                        : undefined
-                    }
+                    actorRole={selectedRecord.actorRole}
                   />
                   <span>
                     {sessionGraphStatuses(selectedRecord)
@@ -807,6 +808,11 @@ export function SessionGraphPreview({
                       .join(" · ")}
                   </span>
                 </div>
+                <dl className="session-graph-fields">
+                  <dt>Origin</dt><dd>{originText(selectedRecord.origin)}</dd>
+                  {selectedRecord.adoptionOrigin ? <><dt>Adoption Origin</dt><dd>{originText(selectedRecord.adoptionOrigin)}</dd></> : null}
+                  {selectedRecord.actorRole ? <><dt>Actor Role</dt><dd>{selectedRecord.actorRole}</dd></> : null}
+                </dl>
                 <MessageRichText
                   text={selectedRecord.detail}
                   embeddedMedia="text"
@@ -877,8 +883,7 @@ export function SessionGraphPreview({
                     </button>
                   ))}
                 </div>
-                {!("sessionId" in selectedRecord.actor) ||
-                selectedRecord.actor.sessionId !==
+                {selectedRecord.actor.sessionId !==
                   selectedRecord.recordedBy.sessionId ? (
                   <div className="session-graph-recorder">
                     Recorded By{" "}

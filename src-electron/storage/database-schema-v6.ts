@@ -7,6 +7,7 @@ export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
 
 export const V6_SCHEMA_STATUS = "foundation";
+export const SESSION_GRAPH_CONTRACT_INITIALIZED_KEY = "session_graph_agent_origin_contract_initialized_at";
 
 export const REQUIRED_V6_TABLES = [
   "app_settings",
@@ -1451,6 +1452,18 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       continue;
     }
     db.exec(statement);
+  }
+
+  if (!db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?").get(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY)) {
+    db.exec(`
+      DELETE FROM session_graph_relations_v6;
+      DELETE FROM session_graph_records_v6;
+      DELETE FROM session_graph_topics_v6;
+      DELETE FROM session_graphs_v6;
+    `);
+    const initializedAt = new Date().toISOString();
+    db.prepare("INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)")
+      .run(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY, initializedAt, initializedAt);
   }
 
   const sessionColumns = tableColumnNames(db, "sessions_v6");

@@ -25,7 +25,7 @@ import { SessionGraphApplicationService, type SessionGraphStore } from "../../sr
 import { SessionGraphRuntimeService } from "../../src-electron/session-graph/session-graph-runtime-service.js";
 import { SessionGraphStorageV6 } from "../../src-electron/session-graph/session-graph-storage-v6.js";
 import { getSessionGraphAgentRuntimeOperations } from "../../src-shared/session-graph/session-graph-operation-schema.js";
-import type { SessionGraphIdentity, SessionGraphOperation, SessionGraphOwner, SessionGraphRequest } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphIdentity, SessionGraphOperation, SessionGraphOwner, SessionGraphRecord, SessionGraphRequest } from "../../src-shared/session-graph/session-graph-contract.js";
 
 const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111111",
   runtimeGenerationId: "22222222-2222-4222-8222-222222222222" };
@@ -46,7 +46,14 @@ async function fixture() {
       .run(id, "2026-10-10T00:00:00Z", "2026-10-10T00:00:00Z", "2026-10-10T00:00:00Z", `incarnation-${id}`);
   }
   const incarnations = new Map((database.prepare("SELECT id, incarnation_id FROM sessions_v6").all() as { id: string; incarnation_id: string }[]).map((row) => [row.id, row.incarnation_id]));
+  database.prepare("INSERT INTO auxiliary_sessions (id,parent_session_id,status,created_at,updated_at,character_id) VALUES ('aux-a','actor-a','active',?,?,'character')")
+    .run("2026-10-10T00:00:00Z", "2026-10-10T00:00:00Z");
   database.close();
+  const graphOwner = (id: string) => {
+    const parentId = id === "aux-a" ? "actor-a" : id;
+    const incarnationId = incarnations.get(parentId);
+    return incarnationId ? { sessionId: parentId, incarnationId } : null;
+  };
   const storage = new MemoryV6Storage(dbPath);
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
@@ -55,9 +62,9 @@ async function fixture() {
     return graphStorage.execute(scope, operation, request, identity, actors);
   } };
   const graphApplication = new SessionGraphApplicationService({ getStore: () => graphStore, resolveSession: (id) => {
-    const incarnationId = incarnations.get(id);
-    return incarnationId ? { owner: { sessionId: id, incarnationId }, providerId: "codex", generation: "fixture",
-      identity: { sessionId: id, sessionTitle: "Actor", role: "main", character: { id: "character", name: "Character" } } } : null;
+    const owner = graphOwner(id);
+    return owner ? { owner, providerId: "codex", generation: "fixture",
+      identity: { sessionId: id, sessionTitle: "Actor", role: id === "aux-a" ? "auxiliary" : "main", character: { id: "character", name: "Character" } } } : null;
   } });
   const graphRuntime = new SessionGraphRuntimeService({ applicationService: graphApplication, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
   const glossaryApplication = new GlossaryApplicationService();
@@ -88,7 +95,7 @@ async function fixture() {
     const projection = bindings.issueOrReuse({
       actorSessionId, providerId: "codex", operationGrants: [...getMemoryV6AgentRuntimeOperations(), ...getGlossaryAgentRuntimeOperations(), ...getSessionGraphAgentRuntimeOperations()],
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [],
-        glossaryPrimaryCheckout: projectGlossaryCheckoutAuthority(checkout), sessionGraphOwner: { sessionId: actorSessionId, incarnationId: incarnations.get(actorSessionId) } },
+        glossaryPrimaryCheckout: projectGlossaryCheckoutAuthority(checkout), sessionGraphOwner: graphOwner(actorSessionId) },
     });
     const turn = await glossary.beginProviderTurn(actorSessionId, { ...projection, memoryRuntimeOwner: owner });
     const managedMcp = host.issue(turn.binding, turn.handle, signal);
@@ -119,10 +126,10 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Graphの第3HTTP endpointは6操作を発見でき、trusted recorder付きbatch保存とrecent/context復元およびrevision競合を返す"
+// claim = "Graphの第3HTTP endpointは6操作を公開し、同CharacterのMain/Auxを別Sessionとして自己解決・明示担当保存・由来保持し、別parent・由来欠落・競合・失効turnを拒否する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
 // fault = "provider向けURLからGraphを発見・実行できないか、recordが別actorへ帰属しCASを無視する"
-// observable = "SDK tools list、apply/recent/context/conflict応答とrecorder snapshot"
+// observable = "SDK tools list、apply/recent/context/conflict応答、担当・由来・recorder snapshotと失効後HTTP status"
 // observation_boundary = "public-boundary"
 // scope = "managed HTTP Graph MCP SDKからruntime challenge・SQLiteまで"
 // lifecycle = "permanent"
@@ -139,22 +146,67 @@ test("third managed HTTP MCP endpoint discovers and executes Session Graph", asy
     ]);
     const topics = await graph.client.callTool({ name: "session_graph.list_topics", arguments: {} });
     assert.deepEqual(topics.structuredContent, { status: "ok", revision: 0, items: [], total: 0, offset: 0, hasMore: false, incomplete: false });
+    const record = { id: "requirement", topicId: "topic", kind: "requirement", title: "Restore scope", detail: "Trusted record", scope: "feature", references: [] };
+    const missingOrigin = await graph.client.callTool({ name: "session_graph.apply", arguments: { expectedRevision: 0,
+      topics: [{ id: "topic", title: "Topic" }], records: [record] } });
+    assert.equal(missingOrigin.isError, true);
+    assert.deepEqual((await graph.client.callTool({ name: "session_graph.list_topics", arguments: {} })).structuredContent, topics.structuredContent);
     const applied = await graph.client.callTool({ name: "session_graph.apply", arguments: { expectedRevision: 0,
-      topics: [{ id: "topic", title: "Topic" }], records: [{ id: "requirement", topicId: "topic", kind: "requirement", title: "Restore scope", detail: "Trusted record", scope: "feature", actor: { sessionId: "actor-a" }, references: [] }] } });
+      topics: [{ id: "topic", title: "Topic" }], records: [{ ...record, origin: { type: "user" } }] } });
     assert.deepEqual(applied.structuredContent, { status: "ok", revision: 1 });
     assert.notEqual(applied.isError, true);
+    const auxTurn = await f.begin("aux-a");
+    const auxGraph = await f.connect(auxTurn.binding, "graph");
+    const foreignActor = await auxGraph.client.callTool({ name: "session_graph.apply", arguments: { expectedRevision: 1,
+      records: [{ ...record, id: "foreign", origin: { type: "agent" }, actor: { sessionId: "actor-b" } }] } });
+    assert.equal(foreignActor.isError, true);
+    const auxApplied = await auxGraph.client.callTool({ name: "session_graph.apply", arguments: { expectedRevision: 1, records: [
+      { ...record, id: "external", origin: { type: "external", label: "Specification" } },
+      { ...record, id: "assigned", origin: { type: "agent" }, actor: { sessionId: "actor-a" }, actorRole: "実装担当" },
+    ] } });
+    assert.deepEqual(auxApplied.structuredContent, { status: "ok", revision: 2 });
+    const updated = await auxGraph.client.callTool({ name: "session_graph.apply", arguments: { expectedRevision: 2,
+      records: [{ ...record, title: "Updated by Aux" }] } });
+    assert.deepEqual(updated.structuredContent, { status: "ok", revision: 3 });
     for (const operation of ["recent", "context"] as const) {
-      const result = await graph.client.callTool({ name: `session_graph.${operation}`, arguments: { limit: 1 } });
+      const result = await graph.client.callTool({ name: `session_graph.${operation}`, arguments: { limit: 10 } });
       assert.notEqual(result.isError, true, JSON.stringify(result));
-      const page = result.structuredContent as { revision: number; items: { id: string; recordedBy: SessionGraphIdentity; actorSnapshot: SessionGraphIdentity }[] };
-      assert.equal(page.revision, 1);
-      assert.equal(page.items[0]?.id, "requirement");
-      assert.deepEqual(page.items[0]?.recordedBy, { sessionId: "actor-a", sessionTitle: "Actor", role: "main", character: { id: "character", name: "Character" } });
-      assert.equal(page.items[0]?.actorSnapshot.sessionId, "actor-a");
+      const page = result.structuredContent as { revision: number; items: SessionGraphRecord[] };
+      assert.equal(page.revision, 3);
+      assert.equal(page.items.length, 3);
+      const byId = new Map(page.items.map((item) => [item.id, item]));
+      const main = byId.get("requirement")!;
+      assert.equal(main.title, "Updated by Aux");
+      assert.deepEqual(main.origin, { type: "user" });
+      assert.deepEqual(main.actor, { sessionId: "actor-a" });
+      assert.deepEqual(main.recordedBy, { sessionId: "actor-a", sessionTitle: "Actor", role: "main", character: { id: "character", name: "Character" } });
+      assert.deepEqual(main.actorSnapshot, main.recordedBy);
+      const external = byId.get("external")!;
+      assert.deepEqual(external.origin, { type: "external", label: "Specification" });
+      assert.deepEqual(external.actor, { sessionId: "aux-a" });
+      assert.equal(external.actorSnapshot.role, "auxiliary");
+      assert.equal(external.recordedBy.sessionId, "aux-a");
+      assert.deepEqual(external.actorSnapshot.character, main.actorSnapshot.character);
+      const assigned = byId.get("assigned")!;
+      assert.deepEqual(assigned.actor, { sessionId: "actor-a" });
+      assert.deepEqual(assigned.origin, { type: "agent" });
+      assert.equal(assigned.recordedBy.sessionId, "aux-a");
+      assert.deepEqual(assigned.actorSnapshot, main.actorSnapshot);
+      assert.equal(assigned.actorRole, "実装担当");
     }
+    const auxRecords = await graph.client.callTool({ name: "session_graph.context", arguments: { recordedBySessionId: "aux-a" } });
+    assert.deepEqual((auxRecords.structuredContent as { items: SessionGraphRecord[] }).items.map((item) => item.id).sort(), ["assigned", "external"]);
+    const otherTurn = await f.begin("actor-b");
+    const otherGraph = await f.connect(otherTurn.binding, "graph");
+    assert.deepEqual((await otherGraph.client.callTool({ name: "session_graph.recent", arguments: {} })).structuredContent,
+      { status: "ok", revision: 0, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [], relationsTruncated: false });
     const conflict = await graph.client.callTool({ name: "session_graph.apply", arguments: { expectedRevision: 0, topics: [{ id: "other", title: "Other" }] } });
     assert.equal(conflict.isError, true);
-    assert.deepEqual(conflict.structuredContent, { status: "conflict", revision: 1 });
+    assert.deepEqual(conflict.structuredContent, { status: "conflict", revision: 3 });
+    f.glossary.endProviderTurn(auxTurn.handle);
+    assert.equal((await fetch(auxTurn.binding.managedMcp!.sessionGraphUrl, { method: "POST", headers: {
+      [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: auxTurn.binding.managedMcp!.token,
+    } })).status, 401);
   } finally { await f.close(); }
 });
 

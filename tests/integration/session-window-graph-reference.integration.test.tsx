@@ -45,8 +45,10 @@ test("Session Window shows Graph reference failures for Main and Auxiliary witho
     checkout: { repositoryName: "Fixture", branch: "test", pathLabel: "fixture" },
     state: { status: "valid", relativePath: ".withmate/glossary.yaml", revision: "fixture", entries: [] } });
   const record = { id: "reference", topicId: "topic", kind: "decision", title: "Graph Reference", detail: "", scope: "",
-    actor: { label: "User" }, recordedBy: { sessionId: "benchmark-main", sessionTitle: "Main", role: "main" },
-    references: [{ role: "evidence", label: "Open Reference", href: "evidence.md" }], createdAt: "2026-10-26T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z" };
+    actor: { sessionId: "benchmark-main" }, origin: { type: "user" },
+    actorSnapshot: { sessionId: "benchmark-main", sessionTitle: "Main", role: "main" },
+    recordedBy: { sessionId: "benchmark-main", sessionTitle: "Main", role: "main" },
+    references: [{ role: "evidence", label: "Open Reference", href: "https://example.com/evidence?q=a%2Fb#heading" }], createdAt: "2026-10-26T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z" };
   api.readSessionGraph = (async (_id: string, operation: string) => ({ status: "ok", revision: 1,
     items: operation === "list_topics" ? [{ id: "topic", title: "Topic" }] : [record], total: 1, offset: 0,
     hasMore: false, incomplete: false, relations: [], externalEndpoints: [], relationsTruncated: false })) as WithMateWindowApi["readSessionGraph"];
@@ -55,6 +57,7 @@ test("Session Window shows Graph reference failures for Main and Auxiliary witho
   const owners: string[] = [];
   api.openSessionFilePreviewWindow = async (request) => {
     assert.ok(request.kind === "link");
+    assert.equal(request.target, "https://example.com/evidence?q=a%2Fb#heading");
     owners.push(request.sessionId);
     if (outcome === "throw") throw new Error("Graph reference exception");
     return outcome === "opened" ? { status: "opened", targetType: "external-url", target: "evidence.md" }

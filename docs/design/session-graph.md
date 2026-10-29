@@ -10,7 +10,7 @@ Session Graphは要求、制約、判断、活動、観測、未解決事項と�
 
 ## 記録
 
-Topicはstable IDと表示名を持つ。Recordは親Graph内で一意のstable ID、topic ID、kind、短いtitle、Markdownのdetail、適用範囲scope、内容上の主体actorを持つ。titleは図の要点であり、重要な限定を落とした自動要約には置き換えない。
+Topicはstable IDと表示名を持つ。Recordは親Graph内で一意のstable ID、topic ID、kind、短いtitle、Markdownのdetail、適用範囲scope、担当エージェントactor、内容の由来originを持つ。titleは図の要点であり、重要な限定を落とした自動要約には置き換えない。
 
 | kind | 状態 |
 | --- | --- |
@@ -23,9 +23,15 @@ Topicはstable IDと表示名を持つ。Recordは親Graph内で一意のstable 
 
 状態は省略できる。context選択ではissueの省略をopen、activityの省略をplannedとして扱うが、UIで確認済みの状態を創作しない。全kindに任意のvalidity `superseded` / `withdrawn`を持たせ、未指定を現行とする。活動の完了、結果の成功、論点の解消、判断の採用は別々の情報である。
 
-actorは同じ親Graphに属するMain/AuxiliaryのSession ID、またはユーザー等を示すlabelで指定する。`User`等のlabelは要求者・判断者といった内容上の主体であり、その人がGraphへ直接書き込んだことを示さない。ユーザー向けの書込UIは設けず、agentがMCPから記録する。記録者`recordedBy`とCharacter snapshotはWithMateが信頼済みSessionから付与し、入力では受け付けない。初回の記録者・作成時刻と、同じactorのsnapshotは更新でも保持する。他Auxiliaryによる更新やCharacterの後の変更で初回帰属を付け替えない。snapshotのiconは既存Character資産への参照であり、画像fileの複製・永久保存はしない。
+actorは同じ親Graphに属する担当Main/Auxiliaryの`{ sessionId }`である。新規recordでactorを省略すると信頼済み呼出元を担当にする。自分のSession ID、名前、画像の再入力やself取得は不要で、他担当の指定・担当変更はactorを明示する。同じCharacterを使うSessionもSession IDで区別する。`actorRole`は最大512文字の任意の作業役割であり、Character名やidentityのMain/Auxiliary区分とは別である。
+
+`origin`は`{ type: "agent" | "user" | "external", label?: string }`で内容の由来を示す。新規recordでは必須で、担当や記録者から推測しない。labelは最大512文字の任意の補足（外部サービス名など）。decisionの`adoptionOrigin`は同じ形式でaccepted/declinedの判断の由来を別に保持する。agent提案をuserが採用する場合は元のactor/originを保持し、adoptionとadoptionOriginを変更する。acceptedだけでuser採用を推測しない。由来はagentが内容を記録する属性であり、本人の直接編集の証明や実行承認・権限ではない。
+
+ユーザー向けの書込UIは設けず、agentがMCPから記録する。初回記録者`recordedBy`と担当`actorSnapshot`はWithMateが信頼済みSessionから付与し、入力では受け付けない。初回記録者・作成時刻と、同じ担当のsnapshotは更新でも保持する。他Auxiliaryによる更新やCharacterの後の変更で帰属を付け替えない。担当を明示変更した場合だけ新担当のsnapshotを取得する。snapshotのiconは既存Character資産への参照であり、画像fileの複製・永久保存はしない。
 
 任意のtargetは対象revision、実施条件、観測日時をまとめて保持する。これはサーバーが付ける作成・更新日時と区別する。referencesは`evidence` / `artifact` / `handoff`の役割、表示名、参照先を持ち、全recordへ一律のSource欄を要求しない。
+
+`references[].href`はWindows drive付き絶対path、バックスラッシュ形式UNC、POSIX絶対path、適切な絶対file URL、または完全なhttp/https/mailto/tel URLを指定する。相対・drive相対・protocol-relative・不完全URLは拒否し、新規・通常更新・未変更hrefの再保存で同じ形式検証を行う。保存時は存在や読取可否を確認せず、文字列のquery/fragment/encodingを保持する。明示クリック時に既存の共通openが存在・読取・open結果を確認し、失敗は既存feedbackへ返す。Workspace内・SessionFolder内・登録root外の明示fileを扱い、baseの推測や同名fileの探索は行わない。
 
 自由項目`fields`にはJSON objectを許可する。入れ子、配列、文字列、有限数、boolean、nullを保持し、定型項目・状態・帰属・認可を上書きしない。自由項目は詳細でそのまま読み、任意pathのqueryや自動状態判定には使用しない。
 
@@ -62,7 +68,9 @@ contextは絞り込みに一致する現行recordを起点に、outgoing `depend
 
 読取はrevision、total、offset、hasMore、incompleteを返す。recordはサーバー更新日時の降順で返し、観測日時の新旧では並べない。関係は返却recordに接続するものと表示外endpointの要点を返し、record読取の`relationsTruncated`はそのpageの関係を取得上限で切り詰めた場合だけtrueになる。UIはpage間でこのflagを保持し、累積関係数ではなく実際の欠落に基づいて警告と集約可否を決める。record pageと関係の取得上限を区別し、部分取得を完全なGraphに見せない。続きの取得には同じexpectedRevisionを渡し、途中更新はconflictとして再取得する。
 
-applyはtopic/record/relationのupsertとrelation解除を1transactionで処理し、1batchにつきrevisionを1増やす。recordの更新は指定IDの内容全体を置き換えるため、更新前に必要なIDをgetする。expectedRevision不一致では保存せず、現在revisionを返す。影響するIDを再取得してから再試行し、古いGraph全体で他者の変更を上書きしない。任意record/topic削除toolは設けず、撤回・置換と親削除を使う。通信やcommit後の応答に失敗した場合、結果不明を成功・未保存のどちらにも決めつけず、再取得して確認する。
+applyはtopic/record/relationのupsertとrelation解除を1transactionで処理し、1batchにつきrevisionを1増やす。recordの必須本文（id、topicId、kind、title、detail、scope、references）は毎回指定する。actor/originと任意属性は省略時に既存値を保持する。target、fields、actorRole、adoptionOrigin、各状態はnullで明示解除でき、actor/originは解除できない。更新前に必要なIDをgetし、kind変更時も保持される状態が新kindと整合するよう明示解除する。既存adoptionOriginがあるdecisionのadoptionを変更・解除する場合は、adoptionOriginの新値またはnullも明示する。採否がaccepted/declinedでないrecordへadoptionOriginを保存しない。保持された担当も保存時の親Graph所属検証を受ける。
+
+`actorSessionId`は担当、`recordedBySessionId`は初回記録者で絞り込む。担当が受け持つuser/external由来も含み、contextや関連取得から由来だけを理由に除外しない。expectedRevision不一致では保存せず、現在revisionを返す。影響するIDを再取得してから再試行し、古いGraph全体で他者の変更を上書きしない。任意record/topic削除toolは設けず、撤回・置換と親削除を使う。通信やcommit後の応答に失敗した場合、結果不明を成功・未保存のどちらにも決めつけず、再取得して確認する。
 
 ## 閲覧UI
 
@@ -88,4 +96,4 @@ applyはtopic/record/relationのupsertとrelation解除を1transactionで処理�
 
 配置は無向の幅優先順で接続recordを近づけ、利用可能な幅へ詰めて複数段に置く。表示幅の変更でもcardの文字・54pxのCharacter iconを縮小せず再配置し、拡縮操作は配置を変えず表示倍率だけを変える。card1列に必要な幅を下回る領域と拡大時はnative横scrollを残す。行・列は時系列や依存方向を表さず、意味と方向は関係のlabelと矢印で示す。複数段を跨ぐ辺はcard間の余白へ通す。
 
-図は要点・意味の異なる状態・主体icon・関係を中心にし、本文、適用範囲、target、自由項目、具体的な参照は選択後に表示する。Main/Auxiliaryの区分・会話名はiconのhover/focusで読め、記録者が内容上の主体と違う場合だけ記録者を補足する。任意labelの主体は人型と名前を常設表示し、`User`を頭文字だけに短縮しない。長いlabelはnode内の表示範囲を制限し、hover/focusと詳細で全文を読める。labelから利用者本人の画像へ自動紐付けはしない。関係・区間展開はkeyboardからも辿れる。Markdown内の埋込み画像や図を自動取得・実行せず、参照は利用者の明示操作から既存の認可済みlink/file経路へ渡す。
+図は要点・意味の異なる状態・担当画像とCharacter名・関係を中心にし、内容由来と採否由来を小さな別labelで示す。Main/Auxiliaryの区分、会話名、任意の担当役割は画像のhover/focusから、由来の補足labelは由来のhover/focusから確認できる。本文、適用範囲、target、自由項目、具体的参照、担当役割と各由来の全文は選択後に表示する。初回記録者が担当と違う場合だけRecorded Byを補足する。user/external由来やユーザー採用でも担当画像を切り替えず、画像未設定・読込失敗時は担当名を保つ既存avatar fallbackを使う。担当/画像が変われば新しい画像を再試行する。集約は件数と区間titleを示し、先頭recordの担当・由来を集約全体の属性として表示しない。関係・区間展開はkeyboardからも辿れる。Markdown内の埋込み画像や図を自動取得・実行せず、参照は利用者の明示操作から既存の認可済みlink/file経路へ渡す。

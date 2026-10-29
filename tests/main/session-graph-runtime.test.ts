@@ -11,17 +11,18 @@ function fixture() {
   const owner = { sessionId: "main", incarnationId: "incarnation" };
   let generation = "generation";
   const identities: SessionGraphIdentity[] = [
-    { sessionId: "main", sessionTitle: "Main", role: "main" },
+    { sessionId: "main", sessionTitle: "Main", role: "main", character: { id: "character", name: "Character" } },
     { sessionId: "aux", sessionTitle: "Aux", role: "auxiliary", character: { id: "character", name: "Character" } },
+    { sessionId: "other-parent", sessionTitle: "Other", role: "main", character: { id: "character", name: "Character" } },
   ];
-  const calls: { recorder?: SessionGraphIdentity; actors?: SessionGraphIdentity[] }[] = [];
+  const calls: { request: SessionGraphRequest<SessionGraphOperation>; recorder?: SessionGraphIdentity; actors?: SessionGraphIdentity[] }[] = [];
   const store: SessionGraphStore = { async execute<K extends SessionGraphOperation>(_owner: SessionGraphOwner, _operation: K, _request: SessionGraphRequest<K>, recorder?: SessionGraphIdentity, actors?: SessionGraphIdentity[]) {
-    calls.push({ recorder, actors });
+    calls.push({ request: _request, recorder, actors });
     return { status: "ok", revision: 1 } as SessionGraphOperationResult<K>;
   } };
   const app = new SessionGraphApplicationService({ getStore: () => store, resolveSession(id): ResolvedSessionGraphSession | null {
     const identity = identities.find((item) => item.sessionId === id);
-    return identity ? { owner, identity, providerId: "codex", generation } : null;
+    return identity ? { owner: id === "other-parent" ? { ...owner, sessionId: id } : owner, identity, providerId: "codex", generation } : null;
   } });
   const registry = new AgentRuntimeBindingRegistry();
   const binding = registry.issueOrReuse({ actorSessionId: "aux", providerId: "codex", authoritySnapshot: { sessionGraphOwner: owner, characterId: "character" }, operationGrants: getSessionGraphAgentRuntimeOperations() });
@@ -29,11 +30,11 @@ function fixture() {
   const runtime = new SessionGraphRuntimeService({ applicationService: app, bindingRegistry: registry, providerAgentRuntimeTurns: turns });
   return { app, registry, turns, runtime, binding, calls, identities, replaceGeneration() { generation = "replacement"; } };
 }
-const record = { id: "record", topicId: "topic", kind: "activity" as const, title: "Work", detail: "Details", scope: "scope", actor: { sessionId: "main" }, references: [] };
+const record = { id: "record", topicId: "topic", kind: "activity" as const, title: "Work", detail: "Details", scope: "scope", origin: { type: "agent" as const }, actor: { sessionId: "main" }, references: [] };
 
 // @test-value v2
 // kind = "invariant"
-// claim = "AuxによるMain主体の記録はtrusted recorderとactorを別々に解決し、失効turnとscope偽装を拒否する"
+// claim = "Auxは明示担当とtrusted recorderを別々に解決し、担当省略は保存層へ保持して渡し、失効turn・bindingとrecorder偽装を拒否する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
 // fault = "callerがrecorderを偽装するか失効turnでMain Graphへ変更する"
 // observable = "runtime応答と永続化境界へ渡されたidentityおよび呼出件数"
@@ -49,18 +50,26 @@ test("Session Graph mutation uses trusted identities and active turn authority",
   const request = { method: "POST" as const, path: "/v1/session-graph/apply", transport: "mcp" as const, bindingReference: f.binding.bindingReference, turnCapability: turn.capability, body: { expectedRevision: 0, records: [record] } };
   assert.equal((await f.runtime.route({ ...request, body: { ...request.body, recordedBy: "main" } }))?.status, 400);
   assert.equal((await f.runtime.route(request))?.status, 200);
-  assert.deepEqual(f.calls, [{ recorder: f.identities[1], actors: [f.identities[0]] }]);
+  assert.deepEqual(f.calls, [{ request: request.body, recorder: f.identities[1], actors: [f.identities[0]] }]);
+  const { actor: _actor, ...selfRecord } = record;
+  const selfRequest = { ...request, body: { expectedRevision: 1, records: [{ ...selfRecord, origin: { type: "user" as const } }] } };
+  assert.equal((await f.runtime.route(selfRequest))?.status, 200);
+  assert.deepEqual(f.calls[1], { request: selfRequest.body, recorder: f.identities[1], actors: [] });
   f.turns.end(turn);
   assert.equal((await f.runtime.route(request))?.status, 401);
-  assert.equal(f.calls.length, 1);
+  const activeTurn = f.turns.begin({ actorSessionId: "aux", providerId: "codex" });
+  f.registry.revokeSession("aux");
+  assert.equal((await f.runtime.route({ ...request, turnCapability: activeTurn.capability }))?.status, 401);
+  f.turns.end(activeTurn);
+  assert.equal(f.calls.length, 2);
 });
 
 // @test-value v2
 // kind = "invariant"
-// claim = "同じparentに解決できないactor参照を保存境界へ渡さない"
+// claim = "存在しないactor、同Characterの別parent actor、親Graph不一致のbindingを保存境界へ渡さない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
 // fault = "任意Session IDをactorとして登録し他parentへ誤帰属させる"
-// observable = "applicationのrejectとstore呼出件数"
+// observable = "applicationのreject、runtimeの403応答とstore呼出件数"
 // observation_boundary = "public-boundary"
 // scope = "session-graph-application"
 // lifecycle = "permanent"
@@ -69,7 +78,17 @@ test("Session Graph mutation uses trusted identities and active turn authority",
 // @end-test-value
 test("Session Graph rejects unresolved actor references before storage", async () => {
   const f = fixture();
-  await assert.rejects(f.app.executeTrusted("aux", "apply", { expectedRevision: 0, records: [{ ...record, actor: { sessionId: "other-parent" } }] }, () => true), /outside the parent/);
+  for (const sessionId of ["missing", "other-parent"]) {
+    await assert.rejects(f.app.executeTrusted("aux", "apply", { expectedRevision: 0, records: [{ ...record, actor: { sessionId } }] }, () => true), /outside the parent/);
+  }
+  const wrongParent = f.registry.issueOrReuse({ actorSessionId: "aux", providerId: "codex",
+    authoritySnapshot: { sessionGraphOwner: { sessionId: "other-parent", incarnationId: "incarnation" }, characterId: "character" },
+    operationGrants: getSessionGraphAgentRuntimeOperations() });
+  const turn = f.turns.begin({ actorSessionId: "aux", providerId: "codex" });
+  assert.equal((await f.runtime.route({ method: "POST", path: "/v1/session-graph/apply", transport: "mcp",
+    bindingReference: wrongParent.bindingReference, turnCapability: turn.capability,
+    body: { expectedRevision: 0, records: [record] } }))?.status, 403);
+  f.turns.end(turn);
   assert.equal(f.calls.length, 0);
 });
 

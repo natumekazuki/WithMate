@@ -8,6 +8,7 @@ import {
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { normalizeSessionSidePane, type SessionSidePane } from "../../src-shared/settings/session-side-pane.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "../storage/database-schema-v1.js";
+import { SESSION_GRAPH_CONTRACT_INITIALIZED_KEY } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
@@ -699,7 +700,7 @@ export class AppSettingsStorage {
   resetSettings(): AppSettings {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      this.db.exec("DELETE FROM app_settings;");
+      this.db.prepare("DELETE FROM app_settings WHERE setting_key <> ?").run(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY);
       this.ensureSessionSidePaneDefault();
       this.ensureDefaults();
       this.db.exec("COMMIT");

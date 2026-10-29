@@ -108,12 +108,98 @@ function record(id: string): SessionGraphRecord {
     detail: "",
     scope: "",
     references: [],
-    actor: { label: "User" },
+    actor: { sessionId: "main" },
+    actorSnapshot: { sessionId: "main", sessionTitle: "Main", role: "main", character: { id: "character", name: "Akari" } },
+    origin: { type: "agent" },
     recordedBy: { sessionId: "main", sessionTitle: "Main", role: "main" },
     createdAt: "2026-10-24T00:00:00Z",
     updatedAt: "2026-10-24T00:00:00Z",
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "agent・user・external由来に関わらず担当Character名と対応画像を表示し、採否由来・任意役割・初回記録者を区別し、画像失敗後の明示担当変更では新画像を描画する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md: 記録・閲覧UI; GitHub Issues #889/#893/#897" }
+// fault = "由来や採用に応じて担当画像をUser/記録者画像へ切り替える、役割をCharacter名へ混ぜる、画像失敗状態を次の担当へ持ち越す"
+// observable = "各nodeの可視担当名・img src・由来、詳細の由来・採否由来・役割・記録者、採用通知前後のimg同一性と担当変更後のimg src"
+// observation_boundary = "component-behavior"
+// scope = "SessionGraphPreviewの担当identityと由来表示・CharacterAvatar更新"
+// lifecycle = "permanent"
+// impact = "要求者や採否判断者を担当と誤認せず、画像読込失敗後も別担当を識別できる"
+// distinction = "schemaやstorage testではrendererの由来による画像選択・Avatar失敗stateの再利用を検出できない。少数recordのDOM操作で継続確認する"
+// @end-test-value
+test("graph preview keeps character ownership separate from content and adoption origins", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
+  const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const records: SessionGraphRecord[] = (["agent", "user", "external"] as const).map((type) => ({
+    ...record(type), origin: { type, label: `${type} source` }, actorRole: "Reviewer",
+    actor: { sessionId: `actor-${type}` },
+    actorSnapshot: { sessionId: `actor-${type}`, sessionTitle: `${type} Session`, role: "auxiliary",
+      character: { id: type, name: `Character ${type}`, icon: `C:\\assets\\${type}.png` } },
+    recordedBy: { sessionId: "recorder", sessionTitle: "Recorder Session", role: "main", character: { id: "recorder", name: "Recorder", icon: "C:\\assets\\recorder.png" } },
+  }));
+  let revision = 1;
+  let notify = (_id: string) => {};
+  const api = {
+    readSessionGraph: (async (_id: string, operation: string, request: { ids?: string[] }) => {
+      if (operation === "list_topics") return { status: "ok", revision, items: [{ id: "topic", title: "Topic" }], total: 1, offset: 0, hasMore: false, incomplete: false };
+      const items = operation === "get" ? records.filter((item) => request.ids?.includes(item.id)) : records;
+      return { status: "ok", revision, items, total: items.length, offset: 0, hasMore: false, incomplete: false,
+        relationsTruncated: false, relations: [], externalEndpoints: [] };
+    }) as WithMateWindowApi["readSessionGraph"],
+    subscribeSessionGraph: (listener: (id: string) => void) => { notify = listener; return () => {}; },
+  };
+  const doc = dom.window.document;
+  const nodes = () => [...doc.querySelectorAll<HTMLButtonElement>(".session-graph-node")];
+  try {
+    await act(async () => root.render(<SessionGraphPreview api={api} sessionId="main" onOpenPath={() => {}} />));
+    for (const [index, type] of (["agent", "user", "external"] as const).entries()) {
+      assert.equal(nodes()[index].querySelector(".session-graph-actor-name")?.textContent, `Character ${type}`);
+      assert.equal(nodes()[index].querySelector("img")?.getAttribute("src"), `file:///C:/assets/${type}.png`);
+      assert.match(nodes()[index].querySelector(".session-graph-provenance")?.textContent ?? "", new RegExp(`From ${type[0].toUpperCase()}${type.slice(1)}`));
+    }
+    const originalImage = nodes()[0].querySelector("img");
+    records[0] = { ...records[0], adoption: "accepted", adoptionOrigin: { type: "user", label: "Project Owner" } };
+    revision++;
+    await act(async () => notify("main"));
+    assert.equal(nodes()[0].querySelector("img"), originalImage);
+    assert.match(nodes()[0].querySelector(".session-graph-provenance")?.textContent ?? "", /Adoption: User/);
+    await act(async () => nodes()[0].click());
+    const detail = doc.querySelector(".session-graph-details")!;
+    const fields = [...detail.querySelectorAll(".session-graph-fields dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]);
+    assert.deepEqual(fields, [["Origin", "Agent · agent source"], ["Adoption Origin", "User · Project Owner"], ["Actor Role", "Reviewer"]]);
+    assert.equal(detail.querySelector(".session-graph-identity .session-graph-actor-name")?.textContent, "Character agent");
+    assert.equal(detail.querySelector(".session-graph-recorder img")?.getAttribute("src"), "file:///C:/assets/recorder.png");
+    await act(async () => doc.querySelector<HTMLButtonElement>("button[aria-label='Close Record Details']")!.click());
+
+    await act(async () => nodes()[0].querySelector("img")!.dispatchEvent(new dom.window.Event("error")));
+    assert.equal(nodes()[0].querySelector("img"), null);
+    assert.equal(nodes()[0].querySelector(".avatar-fallback")?.textContent, "C");
+    assert.equal(nodes()[0].querySelector(".session-graph-actor-name")?.textContent, "Character agent");
+    records[0] = { ...records[0], actor: { sessionId: "replacement" }, actorSnapshot: {
+      sessionId: "replacement", sessionTitle: "Replacement Session", role: "auxiliary",
+      character: { id: "replacement", name: "New Character", icon: "C:\\assets\\replacement.png" },
+    } };
+    records[1] = { ...records[1], actorSnapshot: { ...records[1].actorSnapshot,
+      character: { id: "user", name: "Character user" } } };
+    revision++;
+    await act(async () => notify("main"));
+    assert.equal(nodes()[0].querySelector("img")?.getAttribute("src"), "file:///C:/assets/replacement.png");
+    assert.equal(nodes()[0].querySelector(".session-graph-actor-name")?.textContent, "New Character");
+    assert.equal(nodes()[1].querySelector("img"), null);
+    assert.equal(nodes()[1].querySelector(".session-graph-actor-name")?.textContent, "Character user");
+    assert.match(nodes()[1].textContent ?? "", /From User/);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
 
 // @test-value v2
 // kind = "invariant"
@@ -281,15 +367,15 @@ test("graph overview retains semantic boundaries, branches, cycles and unloaded 
 
 // @test-value v2
 // kind = "contract"
-// claim = "区間展開からrecord詳細へ辿れ、操作名を持つ範囲navigationで位置・倍率・focusへ戻り、再表示・跨話題往復で追加取得した区間とlabel主体の名前を保持する"
+// claim = "区間展開からrecord詳細へ辿れ、操作名を持つ範囲navigationで位置・倍率・focusへ戻り、再表示・跨話題往復で追加取得した区間を保持する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "group操作が全経路を無条件展開するか、全体へ戻るiconに操作名がなくなるか、範囲navigationが会話復帰を実行するか、戻る時に位置・倍率・focusを失うか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われるか、Userがtooltip内だけになる"
-// observable = "展開後のgroupとrecord、全体へ戻るiconのaccessible nameとtitle・深い区間の可視labelと操作結果、詳細本文と可視label、再表示・跨話題往復後のnode集合、戻り先groupのfocusとviewport位置・倍率、部分取得中の集約可否"
+// fault = "group操作が全経路を無条件展開するか、全体へ戻るiconに操作名がなくなるか、範囲navigationが会話復帰を実行するか、戻る時に位置・倍率・focusを失うか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われる"
+// observable = "展開後のgroupとrecord、全体へ戻るiconのaccessible nameとtitle・深い区間の可視labelと操作結果、詳細本文、再表示・跨話題往復後のnode集合、戻り先groupのfocusとviewport位置・倍率、部分取得中の集約可否"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-overview-navigation"
 // lifecycle = "permanent"
 // @end-test-value
-test("graph preview retains expanded ranges and displays label actors beside a person icon", async () => {
+test("graph preview retains expanded ranges across record and topic navigation", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
   const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   Object.defineProperties(globalThis, {
@@ -359,10 +445,7 @@ test("graph preview retains expanded ranges and displays label actors beside a p
     assert.equal(rangeNavigation().querySelector("[aria-label='Back To Previous Range']")?.textContent, "←Back To Previous Range");
     const leaf = labels();
     await click(".session-graph-node");
-    const actor = dom.window.document.querySelector(".session-graph-details .session-graph-identity.is-label")!;
-    assert.equal(actor.querySelector(".session-graph-actor-name")?.textContent, "User");
-    assert.ok(actor.querySelector("svg[aria-hidden='true']"));
-    assert.equal(actor.getAttribute("aria-label"), "User");
+    assert.ok(dom.window.document.querySelector(".session-graph-details h2")?.textContent);
     await click("[aria-label='Close Record Details']");
     assert.deepEqual(labels(), leaf);
     assert.ok(dom.window.document.activeElement?.classList.contains("session-graph-node"));
