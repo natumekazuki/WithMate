@@ -380,7 +380,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Historyのbranch selectorは現在選択中のbranchを`Current`で示し、branch名自体はraw valueのまま表示する
   - History Compareは4つ目のtabや独自のdiff surfaceを増やさず、Historyのfile tree、filter、Open All Changesを再利用する。比較時に解決したcommit object IDを保持し、branchの移動でpatchを暗黙に差し替えない。patchはcentral surfaceまたはdetached File Preview Windowで開け、before / after previewはcentral diffのactionからcommit-scoped File Preview Windowで開ける
   - Changes は user configuration から外部 command を実行しない。root の認可と表示 scope は ADR 015、Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
-  - Git rootがない、または変更が0件という正常状態はblankで表現する。Git repositoryのdiscovery・availability・rejectと、Changes / Historyの取得・diff操作の失敗は理由を持つ実エラーとして扱い、正常blankへ潰さない。File Explorerのroot読込失敗は`role="alert"`で示し、読込中はspinner/statusと区別する
+  - Git rootがない正常状態はblankで表現する。Changesは変更が0件でも対象Git rootの見出し・path・0件表示を残し、ファイル一覧の本文だけをblankにする。変更ありから0件への更新後や、変更あり・なしの混在でも同じ表示を維持する。Git repositoryのdiscovery・availability・rejectと、Changes / Historyの取得・diff操作の失敗は理由を持つ実エラーとして扱い、正常blankへ潰さない。File Explorerのroot読込失敗は`role="alert"`で示し、読込中はspinner/statusと区別する
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
   - ファイル名・操作のheaderと本文の間に、絶対パス専用の全幅領域を置く。pathはread-onlyで、長い場合は折り返して全文を表示し、Tabでfocusして選択・copyできる。狭幅では操作群も折り返す。通常fileはMainが解決したcanonical path、commit snapshotは選択root内の対応pathを表示し、Commit表示で本文の版を区別する。resourceの識別・認可や読込先は表示pathから変更しない

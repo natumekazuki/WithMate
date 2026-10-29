@@ -305,10 +305,6 @@ export function FileRootChangesGroup({
     }
   }, [totalSize]);
 
-  if (rootChange.status === "empty") {
-    return null;
-  }
-
   return (
     <section
       className={`workspace-changes-root-group${sizing === "content" ? " is-content-sized" : ""}`}

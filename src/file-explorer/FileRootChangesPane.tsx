@@ -296,15 +296,13 @@ export function FileRootChangesPane({
     }
   };
 
-  const visibleRootChanges = rootChanges.filter((rootChange) => rootChange.status !== "empty");
-
   return (
     <div className="workspace-changes-pane">
       {repositoryMessage ? <p className="workspace-changes-message" role="alert">{repositoryMessage}</p> : null}
       {message ? <p className="workspace-changes-message" role="alert">{message}</p> : null}
-      {visibleRootChanges.length > 0 ? (
+      {rootChanges.length > 0 ? (
         <div className="workspace-changes-groups" role="list" aria-label="File root changes">
-          {visibleRootChanges.map((rootChange) => (
+          {rootChanges.map((rootChange) => (
             <FileRootChangesGroup
               key={`${sessionId ?? ""}:${rootChange.root.id}`}
               rootChange={rootChange}
