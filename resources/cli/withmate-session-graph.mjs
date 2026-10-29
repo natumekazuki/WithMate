@@ -5643,9 +5643,9 @@ var sessionGraphRecordInputSchema = sessionGraphRecordSchema.extend({
 	validity: sessionGraphRecordSchema.shape.validity.nullable()
 });
 var sessionGraphRelationSchema = object({
-	id,
-	fromId: id,
-	toId: id,
+	id: id.describe("Stable relation ID: reuse it to update kind, label or endpoints; remove it with removeRelationIds."),
+	fromId: id.describe("Source record ID; both endpoints must exist in this parent Graph, including records in the same atomic apply."),
+	toId: id.describe("Target record ID; may belong to another topic in this parent Graph."),
 	kind: _enum([
 		"fulfills",
 		"constrains",
@@ -5654,13 +5654,17 @@ var sessionGraphRelationSchema = object({
 		"depends_on",
 		"supersedes",
 		"related"
-	]),
+	]).describe("fulfills: activity -> requirement; checks: observation -> checked target; supports: evidence -> decision/target; depends_on: dependent -> prerequisite; constrains: constraint -> target; supersedes: successor -> old record; related: other explicit connection. Relations never change record state automatically."),
 	label: string().max(1024).optional()
 }).strict();
 var page = {
 	limit: number().int().min(1).max(200).optional(),
 	offset: number().int().nonnegative().optional(),
 	expectedRevision: number().int().nonnegative().optional()
+};
+var recordPage = {
+	...page,
+	relationOffset: number().int().nonnegative().optional().describe("Independent offset into relations touching returned items, ordered by stable relation ID (400 per read). Keep record filters/offset/limit and expectedRevision unchanged for continuation. Only a complete sequence from zero to relationsHasMore=false confirms absence within returned item IDs.")
 };
 var filters = {
 	topicId: id.optional(),
@@ -5675,24 +5679,24 @@ var filters = {
 var sessionGraphOperationRequestSchemas = {
 	list_topics: object({ ...page }).strict(),
 	recent: object({
-		...page,
+		...recordPage,
 		...filters
 	}).strict(),
 	context: object({
-		...page,
+		...recordPage,
 		...filters
 	}).strict(),
 	get: object({
-		...page,
+		...recordPage,
 		ids: array(id).min(1).max(200)
 	}).strict(),
 	search: object({
-		...page,
+		...recordPage,
 		...filters,
 		query: string().min(1).max(1024)
 	}).strict(),
 	get_topic_view: object({
-		...page,
+		...recordPage,
 		...filters,
 		topicId: id
 	}).strict(),
@@ -5703,8 +5707,8 @@ var sessionGraphOperationRequestSchemas = {
 			title: string().min(1).max(1024)
 		}).strict()).max(100).optional(),
 		records: array(sessionGraphRecordInputSchema).max(200).optional(),
-		relations: array(sessionGraphRelationSchema).max(400).optional(),
-		removeRelationIds: array(id).max(400).optional()
+		relations: array(sessionGraphRelationSchema).max(400).optional().describe("Explicit meaningful connections, saved atomically with records. Isolated records are valid; never infer relations from title, topic, actor, time or origin."),
+		removeRelationIds: array(id).max(400).optional().describe("Remove known stable relation IDs in the same revision-checked atomic batch.")
 	}).strict()
 };
 var SESSION_GRAPH_RUNTIME_OPERATION_PATHS = Object.fromEntries(Object.keys(sessionGraphOperationRequestSchemas).map((key) => [key, `/v1/session-graph/${key.replaceAll("_", "-")}`]));

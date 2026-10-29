@@ -96,7 +96,7 @@ export class SessionGraphStorageV6 {
 
   private read(owner: SessionGraphOwner, operation: SessionGraphOperation, request: unknown, revision: number) {
     const input = request as SessionGraphRequest<"recent"> & { ids?: string[]; query?: string };
-    const limit = input.limit ?? 50, offset = input.offset ?? 0;
+    const limit = input.limit ?? 50, offset = input.offset ?? 0, relationOffset = input.relationOffset ?? 0;
     const where = ["session_id = ?"], params: SQLInputValue[] = [owner.sessionId];
     for (const key of ["topicId", "actorSessionId", "recordedBySessionId", "kind", "adoption", "progress", "result", "resolution"] as const) {
       if (input[key] === undefined) continue;
@@ -130,7 +130,7 @@ export class SessionGraphStorageV6 {
     let relations: SessionGraphRelation[] = [], externalEndpoints: SessionGraphEndpoint[] = [], edgesTruncated = false;
     if (ids.length) {
       const placeholders = ids.map(() => "?").join(",");
-      const edges = this.db.prepare(`SELECT payload_json FROM session_graph_relations_v6 WHERE session_id = ? AND (from_id IN (${placeholders}) OR to_id IN (${placeholders})) ORDER BY id LIMIT ?`).all(owner.sessionId, ...ids, ...ids, SESSION_GRAPH_RELATION_LIMIT + 1) as JsonRow[];
+      const edges = this.db.prepare(`SELECT payload_json FROM session_graph_relations_v6 WHERE session_id = ? AND (from_id IN (${placeholders}) OR to_id IN (${placeholders})) ORDER BY id LIMIT ? OFFSET ?`).all(owner.sessionId, ...ids, ...ids, SESSION_GRAPH_RELATION_LIMIT + 1, relationOffset) as JsonRow[];
       edgesTruncated = edges.length > SESSION_GRAPH_RELATION_LIMIT;
       relations = edges.slice(0, SESSION_GRAPH_RELATION_LIMIT).map(decode<SessionGraphRelation>);
       const external = [...new Set(relations.flatMap((edge) => [edge.fromId, edge.toId]).filter((id) => !ids.includes(id)))];
@@ -140,6 +140,7 @@ export class SessionGraphStorageV6 {
       });
     }
     const hasMore = offset + items.length < total;
-    return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0 || edgesTruncated, relations, externalEndpoints, relationsTruncated: edgesTruncated };
+    return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0 || relationOffset > 0 || edgesTruncated,
+      relations, externalEndpoints, relationsTruncated: edgesTruncated, relationOffset, relationsHasMore: edgesTruncated };
   }
 }

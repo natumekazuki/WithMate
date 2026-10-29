@@ -24,8 +24,9 @@ import { CharacterAvatar } from "../ui/ui-utils.js";
 import { IMAGE_ZOOM_MIN, IMAGE_ZOOM_MAX, IMAGE_ZOOM_STEP, useCtrlWheelZoom, type ImageZoom } from "../ui/image-viewport.js";
 import { useViewportPan } from "../ui/viewport-pan.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
-import { layoutSessionGraph, sessionGraphCapacity, sessionGraphEdgePath } from "./graph-layout.js";
+import { layoutSessionGraph, sessionGraphCapacity, sessionGraphRoutePath, type SessionGraphLayout, type SessionGraphLabelSize } from "./graph-layout.js";
 import { projectSessionGraph, type GraphOverviewNode } from "./graph-overview.js";
+import { applyGraphRead, applyGraphReadBatch, createGraphReadState, graphReadIsIncomplete, graphReadPendingScopes, type GraphReadState } from "./graph-read-state.js";
 
 const PAGE_SIZE = 40;
 function OverviewIcon() {
@@ -40,13 +41,26 @@ export const defaultSessionGraphViewState: SessionGraphViewState = {
   topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0,
 };
 type GraphScope = { ids: string[]; parentState: SessionGraphViewState; triggerId: string };
+type GraphLocation = {
+  state: SessionGraphViewState;
+  title: string;
+  scopes: GraphScope[];
+  recordIds: string[];
+  inspectedIds: string[];
+  navigationId: string | null;
+};
+type GraphReturn = { location: GraphLocation; kind: "detail" | "range"; rangeChanged: boolean };
 export type SessionGraphPreviewMemory = {
   topics: SessionGraphTopic[];
   topicsMore: boolean;
   view: SessionGraphReadResult | null;
   selectedRecord: SessionGraphRecord | null;
-  detailView: SessionGraphReadResult | null;
-  backStack: Array<{ state: SessionGraphViewState; title: string; scopes: GraphScope[]; view: SessionGraphReadResult | null }>;
+  relationState: GraphReadState;
+  inspectedRecords: SessionGraphRecord[];
+  navigationId: string | null;
+  backStack: Array<GraphLocation & { rangeChanged: boolean }>;
+  rangeBackStack: GraphLocation[];
+  recordPagingNeedsRefresh: boolean;
   scopes: GraphScope[];
 };
 function label(value: string) {
@@ -64,7 +78,7 @@ function mergeViews(
     offset: 0,
     incomplete: next.hasMore || current.relationsTruncated || next.relationsTruncated,
     relationsTruncated: current.relationsTruncated || next.relationsTruncated,
-    items: [...current.items, ...next.items],
+    items: [...new Map([...current.items, ...next.items].map((record) => [record.id, record])).values()],
     relations: [
       ...new Map(
         [...current.relations, ...next.relations].map((edge) => [
@@ -173,9 +187,13 @@ export function SessionGraphPreview({
   const [selectedId, setSelectedId] = useState<string | null>(initialState.selectedId);
   const [selectedRecord, setSelectedRecord] =
     useState<SessionGraphRecord | null>(initialMemory?.selectedRecord ?? null);
-  const [detailView, setDetailView] = useState<SessionGraphReadResult | null>(
-    initialMemory?.detailView ?? null,
-  );
+  const [relationState, setRelationState] = useState<GraphReadState>(() => initialMemory?.relationState ?? createGraphReadState());
+  const relationStateRef = useRef(relationState);
+  relationStateRef.current = relationState;
+  const [navigationId, setNavigationId] = useState<string | null>(initialMemory ? initialMemory.navigationId : initialState.selectedId);
+  const [inspectedRecords, setInspectedRecords] = useState<SessionGraphRecord[]>(initialMemory?.inspectedRecords ?? []);
+  const [loadingRelations, setLoadingRelations] = useState(false);
+  const [relationError, setRelationError] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState("");
@@ -185,6 +203,9 @@ export function SessionGraphPreview({
   const [refresh, setRefresh] = useState(0);
   const [zoom, setZoom] = useState(initialState.zoom);
   const [backStack, setBackStack] = useState<SessionGraphPreviewMemory["backStack"]>(initialMemory?.backStack ?? []);
+  const [rangeBackStack, setRangeBackStack] = useState<GraphLocation[]>(initialMemory?.rangeBackStack ?? []);
+  const pendingReturn = useRef<GraphReturn | null>(null);
+  const [recordPagingNeedsRefresh, setRecordPagingNeedsRefresh] = useState(initialMemory?.recordPagingNeedsRefresh ?? false);
   const [scopes, setScopes] = useState<GraphScope[]>(initialMemory?.scopes ?? []);
   const viewportRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -194,6 +215,9 @@ export function SessionGraphPreview({
   const loadedCountRef = useRef<HTMLSpanElement>(null);
   const focusLoadedCount = useRef(false);
   const nodesRef = useRef(new Map<string, HTMLButtonElement>());
+  const labelElements = useRef(new Map<string, HTMLSpanElement>());
+  const [labelSizes, setLabelSizes] = useState(new Map<string, SessionGraphLabelSize>());
+  const layouts = useRef(new Map<string, SessionGraphLayout>());
   const pendingScroll = useRef<SessionGraphViewState | null>(initialState);
   const focusDetail = useRef(false);
   const restoreNodeFocus = useRef<string | null>(null);
@@ -204,7 +228,7 @@ export function SessionGraphPreview({
   const windowTargetTrigger = useRef<HTMLElement | null>(null);
   const windowMenuRef = useRef<HTMLButtonElement>(null);
   const stateRef = useRef(initialState);
-  const pan = useViewportPan(`${sessionId}:${topicId}:${selectedId ?? ""}`, { captureOnMove: true });
+  const pan = useViewportPan(`${sessionId}:${topicId}`, { captureOnMove: true });
   const suppressPanClick = useRef(false);
   const setViewportZoom = useCallback<Dispatch<SetStateAction<ImageZoom>>>((action) => {
     setZoom((current) => {
@@ -226,14 +250,14 @@ export function SessionGraphPreview({
   }, []);
   useEffect(() => { if (windowTarget) windowMenuRef.current?.focus(); }, [windowTarget]);
   useLayoutEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const measure = () => setViewportSize((current) => current?.width === viewport.clientWidth && current.height === viewport.clientHeight
-      ? current : { width: viewport.clientWidth, height: viewport.clientHeight });
+    const host = workspaceRef.current;
+    if (!host) return;
+    const measure = () => setViewportSize((current) => current?.width === host.clientWidth && current.height === host.clientHeight
+      ? current : { width: host.clientWidth, height: host.clientHeight });
     measure();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(measure);
-    observer.observe(viewport);
+    observer.observe(host);
     return () => observer.disconnect();
   }, []);
   const [tooltipsDismissed, setTooltipsDismissed] = useState(false);
@@ -243,6 +267,21 @@ export function SessionGraphPreview({
   const topicRef = useRef(topicId);
   topicRef.current = topicId;
   const markerId = useId().replaceAll(":", "");
+  const finishReturn = ({ location, kind, rangeChanged }: GraphReturn) => {
+    setScopes(location.scopes);
+    setNavigationId(location.navigationId);
+    pendingScroll.current = location.state;
+    setZoom(location.state.zoom);
+    setSelectedId(kind === "detail" ? location.state.selectedId : null);
+    if (kind === "range" || location.state.selectedId !== selectedId) setSelectedRecord(null);
+    setDetailError("");
+    if (kind === "detail") setBackStack((current) => current.slice(0, -1));
+    else setBackStack([]);
+    if (rangeChanged) setRangeBackStack((current) => current.slice(0, -1));
+    if (kind === "range") restoreNodeFocus.current = location.state.selectedId;
+    focusDetail.current = kind === "detail";
+    pendingReturn.current = null;
+  };
   const load = useCallback(
     async (more = false, moreTopics = false) => {
       const revision = ++request.current;
@@ -251,7 +290,12 @@ export function SessionGraphPreview({
       setLoadingMore(more);
       setLoadMoreError("");
       setError("");
+      setRelationError("");
       try {
+        const returning = pendingReturn.current;
+        const rebuildPaging = more && recordPagingNeedsRefresh;
+        const append = more && !rebuildPaging;
+        const loadedCount = returning ? returning.location.recordIds.length : (view?.items.length ?? 0) + (rebuildPaging ? PAGE_SIZE : 0);
         let topicPage = await api.readSessionGraph(sessionId, "list_topics", {
           limit: 200,
           offset: moreTopics ? topics.length : 0,
@@ -284,28 +328,29 @@ export function SessionGraphPreview({
         if (!topicRef.current) setTopicId(nextTopic);
         let result = await api.readSessionGraph(sessionId, "get_topic_view", {
           topicId: nextTopic,
-          limit: more
+          limit: append
             ? PAGE_SIZE
-            : Math.max(PAGE_SIZE, Math.min(200, view?.items.length ?? 0)),
-          offset: more ? (view?.items.length ?? 0) : 0,
-          expectedRevision: more ? view?.revision : undefined,
+            : Math.max(PAGE_SIZE, Math.min(200, loadedCount)),
+          offset: append ? (view?.items.length ?? 0) : 0,
+          expectedRevision: more ? view?.revision : topicPage.revision,
         });
         if (request.current !== revision) return;
         if (result.status !== "ok")
           throw new Error(
             "The graph changed. Retry before loading more records.",
           );
-        let combined = more && view ? mergeViews(view, result) : result;
+        const reads = [result];
+        let combined = append && view ? mergeViews(view, result) : result;
         // Revalidate every already visible page at one revision; retain the old view
         // if a concurrent write prevents a consistent refresh.
         while (
-          !more &&
+          !append &&
           combined.hasMore &&
-          combined.items.length < (view?.items.length ?? 0)
+          combined.items.length < loadedCount
         ) {
           result = await api.readSessionGraph(sessionId, "get_topic_view", {
             topicId: nextTopic,
-            limit: 200,
+            limit: Math.min(200, loadedCount - combined.items.length),
             offset: combined.items.length,
             expectedRevision: combined.revision,
           });
@@ -315,11 +360,50 @@ export function SessionGraphPreview({
               "The graph changed. Retry to refresh its current state.",
             );
           if (!result.items.length) break;
+          reads.push(result);
           combined = mergeViews(combined, result);
+        }
+        const knownIds = returning ? [...returning.location.recordIds, ...returning.location.inspectedIds]
+          : [...inspectedRecords, ...(view?.items ?? [])].filter((record) => record.topicId === nextTopic).map((record) => record.id);
+        const extraIds = [...new Set(knownIds.filter((id) => !combined.items.some((item) => item.id === id)))];
+        const refreshedExtras: SessionGraphRecord[] = [];
+        if (!append) for (let offset = 0; offset < extraIds.length; offset += 200) {
+          const extra = await api.readSessionGraph(sessionId, "get", { ids: extraIds.slice(offset, offset + 200), limit: 200, expectedRevision: combined.revision });
+          if (request.current !== revision) return;
+          if (extra.status !== "ok") throw new Error("The graph changed. Retry to refresh its current state.");
+          reads.push(extra);
+          refreshedExtras.push(...extra.items);
+        }
+        let needsPagingRefresh = false;
+        if (returning || rebuildPaging) {
+          const prefix = new Set(combined.items.map((record) => record.id));
+          const latest = new Map([...combined.items, ...refreshedExtras].map((record) => [record.id, record]));
+          const savedIds = returning ? returning.location.recordIds : view!.items.map((record) => record.id);
+          const saved = new Set(savedIds);
+          const items = savedIds.flatMap((id) => latest.get(id) ?? []);
+          if (rebuildPaging) items.push(...combined.items.filter((record) => !saved.has(record.id)).slice(0, PAGE_SIZE));
+          needsPagingRefresh = items.length !== prefix.size || items.some((record) => !prefix.has(record.id));
+          combined = { ...combined, items };
+          combined.hasMore = combined.items.length < combined.total;
+          if (returning) setInspectedRecords(returning.location.inspectedIds.flatMap((id) => latest.get(id) ?? []));
+        }
+        const retainedIds = combined.items.map((record) => record.id);
+        retainedIds.push(...extraIds);
+        if (selectedId) retainedIds.push(selectedId);
+        const nextRelations = applyGraphReadBatch(relationStateRef.current, reads, retainedIds);
+        relationStateRef.current = nextRelations;
+        setRelationState(nextRelations);
+        if (!returning && !append && extraIds.length) setInspectedRecords((current) => [...current.filter((record) => !extraIds.includes(record.id)), ...refreshedExtras]);
+        // Keep the reader's spatial order when updatedAt changes on live refresh.
+        if (!returning && !more && view) {
+          const order = new Map(view.items.map((record, index) => [record.id, index]));
+          combined.items.sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER));
         }
         if (restoreLoadFocus && !combined.hasMore &&
           (document.activeElement === loadMoreRef.current || document.activeElement === document.body)) focusLoadedCount.current = true;
         setView(combined);
+        setRecordPagingNeedsRefresh(needsPagingRefresh);
+        if (returning) finishReturn(returning);
       } catch (cause) {
         if (request.current === revision)
           (more ? setLoadMoreError : setError)(cause instanceof Error ? cause.message : String(cause));
@@ -330,7 +414,7 @@ export function SessionGraphPreview({
         }
       }
     },
-    [api, sessionId, topics.length, view],
+    [api, sessionId, topics.length, view, selectedId, inspectedRecords, recordPagingNeedsRefresh],
   );
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -355,13 +439,18 @@ export function SessionGraphPreview({
       try {
         const result = await api.readSessionGraph(sessionId, "get", {
           ids: [id],
+          expectedRevision: relationStateRef.current.revision ?? undefined,
         });
         if (detailRequest.current !== revision) return;
-        if (result.status !== "ok" || !result.items[0])
+        if (result.status !== "ok") throw new Error("The graph changed. Refresh the graph to read current details.");
+        if (!result.items[0])
           throw new Error("This record is no longer available.");
+        const nextRelations = applyGraphRead(relationStateRef.current, result);
+        relationStateRef.current = nextRelations;
+        setRelationState(nextRelations);
         const record = result.items[0];
+        setInspectedRecords((current) => [...current.filter((item) => item.id !== record.id), record]);
         setSelectedRecord(record);
-        setDetailView(result);
         if (record.topicId !== topicRef.current) {
           setView(null);
           setTopicId(record.topicId);
@@ -376,47 +465,54 @@ export function SessionGraphPreview({
         if (detailRequest.current === revision) setDetailLoading(false);
       }
     },
-    [api, sessionId],
+    [api, sessionId, view?.revision],
   );
   useEffect(() => {
     if (selectedId) void selectRecord(selectedId);
     return () => {
       detailRequest.current += 1;
     };
-  }, [refresh, selectedId, selectRecord]);
+  }, [selectedId, selectRecord]);
   const records = useMemo(() => {
     const items = view?.items ?? [];
-    return selectedRecord?.topicId === topicId &&
-      !items.some((item) => item.id === selectedRecord.id)
-      ? [...items, selectedRecord]
-      : items;
-  }, [view, selectedRecord, topicId]);
-  const relations = useMemo(
-    () => [
-      ...new Map(
-        [...(view?.relations ?? []), ...(detailView?.relations ?? [])].map(
-          (edge) => [edge.id, edge],
-        ),
-      ).values(),
-    ],
-    [view, detailView],
-  );
+    const extra = inspectedRecords.filter((record) => record.topicId === topicId && !items.some((item) => item.id === record.id));
+    return extra.length ? [...items, ...extra] : items;
+  }, [view, inspectedRecords, topicId]);
+  const relations = relationState.relations;
+  const relationsIncomplete = graphReadIsIncomplete(relationState);
+  const loadRelations = async () => {
+    const pending = graphReadPendingScopes(relationStateRef.current)[0];
+    if (!pending || loadingRelations) return;
+    const currentRequest = request.current;
+    setLoadingRelations(true);
+    setRelationError("");
+    try {
+      const result = await api.readSessionGraph(sessionId, "get", {
+        ids: pending.ids, limit: 200, expectedRevision: pending.expectedRevision, relationOffset: pending.nextOffset,
+      });
+      if (request.current !== currentRequest) return;
+      if (result.status !== "ok") throw new Error("The graph changed. Refresh before loading more relations.");
+      const next = applyGraphRead(relationStateRef.current, result);
+      relationStateRef.current = next;
+      setRelationState(next);
+    } catch (cause) {
+      if (request.current === currentRequest) setRelationError(cause instanceof Error ? cause.message : String(cause));
+    } finally { setLoadingRelations(false); }
+  };
   const endpoints = useMemo(
     () =>
       new Map(
         [
+          ...relationState.externalEndpoints,
           ...records,
-          ...(view?.externalEndpoints ?? []),
-          ...(detailView?.externalEndpoints ?? []),
         ].map((record) => [record.id, record]),
       ),
-    [records, view, detailView],
+    [records, relationState.externalEndpoints],
   );
   const related = relations.filter(
     (edge) => edge.fromId === selectedId || edge.toId === selectedId,
   );
-  const focalRecords = useMemo(() => {
-    if (!selectedId) return records;
+  const connectedIds = useMemo(() => {
     const ids = new Set([selectedId]);
     for (const edge of relations) {
       if (edge.fromId === selectedId || edge.toId === selectedId) {
@@ -424,34 +520,86 @@ export function SessionGraphPreview({
         ids.add(edge.toId);
       }
     }
-    return records.filter((record) => ids.has(record.id));
-  }, [records, relations, selectedId]);
+    return ids;
+  }, [relations, selectedId]);
   const projection = useMemo(() => projectSessionGraph(
-    focalRecords, relations,
-    selectedId || view?.relationsTruncated
+    records, relations,
+    relationsIncomplete
       ? Number.POSITIVE_INFINITY : sessionGraphCapacity(viewportSize?.width ?? 0, viewportSize?.height ?? 0),
-    selectedId ? null : scopes.at(-1)?.ids ?? null,
-  ), [focalRecords, relations, selectedId, viewportSize, scopes, view?.relationsTruncated]);
+    navigationId ? [navigationId] : scopes.at(-1)?.ids ?? null,
+  ), [records, relations, relationsIncomplete, viewportSize, scopes, navigationId]);
+  const layoutKey = JSON.stringify([topicId, navigationId, scopes.map((scope) => scope.ids)]);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const measured = new Map<string, SessionGraphLabelSize>();
+      for (const [id, element] of labelElements.current) {
+        const { width, height } = element.getBoundingClientRect();
+        measured.set(id, { width: Math.ceil(width), height: Math.ceil(height) });
+      }
+      setLabelSizes((current) => measured.size === current.size && [...measured].every(([id, size]) =>
+        current.get(id)?.width === size.width && current.get(id)?.height === size.height) ? current : measured);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    for (const element of labelElements.current.values()) observer.observe(element);
+    return () => observer.disconnect();
+  }, [projection.edges]);
   const layout = useMemo(
-    () => layoutSessionGraph(projection.nodes, projection.edges, viewportSize?.width ?? 0),
-    [projection, viewportSize],
+    () => layoutSessionGraph(projection.nodes, projection.edges, viewportSize?.width ?? 0, viewportSize?.height ?? 0, labelSizes, layouts.current.get(layoutKey)),
+    [projection, viewportSize, labelSizes, layoutKey],
   );
+  useLayoutEffect(() => { layouts.current.set(layoutKey, layout); }, [layoutKey, layout]);
   const edgeRoutes = projection.edges.flatMap((edge) => {
-    const from = layout.positions.get(edge.fromId);
-    const to = layout.positions.get(edge.toId);
-    return from && to
-      ? [{ edge, route: sessionGraphEdgePath(from, to, edge.fromId === edge.toId) }]
-      : [];
+    const route = layout.edgeRoutes.get(edge.id);
+    return route ? [{ edge, route }] : [];
   });
+  const visibleRecordIds = new Set(projection.nodes.flatMap((node) => node.records.map((record) => record.id)));
+  const outsideRelations = new Map(projection.nodes.map((node) => [node.id, relations.filter((edge) =>
+    node.records.some((record) => record.id === edge.fromId && !visibleRecordIds.has(edge.toId)
+      || record.id === edge.toId && !visibleRecordIds.has(edge.fromId)))]));
+  const relationDescription = (edge: typeof relations[number], fromId: string) => {
+    const endpoint = endpoints.get(edge.fromId === fromId ? edge.toId : edge.fromId);
+    return `${edge.fromId === fromId ? "→" : "←"} ${label(edge.kind)}${edge.label ? ` · ${edge.label}` : ""} · ${endpoint?.title ?? "Related Record"}${endpoint && endpoint.topicId !== topicId ? ` · ${topics.find((topic) => topic.id === endpoint.topicId)?.title ?? "Other Topic"}` : ""}`;
+  };
   const clearSelection = (restoreFocus = true) => {
     restoreNodeFocus.current = restoreFocus ? selectedId : null;
     detailRequest.current += 1;
     setSelectedId(null);
     setSelectedRecord(null);
-    setDetailView(null);
     setDetailError("");
     setDetailLoading(false);
     setBackStack([]);
+  };
+  const returnToLocation = (returning: GraphReturn) => {
+    if (pendingReturn.current) {
+      void loadRef.current();
+      return;
+    }
+    const { location } = returning;
+    detailRequest.current += 1;
+    setDetailError("");
+    setDetailLoading(false);
+    if (location.state.topicId !== topicId) {
+      pendingReturn.current = returning;
+      setSelectedId(null);
+      setSelectedRecord(null);
+      setView(null);
+      setInspectedRecords([]);
+      setTopicId(location.state.topicId ?? "");
+      return;
+    }
+    const latest = new Map([...inspectedRecords, ...(view?.items ?? [])].map((record) => [record.id, record]));
+    const items = location.recordIds.flatMap((id) => latest.get(id) ?? []);
+    const inspected = location.inspectedIds.flatMap((id) => latest.get(id) ?? []);
+    if (view) setView({ ...view, items, hasMore: items.length < view.total });
+    setRecordPagingNeedsRefresh(recordPagingNeedsRefresh || items.length !== view?.items.length
+      || items.some((record) => !view?.items.some((current) => current.id === record.id)));
+    setInspectedRecords(inspected);
+    const nextRelations = applyGraphReadBatch(relationStateRef.current, [], [...items, ...inspected].map((record) => record.id));
+    relationStateRef.current = nextRelations;
+    setRelationState(nextRelations);
+    finishReturn(returning);
   };
   useLayoutEffect(() => {
     if (view && viewportSize !== null && pendingScroll.current && viewportRef.current) {
@@ -466,7 +614,7 @@ export function SessionGraphPreview({
     }
     if (!selectedId && restoreNodeFocus.current) {
       const target = projection.nodes.find((node) => node.id === restoreNodeFocus.current || node.records.some((record) => record.id === restoreNodeFocus.current));
-      (nodesRef.current.get(target?.id ?? "") ?? viewportRef.current)?.focus();
+      (nodesRef.current.get(target?.id ?? "") ?? viewportRef.current)?.focus({ preventScroll: true });
       restoreNodeFocus.current = null;
     }
     if (focusSelector.current && topics.length) {
@@ -474,20 +622,28 @@ export function SessionGraphPreview({
       focusSelector.current = false;
     }
     if (focusDetail.current && selectedId && !detailLoading && selectedRecord?.id === selectedId) {
-      headingRef.current?.focus();
+      headingRef.current?.focus({ preventScroll: true });
       focusDetail.current = false;
     }
   }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord, viewportSize, scopes, projection]);
   useLayoutEffect(() => {
-    onMemoryChange?.({ topics, topicsMore, view, selectedRecord, detailView, backStack, scopes });
-  }, [topics, topicsMore, view, selectedRecord, detailView, backStack, scopes, onMemoryChange]);
+    onMemoryChange?.({ topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes });
+  }, [topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes, onMemoryChange]);
   const chooseRecord = (id: string, related = false, event?: MouseEvent) => {
     if (event && (event.ctrlKey || event.metaKey) && onOpenWindow) {
       onOpenWindow({ ...snapshot(), selectedId: id });
       return;
     }
-    setBackStack((current) => related && selectedId
-      ? [...current, { state: snapshot(), title: selectedRecord?.title ?? "Record", scopes, view }] : []);
+    const rangeChanged = related && !projection.nodes.some((node) => node.records.length === 1 && node.records[0].id === id);
+    const location: GraphLocation = { state: snapshot(), title: selectedRecord?.title ?? "Graph", scopes,
+      recordIds: view?.items.map((record) => record.id) ?? [],
+      inspectedIds: inspectedRecords.filter((record) => record.topicId === topicId).map((record) => record.id), navigationId };
+    setBackStack((current) => related ? [...current, { ...location, rangeChanged }] : []);
+    if (rangeChanged) {
+      setRangeBackStack((current) => [...current, location]);
+      setNavigationId(id);
+      pendingScroll.current = { ...snapshot(), scrollLeft: 0, scrollTop: 0 };
+    }
     focusDetail.current = true;
     setSelectedId(id);
   };
@@ -498,6 +654,8 @@ export function SessionGraphPreview({
   };
   const closeRecordMenu = () => { setWindowTarget(null); windowTargetTrigger.current?.focus(); };
   const expandGroup = (node: GraphOverviewNode) => {
+    clearSelection(false);
+    setNavigationId(null);
     setScopes((current) => [...current, {
       ids: node.records.map((record) => record.id),
       parentState: snapshot(), triggerId: node.id,
@@ -530,7 +688,14 @@ export function SessionGraphPreview({
             value={topicId}
             onChange={(event) => {
               clearSelection(false);
+              pendingReturn.current = null;
+              setRangeBackStack([]);
+              setRecordPagingNeedsRefresh(false);
               setScopes([]);
+              setNavigationId(null);
+              setInspectedRecords([]);
+              relationStateRef.current = createGraphReadState();
+              setRelationState(relationStateRef.current);
               setView(null);
               setTopicId(event.target.value);
             }}
@@ -547,15 +712,23 @@ export function SessionGraphPreview({
             ) : null}
           </select>
         ) : null}
-        {scopes.length && !selectedId ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
+        {rangeBackStack.length ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
+          <BackNavigationButton label="Back To Previous Range" showLabel disabled={loading} onBack={() => {
+            returnToLocation({ location: rangeBackStack.at(-1)!, kind: "range", rangeChanged: true });
+          }} />
+        </div> : scopes.length ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
           <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} icon={scopes.length === 1 ? <OverviewIcon /> : undefined} showLabel={scopes.length > 1} onBack={() => {
             const previous = scopes.at(-1)!;
+            clearSelection(false);
+            setNavigationId(null);
             pendingScroll.current = previous.parentState;
             restoreNodeFocus.current = previous.triggerId;
             setZoom(previous.parentState.zoom);
             setScopes((current) => current.slice(0, -1));
           }} />
           {scopes.length > 1 ? <BackNavigationButton label="Overview" icon={<OverviewIcon />} onBack={() => {
+            clearSelection(false);
+            setNavigationId(null);
             pendingScroll.current = scopes[0].parentState;
             restoreNodeFocus.current = scopes[0].triggerId;
             setZoom(scopes[0].parentState.zoom);
@@ -573,6 +746,11 @@ export function SessionGraphPreview({
         ) : null}
         {toolbarActions}
       </header>
+      <div className="session-graph-label-measure" aria-hidden="true">
+        {projection.edges.map((edge) => <span key={edge.id} className="session-graph-edge-label"
+          ref={(element) => { if (element) labelElements.current.set(edge.id, element); else labelElements.current.delete(edge.id); }}
+        >{edge.label ?? label(edge.kind)}</span>)}
+      </div>
       <div className="session-graph-load-status" aria-busy={loading && !loadingMore}>
         {loading && !loadingMore ? (
           <LoadingIndicator label="Loading Session Graph" inline />
@@ -651,19 +829,21 @@ export function SessionGraphPreview({
                         key={edge.id}
                         className={`${edge.fromId === `record:${selectedId}` || edge.toId === `record:${selectedId}` ? "is-connected" : ""}${edge.grouped ? " is-grouped" : ""}`}
                       >
-                        <path
-                          d={route.path}
-                          markerEnd={`url(#${markerId})`}
-                        />
+                        {route.segments.map((points, index) => <path
+                          key={index}
+                          d={sessionGraphRoutePath(points)}
+                          markerEnd={index === route.segments.length - 1 ? `url(#${markerId})` : undefined}
+                        />)}
                       </g>
                     );
                   })}
-                  {edgeRoutes.map(({ edge, route }) => (
-                    <text key={edge.id} x={route.labelX} y={route.labelY}>
-                      {edge.label ?? label(edge.kind)}
-                    </text>
-                  ))}
                 </svg>
+                {edgeRoutes.map(({ edge, route }) => <span key={edge.id}
+                  className={`session-graph-edge-label${edge.fromId === `record:${selectedId}` || edge.toId === `record:${selectedId}` ? " is-connected" : ""}`}
+                  data-relation-id={edge.id}
+                  style={{ left: route.labelX, top: route.labelY }}
+                  title={`${label(edge.kind)}: ${projection.nodes.find((node) => node.id === edge.fromId)?.records[0].title} → ${projection.nodes.find((node) => node.id === edge.toId)?.records[0].title}`}
+                >{edge.label ?? label(edge.kind)}</span>)}
                 {projection.nodes.map((node) => {
                   const point = layout.positions.get(node.id)!;
                   const record = node.records[0];
@@ -684,7 +864,7 @@ export function SessionGraphPreview({
                       ref={(element) => { if (element) nodesRef.current.set(node.id, element); else nodesRef.current.delete(node.id); }}
                       key={node.id}
                       type="button"
-                      className={`session-graph-node${record.id === selectedId ? " is-selected" : ""}`}
+                      className={`session-graph-node${record.id === selectedId ? " is-selected" : connectedIds.has(record.id) ? " is-connected" : ""}`}
                       style={{ left: point.x, top: point.y }}
                       aria-pressed={record.id === selectedId}
                       onClick={(event) => chooseRecord(record.id, false, event)}
@@ -707,6 +887,13 @@ export function SessionGraphPreview({
                           {sessionGraphStatuses(record).map(label).join(" · ")}
                         </span>
                       <Provenance record={record} />
+                      {outsideRelations.get(node.id)?.length ? <span className="session-graph-outside-relations">
+                        <span aria-hidden="true">↗ {outsideRelations.get(node.id)!.length}</span>
+                        <span className="session-graph-relations-tooltip" role="tooltip">
+                          {outsideRelations.get(node.id)!.map((edge) => <span key={edge.id}>{relationDescription(edge, record.id)}</span>)}
+                        </span>
+                        <span className="sr-only">{outsideRelations.get(node.id)!.length} Relations Outside This View. Open Details To Follow.</span>
+                      </span> : null}
                     </button>
                   );
                 })}
@@ -740,8 +927,11 @@ export function SessionGraphPreview({
                 <span ref={loadedCountRef} tabIndex={-1}>
                   {view.items.length.toLocaleString("en-US")} / {view.total.toLocaleString("en-US")} Records Loaded
                 </span>
-                {view.relationsTruncated ? <span>Some Relations May Be Missing</span> : null}
+                {relationsIncomplete ? <span>Some Relations Are Unconfirmed</span> : null}
               </div>
+              {relationsIncomplete ? <button type="button" disabled={loadingRelations || loading} aria-busy={loadingRelations} onClick={() => void loadRelations()}>
+                <ButtonContent busy={loadingRelations} busyLabel="Loading More Relations">Load More Relations</ButtonContent>
+              </button> : null}
               <div className="session-graph-load-action">
                 <span className="session-graph-load-reserve" aria-hidden="true"><ButtonContent busy={false}>Load 40 More</ButtonContent></span>
                 {view.hasMore ? <button
@@ -758,6 +948,7 @@ export function SessionGraphPreview({
                 </button> : null}
               </div>
               {loadMoreError ? <div id={`${markerId}-load-error`} className="session-graph-load-error" role="alert" tabIndex={0}>{loadMoreError}</div> : null}
+              {relationError ? <div className="session-graph-load-error" role="alert">{relationError} <button type="button" onClick={() => void load()}>Refresh</button></div> : null}
             </div> : null}
           </footer>
         </div>
@@ -784,7 +975,7 @@ export function SessionGraphPreview({
                 {detailError}{" "}
                 <button
                   type="button"
-                  onClick={() => void selectRecord(selectedId)}
+                  onClick={() => void load().then(() => selectRecord(selectedId))}
                 >
                   Retry
                 </button>
@@ -792,16 +983,9 @@ export function SessionGraphPreview({
             ) : null}
             {selectedRecord?.id === selectedId ? (
               <>
-                {backStack.length ? <button type="button" className="session-graph-back-link" onClick={() => {
+                {backStack.length ? <button type="button" className="session-graph-back-link" disabled={loading} onClick={() => {
                   const previous = backStack[backStack.length - 1];
-                  setBackStack((current) => current.slice(0, -1));
-                  setScopes(previous.scopes);
-                  pendingScroll.current = previous.state;
-                  if (previous.state.topicId !== topicId) setView(previous.view);
-                  setTopicId(previous.state.topicId ?? "");
-                  setSelectedId(previous.state.selectedId);
-                  setZoom(previous.state.zoom);
-                  focusDetail.current = true;
+                  returnToLocation({ location: previous, kind: "detail", rangeChanged: previous.rangeChanged });
                 }}>Back To {backStack[backStack.length - 1].title}</button> : null}
                 <div className="session-graph-detail-meta">
                   <Identity
@@ -860,6 +1044,7 @@ export function SessionGraphPreview({
                   className="session-graph-related"
                   aria-label="Related Records"
                 >
+                  {relationsIncomplete ? <span className="session-graph-relations-incomplete">Some Relations Are Unconfirmed <button type="button" disabled={loadingRelations || loading} aria-busy={loadingRelations} onClick={() => void loadRelations()}><ButtonContent busy={loadingRelations} busyLabel="Loading More Relations">Load More Relations</ButtonContent></button></span> : null}
                   {related.map((edge) => {
                     const id =
                       edge.fromId === selectedId ? edge.toId : edge.fromId;
@@ -871,9 +1056,7 @@ export function SessionGraphPreview({
                         onContextMenu={(event) => { if (onOpenWindow) { event.preventDefault(); showRecordMenu(id, endpoints.get(id)?.title ?? "Related Record", event.currentTarget); } }}
                         onKeyDown={(event) => { if (event.key === "ContextMenu" || event.key === "F10" && event.shiftKey) { event.preventDefault(); showRecordMenu(id, endpoints.get(id)?.title ?? "Related Record", event.currentTarget); } }}
                       >
-                        {edge.fromId === selectedId ? "→" : "←"}{" "}
-                        {edge.label ?? label(edge.kind)} ·{" "}
-                        {endpoints.get(id)?.title ?? "Related Record"}
+                        {relationDescription(edge, selectedId)}
                       </button>
                     );
                   })}
