@@ -1017,6 +1017,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
     const relatedMemory = latestMemory!;
     await click(dom.window.document.querySelector(".session-graph-back-link"));
     assert.equal(dom.window.document.querySelector<HTMLSelectElement>("select[aria-label='Graph Topic']")?.value, "topic");
+    details = dom.window.document.querySelector<HTMLElement>(".session-graph-details")!;
     assert.match(details.textContent ?? "", /Decision At Revision 2/);
     assert.equal(canvas.scrollLeft, 43);
     assert.equal(canvas.scrollTop, 91);
@@ -1063,6 +1064,152 @@ test("graph preview preserves selection on notifications and navigates cross-top
     ] as const) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
+    }
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "範囲外の関連先で詳細dismiss・通常選択しても範囲復帰を保ち、追加page・live更新後のBackは元ID集合と位置を最新record/relationで復元し、異topicの復帰失敗は履歴を保って再検証でき、先頭追加で取得境界がずれてもLoad Moreで重複・取り逃しなく末尾へ到達する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
+// fault = "詳細解除で範囲履歴を消すか、Backで追加取得nodeが残るか、旧record・削除relation・旧endpointを復活させるか、異topicの失敗を古い成功表示に置き換えるか、復帰後の表示件数をサーバoffsetとして先頭追加を取り逃す"
+// observable = "toolbarの範囲復帰操作、node ID相当のtitle集合と位置、倍率・scroll・focus、更新titleとrelationの削除/endpoint、詳細getのexpectedRevision、異topic再取得alert・再試行結果、復帰後Load Moreのoffsetと全recordのユニークID集合・完了状態"
+// observation_boundary = "component-behavior"
+// scope = "SessionGraphPreviewの詳細履歴と範囲履歴、同topic最新データ復元、異topic同revision再検証"
+// lifecycle = "permanent"
+// impact = "関連探索からの帰り道と最新Graphの意味を保ち、正常な閲覧操作による旧情報復活を防ぐ"
+// distinction = "型・配置・read-state単体testでは詳細dismissとlive refreshを跨ぐ実componentのnavigation状態遷移を観測できない。80recordの架空APIで主要経路を継続確認する"
+// @end-test-value
+test("graph range return survives detail dismissal and never restores stale graph data", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
+  const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const doc = dom.window.document;
+  let revision = 1;
+  let failReturn = false;
+  let notify = (_owner: string) => {};
+  let memory: SessionGraphPreviewMemory | null = null;
+  const requests: Array<{ operation: string; ids?: string[]; expectedRevision?: number; offset?: number }> = [];
+  const records = () => [
+    ...(revision >= 3 ? [{ ...record("new-prefix"), title: "New Prefix" }] : []),
+    ...Array.from({ length: 80 }, (_, index) => ({ ...record(`page-${index}`),
+      title: index === 1 ? `Updated At ${revision}` : index === 2 && revision > 1 ? `page-2 At ${revision}` : `page-${index}` })),
+    { ...record("other-topic"), topicId: "other", title: "Other Topic" },
+  ];
+  const relations = (): SessionGraphRelation[] => [
+    { id: "jump", fromId: "page-2", toId: "page-48", kind: "related" },
+    { id: "near-jump", fromId: "page-3", toId: "page-48", kind: "related" },
+    { id: "cross", fromId: "page-2", toId: "other-topic", kind: "related" },
+    { id: "moving", fromId: revision === 1 ? "page-1" : "page-3", toId: "page-2", kind: "supports", label: `Meaning At ${revision}` },
+    ...(revision === 1 ? [{ id: "deleted", fromId: "page-1", toId: "page-2", kind: "checks" as const }] : []),
+  ];
+  const api = {
+    readSessionGraph: (async (_owner: string, operation: string, request: { ids?: string[]; topicId?: string; offset?: number; limit?: number; expectedRevision?: number }) => {
+      requests.push({ operation, ids: request.ids, expectedRevision: request.expectedRevision,
+        ...(request.offset === undefined ? {} : { offset: request.offset }) });
+      if (request.expectedRevision !== undefined && request.expectedRevision !== revision) return { status: "conflict", revision };
+      if (operation === "list_topics") return { status: "ok", revision, items: [{ id: "topic", title: "Topic" }, { id: "other", title: "Other" }], total: 2, offset: 0, hasMore: false, incomplete: false };
+      if (failReturn && operation === "get_topic_view" && request.topicId === "topic") { failReturn = false; throw new Error("Return scope unavailable"); }
+      const source = records().filter((item) => operation === "get" ? request.ids?.includes(item.id) : item.topicId === request.topicId);
+      const offset = request.offset ?? 0;
+      const items = source.slice(offset, offset + (request.limit ?? 200));
+      const ids = new Set(items.map((item) => item.id));
+      return { status: "ok", revision, items, total: source.length, offset, hasMore: offset + items.length < source.length,
+        incomplete: false, relations: relations().filter((edge) => ids.has(edge.fromId) || ids.has(edge.toId)), externalEndpoints: records(),
+        relationsTruncated: false, relationOffset: 0, relationsHasMore: false };
+    }) as WithMateWindowApi["readSessionGraph"],
+    subscribeSessionGraph: (listener: (owner: string) => void) => { notify = listener; return () => {}; },
+  };
+  const click = async (target: Element | null | undefined) => { assert.ok(target); await act(async () => (target as HTMLElement).click()); };
+  const node = (title: string) => [...doc.querySelectorAll<HTMLButtonElement>(".session-graph-node")].find((element) => element.querySelector(".session-graph-node-title")?.textContent === title);
+  const related = (title: string) => [...doc.querySelectorAll<HTMLButtonElement>(".session-graph-related button")].find((element) => element.textContent?.includes(title));
+  const positions = () => [...doc.querySelectorAll<HTMLElement>(".session-graph-node")].map((element) => ({ title: element.querySelector(".session-graph-node-title")?.textContent, left: element.style.left, top: element.style.top }));
+  const rangeBack = () => doc.querySelector("[aria-label='Graph Range Navigation'] [aria-label='Back To Previous Range']");
+  const details = () => doc.querySelector(".session-graph-details");
+  const state = () => (memory as SessionGraphPreviewMemory | null)!;
+  try {
+    await act(async () => root.render(<SessionGraphPreview api={api} sessionId="main" onOpenPath={() => {}} onMemoryChange={(next) => { memory = next; }} />));
+    assert.equal(positions().length, 40);
+    const overview = positions();
+    const viewport = doc.querySelector<HTMLElement>(".session-graph-viewport")!;
+    await click(doc.querySelector("[aria-label='Zoom In']"));
+    viewport.scrollLeft = 31; viewport.scrollTop = 73;
+    await click(node("page-2"));
+    await click(related("page-48"));
+    assert.equal(positions().length, 3);
+    const neighborhood = positions();
+    await click(doc.querySelector("[aria-label='Close Record Details']"));
+    assert.deepEqual(positions(), neighborhood);
+    assert.ok(rangeBack());
+    await click(node("page-3"));
+    await act(async () => details()!.querySelector("h2")!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.deepEqual(positions(), neighborhood);
+    await click(rangeBack());
+    assert.deepEqual(positions(), overview);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [31, 73]);
+    assert.match(doc.querySelector(".session-graph-zoom")?.textContent ?? "", /110%/);
+    assert.equal(doc.activeElement, node("page-2"));
+
+    await click(node("page-2"));
+    await click(related("page-48"));
+    await click(doc.querySelector(".session-graph-load-more"));
+    assert.equal(state().view?.items.length, 80);
+    revision = 2;
+    await act(async () => notify("main"));
+    assert.equal(state().relationState.revision, 2);
+    await click(doc.querySelector(".session-graph-back-link"));
+    assert.equal(positions().length, 40);
+    assert.ok(node("Updated At 2"));
+    assert.ok(node("page-2 At 2"));
+    assert.equal(node("Updated At 1"), undefined);
+    assert.equal(node("page-48"), undefined);
+    assert.equal(state().relationState.revision, 2);
+    assert.equal(state().relationState.relations.some((edge) => edge.id === "deleted"), false);
+    assert.equal(state().relationState.relations.find((edge) => edge.id === "moving")?.fromId, "page-3");
+    assert.equal(state().relationState.relations.find((edge) => edge.id === "moving")?.label, "Meaning At 2");
+    assert.deepEqual(requests.at(-1), { operation: "get", ids: ["page-2"], expectedRevision: 2 });
+    assert.equal(doc.querySelector("[role='alert']"), null);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [31, 73]);
+
+    await click(related("Other Topic"));
+    revision = 3;
+    await act(async () => notify("main"));
+    failReturn = true;
+    await click(doc.querySelector(".session-graph-back-link"));
+    assert.match(doc.querySelector("[role='alert']")?.textContent ?? "", /Return scope unavailable/);
+    assert.equal(positions().length, 0, "failed revalidation must not display an old successful graph");
+    assert.ok(rangeBack(), "the return target remains available after failure");
+    await click(rangeBack());
+    assert.equal(positions().length, 40);
+    assert.ok(node("Updated At 3"));
+    assert.equal(state().relationState.revision, 3);
+    assert.match(details()?.textContent ?? "", /page-2/);
+    assert.equal(doc.querySelector("[role='alert']"), null);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [31, 73]);
+    assert.equal(node("New Prefix"), undefined, "return preserves the saved ID scope before explicit additional loading");
+    await click(doc.querySelector(".session-graph-load-more"));
+    const loadedIds = state().view!.items.map((item) => item.id);
+    assert.equal(loadedIds.length, 80);
+    assert.equal(new Set(loadedIds).size, 80);
+    assert.deepEqual(requests.at(-1), { operation: "get_topic_view", ids: undefined, expectedRevision: 3, offset: 0 });
+    assert.equal(state().view!.hasMore, true);
+    await click(doc.querySelector(".session-graph-load-more"));
+    const allIds = state().view!.items.map((item) => item.id);
+    assert.equal(allIds.length, 81);
+    assert.equal(new Set(allIds).size, 81);
+    assert.deepEqual([...allIds].sort(), ["new-prefix", ...Array.from({ length: 80 }, (_, index) => `page-${index}`)].sort());
+    assert.deepEqual(requests.at(-1), { operation: "get_topic_view", ids: undefined, expectedRevision: 3, offset: 80 });
+    assert.equal(state().view!.hasMore, false);
+    assert.equal(doc.querySelector(".session-graph-load-more"), null);
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of descriptors) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
     }
     dom.window.close();
   }

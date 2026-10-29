@@ -41,6 +41,15 @@ export const defaultSessionGraphViewState: SessionGraphViewState = {
   topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0,
 };
 type GraphScope = { ids: string[]; parentState: SessionGraphViewState; triggerId: string };
+type GraphLocation = {
+  state: SessionGraphViewState;
+  title: string;
+  scopes: GraphScope[];
+  recordIds: string[];
+  inspectedIds: string[];
+  navigationId: string | null;
+};
+type GraphReturn = { location: GraphLocation; kind: "detail" | "range"; rangeChanged: boolean };
 export type SessionGraphPreviewMemory = {
   topics: SessionGraphTopic[];
   topicsMore: boolean;
@@ -49,7 +58,9 @@ export type SessionGraphPreviewMemory = {
   relationState: GraphReadState;
   inspectedRecords: SessionGraphRecord[];
   navigationId: string | null;
-  backStack: Array<{ state: SessionGraphViewState; title: string; scopes: GraphScope[]; view: SessionGraphReadResult | null; relationState: GraphReadState; inspectedRecords: SessionGraphRecord[]; navigationId: string | null }>;
+  backStack: Array<GraphLocation & { rangeChanged: boolean }>;
+  rangeBackStack: GraphLocation[];
+  recordPagingNeedsRefresh: boolean;
   scopes: GraphScope[];
 };
 function label(value: string) {
@@ -67,7 +78,7 @@ function mergeViews(
     offset: 0,
     incomplete: next.hasMore || current.relationsTruncated || next.relationsTruncated,
     relationsTruncated: current.relationsTruncated || next.relationsTruncated,
-    items: [...current.items, ...next.items],
+    items: [...new Map([...current.items, ...next.items].map((record) => [record.id, record])).values()],
     relations: [
       ...new Map(
         [...current.relations, ...next.relations].map((edge) => [
@@ -192,6 +203,9 @@ export function SessionGraphPreview({
   const [refresh, setRefresh] = useState(0);
   const [zoom, setZoom] = useState(initialState.zoom);
   const [backStack, setBackStack] = useState<SessionGraphPreviewMemory["backStack"]>(initialMemory?.backStack ?? []);
+  const [rangeBackStack, setRangeBackStack] = useState<GraphLocation[]>(initialMemory?.rangeBackStack ?? []);
+  const pendingReturn = useRef<GraphReturn | null>(null);
+  const [recordPagingNeedsRefresh, setRecordPagingNeedsRefresh] = useState(initialMemory?.recordPagingNeedsRefresh ?? false);
   const [scopes, setScopes] = useState<GraphScope[]>(initialMemory?.scopes ?? []);
   const viewportRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -253,6 +267,21 @@ export function SessionGraphPreview({
   const topicRef = useRef(topicId);
   topicRef.current = topicId;
   const markerId = useId().replaceAll(":", "");
+  const finishReturn = ({ location, kind, rangeChanged }: GraphReturn) => {
+    setScopes(location.scopes);
+    setNavigationId(location.navigationId);
+    pendingScroll.current = location.state;
+    setZoom(location.state.zoom);
+    setSelectedId(kind === "detail" ? location.state.selectedId : null);
+    if (kind === "range" || location.state.selectedId !== selectedId) setSelectedRecord(null);
+    setDetailError("");
+    if (kind === "detail") setBackStack((current) => current.slice(0, -1));
+    else setBackStack([]);
+    if (rangeChanged) setRangeBackStack((current) => current.slice(0, -1));
+    if (kind === "range") restoreNodeFocus.current = location.state.selectedId;
+    focusDetail.current = kind === "detail";
+    pendingReturn.current = null;
+  };
   const load = useCallback(
     async (more = false, moreTopics = false) => {
       const revision = ++request.current;
@@ -263,6 +292,10 @@ export function SessionGraphPreview({
       setError("");
       setRelationError("");
       try {
+        const returning = pendingReturn.current;
+        const rebuildPaging = more && recordPagingNeedsRefresh;
+        const append = more && !rebuildPaging;
+        const loadedCount = returning ? returning.location.recordIds.length : (view?.items.length ?? 0) + (rebuildPaging ? PAGE_SIZE : 0);
         let topicPage = await api.readSessionGraph(sessionId, "list_topics", {
           limit: 200,
           offset: moreTopics ? topics.length : 0,
@@ -295,10 +328,10 @@ export function SessionGraphPreview({
         if (!topicRef.current) setTopicId(nextTopic);
         let result = await api.readSessionGraph(sessionId, "get_topic_view", {
           topicId: nextTopic,
-          limit: more
+          limit: append
             ? PAGE_SIZE
-            : Math.max(PAGE_SIZE, Math.min(200, view?.items.length ?? 0)),
-          offset: more ? (view?.items.length ?? 0) : 0,
+            : Math.max(PAGE_SIZE, Math.min(200, loadedCount)),
+          offset: append ? (view?.items.length ?? 0) : 0,
           expectedRevision: more ? view?.revision : topicPage.revision,
         });
         if (request.current !== revision) return;
@@ -307,17 +340,17 @@ export function SessionGraphPreview({
             "The graph changed. Retry before loading more records.",
           );
         const reads = [result];
-        let combined = more && view ? mergeViews(view, result) : result;
+        let combined = append && view ? mergeViews(view, result) : result;
         // Revalidate every already visible page at one revision; retain the old view
         // if a concurrent write prevents a consistent refresh.
         while (
-          !more &&
+          !append &&
           combined.hasMore &&
-          combined.items.length < (view?.items.length ?? 0)
+          combined.items.length < loadedCount
         ) {
           result = await api.readSessionGraph(sessionId, "get_topic_view", {
             topicId: nextTopic,
-            limit: 200,
+            limit: Math.min(200, loadedCount - combined.items.length),
             offset: combined.items.length,
             expectedRevision: combined.revision,
           });
@@ -330,15 +363,29 @@ export function SessionGraphPreview({
           reads.push(result);
           combined = mergeViews(combined, result);
         }
-        const extraIds = [...new Set([...inspectedRecords, ...(view?.items ?? [])]
-          .filter((record) => record.topicId === nextTopic && !combined.items.some((item) => item.id === record.id)).map((record) => record.id))];
+        const knownIds = returning ? [...returning.location.recordIds, ...returning.location.inspectedIds]
+          : [...inspectedRecords, ...(view?.items ?? [])].filter((record) => record.topicId === nextTopic).map((record) => record.id);
+        const extraIds = [...new Set(knownIds.filter((id) => !combined.items.some((item) => item.id === id)))];
         const refreshedExtras: SessionGraphRecord[] = [];
-        if (!more) for (let offset = 0; offset < extraIds.length; offset += 200) {
+        if (!append) for (let offset = 0; offset < extraIds.length; offset += 200) {
           const extra = await api.readSessionGraph(sessionId, "get", { ids: extraIds.slice(offset, offset + 200), limit: 200, expectedRevision: combined.revision });
           if (request.current !== revision) return;
           if (extra.status !== "ok") throw new Error("The graph changed. Retry to refresh its current state.");
           reads.push(extra);
           refreshedExtras.push(...extra.items);
+        }
+        let needsPagingRefresh = false;
+        if (returning || rebuildPaging) {
+          const prefix = new Set(combined.items.map((record) => record.id));
+          const latest = new Map([...combined.items, ...refreshedExtras].map((record) => [record.id, record]));
+          const savedIds = returning ? returning.location.recordIds : view!.items.map((record) => record.id);
+          const saved = new Set(savedIds);
+          const items = savedIds.flatMap((id) => latest.get(id) ?? []);
+          if (rebuildPaging) items.push(...combined.items.filter((record) => !saved.has(record.id)).slice(0, PAGE_SIZE));
+          needsPagingRefresh = items.length !== prefix.size || items.some((record) => !prefix.has(record.id));
+          combined = { ...combined, items };
+          combined.hasMore = combined.items.length < combined.total;
+          if (returning) setInspectedRecords(returning.location.inspectedIds.flatMap((id) => latest.get(id) ?? []));
         }
         const retainedIds = combined.items.map((record) => record.id);
         retainedIds.push(...extraIds);
@@ -346,15 +393,17 @@ export function SessionGraphPreview({
         const nextRelations = applyGraphReadBatch(relationStateRef.current, reads, retainedIds);
         relationStateRef.current = nextRelations;
         setRelationState(nextRelations);
-        if (!more && extraIds.length) setInspectedRecords((current) => [...current.filter((record) => !extraIds.includes(record.id)), ...refreshedExtras]);
+        if (!returning && !append && extraIds.length) setInspectedRecords((current) => [...current.filter((record) => !extraIds.includes(record.id)), ...refreshedExtras]);
         // Keep the reader's spatial order when updatedAt changes on live refresh.
-        if (!more && view) {
+        if (!returning && !more && view) {
           const order = new Map(view.items.map((record, index) => [record.id, index]));
           combined.items.sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER));
         }
         if (restoreLoadFocus && !combined.hasMore &&
           (document.activeElement === loadMoreRef.current || document.activeElement === document.body)) focusLoadedCount.current = true;
         setView(combined);
+        setRecordPagingNeedsRefresh(needsPagingRefresh);
+        if (returning) finishReturn(returning);
       } catch (cause) {
         if (request.current === revision)
           (more ? setLoadMoreError : setError)(cause instanceof Error ? cause.message : String(cause));
@@ -365,7 +414,7 @@ export function SessionGraphPreview({
         }
       }
     },
-    [api, sessionId, topics.length, view, selectedId, inspectedRecords],
+    [api, sessionId, topics.length, view, selectedId, inspectedRecords, recordPagingNeedsRefresh],
   );
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -522,6 +571,36 @@ export function SessionGraphPreview({
     setDetailLoading(false);
     setBackStack([]);
   };
+  const returnToLocation = (returning: GraphReturn) => {
+    if (pendingReturn.current) {
+      void loadRef.current();
+      return;
+    }
+    const { location } = returning;
+    detailRequest.current += 1;
+    setDetailError("");
+    setDetailLoading(false);
+    if (location.state.topicId !== topicId) {
+      pendingReturn.current = returning;
+      setSelectedId(null);
+      setSelectedRecord(null);
+      setView(null);
+      setInspectedRecords([]);
+      setTopicId(location.state.topicId ?? "");
+      return;
+    }
+    const latest = new Map([...inspectedRecords, ...(view?.items ?? [])].map((record) => [record.id, record]));
+    const items = location.recordIds.flatMap((id) => latest.get(id) ?? []);
+    const inspected = location.inspectedIds.flatMap((id) => latest.get(id) ?? []);
+    if (view) setView({ ...view, items, hasMore: items.length < view.total });
+    setRecordPagingNeedsRefresh(recordPagingNeedsRefresh || items.length !== view?.items.length
+      || items.some((record) => !view?.items.some((current) => current.id === record.id)));
+    setInspectedRecords(inspected);
+    const nextRelations = applyGraphReadBatch(relationStateRef.current, [], [...items, ...inspected].map((record) => record.id));
+    relationStateRef.current = nextRelations;
+    setRelationState(nextRelations);
+    finishReturn(returning);
+  };
   useLayoutEffect(() => {
     if (view && viewportSize !== null && pendingScroll.current && viewportRef.current) {
       viewportRef.current.scrollLeft = pendingScroll.current.scrollLeft;
@@ -548,16 +627,20 @@ export function SessionGraphPreview({
     }
   }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord, viewportSize, scopes, projection]);
   useLayoutEffect(() => {
-    onMemoryChange?.({ topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, scopes });
-  }, [topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, scopes, onMemoryChange]);
+    onMemoryChange?.({ topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes });
+  }, [topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes, onMemoryChange]);
   const chooseRecord = (id: string, related = false, event?: MouseEvent) => {
     if (event && (event.ctrlKey || event.metaKey) && onOpenWindow) {
       onOpenWindow({ ...snapshot(), selectedId: id });
       return;
     }
-    setBackStack((current) => related
-      ? [...current, { state: snapshot(), title: selectedRecord?.title ?? "Graph", scopes, view, relationState, inspectedRecords, navigationId }] : []);
-    if (related && !projection.nodes.some((node) => node.records.length === 1 && node.records[0].id === id)) {
+    const rangeChanged = related && !projection.nodes.some((node) => node.records.length === 1 && node.records[0].id === id);
+    const location: GraphLocation = { state: snapshot(), title: selectedRecord?.title ?? "Graph", scopes,
+      recordIds: view?.items.map((record) => record.id) ?? [],
+      inspectedIds: inspectedRecords.filter((record) => record.topicId === topicId).map((record) => record.id), navigationId };
+    setBackStack((current) => related ? [...current, { ...location, rangeChanged }] : []);
+    if (rangeChanged) {
+      setRangeBackStack((current) => [...current, location]);
       setNavigationId(id);
       pendingScroll.current = { ...snapshot(), scrollLeft: 0, scrollTop: 0 };
     }
@@ -605,6 +688,9 @@ export function SessionGraphPreview({
             value={topicId}
             onChange={(event) => {
               clearSelection(false);
+              pendingReturn.current = null;
+              setRangeBackStack([]);
+              setRecordPagingNeedsRefresh(false);
               setScopes([]);
               setNavigationId(null);
               setInspectedRecords([]);
@@ -626,7 +712,11 @@ export function SessionGraphPreview({
             ) : null}
           </select>
         ) : null}
-        {scopes.length ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
+        {rangeBackStack.length ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
+          <BackNavigationButton label="Back To Previous Range" showLabel disabled={loading} onBack={() => {
+            returnToLocation({ location: rangeBackStack.at(-1)!, kind: "range", rangeChanged: true });
+          }} />
+        </div> : scopes.length ? <div className="session-graph-scope-navigation" role="group" aria-label="Graph Range Navigation">
           <BackNavigationButton label={scopes.length === 1 ? "Back To Overview" : "Back To Previous Range"} icon={scopes.length === 1 ? <OverviewIcon /> : undefined} showLabel={scopes.length > 1} onBack={() => {
             const previous = scopes.at(-1)!;
             clearSelection(false);
@@ -893,20 +983,9 @@ export function SessionGraphPreview({
             ) : null}
             {selectedRecord?.id === selectedId ? (
               <>
-                {backStack.length ? <button type="button" className="session-graph-back-link" onClick={() => {
+                {backStack.length ? <button type="button" className="session-graph-back-link" disabled={loading} onClick={() => {
                   const previous = backStack[backStack.length - 1];
-                  setBackStack((current) => current.slice(0, -1));
-                  setScopes(previous.scopes);
-                  setNavigationId(previous.navigationId);
-                  pendingScroll.current = previous.state;
-                  setView(previous.view);
-                  setInspectedRecords(previous.inspectedRecords);
-                  relationStateRef.current = previous.relationState;
-                  setRelationState(previous.relationState);
-                  setTopicId(previous.state.topicId ?? "");
-                  setSelectedId(previous.state.selectedId);
-                  setZoom(previous.state.zoom);
-                  focusDetail.current = true;
+                  returnToLocation({ location: previous, kind: "detail", rangeChanged: previous.rangeChanged });
                 }}>Back To {backStack[backStack.length - 1].title}</button> : null}
                 <div className="session-graph-detail-meta">
                   <Identity
