@@ -1220,7 +1220,8 @@ it("rejects unavailable Claude modes without silently changing the selection", a
   const request = input();
   request.executionOptions = { ...request.executionOptions, approvalMode: "untrusted" };
   let queryCalls = 0;
-  const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {}, () => { queryCalls += 1; }) });
+  const inner = fakeQuery(async function* () {});
+  const adapter = new ClaudeAdapter({ query: ((...args: Parameters<typeof inner>) => { queryCalls += 1; return inner(...args); }) as typeof inner });
   await assert.rejects(adapter.runSessionTurn(request), /not supported by Claude/);
   assert.equal(queryCalls, 0);
   request.executionOptions = { ...request.executionOptions, approvalMode: "accept-edits", codexReviewer: "auto-review" };
