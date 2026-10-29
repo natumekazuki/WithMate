@@ -6,6 +6,8 @@
 
 ## 適用状態
 
+[ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI operatorと通常Session CLIを別authority modeにする判断は現行運用の適用対象外とする。通常CLIはMCP障害を利用条件としない。共有HTTP MCPの短命credential、captured turn、内側のruntime exchange、および明示fallback再試行のadmissionは維持する。以下の本文は当時の判断として保持する。
+
 共有HTTP host、captured turnの失効と副作用guard、Codex／Copilot／Claudeへの一時HTTP設定注入へ適用した。本判断はprovider → 共有HTTP MCPの入口に限定し、operator CLI、agent-bound CLI fallback、手動stdio MCP、MCPから既存runtime exchangeへの内側の接続を置換しない。実装への適用と、全providerの実接続・credential非保存・効果測定・統合・公開の確認は区別する。
 
 ## 背景

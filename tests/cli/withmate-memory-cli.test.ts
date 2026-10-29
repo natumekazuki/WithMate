@@ -37,6 +37,16 @@ import {
 } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import { publishRuntimeDiscoveryEntry } from "../../src-electron/platform/runtime-discovery/runtime-discovery-registry.js";
 
+// @test-value v2
+// kind = "contract"
+// claim = "provider execution markerがある場合はbinding省略をlocal-userへdowngradeしない"
+// oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+// fault = "binding必須markerがあるのに参照欠落をundefinedとして許可する"
+// observable = "binding必須marker時の例外messageと、markerなしのresolveAgentRuntimeBindingReference戻り値undefined"
+// observation_boundary = "component-behavior"
+// scope = "Memory CLI public input and runtime exchange"
+// lifecycle = "permanent"
+// @end-test-value
 it("provider execution markerがある場合はbinding省略をlocal-userへdowngradeしない", () => {
   assert.throws(
     () => resolveAgentRuntimeBindingReference({ WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1" }),
@@ -61,9 +71,9 @@ const TEST_RUNTIME_ENV = {
   WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: TEST_RUNTIME_INSTANCE_ID,
 };
 
-type LegacyCliTestDeps = WithMateMemoryCliDeps & { fetch?: typeof fetch };
+type FetchCliTestDeps = WithMateMemoryCliDeps & { fetch?: typeof fetch };
 
-function createLegacyRuntimeCall(fetchImpl: typeof fetch) {
+function createFetchRuntimeCall(fetchImpl: typeof fetch) {
   return async (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
@@ -101,7 +111,7 @@ function createLegacyRuntimeCall(fetchImpl: typeof fetch) {
         signal: options.signal,
       });
     } catch (error) {
-      throw new WithMateMemoryRuntimeExchangeError("Legacy test runtime request failed.", true, { cause: error });
+      throw new WithMateMemoryRuntimeExchangeError("Test runtime request failed.", true, { cause: error });
     }
     const text = await response.text();
     if (!text.trim()) {
@@ -118,11 +128,11 @@ function createLegacyRuntimeCall(fetchImpl: typeof fetch) {
   };
 }
 
-async function runWithMateMemoryCli(args: readonly string[], deps: LegacyCliTestDeps = {}): Promise<number> {
+async function runWithMateMemoryCli(args: readonly string[], deps: FetchCliTestDeps = {}): Promise<number> {
   const { fetch: fetchImpl, ...runtimeDeps } = deps;
   return runWithMateMemoryCliImpl(args, {
     ...runtimeDeps,
-    ...(fetchImpl ? { runtimeCall: createLegacyRuntimeCall(fetchImpl) } : {}),
+    ...(fetchImpl ? { runtimeCall: createFetchRuntimeCall(fetchImpl) } : {}),
   });
 }
 
@@ -216,13 +226,15 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
 }
 
 describe("withmate-memory CLI", () => {
-// @test-value v1
+// @test-value v2
 // kind = "security"
 // claim = "agent CLI fallbackはMCP credentialとbound runtime identityを選び、公開tool入力をMCPと同じruntime bodyへ変換してbindingとturn capabilityを伝搬する"
-// oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-// failure_mode = "fallbackがoperator credentialへ昇格する、別runtimeを選ぶ、binding/turnを欠く、またはMCP内部fieldを補わずadmissionと異なるbodyを送る"
+// oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
 // scope = "withmate-memory-agent-cli-fallback"
 // lifecycle = "permanent"
+// fault = "fallbackがoperator credentialへ昇格する、別runtimeを選ぶ、binding/turnを欠く、またはMCP内部fieldを補わずadmissionと異なるbodyを送る"
+// observable = "runtimeCallで捕捉したMCP credential、fallbackFrom、schemaVersion付きbody、bindingReference、turnCapability、Character search既定limit、および終了code"
+// observation_boundary = "component-behavior"
 // @end-test-value
 it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () => {
   const stdout = createOutputCapture();
@@ -291,13 +303,15 @@ it("agent CLI fallbackはMCP credentialとruntime bindingを使う", async () =>
   });
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
-// claim = "provider-bound CLIは通常operator mode、不完全・operator-only・内部field付きfallback入力、非idempotent file exportをdispatch前に拒否する"
-// oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-// failure_mode = "bound processがfallback markerを省略してoperator credentialを選ぶ、markerでoperator authorityやcaller選択runtimeへ到達する、schemaVersion追加requestを同一admissionへ正規化する、またはget-file/export-filesをagent fallbackとしてdispatchする"
+// claim = "CLIは内部field付きpublic入力、不完全なfallback binding、非idempotent file exportの自動fallbackをdispatch前に拒否する"
+// oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
 // scope = "withmate-memory-agent-cli-fallback"
 // lifecycle = "permanent"
+// fault = "内部field付きpublic入力、不完全なfallback binding、caller選択runtimeまたは非idempotent exportのfallbackをdispatchする"
+// observable = "各不正入力のusageまたはinvalid-input終了codeとJSON error code、およびruntimeCall未実行"
+// observation_boundary = "public-boundary"
 // @end-test-value
 it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正を拒否する", async () => {
   const boundEnv = {
@@ -307,21 +321,19 @@ it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正
     WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
   };
   for (const { args, env } of [
-    { args: ["search", "--json", JSON.stringify({})], env: boundEnv },
     {
       args: ["append", "--json", JSON.stringify({
         schemaVersion: "withmate-memory-v1",
-        target: { owner: "user", scope: "global" },
+        target: { kind: "user-global" },
         kind: "decision",
-        title: "Bound no-flag write",
-        body: "Must not dispatch as operator.",
-        preview: "Bound no-flag writes are rejected.",
+        title: "Caller-owned schema",
+        body: "Adapter-owned fields must be rejected.",
+        preview: "Adapter-owned fields must be rejected.",
         tags: [],
         idempotencyKey: "bound-no-flag-write",
       })],
       env: boundEnv,
     },
-    { args: ["audit", "--fallback-from", "mcp", "--all-targets"], env: boundEnv },
     {
       args: ["append", "--fallback-from", "mcp", "--json", JSON.stringify({
         schemaVersion: "attacker-controlled",
@@ -352,13 +364,12 @@ it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正
       env: boundEnv,
     },
     {
-      args: ["search", "--fallback-from", "mcp", "--api-url", "http://127.0.0.1:7777", "--json", JSON.stringify({})],
+      args: ["search", "--fallback-from", "mcp", "--api-url", "http://127.0.0.1:7777", "--json", JSON.stringify({ targets: [{ kind: "user-global" }], query: "binding validation" })],
       env: boundEnv,
     },
-    { args: ["file-usage", "--fallback-from", "mcp", "--largest"], env: boundEnv },
-    { args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})], env: {} },
+    { args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({ targets: [{ kind: "user-global" }], query: "binding validation" })], env: {} },
     {
-      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({ targets: [{ kind: "user-global" }], query: "binding validation" })],
       env: {
         WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
         WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
@@ -366,14 +377,14 @@ it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正
       },
     },
     {
-      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({ targets: [{ kind: "user-global" }], query: "binding validation" })],
       env: {
         WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
         WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-a",
       },
     },
     {
-      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({})],
+      args: ["search", "--fallback-from", "mcp", "--json", JSON.stringify({ targets: [{ kind: "user-global" }], query: "binding validation" })],
       env: {
         ...boundEnv,
         WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "not-a-uuid",
@@ -390,19 +401,22 @@ it("agent CLI fallbackは非対応入力とbound runtime情報の欠落・不正
         return { ok: true, status: 200, value: {} };
       },
     });
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
-    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+    const hasInternalFields = args.some((arg) => arg.includes("schemaVersion"));
+    assert.equal(exitCode, hasInternalFields ? WITHMATE_MEMORY_CLI_EXIT_CODES.apiError : WITHMATE_MEMORY_CLI_EXIT_CODES.usage, JSON.stringify({ args, response: stdout.json() }));
+    assert.equal(stdout.json().error.code, hasInternalFields ? "WITHMATE_MEMORY_INVALID_INPUT" : "WITHMATE_MEMORY_CLI_USAGE");
     assert.equal(dispatched, false);
   }
 });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "loopback環境変数からruntime接続情報を解決する"
-// oracle = { type = "contract", ref = "memory runtime discovery" }
-// failure_mode = "不正URLやgeneration情報を誤って受理する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-discovery"
 // lifecycle = "permanent"
+// fault = "不正URLやgeneration情報を誤って受理する"
+// observable = "discoverWithMateMemoryApiのIPv4/IPv6 loopback baseUrl、apiSecret、generation/instance ID、CLI credentialと不正URLのusage例外"
+// observation_boundary = "component-behavior"
 // @end-test-value
 it("loopbackの環境変数URLをdiscovery結果として使う", async () => {
     assert.deepEqual(
@@ -452,13 +466,15 @@ it("loopbackの環境変数URLをdiscovery結果として使う", async () => {
     );
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "legacy discovery fileをcanonical generationへ変換する"
-// oracle = { type = "contract", ref = "memory runtime discovery" }
-// failure_mode = "旧形式のruntime identityを誤解釈する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-discovery"
 // lifecycle = "permanent"
+// fault = "旧形式のruntime identityを誤解釈する"
+// observable = "discovery fileから復元したlocalhost URL、API secret、runtimeGenerationId/runtimeInstanceId、CLI adapter secret"
+// observation_boundary = "component-behavior"
 // @end-test-value
 it("discovery fileからloopback API URLを解決する", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-"));
@@ -486,13 +502,15 @@ it("discovery fileからloopback API URLを解決する", async () => {
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "contract"
 // claim = "runtime directoryのlegacy projectionを既定解決する"
-// oracle = { type = "contract", ref = "memory runtime discovery" }
-// failure_mode = "既定pathが別runtimeを参照する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-discovery"
 // lifecycle = "permanent"
+// fault = "既定pathが別runtimeを参照する"
+// observable = "既定memory-v6.current.jsonから復元したloopback URL、API secret、runtime identityとCLI credential"
+// observation_boundary = "component-behavior"
 // @end-test-value
 it("runtime directoryのdiscovery fileを既定で読む", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-runtime-"));
@@ -525,6 +543,16 @@ it("runtime directoryのdiscovery fileを既定で読む", async () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "明示された--api-urlが不正な場合はdiscovery fileへfallbackしない"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "明示された--api-urlが不正な場合はdiscovery fileへfallbackしないという公開契約に反する結果を返す"
+  // observable = "apiError終了code、WITHMATE_RUNTIME_SELECTOR_INVALID、effect none、fetch呼出し0件"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("明示された--api-urlが不正な場合はdiscovery fileへfallbackしない", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-"));
     const discoveryFilePath = join(tempDirectory, "memory-v6-api.json");
@@ -545,8 +573,8 @@ it("runtime directoryのdiscovery fileを既定で読む", async () => {
         },
       });
 
-      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
-      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+      assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_SELECTOR_INVALID");
       assert.equal(stdout.json().error.effect, "none");
       assert.equal(fetchCalls, 0);
     } finally {
@@ -554,15 +582,17 @@ it("runtime directoryのdiscovery fileを既定で読む", async () => {
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "runtime unavailable時にDB直読みにfallbackしない"
-// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "停止runtimeへ接続できない"
+// claim = "空のruntime registryのdiscovery失敗をCLIのunavailable errorへ投影する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-discovery"
 // lifecycle = "permanent"
+// fault = "runtime不在を成功または別のerror codeへ誤分類する"
+// observable = "apiError終了codeとWITHMATE_RUNTIME_UNAVAILABLE"
+// observation_boundary = "public-boundary"
 // @end-test-value
-it("WithMate未起動時はDB直読みに逃げずWITHMATE_NOT_RUNNINGを返す", async () => {
+it("空registryのruntime discovery失敗をCLI unavailable errorへ投影する", async () => {
     const registryRootDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-empty-registry-"));
     const stdout = createOutputCapture();
     try {
@@ -575,20 +605,22 @@ it("WithMate未起動時はDB直読みに逃げずWITHMATE_NOT_RUNNINGを返す"
         },
       });
 
-      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
       assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
     } finally {
       await rm(registryRootDirectoryPath, { recursive: true, force: true });
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
 // claim = "Character commandがruntime unavailableをstructured errorへ投影する"
-// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "storage_unavailableの原因が識別不能になる"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-discovery"
 // lifecycle = "permanent"
+// fault = "storage_unavailableの原因が識別不能になる"
+// observable = "apiError終了codeとCharacter schemaのstorage_unavailable、retryable true、effect none、discoveryCode、空candidate配列"
+// observation_boundary = "public-boundary"
 // @end-test-value
 it("Character commandのruntime unavailableを共通error semanticsで返す", async () => {
     const registryRootDirectoryPath = await mkdtemp(join(tmpdir(), "withmate-memory-empty-registry-"));
@@ -598,9 +630,7 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
         "context-get",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
-          sessionId: "session-a",
+
         }),
       ], {
         env: {},
@@ -628,16 +658,25 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character writeのdispatch後timeoutはeffect unknownを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "Character writeのdispatch後timeoutはeffect unknownを返すという公開契約に反する結果を返す"
+  // observable = "注入exchange timeout後のapiError終了code、storage_unavailable、effect unknown、retryable true"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("Character writeのdispatch後timeoutはeffect unknownを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli([
       "character-memory-forget",
       "--json",
       JSON.stringify({
-        schemaVersion: "withmate-character-context-v1",
-        characterId: "character-a",
         entryId: "entry-a",
-        authority: { kind: "operator", reason: "Recovery test." },
+
         reason: "other",
         idempotencyKey: "forget-timeout-1",
       }),
@@ -664,15 +703,24 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
     assert.equal(stdout.json().error.retryable, true);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character readのdispatch後response lossはeffect noneを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "Character readのdispatch後response lossはeffect noneを返すという公開契約に反する結果を返す"
+  // observable = "注入exchange response loss後のapiError終了code、storage_unavailable、effect none、retryable true"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("Character readのdispatch後response lossはeffect noneを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli([
       "context-get",
       "--json",
       JSON.stringify({
-        schemaVersion: "withmate-character-context-v1",
-        characterId: "character-a",
-        sessionId: "session-a",
+
       }),
     ], {
       env: TEST_RUNTIME_ENV,
@@ -694,13 +742,22 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
     assert.equal(stdout.json().error.retryable, true);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "一般Memoryのdispatch後response lossはreadをeffect none、writeをeffect unknownにする"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "一般Memoryのdispatch後response lossはreadをeffect none、writeをeffect unknownにするという公開契約に反する結果を返す"
+  // observable = "注入runtimeCall失敗後のapiError終了code、TRANSPORT_ERROR、read/dry-runのeffect none、writeのeffect unknown、retryable true"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("一般Memoryのdispatch後response lossはreadをeffect none、writeをeffect unknownにする", async () => {
     const cases = [
       {
         command: "search",
         body: {
-          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          targets: [{ owner: "user", scope: "global" }],
+          targets: [{ kind: "user-global" }],
           query: "preference",
         },
         expectedEffect: "none",
@@ -708,8 +765,7 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
       {
         command: "append",
         body: {
-          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          target: { owner: "user", scope: "global" },
+          target: { kind: "user-global" },
           kind: "preference",
           title: "Compact output",
           body: "Prefer compact output.",
@@ -722,8 +778,7 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
       {
         command: "forget",
         body: {
-          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          target: { owner: "user", scope: "global" },
+          target: { kind: "user-global" },
           entryIds: ["entry-a"],
           reason: "user_request",
           idempotencyKey: "cli-general-response-loss-dry-run-1",
@@ -746,22 +801,30 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
         },
       });
       assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
-      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_REQUEST_TIMEOUT");
+      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_TRANSPORT_ERROR");
       assert.equal(stdout.json().error.effect, testCase.expectedEffect);
       assert.equal(stdout.json().error.retryable, true);
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character writeのpre-dispatch同期failureはeffect noneを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "Character writeのpre-dispatch同期failureはeffect noneを返すという公開契約に反する結果を返す"
+  // observable = "注入runtimeCall同期例外後のapiError終了code、storage_unavailableとeffect none"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Character writeのpre-dispatch同期failureはeffect noneを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli([
       "character-memory-forget",
       "--json",
       JSON.stringify({
-        schemaVersion: "withmate-character-context-v1",
-        characterId: "character-a",
         entryId: "entry-a",
-        authority: { kind: "operator", reason: "Recovery test." },
+
         reason: "other",
         idempotencyKey: "forget-predispatch-1",
       }),
@@ -778,6 +841,16 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
     assert.equal(stdout.json().error.effect, "none");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Character commandのruntime HTTP errorを共通Character schemaへ変換する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "Character commandのruntime HTTP errorを共通Character schemaへ変換するという公開契約に反する結果を返す"
+  // observable = "注入HTTP 401/413/500に対するCharacter schema、authority_denied/invalid_input/storage_unavailable、effect none、details.httpStatusと終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("Character commandのruntime HTTP errorを共通Character schemaへ変換する", async () => {
     for (const testCase of [
       { status: 401, expectedCode: "authority_denied" },
@@ -789,9 +862,7 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
         "context-get",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
-          sessionId: "session-a",
+
         }),
       ], {
         env: TEST_RUNTIME_ENV,
@@ -811,15 +882,18 @@ it("Character commandのruntime unavailableを共通error semanticsで返す", a
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "stale endpoint接続失敗をruntime unavailableとして返す"
-// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "終了済みruntimeへ接続を試みる"
+// claim = "注入exchangeのidentity preflight接続失敗をCLI TRANSPORT_ERRORへ投影する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-discovery"
 // lifecycle = "permanent"
+// fault = "identity preflight接続失敗を成功または不適切なerror codeへ誤分類する"
+// observable = "注入identity preflight接続失敗後のapiError終了codeとWITHMATE_MEMORY_TRANSPORT_ERROR"
+// observation_boundary = "component-behavior"
+// distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
 // @end-test-value
-it("stale discovery endpointへ接続できない場合もWITHMATE_NOT_RUNNINGを返す", async () => {
+it("stale discovery endpointへ接続できない場合も共通transport errorを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
       env: TEST_RUNTIME_ENV,
@@ -829,19 +903,22 @@ it("stale discovery endpointへ接続できない場合もWITHMATE_NOT_RUNNING�
       },
     });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_TRANSPORT_ERROR");
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "regression"
-// claim = "stale endpointの応答停止をtimeoutでboundedに処理する"
-// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "応答しないruntimeがCLIを占有する"
+// claim = "注入exchangeのidentity preflight応答停止をabortし、CLI TRANSPORT_ERRORへ投影する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-discovery"
 // lifecycle = "permanent"
+// fault = "preflight応答停止から復帰しないか、abortを成功へ誤分類する"
+// observable = "注入identity preflightのabort後のapiError終了codeとWITHMATE_MEMORY_TRANSPORT_ERROR"
+// observation_boundary = "component-behavior"
+// distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
 // @end-test-value
-it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT_RUNNINGを返す", async () => {
+it("stale discovery endpointが応答しない場合はtimeoutして共通transport errorを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
       env: TEST_RUNTIME_ENV,
@@ -852,11 +929,22 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
       }),
     });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_TRANSPORT_ERROR");
   });
 
-  it("file operationは通常requestと別のtimeoutを使い、本体timeoutを明示する", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "timeout解決helperが通常/file別の設定値を返し、注入file exchangeのabortをCLI transport errorへ投影する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "timeout解決helperが別操作の設定値を返すか、注入file exchange失敗を成功へ誤分類する"
+  // observable = "timeout解決helperの通常/file設定値と、注入file exchange abort後のapiError終了code、TRANSPORT_ERROR、effect unknown"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
+  it("timeout設定helperの操作別値と注入file exchange失敗のCLI投影を確認する", async () => {
     assert.equal(resolveRuntimeRequestTimeoutMs("search"), DEFAULT_REQUEST_TIMEOUT_MS);
     assert.equal(resolveRuntimeRequestTimeoutMs("get_file"), DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS);
     assert.equal(resolveRuntimeRequestTimeoutMs("export_files", { fileOperationRequestTimeoutMs: 20_000 }), 20_000);
@@ -864,8 +952,7 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
 
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       objectId: "a".repeat(32),
       outputPath: "C:/exports/file.bin",
     };
@@ -885,11 +972,22 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
-    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_REQUEST_TIMEOUT");
-    assert.equal(stdout.json().error.field, "get_file");
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_TRANSPORT_ERROR");
+    assert.equal(stdout.json().error.effect, "unknown");
   });
 
-  it("statusはGETで/v1/statusへ送る", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "statusは認証済みruntime status routeへ送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "statusは認証済みruntime status routeへ送るという公開契約に反する結果を返す"
+  // observable = "注入exchange内のpreflight GET /v1/status nonceとGET /v1/runtime_status、header/body、およびstdout JSONと終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
+  it("statusは認証済みruntime status routeへ送る", async () => {
     const stdout = createOutputCapture();
     const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
     const exitCode = await runWithMateMemoryCli(["status"], {
@@ -914,13 +1012,24 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
       headers: undefined,
     });
     assert.deepEqual(requests[1], {
-      url: "http://127.0.0.1:7777/v1/status",
+      url: "http://127.0.0.1:7777/v1/runtime_status",
       method: "GET",
       body: undefined,
       headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "charactersはGETで/v1/charactersへ送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "charactersはGETで/v1/charactersへ送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeのGET /v1/characters要求とheader、response JSON、および成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("charactersはGETで/v1/charactersへ送る", async () => {
     const stdout = createOutputCapture();
     const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
@@ -958,6 +1067,17 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "file-usageはGETで/v1/file_usageへ送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "file-usageはGETで/v1/file_usageへ送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeのGET /v1/file_usage要求とheader、response JSON、および成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("file-usageはGETで/v1/file_usageへ送る", async () => {
     const stdout = createOutputCapture();
     const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
@@ -996,6 +1116,17 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "file-usage --largestはGET queryで候補数を指定する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "file-usage --largestはGET queryで候補数を指定するという公開契約に反する結果を返す"
+  // observable = "注入exchangeのfile_usage URLに付いたlargestとlimit、およびresponse JSONと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("file-usage --largestはGET queryで候補数を指定する", async () => {
     const stdout = createOutputCapture();
     const requests: Array<{ url: string; method: string | undefined; body: BodyInit | null | undefined; headers: HeadersInit | undefined }> = [];
@@ -1041,11 +1172,21 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "get-fileはJSON bodyをPOSTで送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "get-fileはJSON bodyをPOSTで送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeで捕捉したPOST /v1/get_file、schemaVersion付きpublic body、stdout bytesWrittenと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("get-fileはJSON bodyをPOSTで送る", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       objectId: "a".repeat(32),
       outputPath: "C:/exports/file.bin",
     };
@@ -1074,15 +1215,25 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-    assert.deepEqual(capturedBody, requestBody);
+    assert.deepEqual(capturedBody, { ...requestBody, schemaVersion: MEMORY_V6_SCHEMA_VERSION });
     assert.equal(stdout.json().bytesWritten, 12);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "export-filesはJSON bodyをPOSTで送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "export-filesはJSON bodyをPOSTで送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeで捕捉したPOST /v1/export_files、schemaVersion付きpublic body、stdout exportedCountと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("export-filesはJSON bodyをPOSTで送る", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       entryId: "mem-a",
       outputDirectoryPath: "C:/exports",
     };
@@ -1109,10 +1260,20 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-    assert.deepEqual(capturedBody, requestBody);
+    assert.deepEqual(capturedBody, { ...requestBody, schemaVersion: MEMORY_V6_SCHEMA_VERSION });
     assert.equal(stdout.json().exportedCount, 0);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "環境変数URLが不正な場合はdefault discovery fileへfallbackしない"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "環境変数URLが不正な場合はdefault discovery fileへfallbackしないという公開契約に反する結果を返す"
+  // observable = "apiError終了code、WITHMATE_RUNTIME_SELECTOR_INVALID、fetch呼出し0件"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("環境変数URLが不正な場合はdefault discovery fileへfallbackしない", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-runtime-"));
     const stdout = createOutputCapture();
@@ -1137,14 +1298,25 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
         },
       });
 
-      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
-      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+      assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_SELECTOR_INVALID");
       assert.equal(fetchCalls, 0);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "discovery/envのapiSecretを内部API headerとして送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "discovery/envのapiSecretを内部API headerとして送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeで捕捉したstatus要求のAPI secret headerとpreflightを含む2要求、および成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("discovery/envのapiSecretを内部API headerとして送る", async () => {
     const stdout = createOutputCapture();
     const requests: Array<{ url: string; method: string | undefined; headers: HeadersInit | undefined }> = [];
@@ -1168,17 +1340,27 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.equal(requests.length, 2);
     assert.deepEqual(requests[1], {
-      url: "http://127.0.0.1:7777/v1/status",
+      url: "http://127.0.0.1:7777/v1/runtime_status",
       method: "GET",
       headers: { "x-withmate-memory-api-secret": TEST_API_SECRET },
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "searchはJSON bodyをPOSTで送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "searchはJSON bodyをPOSTで送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeのPOST /v1/search、header、schemaVersion付きtargets/query、およびstdout itemsと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("searchはJSON bodyをPOSTで送る", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+      targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
       query: "cli",
     };
     let capturedBody: unknown = null;
@@ -1202,10 +1384,20 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-    assert.deepEqual(capturedBody, requestBody);
+    assert.deepEqual(capturedBody, { ...requestBody, schemaVersion: MEMORY_V6_SCHEMA_VERSION });
     assert.deepEqual(stdout.json(), { schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "schemaはruntime接続なしでCLI capabilitiesを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "schemaはruntime接続なしでCLI capabilitiesを返すという公開契約に反する結果を返す"
+  // observable = "schemaのpublic tools名、append kind enum、必須idempotencyKey、schemaVersion入力の不在、fetch呼出し0件と成功終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("schemaはruntime接続なしでCLI capabilitiesを返す", async () => {
     const stdout = createOutputCapture();
     let fetchCalls = 0;
@@ -1220,30 +1412,30 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.equal(fetchCalls, 0);
-    assert.deepEqual(stdout.json().entryKinds, [
-      "decision",
-      "constraint",
-      "convention",
-      "context",
-      "deferred",
-      "preference",
-      "relationship",
-      "boundary",
-      "note",
+    const tools = stdout.json().tools as Array<{ name: string; inputSchema: Record<string, any> }>;
+    const append = tools.find((tool) => tool.name === "memory.append")!;
+    assert.ok(append);
+    assert.deepEqual(append.inputSchema.properties.kind.enum, [
+      "decision", "constraint", "convention", "context", "deferred", "preference", "relationship", "boundary", "note",
     ]);
-    assert.deepEqual(stdout.json().forgetReasons, ["user_request", "incorrect", "outdated", "privacy", "other"]);
-    assert.ok(stdout.json().commands.includes("characters"));
-    assert.ok(stdout.json().commands.includes("file-usage"));
-    assert.ok(stdout.json().commands.includes("get-file"));
-    assert.ok(stdout.json().commands.includes("export-files"));
-    assert.deepEqual(stdout.json().requestBodyInputs, ["--json", "--file", "@file", "--stdin"]);
-    assert.deepEqual(stdout.json().targetSelectors.at(-1), {
-      owner: "user",
-      scope: "global",
-      requiredFields: [],
-    });
+    assert.ok(append.inputSchema.required.includes("idempotencyKey"));
+    assert.equal(append.inputSchema.properties.schemaVersion, undefined);
+    assert.ok(tools.some((tool) => tool.name === "memory.get_file"));
+    assert.ok(tools.some((tool) => tool.name === "memory.export_files"));
+    assert.ok(tools.some((tool) => tool.name === "character_affect.reset"));
+    assert.ok(tools.some((tool) => tool.name === "memory.status"));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "--helpはruntime接続なしでusage textを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "--helpはruntime接続なしでusage textを返すという公開契約に反する結果を返す"
+  // observable = "help stdoutのUsage・command・request入力案内、fetch呼出し0件と成功終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("--helpはruntime接続なしでusage textを返す", async () => {
     const stdout = createOutputCapture();
     let fetchCalls = 0;
@@ -1268,6 +1460,16 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assert.match(stdout.text(), /validate --command <list-targets\|list-entries\|audit\|search\|get-entry\|get-file\|export-files\|list-tags\|append\|forget\|move-entry>/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "command --helpもruntime接続なしでusage textを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "command --helpもruntime接続なしでusage textを返すという公開契約に反する結果を返す"
+  // observable = "command help stdoutのCommandsと--stdin案内、fetch呼出し0件と成功終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("command --helpもruntime接続なしでusage textを返す", async () => {
     const stdout = createOutputCapture();
     let fetchCalls = 0;
@@ -1286,17 +1488,27 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assert.match(stdout.text(), /--stdin/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "validateはrequest bodyをruntimeへ送らずに検証する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "validateはrequest bodyをruntimeへ送らずに検証するという公開契約に反する結果を返す"
+  // observable = "validate stdoutのvalid、command append、public tags値、fetch呼出し0件と成功終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("validateはrequest bodyをruntimeへ送らずに検証する", async () => {
     const stdout = createOutputCapture();
     let fetchCalls = 0;
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       kind: "decision",
       title: "Decision",
       body: "Body",
       preview: "Preview",
       tags: [{ type: "topic", value: "cli" }],
+      idempotencyKey: "validate-append-a",
     };
 
     const exitCode = await runWithMateMemoryCli(["validate", "--command", "append", "--json", JSON.stringify(requestBody)], {
@@ -1312,14 +1524,23 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assert.equal(fetchCalls, 0);
     assert.equal(stdout.json().valid, true);
     assert.equal(stdout.json().command, "append");
-    assert.equal(stdout.json().value.tags[0].canonicalValue, "cli");
+    assert.deepEqual(stdout.json().value.tags, [{ type: "topic", value: "cli" }]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "validateはuser-global targetを受け付ける"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "validateはuser-global targetを受け付けるという公開契約に反する結果を返す"
+  // observable = "validate stdoutのvalidとuser-global target、および成功終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("validateはuser-global targetを受け付ける", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{ owner: "user", scope: "global" }],
+      targets: [{ kind: "user-global" }],
       query: "global preference",
     };
 
@@ -1333,14 +1554,23 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
     assert.equal(stdout.json().valid, true);
-    assert.deepEqual(stdout.json().value.targets, [{ owner: "user", scope: "global" }]);
+    assert.deepEqual(stdout.json().value.targets, [{ kind: "user-global" }]);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "validateはinvalid requestをJSON errorで返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "validateはinvalid requestをJSON errorで返すという公開契約に反する結果を返す"
+  // observable = "apiError終了code、WITHMATE_MEMORY_INVALID_INPUT、kindを示すmessage、effect none"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("validateはinvalid requestをJSON errorで返す", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       kind: "investigation",
       title: "Decision",
       body: "Body",
@@ -1354,16 +1584,26 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
-    assert.equal(stdout.json().error.code, "MEMORY_INVALID_FIELD");
-    assert.equal(stdout.json().error.field, "kind");
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_INVALID_INPUT");
+    assert.match(stdout.json().error.message, /kind/);
     assert.equal(stdout.json().error.effect, "none");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "--stdinは明示的に標準入力からrequest bodyを読む"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "--stdinは明示的に標準入力からrequest bodyを読むという公開契約に反する結果を返す"
+  // observable = "stdinから読んだtargets/queryにschemaVersionを補った注入exchange bodyと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("--stdinは明示的に標準入力からrequest bodyを読む", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+      targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
       query: "cli",
     };
     let capturedBody: unknown = null;
@@ -1382,16 +1622,26 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     });
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-    assert.deepEqual(capturedBody, requestBody);
+    assert.deepEqual(capturedBody, { ...requestBody, schemaVersion: MEMORY_V6_SCHEMA_VERSION });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "@fileは--fileの短縮形としてrequest bodyを読む"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "@fileは--fileの短縮形としてrequest bodyを読むという公開契約に反する結果を返す"
+  // observable = "@fileから読んだtargets/queryにschemaVersionを補った注入exchange bodyと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("@fileは--fileの短縮形としてrequest bodyを読む", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-at-file-"));
     const requestPath = join(tempDirectory, "search.json");
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+      targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
       query: "cli",
     };
     let capturedBody: unknown = null;
@@ -1411,12 +1661,23 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
       });
 
       assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
-      assert.deepEqual(capturedBody, requestBody);
+      assert.deepEqual(capturedBody, { ...requestBody, schemaVersion: MEMORY_V6_SCHEMA_VERSION });
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "search shorthandはprojectとqueryからrequest bodyを作る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "search shorthandはprojectとqueryからrequest bodyを作るという公開契約に反する結果を返す"
+  // observable = "注入exchange bodyのschemaVersion、絶対project path、query、limitと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("search shorthandはprojectとqueryからrequest bodyを作る", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-shorthand-"));
@@ -1444,6 +1705,17 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "search shorthandは--tag / --tagsからtagsを作り、query未指定時はtag値をqueryに使う"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "search shorthandは--tag / --tagsからtagsを作り、query未指定時はtag値をqueryに使うという公開契約に反する結果を返す"
+  // observable = "注入exchange bodyのtag配列、tag値を連結したqueryと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("search shorthandは--tag / --tagsからtagsを作り、query未指定時はtag値をqueryに使う", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-tags-"));
@@ -1481,6 +1753,17 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "get-entry shorthandはprojectとentry idからrequest bodyを作る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "get-entry shorthandはprojectとentry idからrequest bodyを作るという公開契約に反する結果を返す"
+  // observable = "注入exchange bodyのschemaVersion、entryId、絶対project pathと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("get-entry shorthandはprojectとentry idからrequest bodyを作る", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-get-entry-"));
@@ -1513,6 +1796,16 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "get-entry shorthandはtargetなしをusage errorにする"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "get-entry shorthandはtargetなしをusage errorにするという公開契約に反する結果を返す"
+  // observable = "target欠落時のusage終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("get-entry shorthandはtargetなしをusage errorにする", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["get-entry", "--entry-id", "mem-1"], {
@@ -1527,6 +1820,17 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assertUsageError(stdout.json(), /get-entry shorthand requires --project/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "get-file shorthandはprojectとobject idとoutputからrequest bodyを作る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "get-file shorthandはprojectとobject idとoutputからrequest bodyを作るという公開契約に反する結果を返す"
+  // observable = "注入exchange bodyのschemaVersion、objectId、絶対project path、outputPathと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("get-file shorthandはprojectとobject idとoutputからrequest bodyを作る", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-get-file-"));
@@ -1571,6 +1875,16 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "get-file shorthandはoutputなしをusage errorにする"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "get-file shorthandはoutputなしをusage errorにするという公開契約に反する結果を返す"
+  // observable = "output欠落時のusage終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("get-file shorthandはoutputなしをusage errorにする", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["get-file", "--project-id", "project-a", "--object-id", "a".repeat(32)], {
@@ -1585,6 +1899,17 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assertUsageError(stdout.json(), /get-file shorthand requires --output/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "export-files shorthandはprojectとentry idとoutput dirからrequest bodyを作る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "export-files shorthandはprojectとentry idとoutput dirからrequest bodyを作るという公開契約に反する結果を返す"
+  // observable = "注入exchange bodyのschemaVersion、entryId、絶対project path、outputDirectoryPathと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("export-files shorthandはprojectとentry idとoutput dirからrequest bodyを作る", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-export-files-"));
@@ -1627,6 +1952,16 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "export-files shorthandはoutput dirなしをusage errorにする"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "export-files shorthandはoutput dirなしをusage errorにするという公開契約に反する結果を返す"
+  // observable = "output directory欠落時のusage終了code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("export-files shorthandはoutput dirなしをusage errorにする", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["export-files", "--project-id", "project-a", "--entry-id", "mem-a"], {
@@ -1641,6 +1976,16 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assertUsageError(stdout.json(), /export-files shorthand requires --output-dir/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "project.pathの相対pathはCLIで拒否する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "project.pathの相対pathはCLIで拒否するという公開契約に反する結果を返す"
+  // observable = "usage終了code、CLI_USAGE error codeとabsolute pathを示すmessage"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("project.pathの相対pathはCLIで拒否する", async () => {
     const stdout = createOutputCapture();
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-cli-cwd-"));
@@ -1648,8 +1993,7 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     try {
       process.chdir(tempDirectory);
       const exitCode = await runWithMateMemoryCli(["search", "--json", JSON.stringify({
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "project", scope: "project", project: { type: "path", path: "." } }],
+        targets: [{ kind: "project", project: { type: "path", path: "." } }],
         query: "cli",
       })], {
         env: TEST_RUNTIME_ENV,
@@ -1672,6 +2016,16 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "--session-projectは非対応optionとしてusage errorを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "--session-projectは非対応optionとしてusage errorを返すという公開契約に反する結果を返す"
+  // observable = "usage終了code、CLI_USAGE error codeとUnknown option: --session-project message"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("--session-projectは非対応optionとしてusage errorを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["search", "--session-project", "--query", "missing"], {
@@ -1684,15 +2038,17 @@ it("stale discovery endpointが応答しない場合はtimeoutしてWITHMATE_NOT
     assert.match(stdout.json().error.message, /Unknown option: --session-project/);
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
-// claim = "redirect先へsecretとrequest bodyを転送しない"
-// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "redirect経由でcredentialが漏洩する"
+// claim = "identity preflightのHTTP redirect失敗をCLI unavailable errorへ投影し、redirect先へ接続しない"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-transport"
 // lifecycle = "permanent"
+// fault = "preflight redirectを追従するか、失敗を成功としてCLIへ返す"
+// observable = "identity preflightがHTTP redirectを返した場合のapiError終了code、WITHMATE_RUNTIME_UNAVAILABLE、redirect先serverの受信0件"
+// observation_boundary = "public-boundary"
 // @end-test-value
-it("POST redirectは追従せずrequest bodyを転送しない", async () => {
+it("identity preflightのredirectは追従せずCLI unavailableを返す", async () => {
     let destinationRequests = 0;
 
     await withHttpServer((request, response) => {
@@ -1708,13 +2064,13 @@ it("POST redirectは追従せずrequest bodyを転送しない", async () => {
       }, async (redirectUrl) => {
         const stdout = createOutputCapture();
         const exitCode = await runWithMateMemoryCli(["append", "--json", JSON.stringify({
-          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          target: { kind: "project", project: { type: "id", id: "project-a" } },
           kind: "decision",
           title: "redirect",
           body: "redirect body",
           preview: "redirect",
           tags: [],
+          idempotencyKey: "redirect-a",
         })], {
           env: {
             WITHMATE_MEMORY_API_URL: redirectUrl,
@@ -1725,7 +2081,7 @@ it("POST redirectは追従せずrequest bodyを転送しない", async () => {
           stdout: stdout.stream,
         });
 
-        assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
+        assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
         assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
       });
     });
@@ -1733,24 +2089,27 @@ it("POST redirectは追従せずrequest bodyを転送しない", async () => {
     assert.equal(destinationRequests, 0);
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "security"
-// claim = "identity challenge失敗時にmutation bodyとsecretを送信しない"
-// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "port再利用先へ誤接続する"
+// claim = "注入exchange helperのidentity検証失敗をCLIがTRANSPORT_ERRORへ投影する"
+// oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // scope = "memory-cli-transport"
 // lifecycle = "permanent"
+// fault = "注入exchangeのidentity不一致をCLI成功として扱うか、別のerror codeへ誤分類する"
+// observable = "注入exchange helperのidentity不一致に対するCLI apiError終了code、TRANSPORT_ERROR、およびhelperが捕捉したpreflight GET一件のheader/bodyなし"
+// observation_boundary = "component-behavior"
+// distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
 // @end-test-value
-it("runtime identityを検証できないport再利用先へmutation bodyやsecretを送らない", async () => {
+it("注入exchangeのidentity不一致をCLI transport errorへ投影する", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       kind: "decision",
       title: "stale",
       body: "must not leak",
       preview: "stale",
       tags: [],
+      idempotencyKey: "stale-a",
     };
     const requests: Array<{ url: string; method: string | undefined; headers: HeadersInit | undefined; body: BodyInit | null | undefined }> = [];
 
@@ -1770,8 +2129,8 @@ it("runtime identityを検証できないport再利用先へmutation bodyやsecr
       },
     });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning);
-    assert.equal(stdout.json().error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_TRANSPORT_ERROR");
     assert.equal(requests.length, 1);
     assert.match(requests[0].url, /^http:\/\/127\.0\.0\.1:7777\/v1\/status\?nonce=/);
     assert.deepEqual({
@@ -1790,7 +2149,7 @@ it("runtime identityを検証できないport再利用先へmutation bodyやsecr
 // claim = "valid preflight後のexchangeでruntime identityが差し替わるとoperationをdispatchせず拒否する"
 // oracle = { type = "adr", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
 // fault = "exchangeの偽identityを受け入れ、credentialまたはoperation bodyを偽peerへ送信する"
-// observable = "status preflightとexchange requestの回数、forged 103 identity、exchange body、CLI error/effect"
+// observable = "実HTTP exchangeの偽identityに対するstorage_unavailable・effect none・apiError終了code、preflight/exchange各1要求、exchange body 0 bytes、credential/content-length header不在"
 // observation_boundary = "public-boundary"
 // scope = "memory-cli-transport.exchange-peer-identity"
 // lifecycle = "permanent"
@@ -1829,8 +2188,6 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
         "character-memory-forget",
         "--json",
         JSON.stringify({
-          schemaVersion: "withmate-character-context-v1",
-          characterId: "character-a",
           entryId: "entry-a",
           reason: "user_request",
           idempotencyKey: "swap-cli-1",
@@ -1857,6 +2214,17 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "API errorはレスポンスJSONをそのまま出し、apiErrorで終了する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "API errorはレスポンスJSONをそのまま出し、apiErrorで終了するという公開契約に反する結果を返す"
+  // observable = "注入exchangeの403応答に対するapiError終了codeとMEMORY_FORBIDDEN"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("API errorはレスポンスJSONをそのまま出し、apiErrorで終了する", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["search", "--project-id", "project-a", "--query", "memory"], {
@@ -1877,16 +2245,27 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     assert.equal(stdout.json().error.code, "MEMORY_FORBIDDEN");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "appendはimporter由来API errorをそのまま出し、apiErrorで終了する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "appendはimporter由来API errorをそのまま出し、apiErrorで終了するという公開契約に反する結果を返す"
+  // observable = "注入exchangeのimporter error応答に対するapiError終了code、MEMORY_INVALID_FIELDとfiles[0].path"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("appendはimporter由来API errorをそのまま出し、apiErrorで終了する", async () => {
     const stdout = createOutputCapture();
     const requestBody = {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-      target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      target: { kind: "project", project: { type: "id", id: "project-a" } },
       kind: "decision",
       title: "file append",
       body: "file append body",
       preview: "file append",
       tags: [],
+      idempotencyKey: "importer-error-a",
       files: [{
         path: "C:/trace/missing.png",
         summary: "Missing screenshot.",
@@ -1916,7 +2295,18 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     assert.equal(stdout.json().error.field, "files[0].path");
   });
 
-  it("APIが非JSONを返した場合もstdoutにはJSON errorだけを出す", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "注入exchangeのidentity preflight非JSON失敗をCLIがJSON TRANSPORT_ERRORへ投影する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "preflight非JSON失敗を成功へ誤分類するか、stdoutにJSON error以外を返す"
+  // observable = "注入exchangeのidentity preflight非JSON応答に対するapiError終了codeとstdout JSONのTRANSPORT_ERROR"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
+  it("注入exchangeのidentity preflight非JSON失敗をCLI JSON errorへ投影する", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {
       env: TEST_RUNTIME_ENV,
@@ -1925,23 +2315,34 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
       fetch: async () => new Response("<html>not memory api</html>", { status: 200 }),
     });
 
-    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.transportError);
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
     assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_TRANSPORT_ERROR");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "maintenance shorthandはlist-targets、list-entries、tag countsをruntimeへ送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "maintenance shorthandはlist-targets、list-entries、tag countsをruntimeへ送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeで捕捉したlist_targets/list_entries/list_tagsのrouteとpublic target/filter/count条件付きbody、および成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("maintenance shorthandはlist-targets、list-entries、tag countsをruntimeへ送る", async () => {
     const cases = [
       {
         args: ["list-targets", "--owner", "project", "--include-empty", "--limit", "100"],
         path: "/v1/list_targets",
-        expected: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, owner: "project", includeEmpty: true, limit: 100 },
+        expected: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, filter: { kind: "project" }, includeEmpty: true, limit: 100 },
       },
       {
         args: ["list-entries", "--project-id", "project-a", "--limit", "100"],
         path: "/v1/list_entries",
         expected: {
           schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          target: { kind: "project", project: { type: "id", id: "project-a" } },
           limit: 100,
         },
       },
@@ -1950,7 +2351,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
         path: "/v1/list_entries",
         expected: {
           schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          target: { owner: "user", scope: "global" },
+          target: { kind: "user-global" },
           limit: 100,
         },
       },
@@ -1959,7 +2360,7 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
         path: "/v1/list_tags",
         expected: {
           schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-          targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+          targets: [{ kind: "project", project: { type: "id", id: "project-a" } }],
           withCounts: true,
           sampleLimit: 2,
         },
@@ -1985,22 +2386,33 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "forget --file --dry-runはrequestへpreview flagを加え、move-entryは専用routeへ送る"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "forget --file --dry-runはrequestへpreview flagを加え、move-entryは専用routeへ送るという公開契約に反する結果を返す"
+  // observable = "注入exchangeで捕捉したforget/move_entry route、forget dryRun trueとmoveのdryRun不在、および成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("forget --file --dry-runはrequestへpreview flagを加え、move-entryは専用routeへ送る", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-maintenance-cli-"));
     try {
       const forgetPath = join(tempDirectory, "forget.json");
       const movePath = join(tempDirectory, "move.json");
-      const target = { owner: "project", scope: "project", project: { type: "id", id: "project-a" } };
+      const target = { kind: "project", project: { type: "id", id: "project-a" } };
       await writeFile(forgetPath, JSON.stringify({
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target,
         entryIds: ["mem-a"],
+        reason: "user_request",
+        idempotencyKey: "dry-run-a",
       }), "utf8");
       await writeFile(movePath, JSON.stringify({
-        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         entryId: "mem-a",
         from: target,
-        to: { owner: "user", scope: "global" },
+        to: { kind: "user-global" },
         reason: "move to user scope",
         idempotencyKey: "move-a",
       }), "utf8");
@@ -2030,6 +2442,17 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "audit markdown/jsonlはbodyを要求せずmaintenance projectionを整形する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "audit markdown/jsonlはbodyを要求せずmaintenance projectionを整形するという公開契約に反する結果を返す"
+  // observable = "audit markdownのproject/kind/tag/duplicate/cursor表記、JSONLのpage/target recordと成功終了code"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // distinction = "runtime exchangeを注入してCLIの入力変換・response投影を観測する。productionの103 exchange送信保護はこのtestの保証対象外"
+  // @end-test-value
   it("audit markdown/jsonlはbodyを要求せずmaintenance projectionを整形する", async () => {
     const response = {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
@@ -2092,6 +2515,16 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "invalid JSONはusage errorで終了する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "invalid JSONはusage errorで終了するという公開契約に反する結果を返す"
+  // observable = "不正JSONのusage終了codeとCLI_USAGE error code"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("invalid JSONはusage errorで終了する", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["search", "--json", "{"], {
@@ -2103,6 +2536,16 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "option value不足はusage errorで終了する"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "option value不足はusage errorで終了するという公開契約に反する結果を返す"
+  // observable = "option値欠落のusage終了codeと--json requires a value message"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("option value不足はusage errorで終了する", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["search", "--json"], {
@@ -2114,6 +2557,16 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
     assert.match(stdout.json().error.message, /--json requires a value/);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "unknown commandは現行CLI surfaceを含むusage errorを返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
+  // fault = "unknown commandは現行CLI surfaceを含むusage errorを返すという公開契約に反する結果を返す"
+  // observable = "unknown commandのusage終了codeとschema/validate、@file、stdin、project、tagを含むmessage"
+  // observation_boundary = "public-boundary"
+  // scope = "Memory CLI public input and runtime exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("unknown commandは現行CLI surfaceを含むusage errorを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["nope"], {
@@ -2132,10 +2585,10 @@ it("challenge後に同じportのpeerが差し替わってもcredentialとmutatio
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "operator CLIは複数active候補を列挙でき、暗黙のlast-writer選択を行わない"
+  // claim = "CLIは複数active候補のsafe metadataをinstances/status --allで列挙する"
   // oracle = { type = "contract", ref = "docs/adr/023-multi-instance-runtime-discovery.md" }
   // fault = "instances/status --allが一意性を確認せず後発runtimeへ接続する"
-  // observable = "instancesとstatus --allのsafe metadata列挙結果、およびactive候補ごとのidentity"
+  // observable = "instances/status --allの各2候補とapplication/generation ID一致、secret文字列不在、成功終了code"
   // observation_boundary = "public-boundary"
   // scope = "withmate-memory-cli-discovery"
   // lifecycle = "permanent"

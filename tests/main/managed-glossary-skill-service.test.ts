@@ -94,15 +94,26 @@ describe("withmate-glossary managed distribution", () => {
 });
 
 describe("withmate-glossary managed bundle contract", () => {
-  it("SkillはMCP-first、proactive条件、effect certaintyを定義し、用語内容やfallback件数を持たない", async () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "配布Glossary SkillはCLI/MCP共通契約、Sessionなしの明示repositoryとexplicit制約、proactive上限、結果不明時の再取得を指示する"
+  // oracle = { type = "contract", ref = "docs/runbooks/repository-glossary.md#Managed Skill、MCP、CLI" }
+  // fault = "Skillがtransportで契約を変える、無bindingのproactiveを許す、または結果不明の自動再書込みを勧める"
+  // observable = "配布SKILL.mdの共通契約・target選択・proactive・effect unknownに関する指示"
+  // observation_boundary = "declaration"
+  // scope = "managed-glossary-skill-instructions"
+  // lifecycle = "permanent"
+  // distinction = "runtimeの認可testでは保証できないproviderへ配布する判断指示を確認する"
+  // impact = "agentがtargetを推定したり保存結果不明のmutationを再送したりする誘導を防ぐ"
+  // @end-test-value
+  it("SkillはCLI/MCP共通契約とproactive・結果不明時の判断を指示する", async () => {
     const skill = await readFile(path.join(bundlePath, "SKILL.md"), "utf8");
-    assert.match(skill, /name: withmate-glossary/);
-    assert.match(skill, /`withmate-glossary` MCP server/);
+    assert.match(skill, /MCP and CLI use the same operation schemas, runtime authorization, and application service/);
+    assert.match(skill, /Without a Session binding, explicitly supply[^\n]+"kind": "repository"/);
+    assert.match(skill, /Without a Session binding, create and create_batch support only explicit mode/);
     assert.match(skill, /at most one proactive/);
     assert.match(skill, /do not guess, cache, or substitute a fallback limit/);
-    assert.match(skill, /`effect: "unknown"`/);
-    assert.doesNotMatch(skill, /current limit is|default limit is/i);
-    assert.doesNotMatch(skill, /schemaVersion:\s*1\s*$/m);
+    assert.match(skill, /`effect: "unknown"`[^\n]+Do not mutate again automatically\. Read the current value and ask the user/);
   });
 
   it("bundled CLIはcanonical sourceから生成されたcurrent artifactである", async () => {

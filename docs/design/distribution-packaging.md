@@ -21,8 +21,8 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
 - output: `release/` 配下の installer
 - Start Menu shortcut: `WithMate`
 - installer から導入した app は Start Menu 検索から `WithMate` で起動できる想定にする
-- Memory CLI は install root の `withmate-memory.cmd` と `%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-memory.cmd` alias で公開し、user `Path` registry 値は直接編集しない
-- Memory CLI artifactのcanonical pathはrepositoryで`resources/cli/withmate-memory.mjs`、Windows install root基準で`resources/resources/cli/withmate-memory.mjs`とし、Skill catalog配下へ置かない
+- Memory／Glossary／Session Graph CLI は install root の `withmate-memory.cmd`、`withmate-glossary.cmd`、`withmate-session-graph.cmd` と同名の `%LOCALAPPDATA%\Microsoft\WindowsApps` alias で公開し、user `Path` registry 値は直接編集しない
+- repositoryのartifactはMemoryが`resources/cli/withmate-memory.mjs`、Session Graphが`resources/cli/withmate-session-graph.mjs`、Glossaryが`resources/skills/withmate-glossary/bin/withmate-glossary.mjs`。Windows install rootからは各pathの先頭に`resources/`を付ける。MemoryとGraphはSkill catalogへ置かない
 
 ### macOS
 
@@ -31,6 +31,13 @@ WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packaging�
 - output: `release/` 配下の `.dmg`
 - Memory CLI は Settings > Diagnostics から `~/.local/bin/withmate-memory` shim と管理 metadata を install / uninstall できる。既存の非管理 `withmate-memory` は上書き・削除しない
 - `~/.local/bin` が app process の `PATH` に無い場合、Diagnostics は `installed-path-missing` として表示する。provider Skill directoryへのMemory CLI同期は行わない
+
+全CLI artifactは`<process.resourcesPath>/resources/`配下へ同梱する。macOSでGlossary／Session Graphを直接呼ぶ場合は、`ELECTRON_RUN_AS_NODE=1`を付けてapp executableへ対応する`.mjs`と引数を渡す。例えばSession Graphのhelpは次で確認できる。
+
+```sh
+ELECTRON_RUN_AS_NODE=1 /Applications/WithMate.app/Contents/MacOS/WithMate \
+  /Applications/WithMate.app/Contents/Resources/resources/cli/withmate-session-graph.mjs help
+```
 
 ## Script Policy
 

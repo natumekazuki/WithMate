@@ -155,15 +155,15 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "tools/listは17 toolsのstrict actor-relative schema、identity-free Character context projection、effect contractを正本として公開する"
-  // oracle = { type = "adr", ref = "ADR-024 tools/list operation contract" }
+  // claim = "tools/listは全Memory公開操作のstrict actor-relative input、identity-free Character context projection、effect contractを公開する"
+  // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md 公開操作契約" }
   // fault = "caller identityやowner/scope schemaが再公開される、context private fieldが露出する、error/effect annotationが欠落する、またはappendの必須入力が誤る"
   // observable = "MCP clientが取得するtools/listのschema、annotationと操作説明"
   // observation_boundary = "public-boundary"
   // scope = "withmate-memory-mcp-tools-list"
   // lifecycle = "permanent"
   // @end-test-value
-  it("既存Character 6 toolsと一般Memory 11 toolsを完全schemaとannotation付きで公開する", async () => {
+  it("MemoryとCharacterの公開操作をschemaとannotation付きで公開する", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer();
     const client = new Client({ name: "withmate-mcp-contract-test", version: "1.0.0" });
@@ -336,10 +336,10 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       assert.equal(Object.prototype.hasOwnProperty.call(searchOutputEntryProperties, "owner"), false);
       assert.equal(Object.prototype.hasOwnProperty.call(searchOutputEntryProperties, "scope"), false);
       const fileUsageTool = result.tools.find((tool) => tool.name === "memory.file_usage");
-      assert.deepEqual(Object.keys(fileUsageTool?.inputSchema.properties ?? {}), []);
+      assert.deepEqual(Object.keys(fileUsageTool?.inputSchema.properties ?? {}), ["largest", "limit"]);
       assert.equal(
         Object.prototype.hasOwnProperty.call(fileUsageTool?.outputSchema?.properties ?? {}, "largestEntries"),
-        false,
+        true,
       );
       const listEntriesSchema = result.tools.find((tool) => tool.name === "memory.list_entries")?.inputSchema;
       assert.equal((listEntriesSchema?.properties?.states as { minItems?: number })?.minItems, 1);

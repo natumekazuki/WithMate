@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { sessionGraphOperationRequestSchemas, SESSION_GRAPH_RUNTIME_OPERATION_PATHS } from "../../../src-shared/session-graph/session-graph-operation-schema.js";
-import { callWithMateMemoryRuntime, resolveAgentRuntimeBindingReference, resolveAgentRuntimeTurnCapability, type WithMateMemoryRuntimeConnection, WithMateMemoryRuntimeExchangeError } from "./withmate-memory-runtime-client.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../memory/memory-runtime-exchange.js";
+import { sessionGraphOperationRequestSchemas } from "../../../src-shared/session-graph/session-graph-operation-schema.js";
+import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "./withmate-memory-runtime-client.js";
+import { callSessionGraphRuntime } from "./withmate-session-graph-runtime-client.js";
 
 export type SessionGraphMcpRuntimeDeps = {
   connection: WithMateMemoryRuntimeConnection;
@@ -21,23 +21,7 @@ export function createWithMateSessionGraphMcpServer(deps: SessionGraphMcpRuntime
   } as const;
   for (const operation of ["list_topics", "recent", "context", "get", "search", "apply"] as const) {
     server.registerTool(`session_graph.${operation}`, { description: descriptions[operation], inputSchema: sessionGraphOperationRequestSchemas[operation] }, async (input: Record<string, unknown>) => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
-      let value: Record<string, unknown>;
-      try {
-        const response = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(deps.connection, { method: "POST", path: SESSION_GRAPH_RUNTIME_OPERATION_PATHS[operation], body: input }, {
-          signal: controller.signal,
-          bindingReference: resolveAgentRuntimeBindingReference(deps.env),
-          turnCapability: resolveAgentRuntimeTurnCapability(deps.env),
-          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
-        });
-        value = response.value && typeof response.value === "object" && !Array.isArray(response.value)
-          ? response.value as Record<string, unknown>
-          : { ok: false, code: "SESSION_GRAPH_TRANSPORT_ERROR", effect: operation === "apply" ? "unknown" : "none" };
-      } catch (cause) {
-        value = { ok: false, code: "SESSION_GRAPH_TRANSPORT_ERROR", message: "Session Graph runtime request failed.",
-          effect: operation === "apply" && (!(cause instanceof WithMateMemoryRuntimeExchangeError) || cause.dispatched) ? "unknown" : "none" };
-      } finally { clearTimeout(timeout); }
+      const value = await callSessionGraphRuntime(operation, input, deps);
       return { content: [{ type: "text" as const, text: JSON.stringify(value) }], structuredContent: value,
         ...(value.ok === false || value.status === "conflict" ? { isError: true } : {}) };
     });

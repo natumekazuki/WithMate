@@ -26,6 +26,7 @@ import { SessionGraphRuntimeService } from "../../src-electron/session-graph/ses
 import { SessionGraphStorageV6 } from "../../src-electron/session-graph/session-graph-storage-v6.js";
 import { getSessionGraphAgentRuntimeOperations } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import type { SessionGraphIdentity, SessionGraphOperation, SessionGraphOwner, SessionGraphRecord, SessionGraphRequest } from "../../src-shared/session-graph/session-graph-contract.js";
+import { buildWithMateSessionGraphCli } from "../../scripts/build/build-withmate-memory-cli.js";
 
 const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111111",
   runtimeGenerationId: "22222222-2222-4222-8222-222222222222" };
@@ -113,6 +114,17 @@ async function fixture() {
   }
   return {
     begin, connect, host, bindings, turns, storage, directory, glossary,
+    cliEnv(binding: ProviderAgentRuntimeBindingProjection): NodeJS.ProcessEnv {
+      return { ...process.env,
+        WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+        WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: binding.turnCapability,
+        WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: owner.applicationInstanceId,
+        WITHMATE_MEMORY_RUNTIME_GENERATION_ID: owner.runtimeGenerationId,
+        WITHMATE_MEMORY_API_URL: `http://127.0.0.1:${runtime.address()!.port}`,
+        WITHMATE_MEMORY_API_SECRET: "api", WITHMATE_MEMORY_MCP_API_SECRET: "mcp",
+      };
+    },
     async close() {
       await Promise.all(clients.map((client) => client.close()));
       await host.stop();
@@ -206,6 +218,78 @@ test("third managed HTTP MCP endpoint discovers and executes Session Graph", asy
     f.glossary.endProviderTurn(auxTurn.handle);
     assert.equal((await fetch(auxTurn.binding.managedMcp!.sessionGraphUrl, { method: "POST", headers: {
       [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: auxTurn.binding.managedMcp!.token,
+    } })).status, 401);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "配布Graph CLIとmanaged HTTP MCPは同じ保存Graphを読み書きし、競合と失効turnを両入口で拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "単体bundleが起動不能、CLIが別Graphを更新、または認証・CASを迂回する"
+// observable = "分離directoryのCLI process exit/JSON、SDK MCP応答、保存後の全5読取操作と失効後の結果"
+// observation_boundary = "consumer"
+// scope = "配布Graph CLI/managed HTTP MCPからruntime challengeとSQLite保存まで"
+// lifecycle = "permanent"
+// impact = "配布CLIから共有Graphへ安全に復元・記録できなくなる"
+// distinction = "adapter単体testと異なりbundleを別processで起動し実HTTP認証と保存を通す"
+// @end-test-value
+test("bundled Graph CLI and managed MCP share storage and authorization", async () => {
+  const f = await fixture();
+  try {
+    const artifact = await buildWithMateSessionGraphCli(f.directory);
+    const turn = await f.begin("aux-a");
+    const graph = await f.connect(turn.binding, "graph");
+    const invokeCli = async (command: string, body: Record<string, unknown>) => {
+      try {
+        const result = await promisify(execFile)(process.execPath, [artifact, command, "--json", JSON.stringify(body)],
+          { cwd: f.directory, env: f.cliEnv(turn.binding), windowsHide: true });
+        return { code: 0, value: JSON.parse(result.stdout) as Record<string, unknown> };
+      } catch (cause) {
+        const result = cause as { code: number; stdout: string };
+        return { code: result.code, value: JSON.parse(result.stdout) as Record<string, unknown> };
+      }
+    };
+    const batch = { expectedRevision: 0, topics: [{ id: "parity", title: "Parity" }], records: [{
+      id: "work", topicId: "parity", kind: "activity", title: "CLI work", detail: "Shared scope", scope: "parity",
+      origin: { type: "agent" }, references: [], progress: "in_progress",
+    }] };
+    assert.deepEqual(await invokeCli("apply", batch), { code: 0, value: { status: "ok", revision: 1 } });
+    const updated = await graph.client.callTool({ name: "session_graph.apply", arguments: {
+      expectedRevision: 1, records: [{ ...batch.records[0], title: "MCP work" }],
+    } });
+    assert.deepEqual(updated.structuredContent, { status: "ok", revision: 2 });
+    for (const [operation, body] of [
+      ["list_topics", {}], ["recent", {}], ["context", { topicId: "parity" }],
+      ["get", { ids: ["work"] }], ["search", { query: "MCP work" }],
+    ] as const) {
+      const cli = await invokeCli(operation, body);
+      const mcp = await graph.client.callTool({ name: `session_graph.${operation}`, arguments: body });
+      assert.equal(cli.code, 0);
+      assert.deepEqual(cli.value, mcp.structuredContent);
+      assert.equal((cli.value.items as unknown[]).length, 1);
+      if (operation !== "list_topics") {
+        const record = (cli.value.items as SessionGraphRecord[])[0];
+        assert.equal(record.actor.sessionId, "aux-a");
+        assert.equal(record.recordedBy.sessionId, "aux-a");
+      }
+    }
+    const conflictCli = await invokeCli("apply", batch);
+    const conflictMcp = await graph.client.callTool({ name: "session_graph.apply", arguments: batch });
+    assert.equal(conflictCli.code, 1);
+    assert.deepEqual(conflictCli.value, conflictMcp.structuredContent);
+    assert.equal(conflictMcp.isError, true);
+    const foreign = { expectedRevision: 2, records: [{ ...batch.records[0], actor: { sessionId: "actor-b" } }] };
+    const foreignCli = await invokeCli("apply", foreign);
+    const foreignMcp = await graph.client.callTool({ name: "session_graph.apply", arguments: foreign });
+    assert.equal(foreignCli.code, 1);
+    assert.deepEqual(foreignCli.value, foreignMcp.structuredContent);
+    f.glossary.endProviderTurn(turn.handle);
+    const expired = await invokeCli("apply", { expectedRevision: 2 });
+    assert.equal(expired.code, 1);
+    assert.equal(expired.value.code, "SESSION_GRAPH_TURN_INACTIVE");
+    assert.equal((await fetch(turn.binding.managedMcp!.sessionGraphUrl, { method: "POST", headers: {
+      [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: turn.binding.managedMcp!.token,
     } })).status, 401);
   } finally { await f.close(); }
 });

@@ -113,6 +113,8 @@ export type MemoryV6HttpServer = {
 };
 
 export type MemoryV6Route =
+  | "runtime_status"
+  | "runtime_instances"
   | "characters"
   | "file_usage"
   | "list_targets"
@@ -155,6 +157,8 @@ const fileOperationRoutes = new Set<MemoryV6Route>([
 ]);
 
 const routeByPath = new Map<string, MemoryV6Route>([
+  ["/v1/runtime_status", "runtime_status"],
+  ["/v1/runtime_instances", "runtime_instances"],
   ["/v1/characters", "characters"],
   ["/v1/file_usage", "file_usage"],
   ["/v1/file-usage", "file_usage"],
@@ -187,11 +191,13 @@ const routeByPath = new Map<string, MemoryV6Route>([
 ]);
 
 export const MEMORY_V6_ROUTE_BINDING_POLICIES: Readonly<Record<MemoryV6Route, AgentRuntimeBindingPolicy>> = {
-  characters: "none",
+  runtime_status: "optional",
+  runtime_instances: "optional",
+  characters: "required",
   file_usage: "optional",
   list_targets: "optional",
   list_entries: "optional",
-  audit: "none",
+  audit: "optional",
   search: "optional",
   get_entry: "optional",
   get_file: "optional",
@@ -202,14 +208,14 @@ export const MEMORY_V6_ROUTE_BINDING_POLICIES: Readonly<Record<MemoryV6Route, Ag
   move_entry: "optional",
   character_context_get: "required",
   character_affect_appraise: "required",
-  character_affect_inspect: "none",
-  character_affect_correct: "none",
-  character_affect_reset: "none",
-  character_memory_search: "optional",
-  character_memory_append_episode: "optional",
-  character_memory_correct: "optional",
-  character_memory_forget: "optional",
-  character_context_metrics: "none",
+  character_affect_inspect: "required",
+  character_affect_correct: "required",
+  character_affect_reset: "required",
+  character_memory_search: "required",
+  character_memory_append_episode: "required",
+  character_memory_correct: "required",
+  character_memory_forget: "required",
+  character_context_metrics: "optional",
 };
 
 export function agentRuntimeOperationForMemoryRoute(route: MemoryV6Route): string {
@@ -228,6 +234,14 @@ export function getMemoryV6AgentRuntimeOperations(): string[] {
 }
 
 const mcpRoutes = new Set<MemoryV6Route>([
+  "runtime_status",
+  "runtime_instances",
+  "characters",
+  "audit",
+  "character_affect_inspect",
+  "character_affect_correct",
+  "character_affect_reset",
+  "character_context_metrics",
   "file_usage",
   "list_targets",
   "list_entries",
@@ -490,8 +504,9 @@ function resolveTransportAuthority(
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return body;
   }
-  const authority = transport === "cli"
-    ? { kind: "operator", reason: "Authenticated local CLI operation." }
+  const request = body as Record<string, unknown>;
+  const authority = (route === "character_affect_correct" || route === "character_affect_reset")
+    ? request.authority
     : { kind: "conversation" };
   return { ...(body as Record<string, unknown>), authority };
 }
@@ -645,6 +660,7 @@ const AGENT_IDENTITY_FIELDS = new Set(["userId", "characterId", "sessionId", "ow
 const TURN_PROTECTED_ROUTES = new Set<MemoryV6Route>([
   "get_file", "export_files", "append", "forget", "move_entry",
   "character_affect_appraise", "character_memory_append_episode",
+  "character_affect_correct", "character_affect_reset",
   "character_memory_correct", "character_memory_forget",
 ]);
 
@@ -777,17 +793,26 @@ async function resolveAllowedProject(
 async function resolveActorRelativeTarget(
   options: MemoryV6HttpServerOptions,
   value: unknown,
-  authority: ProviderAgentRuntimeAuthoritySnapshot,
+  authority: ProviderAgentRuntimeAuthoritySnapshot | null,
 ): Promise<MemoryTargetSelector | null> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const target = value as Record<string, unknown>;
   if (target.kind === "user-global" && Object.keys(target).length === 1) {
     return { owner: "user", scope: "global" };
   }
-  if (target.kind === "character" && Object.keys(target).length === 1) {
+  if (target.kind === "character" && Object.keys(target).length === 1 && authority) {
     return { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
   }
   if ((target.kind === "project" || target.kind === "character+project") && Object.keys(target).length === 2) {
+    if (!authority) {
+      if (target.kind !== "project" || !target.project || typeof target.project !== "object" || Array.isArray(target.project)) return null;
+      const project = target.project as ProjectTargetRef;
+      if (project.type === "id" && typeof project.id === "string" && project.id.trim()
+        || project.type === "path" && typeof project.path === "string") {
+        return { owner: "project", scope: "project", project };
+      }
+      return null;
+    }
     const resolvedProject = await resolveAllowedProject(options, target.project, authority);
     if (!resolvedProject) return null;
     return target.kind === "project"
@@ -811,6 +836,20 @@ async function resolveAgentBoundRequestBody(
   authority: ProviderAgentRuntimeAuthoritySnapshot,
 ): Promise<AgentBodyResult> {
   if (route.startsWith("character_")) {
+    if (route === "character_context_metrics") return { ok: true, value: body };
+    if (route === "character_affect_correct" || route === "character_affect_reset") {
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return { ok: false, error: agentInputError(route, "body", "Character request body must be an object.") };
+      }
+      const { explicitUserRequest, ...request } = body as Record<string, unknown>;
+      if (explicitUserRequest !== true || typeof request.reason !== "string" || !request.reason.trim()) {
+        return { ok: false, error: agentInputError(route, "explicitUserRequest", "An explicit user request and concrete reason are required.") };
+      }
+      return { ok: true, value: applyActorSessionToBody(route, {
+        ...request,
+        authority: { kind: "explicit_user_instruction", reason: request.reason },
+      }, actorSession, authority) };
+    }
     if (route === "character_memory_search") {
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return { ok: false, error: agentInputError(route, "body", "Character Memory request body must be an object.") };
@@ -844,8 +883,12 @@ async function resolveAgentBoundRequestBody(
     return { ok: false, error: agentInputError(route, "body", "Memory request body must be an object.") };
   }
   const request = { ...(body as Record<string, unknown>) };
+  if (route === "characters" || route === "runtime_status" || route === "runtime_instances"
+    || (route === "audit" && request.allTargets === true)) {
+    return { ok: true, value: request };
+  }
   if (route === "file_usage") {
-    return Object.keys(request).every((key) => key === "schemaVersion")
+    return Object.keys(request).every((key) => key === "schemaVersion" || key === "includeLargestEntries" || key === "largestLimit")
       ? { ok: true, value: request }
       : { ok: false, error: agentInputError(route, "body", "Agent-bound file usage accepts no detail options.") };
   }
@@ -901,7 +944,7 @@ function projectAgentBoundResponse(
   route: MemoryV6Route,
   requestBody: unknown,
   result: unknown,
-  authority: ProviderAgentRuntimeAuthoritySnapshot,
+  authority: ProviderAgentRuntimeAuthoritySnapshot | null,
 ): unknown {
   if (isMemoryErrorResponse(result) || isCharacterContextError(result) || route.startsWith("character_")) {
     return result;
@@ -912,19 +955,19 @@ function projectAgentBoundResponse(
     if (selector.owner === "user" && selector.scope === "global") return { kind: "user-global" };
     if (selector.owner === "project" && selector.scope === "project") {
       const project = selector.project as { type?: unknown; id?: unknown } | undefined;
-      return project?.type === "id" && typeof project.id === "string" && authority.allowedProjectIds.includes(project.id)
+      return project?.type === "id" && typeof project.id === "string" && (!authority || authority.allowedProjectIds.includes(project.id))
         ? { kind: "project", project: { type: "id", id: project.id } }
         : null;
     }
     if (selector.owner === "character" && selector.scope === "character") {
       const character = selector.character as { type?: unknown; id?: unknown } | undefined;
-      return character?.type === "id" && character.id === authority.characterId ? { kind: "character" } : null;
+      return character?.type === "id" && character.id === authority?.characterId ? { kind: "character" } : null;
     }
     if (selector.owner === "character" && selector.scope === "project") {
       const character = selector.character as { type?: unknown; id?: unknown } | undefined;
       const project = selector.project as { type?: unknown; id?: unknown } | undefined;
-      return character?.type === "id" && character.id === authority.characterId
-        && project?.type === "id" && typeof project.id === "string" && authority.allowedProjectIds.includes(project.id)
+      return character?.type === "id" && character.id === authority?.characterId
+        && project?.type === "id" && typeof project.id === "string" && authority?.allowedProjectIds.includes(project.id)
         ? { kind: "character+project", project: { type: "id", id: project.id } }
         : null;
     }
@@ -933,18 +976,18 @@ function projectAgentBoundResponse(
   const targetForResolvedRefs = (value: Record<string, unknown>): Record<string, unknown> | null => {
     const owner = value.owner as { type?: unknown; id?: unknown } | undefined;
     const scope = value.scope as { type?: unknown; id?: unknown } | undefined;
-    if (owner?.type === "user" && owner.id === authority.userId && scope?.type === "global") {
+    if (owner?.type === "user" && owner.id === (authority?.userId ?? "local-user") && scope?.type === "global") {
       return { kind: "user-global" };
     }
     if (owner?.type === "project" && scope?.type === "project" && owner.id === scope.id
-      && typeof owner.id === "string" && authority.allowedProjectIds.includes(owner.id)) {
+      && typeof owner.id === "string" && (!authority || authority.allowedProjectIds.includes(owner.id))) {
       return { kind: "project", project: { type: "id", id: owner.id } };
     }
-    if (owner?.type === "character" && owner.id === authority.characterId && scope?.type === "character") {
+    if (owner?.type === "character" && owner.id === authority?.characterId && scope?.type === "character") {
       return { kind: "character" };
     }
-    if (owner?.type === "character" && owner.id === authority.characterId && scope?.type === "project"
-      && typeof scope.id === "string" && authority.allowedProjectIds.includes(scope.id)) {
+    if (owner?.type === "character" && owner.id === authority?.characterId && scope?.type === "project"
+      && typeof scope.id === "string" && authority?.allowedProjectIds.includes(scope.id)) {
       return { kind: "character+project", project: { type: "id", id: scope.id } };
     }
     return null;
@@ -1040,7 +1083,15 @@ async function routeResolvedRequest(input: {
     if (mcpGeneralPolicyError) {
       return mcpGeneralPolicyError;
     }
-    const dispatch = () => (input.route.startsWith("character_")
+    const dispatch = () => (input.route === "runtime_status" || input.route === "runtime_instances"
+      ? Promise.resolve(buildStatusResponse({
+          apiSecret: input.options.apiSecret,
+          applicationInstanceId: input.options.applicationInstanceId ?? "legacy",
+          runtimeGenerationId: input.options.runtimeGenerationId ?? input.options.runtimeInstanceId ?? "legacy",
+          buildChannel: input.options.buildChannel ?? "unknown",
+          requestUrl: "/v1/status",
+        }))
+      : input.route.startsWith("character_")
       ? routeCharacterContextRequest(
           input.options.characterContextService,
           bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
@@ -1057,9 +1108,7 @@ async function routeResolvedRequest(input: {
     const result = await (bindingResolution.turnAdmission
       ? runWithRuntimeTurnAdmission(bindingResolution.turnAdmission, dispatch)
       : dispatch());
-    return bindingResolution.authority
-      ? projectAgentBoundResponse(input.route, bindingResolution.body, result, bindingResolution.authority)
-      : result;
+    return projectAgentBoundResponse(input.route, bindingResolution.body, result, bindingResolution.authority);
   } catch (error) {
     if (error instanceof RuntimeTurnInactiveError) return turnAdmissionFailure(input.route);
     throw error;
@@ -1075,6 +1124,50 @@ type RouteBindingResolution =
       turnAdmission?: RuntimeTurnAdmission;
     }
   | { ok: false; error: unknown };
+
+async function resolveUnboundMemoryBody(
+  options: MemoryV6HttpServerOptions,
+  route: MemoryV6Route,
+  body: unknown,
+): Promise<AgentBodyResult> {
+  if (route.startsWith("character_") && route !== "character_context_metrics" || route === "characters") {
+    return { ok: false, error: bindingFailure(route, "SESSION_BINDING_REQUIRED") };
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, error: agentInputError(route, "body", "Memory request body must be an object.") };
+  }
+  const request = { ...body as Record<string, unknown> };
+  const identityField = findCallerIdentityField(request);
+  if (identityField) return { ok: false, error: agentInputError(route, identityField, "Caller identity is not accepted.") };
+  if (route === "file_usage" || route === "runtime_status" || route === "runtime_instances" || route === "character_context_metrics") {
+    return { ok: true, value: request };
+  }
+  const resolveTarget = (value: unknown) => resolveActorRelativeTarget(options, value, null);
+  if (route === "list_targets") {
+    if (request.filter && typeof request.filter === "object" && !Array.isArray(request.filter)
+      && (request.filter as Record<string, unknown>).kind === "project" && Object.keys(request.filter).length === 1) {
+      delete request.filter;
+      return { ok: true, value: { ...request, owner: "project", scope: "project" } };
+    }
+    const target = await resolveTarget(request.filter);
+    if (!target) return { ok: false, error: bindingFailure(route, "SESSION_BINDING_REQUIRED") };
+    delete request.filter;
+    return { ok: true, value: { ...request, ...target } };
+  }
+  if (route === "audit" && request.allTargets === true) return { ok: false, error: bindingFailure(route, "SESSION_BINDING_REQUIRED") };
+  if (Array.isArray(request.targets)) {
+    const targets = await Promise.all(request.targets.map(resolveTarget));
+    if (targets.some((target) => target === null)) return { ok: false, error: bindingFailure(route, "SESSION_BINDING_REQUIRED") };
+    return { ok: true, value: { ...request, targets } };
+  }
+  const fields = route === "move_entry" ? ["from", "to"] : ["target"];
+  for (const field of fields) {
+    const target = await resolveTarget(request[field]);
+    if (!target) return { ok: false, error: bindingFailure(route, "SESSION_BINDING_REQUIRED") };
+    request[field] = target;
+  }
+  return { ok: true, value: request };
+}
 
 function bindingFailure(
   route: MemoryV6Route,
@@ -1132,7 +1225,17 @@ function applyActorSessionToBody(
         : request.candidates,
     };
   }
-  if (route === "character_context_get" || route === "character_memory_append_episode") {
+  if (route === "character_affect_correct") {
+    const replacement = request.replacement;
+    return {
+      ...request, characterId: actorSession.characterId, sessionId: actorSession.id,
+      replacement: replacement && typeof replacement === "object" && !Array.isArray(replacement)
+        ? { ...replacement, characterId: actorSession.characterId, sessionId: actorSession.id, userId: authority.userId }
+        : replacement,
+    };
+  }
+  if (route === "character_context_get" || route === "character_memory_append_episode"
+    || route === "character_affect_inspect" || route === "character_affect_reset") {
     return {
       ...request,
       characterId: actorSession.characterId,
@@ -1158,28 +1261,13 @@ async function resolveRouteAgentRuntimeBinding(input: {
   fallbackFrom?: "mcp";
   turnCapability?: string;
 }): Promise<RouteBindingResolution> {
-  const agentBound = input.transport === "mcp" || input.fallbackFrom === "mcp";
-  const configuredPolicy = MEMORY_V6_ROUTE_BINDING_POLICIES[input.route];
-  const policy: AgentRuntimeBindingPolicy = agentBound && mcpRoutes.has(input.route)
-    ? "required"
-    : input.transport === "cli" && configuredPolicy === "required"
-      ? "optional"
-      : configuredPolicy;
-  if (policy === "none") {
-    if (input.bindingReference !== undefined) {
-      return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
-    }
-    return { ok: true, body: input.body, principal: null, authority: null };
-  }
   const bindingWasPresented = input.bindingReference !== undefined;
-  if (input.transport === "cli" && bindingWasPresented && input.fallbackFrom === undefined) {
-    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
-  }
   const reference = input.bindingReference?.trim();
   if (!bindingWasPresented) {
-    return policy === "optional"
-      ? { ok: true, body: input.body, principal: null, authority: null }
-      : { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_REQUIRED") };
+    const body = await resolveUnboundMemoryBody(input.options, input.route, input.body);
+    return body.ok
+      ? { ok: true, body: body.value, principal: createLocalUserMemoryPrincipal(), authority: null }
+      : body;
   }
   if (!reference) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
@@ -1196,7 +1284,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
   }
   const binding = resolved.binding;
   let turnAdmission: RuntimeTurnAdmission | undefined;
-  if (agentBound && (input.turnCapability || input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body))) {
+  if (input.turnCapability || input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
     const admission = input.options.providerAgentRuntimeTurns?.admit({
       actorSessionId: binding.actorSessionId,
       providerId: binding.providerId,
@@ -1229,14 +1317,6 @@ async function resolveRouteAgentRuntimeBinding(input: {
     || actorSession.providerId !== resolved.binding.providerId
   ) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
-  }
-  if (!agentBound) {
-    return {
-      ok: true,
-      body: input.body,
-      principal: createSessionBindingMemoryPrincipal(binding, actorSession),
-      authority: null,
-    };
   }
   const authority = resolveProviderAgentRuntimeAuthority(binding, actorSession);
   if (!authority) {
@@ -1281,7 +1361,7 @@ function validateMcpGeneralMutationPolicy(
   body: unknown,
   transport: CharacterContextTransport,
 ): MemoryErrorResponse | null {
-  if (transport !== "mcp" || !body || typeof body !== "object" || Array.isArray(body)) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return null;
   }
   const request = body as Record<string, unknown>;
@@ -1542,13 +1622,6 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           return;
         }
         const operationUrl = new URL(payload.operation.path, "http://127.0.0.1");
-        if (payload.adapter === "cli" && payload.bindingReference !== undefined) {
-          writeJson(response, 403, memoryTransportError(
-            "MEMORY_FORBIDDEN",
-            "Operator CLI requests cannot use an Agent runtime binding.",
-          ));
-          return;
-        }
         if (
           operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_PATH
           || operationUrl.pathname === WITHMATE_MEMORY_FALLBACK_LISTED_ROLLBACK_PATH
@@ -1671,12 +1744,13 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         });
         request.setTimeout(routeTimeoutMs);
         response.setTimeout(routeTimeoutMs);
-        const getOnlyRoute = route === "characters" || route === "file_usage" || route === "character_context_metrics";
+        const getOnlyRoute = route === "characters" || route === "file_usage" || route === "character_context_metrics"
+          || route === "runtime_status" || route === "runtime_instances";
         if ((getOnlyRoute && payload.operation.method !== "GET") || (!getOnlyRoute && payload.operation.method !== "POST")) {
           writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
           return;
         }
-        const body = route === "characters" || route === "character_context_metrics"
+        const body = route === "characters" || route === "character_context_metrics" || route === "runtime_status" || route === "runtime_instances"
           ? {}
           : route === "file_usage"
             ? buildFileUsageRequestOptions(payload.operation.path)
@@ -1806,7 +1880,8 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
       });
       request.setTimeout(routeTimeoutMs);
       response.setTimeout(routeTimeoutMs);
-      const getOnlyRoute = route === "characters" || route === "file_usage" || route === "character_context_metrics";
+      const getOnlyRoute = route === "characters" || route === "file_usage" || route === "character_context_metrics"
+        || route === "runtime_status" || route === "runtime_instances";
       if (getOnlyRoute && request.method !== "GET") {
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
@@ -1827,7 +1902,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         return;
       }
 
-      const body = route === "characters" || route === "character_context_metrics"
+      const body = route === "characters" || route === "character_context_metrics" || route === "runtime_status" || route === "runtime_instances"
         ? {}
         : route === "file_usage"
           ? buildFileUsageRequestOptions(request.url)

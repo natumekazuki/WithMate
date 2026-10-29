@@ -4,6 +4,14 @@ import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../../src-shared/character-
 import { MEMORY_V6_SCHEMA_VERSION } from "../../../src-shared/memory/memory-contract.js";
 
 export type WithMateMemoryMcpCommand =
+  | "audit"
+  | "characters"
+  | "status"
+  | "instances"
+  | "character_metrics"
+  | "affect_inspect"
+  | "affect_correct"
+  | "affect_reset"
   | "file_usage"
   | "list_targets"
   | "list_entries"
@@ -23,6 +31,7 @@ export type WithMateMemoryMcpCommand =
   | "character_memory_forget";
 
 const GENERAL_MEMORY_COMMANDS = new Set<WithMateMemoryMcpCommand>([
+  "audit",
   "list_targets",
   "list_entries",
   "search",

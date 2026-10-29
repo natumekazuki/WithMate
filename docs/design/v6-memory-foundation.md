@@ -53,7 +53,7 @@ foundationでは次を扱わない。
 ## Architecture Summary
 
 ```text
-Provider-common Memory MCP / operator CLI
+Provider-common Memory MCP / CLI
   -> localhost Memory API
       -> Explicit Target Resolver
       -> Permission Gate
@@ -65,7 +65,7 @@ Provider-common Memory MCP / operator CLI
       -> V6 Memory Storage
 ```
 
-agent-facing Memory contractはMCP `tools/list`、内部のrequest / response contractはapplication serviceを正本にする。operator CLIとagent-bound CLI fallbackは同じapplication serviceへ接続するが、authority modeと入力schemaを共有しない。
+CLI/MCPの公開操作、input schema、handler、errorは`src-electron/platform/mcp/withmate-memory-mcp.ts`の共通tool registryを正本とする。両入口は同じruntime clientとapplication serviceへ接続し、内部のcanonical request / response contractを公開入力から区別する。
 
 ## Entrypoint Policy
 
@@ -74,8 +74,9 @@ agent-facing Memory contractはMCP `tools/list`、内部のrequest / response co
 - provider共通MCPをagent-facing entrypointとし、initialize instructionsと`tools/list`でoperation contractを公開する。
 - agent-facing targetはactor-relative schemaを使い、user / Character / Session identityを受け付けない。runtime bindingがactor Session、Character、user、許可Projectを解決する。
 - `withmate-memory` Skillは配布、同期、検査しない。Memory運用方針をprovider instructionやsystem promptへ複製しない。
-- operator CLIはlocalhost APIを呼ぶthin clientとし、operator credentialと明示target / identityを使う。
-- agent-bound CLI fallbackはMCP initializeと`tools/list`取得後のtransport availability failureに限定し、MCP credential、binding、actor-relative schemaを維持する。operator modeへdowngradeしない。
+- CLIもMCPもlocalhost APIを呼ぶthin adapterであり、ローカルruntime認証を維持する。通常CLIはMCP障害の有無に依存しない。
+- Character context / Affect / Character所有Memoryはbindingを要求し、現在Character / Sessionと許可Projectを解決する。一般user-global / Project Memoryは明示targetがあればbindingなしでも利用できる。binding提示時は許可範囲・失効を検証し、無効bindingを無視してunboundへ降格しない。
+- status / instances / metrics / 容量等の集計診断はbindingなしで利用できる。複数targetにCharacterを含む要求、filter省略の横断一覧、audit allTargetsは要求全体でbindingが必要である。
 
 ## Affectの更新とcontext
 
@@ -87,7 +88,7 @@ pre-turnのcontext取得・prompt注入と取得時のafterglow projectionは維
 
 ### Memory Principal
 
-Memory requestを実行する主体。operator / app-internal操作の`local_user`と、bound Agent操作の`session_binding`を分ける。
+Memory requestを実行する主体。認証済み無bindingの一般Memory / app-internal操作の`local_user`と、bindingを解決した操作の`session_binding`を分ける。
 
 ```ts
 type LocalUserMemoryPrincipal = {
@@ -118,7 +119,7 @@ type MemoryPermission =
   | "memory.list_characters";
 ```
 
-`local_user`はoperator CLIまたはapp-internal操作を表し、明示targetを扱う。`session_binding`はruntime bindingから解決したactor Sessionを表し、agent-facing actor-relative targetをcanonical user / Character / 許可Projectへ解決する。requestのidentity field、ambient workspace、process cwdをauthorityには使わない。
+`local_user`は認証済み無bindingの一般Memoryまたはapp-internal操作を表す。公開入口からは明示user-global / Project targetを扱う。`session_binding`はruntime bindingから解決したactor Sessionを表し、同じpublic targetをcanonical user / 現Character / 許可Projectへ解決する。requestのidentity field、ambient workspace、process cwdをauthorityには使わない。
 
 ### Owner
 
@@ -261,7 +262,7 @@ generic hard delete、archive、purge、irreversible redactionは別操作とし
 - evidence / auditはMemoryを作ったsessionと、そのsessionに保存されたCharacter snapshotを追跡できるようにする。
 - Memory ownerをsnapshot hashへ直接固定しない。
 - 通常Main / Auxiliaryはstable ownerと保存済みsnapshotの表示metadataを維持し、active Characterの有効な定義変更だけを内部送信開始経路でsnapshotへ反映する。Archive後の継続と`character-authoring`固有の境界を含む詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。
-- agent-facing Memory検索時のownerはruntime bindingのactor Characterから解決する。operator CLIだけが明示Character IDを使う。
+- Character所有Memoryのownerは両入口ともruntime bindingのactor Characterから解決する。callerの明示Character IDをauthorityとして受け付けない。
 
 ## Mutation Policy
 
@@ -301,9 +302,9 @@ generic hard delete、archive、purge、irreversible redactionは別操作とし
 
 ## API Contract
 
-全request / responseはversionを持つ。
+以下の型はapplication service内部のcanonical request / responseを示し、versionを持つ。CLI/MCPのpublic inputはactor-relative targetを使い、top-levelのschemaVersionやidentityをcallerから受け取らない。runtimeがcanonical requestへ変換する。
 response shapeは操作ごとに自然な形にし、統一のためだけの共通envelopeは強制しない。
-LLM agent向けのcommandと入出力shapeはMCP `tools/list`を正本とする。operator CLIの操作手順はrunbookで管理する。
+CLI/MCP共通の公開入出力shapeは`memory.schema` / CLI `schema`とMCP `tools/list`で確認する。27操作の対応・認可・操作手順は[Memory / Affect Runbook](../runbooks/memory-affect-mcp.md)を参照する。
 error responseは共通envelopeよりもmachine-readable `code`、人間向け`message`、必要に応じた`field`を優先する。
 
 ### `memory.search`
@@ -541,15 +542,33 @@ value.normalize("NFC").toLowerCase()
 
 ## CLI Contract
 
-CLIはoperator操作と、MCP契約取得後の限定的なagent-bound fallbackに使う薄いclientとする。
-CLIはDBを直接触らず、起動中のWithMateが提供するruntime Memory APIへ接続する。
-WithMateが起動していない場合、CLIはすべてのMemory操作を拒否し、machine-readable errorを返す。
-WithMate起動中は、operator CLIからMemory target inventory、明示targetのentry一覧・検索・取得・tag統計・audit・append・forget preview/mutation・retargetを扱える。
-operator CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。明示targetだけを扱い、`character: current`やsession-bound project inferenceは使えない。
-agent-bound CLI fallbackはMCPと同じ`session_binding` principal、actor-relative input、route allowlistを使い、caller指定identityやoperator credentialを使わない。provider binding markerがあるprocessではflagなしの通常CLI操作を拒否し、serverもbinding reference付きoperator requestを受け付けない。fallbackは通常MCP credentialと分離したgeneration-bound reporter credentialにより、MCPの`tools/list` response送出と後続の実transport exceptionをserverへ登録し、同じruntime generation、binding、current turn、method/path/bodyへ発行した短命admissionがある場合だけ実行できる。stateは`listed → eligible → consumed`の一方向であり、structured domain error、変更operation、期限切れ、stale turn、非idempotent file exportはclientとserverの両方で対象外とする。
-retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
-bindingなしの外部CLIによるappend / forgetではMemory entryの`source.sessionId`を`null`として保存する。WithMateが起動したagent executionからbinding付きで操作する場合は、runtimeが解決したactor Sessionをsourceとidempotency principalへ保存する。
-`--self` flagは採用しない。
+CLIとMCPは共通tool registryの27操作を公開する薄いadapterであり、SQLiteやobject storeを直接開かない。起動中のWithMate runtimeを選択・認証して同じapplication boundaryへ要求を送る。停止中は別の保存先へfallbackせずmachine-readable errorを返す。操作対応とbinding要否は[Memory / Affect Runbook](../runbooks/memory-affect-mcp.md)を参照する。
+
+一般user-global / Project Memoryは明示targetがあればbindingなしでも利用でき、`local_user` principalとして保存する。この場合 `source.sessionId` はnullである。有効なbinding付き要求は `session_binding` principalを使い、actor Sessionをsourceとidempotency principalへ保存する。Character context / Affect / Character所有Memory / charactersはbinding必須である。
+
+公開targetは `{kind:"user-global"}`、`{kind:"project",project:ref}`、`{kind:"character"}`、`{kind:"character+project",project:ref}` の4種類である。project refはidまたは絶対pathを明示し、cwdやambient workspaceから推定しない。Character identity、user identity、Session identity、authorityは入力しない。無bindingの一覧はuser-global / Project filterを明示し、暗黙Character対象を含む横断要求を成功扱いしない。binding提示時は対象・許可Project・失効を検証し、無効bindingを無視しない。
+
+`--json`、`--file`、`@file`、`--stdin` は同じpublic bodyの入力方法であり、project等のshorthandも同じbodyへ正規化する。write等の複雑な入力は `--stdin` / `--file` を使う。`schema` / `validate` はruntimeへ接続せず共通registryの説明・形式検証だけを行い、認可や保存の成功を保証しない。
+
+```text
+withmate-memory status
+withmate-memory instances
+withmate-memory status --all
+withmate-memory list-targets --json '{"filter":{"kind":"project"}}'
+withmate-memory search --project <absolute-project-path> --query "approval modeの方針"
+withmate-memory get-entry --project-id <project-id> --entry-id <entry-id>
+withmate-memory append --file payload.json
+withmate-memory affect-inspect --json '{}'
+withmate-memory schema
+withmate-memory validate --command append --stdin
+```
+
+Character系の例はSession bindingを受け継いだprocessで実行する。通常CLIはMCP initializeや障害を開始条件にしない。`--fallback-from mcp` は実transport障害後にserverが発行する限定admission付きの同一要求再照合であり、通常操作やoperator権限への昇格ではない。非idempotentなfile exportはこのfallbackに含めない。
+
+CLI stdoutはJSONが基本で、`audit --format jsonl|markdown` だけが表示用projectionを選択する。CLI exit codeは `0` が成功、`1` がusage、`2` がdiscovery選択、`3` が公開操作の失敗、`4` がCLI transport失敗である。業務上の判定には両入口で共通のJSON error codeとeffectを使う。
+
+### Runtime discovery
+
 current CLIは`WITHMATE_MEMORY_API_URL`、OSユーザー共通runtime registry、または互換用runtime discovery fileからlocalhost APIを発見する。registryは複数のactive entryを正本とし、selectorなしではactive候補が一意な場合だけ選択する。複数候補は`WITHMATE_RUNTIME_AMBIGUOUS`を返し、`--instance <applicationInstanceId>`で明示選択できる。
 registry entryはsafe metadataとhash化したcredential参照だけを保持する。credential documentはapplication instanceとMemory固有runtime generationを分離して持つ。legacy generation fileは`withmate-memory-discovery-v2` documentとして`baseUrl`、credential、`applicationInstanceId`、`runtimeGenerationId`、legacy aliasの`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。`memory-v6.current.json`はgenerationを指すpair pointerであり、canonical registryのactive候補が一意な場合だけcleanup時にchallenge済みgenerationへhandoffする。
 `--api-url`または`WITHMATE_MEMORY_API_URL`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
@@ -559,111 +578,14 @@ current app起動配線は`src-electron/memory/memory-v6-runtime.ts`で行う。
 全 window close では app process を終了せず、Windows でも runtime API / CLI discovery を維持する。`app.requestSingleInstanceLock()` と `second-instance` handler により、Start Menu などから再起動された場合は既存 process の Home を再表示・focus する。
 Settings の `launchAtLoginEnabled` が有効な場合、packaged app だけが Electron login item へ `--background` 付きで登録する。dev / visual-check の unpackaged app は、引数なしの `electron.exe` をOSの起動先へ登録しないため、保存済み設定にかかわらずlogin itemを変更しない。`--background` 起動では Boot window / Home window を表示せず、runtime API と CLI discovery だけを立ち上げる。
 runtime APIはapp起動ごとの短命`apiSecret`、`applicationInstanceId`、Memory `runtimeGenerationId`を要求する。CLI/MCPはoperation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`でapplication instance、generation、owner challengeを検証する。lease期限切れでもchallenge成功runtimeはactiveとし、期限切れかつchallenge失敗だけをstaleとする。app log、status、diagnostics、error detailsにはruntime endpoint URL、credential path、userData path、binding reference、secretを出さない。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
-operator CLIはsession由来の暗黙targetを扱わず、Memoryのowner / scope targetをcommand引数またはinput payloadで明示する。agent-bound CLI fallbackはactor-relative targetをruntime bindingから解決する。
 
-current raw JSON CLI:
+### Target resolutionと診断範囲
 
-```text
-withmate-memory status
-withmate-memory status --all
-withmate-memory instances
-withmate-memory status --instance <application-instance-id>
-withmate-memory characters
-withmate-memory list-targets
-withmate-memory list-entries --project <absolute-project-path> --limit 100
-withmate-memory audit --all-targets --format markdown
-withmate-memory schema
-withmate-memory validate --command append --stdin
-withmate-memory search --json '<MemorySearchRequest>'
-withmate-memory get-entry --json '<MemoryGetEntryRequest>'
-withmate-memory list-tags --json '<MemoryListTagsRequest>'
-withmate-memory append --json '<MemoryAppendRequest>'
-withmate-memory forget --json '<MemoryForgetRequest>'
-withmate-memory forget --file payload.json --dry-run
-withmate-memory move-entry --file payload.json
-withmate-memory search --file payload.json
-withmate-memory search @payload.json
-withmate-memory search --project <absolute-project-path> --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project <absolute-project-path> --tags topic:delivery-cleanup,topic:relaygraph
-```
+projectの絶対pathはruntime側でGit repositoryへ解決する。repository subdirectoryでもroot / common dir / remoteからproject scopeを決定し、同じrepositoryの別worktreeは同一project scopeとして扱う。relative pathを受け付けない。owner / scopeのallowlist、entry access、mutation permissionはapplication serviceで再検証する。
 
-`--json`、`--file`、`@file`、`--stdin`はrequest bodyの入力方法である。CLI outputは原則JSONとし、`audit --format jsonl|markdown`だけは明示した保守用projectionをstdoutへ出す。
-Windows PowerShell / `.cmd` wrapper経由ではinline JSONのquoteが壊れやすいため、request bodyを渡すcommandでは`--stdin`または`--file <path>`を推奨する。
-`schema`と`validate`はruntime APIへ接続せずにCLI process内で完結する。`validate`はMemory entryを作成、更新、forgetしない。
-API errorもtransportできた場合はruntime APIのJSON responseをそのままstdoutへ出す。
-CLI request timeoutは10秒を既定とする。structured JSONの正本は`WITHMATE_RUNTIME_UNAVAILABLE`、`WITHMATE_RUNTIME_INSTANCE_MISMATCH`、`WITHMATE_RUNTIME_GENERATION_CHANGED`、`WITHMATE_RUNTIME_AMBIGUOUS`、`WITHMATE_RUNTIME_STALE`、`WITHMATE_RUNTIME_REGISTRY_CAPACITY`であり、`WITHMATE_NOT_RUNNING`はunavailableのlegacy aliasとして必要な互換期間だけdetailsへ残す。
-CLI fetchはHTTP redirectを追従しない。初期URLがloopbackでも、POST bodyを別endpointへ転送しないためにredirectは接続失敗と同じ扱いにする。
-stable exit codeは次とする。
+Session bindingによるtarget inventory・audit・largest entry詳細の権限絞り込みはpaginationとcursor生成より前に行う。bound scopeは現在Character・許可Project・共有user-globalであり、記憶を作成したSessionだけに狭めない。`characters`は現在Characterのid/name/descriptionのみを返し、renderer metadataは返さない。
 
-| Exit code | Meaning |
-| --- | --- |
-| `0` | success |
-| `1` | CLI usage error |
-| `2` | runtime discovery selection error (`WITHMATE_RUNTIME_*`) |
-| `3` | runtime APIがnon-2xx JSON responseを返した |
-| `4` | transport failure |
-
-current convenience flags:
-
-```text
-withmate-memory search --project <absolute-project-path> --query "approval modeの方針"
-withmate-memory characters
-withmate-memory search --project-id <project-id> --query "approval modeの方針"
-withmate-memory search --project <absolute-project-path> --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project <absolute-project-path> --tags topic:delivery-cleanup,topic:relaygraph
-withmate-memory get-entry --project <absolute-project-path> --entry-id <entry-id>
-withmate-memory list-tags --project <absolute-project-path>
-```
-
-create / update / supersede系の複雑なrequestをすべてCLI flagsへ展開することは目指さない。write系の構造化requestは`--stdin`または`--file`を正本とする。
-
-### Target Selection
-
-operator CLIではMemory targetをcallerが明示する。agent-bound CLI fallbackはMCP `tools/list`と同じactor-relative targetを使い、Character / user identityを入力しない。
-CLI利用者に認証tokenやcredential管理を要求しない。
-ただし、CLIは起動中のWithMate runtime Memory APIにのみ接続し、offline CLI / direct DB accessは提供しない。
-
-project target:
-
-- `--project <absolute-path>`
-- `--project-id <id>`
-
-character target:
-
-- `--character <character-id>`
-- `withmate-memory characters`でactive Character catalogを取得し、明示IDを選択する。
-- `withmate-memory characters` / `memory.list_characters`はoperator-onlyであり、agent-facing MCP `tools/list`には公開しない。operator responseも`id`、`name`、必要な`description`だけを返し、renderer用の`iconFilePath`、theme、default、timestamps、archived metadataは返さない。
-user-global target:
-
-- operator CLIではrequest bodyの`target`または`targets[]`に`{ "owner": "user", "scope": "global" }`を明示する。agent-bound CLI fallbackではMCPと同じ`{ "kind": "user-global" }`を使い、ownerまたはuser identityを入力しない。
-- CLI shorthandは用意せず、`--file` / `--stdin` / `--json`でrequest bodyを渡す。
-- user-global Memoryは全projectから見えるため、user-level preference / convention / constraintに限定し、secret、token、project固有の非公開情報は保存しない。
-
-project targetはcurrent working directoryから暗黙推定しない。
-`--project .`やrelative pathはCLI起動`cwd`に依存するため許可しない。callerは`--project <absolute-path>`、または`--project-id <id>`を使う。
-`--project <absolute-path>`はWithMate runtime側でGit repositoryへ解決する。pathがrepository subdirectoryの場合もrepository root / common dir / remote情報からproject scopeを決定する。Git管理外directoryはproject targetとして解決せず、workspace target導線（例: `--workspace <path>`）を使う。
-同じrepositoryの別worktreeは同一project scopeとして扱う。
-
-appendはfirst releaseでは単一target必須とする。
-searchは単一targetを受け付ける。
-owner / scopeのallowlist、entry access、mutation permissionはapp service側で再検証する。
-Session bindingによるtarget inventoryの権限絞り込みはpaginationとcursor生成より前に行う。未許可targetはpageを消費せず、cursorにも含めない。
-
-WithMateが起動していない場合:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "error": {
-    "code": "WITHMATE_RUNTIME_UNAVAILABLE",
-    "message": "WithMate Memory runtime discovery could not select a runtime.",
-    "details": {
-      "discoveryCode": "WITHMATE_RUNTIME_UNAVAILABLE",
-      "legacyCode": "WITHMATE_NOT_RUNNING"
-    }
-  }
-}
-```
+status、instances、metrics、quota / usage集計はbindingなしでも利用できる。metricsとquota集計はruntime / DB全体値で、Session別集計ではない。binding付きinstancesは選択ownerへ限定する。largest entry詳細は無bindingでは一般user-global / Project、binding付きでは現在Character / 許可Project / 共有user-globalに限定し、object store path、key、hashを返さない。
 
 ## Runtime Memory API Security
 
@@ -828,7 +750,7 @@ CREATE TABLE IF NOT EXISTS memory_idempotency_forget_results_v6 (
 ```
 
 重要なのはlegacy tableとの意味分離である。
-idempotencyは`binding_id_hash / key / operation / owner / scope`をidentityに含める。`binding_id_hash`は互換上の列名であり、current実装では`local-user` principalのhashを保存する。
+idempotencyは`binding_id_hash / key / operation / owner / scope`をidentityに含める。`binding_id_hash`は実行principalを識別し、無bindingの一般Memoryでは`local-user`、binding付きでは解決されたbindingのhashを保存する。
 `request_fingerprint`が同一idempotency identityで一致しない場合は、retryではなくconflictとして扱う。
 batch forgetの再現結果は`memory_idempotency_forget_results_v6`にentryごとに保存する。
 append / supersede / forgetはtransaction内で実行し、失敗時にpartial stateを残さない。
@@ -880,7 +802,7 @@ search監査は件数・latency・strategy程度に抑え、private query全文�
 - CLI/MCP artifactはbuild時に`src-cli/memory/withmate-memory.ts`から生成し、repositoryでは`resources/cli/withmate-memory.mjs`をcanonical pathとする。生成artifactをcanonical CLIと別実装として保守しない。
 - Windowsではinstall rootの`withmate-memory.cmd`と`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。
 - macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。shimが未導入または`PATH`外でもprovider Skill directoryへCLIを同期しない。
-- operator CLIは明示target、operator credential、接続先selectorを扱える。agent-bound CLI fallbackはMCPのinitializeと`tools/list`取得後のtransport availability failureだけで使い、bound runtime、MCP credential、actor-relative schemaを維持する。
+- CLI/MCPは同じpublic input・result・error・認可を持つ。通常CLIとは別に、MCPの実transport障害へserverが発行するadmission付き再照合経路を持つ。後者は同一runtime・binding・turn・要求に限定し、認可拒否やdomain errorの迂回に使わない。
 - WithMateはMemory運用方針、reflection、CLI fallback手順をprovider instruction fileやsystem promptへ追加しない。
 
 ## UI Policy

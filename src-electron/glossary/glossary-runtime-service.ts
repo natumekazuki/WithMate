@@ -60,9 +60,9 @@ export type GlossaryRuntimeServiceDeps = {
 };
 
 type AuthorizedCheckout = {
-  binding: ResolvedAgentRuntimeBinding;
+  binding?: ResolvedAgentRuntimeBinding;
   target: ResolvedGlossaryCheckout;
-  checkoutId: string;
+  checkoutId?: string;
 };
 
 function runtimeEnvelope<T extends object>(value: T): GlossaryRuntimeEnvelope<T> {
@@ -213,17 +213,19 @@ export class GlossaryRuntimeService {
       ));
     }
 
-    const selector: GlossaryCheckoutSelector = operation === "list_targets"
-      ? { kind: "primary" }
-      : glossaryCheckoutSelectorSchema.parse((parsed.data as { selector?: unknown }).selector);
-    const captured = this.#bindingRegistry.resolve(request.bindingReference, glossaryAgentRuntimeOperation(operation));
-    if (!captured.ok) {
+    const selector = glossaryCheckoutSelectorSchema.parse((parsed.data as { selector?: unknown }).selector ?? { kind: "primary" });
+    const captured = request.bindingReference
+      ? this.#bindingRegistry.resolve(request.bindingReference, glossaryAgentRuntimeOperation(operation)) : null;
+    if (captured && !captured.ok) {
       return this.#respond(runtimeError(bindingErrorCode(captured.code), "Glossary operation requires the active provider Session runtime binding."));
     }
-    const capturedBinding = captured.binding;
+    const capturedBinding = captured?.binding;
+    if (!capturedBinding && request.turnCapability) {
+      return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "A turn capability requires its provider Session runtime binding."));
+    }
     const mutation = ["create", "create_batch", "update", "delete"].includes(operation);
     let turnAdmission: RuntimeTurnAdmission | undefined;
-    if (request.turnCapability || (request.transport === "mcp" && mutation)) {
+    if (capturedBinding && (request.turnCapability || mutation)) {
       const admitted = this.#providerTurns.admit({
         actorSessionId: capturedBinding.actorSessionId,
         providerId: capturedBinding.providerId,
@@ -265,8 +267,8 @@ export class GlossaryRuntimeService {
       return this.#respond(authorization.error);
     }
     const { binding, target, checkoutId } = authorization;
-    if (binding.bindingId !== capturedBinding.bindingId
-      || binding.executionGeneration !== capturedBinding.executionGeneration
+    if (binding?.bindingId !== capturedBinding?.bindingId
+      || binding?.executionGeneration !== capturedBinding?.executionGeneration
       || !admissionCurrent()) {
       return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Captured provider Session authority is no longer active."));
     }
@@ -275,8 +277,8 @@ export class GlossaryRuntimeService {
       const current = await this.#authorize(request.bindingReference, operation, selector);
       if (
         "error" in current
-        || current.binding.bindingId !== binding.bindingId
-        || current.binding.executionGeneration !== binding.executionGeneration
+        || current.binding?.bindingId !== binding?.bindingId
+        || current.binding?.executionGeneration !== binding?.executionGeneration
         || !admissionCurrent()
       ) {
         return null;
@@ -287,12 +289,9 @@ export class GlossaryRuntimeService {
     switch (operation) {
       case "list_targets": {
         const display = await this.#applicationService.describeCheckout(target);
-        const checkoutTarget: GlossaryCheckoutTarget = {
-          checkoutId,
-          selector: { kind: "checkout", checkoutId },
-          isPrimary: true,
-          ...display,
-        };
+        const checkoutTarget: GlossaryCheckoutTarget = binding && checkoutId
+          ? { checkoutId, selector: { kind: "checkout", checkoutId }, isPrimary: true, ...display }
+          : { selector: { kind: "repository", path: target.rootPath }, isPrimary: false, ...display };
         return this.#respond(runtimeEnvelope({ ok: true, targets: [checkoutTarget] }));
       }
       case "list": {
@@ -309,7 +308,8 @@ export class GlossaryRuntimeService {
       }
       case "create": {
         const input = glossaryOperationRequestSchemas.create.parse(request.body);
-        const proactiveAdmission = input.mode === "proactive"
+        if (input.mode === "proactive" && !binding) return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "Proactive create requires an active provider Session turn."));
+        const proactiveAdmission = input.mode === "proactive" && binding
           ? this.#admitProactiveCreate(binding, request.turnCapability, "create", input.entry, 1)
           : null;
         if (proactiveAdmission && !proactiveAdmission.ok) {
@@ -323,7 +323,8 @@ export class GlossaryRuntimeService {
       }
       case "create_batch": {
         const input = glossaryOperationRequestSchemas.create_batch.parse(request.body);
-        const proactiveAdmission = input.mode === "proactive"
+        if (input.mode === "proactive" && !binding) return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "Proactive create requires an active provider Session turn."));
+        const proactiveAdmission = input.mode === "proactive" && binding
           ? this.#admitProactiveCreate(binding, request.turnCapability, "create_batch", input.entries, input.entries.length)
           : null;
         if (proactiveAdmission && !proactiveAdmission.ok) {
@@ -399,6 +400,14 @@ export class GlossaryRuntimeService {
     operation: GlossaryRuntimeOperation,
     selector: GlossaryCheckoutSelector,
   ): Promise<AuthorizedCheckout | { error: GlossaryRuntimeEnvelope<GlossaryOperationError> }> {
+    if (!bindingReference) {
+      if (selector.kind !== "repository") return { error: runtimeError("GLOSSARY_SESSION_BINDING_REQUIRED", "Without a Session binding, specify a repository path.") };
+      try {
+        return { target: await this.#applicationService.resolvePrimaryCheckout(selector.path) };
+      } catch {
+        return { error: runtimeError("GLOSSARY_TARGET_INVALID", "Repository path must identify an absolute supported Git checkout.") };
+      }
+    }
     const resolved = this.#bindingRegistry.resolve(
       bindingReference,
       glossaryAgentRuntimeOperation(operation),
@@ -437,6 +446,14 @@ export class GlossaryRuntimeService {
       return { error: runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Primary checkout no longer matches the runtime binding.") };
     }
     const checkoutId = createCheckoutId(resolved.binding, currentTarget);
+    if (selector.kind === "repository") {
+      let requestedTarget: ResolvedGlossaryCheckout;
+      try { requestedTarget = await this.#applicationService.resolvePrimaryCheckout(selector.path); }
+      catch { return { error: runtimeError("GLOSSARY_TARGET_INVALID", "Repository path must identify an absolute supported Git checkout.") }; }
+      if (!areResolvedGlossaryCheckoutsEqual(currentTarget, requestedTarget)) {
+        return { error: runtimeError("GLOSSARY_SESSION_BINDING_FORBIDDEN", "Repository is outside the Session's authorized checkout.") };
+      }
+    }
     if (selector.kind === "checkout" && selector.checkoutId !== checkoutId) {
       return { error: runtimeError("GLOSSARY_CHECKOUT_NOT_FOUND", "checkoutId is not authorized by this runtime binding.") };
     }

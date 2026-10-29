@@ -8,6 +8,7 @@ import {
 export const glossaryCheckoutSelectorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("primary") }).strict(),
   z.object({ kind: z.literal("checkout"), checkoutId: z.string().min(1).max(256) }).strict(),
+  z.object({ kind: z.literal("repository"), path: z.string().min(1).max(8192) }).strict(),
 ]);
 
 export const glossaryEntryInputSchema = z.object({
@@ -29,7 +30,7 @@ const pageShape = {
 };
 
 export const glossaryOperationRequestSchemas = {
-  list_targets: z.object({ schemaVersion }).strict(),
+  list_targets: z.object({ schemaVersion, selector: glossaryCheckoutSelectorSchema.optional() }).strict(),
   list: selectedRequest.extend(pageShape).strict(),
   search: selectedRequest.extend({
     query: z.string().max(GLOSSARY_LIMITS.maxQueryCodePoints * 4),

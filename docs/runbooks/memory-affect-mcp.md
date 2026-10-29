@@ -21,34 +21,25 @@ node resources/cli/withmate-memory.mjs mcp-server
 
 同梱artifactはSDKを内包し、配布先の`node_modules`を参照しない。sourceまたは依存を変更した場合は`npm run build:memory-cli`で再生成し、分離した一時directoryからMCP initialize、`tools/list`、代表的なread/writeを実行してから配布する。
 
-Character系は次の6 toolを公開する。
-
-- `character_context.get`
-- `character_affect.appraise`
-- `character_memory.search`
-- `character_memory.append_episode`
-- `character_memory.correct`
-- `character_memory.forget`
-
-一般Memoryは次の11 toolを`memory.*` namespaceで公開する。
-
-- `memory.search`
-- `memory.get_entry`
-- `memory.list_targets`
-- `memory.list_entries`
-- `memory.list_tags`
-- `memory.append`
-- `memory.forget`
-- `memory.move_entry`
-- `memory.get_file`
-- `memory.export_files`
-- `memory.file_usage`
+CLIとMCPは27の公開操作を同じtool registry、input schema、runtime clientで提供する。操作一覧は[対応表](#cli-commandとmcp公開範囲)を参照する。CLIのJSON bodyはMCP tool inputと同じであり、top-levelの`schemaVersion`、user / Character / Session identity、authorityをcallerから渡さない。Affect candidate等のnested schemaは各toolの定義に従う。runtimeが必要な内部値を補完し、application serviceが最終検証する。
 
 `memory.append`、`memory.forget`、`memory.move_entry`はidempotency keyを必須とし、`memory.forget`と`memory.move_entry`はreasonも必須とする。`memory.forget`の`dryRun: true`はMemory、protected object、監査event、idempotency stateを変更しない。`memory.move_entry`はdry-runを受け付けない。成功responseの`replayed: true`は同一requestの再送を表す。keyを異なるrequestへ再利用した結果はdomain conflictであり、availability failureではない。
 
 `memory.get_file`と`memory.export_files`は、target照合後に新しい出力fileだけを作成する。既存fileを上書きしないためdestructive annotationは付けないが、external side effectを持ち、同じrequestの再実行は既存file errorになり得るためread-onlyまたはidempotentとは表示しない。
 
-Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-onlyである。Characterの`appraise`と`append_episode`、一般Memoryの`append`はbounded writeである。runtime bindingで解決されたAgentは、明示target、具体的な理由、idempotency key、変更後のread-backを満たす場合、Characterの`correct`と`forget`、一般Memoryの`forget`と`move_entry`をユーザーの代理として自律実行できる。一般Memoryのbulk forgetは実行前にdry-runする。relationship affect correction、session / relationship affect reset、relationship boundary変更は、明示的なユーザー指示またはoperator authorityを必要とする。MCP tool inputはauthority文字列を受け付けない。CLIはCLI専用operator credential、MCPはMCP専用credentialで認証し、MCP credentialは公開toolに対応するruntime routeだけを呼び出せる。最終判定はWithMate application serviceが行う。
+Characterのget/search/inspectと一般Memoryの検索・取得・一覧・診断はread-onlyである。Characterのappraise/append_episodeと一般Memoryのappendはbounded writeである。明示target、具体的な理由、idempotency key、変更後のread-backを満たす場合、Character Memoryのcorrect/forgetと一般Memoryのforget/move_entryをユーザーの代理として実行できる。一般Memoryのbulk forgetは実行前にdry-runする。Affectのcorrect/resetは `explicitUserRequest: true` と具体的な `reason` を必要とし、expectedVersionによる競合検証を維持する。
+
+### 認証とSession binding
+
+両入口とも既存のローカルruntime credential、loopback制限、runtime owner / generationの検証を維持する。Session bindingの要否はtransport名ではなく対象情報で決まる。
+
+- Character context、Affect、Character所有Memory、`characters`は有効なbindingが必須。対象は現在のCharacter / Sessionと許可Projectから解決し、caller identityを受け付けない。Character共有のMemoryやrelationship層を作成Sessionだけに狭めない。
+- 一般Memoryのuser-global / Projectは明示targetがあればbindingなしで利用できる。`{kind:"user-global"}` または `{kind:"project",project:{type:"id",id:"..."}}` / 絶対pathのproject refを使う。
+- 複数targetにCharacter対象が含まれる場合、要求全体でbindingを必要とする。無bindingの `audit allTargets` とfilter省略の `list_targets` は暗黙のCharacter横断要求として拒否し、一部targetだけを黙って除外して成功にしない。無bindingの一覧にはuser-global / Project filterを明示する。
+- status / instances / metrics / 容量等の診断集計はbindingなしで利用できる。bindingを提示した場合は、その許可範囲と失効を検証する。無効bindingを無視してunboundへ降格しない。
+- bound mutationはcurrent turn capabilityを検証する。readはcapability省略を許すが、提示されたcapabilityがstaleなら拒否する。取消・失効後の未確定副作用も同じapplication境界で停止する。
+
+Session Graphもbinding必須であり、Memoryとは別の公開操作を持つ。詳細は[Session Graph](../design/session-graph.md)を参照する。
 
 `memory.list_tags`は`targets`へ明示targetを1件だけ指定する。`limit`で1 pageのtag総数を制限し、`nextCursor`が返る間は同じtargetとcount条件で継続する。cursorはruntime発行値だけを使う。`sampleLimit`は`withCounts: true`時の各tagのsample数だけを制限し、tag総数の上限には使わない。
 
@@ -90,67 +81,55 @@ title/previewは検索・一覧で本文取得前にも表示されるため、�
 
 ## CLI commandとMCP公開範囲
 
-「公開」は同名のruntime routeを一般またはCharacter MCP toolから呼び出せることを表す。「MCPで代替済み」は専用toolを増やさず、MCP protocolまたは別の公開toolで同じ利用目的を満たすことを表す。
+27操作はCLI/MCPで同じ意味のinput、JSON result、domain error、対象解決、保存効果を持つ。CLIのhyphen名はMCPのunderscore名へ対応する。`schema` / `validate` はローカルな説明・形式検証であり、runtime認可や保存を実行しない。helpとmcp-serverは表示・bootstrap用commandで、domain操作ではない。
 
-| CLI command | Runtime route | 判定 | MCP toolまたは代替経路 | 除外理由 |
-| --- | --- | --- | --- | --- |
-| `help` | なし | MCPで代替済み | server instructions、`tools/list` | CLIの表示用helpをpublic APIにしない |
-| `status` | `/v1/status` | MCPで代替済み | MCP initializeと各toolのstructured availability error | runtime identity確認用routeをtool化しない |
-| `characters` | `/v1/characters` | MCPで代替済み | `memory.list_targets`で`filter: { kind: "character" }`と`includeEmpty: true`を指定 | Character definitionを広げずtarget inventoryだけを使う |
-| `file-usage` | `/v1/file_usage` | 公開 | `memory.file_usage` | optional |
-| `list-targets` | `/v1/list_targets` | 公開 | `memory.list_targets` | なし |
-| `list-entries` | `/v1/list_entries` | 公開 | `memory.list_entries` | なし |
-| `audit` | `/v1/audit` | operator/診断専用として除外 | CLI operator credential | repository横断の保守・診断候補を通常会話toolへ出さない |
-| `search` | `/v1/search` | 公開 | `memory.search` | なし |
-| `get-entry` | `/v1/get_entry` | 公開 | `memory.get_entry` | なし |
-| `get-file` | `/v1/get_file` | 公開 | `memory.get_file` | target照合、絶対path、非上書きをserviceで維持する |
-| `export-files` | `/v1/export_files` | 公開 | `memory.export_files` | target照合、絶対path、非上書きをserviceで維持する |
-| `list-tags` | `/v1/list_tags` | 公開 | `memory.list_tags` | なし |
-| `append` | `/v1/append` | 公開 | `memory.append` | MCPではidempotency keyを必須化する |
-| `forget` | `/v1/forget` | 公開 | `memory.forget` | MCPではreasonとidempotency keyを必須化し、dry-runを維持する |
-| `move-entry` | `/v1/move_entry` | 公開 | `memory.move_entry` | MCPではreasonとidempotency keyを必須化する |
-| `context-get` | `/v1/character_context/get` | 公開 | `character_context.get` | なし |
-| `affect-appraise` | `/v1/character_affect/appraise` | 公開 | `character_affect.appraise` | なし |
-| `affect-inspect` | `/v1/character_affect/inspect` | operator/診断専用として除外 | CLI operator credential | 生eventとversionの運用inspectを通常会話toolへ出さない |
-| `affect-correct` | `/v1/character_affect/correct` | operator/診断専用として除外 | CLI operator credential | version付き訂正はoperator operationとして維持する |
-| `affect-reset` | `/v1/character_affect/reset` | operator/診断専用として除外 | CLI operator credential | session/relationship resetを通常会話toolへ出さない |
-| `character-memory-search` | `/v1/character_memory/search` | 公開 | `character_memory.search` | なし |
-| `character-memory-append-episode` | `/v1/character_memory/append_episode` | 公開 | `character_memory.append_episode` | なし |
-| `character-memory-correct` | `/v1/character_memory/correct` | 公開 | `character_memory.correct` | 明示target、理由、idempotency、read-backを維持する |
-| `character-memory-forget` | `/v1/character_memory/forget` | 公開 | `character_memory.forget` | 明示target、理由、idempotency、read-backを維持する |
-| `character-metrics` | `/v1/character_context/metrics` | operator/診断専用として除外 | CLI operator credential | 運用metricsを通常会話toolへ出さない |
-| `mcp-server` | なし | MCPで代替済み | stdio MCP serverの起動command | toolではなくadapter bootstrapである |
-| `schema` | なし | MCPで代替済み | `tools/list` | MCPでは完全なinput/output schemaをprotocolで返す |
-| `validate` | なし | MCPで代替済み | tool input schemaとapplication boundary validation | CLI local validation wrapperをtool化しない |
+| CLI command | MCP tool | 入力・対象 / 返却 |
+| --- | --- | --- |
+| `status` | `memory.status` | runtime identity。CLI `--all` / MCP `all:true` はinstancesと同じ一覧 |
+| `instances` | `memory.instances` | safe runtime inventoryと選択結果。bindingありでは選択ownerへ限定 |
+| `characters` | `memory.characters` | binding必須、現在Characterのid/name/descriptionのみ |
+| `file-usage` | `memory.file_usage` | 全体容量集計。`largest:true,limit` で許可範囲のentry詳細 |
+| `list-targets` | `memory.list_targets` | `filter,includeEmpty,limit,cursor`。無bindingはuser-global/Project filter必須 |
+| `list-entries` | `memory.list_entries` | `target,states,kinds,tags,includeBody,limit,cursor` |
+| `audit` | `memory.audit` | 明示 `targets` または `allTargets:true`、staleBefore/limit/cursor。allTargetsはbinding必須 |
+| `search` | `memory.search` | 明示 `targets,query` と任意filter / pagination |
+| `get-entry` | `memory.get_entry` | `target,entryId` |
+| `get-file` | `memory.get_file` | `target,objectId,outputPath`。絶対path・非上書き |
+| `export-files` | `memory.export_files` | `target,entryId,outputDirectoryPath`。絶対path・非上書き |
+| `list-tags` | `memory.list_tags` | target 1件、withCounts/sampleLimit/limit/cursor |
+| `append` | `memory.append` | 明示target、本文・preview・kind・title、idempotencyKey |
+| `forget` | `memory.forget` | target/entryIds/reason/idempotencyKey。dryRunで非変更preview |
+| `move-entry` | `memory.move_entry` | entryId/from/to/reason/idempotencyKey。entry identityを保持 |
+| `context-get` | `character_context.get` | binding必須。任意query、memoryLimit既定3 |
+| `affect-appraise` | `character_affect.appraise` | binding必須。candidates、任意expectedVersion |
+| `affect-inspect` | `character_affect.inspect` | binding必須。現在Character / Sessionのevent・reset・version |
+| `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/explicitUserRequest/reason/replacement |
+| `affect-reset` | `character_affect.reset` | binding必須。layer/expectedVersion/explicitUserRequest/reason/resetAt/idempotencyKey |
+| `character-memory-search` | `character_memory.search` | binding必須。query、明示scope、limit既定5 |
+| `character-memory-append-episode` | `character_memory.append_episode` | binding必須。episode/idempotencyKey |
+| `character-memory-correct` | `character_memory.correct` | binding必須。entryId/reason/idempotencyKey/replacement、read-back |
+| `character-memory-forget` | `character_memory.forget` | binding必須。entryId/reason/idempotencyKey、read-back |
+| `character-metrics` | `character_context.metrics` | 本文を含まないruntime/DB全体の診断counter |
+| `schema` | `memory.schema` | 共通registryの全tool input schema |
+| `validate` | `memory.validate` | command/inputの形式検証。CLIは `--command` とJSON入力 |
 
-現在のCLIにmigrationまたはrepair commandはない。将来追加する場合も、既存data、schema、storageを変更する操作はoperator/診断専用を既定とし、MCPで明示指示、authority、failure effectを表現できる場合だけ別のcontract変更として公開を判断する。
+完全な入力schemaは `schema` / `memory.schema` またはMCP `tools/list` で確認する。CLIの `--json`、`--file`、`@file`、`--stdin` は同じpublic inputの入力方法である。project等のshorthandも同じpublic bodyへ正規化する。複雑なwriteには `--stdin` / `--file` を使う。
 
-## CLIでのinspectとrecovery
+診断の容量集計とmetricsは全体値であり、Session別の値と解釈しない。largest entry詳細は、bindingなしでは一般user-global / Projectだけ、bindingありでは現在Character・許可Project・共有user-globalへ限定する。object store path、key、hashを返さない。scope filterはpagination前に適用する。
 
-request bodyはshellのquotingを避けるため`--stdin`または`--file`で渡す。
+## CLIでのinspectと再照合
 
-```powershell
-$request = @{
-  schemaVersion = "withmate-character-context-v1"
-  characterId = "<character-id>"
-  sessionId = "<session-id>"
-  authority = @{ kind = "operator"; reason = "incident inspection" }
-} | ConvertTo-Json -Depth 10
-
-$request | withmate-memory affect-inspect --stdin
-```
-
-主なoperator commandは`affect-inspect`、`affect-correct`、`affect-reset`、`character-metrics`、一般Memoryの`audit`である。`withmate-memory schema`はcommand、入力方法、enumの一覧であり、完全なrequest schemaは返さない。MCP toolの完全なinput/output shapeは`tools/list`で確認する。CLIとapplication boundaryのcanonical validationは一般Memoryが`src-shared/memory/memory-validation.ts`、Character系が`src-shared/character-context/character-context-validation.ts`にある。
-
-`character-memory-correct`の自由記述reasonは訂正監査とidempotency判定に使われる。`character-memory-forget`のreasonは`user_request`、`incorrect`、`outdated`、`privacy`、`other`のいずれかを指定する。
-
-MCPのinitializeと`tools/list`取得後にtransport availability failureが発生し、tool errorの`details.fallbackEligible`が`true`になった同じ一般MemoryまたはCharacter操作をCLIで明示的にfallbackする場合は`--fallback-from mcp`を付ける。fallbackはruntime bindingが選んだruntimeとMCP credentialを使い、operator-only command、接続先selector、caller指定identityは受け付けない。provider binding markerがあるprocessのflagなしCLIはoperator modeへ切り替えず拒否される。
+Session bindingを受け継いだprocessでは、通常CLIをMCP障害の有無にかかわらず利用できる。Character inspectのpublic inputは空objectでよい。
 
 ```powershell
-$request | withmate-memory context-get --stdin --fallback-from mcp
+'{}' | withmate-memory affect-inspect --stdin
 ```
 
-fallbackも同じruntime APIを使う。MCP server（共有HTTP hostまたは手動stdio）は`tools/list` responseの正常送出を確認して短命な`listed`登録を確定し、後続toolの内側runtime exchangeの実transport exceptionでmethod、path、bodyのfingerprintを持つ`eligible` stateへ遷移させる。CLIは同じruntime generation、binding、current turn、operation fingerprintに一致するadmissionだけをconsumeする。MCP initialize前の未設定・起動不能、`tools/list`失敗、process terminationなどserverへ障害を報告できない場合は開始しない。provider → HTTP MCPの切断やresponse lossだけではeligibleにならない。MemoryまたはCharacterのstructured domain error、authority拒否、invalid input、version conflict、idempotency conflict/replay、migration requiredをCLIで迂回してはならない。変更request、期限切れ、stale turnも拒否される。idempotency keyを持つwriteの`effect: unknown`はresponse lossの可能性を表すため、同じrequestとidempotency keyでreconcileする。`memory.get_file`と`memory.export_files`はagent fallbackで自動再試行せず、出力先をread-onlyで確認するかoperatorによるmanual recoveryへ進む。
+`affect-correct` / `affect-reset` は明示指示の `explicitUserRequest:true`、具体的なreason、最新expectedVersionを渡す。authorityやCharacter/Session IDは渡さない。`character-memory-correct`のreasonは自由記述、`character-memory-forget`は `user_request`、`incorrect`、`outdated`、`privacy`、`other` のいずれかである。
+
+`--fallback-from mcp` は通常CLIの開始条件ではなく、MCPの実transport障害後に同じ要求を明示的に再照合する限定経路である。MCP initializeと `tools/list` の正常送出後、serverが `details.fallbackEligible:true` を返した場合だけ使用する。同じruntime generation、binding、current turn、method/path/bodyへ発行された短命admissionをconsumeし、接続selectorやcaller identityを受け付けない。structured domain error、authority拒否、version/idempotency conflict、migration/storage errorは開始理由にならない。変更request、期限切れ、stale turnも拒否する。
+
+writeの `effect:unknown` は保存結果不明を表す。idempotent writeは入力とkeyを変えず再照合する。`memory.get_file` / `memory.export_files` は非idempotentな出力操作であり、このfallbackでは自動再試行せず、出力先をread-onlyで確認して明示的な復旧判断を行う。
 
 ## Errorと再試行
 

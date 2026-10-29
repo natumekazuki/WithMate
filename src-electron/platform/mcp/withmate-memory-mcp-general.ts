@@ -29,7 +29,7 @@ const projectRefSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("path"), path: z.string().min(1).max(1_000).regex(MEMORY_ABSOLUTE_PATH_PATTERN) }).strict(),
 ]);
 
-const memoryTargetSchema = z.discriminatedUnion("kind", [
+export const memoryTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("user-global") }).strict(),
   z.object({ kind: z.literal("project"), project: projectRefSchema }).strict(),
   z.object({ kind: z.literal("character") }).strict(),
@@ -275,6 +275,7 @@ const fileUsageSuccessSchema = z.object({
   objectCount: z.number().int().nonnegative(),
   pendingDeleteCount: z.number().int().nonnegative(),
   quotaExceeded: z.boolean(),
+  largestEntries: z.array(z.object({ entryId: z.string(), title: z.string(), preview: z.string(), totalFileBytes: z.number().int().nonnegative(), fileCount: z.number().int().nonnegative(), updatedAt: z.string() }).strict()).optional(),
 }).strict();
 
 const appendFileInputSchema = z.object({
@@ -286,7 +287,7 @@ const appendFileInputSchema = z.object({
 }).strict();
 
 export const GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
-  { name: "memory.search", description: "Search active general Memory in one or more actor-relative targets. Before memory.append, search the same exact target and do not append an active semantic duplicate or create a conflicting replacement without correction authority. Agent CLI fallback is available only when MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true: invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON. The runtime consumes the matching short-lived admission. Never fallback for domain, authority, version, idempotency, migration, or storage errors.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: "memory.search", description: "Search active general Memory in one or more actor-relative targets. Before memory.append, search the same exact target and do not append an active semantic duplicate or create a conflicting replacement without correction authority. Ordinary CLI use exposes the same public input without requiring an MCP failure. The explicit --fallback-from mcp recovery mode is available only when MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true: invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON. The runtime consumes the matching short-lived admission. Never fallback for domain, authority, version, idempotency, migration, or storage errors.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.get_entry", description: "Read one active Memory entry from an explicit target, including its full body. After search or a small entry/tag listing, read only relevant entries before relying on their details; previews are not the full record.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_targets", description: "List bounded general Memory target inventory without exposing entry bodies. Use a small filtered page when the relevant authorized target is unknown, not a full inventory on every turn.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_entries", description: "List entries in one explicit target; bodies are omitted unless explicitly requested. When no search query comes to mind, try {target, states:[\"active\"], limit:5}, then memory.get_entry for relevant IDs. Untagged notes are included unless a tag filter is supplied.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
@@ -300,7 +301,7 @@ export const GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 ] as const;
 
 export function registerGeneralMemoryMcpTools(
-  server: McpServer,
+  server: Pick<McpServer, "registerTool">,
   callRuntime: GeneralMemoryRuntimeCall,
   toolResult: GeneralMemoryToolResult,
 ): void {
@@ -432,7 +433,7 @@ export function registerGeneralMemoryMcpTools(
     method: "POST", path: "/v1/export_files", body: buildWithMateMemoryMcpRuntimeBody("export_files", input), operationKind: "write",
   }));
 
-  register("memory.file_usage", z.object({}).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, ["schemaVersion", "quotaBytes", "usedBytes", "physicalBytes", "pendingDeleteBytes", "availableBytes", "objectCount", "pendingDeleteCount", "quotaExceeded"]), () => ({
-    method: "GET", path: "/v1/file_usage", body: buildWithMateMemoryMcpRuntimeBody("file_usage", {}), operationKind: "read",
+  register("memory.file_usage", z.object({ largest: z.boolean().optional(), limit: z.number().int().min(1).optional() }).strict().refine((input) => input.limit === undefined || input.largest === true, "limit requires largest=true"), createMemoryToolOutputSchema(fileUsageSuccessSchema, ["schemaVersion", "quotaBytes", "usedBytes", "physicalBytes", "pendingDeleteBytes", "availableBytes", "objectCount", "pendingDeleteCount", "quotaExceeded"]), (input) => ({
+    method: "GET", path: `/v1/file_usage${input.largest ? `?largest=1${input.limit === undefined ? "" : `&limit=${input.limit}`}` : ""}`, body: {}, operationKind: "read",
   }));
 }

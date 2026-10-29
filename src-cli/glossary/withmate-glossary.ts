@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { z } from "zod";
 
 import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../../src-shared/glossary/glossary-contract.js";
 import {
@@ -65,6 +66,7 @@ Commands:
 
 Target options:
   --checkout-id <opaque-id>   Use an ID returned by list-targets. Defaults to primary.
+  --repository <absolute-path>  Explicit repository; required without a Session binding.
 
 Input shorthands:
   --query <text>
@@ -142,6 +144,7 @@ export async function parseWithMateGlossaryCliArgs(
   let applicationInstanceId: string | undefined;
   let runtimeGenerationId: string | undefined;
   let checkoutId: string | undefined;
+  let repository: string | undefined;
   const shorthand: Record<string, unknown> = {};
   const read = deps.readFile ?? readFile;
 
@@ -180,6 +183,9 @@ export async function parseWithMateGlossaryCliArgs(
     } else if (argument === "--checkout-id") {
       checkoutId = requireOptionValue(args, index, argument);
       index += 1;
+    } else if (argument === "--repository") {
+      repository = requireOptionValue(args, index, argument);
+      index += 1;
     } else if (argument === "--query") {
       shorthand.query = requireOptionValue(args, index, argument);
       index += 1;
@@ -204,10 +210,13 @@ export async function parseWithMateGlossaryCliArgs(
     body = shorthand;
   }
   if (command !== "help" && command !== "schema" && command !== "mcp_server") {
+    if (checkoutId && repository) throw new GlossaryCliUsageError("Choose only one checkout or repository selector.");
+    if ((checkoutId || repository) && "selector" in body) throw new GlossaryCliUsageError("Specify selector in JSON or options, not both.");
+    const selector = repository ? { kind: "repository", path: repository } : checkoutId ? { kind: "checkout", checkoutId } : undefined;
     const selectedBody = command === "list_targets"
-      ? body
+      ? { ...body, ...(selector ? { selector } : {}) }
       : {
-          selector: checkoutId ? { kind: "checkout", checkoutId } : { kind: "primary" },
+          selector: selector ?? { kind: "primary" },
           ...body,
         };
     const parsed = GLOSSARY_PUBLIC_INPUT_SCHEMAS[command].safeParse(selectedBody);
@@ -235,6 +244,7 @@ function schemaProjection() {
       operation: definition.operation,
       tool: definition.name,
       path: GLOSSARY_RUNTIME_OPERATION_PATHS[definition.operation],
+      inputSchema: z.toJSONSchema(GLOSSARY_PUBLIC_INPUT_SCHEMAS[definition.operation], { io: "input" }),
     })),
   };
 }
@@ -282,7 +292,9 @@ export async function runWithMateGlossaryCli(
     return WITHMATE_GLOSSARY_CLI_EXIT_CODES.ok;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Glossary CLI request failed.";
-    const value = createGlossaryTransportError(message);
+    const value = error instanceof GlossaryCliUsageError
+      ? { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION, ok: false, code: "GLOSSARY_INVALID_REQUEST", message, effect: "none", retryable: false }
+      : createGlossaryTransportError(message);
     stdout.write(`${JSON.stringify(value)}\n`);
     if (error instanceof GlossaryCliUsageError) {
       stderr.write(`${message}\n`);

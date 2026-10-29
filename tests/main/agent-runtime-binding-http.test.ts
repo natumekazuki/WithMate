@@ -34,26 +34,40 @@ describe("Memory HTTP agent runtime binding policy", () => {
     server = null;
   });
 
-  it("全WithMate-owned routeがrequired/optional/noneを宣言する", () => {
-    assert.equal(Object.keys(MEMORY_V6_ROUTE_BINDING_POLICIES).length, 23);
+  // @test-value v2
+  // kind = "contract"
+  // claim = "全公開runtime操作のbinding policyはCharacter依存と一般Memory・診断を区別する"
+  // oracle = { type = "contract", ref = "Issue #905 context-dependent binding authorization" }
+  // fault = "Character必須routeをoptionalにするか一般診断をbinding必須にする"
+  // observable = "route policyの全件数と操作別required/optional値"
+  // observation_boundary = "declaration"
+  // scope = "Memory HTTP route binding policy"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("全WithMate-owned routeが文脈別binding policyを宣言する", () => {
+    assert.equal(Object.keys(MEMORY_V6_ROUTE_BINDING_POLICIES).length, 25);
     assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_context_get, "required");
     assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_affect_appraise, "required");
     assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.search, "optional");
     assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.file_usage, "optional");
-    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_memory_search, "optional");
+    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_memory_search, "required");
     assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.forget, "optional");
     assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.move_entry, "optional");
-    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_memory_correct, "optional");
-    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_memory_forget, "optional");
-    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_affect_reset, "none");
-    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_context_metrics, "none");
+    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_memory_correct, "required");
+    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_memory_forget, "required");
+    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_affect_reset, "required");
+    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.character_context_metrics, "optional");
+    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.runtime_status, "optional");
+    assert.equal(MEMORY_V6_ROUTE_BINDING_POLICIES.runtime_instances, "optional");
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "Character contextはbinding由来のactor identityだけを内部requestへ設定しpublic responseへ投影しない"
-  // oracle = { type = "adr", ref = "ADR-024 Character tool input and context projection" }
-  // failure_mode = "caller指定identityがdispatchされる、またはresolved Session/Character IDがresponseへ露出する"
+  // claim = "Character contextはbinding由来のactor identityを内部requestへ設定し、binding欠落とcaller指定identityをdispatch前に拒否する"
+  // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#認証とsession-binding" }
+  // fault = "bindingなしでapplicationへdispatchする、またはcaller指定identityをbinding由来actorの代わりに使用する"
+  // observable = "HTTP拒否statusとbindingFailure、stub applicationの呼出件数とrequestのSession/Character ID"
+  // observation_boundary = "public-boundary"
   // scope = "memory-http-character-context-binding"
   // lifecycle = "permanent"
   // @end-test-value
@@ -98,15 +112,17 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 1);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "agent-facing Memory readはbinding必須でactor-relative Project targetを許可済みcanonical IDへ解決する"
+  // claim = "一般Memory readは無bindingで明示Projectを扱い、有効binding時はactorと許可Projectを解決する"
   // oracle = { type = "adr", ref = "ADR-024 actor-relative Memory target" }
-  // failure_mode = "unbound requestがlocal-userへdowngradeする、またはcaller targetが未検証でapplicationへ到達する"
+  // fault = "明示Projectの無binding readを拒否するか、無効bindingを無視してlocal-userへ降格する"
+  // observable = "read status、applicationが受信したprincipalとcanonical targets、public projection"
+  // observation_boundary = "public-boundary"
   // scope = "memory-http-general-read-binding"
   // lifecycle = "permanent"
   // @end-test-value
-  it("agent-facing Memory readはbindingを必須にしてactor-relative targetをcanonicalizeする", async () => {
+  it("一般Memory readは無bindingを許しbinding提示時はactor-relative targetを検証する", async () => {
     const registry = new AgentRuntimeBindingRegistry();
     const binding = registry.issueOrReuse({
       actorSessionId: "session-a",
@@ -162,8 +178,8 @@ describe("Memory HTTP agent runtime binding policy", () => {
       query: "runtime binding",
     };
 
-    assert.equal((await runtime.call("/v1/search", body)).status, 401);
-    assert.equal(calls.length, 0);
+    assert.equal((await runtime.call("/v1/search", body)).status, 200);
+    assert.equal(calls.shift()?.principal.type, "local_user");
 
     const bound = await runtime.call("/v1/search", body, binding.bindingReference);
     assert.equal(bound.status, 200);
@@ -264,15 +280,17 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 1);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "agent-facing file usageは集計値だけを公開し、entry previewを含むlargest detail optionをdispatch前に拒否する"
+  // claim = "file usageはlargest指定を同じapplication境界へ渡し、binding付きのscope制約をprincipalとして保持する"
   // oracle = { type = "adr", ref = "ADR-024 actor-relative Memory read authority" }
-  // failure_mode = "未許可Projectのentry titleまたはpreviewがlargestEntries経由でagentへ露出する"
+  // fault = "largest指定を拒否するかbinding principalを落としてdetailのscope制約を失う"
+  // observable = "file usageのstatusとapplicationが受信したoptions・principal"
+  // observation_boundary = "component-behavior"
   // scope = "memory-http-file-usage-projection"
   // lifecycle = "permanent"
   // @end-test-value
-  it("agent-facing file usageはlargest detailを受け付けない", async () => {
+  it("file usageはlargest detail指定とbinding principalをapplicationへ渡す", async () => {
     const registry = new AgentRuntimeBindingRegistry();
     const binding = registry.issueOrReuse({
       actorSessionId: "session-a",
@@ -282,8 +300,8 @@ describe("Memory HTTP agent runtime binding policy", () => {
     });
     const calls: unknown[] = [];
     const service = {
-      fileUsage(_principal: unknown, options: unknown) {
-        calls.push(options);
+      fileUsage(principal: unknown, options: unknown) {
+        calls.push({ principal, options });
         return {
           schemaVersion: "withmate-memory-v1",
           quotaBytes: 10,
@@ -301,23 +319,28 @@ describe("Memory HTTP agent runtime binding policy", () => {
 
     const summary = await runtime.callRead("/v1/file_usage", binding.bindingReference);
     assert.equal(summary.status, 200);
-    assert.deepEqual(calls, [{}]);
+    assert.deepEqual((calls[0] as any).options, {});
+    assert.equal((calls[0] as any).principal.characterId, "character-a");
+    assert.deepEqual((calls[0] as any).principal.allowedProjectIds, ["project-a"]);
 
     const largest = await runtime.callRead("/v1/file_usage?largest=1&limit=10", binding.bindingReference);
-    assert.equal(largest.status, 422);
-    assert.equal((largest.value as any).error.effect, "none");
-    assert.equal(calls.length, 1);
+    assert.equal(largest.status, 200);
+    assert.deepEqual((calls[1] as any).options, { includeLargestEntries: true, largestLimit: 10 });
+    assert.equal((calls[1] as any).principal.type, "session_binding");
+    assert.equal(calls.length, 2);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "agent-facing Memory mutationはbindingとcurrent provider turn capabilityの両方を要求する"
+  // claim = "一般Memory mutationは無bindingを許し、binding付きmutationにはcurrent turnを要求する"
   // oracle = { type = "adr", ref = "ADR-024 provider turn capability" }
-  // failure_mode = "unboundまたはstale turnのmutationがapplicationへ到達する"
+  // fault = "明示一般targetの無bindingmutationを拒否するかstale turnのbound mutationをdispatchする"
+  // observable = "無bindingとboundのprincipal、stale turn拒否statusとdispatch件数"
+  // observation_boundary = "public-boundary"
   // scope = "memory-http-general-mutation-turn"
   // lifecycle = "permanent"
   // @end-test-value
-  it("agent-facing Memory mutationはbindingとcurrent turn capabilityを要求する", async () => {
+  it("一般Memory mutationは無bindingを許しbound mutationはcurrent turnを要求する", async () => {
     const registry = new AgentRuntimeBindingRegistry();
     const binding = registry.issueOrReuse({
       actorSessionId: "session-a",
@@ -340,8 +363,8 @@ describe("Memory HTTP agent runtime binding policy", () => {
       idempotencyKey: "binding-none-route",
     };
 
-    assert.equal((await runtime.call("/v1/forget", body)).status, 401);
-    assert.equal(calls.length, 0);
+    assert.equal((await runtime.call("/v1/forget", body)).status, 200);
+    assert.equal(calls.shift()?.principal.type, "local_user");
 
     assert.equal((await runtime.call("/v1/forget", body, binding.bindingReference)).status, 200);
     assert.equal(calls[0]?.principal.type, "session_binding");
@@ -460,11 +483,13 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls[0]?.body.authority.kind, "conversation");
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
   // claim = "agent CLI fallbackは専用reporterが作る短命server admissionとcurrent turnが一致する同一のretryable operationだけを実行する"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-  // failure_mode = "通常MCP credentialによるcontrol自己発行、consumed state再武装、file export、別操作、operator credential、またはstale turnでdispatchする"
+  // fault = "通常MCP credentialによるcontrol自己発行、consumed state再武装、file export、別操作、CLI credentialのfallback昇格、またはstale turnでdispatchする"
+  // observable = "admission controlとfallbackのstatus、service dispatch件数、CLI通常readの成功"
+  // observation_boundary = "public-boundary"
   // scope = "memory-runtime-agent-cli-fallback"
   // lifecycle = "permanent"
   // @end-test-value
@@ -554,8 +579,8 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 2);
 
     const boundOperator = await runtime.callOperator("/v1/search", body, binding.bindingReference);
-    assert.equal(boundOperator.status, 403);
-    assert.equal(calls.length, 2);
+    assert.equal(boundOperator.status, 200);
+    assert.equal(calls.length, 3);
 
     nowMs += 60_001;
     assert.equal((await runtime.markFallbackListed(binding.bindingReference)).status, 200);
@@ -563,7 +588,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
     runtime.expireTurn();
     const stale = await runtime.callFallback("/v1/search", body, binding.bindingReference);
     assert.equal(stale.status, 403);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
   });
 
   // @test-value v1
@@ -703,19 +728,22 @@ describe("Memory HTTP agent runtime binding policy", () => {
     assert.equal(calls.length, 0);
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
-  // claim = "operator CLI exchangeはroute policyに関係なくAgent bindingを提示したrequestをdispatch前に拒否する"
+  // claim = "CLI credentialもCharacter resetに有効bindingと明示指示を必要とし、caller identityを受け付けない"
   // oracle = { type = "adr", ref = "ADR-024 operator CLI and agent-bound CLI fallback" }
-  // failure_mode = "provider-bound processがoperator credentialとbindingを組み合わせてoperator-only routeへ昇格する"
+  // fault = "CLI credentialだけでCharacter resetを実行するかcaller identityをactorとして使う"
+  // observable = "CLI resetの拒否statusとapplication受信actor・authority・呼出し件数"
+  // observation_boundary = "public-boundary"
   // scope = "memory-runtime-operator-cli-binding-boundary"
   // lifecycle = "permanent"
   // @end-test-value
-  it("none routeはbinding付きprovider CLIをoperatorへ昇格させずdispatch前に拒否する", async () => {
+  it("CLIのCharacter resetはbinding actorと明示指示でのみ実行する", async () => {
     const registry = new AgentRuntimeBindingRegistry();
     const binding = registry.issueOrReuse({
       actorSessionId: "session-a",
       providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "character-a", allowedProjectIds: ["project-a"] },
       operationGrants: getMemoryV6AgentRuntimeOperations(),
     });
     const calls: unknown[] = [];
@@ -728,10 +756,8 @@ describe("Memory HTTP agent runtime binding policy", () => {
     const runtime = await startServer({ registry, characterContextService });
     const body = {
       schemaVersion: "withmate-character-context-v1",
-      characterId: "character-b",
-      sessionId: "session-b",
       layer: "session",
-      authority: { kind: "operator", reason: "test" },
+      explicitUserRequest: true,
       reason: "test",
       resetAt: "2026-08-15T00:00:00.000Z",
       idempotencyKey: "none-route-binding",
@@ -742,12 +768,15 @@ describe("Memory HTTP agent runtime binding policy", () => {
       body,
       binding.bindingReference,
     );
-    assert.equal(bound.status, 403);
-    assert.equal((bound.value as any).error.code, "MEMORY_FORBIDDEN");
-    assert.equal(calls.length, 0);
+    assert.equal(bound.status, 200);
+    assert.equal((calls[0] as any).characterId, "character-a");
+    assert.equal((calls[0] as any).sessionId, "session-a");
+    assert.equal((calls[0] as any).authority.kind, "explicit_user_instruction");
+    const caller = await runtime.callOperator("/v1/character_affect/reset", { ...body, characterId: "character-b" }, binding.bindingReference);
+    assert.equal(caller.status, 422);
 
     const operator = await runtime.callOperator("/v1/character_affect/reset", body);
-    assert.equal(operator.status, 200);
+    assert.equal(operator.status, 403);
     assert.equal(calls.length, 1);
   });
 
@@ -893,7 +922,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
           credential: { adapter: "cli" as const, adapterSecret: OPERATOR_SECRET },
         },
         { method: "POST", path, body },
-        { signal: new AbortController().signal, bindingReference },
+        { signal: new AbortController().signal, bindingReference, turnCapability: turn.capability },
       ),
       callOperatorFallback: (path, body, bindingReference) => callWithMateMemoryRuntime(
         {

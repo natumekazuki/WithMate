@@ -351,7 +351,10 @@ export class MemoryV6Service {
     if (permissionError) {
       return permissionError;
     }
-    return createMemoryListCharactersResponse(await this.deps.listCharacters?.() ?? []);
+    const characters = await this.deps.listCharacters?.() ?? [];
+    return createMemoryListCharactersResponse(principal?.type === "session_binding"
+      ? characters.filter((character) => character.id === principal.characterId)
+      : characters);
   }
 
   async fileUsage(principal: MemoryV6Principal | null, options: MemoryV6FileUsageOptions = {}): Promise<MemoryV6ServiceResult<MemoryFileUsageResponse>> {
@@ -363,7 +366,9 @@ export class MemoryV6Service {
     const largestEntries = options.includeLargestEntries
       ? await this.deps.storage.listLargestFileEntries({
           limit: normalizeLargestFileEntryLimit(options.largestLimit),
-          ...(principal?.type === "session_binding" ? { allowedCharacterId: principal.characterId } : {}),
+          ...(principal?.type === "session_binding" ? {
+            allowedCharacterId: principal.characterId, allowedProjectIds: principal.allowedProjectIds,
+          } : { excludeCharacter: true }),
         })
       : undefined;
     return createMemoryFileUsageResponse({
@@ -471,7 +476,13 @@ export class MemoryV6Service {
     let inventoryItems: MemoryV6TargetInventoryItem[];
     let nextCursor: string | undefined;
     if (validated.value.allTargets) {
-      const inventory = await this.deps.storage.listTargets({ limit: validated.value.limit, cursor: validated.value.cursor });
+      const inventory = await this.deps.storage.listTargets({
+        limit: validated.value.limit, cursor: validated.value.cursor,
+        ...(principal.type === "session_binding" ? {
+          allowedCharacterId: principal.characterId,
+          allowedProjectIds: principal.allowedProjectIds,
+        } : {}),
+      });
       inventoryItems = inventory.items;
       nextCursor = inventory.nextCursor;
     } else {

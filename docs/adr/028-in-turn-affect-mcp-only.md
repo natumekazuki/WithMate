@@ -4,6 +4,10 @@
 
 Accepted
 
+## Subsequent decisions
+
+[ADR 029](029-cli-mcp-parity-context-binding.md)により、通常turn内AffectをMCP入口だけに限定する部分は現行運用の適用対象外とする。CLIも同じbinding、current turn、公開schemaとapplication serviceを利用する。専用post-turn評価を設けず、Agentが記録する意味のある変化だけを保存する判断は維持する。以下の本文は当時の判断として保持する。
+
 ## Context
 
 通常turn内のAgentによるAffect MCPと、turn完了後の専用LLM評価が併存していた。Issue #879の2026-10-26追加決定では、Affect更新をMemoryと同じ通常turn内MCPへ統一し、Codex、Copilot、Claude、OpenCodeに共通の追加生成・専用queue・retry・復旧を廃止する。

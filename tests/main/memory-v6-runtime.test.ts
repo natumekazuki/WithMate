@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import {
@@ -27,6 +28,9 @@ import {
   publishMemoryV6DiscoveryFile,
   startMemoryV6RuntimeApi,
 } from "../../src-electron/memory/memory-v6-runtime.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
+import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/memory-v6-http-server.js";
 import {
   callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
@@ -459,11 +463,13 @@ describe("Memory V6 runtime API", () => {
     }
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
-// claim = "Memory runtimeはapplication instanceと固有generationを公開し、operator CLI credentialだけが明示identityのlocal-user operationを実行する"
+// claim = "Memory runtimeはowner identityとadapter credentialを公開し、一般Memoryを両credentialで実行、Character所有Memoryをbinding actorへ限定する"
 // oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
-// failure_mode = "registry credential、legacy projection、HTTP identityが別runtimeを示す、またはMCP credentialがoperator operationへ昇格する"
+// fault = "runtime publicationのownerが不一致、一般Memoryがtransportで不一致、または無binding Character操作が実行される"
+// observable = "discoveryとstatusのidentity、各adapterのwrite/read-back、Character拒否とbound archived Memoryの保存・忘却結果"
+// observation_boundary = "public-boundary"
 // scope = "memory-runtime-publication-and-exchange"
 // lifecycle = "permanent"
 // @end-test-value
@@ -471,6 +477,15 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
     const workspacePath = path.join(userDataPath, "repo");
+    const bindings = new AgentRuntimeBindingRegistry();
+    const turns = new ProviderAgentRuntimeTurnCoordinator();
+    const binding = bindings.issueOrReuse({
+      actorSessionId: "archived-session", providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "archived-character", allowedProjectIds: [] },
+      operationGrants: getMemoryV6AgentRuntimeOperations(),
+    });
+    const turn = turns.begin({ actorSessionId: "archived-session", providerId: "codex" });
+    const boundOptions = { signal: new AbortController().signal, bindingReference: binding.bindingReference, turnCapability: turn.capability };
     try {
       await mkdir(path.join(workspacePath, ".git"), { recursive: true });
       const runtime = await startMemoryV6RuntimeApi({
@@ -479,6 +494,9 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         buildChannel: "development",
         registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
         runtimeDirectoryPath,
+        agentRuntimeBindingRegistry: bindings,
+        providerAgentRuntimeTurns: turns,
+        resolveActorSession: () => ({ id: "archived-session", providerId: "codex", characterId: "archived-character" }),
         listCharacters: () => [{
           id: "character-a",
           name: "Character A",
@@ -495,6 +513,11 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           : null,
       });
       try {
+        const db = new DatabaseSync(runtime.dbPath);
+        db.exec(`INSERT INTO characters (id,name,state,created_at,updated_at) VALUES ('archived-character','Archived Character','archived','2026-01-01','2026-01-01');
+          INSERT INTO sessions_v6 (id,title,state,provider_id,catalog_revision,model_id,approval_mode,character_id,character_snapshot_json,created_at,updated_at,last_active_at)
+          VALUES ('archived-session','Archived Session','active','codex',1,'model','on-request','archived-character','{}','2026-01-01','2026-01-01','2026-01-01');`);
+        db.close();
         const discovery = (await readDiscoveryProjection(runtime.discoveryFilePath)).document;
         const mcpDiscovery = (await readDiscoveryProjection(runtime.mcpDiscoveryFilePath, "mcp")).document;
         assert.equal(discovery.schemaVersion, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION);
@@ -528,9 +551,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           body: {
             schemaVersion: "withmate-memory-v1",
             target: {
-              owner: "character",
-              scope: "character",
-              character: { type: "id", id: "missing-character" },
+              kind: "character",
             },
             kind: "note",
             title: "Unknown Character",
@@ -540,17 +561,15 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
             idempotencyKey: "unknown-character-target",
           },
         }, { signal: new AbortController().signal });
-        assert.equal(unknownCharacter.status, 404);
-        assert.equal((unknownCharacter.value as { error: { code: string } }).error.code, "MEMORY_TARGET_NOT_FOUND");
+        assert.equal(unknownCharacter.status, 401);
+        assert.equal((unknownCharacter.value as { error: { code: string } }).error.code, "MEMORY_PRINCIPAL_REQUIRED");
         const archivedAppend = await callWithMateMemoryRuntime(operatorConnection, {
           method: "POST",
           path: "/v1/append",
           body: {
             schemaVersion: "withmate-memory-v1",
             target: {
-              owner: "character",
-              scope: "character",
-              character: { type: "id", id: "archived-character" },
+              kind: "character",
             },
             kind: "note",
             title: "Archived Character Memory",
@@ -559,7 +578,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
             tags: [],
             idempotencyKey: "archived-character-target",
           },
-        }, { signal: new AbortController().signal });
+        }, boundOptions);
         assert.equal(archivedAppend.status, 200);
         const archivedEntryId = (archivedAppend.value as { entry: { id: string } }).entry.id;
         const archivedForget = await callWithMateMemoryRuntime(operatorConnection, {
@@ -568,15 +587,13 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           body: {
             schemaVersion: "withmate-memory-v1",
             target: {
-              owner: "character",
-              scope: "character",
-              character: { type: "id", id: "archived-character" },
+              kind: "character",
             },
             entryIds: [archivedEntryId],
             reason: "user_request",
             idempotencyKey: "archived-character-forget",
           },
-        }, { signal: new AbortController().signal });
+        }, boundOptions);
         assert.equal(archivedForget.status, 200);
         assert.equal((archivedForget.value as { results: Array<{ status: string }> }).results[0]?.status, "forgotten");
         assert.ok(mcpConnection);
@@ -635,8 +652,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         const appendBody = {
           schemaVersion: "withmate-memory-v1",
           target: {
-            owner: "project",
-            scope: "project",
+            kind: "project",
             project: { type: "path", path: workspacePath },
           },
           kind: "note",
@@ -656,16 +672,16 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           },
           body: JSON.stringify(appendBody),
         });
-        assert.equal(mcpDirectAppend.status, 401);
-        assert.equal((await mcpDirectAppend.json()).error.code, "MEMORY_PRINCIPAL_REQUIRED");
+        assert.equal(mcpDirectAppend.status, 200);
+        assert.equal((await mcpDirectAppend.json()).created, true);
 
         const mcpExchangeAppend = await callWithMateMemoryRuntime(mcpConnection, {
           method: "POST",
           path: "/v1/append",
           body: appendBody,
         }, { signal: new AbortController().signal });
-        assert.equal(mcpExchangeAppend.ok, false);
-        assert.equal(mcpExchangeAppend.status, 401);
+        assert.equal(mcpExchangeAppend.ok, true);
+        assert.equal(mcpExchangeAppend.status, 200);
 
         const cliExchangeAppend = await callWithMateMemoryRuntime(cliConnection, {
           method: "POST",
@@ -674,7 +690,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         }, { signal: new AbortController().signal });
         assert.equal(cliExchangeAppend.ok, true);
         assert.equal(cliExchangeAppend.status, 200);
-        assert.equal((cliExchangeAppend.value as { created?: boolean }).created, true);
+        assert.equal((cliExchangeAppend.value as { replayed?: boolean }).replayed, true);
 
         const mcpAppendReadBack = await callWithMateMemoryRuntime(cliConnection, {
           method: "POST",
@@ -682,8 +698,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           body: {
             schemaVersion: "withmate-memory-v1",
             targets: [{
-              owner: "project",
-              scope: "project",
+              kind: "project",
               project: { type: "path", path: workspacePath },
             }],
             query: "Runtime project path",
@@ -744,9 +759,9 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
             sessionId: "missing-session",
           }),
         });
-        assert.equal(authenticatedCli.status, 404);
+        assert.equal(authenticatedCli.status, 403);
         const authenticatedCliError = await authenticatedCli.json();
-        assert.equal(authenticatedCliError.error.code, "unknown_character");
+        assert.equal(authenticatedCliError.error.code, "authority_denied");
 
         const characters = await fetch(`${runtime.baseUrl}/v1/characters`, {
           headers: {
@@ -754,15 +769,8 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
             "X-WithMate-Memory-Operator-Api-Secret": discovery.adapterSecret,
           },
         });
-        assert.equal(characters.status, 200);
-        assert.deepEqual(await characters.json(), {
-          schemaVersion: "withmate-memory-v1",
-          characters: [{
-            id: "character-a",
-            name: "Character A",
-            description: "Runtime test character",
-          }],
-        });
+        assert.equal(characters.status, 401);
+        assert.equal((await characters.json()).error.code, "MEMORY_PRINCIPAL_REQUIRED");
 
         const detail = await fetch(`${runtime.baseUrl}/v1/get_entry`, {
           method: "POST",
@@ -775,8 +783,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
             schemaVersion: "withmate-memory-v1",
             entryId: appendJson.entry.id,
             target: {
-              owner: "project",
-              scope: "project",
+              kind: "project",
               project: { type: "path", path: workspacePath },
             },
           }),

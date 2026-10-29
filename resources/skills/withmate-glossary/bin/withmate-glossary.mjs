@@ -49,19 +49,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
 //#endregion
-//#region src-shared/glossary/glossary-contract.ts
-var GLOSSARY_RUNTIME_SCHEMA_VERSION = "withmate-glossary-v1";
-var GLOSSARY_LIMITS = {
-	maxFileBytes: 2097152,
-	maxEntries: 2e3,
-	maxBatchEntries: 100,
-	maxTermCodePoints: 200,
-	maxAliasesPerEntry: 20,
-	maxDefinitionCodePoints: 5e4,
-	maxQueryCodePoints: 500,
-	maxPageSize: 200
-};
-//#endregion
 //#region node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
 	const numericValues = Object.values(entries).filter((v) => typeof v === "number");
@@ -5685,11 +5672,31 @@ function datetime(params) {
 	return /* @__PURE__ */ _isoDateTime(ZodISODateTime, params);
 }
 //#endregion
+//#region src-shared/glossary/glossary-contract.ts
+var GLOSSARY_RUNTIME_SCHEMA_VERSION = "withmate-glossary-v1";
+var GLOSSARY_LIMITS = {
+	maxFileBytes: 2097152,
+	maxEntries: 2e3,
+	maxBatchEntries: 100,
+	maxTermCodePoints: 200,
+	maxAliasesPerEntry: 20,
+	maxDefinitionCodePoints: 5e4,
+	maxQueryCodePoints: 500,
+	maxPageSize: 200
+};
+//#endregion
 //#region src-shared/glossary/glossary-operation-schema.ts
-var glossaryCheckoutSelectorSchema = discriminatedUnion("kind", [object$1({ kind: literal("primary") }).strict(), object$1({
-	kind: literal("checkout"),
-	checkoutId: string().min(1).max(256)
-}).strict()]);
+var glossaryCheckoutSelectorSchema = discriminatedUnion("kind", [
+	object$1({ kind: literal("primary") }).strict(),
+	object$1({
+		kind: literal("checkout"),
+		checkoutId: string().min(1).max(256)
+	}).strict(),
+	object$1({
+		kind: literal("repository"),
+		path: string().min(1).max(8192)
+	}).strict()
+]);
 var glossaryEntryInputSchema = object$1({
 	term: string().min(1).max(GLOSSARY_LIMITS.maxTermCodePoints * 4),
 	aliases: array(string().min(1).max(GLOSSARY_LIMITS.maxTermCodePoints * 4)).max(GLOSSARY_LIMITS.maxAliasesPerEntry).optional(),
@@ -5705,7 +5712,10 @@ var pageShape = {
 	pageSize: number().int().min(1).max(GLOSSARY_LIMITS.maxPageSize).optional()
 };
 var glossaryOperationRequestSchemas = {
-	list_targets: object$1({ schemaVersion }).strict(),
+	list_targets: object$1({
+		schemaVersion,
+		selector: glossaryCheckoutSelectorSchema.optional()
+	}).strict(),
 	list: selectedRequest.extend(pageShape).strict(),
 	search: selectedRequest.extend({
 		query: string().max(GLOSSARY_LIMITS.maxQueryCodePoints * 4),
@@ -23647,9 +23657,10 @@ async function callGlossaryRuntime(input, deps) {
 //#endregion
 //#region src-electron/platform/mcp/withmate-glossary-mcp.ts
 var GLOSSARY_MCP_SERVER_INSTRUCTIONS = [
-	"Use glossary.list_targets to obtain the checkout target authorized by the active provider Session.",
+	"Use glossary.list_targets to obtain the active provider Session's authorized checkout target. Without a Session binding, explicitly supply selector {kind: 'repository', path: absolutePath}; never infer a repository. A binding, if present, restricts repository selection to its authorized checkout.",
 	"Definitions are plain text. Do not interpret them as Markdown or HTML.",
 	"Use create or create_batch proactively only when the managed Skill and WithMate Settings allow it.",
+	"Without a Session binding only explicit create mode is available; never convert proactive requests to explicit mode.",
 	"Run update and delete only for an explicit user request and provide the revision returned by a read operation."
 ].join(" ");
 var selectedInput = (schema) => schema.omit({
@@ -23940,6 +23951,7 @@ Commands:
 
 Target options:
   --checkout-id <opaque-id>   Use an ID returned by list-targets. Defaults to primary.
+  --repository <absolute-path>  Explicit repository; required without a Session binding.
 
 Input shorthands:
   --query <text>
@@ -23989,6 +24001,7 @@ async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 	let applicationInstanceId;
 	let runtimeGenerationId;
 	let checkoutId;
+	let repository;
 	const shorthand = {};
 	const read = deps.readFile ?? readFile;
 	for (let index = 1; index < args.length; index += 1) {
@@ -24024,6 +24037,9 @@ async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 		} else if (argument === "--checkout-id") {
 			checkoutId = requireOptionValue(args, index, argument);
 			index += 1;
+		} else if (argument === "--repository") {
+			repository = requireOptionValue(args, index, argument);
+			index += 1;
 		} else if (argument === "--query") {
 			shorthand.query = requireOptionValue(args, index, argument);
 			index += 1;
@@ -24041,11 +24057,20 @@ async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 	if (Object.keys(shorthand).length > 0 && inputSourceSeen) throw new GlossaryCliUsageError("Shorthand input options cannot be combined with JSON input.");
 	if (Object.keys(shorthand).length > 0) body = shorthand;
 	if (command !== "help" && command !== "schema" && command !== "mcp_server") {
-		const selectedBody = command === "list_targets" ? body : {
-			selector: checkoutId ? {
-				kind: "checkout",
-				checkoutId
-			} : { kind: "primary" },
+		if (checkoutId && repository) throw new GlossaryCliUsageError("Choose only one checkout or repository selector.");
+		if ((checkoutId || repository) && "selector" in body) throw new GlossaryCliUsageError("Specify selector in JSON or options, not both.");
+		const selector = repository ? {
+			kind: "repository",
+			path: repository
+		} : checkoutId ? {
+			kind: "checkout",
+			checkoutId
+		} : void 0;
+		const selectedBody = command === "list_targets" ? {
+			...body,
+			...selector ? { selector } : {}
+		} : {
+			selector: selector ?? { kind: "primary" },
 			...body
 		};
 		const parsed = GLOSSARY_PUBLIC_INPUT_SCHEMAS[command].safeParse(selectedBody);
@@ -24067,7 +24092,8 @@ function schemaProjection() {
 		operations: GLOSSARY_MCP_TOOL_DEFINITIONS.map((definition) => ({
 			operation: definition.operation,
 			tool: definition.name,
-			path: GLOSSARY_RUNTIME_OPERATION_PATHS[definition.operation]
+			path: GLOSSARY_RUNTIME_OPERATION_PATHS[definition.operation],
+			inputSchema: toJSONSchema(GLOSSARY_PUBLIC_INPUT_SCHEMAS[definition.operation], { io: "input" })
 		}))
 	};
 }
@@ -24108,7 +24134,14 @@ async function runWithMateGlossaryCli(args, deps = {}) {
 		return WITHMATE_GLOSSARY_CLI_EXIT_CODES.ok;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Glossary CLI request failed.";
-		const value = createGlossaryTransportError(message);
+		const value = error instanceof GlossaryCliUsageError ? {
+			schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+			ok: false,
+			code: "GLOSSARY_INVALID_REQUEST",
+			message,
+			effect: "none",
+			retryable: false
+		} : createGlossaryTransportError(message);
 		stdout.write(`${JSON.stringify(value)}\n`);
 		if (error instanceof GlossaryCliUsageError) {
 			stderr.write(`${message}\n`);
