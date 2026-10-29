@@ -23,7 +23,7 @@ import { createSessionGraphWindowApi } from "./session-graph-window-api.js";
 export function createWithMateWindowApi(
   ipcRenderer: IpcRendererLike,
   platform: NodeJS.Platform = process.platform,
-): WithMateWindowApi {
+): Omit<WithMateWindowApi, "isClipboardFileBacked"> {
   installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),

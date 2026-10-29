@@ -3,12 +3,19 @@ import test from "node:test";
 
 import {
   collectPastedClipboardFiles,
-  collectPastedSessionAttachments,
-  collectPastedSessionAttachmentPaths,
-  createPastedSessionAttachmentHandler,
+  collectPastedSessionAttachments as collectAttachments,
+  collectPastedSessionAttachmentPaths as collectPaths,
+  createPastedSessionAttachmentHandler as createHandler,
   type PastedClipboardFile,
   type PastedClipboardFileItem,
 } from "../../src/chat/composer-paste-handlers.js";
+
+const collectPastedSessionAttachments = (input: Omit<Parameters<typeof collectAttachments>[0], "isFileBacked">) =>
+  collectAttachments({ ...input, isFileBacked: () => true });
+const collectPastedSessionAttachmentPaths = (input: Omit<Parameters<typeof collectPaths>[0], "isFileBacked">) =>
+  collectPaths({ ...input, isFileBacked: () => true });
+const createPastedSessionAttachmentHandler = (input: Omit<Parameters<typeof createHandler>[0], "isFileBacked">) =>
+  createHandler({ ...input, isFileBacked: () => true });
 
 function createPastedFile(name: string, content: string): PastedClipboardFile {
   return {

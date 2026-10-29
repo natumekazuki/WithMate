@@ -711,7 +711,7 @@ test("session composerのMain/Auxiliaryパス検証と追加は親Mainへ接続�
     for (const target of ["main", "auxiliary"] as const) {
       const owner: ComposerOwner = { kind: target, id: target === "main" ? parentId : auxiliaryId };
       const input = { ...createComposerInput(new ComposerControllerRegistry(), owner),
-        api, activeRunSessionId: owner.id, selectedSessionId: parentId, sessionProvider: "codex" };
+        api: { ...api, isClipboardFileBacked: () => true }, activeRunSessionId: owner.id, selectedSessionId: parentId, sessionProvider: "codex" };
       const bridge = createComposerBridge(log, target, false, { provider: "codex", auxiliarySession: auxiliary });
       bridge.session = { ...main, id: owner.id };
       const select = (directoryPath?: string) => selectAdditionalDirectoryPath({

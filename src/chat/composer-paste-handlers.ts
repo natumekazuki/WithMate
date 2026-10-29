@@ -56,6 +56,7 @@ export async function collectPastedSessionAttachmentPaths(input: {
   currentTimestampLabel: () => string;
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
+  isFileBacked: (file: PastedClipboardFile) => boolean;
   sessionId: string;
   confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
   onReuse?: (fileNames: string[]) => void;
@@ -63,12 +64,19 @@ export async function collectPastedSessionAttachmentPaths(input: {
   return (await collectPastedSessionAttachments(input)).map((attachment) => attachment.path);
 }
 
-function resolvePastedFileName(input: {
+async function resolvePastedFileName(input: {
   currentTimestampLabel: () => string;
   file: PastedClipboardFile;
-}): string {
+  data: ArrayBuffer;
+  useContentName: boolean;
+}): Promise<string> {
   const trimmedName = input.file.name.trim();
   const mimeExtension = SUPPORTED_IMAGE_MIME_EXTENSIONS.get(input.file.type?.toLocaleLowerCase() ?? "");
+  if (input.useContentName && mimeExtension) {
+    const digest = await crypto.subtle.digest("SHA-256", input.data);
+    const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `pasted-${hash}.${mimeExtension}`;
+  }
   if (trimmedName) {
     if (mimeExtension && !isSupportedComposerImagePath(trimmedName)) {
       return `${trimmedName}.${mimeExtension}`;
@@ -95,6 +103,7 @@ export async function collectPastedSessionAttachments(input: {
   currentTimestampLabel: () => string;
   preventDefault: () => void;
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
+  isFileBacked: (file: PastedClipboardFile) => boolean;
   sessionId: string;
   confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
   onReuse?: (fileNames: string[]) => void;
@@ -108,14 +117,19 @@ export async function collectPastedSessionAttachments(input: {
   const savedAttachments: PastedSessionAttachment[] = [];
   const reused: string[] = [];
   for (const file of pastedFiles) {
+    const useContentName = SUPPORTED_IMAGE_MIME_EXTENSIONS.has(file.type?.toLocaleLowerCase() ?? "")
+      && !input.isFileBacked(file);
     const buffer = await file.arrayBuffer();
-    const fileName = resolvePastedFileName({ file, currentTimestampLabel: input.currentTimestampLabel });
+    const fileName = await resolvePastedFileName({ file, data: buffer, useContentName, currentTimestampLabel: input.currentTimestampLabel });
     const request = {
       sessionId: input.sessionId,
       fileName,
       data: buffer,
     };
     let result = await input.savePastedSessionFile(request);
+    if (useContentName && typeof result !== "string" && result.status === "conflict") {
+      throw new Error(`Cannot reuse "${fileName}": the saved image has different contents.`);
+    }
     while (typeof result !== "string" && result.status === "conflict") {
       if (!input.confirmReplacement) throw new Error(`Replacing "${result.fileName}" requires confirmation.`);
       const decision = await input.confirmReplacement(result);
@@ -142,6 +156,7 @@ export function createPastedSessionAttachmentHandler(input: {
   currentTimestampLabel: () => string;
   fallbackErrorMessage: string;
   getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null | undefined;
+  isFileBacked: (file: PastedClipboardFile) => boolean;
   getSessionId: () => string | null | undefined;
   insertAttachments: (attachments: PastedSessionAttachment[]) => void;
   confirmReplacement?: (conflict: PastedSessionFileConflict) => Promise<PastedFileConflictDecision>;
@@ -164,6 +179,7 @@ export function createPastedSessionAttachmentHandler(input: {
         currentTimestampLabel: input.currentTimestampLabel,
         preventDefault: () => event.preventDefault(),
         savePastedSessionFile,
+        isFileBacked: input.isFileBacked,
         sessionId,
         confirmReplacement: input.confirmReplacement,
         onReuse: input.onReuse,

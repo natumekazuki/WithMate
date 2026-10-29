@@ -130,6 +130,7 @@ export function QuestionAnswerEditor({
             preventDefault() {},
             sessionId,
             currentTimestampLabel: () => new Date().toISOString(),
+            isFileBacked: (file) => api.isClipboardFileBacked(file),
             confirmReplacement,
             onReuse: (fileNames) => { if (isCurrent()) notifyReuse(fileNames); },
             savePastedSessionFile: (request) => {
