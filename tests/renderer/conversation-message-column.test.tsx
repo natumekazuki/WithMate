@@ -837,15 +837,15 @@ test("conversation column はMain/Auxの取消終了待ちで応答面を保持�
 
 // @test-value v2
 // kind = "contract"
-// claim = "実runなしの先頭queuedとtail間を移動してもMain/Auxiliaryの対象receiptへfocusを戻し、待機中に別controlへ移したfocusは奪わない"
+// claim = "Main/Auxiliaryの先頭queuedとtail間の移動は対象focusを維持し、開始競合の遅延再取得でcontrolが消えた場合は会話一覧へ退避する。別controlへ移したfocusは奪わない"
 // oracle = { type = "contract", ref = "Issue #912: 上下操作後も対象focusを保持する採用方針" }
-// fault = "本文とtailの再mountで行ローカルfocus refを失う、または保存応答が利用者の次操作からfocusを奪う"
+// fault = "本文とtailの再mountや開始競合後のcontrol消失でfocusを失う、または遅い応答が利用者の次操作からfocusを奪う"
 // observable = "実columnのreceipt本文順、移動前buttonの切断、activeElementのreceipt所属と方向"
 // observation_boundary = "consumer"
 // scope = "queue reorder across virtualized head and queue tail"
 // lifecycle = "permanent"
 // impact = "待機中の会話でもkeyboardで対象を見失わず並べ替えを継続できる"
-// distinction = "hookと全tail row fixtureでは別subtree間の再mountを再現できない。実columnを2件の待機列で通す"
+// distinction = "全tail row fixtureでは別subtree間の再mountと同じ先頭receiptのcontrolのみ消失を再現できない。実columnの2件でACKと再取得を分けて確認する"
 // @end-test-value
 test("queue move retains focus across the active queued head and tail", async () => {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
@@ -859,10 +859,18 @@ test("queue move retains focus across the active queued head and tail", async ()
   const intersection = installIntersectionObserver();
   let items: SessionTurnQueueReceipt[] = [];
   let finish!: () => void;
+  let conflict = false;
+  let readGate: Promise<void> | null = null;
+  let finishRead!: () => void;
   const api: ConversationMessageColumnApi = {
-    listSessionTurnQueue: async () => items,
+    listSessionTurnQueue: async () => { await readGate; return items; },
     reorderQueuedSessionTurns: async (_id, request) => {
       await new Promise<void>((resolve) => { finish = resolve; });
+      if (conflict) {
+        items = items.map((item, index) => index === 0 ? { ...item, state: "starting" } : item);
+        readGate = new Promise<void>((resolve) => { finishRead = resolve; });
+        return { outcome: "conflict", receipts: items };
+      }
       items = request.queuedIds.map((id, index) => ({ ...items.find((item) => item.id === id)!, queuePosition: index + 1 }));
       return { outcome: "reordered", receipts: items };
     },
@@ -876,6 +884,7 @@ test("queue move retains focus across the active queued head and tail", async ()
   const active = () => dom.window.document.activeElement;
   try {
     for (const id of ["main", "aux"]) {
+      conflict = false;
       const session = buildNewSession({ taskTitle: "Queue", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "character", character: "Mate", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" });
       items = ["A", "B"].map((item, index) => ({ sessionId: id, incarnationId: "inc", id: item, requestId: item, sequence: index + 1, queuePosition: index + 1, state: "queued", captured: { request: { clientRequestId: item, userMessage: `Queued ${item}`, executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: "codex", workspacePath: "workspace" }, turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now" }));
       await act(async () => root.render(<View key={id} id={id} />));
@@ -897,6 +906,26 @@ test("queue move retains focus across the active queued head and tail", async ()
       outside.focus();
       await act(async () => finish());
       assert.equal(active(), outside, "an explicit focus change wins over late save completion");
+      conflict = true;
+      for (const focusElsewhere of [false, true]) {
+        items = items.map((item) => ({ ...item, state: "queued" }));
+        await act(async () => root.render(<View key={`${id}:conflict:${focusElsewhere}`} id={id} />));
+        const headMove = button(1, "down");
+        const headArticle = headMove.closest("article");
+        headMove.focus();
+        await act(async () => headMove.click());
+        await act(async () => finish());
+        assert.equal(active(), headMove, "conflict ACK precedes the queued-to-starting refresh");
+        assert.equal(headMove.isConnected, true);
+        assert.notEqual(readGate, null);
+        const other = dom.window.document.getElementById("outside")!;
+        if (focusElsewhere) other.focus();
+        await act(async () => { finishRead(); readGate = null; });
+        assert.equal(headArticle?.isConnected, true, "the same head remains while only its controls disappear");
+        assert.equal(headMove.isConnected, false);
+        assert.ok(button(1, "up"), "remaining queued turn controls are still present");
+        assert.equal(active(), focusElsewhere ? other : dom.window.document.querySelector(".session-message-list"));
+      }
     }
   } finally {
     await act(async () => root.unmount());

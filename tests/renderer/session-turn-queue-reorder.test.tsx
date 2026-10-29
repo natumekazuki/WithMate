@@ -23,9 +23,11 @@ async function mount() {
   let items = [receipt("A", 1), receipt("B", 2), receipt("C", 3)];
   let finish!: (result: SessionTurnQueueReorderResult) => void;
   let fail!: (error: Error) => void;
+  let readError: Error | null = null;
+  let reads = 0;
   const requests: ReorderQueuedSessionTurnsRequest[] = [];
   const api: SessionTurnQueueApi = {
-    listSessionTurnQueue: async () => items,
+    listSessionTurnQueue: async () => { reads += 1; if (readError) throw readError; return items; },
     getSessionTurnQueueReceipt: async (_sessionId, id) => ({ ...receipt(id, 1), state: "canceled" }),
     reorderQueuedSessionTurns: async (_sessionId, request) => {
       requests.push(request);
@@ -48,6 +50,8 @@ async function mount() {
   return {
     document: dom.window.document, requests,
     get current() { return current; },
+    get reads() { return reads; },
+    setReadError(error: Error | null) { readError = error; },
     setItems(next: SessionTurnQueueReceipt[]) { items = next; },
     button(position: number, direction: string) { return dom.window.document.querySelector<HTMLButtonElement>(`button[aria-label="Move queued turn ${position} ${direction}"]`)!; },
     async click(button: HTMLButtonElement) { button.focus(); await act(async () => button.click()); },
@@ -157,4 +161,42 @@ test("queue move refreshes conflict and uncertain outcomes without replaying", a
       assert.equal(view.requests.length, 1);
     } finally { await view.close(); }
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "競合後の再取得失敗は保持した列が古い可能性と取得失敗を表示し、Retry Queueで最新列へ回復するが並べ替えは再送しない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 並べ替え競合時の再取得と失敗時の本文保持・回復導線" }
+// fault = "競合のaction errorでread errorを隠し、古い列を更新済みとして案内する"
+// observable = "alertの失敗・古い列の説明、表示ID順、readとmutationの回数、Retry後のalert消去"
+// observation_boundary = "component-behavior"
+// scope = "queue conflict refresh failure and retry"
+// lifecycle = "permanent"
+// impact = "取得失敗時に消失済み項目を最新と誤認せず、再取得から操作へ戻れる"
+// distinction = "既存競合testは再取得成功のみ。API失敗と操作ACKを実hookで組み合わせる小さいtestであり型検査では代替できない"
+// @end-test-value
+test("queue conflict exposes refresh failure and retries the read without replaying the move", async () => {
+  const view = await mount();
+  try {
+    await view.click(view.button(2, "up"));
+    view.setItems([receipt("B", 2), receipt("C", 3)]);
+    view.setReadError(new Error("queue read unavailable"));
+    await view.resolve("conflict");
+    assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), ["A", "B", "C"]);
+    const alert = view.document.querySelector('[role="alert"]')!;
+    assert.match(alert.textContent ?? "", /queue changed/);
+    assert.match(alert.textContent ?? "", /Queue refresh failed.*may be out of date.*queue read unavailable/);
+    assert.equal(view.current.announcement, "");
+    assert.equal(view.reads, 2);
+    assert.equal(view.requests.length, 1);
+    view.setReadError(null);
+    const retry = alert.querySelector<HTMLButtonElement>("button")!;
+    assert.equal(retry.textContent, "Retry Queue");
+    await view.click(retry);
+    assert.deepEqual(view.current.queuedReceipts.map((item) => item.id), ["B", "C"]);
+    assert.equal(view.document.querySelector('[role="alert"]'), null);
+    assert.equal(view.current.announcement, "");
+    assert.equal(view.reads, 3);
+    assert.equal(view.requests.length, 1);
+  } finally { await view.close(); }
 });

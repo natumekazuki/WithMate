@@ -21,7 +21,7 @@ export function SessionTurnSubmissionRow({ submission, resolveImageSource, markd
   </>;
 }
 
-export function SessionTurnQueueStatus({ receipt, position, queueSize, busy, busyKind, onCancel, onRelease, onSendInput, onMove, moveDisabled }: {
+export function SessionTurnQueueStatus(props: {
   receipt: SessionTurnQueueReceipt; position?: number; busy: boolean;
   queueSize?: number;
   moveDisabled?: boolean;
@@ -30,6 +30,11 @@ export function SessionTurnQueueStatus({ receipt, position, queueSize, busy, bus
   onSendInput?: (receipt: SessionTurnQueueReceipt) => void;
   onMove?: (receipt: SessionTurnQueueReceipt, direction: SessionTurnQueueMoveDirection) => void;
 }) {
+  if (props.receipt.state !== "queued" && props.receipt.state !== "interrupted") return null;
+  return <SessionTurnQueueControls {...props} />;
+}
+
+function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind, onCancel, onRelease, onSendInput, onMove, moveDisabled }: Parameters<typeof SessionTurnQueueStatus>[0]) {
   const statusRef = useRef<HTMLDivElement>(null);
   const moveFocus = useRef<HTMLButtonElement | null>(null);
   useLayoutEffect(() => {
@@ -47,7 +52,6 @@ export function SessionTurnQueueStatus({ receipt, position, queueSize, busy, bus
       if (status?.contains(status.ownerDocument.activeElement)) status.closest<HTMLElement>(".session-message-list")?.focus({ preventScroll: true });
     };
   }, []);
-  if (receipt.state !== "queued" && receipt.state !== "interrupted") return null;
   const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
   return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} aria-label={label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}

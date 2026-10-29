@@ -106,7 +106,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
           setState((current) => current.owner !== owner ? current : {
             ...current, active: current.active.map((item) => item.state === "queued" && positions.has(item.id) ? { ...item, queuePosition: positions.get(item.id)! } : item),
           });
-          if (result.outcome === "conflict") setActionError({ owner, message: "The queue changed before the move was saved. Review the updated order and try again." });
+          if (result.outcome === "conflict") setActionError({ owner, message: "The queue changed before the move was saved." });
           else setAnnouncement({ owner, message: `Queue order saved. Message moved to position ${order.queuedIds.indexOf(receipt.id) + 1} of ${order.queuedIds.length}.` });
         }
       } else if (kind === "input") {
@@ -158,7 +158,10 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   }, [act, queuedReceipts]);
   return {
     receipts, queuedReceipts, announcement: enabled && announcement?.owner === owner ? announcement.message : "",
-    error: enabled ? (actionError?.owner === owner ? actionError.message : state.owner === owner ? state.error : "") : "", loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
+    error: enabled ? [actionError?.owner === owner ? actionError.message : "",
+      state.owner === owner && state.error ? (state.ready ? `Queue refresh failed. The displayed queue may be out of date. ${state.error}` : state.error) : "",
+    ].filter(Boolean).join(" ") : "",
+    loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
     busyId: pendingAction?.owner === owner ? pendingAction.id : null,
     busyKind: pendingAction?.owner === owner ? pendingAction.kind : null,
     reload: retry, cancel, release, sendInput, move,
