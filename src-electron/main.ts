@@ -381,9 +381,8 @@ const claudeAdapter = new ClaudeAdapter({
     process: "main",
   }),
 });
-const opencodeDatabasePath = path.join(fixedUserDataPath, "providers", "opencode", runtimeBuildChannel, "opencode.db");
 const opencodeAdapter = new OpenCodeAdapter({
-  databasePath: opencodeDatabasePath,
+  legacyDatabasePath: path.join(fixedUserDataPath, "providers", "opencode", runtimeBuildChannel, "opencode.db"),
   log: (input) => writeAppLog({ ...input, kind: "provider", process: "main" }),
 });
 const mainLogComposition = new MainLogComposition(

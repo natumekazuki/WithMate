@@ -104,7 +104,6 @@ describe("HomeSettingsContent", () => {
       onChangeGlossaryProactiveCreateLimit={noOp}
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
-      onChangeProviderApiKey={noOp}
       onChangeProviderSkillRootPath={noOp}
       onChangeProviderSkillRelativePath={noOp}
       onChangeProviderInstructionRelativePath={noOp}
@@ -345,19 +344,19 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "OpenCodeのprovider cardは保存済みGo keyをpassword入力で編集しnative file設定先を案内する"
-  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
-  // fault = "Go key入力がない、平文入力になる、または別providerのkeyを表示する"
-  // observable = "OpenCode cardのlabel、input type/value、native path案内"
+  // claim = "OpenCodeのprovider rowはOpenCode側の認証設定とnative file設定先を案内する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "WithMateが管理しない認証やnative file設定の場所を案内しない"
+  // observable = "OpenCode rowの認証設定先とnative path案内"
   // observation_boundary = "component-behavior"
   // scope = "settings-opencode-provider-card"
   // lifecycle = "permanent"
-  // impact = "Go keyを設定できずOpenCodeを開始できないか、画面で資格情報が露出する"
-  // distinction = "設定型とdraft単体testでは実際のprovider cardのinput属性・表示を確認できない"
+  // impact = "利用者が必要な認証設定とfile設定の場所を判断できない"
+  // distinction = "設定型とdraft単体testではprovider rowに表示される案内を確認できない"
   // @end-test-value
-  it("OpenCodeのGo keyとnative読込先をprovider cardに表示する", () => {
+  it("OpenCodeの認証設定先とnative読込先をprovider rowに表示する", () => {
     const draft = createDefaultAppSettings();
-    draft.codingProviderSettings.opencode = { enabled: true, apiKey: "go-key-fixture", skillRootPath: "" };
+    draft.codingProviderSettings.opencode = { enabled: true, apiKey: "", skillRootPath: "" };
     const catalog: ModelCatalogSnapshot = {
       providers: [{ id: "opencode", label: "OpenCode", defaultModelId: "opencode-go/glm-5.3", defaultReasoningEffort: "high", models: [{ id: "opencode-go/glm-5.3", label: "GLM-5.3", reasoningEfforts: ["low", "high", "max"] }] }],
     };
@@ -365,10 +364,7 @@ describe("HomeSettingsContent", () => {
     const dom = new JSDOM(html);
     try {
       const card = dom.window.document.querySelector(".settings-provider-card")!;
-      const label = [...card.querySelectorAll("label")].find((element) => element.textContent?.includes("OpenCode Go API Key"));
-      const input = label?.querySelector("input");
-      assert.equal(input?.type, "password");
-      assert.equal(input?.value, "go-key-fixture");
+      assert.match(card.textContent ?? "", /Configure authentication in OpenCode\./);
       assert.match(card.textContent ?? "", /OpenCode config root with AGENTS\.md and skills\/<name>\/SKILL\.md/);
     } finally {
       dom.window.close();

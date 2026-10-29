@@ -14,7 +14,6 @@ import {
   handleChangePreviewWheelZoomStep,
   handleChangeProviderInstructionRelativePath,
   handleChangeProviderEnabled,
-  handleChangeProviderApiKey,
   handleChangeProviderSkillRelativePath,
   handleChangeProviderSkillRootPath,
   handleChangeSessionTurnNotificationEnabled,
@@ -45,7 +44,6 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeMemoryFileQuotaMegabytes"
   | "onChangeGlossaryProactiveCreateLimit"
   | "onChangeProviderEnabled"
-  | "onChangeProviderApiKey"
   | "onChangeProviderInstructionRelativePath"
   | "onChangeProviderSkillRootPath"
   | "onChangeProviderSkillRelativePath"
@@ -105,9 +103,6 @@ export function buildSettingsDraftHandlers({
     },
     onChangeProviderEnabled: (providerId, enabled) => {
       handleChangeProviderEnabled({ providerId, enabled, setSettingsDraft: updateSettingsDraft });
-    },
-    onChangeProviderApiKey: (providerId, apiKey) => {
-      handleChangeProviderApiKey({ providerId, apiKey, setSettingsDraft: updateSettingsDraft });
     },
     onChangeProviderSkillRootPath: (providerId, skillRootPath) => {
       handleChangeProviderSkillRootPath({ providerId, skillRootPath, setSettingsDraft: updateSettingsDraft });

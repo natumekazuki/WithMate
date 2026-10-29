@@ -53,6 +53,7 @@ export class AppSettingsStorage {
     this.db = openAppDatabase(dbPath);
     this.db.exec(CREATE_APP_SETTINGS_TABLE_SQL);
     this.removeObsoleteMicrocopySettings();
+    this.removeOpenCodeApiKey();
     this.ensureSessionSidePaneDefault();
     this.ensureDefaults();
   }
@@ -61,6 +62,15 @@ export class AppSettingsStorage {
     this.db
       .prepare(`DELETE FROM app_settings WHERE setting_key IN (${OBSOLETE_MICROCOPY_SETTING_KEYS.map(() => "?").join(", ")})`)
       .run(...OBSOLETE_MICROCOPY_SETTING_KEYS);
+  }
+
+  private removeOpenCodeApiKey(): void {
+    this.db.prepare(`
+      UPDATE app_settings
+      SET setting_value = json_remove(setting_value, '$.opencode.apiKey'), updated_at = ?
+      WHERE setting_key = ?
+        AND CASE WHEN json_valid(setting_value) THEN json_type(setting_value, '$.opencode.apiKey') END IS NOT NULL
+    `).run(new Date().toISOString(), CODING_PROVIDER_SETTINGS_KEY);
   }
 
   private ensureSessionSidePaneDefault(): void {

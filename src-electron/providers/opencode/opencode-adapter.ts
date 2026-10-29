@@ -4,7 +4,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { OpenCodeClient, OpenCodeEvent, PermissionRuleset, SessionInfo, SessionMessageInfo } from "@opencode/client";
-import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
 import { composeProviderPrompt } from "../provider-prompt.js";
 import { buildProviderAgentRuntimeBindingEnv, createProviderAgentRuntimeBindingRedactor, mergeDefinedProviderEnv } from "../provider-agent-runtime-binding.js";
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
@@ -14,16 +13,15 @@ import { OpenCodeTransport, type OpenCodeTransportOptions } from "./opencode-tra
 import { resolveOpenCodeModelRef, validateOpenCodeModel } from "./opencode-model.js";
 import { OpenCodeTurnProjection } from "./opencode-events.js";
 import { buildOpenCodeElicitation } from "./opencode-interactions.js";
-import { fetchOpenCodeQuotaTelemetry } from "./opencode-quota-telemetry.js";
+import { migrateOpenCodeThread, sameOpenCodeOwner } from "./opencode-thread-migration.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
 import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
 
 const require = createRequire(import.meta.url);
 type Transport = Pick<OpenCodeTransport, "start" | "close" | "whenClosed"> & { readonly secrets?: readonly string[] };
 export type OpenCodeAdapterOptions = {
-  databasePath?: string;
+  legacyDatabasePath?: string;
   executable?: string;
-  fetch?: typeof fetch;
   createTransport?: (options: OpenCodeTransportOptions) => Transport;
   log?: (input: { level: "warn" | "error"; kind: string; message: string; data?: unknown }) => void;
 };
@@ -43,11 +41,7 @@ export function buildOpenCodePermissions(additionalDirectories: string[]): Permi
   return permissions;
 }
 
-function sameOwner(actual: unknown, expected: NonNullable<RunSessionTurnInput["runtimeOwner"]>): boolean {
-  if (!actual || typeof actual !== "object") return false;
-  const owner = actual as Record<string, unknown>;
-  return owner.schema === 1 && owner.kind === expected.kind && owner.id === expected.id && owner.incarnationId === expected.incarnationId;
-}
+const NATIVE_THREAD_PREFIX = "native:";
 
 function abortError(): Error { return new Error("OpenCode turn canceled"); }
 
@@ -61,12 +55,12 @@ function withSignal<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 export async function preflightOpenCodeInbox(client: OpenCodeClient, root: SessionInfo, workspacePath: string, owner: NonNullable<RunSessionTurnInput["runtimeOwner"]>, signal?: AbortSignal): Promise<void> {
-  if (root.parentID || path.resolve(root.location.directory) !== path.resolve(workspacePath) || !sameOwner(root.metadata?.withmateOwner, owner)) {
+  if (root.parentID || path.resolve(root.location.directory) !== path.resolve(workspacePath) || !sameOpenCodeOwner(root.metadata?.withmateOwner, owner)) {
     throw new Error("OpenCode thread owner or workspace does not match this Session");
   }
   const entries = await client.session.inbox.list({ sessionID: root.id }, { signal });
   for (const entry of entries) {
-    if (entry.type !== "user" || !sameOwner(entry.payload.metadata?.withmateOwner, owner) || entry.payload.metadata?.withmateRequestID !== entry.id) {
+    if (entry.type !== "user" || !sameOpenCodeOwner(entry.payload.metadata?.withmateOwner, owner) || entry.payload.metadata?.withmateRequestID !== entry.id) {
       throw new Error("OpenCode inbox contains an input with unknown ownership");
     }
     await client.session.inbox.cancel({ sessionID: root.id, inboxID: entry.id }, { signal });
@@ -96,7 +90,7 @@ async function readCurrentMessages(client: OpenCodeClient, sessionID: string, re
 }
 
 export class OpenCodeAdapter implements ProviderTurnAdapter {
-  private readonly active = new Map<string, { controller: AbortController; transport: Transport }>();
+  private readonly active = new Map<string, { controller: AbortController; transports: Transport[] }>();
   private readonly pendingCleanups = new Map<string, { workspace: string; threadId: string; completion: Promise<void> }>();
   constructor(private readonly options: OpenCodeAdapterOptions = {}) {}
   composePrompt(input: RunSessionTurnInput) { return composeProviderPrompt(input); }
@@ -104,12 +98,9 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
     signal.throwIfAborted();
     this.assertCleanupComplete(input.workspacePath);
-    if (!this.options.databasePath) throw new Error("OpenCode dedicated database path is required");
-    const apiKey = getProviderAppSettings(input.appSettings, "opencode").apiKey.trim() || process.env.OPENCODE_API_KEY?.trim() || "";
     const transport = (this.options.createTransport ?? ((options) => new OpenCodeTransport(options)))({
-      executable: this.options.executable ?? resolveOpenCodeBinaryPath(), cwd: input.workspacePath,
-      databasePath: this.options.databasePath,
-      env: mergeDefinedProviderEnv(process.env, apiKey ? { OPENCODE_API_KEY: apiKey } : {}),
+      executable: this.options.executable, cwd: input.workspacePath,
+      env: mergeDefinedProviderEnv(process.env, {}),
     });
     try {
       const client = await transport.start(signal);
@@ -124,7 +115,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       return { id: "opencode", label: "OpenCode", models,
         defaultModelId: models.find((model) => model.id === preferredId)?.id ?? models[0]?.id ?? "", defaultReasoningEffort: "" };
     } catch {
-      throw new Error(signal.aborted ? "OpenCode model discovery canceled" : "OpenCode models could not be retrieved");
+      throw new Error(signal.aborted ? "OpenCode model discovery canceled" : "OpenCode models could not be retrieved. Check the installed OpenCode 2.1.4 CLI and its standalone provider configuration.");
     } finally {
       try { await transport.close(); }
       catch {
@@ -136,10 +127,8 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       }
     }
   }
-  async getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput) {
-    const apiKey = getProviderAppSettings(input.appSettings, "opencode").apiKey.trim() || process.env.OPENCODE_API_KEY?.trim() || "";
-    if (!apiKey) return null;
-    return fetchOpenCodeQuotaTelemetry(apiKey, input.signal, this.options.fetch);
+  async getProviderQuotaTelemetry(_input: GetProviderQuotaTelemetryInput) {
+    return null;
   }
   private assertCleanupComplete(workspacePath: string, sessionId?: string, threadId?: string | null): void {
     for (const [ownerId, cleanup] of this.pendingCleanups) {
@@ -152,7 +141,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     const active = this.active.get(sessionId);
     if (!active) return;
     active.controller.abort();
-    await active.transport.close();
+    await Promise.all(active.transports.map((transport) => transport.close()));
   }
   async invalidateAllSessionThreads(): Promise<void> {
     await Promise.all([...this.active.keys()].map((id) => this.invalidateSessionThread(id)));
@@ -163,30 +152,31 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     const workspacePath = resolveRunWorkspacePath(input);
     this.assertCleanupComplete(workspacePath, input.session.id, input.session.threadId);
     if (!input.runtimeOwner?.id || !input.runtimeOwner.incarnationId) throw new Error("OpenCode runtime owner is required");
-    if (!this.options.databasePath) throw new Error("OpenCode dedicated database path is required");
     if (input.executionOptions.approvalMode !== "on-request" && input.executionOptions.approvalMode !== "never") throw new Error("Unsupported OpenCode approval mode");
     const owner = input.runtimeOwner;
     const prompt = this.composePrompt(input);
     const model = resolveOpenCodeModelRef(input.executionOptions.model, input.executionOptions.reasoningEffort);
-    const apiKey = getProviderAppSettings(input.appSettings, "opencode").apiKey.trim() || process.env.OPENCODE_API_KEY?.trim() || "";
-    let redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, [apiKey]);
+    const environment = mergeDefinedProviderEnv(process.env, buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding));
+    const environmentSecrets = Object.entries(environment).filter(([name]) => /(?:API_KEY|TOKEN|SECRET|PASSWORD)$/i.test(name)).map(([, value]) => value);
+    let redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, environmentSecrets);
     const controller = new AbortController();
     const abort = () => controller.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
     if (input.signal?.aborted) abort();
     let transport: Transport;
     try {
-      transport = (this.options.createTransport ?? ((options) => new OpenCodeTransport(options)))({ executable: this.options.executable ?? resolveOpenCodeBinaryPath(), cwd: workspacePath,
-        databasePath: this.options.databasePath, env: mergeDefinedProviderEnv(process.env, { ...buildProviderAgentRuntimeBindingEnv(input.agentRuntimeBinding), ...(apiKey ? { OPENCODE_API_KEY: apiKey } : {}) }) });
+      transport = (this.options.createTransport ?? ((options) => new OpenCodeTransport(options)))({ executable: this.options.executable, cwd: workspacePath, env: environment });
     } catch (error) {
       input.signal?.removeEventListener("abort", abort);
       throw new ProviderTurnError(redactor.sanitizeText(error instanceof Error ? error.message : String(error)), { threadId: input.session.threadId || null, assistantText: "", usage: null }, controller.signal.aborted, controller.signal.aborted ? "canceled" : "provider_unavailable");
     }
-    this.active.set(input.session.id, { controller, transport });
+    const transports = [transport];
+    this.active.set(input.session.id, { controller, transports });
     const signal = controller.signal;
     const requestID = `msg_${randomUUID()}`;
     const metadata = { withmateOwner: { schema: 1, ...owner }, withmateRequestID: requestID };
-    let rootID = input.session.threadId || "";
+    let threadReference = input.session.threadId || "";
+    let rootID = threadReference.startsWith(NATIVE_THREAD_PREFIX) ? threadReference.slice(NATIVE_THREAD_PREFIX.length) : threadReference;
     let projection = new OpenCodeTurnProjection(rootID);
     let client: OpenCodeClient | undefined;
     let iterator: AsyncIterator<OpenCodeEvent> | undefined;
@@ -201,25 +191,41 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       interactionsClosed = true;
       for (const pending of interactionControllers.values()) pending.abort();
     };
-    const result = (): RunSessionTurnResult => ({ threadId: rootID || null, assistantText: redactor.sanitizeText(projection.assistantText), usage: projection.tokenUsage,
+    const result = (): RunSessionTurnResult => ({ threadId: threadReference || null, assistantText: redactor.sanitizeText(projection.assistantText), usage: projection.tokenUsage,
       artifact: redactor.sanitize({ title: "OpenCode", activitySummary: [], operationTimeline: [...projection.steps.values()], changedFiles: [], runChecks: [] }) });
     const publish = async () => {
       if (!onProgress) return;
       const steps = redactor.sanitize([...projection.steps.values()]);
-      await onProgress({ sessionId: input.session.id, threadId: rootID, turnId: requestID, assistantText: redactor.sanitizeText(projection.assistantText), reasoningText: redactor.sanitizeText(projection.reasoningText),
+      await onProgress({ sessionId: input.session.id, threadId: threadReference, turnId: requestID, assistantText: redactor.sanitizeText(projection.assistantText), reasoningText: redactor.sanitizeText(projection.reasoningText),
         steps, backgroundTasks: [], usage: projection.tokenUsage, errorMessage: "", approvalRequest: null, elicitationRequest: null }, { steps: { upserts: steps, removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
     };
     try {
       client = await transport.start(signal);
-      redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, [apiKey, ...(transport.secrets ?? [])]);
+      redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, [...environmentSecrets, ...(transport.secrets ?? [])]);
       const native = client;
       const location = { directory: workspacePath };
       const info = await validateOpenCodeModel(native, model, location, input.attachments, signal);
       for (const attachment of input.attachments) await access(attachment.absolutePath);
       const canonicalDirectories = await Promise.all(prompt.additionalDirectories.map((directory) => realpath(directory)));
       const permissions = buildOpenCodePermissions([...prompt.additionalDirectories, ...canonicalDirectories]);
-      const root = rootID ? await native.session.get({ sessionID: rootID }, { signal }) : await native.session.create({ location, metadata: { withmateOwner: metadata.withmateOwner }, model, permissions }, { signal });
+      let root: SessionInfo;
+      if (rootID && !threadReference.startsWith(NATIVE_THREAD_PREFIX)) {
+        const databasePath = this.options.legacyDatabasePath;
+        if (!databasePath) throw new Error("The existing WithMate OpenCode database is required to continue this conversation.");
+        await access(databasePath);
+        const legacy = (this.options.createTransport ?? ((options) => new OpenCodeTransport(options)))({
+          executable: resolveOpenCodeBinaryPath(), cwd: workspacePath, databasePath, env: mergeDefinedProviderEnv(process.env, {}),
+        });
+        transports.push(legacy);
+        const source = await legacy.start(signal);
+        redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, [...environmentSecrets, ...transports.flatMap((item) => item.secrets ?? [])]);
+        await preflightOpenCodeInbox(source, await source.session.get({ sessionID: rootID }, { signal }), workspacePath, owner, signal);
+        root = await migrateOpenCodeThread({ source, target: native, rootID, workspacePath, runtimeOwner: owner, signal });
+      } else {
+        root = rootID ? await native.session.get({ sessionID: rootID }, { signal }) : await native.session.create({ location, metadata: { withmateOwner: metadata.withmateOwner }, model, permissions }, { signal });
+      }
       rootID = root.id;
+      threadReference = `${NATIVE_THREAD_PREFIX}${rootID}`;
       projection = new OpenCodeTurnProjection(rootID);
       await preflightOpenCodeInbox(native, root, workspacePath, owner, signal);
       await native.session.switchModel({ sessionID: rootID, model }, { signal });
@@ -331,13 +337,13 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       await publish();
       return result();
     } catch (error) {
-      redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, [apiKey, ...(transport.secrets ?? [])]);
+      redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding, [...environmentSecrets, ...transports.flatMap((item) => item.secrets ?? [])]);
       if (client && rootID && dispatched) {
         const cleanupController = new AbortController();
         const timer = setTimeout(() => cleanupController.abort(), 2_000);
         try {
           const inbox = await client.session.inbox.list({ sessionID: rootID }, { signal: cleanupController.signal });
-          if (inbox.some((entry) => entry.id === requestID && entry.type === "user" && sameOwner(entry.payload.metadata?.withmateOwner, owner) && entry.payload.metadata?.withmateRequestID === requestID)) {
+          if (inbox.some((entry) => entry.id === requestID && entry.type === "user" && sameOpenCodeOwner(entry.payload.metadata?.withmateOwner, owner) && entry.payload.metadata?.withmateRequestID === requestID)) {
             await client.session.inbox.cancel({ sessionID: rootID, inboxID: requestID }, { signal: cleanupController.signal });
           }
           await client.session.interrupt({ sessionID: rootID, resume: false }, { signal: cleanupController.signal });
@@ -345,7 +351,9 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
         finally { clearTimeout(timer); }
       }
       const failure = interactionFailure ?? error;
-      const message = redactor.sanitizeText(failure instanceof Error ? failure.message : String(failure));
+      const detail = redactor.sanitizeText(failure instanceof Error ? failure.message : String(failure));
+      const message = /auth|unauthori[sz]ed|api.?key|credential/i.test(detail)
+        ? `${detail}\nConfigure the provider in OpenCode with opencode auth login --standalone, then retry in WithMate.` : detail;
       const canceled = nativeCanceled || signal.aborted && !interactionFailure;
       const reason = canceled ? "canceled" : /auth|unauthori[sz]ed|api.?key|credential/i.test(message) ? "auth" : /quota|rate.?limit|usage.?limit|insufficient/i.test(message) ? "usage_limit" : /unavailable|model|variant|executable|version/i.test(message) ? "provider_unavailable" : /network|disconnect|fetch|ECONN/i.test(message) ? "network" : "unknown";
       throw new ProviderTurnError(message, result(), canceled, reason);
@@ -355,14 +363,14 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       input.signal?.removeEventListener("abort", abort);
       void iterator?.return?.().catch(() => undefined);
       await interactionTail;
-      try { await transport.close(); this.active.delete(input.session.id); }
+      try { await Promise.all(transports.map((item) => item.close())); this.active.delete(input.session.id); }
       catch (error) {
         this.options.log?.({ level: "warn", kind: "opencode.cleanup", message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)) });
-        const completion = transport.whenClosed().then(() => {
-          if (this.active.get(input.session.id)?.transport === transport) this.active.delete(input.session.id);
+        const completion = Promise.all(transports.map((item) => item.whenClosed())).then(() => {
+          if (this.active.get(input.session.id)?.transports === transports) this.active.delete(input.session.id);
           if (this.pendingCleanups.get(input.session.id)?.completion === completion) this.pendingCleanups.delete(input.session.id);
         });
-        this.pendingCleanups.set(input.session.id, { workspace: path.resolve(workspacePath), threadId: rootID, completion });
+        this.pendingCleanups.set(input.session.id, { workspace: path.resolve(workspacePath), threadId: threadReference, completion });
         input.onCleanupPending?.(completion);
       }
     }

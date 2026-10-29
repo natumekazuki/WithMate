@@ -1,21 +1,21 @@
 import { randomBytes } from "node:crypto";
-import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { OpenCode, type OpenCodeClient } from "@opencode/client";
+import { OPENCODE_VERSION, resolveOpenCodeEnvironment, type OpenCodeEnvironment } from "./opencode-environment.js";
 import {
   spawnOwnedProviderProcess,
   OwnedProviderProcessAcquisitionError,
   type OwnedProviderProcessCleanupOwner,
 } from "../owned-process.js";
 
-export const OPENCODE_VERSION = "2.1.4";
+export { OPENCODE_VERSION } from "./opencode-environment.js";
 export const OPENCODE_SERVE_ARGUMENTS = ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"] as const;
 export type OpenCodeTransportOptions = {
-  executable: string;
+  executable?: string;
   cwd: string;
   env?: NodeJS.ProcessEnv;
-  databasePath: string;
+  databasePath?: string;
   startupTimeoutMs?: number;
   closeTimeoutMs?: number;
 };
@@ -34,10 +34,15 @@ export class OpenCodeTransport {
   #releaseDatabase?: () => void;
   #options: OpenCodeTransportOptions;
   #spawn: typeof spawnOwnedProviderProcess;
+  #resolveEnvironment: typeof resolveOpenCodeEnvironment;
   #password?: string;
 
-  constructor(options: OpenCodeTransportOptions, dependencies: { spawnOwnedProcess?: typeof spawnOwnedProviderProcess } = {}) {
-    if (!path.isAbsolute(options.executable) || !path.isAbsolute(options.databasePath) || !path.isAbsolute(options.cwd)) {
+  constructor(options: OpenCodeTransportOptions, dependencies: {
+    spawnOwnedProcess?: typeof spawnOwnedProviderProcess;
+    resolveEnvironment?: typeof resolveOpenCodeEnvironment;
+  } = {}) {
+    if ((options.executable !== undefined && !path.isAbsolute(options.executable))
+      || (options.databasePath !== undefined && !path.isAbsolute(options.databasePath)) || !path.isAbsolute(options.cwd)) {
       throw new TypeError("OpenCode executable, database and workspace paths must be absolute.");
     }
     for (const duration of [options.startupTimeoutMs, options.closeTimeoutMs]) {
@@ -47,6 +52,7 @@ export class OpenCodeTransport {
     }
     this.#options = { ...options, env: { ...(options.env ?? process.env) } };
     this.#spawn = dependencies.spawnOwnedProcess ?? spawnOwnedProviderProcess;
+    this.#resolveEnvironment = dependencies.resolveEnvironment ?? resolveOpenCodeEnvironment;
   }
 
   start(signal?: AbortSignal): Promise<OpenCodeClient> {
@@ -61,7 +67,17 @@ export class OpenCodeTransport {
   }
 
   async #launch(signal?: AbortSignal): Promise<OpenCodeClient> {
-    const key = path.resolve(this.#options.databasePath);
+    let environment: OpenCodeEnvironment;
+    try {
+      const env = { ...this.#options.env };
+      if (this.#options.databasePath !== undefined) env.OPENCODE_DB = this.#options.databasePath;
+      environment = await this.#resolveEnvironment({ cwd: this.#options.cwd, executable: this.#options.executable, env, signal });
+      if (this.#closing || signal?.aborted) throw abortError();
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
+    const key = path.resolve(environment.databasePath);
     const database = databases.get(key) ?? { tail: Promise.resolve(), version: OPENCODE_VERSION, active: 0 };
     if (database.active && database.version !== OPENCODE_VERSION) throw new Error("OpenCode database is open with a different CLI version.");
     databases.set(key, database);
@@ -72,12 +88,11 @@ export class OpenCodeTransport {
       await bounded(previous, this.#options.startupTimeoutMs ?? 10_000, signal);
       if (this.#closing || signal?.aborted) throw abortError();
       database.version = OPENCODE_VERSION;
-      await mkdir(path.dirname(key), { recursive: true });
       const password = randomBytes(32).toString("base64url");
       this.#password = password;
-      const env: NodeJS.ProcessEnv = { ...this.#options.env, OPENCODE_DB: key, OPENCODE_PASSWORD: password, OPENCODE_SERVER_PASSWORD: password };
+      const env: NodeJS.ProcessEnv = { ...environment.env, OPENCODE_PASSWORD: password, OPENCODE_SERVER_PASSWORD: password };
       if (this.#closing || signal?.aborted) throw abortError();
-      const owner = this.#spawn({ executable: this.#options.executable, arguments: OPENCODE_SERVE_ARGUMENTS, cwd: this.#options.cwd, env });
+      const owner = this.#spawn({ executable: environment.executable, arguments: OPENCODE_SERVE_ARGUMENTS, cwd: this.#options.cwd, env });
       this.#retainOwner(owner);
       database.active++;
       this.#releaseDatabase = () => { database.active--; };

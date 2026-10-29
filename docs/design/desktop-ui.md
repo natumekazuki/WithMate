@@ -220,6 +220,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - `Close Action Dock After Send`
   - `Prompt Context` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない
   - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える。sectionやproviderを装飾cardで入れ子にしない
+  - OpenCodeの認証はOpenCode側で設定し、WithMate専用のGo key入力・OAuth接続・account切替UIは置かない。provider file設定は維持する
   - `Diagnostics`
   - `Repository Glossary` の自動追加上限
   - `Storage Maintenance` の古いSession削除
@@ -513,6 +514,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - ClaudeのApproval候補は`Auto Run / Provider Controlled / Accept Edits / Preapproved Only / Plan`。既定は`Provider Controlled + User`。Auto ReviewはReviewerで選び、Provider Controlledとの組合せで有効になる。Auto RunではReviewerを適用せず保存値を保持する。Auto Reviewの選択中にAccept Edits／Preapproved Only／Planを選ぶと、ReviewerをUserへ切り替える確認を表示する。承認時は両方を一括変更し、取消時は両方を保持する。ReviewerがUserしか選べない正常状態ではcontrol全体をdisabledにするが、不正な保存組合せではinvalidを示してUserへの変更を受け付ける。保存Approval自体が非対応の場合は`Unsupported (保存値)`を選択表示し、invalid stateを保持する。ユーザーの明示選択で修正でき、黙って権限設定を置き換えない
   - runtime設定は、Main／Auxiliaryの次送信用の現在選択を表示する。runningや取消終了待ちでも選べるが、実行中Turnと受付済み予約の捕捉値は変えない。対象切替では各会話の選択値・provider能力・read-only／blocked／freeze条件に対応する
   - OpenCodeのApprovalは`Provider Controlled`（既定）と`Auto Run`を選べる。`Safety Focused`、Sandbox／Reviewer／Speedは提供しない。OpenCodeのform質問は共通Question Formsで回答し、実行中の`Steer`とCopilot専用`Tasks`は表示しない
+  - OpenCodeのquotaは未対応の状態を表示し、Goを含む契約残量を0・100%・無制限へ補完しない。token／contextの実取得値とは区別する
   - ModelはSessionの固定providerのSDK候補を検索するpopoverとする。通常は表示名の自然順昇順、同名は配信元・ID順とし、検索結果は名前／IDの完全一致、前方一致、部分一致、配信元だけの一致を優先する。選択中modelにcheckを付け、識別用の配信元とIDを併記する。大量候補はvirtualizeし、開いている候補はsnapshotとして保持する。矢印／Page移動、Enterで選択、Escapeで取消とfocus復帰、IME変換中のEnter抑止を提供する。providerやsortの追加UIは置かない
   - Modelはcacheを先に表示し、古い一覧はbackground更新する。取得中・取得失敗・正常empty・検索0件を区別し、候補の更新で現在選択、draft、threadを変更しない。候補から消えた現在modelも表示する。Depthは独立した選択とし、modelがadvertiseする任意の値を表示する。Depth候補が空なら隠す。取得・実行の境界は[Provider Model Discovery](model-catalog.md)を参照する
   - Model以外のruntime設定はnative single-select controlのkeyboard操作を維持し、menu内には正式な選択肢を表示する。Electronのcustomizable selectでmenuに6px、各選択肢に上下8px・左右12pxの余白を設け、viewport内へ収める。常設の項目名は省略し、Approval / Reviewer / Sandbox / Model / Depth / Speedの現在値を文字で表示する。項目名はtooltipとaccessible nameに残し、disabled・invalid・focusの状態を維持する。幅が不足するときは文字や余白を縮めず設定群を折り返す

@@ -55,7 +55,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
     - `Tool Call Presence`
   - `Coding Agent Providers`
     - provider 名を左、enable checkbox を右に置く
-    - OpenCodeの`OpenCode Go API Key`をpassword inputで編集する
+    - OpenCodeの認証はOpenCode側で設定する
     - provider ごとの `Provider File Settings`
       - `Root Directory`
       - `Skill Relative Path`
@@ -90,7 +90,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - `Launch At Login` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - Claude AgentとOpenCodeは初期状態で無効とし、有効化した場合だけ新規Sessionのprovider候補に出す。Codexは既定のproviderとして維持する
-- OpenCodeのGo用keyは`codingProviderSettings.opencode.apiKey`へ保存し、未設定時は実行環境の`OPENCODE_API_KEY`を使う。入力は既存の設定draft／保存・provider変更通知・実行中判定・thread invalidationを利用し、model候補のpayloadや履歴へは含めない。独自OAuthやaccount選択は提供しない
+- OpenCodeの認証設定はOpenCode側で行い、WithMateではkeyを編集・保持しない。保存済みのOpenCode用keyはstorage ownerの起動時に対象fieldだけを除去し、他providerのkey、provider設定、会話、threadを保持する。このcleanupでは通常の設定更新によるthread invalidationを行わない。読込・保存境界でもOpenCode用keyは空へ正規化し、OpenCodeへ自動コピーしない
 - Model候補はSDKから自動取得し、Settingsに手管理のimport／exportやrefresh操作は置かない。provider設定変更時は有効なproviderをbackground取得し、context別cacheを使う。現在選択やdraftは書き換えない。詳細は[Provider Model Discovery](model-catalog.md)を参照する
 - coding provider ごとの `Provider File Settings`
   - `Root Directory` は provider ごとの file 設定の基準 directory として保持される

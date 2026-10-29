@@ -15,6 +15,86 @@ import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboar
 describe("AppSettingsStorage", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "storage起動でOpenCode用credentialだけを除去し、他providerとfile設定を保持して再保存でもcredentialを復活させない"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "起動時にcredentialを保存したまま返さないだけにするか、他設定を失うか、古いsnapshotから再保存する"
+  // observable = "起動・保存・再open後のSQLite設定JSONとgetSettingsの値"
+  // observation_boundary = "public-boundary"
+  // scope = "opencode-credential-storage-lifecycle"
+  // lifecycle = "permanent"
+  // impact = "廃止したcredentialの保持・再利用や既存provider設定の消失を防ぐ"
+  // distinction = "normalizer単体では実SQLiteの起動cleanupと保存境界を検証できない"
+  // @end-test-value
+  it("起動と保存でOpenCode credentialだけを除去し他の設定を保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-opencode-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      const snapshot = storage.getSettings();
+      snapshot.launchAtLoginEnabled = true;
+      snapshot.codingProviderSettings.codex.apiKey = "codex-fixture";
+      snapshot.codingProviderSettings.copilot = {
+        enabled: true, apiKey: "copilot-fixture", skillRootPath: "C:/copilot",
+        skillRelativePath: "skills", instructionRelativePath: "instructions.md",
+      };
+      snapshot.codingProviderSettings.opencode = {
+        enabled: true, apiKey: "retired-fixture", skillRootPath: "C:/opencode",
+        skillRelativePath: "skills", instructionRelativePath: "AGENTS.md",
+      };
+      storage.updateSettings({ ...snapshot, codingProviderSettings: { ...snapshot.codingProviderSettings, opencode: { ...snapshot.codingProviderSettings.opencode, apiKey: "" } } });
+      storage.close();
+      storage = undefined;
+      const database = new DatabaseSync(dbPath);
+      try {
+        database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+          .run(JSON.stringify(snapshot.codingProviderSettings), "coding_provider_settings_json");
+      } finally {
+        database.close();
+      }
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        storage = new AppSettingsStorage(dbPath);
+        const rawDatabase = new DatabaseSync(dbPath);
+        try {
+          const row = rawDatabase.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+            .get("coding_provider_settings_json") as { setting_value: string };
+          const raw = JSON.parse(row.setting_value);
+          assert.equal(Object.hasOwn(raw.opencode, "apiKey"), false);
+          assert.deepEqual(raw, {
+            ...snapshot.codingProviderSettings,
+            opencode: { enabled: true, skillRootPath: "C:/opencode", skillRelativePath: "skills", instructionRelativePath: "AGENTS.md" },
+          });
+        } finally {
+          rawDatabase.close();
+        }
+        const current = storage.getSettings();
+        assert.equal(current.launchAtLoginEnabled, true);
+        assert.equal(current.codingProviderSettings.opencode.apiKey, "");
+        const saved = storage.updateSettings(snapshot);
+        assert.deepEqual(saved.codingProviderSettings, {
+          ...current.codingProviderSettings,
+          opencode: { ...current.codingProviderSettings.opencode, apiKey: "" },
+        });
+        const rawDatabaseAfterSave = new DatabaseSync(dbPath);
+        try {
+          const row = rawDatabaseAfterSave.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+            .get("coding_provider_settings_json") as { setting_value: string };
+          assert.equal(JSON.parse(row.setting_value).opencode.apiKey, "");
+        } finally {
+          rawDatabaseAfterSave.close();
+        }
+        storage.close();
+        storage = undefined;
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "承認通知は既定有効で独立保存され、再openで値を保持し、欠落・不正値とresetでは有効へ戻る"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#decision" }
   // fault = "承認通知の設定を保存しないかturn通知と混同するか欠落時に無効となる"

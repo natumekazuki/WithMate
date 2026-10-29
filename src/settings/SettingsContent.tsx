@@ -85,7 +85,6 @@ export type HomeSettingsContentProps = {
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
-  onChangeProviderApiKey: (providerId: string, apiKey: string) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
   onChangeProviderInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
@@ -184,7 +183,6 @@ export function HomeSettingsContent({
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeProviderEnabled,
-  onChangeProviderApiKey,
   onChangeProviderSkillRootPath,
   onChangeProviderSkillRelativePath,
   onChangeProviderInstructionRelativePath,
@@ -400,16 +398,7 @@ export function HomeSettingsContent({
                         </p>
                       ) : null}
                       {provider.id === "opencode" ? (
-                        <label className="settings-provider-input">
-                          <span>OpenCode Go API Key</span>
-                          <input
-                            type="password"
-                            value={settings.apiKey}
-                            onChange={(event) => onChangeProviderApiKey(provider.id, event.target.value)}
-                            autoComplete="off"
-                            spellCheck={false}
-                          />
-                        </label>
+                        <p className="settings-help">Configure authentication in OpenCode.</p>
                       ) : null}
                       <div className="settings-provider-file-settings">
                         <div>

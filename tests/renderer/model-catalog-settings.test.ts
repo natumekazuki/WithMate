@@ -17,7 +17,19 @@ describe("app settings provider helpers", () => {
     assert.equal(settings.memoryGenerationEnabled, true);
   });
 
-  it("provider ごとの enabled と apiKey を保持する", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "provider設定の正規化はOpenCode keyを利用せず、他providerのkeyと各providerのfile設定を保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "OpenCode keyを返すか、他providerのkeyまたはOpenCodeの設定を消す"
+  // observable = "normalizeAppSettingsとgetProviderAppSettingsのprovider設定"
+  // observation_boundary = "public-boundary"
+  // scope = "provider-settings-normalization"
+  // lifecycle = "permanent"
+  // impact = "廃止したcredentialの再利用や他providerの認証設定消失を防ぐ"
+  // distinction = "型ではJSON入力に残るcredentialの対象限定除去を保証できない"
+  // @end-test-value
+  it("provider ごとの設定を保持しOpenCode keyだけを正規化する", () => {
     const settings = normalizeAppSettings({
       ...createDefaultAppSettings(),
       codingProviderSettings: {
@@ -28,6 +40,13 @@ describe("app settings provider helpers", () => {
         copilot: {
           enabled: true,
           apiKey: "copilot-key",
+        },
+        opencode: {
+          enabled: true,
+          apiKey: "retired-key",
+          skillRootPath: "C:/opencode",
+          skillRelativePath: "skills",
+          instructionRelativePath: "AGENTS.md",
         },
       },
     });
@@ -46,6 +65,14 @@ describe("app settings provider helpers", () => {
       skillRelativePath: "",
       instructionRelativePath: "",
     });
+    assert.deepEqual(getProviderAppSettings(settings, "opencode"), {
+      enabled: true,
+      apiKey: "",
+      skillRootPath: "C:/opencode",
+      skillRelativePath: "skills",
+      instructionRelativePath: "AGENTS.md",
+    });
+    assert.equal(settings.codingProviderSettings.opencode.apiKey, "");
   });
 
   it("canonical な codingProviderSettings だけを正本として扱う", () => {
