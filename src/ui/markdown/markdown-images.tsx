@@ -27,6 +27,7 @@ import {
   isDirectMarkdownImageSource,
   shouldLoadMarkdownImageEagerly,
 } from "./markdown-links.js";
+import { pickMarkdownSourceAttributes, type MarkdownSourceAttributes } from "./markdown-source-ranges.js";
 
 const MARKDOWN_IMAGE_LOADING_DELAY_MS = 1_000;
 type MarkdownImageProps = {
@@ -34,6 +35,7 @@ type MarkdownImageProps = {
   alt?: string;
   title?: string;
   resolveImageSource?: MarkdownImageResolver;
+  sourceAttributes?: MarkdownSourceAttributes;
 };
 type ImageContextMenuHandler = (
   event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>,
@@ -111,6 +113,7 @@ export const MarkdownImage = memo(function MarkdownImage({
   alt,
   title,
   resolveImageSource,
+  sourceAttributes,
 }: MarkdownImageProps) {
   const { imageContext } = useContext(MarkdownRenderContext);
   const canLoadDirectly =
@@ -265,6 +268,7 @@ export const MarkdownImage = memo(function MarkdownImage({
   ) : null;
   return (
     <span
+      {...sourceAttributes}
       ref={shellRef}
       className={`message-image-shell${isResolvingWithoutSource ? " is-resolving" : ""}`}
     >
@@ -330,6 +334,7 @@ export function MarkdownImageComponent({
   alt,
   title,
   node,
+  ...props
 }: React.ComponentPropsWithoutRef<"img"> & { node?: unknown }) {
   const { resolveImageSource } = useContext(MarkdownRenderContext);
   const source = typeof src === "string" ? src.trim() : "";
@@ -340,6 +345,7 @@ export function MarkdownImageComponent({
       alt={alt}
       title={title}
       resolveImageSource={resolveImageSource}
+      sourceAttributes={pickMarkdownSourceAttributes(props)}
     />
   ) : null;
 }

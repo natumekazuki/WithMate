@@ -34,6 +34,7 @@ import {
 } from "./markdown-plugins.js";
 import { createMarkdownParseProjectionPlugin } from "./markdown-parse-projection.js";
 import { createKatexProjectionPlugin } from "./markdown-katex-projection.js";
+import { rehypeSourceRanges, remarkReferenceSourceRanges } from "./markdown-source-ranges.js";
 
 export type MessageViewMode = "preview" | "source";
 
@@ -211,6 +212,7 @@ function MessageMarkdownPreview({
   );
   const rehypePlugins = useMemo<PluggableList>(
     () => [
+      rehypeSourceRanges,
       katexProjection,
       createFootnoteLabelIdPlugin(footnoteLabelId),
       ...(glossaryAnnotations.rehypePlugin
@@ -227,6 +229,7 @@ function MessageMarkdownPreview({
       [remarkProviderResponse, responseProvider],
       parseProjection,
       sharedRemarkHtmlLineBreaks,
+      remarkReferenceSourceRanges,
       ...(inlineContent ? [createInlineContentPlugin(inlineContent.position)] : []),
     ],
     [responseProvider, parseProjection, inlineContent?.position],

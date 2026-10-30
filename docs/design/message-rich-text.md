@@ -4,6 +4,12 @@
 
 Session message と Markdown file preview に同じ rich text renderer を使い、構文、link、image の挙動が表示面によって分岐しないようにする。構文と表示の executable contract は `src/ui/markdown/MessageRichText.tsx` と `tests/renderer/message-rich-text.test.ts` を正本とする。
 
+## Search Targets
+
+- 表示検索はrendererと同じsingle dollar無効の数式解釈を使い、属性なしの`<br>`を改行として扱う。`math` fenceはKaTeX表示として通常codeの文字検索から除く。
+- 原文一致の表示先は既存の構文木から導出する。意味要素の`data-md-source-start/end`は`MessageRichText.text`内のoffsetであり、本文fragmentは外枠の`data-source-start`を加えて元messageへ揃える。reference link／imageと脚注参照は`data-md-definition-start/end`に参照定義の範囲も保持する。保存用のIDや対応台帳は持たない。
+- link先はanchor、画像はshell、数式は生成subtreeの外側、Mermaidは図のshell、HTML／PDF参照はheaderを対象とする。YAMLの構文はtable／原文block全体を対象とする。図・画像・埋込documentの内部を再解析して検索の強調を挿入しない。対応要素のない原文は会話側で所属messageを示し、原文の確認はSource表示へ任せる。
+
 ## Link Handling
 
 - Mermaidのstrict rendererが生成したSVG linkも同じ明示open経路を使う。図のanchorはrawなhref／xlink:hrefを渡し、Mermaid file previewの相対linkはそのfileの親directory、会話内の相対linkはWorkspaceを基準にする。図内でElectron document自体を遷移させず、auxiliary clickとpan後のclickではopenしない。同一page fragmentはdocument navigationを行わない
@@ -31,7 +37,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - 埋め込みPDFは表示領域がviewportへ入ってからMainのPDF専用inspect/chunk APIで読み込む。Session／base resourceの所有関係、通常file・実path・identity・revisionとPDF headerを確認し、汎用file readのroot制限を緩めない。1MiB chunk、50MiB以上のLoad Anyway確認、原本不変を維持する。読込中の容量、失敗理由、Reloadを表示し、Source切替・resource変更・unmountで旧結果とframeを破棄する。同じ参照を保った本文追記やcallback更新ではreaderを作り直さない。全量保持によるメモリー負荷は残る。
 - 本文埋め込みもreader内のページ操作・倍率・全文検索・sidebar・password等を共有し、Copy／利用可能なQuoteは現在のchat callbackへ明示buttonから渡す。文書外linkはホストの確認後にPDF fileを基準としてMainで解決する。File Preview全体やそのshortcut scopeを本文へ入れ子にせず、会話検索には表示file名と元のメッセージ本文を含め、readerの操作・状態・PDF内textは混ぜない。PDF内検索はreaderのFindを使う。
 - 両記法は単一行で終端まで揃ったものを対象とする。`visualize`はJSON objectを読み、`mode`は省略または`wide`を扱う。file citationはquoted属性を読み、`mode="live"`、URLや非local artifact参照はfile linkへ変換しない。コード例、成立したMarkdown link／image内、未完／不正記法は通常のMarkdownとして保持する。通常textの角括弧や未閉じlabelは変換の対象外にしない。User本文とMarkdown file previewにはこの変換を適用しない。
-- 保存本文・Sourceは原文を保持する。title、mode、purpose、sheet、range等の属性を保存値から削除せず、visualizeのtitleはpreviewのaccessible nameに使う。filesystem pathはURLの予約文字をencodeして既存open経路へ渡し、`file:` URLは既存のencodeを維持する。Previewの選択Copy／Quoteには表示label（visualizeはファイル名、file citationはpath）を使う。会話検索は表示labelと元本文を対象とし、原文だけの属性やpathの一致は`Source Match`抜粋で確認できる。隔離されたHTML内部や補助UIは検索対象に含めない。Sourceでは元の記法を対象にする。折りたたみ見出しは既存の改行・空白を正規化したplain summaryとし、本文Previewと同じ描画を保証するものではない。
+- 保存本文・Sourceは原文を保持する。title、mode、purpose、sheet、range等の属性を保存値から削除せず、visualizeのtitleはpreviewのaccessible nameに使う。filesystem pathはURLの予約文字をencodeして既存open経路へ渡し、`file:` URLは既存のencodeを維持する。Previewの選択Copy／Quoteには表示label（visualizeはファイル名、file citationはpath）を使う。会話検索は表示labelと元本文を対象とし、原文だけの属性やpathの一致は対応するlink／埋込headerを強調し、元の記法は既存Source表示で確認する。隔離されたHTML内部や補助UIは検索対象に含めない。折りたたみ見出しは既存の改行・空白を正規化したplain summaryとし、本文Previewと同じ描画を保証するものではない。
 - HTML本文は既存のSession／base resource認可を通して自動読込し、外部URLを最初のHTMLとして取得しない。相対CSS／JavaScript・画像等は認可済みlocal rootまたは同じGit commitから読み、外部CDN・通信・worker・iframe・Web storageは隔離されたWeb環境で扱う。表示枠が画面に入った時に実行し、画面外やSource切替では子Window・権限・storage・接続を含む実行環境を破棄する。再表示／Reloadは新partitionの初期状態から実行し、本文追記だけで同一位置・pathのpreviewを再読込しない。公式visualize host/runtime互換は提供しない。安全境界と上限は[HTML Preview Isolation](electron-window-runtime.md#html-preview-isolation)に従う。
 - HTMLはDOM内のwebviewとして既存のclipと重なり順へ参加する。Jump to latest、選択action、tooltip、通知、dialog、非対象会話のdimを覆わず、浮動操作のための専用領域や余白を追加しない。一時surfaceを表示するためにHTML全体を隠したり再実行したりしない。権限要求・子Window・外部protocolのhost確認ではHTMLを背後に残してdimを重ね、明示選択またはCancel／Escapeで回答する。
 - Codex固有構文は`src-shared/text/codex-file-references.ts`へ分離する。`src-shared/text/provider-response-markdown.ts`が応答元providerに応じたparser extensionを選び、本文描画・検索・plain summaryで共有する。providerは対象会話の所有元から渡し、User本文・通常のMarkdown・未対応providerには固有解析を適用しない。Markdownとfile linkの描画・操作はprovider共通とする。

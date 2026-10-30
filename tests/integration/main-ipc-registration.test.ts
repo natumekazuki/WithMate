@@ -373,6 +373,49 @@ test("会話queryはWindow破棄と明示取消でproducer予算を解放する"
 });
 
 // @test-value v2
+// kind = "contract"
+// claim = "検索IPCはraw-source anchorのsafe integerと非空区間を検証し、正常anchorとanchor省略の継続pageを同じproducerへ渡す"
+// oracle = { type = "contract", ref = "src-shared/session/conversation-page.ts: ConversationSearchAnchor" }
+// fault = "不正anchorをownerへ渡すかanchorを欠落させるか継続pageでproducerを取消する"
+// observable = "IPC rejection、owner searchへ渡されたanchorとproducer、cancel呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "conversation-search-ipc-anchor"
+// lifecycle = "permanent"
+// impact = "外部入力の数値境界を守り、mode切替後もページ取得を継続できる"
+// distinction = "storage testではIPCのvalidationとsignatureによるproducer継続を通らず、型検査は不正runtime入力を拒否できない"
+// @end-test-value
+test("会話検索IPCはanchorを検証して継続pageのproducerを保つ", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const window = createWindowStub("file:///session.html?sessionId=parent");
+  const calls: Array<{ producerId: string; anchor?: unknown }> = [];
+  let cancellations = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => window, resolveSessionWindow: () => window,
+    resolveConversationQueryOwner: async () => ({ ownerSessionId: "parent", isCurrent: () => true,
+      search: async (request: { producerId: string; anchor?: unknown }) => { calls.push(request); return { status: "cancelled" }; },
+      cancel: () => { cancellations++; },
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+  const request = { requestId: "anchor", producerId: "find", query: "needle", mode: "source" };
+  for (const anchor of [null, {}, { messageIndex: -1, startOffset: 0, endOffset: 1 },
+    { messageIndex: 0, startOffset: 0.5, endOffset: 1 },
+    { messageIndex: 0, startOffset: 0, endOffset: Number.MAX_SAFE_INTEGER + 1 },
+    { messageIndex: 0, startOffset: 1, endOffset: 1 }]) {
+    await assert.rejects(async () => search({}, "parent", { ...request, anchor }), /anchor is invalid/);
+  }
+  assert.equal(calls.length, 0);
+  const anchor = { messageIndex: 10, startOffset: 0, endOffset: 6 };
+  await search({}, "parent", { ...request, anchor });
+  await search({}, "parent", { ...request, offset: 64, stamp: { generationId: "generation", ownerIdentity: "owner", contentRevision: 0, requestId: request.requestId } });
+  assert.deepEqual(calls[0].anchor, anchor);
+  assert.equal(calls[1].anchor, undefined);
+  assert.equal(calls[0].producerId, calls[1].producerId);
+  assert.equal(cancellations, 0);
+});
+
+// @test-value v2
 // kind = "invariant"
 // claim = "owner lookup中に新queryまたは取消が到着した場合、旧queryはstorageへdispatchしない"
 // oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts query admission latest/cancel" }

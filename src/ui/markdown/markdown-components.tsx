@@ -10,6 +10,7 @@ import { MarkdownRenderContext } from "./markdown-context.js";
 import { MarkdownPre } from "./markdown-code.js";
 import { MarkdownAnchor } from "./markdown-artifacts.js";
 import { MarkdownImageComponent } from "./markdown-images.js";
+import { markdownSourceAttributes } from "./markdown-source-ranges.js";
 
 function mergeClassName(baseClassName: string, className?: string) {
   return className ? `${baseClassName} ${className}` : baseClassName;
@@ -134,6 +135,7 @@ export function renderMarkdownFrontmatter(_state: unknown, node: Node) {
       type: "element" as const,
       tagName: "table",
       properties: {
+        ...markdownSourceAttributes(node),
         className: ["message-frontmatter-table"],
         "aria-label": "YAML frontmatter",
       },
@@ -167,7 +169,7 @@ export function renderMarkdownFrontmatter(_state: unknown, node: Node) {
   return {
     type: "element" as const,
     tagName: "pre",
-    properties: { className: ["message-frontmatter-block"] },
+    properties: { className: ["message-frontmatter-block"], ...markdownSourceAttributes(node) },
     children: [
       {
         type: "element" as const,

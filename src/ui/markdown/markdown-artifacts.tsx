@@ -4,6 +4,7 @@ import { MarkdownHtmlPreview } from "./MarkdownHtmlPreview.js";
 import { MarkdownRenderContext } from "./markdown-context.js";
 import { MarkdownLink } from "./markdown-links.js";
 import { MarkdownPdfPreview } from "./markdown-pdf.js";
+import { pickMarkdownSourceAttributes } from "./markdown-source-ranges.js";
 
 export function MarkdownAnchor(props: ComponentPropsWithoutRef<"a"> & { node?: { properties?: Record<string, unknown> } }) {
   const { linkFileContext } = useContext(MarkdownRenderContext);
@@ -20,7 +21,8 @@ export function MarkdownAnchor(props: ComponentPropsWithoutRef<"a"> & { node?: {
     const Preview = /\.html?$/iu.test(filePath) ? MarkdownHtmlPreview
       : /\.pdf$/iu.test(filePath) ? MarkdownPdfPreview : null;
     if (Preview) return <Preview key={JSON.stringify([path, linkFileContext])}
-      path={path} href={props.href ?? ""} title={typeof title === "string" ? title : undefined}>
+      path={path} href={props.href ?? ""} title={typeof title === "string" ? title : undefined}
+      sourceAttributes={pickMarkdownSourceAttributes(properties)}>
       {props.children}
     </Preview>;
   }

@@ -15,7 +15,7 @@ type PdfLoadState =
   | { status: "ready"; descriptor: SessionFileDescriptor; bytes: Uint8Array }
   | { status: "error"; message: string };
 
-export function MarkdownPdfPreview({ path, href, title, children }: MarkdownFilePreviewProps) {
+export function MarkdownPdfPreview({ path, href, title, children, sourceAttributes }: MarkdownFilePreviewProps) {
   const { linkFileContext, onCopyText, onQuoteText } = useContext(MarkdownRenderContext);
   const shellRef = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
@@ -102,7 +102,7 @@ export function MarkdownPdfPreview({ path, href, title, children }: MarkdownFile
   };
 
   const loading = state.status === "inspecting" || state.status === "loading";
-  return <MarkdownFilePreviewFrame path={path} href={href} title={title} link={children} format="PDF"
+  return <MarkdownFilePreviewFrame path={path} href={href} title={title} link={children} format="PDF" sourceAttributes={sourceAttributes}
     shellRef={shellRef} loading={loading} onReload={() => {
       setPermittedRevision(null); setReload((value) => value + 1);
     }}>

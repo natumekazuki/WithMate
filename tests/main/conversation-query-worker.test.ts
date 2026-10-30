@@ -29,6 +29,79 @@ async function fixture() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "検索modeを切り替えたraw-source anchorは同じmessageとoffsetのglobal ordinalへ解決し、anchor省略の継続pageでも維持される"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: FindのPreview／Source切替" }
+// fault = "原文と描画の順序差を無視するかmessageを取り違えるかpage取得でanchorを失う"
+// observable = "Main／Auxiliary実WorkerのanchorOrdinalとそのordinalから取得したmessageIndex／occurrenceIndex"
+// observation_boundary = "public-boundary"
+// scope = "conversation-search-source-anchor"
+// lifecycle = "permanent"
+// impact = "mode切替で別の出現へ移動してしまうことを防ぐ"
+// distinction = "parserのoffset testでは全履歴の累積ordinalとproducerに保持したanchorの継続page伝播を確認できない。既存の小SQLite fixtureを使う"
+// @end-test-value
+test("全履歴検索はraw-source anchorをmode別ordinalへ解決する", async () => {
+  const f = await fixture();
+  try {
+    const text = "[label](needle) needle";
+    const messages: Message[] = Array.from({ length: 135 }, () => ({ role: "assistant", text }));
+    await f.bundle.stores.session.upsertSession({ ...f.session, messages });
+    await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.auxiliary, messages });
+    for (const [store, id] of [[f.bundle.stores.session, f.session.id], [f.bundle.stores.auxiliary, f.auxiliary.id]] as const) {
+      for (const mode of ["preview", "source"] as const) {
+        // Preview enumerates the visible occurrence before the raw link destination; Source uses raw order.
+        for (const [startOffset, expectedOccurrence] of [[8, mode === "source" ? 0 : 1], [16, mode === "source" ? 1 : 0]] as const) {
+          const request = { producerId: id, requestId: `${mode}-${startOffset}`, query: "needle", mode };
+          const first = await store.searchConversation(id, { ...request, anchor: { messageIndex: 100, startOffset, endOffset: startOffset + 6 } });
+          if (first.status !== "complete") throw new Error("missing anchored page");
+          const expectedOrdinal = 200 + expectedOccurrence;
+          assert.equal(first.anchorOrdinal, expectedOrdinal);
+          assert.equal(first.items.length, 64);
+          const target = await store.searchConversation(id, { ...request, offset: expectedOrdinal, stamp: first.stamp });
+          if (target.status !== "complete") throw new Error("missing anchor target page");
+          assert.equal(target.anchorOrdinal, expectedOrdinal);
+          assert.deepEqual(target.items[0], { messageIndex: 100, occurrenceIndex: expectedOccurrence });
+        }
+        const missing = await store.searchConversation(id, { producerId: id, requestId: `${mode}-missing`, query: "needle", mode,
+          anchor: { messageIndex: 100, startOffset: 9, endOffset: 15 } });
+        if (missing.status !== "complete") throw new Error("missing complete search");
+        assert.equal(missing.anchorOrdinal, undefined);
+      }
+    }
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "storage検索は負数・小数・safe integer超過・空区間のanchorをWorker scan前に拒否する"
+// oracle = { type = "contract", ref = "src-shared/session/conversation-page.ts: ConversationSearchAnchor" }
+// fault = "不正なmessage indexまたはraw offsetをanchorとして受け入れる"
+// observable = "実storage Worker経由のsearchConversationによるanchor invalid rejection"
+// observation_boundary = "public-boundary"
+// scope = "conversation-search-anchor-validation"
+// lifecycle = "permanent"
+// impact = "壊れたrenderer要求から不正な選択解決を返すことを防ぐ"
+// distinction = "型検査ではruntime入力の数値境界を検証できず、IPC単体testではstorage公開入口のvalidationを通らない"
+// @end-test-value
+test("storage検索は不正なraw-source anchorを拒否する", async () => {
+  const f = await fixture();
+  try {
+    for (const anchor of [
+      { messageIndex: -1, startOffset: 0, endOffset: 1 },
+      { messageIndex: 0.5, startOffset: 0, endOffset: 1 },
+      { messageIndex: Number.MAX_SAFE_INTEGER + 1, startOffset: 0, endOffset: 1 },
+      { messageIndex: 0, startOffset: -1, endOffset: 1 },
+      { messageIndex: 0, startOffset: 0.5, endOffset: 1 },
+      { messageIndex: 0, startOffset: 0, endOffset: Number.MAX_SAFE_INTEGER + 1 },
+      { messageIndex: 0, startOffset: 1, endOffset: 1 },
+    ]) {
+      await assert.rejects(f.bundle.stores.session.searchConversation(f.session.id,
+        { producerId: "invalid", requestId: "invalid", query: "needle", mode: "source", anchor }), /anchor is invalid/);
+    }
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Main／Auxiliaryの検索はPreviewでも原文属性を見つけ、navigatorは各ownerのproviderで固有参照を投影する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#assistant-file-references" }
 // fault = "Preview検索から原文属性が落ちるか親のproviderをAuxiliaryへ流用してnavigatorの表示labelを誤る"

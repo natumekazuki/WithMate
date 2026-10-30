@@ -1686,6 +1686,130 @@ async function setMessageFindQuery(mounted: MountedSessionMessageColumn, query: 
   });
 }
 
+function installMessageFindHighlights(mounted: MountedSessionMessageColumn) {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+    add(range: Range) { this.ranges.push(range); return this; }
+  }
+  const highlights = new Map<string, TestHighlight>();
+  Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+  Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+  return highlights;
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "PreviewとSourceで検索順が違っても同一anchor内の各原文出現とentity・escapeの変換前後を対応付け選択を往復維持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/913" }
+// fault = "表示mode切替で数値ordinalを持ち越す、同じ強調要素内の別出現へ移る、またはentity・escapeのtoken長差で別のraw出現を選ぶ"
+// observable = "Find現在位置、強調anchor、SourceのCSS Highlightの原文offsetと文字列"
+// observation_boundary = "component-behavior"
+// scope = "local Findの表示mode切替"
+// lifecycle = "permanent"
+// impact = "利用者が選んだURL内や変換された表示文字の出現をSourceで確認できない"
+// distinction = "shared範囲helperはReact選択とmode変更を通らない。各3出現だけで順序逆転・同一要素・token長差を検証する"
+// @end-test-value
+test("chat Find preserves each raw occurrence across Preview and Source order changes", async () => {
+  const text = "[表示](C:/needle/needle.md) needle";
+  const mounted = await mountSessionMessageColumn({ messages: [{ role: "assistant", text }] });
+  const highlights = installMessageFindHighlights(mounted);
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  const next = async () => act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+  try {
+    await setMessageFindQuery(mounted, "needle");
+    assert.equal(count(), "1/3");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "needle");
+    await next();
+    const anchor = mounted.container.querySelector(".message-find-source-target");
+    assert.equal(anchor?.tagName, "A");
+    for (const [previewOrdinal, sourceOrdinal, offset] of [[2, 1, text.indexOf("needle")], [3, 2, text.indexOf("needle", text.indexOf("needle") + 1)]]) {
+      assert.equal(count(), `${previewOrdinal}/3`);
+      assert.equal(mounted.container.querySelector(".message-find-source-target")?.textContent, "表示");
+      await mounted.rerender({ messageViewMode: "source" });
+      assert.equal(count(), `${sourceOrdinal}/3`);
+      const range = highlights.get("withmate-find-current")?.ranges[0];
+      assert.equal(range?.toString(), "needle");
+      assert.equal(range?.startOffset, offset);
+      await mounted.rerender({ messageViewMode: "preview" });
+      assert.equal(count(), `${previewOrdinal}/3`);
+      assert.equal(mounted.container.querySelector(".message-find-source-target")?.tagName, "A");
+      if (previewOrdinal === 2) {
+        const beforeNext = mounted.container.querySelector(".message-find-source-target");
+        await next();
+        assert.equal(mounted.container.querySelector(".message-find-source-target"), beforeNext);
+      }
+    }
+  } finally { await mounted.cleanup(); }
+  for (const [text, query, sourceOffset] of [
+    ["[label](a&) &amp; &", "&", 12],
+    ["[label](a*) \\* *", "*", 13],
+  ] as const) {
+    const mounted = await mountSessionMessageColumn({ messages: [{ role: "assistant", text }] });
+    const highlights = installMessageFindHighlights(mounted);
+    const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+    try {
+      await setMessageFindQuery(mounted, query);
+      assert.equal(count(), "1/3");
+      assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), query);
+      await mounted.rerender({ messageViewMode: "source" });
+      assert.equal(count(), "2/3", text);
+      const sourceRange = highlights.get("withmate-find-current")?.ranges[0];
+      assert.equal(sourceRange?.startOffset, sourceOffset, text);
+      assert.equal(sourceRange?.toString(), query);
+      await mounted.rerender({ messageViewMode: "preview" });
+      assert.equal(count(), "1/3", text);
+      assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), query);
+    } finally { await mounted.cleanup(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "原文検索は参照定義の各出現を一度数え最初の表示参照へ移動し、画像pathは画像shell、未参照定義は所属messageを強調する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/913" }
+// fault = "参照先の数だけ件数を増やす、未参照原文を捨てる、または無関係の表示文字を強調する"
+// observable = "Find件数、強調要素のlabel・画像shell class・message body属性と所属行"
+// observation_boundary = "component-behavior"
+// scope = "local Findのreference、画像、表示先なしの強調"
+// lifecycle = "permanent"
+// impact = "画像pathや未参照定義の一致を見失うか誤った場所を一致と理解する"
+// distinction = "parser metadata単体ではcolumnの結果選択とfallbackを確認できない。小さい2messageで一対多と表示先の境界を通す"
+// @end-test-value
+test("chat Find targets first reference, image shell and message fallback", async () => {
+  const previousIntersectionObserver = globalThis.IntersectionObserver;
+  Object.defineProperty(globalThis, "IntersectionObserver", { configurable: true, value: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } });
+  const mounted = await mountSessionMessageColumn({ messages: [
+    { role: "assistant", text: "[first][r] [second][r]\n\n[r]: C:/needle/needle.md\n\n[unused]: C:/orphan.md" },
+    { role: "assistant", text: "![picture](C:/image-path.png)" },
+  ] });
+  const target = () => mounted.container.querySelector(".message-find-source-target");
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  try {
+    await setMessageFindQuery(mounted, "needle");
+    assert.equal(count(), "1/2");
+    assert.equal(target()?.tagName, "A");
+    assert.equal(target()?.textContent, "first");
+    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    assert.equal(count(), "2/2");
+    assert.equal(target()?.textContent, "first");
+    await setMessageFindQuery(mounted, "image-path");
+    assert.equal(count(), "1/1");
+    assert.ok(target()?.classList.contains("message-image-shell"));
+    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "1");
+    await setMessageFindQuery(mounted, "orphan");
+    assert.equal(count(), "1/1");
+    assert.equal(target()?.getAttribute("data-message-body"), "true");
+    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "0");
+  } finally {
+    await mounted.cleanup();
+    Object.defineProperty(globalThis, "IntersectionObserver", { configurable: true, value: previousIntersectionObserver });
+  }
+});
+
 // @test-value v2
 // kind = "contract"
 // claim = "paged Findは保存領域の総hitに未保存末尾とpendingだけを加算し、globalordinalを移動して保存hitの本文pageへ進み、Closeでqueryをcancelする"
@@ -1742,15 +1866,15 @@ test("paged Find counts global saved hits and only unsaved tail and pending", as
 
 // @test-value v2
 // kind = "contract"
-// claim = "Preview検索は原文リンク先の一致理由を該当messageに示し、表示一致を二重計上せず前後移動・Source切替・Close後も元の本文を保つ"
+// claim = "Preview検索は原文リンク先の一致をanchor強調とFind説明で示し、表示一致を二重計上せず通常link操作と文字Highlightを保つ"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/887" }
-// fault = "原文一致を数えない、一致抜粋を別messageへ出す、表示本文を二重に数える、または検索でMarkdown表示を置換する"
-// observable = "Findの件数、Source Matchのmarkと所属message、CSS Highlight、通常link、Source切替・Close後の本文"
+// fault = "原文一致を数えない、別messageのanchorを強調する、表示本文を二重に数える、または検索が通常link操作を妨げる"
+// observable = "Findの件数と短い説明、強調anchorの所属message、CSS Highlight、linkのopen callback"
 // observation_boundary = "component-behavior"
 // scope = "SessionMessageColumnのlocal Findと原文一致表示"
 // lifecycle = "permanent"
 // impact = "リンク先だけにあるファイル名を検索し、見つかった根拠と通常本文を同時に確認できる"
-// distinction = "shared matcherではReactの結果選択・抜粋・本文表示・Closeの接続を確認できない。短い2messageで操作境界を検証する"
+// distinction = "shared matcherではReactの結果選択・要素強調・link操作・Closeの接続を確認できない。短い2messageで操作境界を検証する"
 // @end-test-value
 test("chat Find shows raw-only link matches without replacing Markdown or duplicating visible hits", async () => {
   class TestHighlight {
@@ -1758,30 +1882,39 @@ test("chat Find shows raw-only link matches without replacing Markdown or duplic
     add(range: Range) { this.ranges.push(range); return this; }
   }
   const text = "ordinary needle [filename](C:/users/admin/documents/sample.md)";
+  const opened: string[] = [];
+  function Column(props: SessionMessageColumnProps) {
+    return React.createElement(SessionMessageColumn, { ...props, onOpenPath: async (path) => { opened.push(path); } });
+  }
   const mounted = await mountSessionMessageColumn({ messages: [
     { role: "assistant", text }, { role: "user", text: "Another [label](C:/second/sample.md)" },
-  ] });
+  ], component: Column });
   const highlights = new Map<string, TestHighlight>();
   Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
   Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
-  const snippet = () => mounted.container.querySelector(".message-source-match");
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  const target = () => mounted.container.querySelector(".message-find-source-target");
+  const description = () => mounted.container.querySelector(".session-content-find-count span")?.textContent;
   try {
     await setMessageFindQuery(mounted, "sample.md");
     assert.equal(count(), "1/2");
-    assert.equal(snippet()?.querySelector("mark")?.textContent, "sample.md");
-    assert.equal(snippet()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "0");
-    assert.match(snippet()?.textContent ?? "", /C:\/users\/admin\/documents\/sample.md/);
+    assert.equal(description(), "Source Match");
+    assert.equal(target()?.tagName, "A");
+    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "0");
+    assert.equal(target()?.getAttribute("href"), "C:/users/admin/documents/sample.md");
     assert.equal(mounted.container.querySelector(".rich-text a")?.textContent, "filename");
     assert.equal(highlights.get("withmate-find-current")?.ranges.length ?? 0, 0);
+    await act(async () => (target() as HTMLAnchorElement).click());
+    assert.equal(opened.length, 1);
+    assert.match(opened[0], /sample.md/);
     await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
     assert.equal(count(), "2/2");
-    assert.equal(snippet()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "1");
+    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "1");
     await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Previous match']")!.click());
     assert.equal(count(), "1/2");
     await setMessageFindQuery(mounted, "filename");
     assert.equal(count(), "1/1");
-    assert.equal(snippet(), null);
+    assert.equal(target(), null);
     assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "filename");
     await setMessageFindQuery(mounted, "needle");
     assert.equal(count(), "1/1");
@@ -1789,15 +1922,15 @@ test("chat Find shows raw-only link matches without replacing Markdown or duplic
     await setMessageFindQuery(mounted, "sample.md");
     await mounted.rerender({ messageViewMode: "source" });
     assert.equal(count(), "1/2");
-    assert.equal(snippet(), null);
+    assert.equal(target(), null);
     assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "sample.md");
     await mounted.rerender({ messageViewMode: "preview" });
-    assert.ok(snippet());
+    assert.equal(target()?.tagName, "A");
     await act(async () => {
       mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']")!.blur();
       mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Close find']")!.click();
     });
-    assert.equal(snippet(), null);
+    assert.equal(target(), null);
     assert.equal(mounted.container.querySelector(".rich-text a")?.textContent, "filename");
   } finally { await mounted.cleanup(); }
 });
@@ -1807,7 +1940,7 @@ test("chat Find shows raw-only link matches without replacing Markdown or duplic
 // claim = "原文一致への移動後はDOM更新で読取位置を強制せず、別の一致を選択すれば再び移動できる"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: 全履歴Findと結果への移動" }
 // fault = "一致選択後の本文更新や仮想行変更のたびに同じ原文一致へスクロールする"
-// observable = "原文一致へのスクロール要求回数と選択中の一致"
+// observable = "原文一致選択時とDOM更新後のscrollTop、強調要素と現在位置"
 // observation_boundary = "component-behavior"
 // scope = "SessionMessageColumnの原文一致とDOM更新"
 // lifecycle = "permanent"
@@ -1823,38 +1956,43 @@ test("chat Find preserves the reading position on DOM updates after navigating t
     isRunning: true,
     liveRunAssistantText: "streaming response",
   });
-  let scrollRequests = 0;
-  mounted.dom.window.HTMLElement.prototype.scrollIntoView = function () {
-    if (this.matches(".message-source-match mark")) scrollRequests += 1;
+  const originalRect = mounted.dom.window.HTMLElement.prototype.getBoundingClientRect;
+  mounted.dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
+    return this.matches("a.message-find-source-target")
+      ? createRect({ left: 0, top: 1500, width: 200, height: 40 }) : originalRect.call(this);
   };
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  const list = mounted.messageListRef.current!;
   try {
     await setMessageFindQuery(mounted, "sample.md");
     await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/2");
-    assert.equal(scrollRequests, 1);
+    assert.equal(count(), "1/2");
+    assert.ok(list.scrollTop > 0);
+    list.scrollTop = 100;
     await act(async () => {
       const node = mounted.dom.window.document.createElement("span");
       node.textContent = "unrelated update";
       mounted.messageListRef.current!.appendChild(node);
     });
     await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
-    assert.equal(scrollRequests, 1);
+    assert.equal(list.scrollTop, 100);
     await mounted.rerender({ isRunning: true, liveRunAssistantText: "streaming response updated" });
     await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
-    assert.equal(scrollRequests, 1);
+    assert.equal(list.scrollTop, 100);
     await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
     await act(async () => new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve())));
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/2");
-    assert.equal(scrollRequests, 2);
+    assert.equal(count(), "2/2");
+    assert.ok(list.scrollTop > 100);
+    assert.equal(mounted.container.querySelector(".message-find-source-target")?.textContent, "second");
   } finally { await mounted.cleanup(); }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliaryのpaged Findは保存原文一致・未保存tail・pendingを各1回数え、原文抜粋と履歴page移動を選択結果へ対応させる"
+// claim = "Main/Auxiliaryのpaged Findは保存原文一致・未保存tail・pendingを各1回数え、要素強調と履歴page移動を対応させ、tailとpendingのmode切替選択を維持する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/887; docs/design/desktop-ui.md: 全履歴Find" }
-// fault = "保存結果ordinalを表示一致ordinalと誤解する、loaded保存本文を加算する、またはtail/pending原文一致の選択を失う"
-// observable = "Find件数と循環移動順、抜粋mark、onLoadMessagePageのhistory index"
+// fault = "保存結果ordinalを表示一致ordinalと誤解する、loaded保存本文を加算する、または循環移動やmode切替でtail/pending原文一致の選択を失う"
+// observable = "Find件数と循環移動順、強調anchorのlabelとpending所属、onLoadMessagePageのhistory index"
 // observation_boundary = "component-behavior"
 // scope = "SessionMessageColumnのpaged保存検索とtail/pending合流"
 // lifecycle = "permanent"
@@ -1880,24 +2018,93 @@ test("paged raw Find merges saved, tail and pending matches for Main and Auxilia
     }
     const mounted = await mountSessionMessageColumn({ sessionId, messages, component: Column,
       isRunning: true, pendingMessageText: "[pending](C:/pending/sample.md)" });
-    const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
-    const snippet = () => mounted.container.querySelector(".message-source-match")?.textContent ?? "";
+    const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+    const target = () => mounted.container.querySelector(".message-find-source-target");
     try {
       await setMessageFindQuery(mounted, "sample.md");
       assert.equal(count(), "1/3", sessionId);
-      assert.match(snippet(), /C:\/saved\/sample.md/);
+      assert.equal(target()?.textContent, "saved");
       assert.equal(loaded.at(-1), 49);
       const next = mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!;
       await act(async () => next.click());
       assert.equal(count(), "2/3");
-      assert.match(snippet(), /C:\/tail\/sample.md/);
+      assert.equal(target()?.textContent, "tail");
       assert.equal(loaded.at(-1), 50);
+      await mounted.rerender({ messageViewMode: "source" });
+      assert.equal(count(), "2/3");
+      await mounted.rerender({ messageViewMode: "preview" });
+      assert.equal(count(), "2/3");
       await act(async () => next.click());
       assert.equal(count(), "3/3");
-      assert.match(snippet(), /C:\/pending\/sample.md/);
+      assert.equal(target()?.textContent, "pending");
+      assert.ok(target()?.closest("[data-pending-message-body='true']"));
+      await mounted.rerender({ messageViewMode: "source" });
+      assert.equal(count(), "3/3");
+      await mounted.rerender({ messageViewMode: "preview" });
+      assert.equal(count(), "3/3");
       await act(async () => next.click());
       assert.equal(count(), "1/3");
-      assert.match(snippet(), /C:\/saved\/sample.md/);
+      assert.equal(target()?.textContent, "saved");
+    } finally { await mounted.cleanup(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryの保存Findはmode切替で原文範囲anchorを初回要求へ渡し返されたglobal ordinalのpageと選択へ移る"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/913" }
+// fault = "anchorを渡さず旧ordinalを使うかanchorOrdinalを無視して最初の保存pageを選ぶ"
+// observable = "searchConversationのanchorとoffset/stamp、Find現在位置、Source Highlight、読み込んだhistory index"
+// observation_boundary = "component-behavior"
+// scope = "paged Findの保存原文出現とmode切替"
+// lifecycle = "permanent"
+// impact = "長い履歴の選択中URLをSourceで確認すると別の保存結果へ移る"
+// distinction = "local切替testは保存APIとglobal ordinal page取得を通らない。2ownerと64件境界だけをcanned保存結果で検証する"
+// @end-test-value
+test("paged Find uses raw anchors and returned global ordinals across modes for both owners", async () => {
+  for (const sessionId of ["main", "auxiliary"]) {
+    const text = "[label](C:/needle.md) needle";
+    const messages: Message[] = [{ role: "assistant", text, historyIndex: 49 }];
+    const requests: Array<Parameters<NonNullable<SessionMessageColumnProps["searchConversation"]>>[0]> = [];
+    const loaded: number[] = [];
+    function Column(props: SessionMessageColumnProps) {
+      return React.createElement(SessionMessageColumn, {
+        ...props, conversationQueryOwner: sessionId,
+        searchConversation: async (request) => {
+          requests.push(request);
+          const offset = request.offset ?? 0;
+          const source = request.mode === "source";
+          return { status: "complete", stamp: { generationId: "generation", ownerIdentity: sessionId, contentRevision: 1, requestId: request.requestId },
+            incarnationId: "incarnation", messageCount: 1000, totalCount: 130, offset,
+            ...(!request.stamp && request.anchor ? { anchorOrdinal: source ? 65 : 1 } : {}),
+            items: Array.from({ length: Math.min(64, 130 - offset) }, (_, index) => {
+              const ordinal = offset + index;
+              return source
+                ? { messageIndex: ordinal === 65 ? 49 : ordinal + 100, occurrenceIndex: 0 }
+                : { messageIndex: ordinal < 2 ? 49 : ordinal + 100, occurrenceIndex: ordinal === 1 ? 1 : 0 };
+            }),
+          };
+        },
+        onLoadMessagePage: async (index) => { loaded.push(index); },
+      });
+    }
+    const mounted = await mountSessionMessageColumn({ sessionId, messages, component: Column });
+    const highlights = installMessageFindHighlights(mounted);
+    const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+    try {
+      await setMessageFindQuery(mounted, "needle");
+      await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+      assert.equal(count(), "2/130");
+      await mounted.rerender({ messageViewMode: "source" });
+      const firstSource = requests.find((request) => request.mode === "source" && !request.stamp);
+      assert.deepEqual(firstSource?.anchor, { messageIndex: 49, startOffset: text.indexOf("needle"), endOffset: text.indexOf("needle") + 6 });
+      assert.equal(count(), "66/130", sessionId);
+      assert.ok(requests.some((request) => request.mode === "source" && request.offset === 64 && request.stamp?.requestId === firstSource?.requestId));
+      assert.equal(loaded.at(-1), 49);
+      assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.startOffset, text.indexOf("needle"));
+      await mounted.rerender({ messageViewMode: "preview" });
+      assert.equal(count(), "2/130");
+      assert.equal(mounted.container.querySelector(".message-find-source-target")?.tagName, "A");
     } finally { await mounted.cleanup(); }
   }
 });
@@ -1987,7 +2194,7 @@ test("SessionMessageColumn の検索投影は本文・key・owner・現在履歴
   const second: Message = { role: "user", text: "[other](https://needle.example)" };
   const mounted = await mountSessionMessageColumn({ messages: [first, second], messageKeys: ["first", "second"] });
   const counter = await startSearchProjectionCounter();
-  const count = () => mounted.container.querySelector(".session-content-find-count")?.textContent;
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
   try {
     await setMessageFindQuery(mounted, "needle");
     assert.equal(await counter.take(), 2);
@@ -2273,7 +2480,7 @@ test("承認の詳細開閉と解除を通してFindは本文の一致だけを�
 // claim = "同じmessageの表示一致・原文一致の次にpending一致へ移動し、message削除後は残るpendingへ現在位置をclampする"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/887" }
 // fault = "表示と原文の別出現を失う、pendingを誤順序で数える、または結果減少後に選択を失う"
-// observable = "件数、現在highlightの所属node、原文抜粋のmark、message削除後の件数とhighlight"
+// observable = "件数、現在highlightの所属node、原文一致の強調anchor、message削除後の件数とhighlight"
 // observation_boundary = "component-behavior"
 // scope = "local chat Findの混在順序と現在位置clamp"
 // lifecycle = "permanent"
@@ -2347,8 +2554,9 @@ test("SessionMessageColumn の検索は表示・原文とpendingを順に数え�
     await act(async () => {
       nextButton.click();
     });
-    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "2/3");
-    assert.equal(mounted.container.querySelector(".message-source-match mark")?.textContent, "needle");
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent, "2/3");
+    assert.equal(mounted.container.querySelector(".message-find-source-target")?.tagName, "A");
+    assert.equal(mounted.container.querySelector(".session-content-find-count span")?.textContent, "Source Match");
     assert.equal(highlights.get("withmate-find-current")?.ranges.length ?? 0, 0);
     await act(async () => nextButton.click());
     assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "3/3");

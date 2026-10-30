@@ -30,6 +30,7 @@ import type {
 
 import type { GlossarySearchRequest } from "../../src-shared/glossary/glossary-contract.js";
 import type { ConversationQueryRequest, ConversationSearchRequest, ConversationNavigatorRequest, ConversationQueryCancelRequest } from "../../src-shared/session/conversation-page.js";
+import { isConversationSearchAnchor } from "../../src-shared/session/conversation-page.js";
 import {
   areSessionFileResourcesEqual,
   isFileRootGitHistoryComparisonDiffRequest,
@@ -271,6 +272,7 @@ export function registerSessionQueryHandlers(
     if (kind === "search") {
       const search = request as ConversationSearchRequest;
       if (typeof search.query !== "string" || search.query.length > 4096 || (search.mode !== "source" && search.mode !== "preview")) throw new TypeError("Conversation search is invalid.");
+      if (search.anchor !== undefined && !isConversationSearchAnchor(search.anchor)) throw new TypeError("Conversation search anchor is invalid.");
     } else if (!["all", "bookmarks"].includes((request as ConversationNavigatorRequest).filter)) throw new TypeError("Conversation navigator filter is invalid.");
     const window = deps.resolveEventWindow(event);
     if (!window) throw new Error("Conversation queries require a Session window.");

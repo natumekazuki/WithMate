@@ -1822,6 +1822,8 @@
 
 .session-content-find {
   display: flex;
+  max-width: calc(100% - 16px);
+  flex-wrap: wrap;
   align-items: center;
   justify-self: end;
   gap: 4px;
@@ -1851,28 +1853,16 @@
   text-align: center;
 }
 
-.message-source-match {
-  padding: 8px 10px;
-  border-left: 2px solid var(--character-sub);
-  background: var(--surface-deep);
-  overflow-wrap: anywhere;
-  font-size: 0.8rem;
-}
-
-.message-source-match-label {
+.session-content-find-description {
   display: block;
-  margin-bottom: 4px;
-  color: var(--muted);
-  font-size: 0.74rem;
+  white-space: nowrap;
+  font-size: 0.68rem;
 }
 
-.message-source-match code {
-  white-space: pre-wrap;
-}
-
-.message-source-match mark {
-  background: #fb923c;
-  color: #111827;
+.message-find-source-target {
+  outline: 2px solid #fb923c;
+  outline-offset: 2px;
+  background-color: color-mix(in srgb, #fb923c 14%, transparent);
 }
 
 .session-file-text-scroll,

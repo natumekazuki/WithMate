@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMessageSearchProjection, iterateMessageSearchMatches } from "../../src-shared/session/message-find.js";
+import { createMessageSearchProjection, getMessageSearchMatchSourceRange, iterateMessageSearchMatches, messageSearchSourceRangesCorrespond } from "../../src-shared/session/message-find.js";
 
 // @test-value v2
 // kind = "contract"
@@ -61,6 +61,13 @@ test("変換されたMarkdownの元出現を対応付ける", () => {
     ["needle[^b]\n\n[^a]: needle\n[^b]: needle", "needle", ["rendered", "rendered", "source"]],
     ["![needle](needle.png)", "needle", ["source", "source"]],
     ["```mermaid\nneedle\n```", "needle", ["source"]],
+    ["$needle$", "needle", ["rendered"]],
+    ["$$needle$$", "needle", ["source"]],
+    ["```math\nneedle\n```", "needle", ["source"]],
+    ["```Math\nneedle\n```", "needle", ["rendered"]],
+    ["needle<br>needle", "needle", ["rendered", "rendered"]],
+    ["needle<br>needle", "br", ["source"]],
+    ['needle<br class="needle">needle', "needle", ["rendered", "rendered", "rendered"]],
     ['visualize{"title":"needle.html","path":"C:/needle.html"}', "needle", ["rendered", "source"]],
     ['visualize{"path":"file:///work/needle%20test.html"}', "needle", ["rendered"]],
     [String.raw`:codex-file-citation{path="/work/a\q\"needle.md"}`, "needle", ["rendered"]],
@@ -73,5 +80,59 @@ test("変換されたMarkdownの元出現を対応付ける", () => {
     assert.deepEqual(matches.map((match) => match.kind), kinds, text);
     if (text === "&amp;amp;") assert.equal(matches[1].startOffset, 1);
     if (text.includes('"title"')) assert.equal(matches[1].startOffset, text.indexOf("needle"));
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "検索結果は連続した元原文範囲へ対応し、entity等token全体と包含されるraw一致は同一出現、部分overlapや生成文字をまたぐ一致は別出現として扱う"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/913" }
+// fault = "表示offsetを原文offsetとして利用するか、離れた原文範囲を一つの出現として対応付ける"
+// observable = "検索結果から取得する原文範囲とsource文字列、原文範囲同士の対応判定"
+// observation_boundary = "public-boundary"
+// scope = "PreviewとSourceの検索選択対応"
+// lifecycle = "permanent"
+// impact = "表示切替で同じmessage内の別出現が選ばれる"
+// distinction = "既存の件数testは選択維持に使う範囲を観測しない。小さいparser fixtureで変換境界を検証する"
+// @end-test-value
+test("検索結果の原文範囲は連続対応できる出現だけを返す", () => {
+  for (const [text, query, expected] of [
+    ["**needle** needle", "needle", ["needle", "needle"]],
+    ["&amp; tail", "&", ["&amp;"]],
+    ["foo\r\nneedle", "foo\r\nneedle", ["foo\r\nneedle"]],
+    ["a**b**", "ab", [undefined]],
+    ["first<br>second", "firstsecond", [undefined]],
+    ["main[^a][^b]\n\n[^a]: needle\n[^b]: body", "needle b", [undefined]],
+    ["needle[^b]\n\n[^a]: needle\n[^b]: needle", "needle", ["needle", "needle", "needle"]],
+  ] as const) {
+    const projection = createMessageSearchProjection(text);
+    const matches = [...iterateMessageSearchMatches(projection, query, "preview")];
+    assert.deepEqual(matches.map((match) => {
+      const range = getMessageSearchMatchSourceRange(projection, match);
+      return range && text.slice(range.startOffset, range.endOffset);
+    }), expected, text);
+    if (text === "**needle** needle") {
+      assert.deepEqual(matches.map((match) => getMessageSearchMatchSourceRange(projection, match)), [
+        { startOffset: 2, endOffset: 8 }, { startOffset: 11, endOffset: 17 },
+      ]);
+    }
+    if (text.startsWith("needle[^b]")) {
+      assert.deepEqual(matches.map((match) => getMessageSearchMatchSourceRange(projection, match)?.startOffset), [0, text.lastIndexOf("needle"), text.indexOf("needle", 1)]);
+    }
+  }
+  const projection = createMessageSearchProjection("[label](needle)", undefined, "source");
+  const match = [...iterateMessageSearchMatches(projection, "needle", "source")][0];
+  assert.deepEqual(getMessageSearchMatchSourceRange(projection, match), { startOffset: 8, endOffset: 14 });
+  const tokenRange = { startOffset: 10, endOffset: 15 };
+  for (const [range, expected] of [
+    [{ startOffset: 10, endOffset: 15 }, true],
+    [{ startOffset: 10, endOffset: 11 }, true],
+    [{ startOffset: 11, endOffset: 14 }, true],
+    [{ startOffset: 9, endOffset: 12 }, false],
+    [{ startOffset: 14, endOffset: 16 }, false],
+    [{ startOffset: 15, endOffset: 16 }, false],
+  ] as const) {
+    assert.equal(messageSearchSourceRangesCorrespond(tokenRange, range), expected);
+    assert.equal(messageSearchSourceRangesCorrespond(range, tokenRange), expected);
   }
 });

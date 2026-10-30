@@ -8,6 +8,7 @@ export type SessionContentFindBarProps = {
   matchCount: number;
   loading?: boolean;
   unavailable?: boolean;
+  matchDescription?: string;
   onQueryChange: (query: string) => void;
   onPrevious: () => void;
   onNext: () => void;
@@ -21,6 +22,7 @@ export function SessionContentFindBar({
   matchCount,
   loading = false,
   unavailable = false,
+  matchDescription,
   onQueryChange,
   onPrevious,
   onNext,
@@ -74,6 +76,7 @@ export function SessionContentFindBar({
       />
       <span className="session-content-find-count" role="status">
         {loading ? <LoadingIndicator inline label="Finding Messages" /> : unavailable ? "—" : matchCount > 0 ? `${currentMatch + 1}/${matchCount}` : "0/0"}
+        {!loading && !unavailable && matchDescription ? <span className="session-content-find-description">{matchDescription}</span> : null}
       </span>
       <button type="button" onClick={onPrevious} disabled={matchCount === 0 || unavailable} aria-label="Previous match">↑</button>
       <button type="button" onClick={onNext} disabled={matchCount === 0 || unavailable} aria-label="Next match">↓</button>
