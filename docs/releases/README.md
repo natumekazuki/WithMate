@@ -44,7 +44,8 @@ WithMateのrepository内リリースノートです。各リリースで利用�
 | v6.3.29-preview.4 | [WithMate v6.3.29-preview.4](v6.3.29-preview.4.md) |
 | v6.3.29-preview.3 | [WithMate v6.3.29-preview.3](v6.3.29-preview.3.md) |
 | v6.3.29-preview.2 | [WithMate v6.3.29-preview.2](v6.3.29-preview.2.md) |
-| v6.3.29-preview.1 | [WithMate v6.3.29-preview.1](v6.3.29.md) |
+| v6.3.29-preview.1 | [WithMate v6.3.29-preview.1](v6.3.29-preview.1.md) |
+| v6.3.29-preview.0 | [WithMate v6.3.29-preview.0](v6.3.29-preview.0.md) |
 | v6.3.28 | [WithMate v6.3.28](v6.3.28.md) |
 | v6.3.27 | [WithMate v6.3.27](v6.3.27.md) |
 | v6.3.26 | [WithMate v6.3.26](v6.3.26.md) |
