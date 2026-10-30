@@ -6,10 +6,10 @@
 .topic-overview-card > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .topic-overview-card > span:not(.topic-overview-actors), .topic-overview-card > small { color: var(--muted); font-size: 11px; }
 .topic-overview-card > small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.topic-overview-actors { display: flex; align-items: center; gap: 7px; min-height: 24px; overflow: hidden; }
+.topic-overview-actors { display: flex; align-items: center; gap: 4px; min-height: 32px; overflow: hidden; }
 .topic-overview-actors .session-graph-identity { flex-shrink: 0; }
 .topic-overview-actors .session-graph-actor-name { display: none; }
-.topic-overview-actors .character-avatar.small { width: 24px; height: 24px; }
+.topic-overview-actors .character-avatar.small { width: 32px; height: 32px; }
 .topic-overview .topic-overview-relation { position: absolute; transform: translate(-50%, -50%); cursor: pointer; font-size: 12px; line-height: 1.5; }
 .topic-overview-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .topic-overview-footer > div { display: flex; align-items: center; gap: 10px; }
