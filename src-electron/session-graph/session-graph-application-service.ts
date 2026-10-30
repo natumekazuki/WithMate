@@ -1,6 +1,6 @@
 import type { SessionGraphIdentity, SessionGraphOperation, SessionGraphOperationResult, SessionGraphOwner, SessionGraphRequest } from "../../src-shared/session-graph/session-graph-contract.js";
-import { sessionGraphOperationRequestSchemas } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { sessionGraphStorageRequestSchemas, type SessionGraphStorageOperation, type SessionGraphStorageRequest, type SessionGraphStorageResult, type SessionGraphUiReadOperation, type SessionGraphUiReadRequest, type SessionGraphUiReadResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 
 export type ResolvedSessionGraphSession = {
   owner: SessionGraphOwner;
@@ -9,9 +9,9 @@ export type ResolvedSessionGraphSession = {
   generation: object | string;
 };
 export type SessionGraphStore = {
-  execute<K extends SessionGraphOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[]): Promise<SessionGraphOperationResult<K>>;
+  execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[]): Promise<SessionGraphStorageResult<K>>;
 };
-export type SessionGraphReadOperation = Exclude<SessionGraphOperation, "apply">;
+export type SessionGraphReadOperation = SessionGraphUiReadOperation;
 export const sameSessionGraphOwner = (left: SessionGraphOwner, right: SessionGraphOwner): boolean => left.sessionId === right.sessionId && left.incarnationId === right.incarnationId;
 
 export type SessionGraphApplicationServiceDeps = {
@@ -28,11 +28,17 @@ export class SessionGraphApplicationService {
     this.#listeners.add(listener);
     return () => { this.#listeners.delete(listener); };
   }
-  read<K extends SessionGraphReadOperation>(sessionId: string, operation: K, request: SessionGraphRequest<K>) {
-    return this.executeTrusted(sessionId, operation, request, () => true);
+  read<K extends SessionGraphReadOperation>(sessionId: string, operation: K, request: SessionGraphUiReadRequest<K>) {
+    return this.readTrusted(sessionId, operation, request, () => true);
   }
   async executeTrusted<K extends SessionGraphOperation>(sessionId: string, operation: K, request: SessionGraphRequest<K>, guard: () => boolean, admission?: RuntimeTurnAdmission, expectedOwner?: SessionGraphOwner): Promise<SessionGraphOperationResult<K>> {
-    const parsed = sessionGraphOperationRequestSchemas[operation].parse(request) as SessionGraphRequest<K>;
+    return this.execute(sessionId, operation, request, guard, admission, expectedOwner) as Promise<SessionGraphOperationResult<K>>;
+  }
+  readTrusted<K extends SessionGraphReadOperation>(sessionId: string, operation: K, request: SessionGraphUiReadRequest<K>, guard: () => boolean, expectedOwner?: SessionGraphOwner): Promise<SessionGraphUiReadResult<K>> {
+    return this.execute(sessionId, operation, request, guard, undefined, expectedOwner) as Promise<SessionGraphUiReadResult<K>>;
+  }
+  private async execute<K extends SessionGraphStorageOperation>(sessionId: string, operation: K, request: SessionGraphStorageRequest<K>, guard: () => boolean, admission?: RuntimeTurnAdmission, expectedOwner?: SessionGraphOwner): Promise<SessionGraphStorageResult<K>> {
+    const parsed = sessionGraphStorageRequestSchemas[operation].parse(request) as SessionGraphStorageRequest<K>;
     const captured = await this.#deps.resolveSession(sessionId);
     if (!captured || (expectedOwner && !sameSessionGraphOwner(expectedOwner, captured.owner))) throw new Error("Session Graph owner is unavailable.");
     const store = this.#deps.getStore();

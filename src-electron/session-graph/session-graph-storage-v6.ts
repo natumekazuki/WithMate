@@ -1,21 +1,116 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphOperationResult, SessionGraphRecordInput, SessionGraphRecord, SessionGraphRelation, SessionGraphTopic, SessionGraphEndpoint } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphRecordInput, SessionGraphRecord, SessionGraphRelation, SessionGraphTopic, SessionGraphEndpoint } from "../../src-shared/session-graph/session-graph-contract.js";
 import { SESSION_GRAPH_RELATION_LIMIT } from "../../src-shared/session-graph/session-graph-contract.js";
-import { sessionGraphOperationRequestSchemas, sessionGraphRecordSchema } from "../../src-shared/session-graph/session-graph-operation-schema.js";
+import { sessionGraphRecordSchema } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { sessionGraphStorageRequestSchemas, type SessionGraphStorageOperation, type SessionGraphStorageRequest, type SessionGraphStorageResult, type SessionGraphOverviewCategory, type SessionGraphOverviewGroup, type SessionGraphRecordSummary, type SessionGraphTopicOverview, type SessionGraphTopicRelation } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 
 type JsonRow = { payload_json: string };
 const decode = <T>(row: JsonRow): T => JSON.parse(row.payload_json) as T;
+const summaryColumns = ["id", "topicId", "title", "kind", "adoption", "progress", "result", "resolution", "validity", "updatedAt"] as const;
+const summaryProjection = `json_object(${summaryColumns.flatMap((key) => [`'${key}'`, `json_extract(payload_json, '$.${key}')`]).join(",")}) AS payload_json`;
+const categoryPredicate: Record<SessionGraphOverviewCategory, string> = {
+  requirements: "kind = 'requirement'", constraints: "kind = 'constraint'",
+  decisions: "kind = 'decision' AND json_extract(payload_json, '$.adoption') = 'accepted'",
+  activities: "kind = 'activity'", observations: "kind = 'observation'",
+  issues: "kind = 'issue' AND COALESCE(json_extract(payload_json, '$.resolution'), 'open') = 'open'",
+};
+const emptyGroup = (): SessionGraphOverviewGroup => ({ count: 0, states: {}, records: [] });
+function addSummary(group: SessionGraphOverviewGroup, record: SessionGraphRecordSummary): void {
+  group.count++;
+  for (const key of ["adoption", "progress", "result", "resolution"] as const) {
+    if (record[key]) { const state = `${key}:${record[key]}`; group.states[state] = (group.states[state] ?? 0) + 1; }
+  }
+  if (record.kind === "activity" && !record.progress) group.states["progress:unspecified"] = (group.states["progress:unspecified"] ?? 0) + 1;
+  if (record.kind === "observation" && !record.result) group.states["result:unspecified"] = (group.states["result:unspecified"] ?? 0) + 1;
+  if (group.records.length < 3) group.records.push(record);
+}
+function readSummary(row: JsonRow): SessionGraphRecordSummary {
+  const value = decode<Record<string, unknown>>(row);
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== null)) as SessionGraphRecordSummary;
+}
 
 export class SessionGraphStorageV6 {
   private readonly db: DatabaseSync;
   constructor(dbPath: string) { this.db = openAppDatabase(dbPath); ensureV6Schema(this.db); }
   close(): void { this.db.close(); }
 
-  execute<K extends SessionGraphOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphRequest<K>, identity?: SessionGraphIdentity, actorSnapshots: SessionGraphIdentity[] = []): SessionGraphOperationResult<K> {
-    const input = sessionGraphOperationRequestSchemas[operation].parse(request);
+  private recordRecency(owner: SessionGraphOwner, topicId: string) {
+    const row = this.db.prepare("SELECT min(updated_at) AS oldestUpdatedAt, max(updated_at) AS newestUpdatedAt FROM session_graph_records_v6 WHERE session_id = ? AND topic_id = ?").get(owner.sessionId, topicId) as { oldestUpdatedAt: string | null; newestUpdatedAt: string | null };
+    return { ...(row.oldestUpdatedAt ? { oldestUpdatedAt: row.oldestUpdatedAt } : {}), ...(row.newestUpdatedAt ? { newestUpdatedAt: row.newestUpdatedAt } : {}) };
+  }
+
+  private overview(owner: SessionGraphOwner, input: SessionGraphStorageRequest<"overview">, revision: number) {
+    const offset = input.offset ?? 0, limit = input.limit ?? 50;
+    const total = (this.db.prepare("SELECT count(*) AS n FROM session_graph_topics_v6 WHERE session_id = ?").get(owner.sessionId) as { n: number }).n;
+    const topics = this.db.prepare("SELECT id, title, created_at AS createdAt, updated_at AS updatedAt FROM session_graph_topics_v6 WHERE session_id = ? ORDER BY title, id LIMIT ? OFFSET ?").all(owner.sessionId, limit, offset) as SessionGraphTopic[];
+    const items: SessionGraphTopicOverview[] = topics.map((topic) => {
+      const recency = this.recordRecency(owner, topic.id);
+      const recordCount = (this.db.prepare("SELECT count(*) AS n FROM session_graph_records_v6 WHERE session_id = ? AND topic_id = ?").get(owner.sessionId, topic.id) as { n: number }).n;
+      const item: SessionGraphTopicOverview = { ...topic, recordCount, recency, latestRecordUpdatedAt: recency.newestUpdatedAt,
+        requirements: emptyGroup(), constraints: emptyGroup(), decisions: emptyGroup(), activities: emptyGroup(), observations: emptyGroup(), issues: emptyGroup(), actors: [] };
+      const actors = new Map<string, SessionGraphTopicOverview["actors"][number]>();
+      const rows = this.db.prepare(`SELECT ${summaryProjection}, json_extract(payload_json, '$.actorSnapshot') AS actor_json FROM session_graph_records_v6
+        WHERE session_id = ? AND topic_id = ? AND json_extract(payload_json, '$.validity') IS NULL ORDER BY updated_at DESC, id`).all(owner.sessionId, topic.id) as Array<JsonRow & { actor_json: string }>;
+      for (const row of rows) {
+        const record = readSummary(row);
+        const category = record.kind === "requirement" ? "requirements" : record.kind === "constraint" ? "constraints"
+          : record.kind === "decision" && record.adoption === "accepted" ? "decisions" : record.kind === "activity" ? "activities"
+          : record.kind === "observation" ? "observations" : record.kind === "issue" && record.resolution !== "resolved" ? "issues" : null;
+        if (category) addSummary(item[category], record);
+        if (record.kind === "activity") {
+          const identity = JSON.parse(row.actor_json) as SessionGraphIdentity;
+          let actor = actors.get(identity.sessionId);
+          if (!actor) { actor = { identity, activities: emptyGroup() }; actors.set(identity.sessionId, actor); }
+          addSummary(actor.activities, record);
+        }
+      }
+      item.actors = [...actors.values()].sort((a, b) => a.identity.sessionId.localeCompare(b.identity.sessionId));
+      return item;
+    });
+    const range = this.db.prepare(`SELECT min(latest) AS oldestUpdatedAt, max(latest) AS newestUpdatedAt FROM
+      (SELECT max(updated_at) AS latest FROM session_graph_records_v6 WHERE session_id = ? GROUP BY topic_id)`).get(owner.sessionId) as { oldestUpdatedAt: string | null; newestUpdatedAt: string | null };
+    const recency = { ...(range.oldestUpdatedAt ? { oldestUpdatedAt: range.oldestUpdatedAt } : {}), ...(range.newestUpdatedAt ? { newestUpdatedAt: range.newestUpdatedAt } : {}) };
+    const topicRelations = this.db.prepare(`SELECT f.topic_id AS fromTopicId, t.topic_id AS toTopicId, json_extract(r.payload_json, '$.kind') AS kind, count(*) AS count
+      FROM session_graph_relations_v6 r JOIN session_graph_records_v6 f ON f.session_id = r.session_id AND f.id = r.from_id
+      JOIN session_graph_records_v6 t ON t.session_id = r.session_id AND t.id = r.to_id
+      WHERE r.session_id = ? AND f.topic_id != t.topic_id GROUP BY f.topic_id, t.topic_id, json_extract(r.payload_json, '$.kind') ORDER BY f.topic_id, t.topic_id, json_extract(r.payload_json, '$.kind')`).all(owner.sessionId) as SessionGraphTopicRelation[];
+    const hasMore = offset + items.length < total;
+    return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0, recency, topicRelations };
+  }
+
+  private topicRecords(owner: SessionGraphOwner, input: SessionGraphStorageRequest<"topic_records">, revision: number) {
+    const offset = input.offset ?? 0, limit = input.limit ?? 50;
+    const actor = input.actorSessionId ? " AND json_extract(payload_json, '$.actor.sessionId') = ?" : "";
+    const params = [owner.sessionId, input.topicId, ...(input.actorSessionId ? [input.actorSessionId] : [])];
+    const predicate = `session_id = ? AND topic_id = ? AND json_extract(payload_json, '$.validity') IS NULL AND ${categoryPredicate[input.category]}${actor}`;
+    const total = (this.db.prepare(`SELECT count(*) AS n FROM session_graph_records_v6 WHERE ${predicate}`).get(...params) as { n: number }).n;
+    const items = (this.db.prepare(`SELECT ${summaryProjection} FROM session_graph_records_v6 WHERE ${predicate} ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`).all(...params, limit, offset) as JsonRow[]).map(readSummary);
+    const hasMore = offset + items.length < total;
+    return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0 };
+  }
+
+  private topicRelations(owner: SessionGraphOwner, input: SessionGraphStorageRequest<"topic_relations">, revision: number) {
+    const offset = input.offset ?? 0, limit = input.limit ?? 50;
+    const selection = `FROM session_graph_relations_v6 r JOIN session_graph_records_v6 f ON f.session_id = r.session_id AND f.id = r.from_id
+      JOIN session_graph_records_v6 t ON t.session_id = r.session_id AND t.id = r.to_id
+      WHERE r.session_id = ? AND f.topic_id = ? AND t.topic_id = ? AND json_extract(r.payload_json, '$.kind') = ?`;
+    const params = [owner.sessionId, input.fromTopicId, input.toTopicId, input.kind];
+    const total = (this.db.prepare(`SELECT count(*) AS n ${selection}`).get(...params) as { n: number }).n;
+    const items = (this.db.prepare(`SELECT r.payload_json ${selection} ORDER BY r.id LIMIT ? OFFSET ?`).all(...params, limit, offset) as JsonRow[]).map(decode<SessionGraphRelation>);
+    const ids = [...new Set(items.flatMap((relation) => [relation.fromId, relation.toId]))];
+    const endpoints = ids.length ? (this.db.prepare(`SELECT ${summaryProjection} FROM session_graph_records_v6 WHERE session_id = ? AND id IN (${ids.map(() => "?").join(",")}) ORDER BY id`).all(owner.sessionId, ...ids) as JsonRow[]).map((row) => {
+      const { id, topicId, title, kind, validity } = readSummary(row);
+      return { id, topicId, title, kind, ...(validity ? { validity } : {}) };
+    }) : [];
+    const hasMore = offset + items.length < total;
+    return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0, endpoints };
+  }
+
+  execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots: SessionGraphIdentity[] = []): SessionGraphStorageResult<K> {
+    const input = sessionGraphStorageRequestSchemas[operation].parse(request);
     if (operation === "apply") assertRuntimeTurnAdmission();
     this.db.exec(operation === "apply" ? "BEGIN IMMEDIATE" : "BEGIN");
     try {
@@ -30,10 +125,16 @@ export class SessionGraphStorageV6 {
         const total = (this.db.prepare("SELECT count(*) AS n FROM session_graph_topics_v6 WHERE session_id = ?").get(owner.sessionId) as { n: number }).n;
         const items = this.db.prepare("SELECT id, title, created_at AS createdAt, updated_at AS updatedAt FROM session_graph_topics_v6 WHERE session_id = ? ORDER BY title, id LIMIT ? OFFSET ?").all(owner.sessionId, limit, offset) as SessionGraphTopic[];
         output = { status: "ok", revision, items, total, offset, hasMore: offset + items.length < total, incomplete: offset + items.length < total || offset > 0 };
-      } else output = this.read(owner, operation, input, revision);
+      } else if (operation === "overview") output = this.overview(owner, input as SessionGraphStorageRequest<"overview">, revision);
+      else if (operation === "topic_relations") output = this.topicRelations(owner, input as SessionGraphStorageRequest<"topic_relations">, revision);
+      else if (operation === "topic_records") output = this.topicRecords(owner, input as SessionGraphStorageRequest<"topic_records">, revision);
+      else {
+        output = this.read(owner, operation as SessionGraphOperation, input, revision);
+        if (operation === "get_topic_view") Object.assign(output as object, { recency: this.recordRecency(owner, (input as SessionGraphRequest<"get_topic_view">).topicId) });
+      }
       if (operation === "apply") assertRuntimeTurnAdmission();
       this.db.exec("COMMIT");
-      return output as SessionGraphOperationResult<K>;
+      return output as SessionGraphStorageResult<K>;
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 

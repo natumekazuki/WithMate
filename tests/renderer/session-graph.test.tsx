@@ -8,12 +8,86 @@ import type { SessionGraphRecord } from "../../src-shared/session-graph/session-
 import { layoutSessionGraph } from "../../src/session-graph/graph-layout.js";
 import { projectSessionGraph } from "../../src/session-graph/graph-overview.js";
 import type { SessionGraphRelation } from "../../src-shared/session-graph/session-graph-contract.js";
-import { sessionGraphStatuses } from "../../src/session-graph/SessionGraphPreview.js";
-import { SessionGraphPreview, type SessionGraphPreviewMemory } from "../../src/session-graph/SessionGraphPreview.js";
+import { sessionGraphStatuses } from "../../src/session-graph/SessionGraphTopicView.js";
+import { SessionGraphTopicView as SessionGraphPreview, type SessionGraphTopicMemory as SessionGraphPreviewMemory } from "../../src/session-graph/SessionGraphTopicView.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { MessageRichText } from "../../src/ui/markdown/MessageRichText.js";
 import { PreviewWheelZoomStepContext } from "../../src/settings/preview-zoom-settings-context.js";
+
+const recordRecency = { oldestUpdatedAt: "2026-10-24T00:00:00Z", newestUpdatedAt: "2026-10-24T00:00:00Z" };
+
+// @test-value v2
+// kind = "contract"
+// claim = "Topic全体の時間幅と最新日時を未取得page・集約・展開・選択によらず使い、同率最新を全件示す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/895" }
+// fault = "取得済みpageや表示中の区間で最新と補間基準を再計算するか、集約の先頭日時で最新を失うか、選択で背景または配置を変える"
+// observable = "nodeの背景custom property・data-latest・更新日時のaccessible説明、選択前後の座標と倍率"
+// observation_boundary = "component-behavior"
+// scope = "SessionGraphTopicViewの全Topic比較情報の表示連携"
+// lifecycle = "permanent"
+// impact = "未取得の新記録があるのに取得済み記録を最新と誤認させ、集約や詳細操作で時間比較が変わる"
+// distinction = "純粋関数testはcomponentがserver rangeを渡すことや集約最大日時を使うことを保証しない"
+// @end-test-value
+test("topic recency keeps the full comparison range through paging expansion and selection", async () => {
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
+  const descriptors = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window }, document: { configurable: true, value: dom.window.document },
+    IS_REACT_ACT_ENVIRONMENT: { configurable: true, value: true },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const { records, relations } = chainRecords(55);
+  const recency = { oldestUpdatedAt: "2026-10-01T00:00:00Z", newestUpdatedAt: "2026-10-11T00:00:00Z" };
+  records.forEach((item, index) => { item.updatedAt = index === 0 ? recency.oldestUpdatedAt : index === 50 || index === 54 ? recency.newestUpdatedAt : "2026-10-06T00:00:00Z"; });
+  const api = {
+    readSessionGraph: (async (_id: string, operation: string, request: { ids?: string[]; offset?: number; limit?: number }) => {
+      if (operation === "list_topics") return { status: "ok", revision: 1, items: [{ id: "topic", title: "Topic" }], total: 1, offset: 0, hasMore: false, incomplete: false };
+      const offset = request.offset ?? 0;
+      const items = operation === "get" ? records.filter((item) => request.ids?.includes(item.id)) : records.slice(offset, offset + (request.limit ?? 40));
+      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore: offset + items.length < records.length,
+        incomplete: false, recency, relations, externalEndpoints: [], relationsTruncated: false, relationOffset: 0, relationsHasMore: false };
+    }) as WithMateWindowApi["readSessionGraph"],
+    subscribeSessionGraph: () => () => {},
+  };
+  const doc = dom.window.document;
+  const nodes = () => [...doc.querySelectorAll<HTMLButtonElement>(".session-graph-node")];
+  const node = (id: string) => nodes().find((element) => element.querySelector(".session-graph-node-title")?.textContent === id)!;
+  const color = (element: HTMLElement) => element.style.getPropertyValue("--session-graph-recency");
+  const click = async (element: Element | null) => { assert.ok(element); await act(async () => (element as HTMLElement).click()); };
+  try {
+    await act(async () => root.render(<SessionGraphPreview api={api} sessionId="main" onOpenPath={() => {}} />));
+    assert.equal(doc.querySelector(".session-graph-record-status")?.textContent, "40 / 55 Records Loaded");
+    assert.equal(color(doc.querySelector<HTMLElement>(".session-graph-group")!), "#263243");
+    assert.equal(doc.querySelectorAll(".session-graph-node[data-latest='true']").length, 0);
+    await click(doc.querySelector(".session-graph-load-more"));
+    const aggregate = doc.querySelector<HTMLButtonElement>(".session-graph-group")!;
+    assert.equal(aggregate.dataset.latest, "true");
+    assert.equal(color(aggregate), "#34465A");
+    assert.match(aggregate.getAttribute("aria-label") ?? "", /Latest In Topic\. Updated/);
+    assert.equal(node("node-54").dataset.latest, "true");
+    let expansions = 0;
+    while (doc.querySelector(".session-graph-group")) {
+      assert.ok(expansions++ < 10);
+      await click([...doc.querySelectorAll(".session-graph-group")].at(-1)!);
+    }
+    assert.equal(node("node-50").dataset.latest, "true");
+    assert.equal(color(node("node-50")), "#34465A");
+    const middle = nodes().find((element) => element.dataset.latest !== "true")!;
+    assert.equal(color(middle), "#263243");
+    await click(doc.querySelector("button[aria-label='Zoom In']"));
+    const positions = () => nodes().map((element) => [element.textContent, element.style.left, element.style.top, color(element), element.dataset.latest]);
+    const before = positions();
+    await click(node("node-50"));
+    assert.deepEqual(positions(), before);
+    assert.match(doc.querySelector(".session-graph-zoom")?.textContent ?? "", /110%/);
+    assert.equal(doc.querySelector(".session-graph-details time")?.getAttribute("datetime"), recency.newestUpdatedAt);
+    assert.match(node("node-50").querySelector(".sr-only")?.textContent ?? "", /Latest In Topic\. Updated/);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of descriptors) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -51,7 +125,7 @@ test("graph topic paging rebuilds the loaded revision after renames without losi
         return { status: "ok", revision, items, total: topics.length, offset, hasMore: offset + items.length < topics.length, incomplete: offset > 0 || offset + items.length < topics.length };
       }
       return { status: "ok", revision, items: [{ ...record("record"), topicId: request.topicId ?? "t000", title: "Selected Record", detail: "Retained Detail" }],
-        total: 1, offset: 0, hasMore: false, incomplete: false, relationsTruncated: false, relationOffset: 0, relationsHasMore: false, relations: [], externalEndpoints: [] };
+        total: 1, offset: 0, hasMore: false, incomplete: false, recency: recordRecency, relationsTruncated: false, relationOffset: 0, relationsHasMore: false, relations: [], externalEndpoints: [] };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: (listener: (owner: string) => void) => { notify = listener; return () => {}; },
   };
@@ -151,7 +225,7 @@ test("graph preview keeps character ownership separate from content and adoption
       if (operation === "list_topics") return { status: "ok", revision, items: [{ id: "topic", title: "Topic" }], total: 1, offset: 0, hasMore: false, incomplete: false };
       const items = operation === "get" ? records.filter((item) => request.ids?.includes(item.id)) : records;
       return { status: "ok", revision, items, total: items.length, offset: 0, hasMore: false, incomplete: false,
-        relationsTruncated: false, relationOffset: 0, relationsHasMore: false, relations: [], externalEndpoints: [] };
+        recency: recordRecency, relationsTruncated: false, relationOffset: 0, relationsHasMore: false, relations: [], externalEndpoints: [] };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: (listener: (id: string) => void) => { notify = listener; return () => {}; },
   };
@@ -176,7 +250,7 @@ test("graph preview keeps character ownership separate from content and adoption
     await act(async () => nodes()[0].click());
     const detail = doc.querySelector(".session-graph-details")!;
     const fields = [...detail.querySelectorAll(".session-graph-fields dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]);
-    assert.deepEqual(fields, [["Origin", "Agent · agent source"], ["Adoption Origin", "User · Project Owner"], ["Actor Role", "Reviewer"]]);
+    assert.deepEqual(fields, [["Updated At", new Date(records[0].updatedAt).toLocaleString("en-US")], ["Origin", "Agent · agent source"], ["Adoption Origin", "User · Project Owner"], ["Actor Role", "Reviewer"]]);
     assert.equal(detail.querySelector(".session-graph-identity .session-graph-actor-name")?.textContent, "Character agent");
     assert.equal(detail.querySelector(".session-graph-recorder img")?.getAttribute("src"), "file:///C:/assets/recorder.png");
     await act(async () => doc.querySelector<HTMLButtonElement>("button[aria-label='Close Record Details']")!.click());
@@ -401,7 +475,7 @@ test("graph preview retains expanded ranges across record and topic navigation",
       const total = operation === "get" ? items.length : source.length;
       const hasMore = offset + items.length < total;
       const edges = truncated ? [...relations, ...Array.from({ length: 400 - relations.length }, (_, index) => ({ id: `external-${index}`, fromId: "outside", toId: "unloaded", kind: "related" }))] : relations;
-      return { status: "ok", revision: 1, items, total, offset, hasMore, incomplete: truncated || hasMore || offset > 0, relations: edges, externalEndpoints: [other, records[0]], relationsTruncated: truncated, relationOffset: 0, relationsHasMore: truncated };
+      return { status: "ok", revision: 1, items, total, offset, hasMore, recency: recordRecency, incomplete: truncated || hasMore || offset > 0, relations: edges, externalEndpoints: [other, records[0]], relationsTruncated: truncated, relationOffset: 0, relationsHasMore: truncated };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
@@ -528,7 +602,7 @@ test("graph preview completes relation scopes explicitly beyond the per-page lim
         continuations.push({ ids: request.ids!, relationOffset, expectedRevision: request.expectedRevision });
         if (failRelationPage) { failRelationPage = false; throw new Error("Relation page unavailable"); }
       }
-      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore,
+      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, recency: recordRecency,
         incomplete: hasMore || offset > 0 || relationsTruncated, relationsTruncated, relationOffset, relationsHasMore: relationsTruncated,
         relations: page, externalEndpoints: [{ id: "outside", topicId: "other", title: "Outside", kind: "requirement" }] };
     }) as WithMateWindowApi["readSessionGraph"],
@@ -611,7 +685,7 @@ test("graph page loading keeps the graph usable through busy, retry and completi
       });
       const items = records.slice(offset, offset + (request.limit ?? 40));
       const hasMore = offset + items.length < records.length;
-      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, incomplete: hasMore || offset > 0, relations, externalEndpoints: [], relationsTruncated: false, relationOffset: 0, relationsHasMore: false };
+      return { status: "ok", revision: 1, items, total: records.length, offset, hasMore, recency: recordRecency, incomplete: hasMore || offset > 0, relations, externalEndpoints: [], relationsTruncated: false, relationOffset: 0, relationsHasMore: false };
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
@@ -852,6 +926,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
         hasMore: operation === "get_topic_view" && selected === "alpha" && !request.offset,
         incomplete: false,
         relations: [relation, sameTopicRelation],
+        recency: recordRecency,
         externalEndpoints: [other, sameTopic],
         relationsTruncated: false,
         relationOffset: 0,
@@ -1119,7 +1194,7 @@ test("graph range return survives detail dismissal and never restores stale grap
       const offset = request.offset ?? 0;
       const items = source.slice(offset, offset + (request.limit ?? 200));
       const ids = new Set(items.map((item) => item.id));
-      return { status: "ok", revision, items, total: source.length, offset, hasMore: offset + items.length < source.length,
+      return { status: "ok", revision, items, total: source.length, offset, hasMore: offset + items.length < source.length, recency: recordRecency,
         incomplete: false, relations: relations().filter((edge) => ids.has(edge.fromId) || ids.has(edge.toId)), externalEndpoints: records(),
         relationsTruncated: false, relationOffset: 0, relationsHasMore: false };
     }) as WithMateWindowApi["readSessionGraph"],

@@ -25,7 +25,8 @@ import { SessionGraphApplicationService, type SessionGraphStore } from "../../sr
 import { SessionGraphRuntimeService } from "../../src-electron/session-graph/session-graph-runtime-service.js";
 import { SessionGraphStorageV6 } from "../../src-electron/session-graph/session-graph-storage-v6.js";
 import { getSessionGraphAgentRuntimeOperations } from "../../src-shared/session-graph/session-graph-operation-schema.js";
-import type { SessionGraphIdentity, SessionGraphOperation, SessionGraphOwner, SessionGraphRecord, SessionGraphRequest } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphIdentity, SessionGraphOwner, SessionGraphRecord } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphStorageOperation, SessionGraphStorageRequest } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 import { buildWithMateSessionGraphCli } from "../../scripts/build/build-withmate-memory-cli.js";
 
 const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111111",
@@ -59,7 +60,7 @@ async function fixture() {
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
   const graphStorage = new SessionGraphStorageV6(dbPath);
-  const graphStore: SessionGraphStore = { async execute<K extends SessionGraphOperation>(scope: SessionGraphOwner, operation: K, request: SessionGraphRequest<K>, identity?: SessionGraphIdentity, actors?: SessionGraphIdentity[]) {
+  const graphStore: SessionGraphStore = { async execute<K extends SessionGraphStorageOperation>(scope: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actors?: SessionGraphIdentity[]) {
     return graphStorage.execute(scope, operation, request, identity, actors);
   } };
   const graphApplication = new SessionGraphApplicationService({ getStore: () => graphStore, resolveSession: (id) => {
@@ -211,7 +212,7 @@ test("third managed HTTP MCP endpoint discovers and executes Session Graph", asy
     const otherTurn = await f.begin("actor-b");
     const otherGraph = await f.connect(otherTurn.binding, "graph");
     assert.deepEqual((await otherGraph.client.callTool({ name: "session_graph.recent", arguments: {} })).structuredContent,
-      { status: "ok", revision: 0, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [], relationsTruncated: false });
+      { status: "ok", revision: 0, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [], relationsTruncated: false, relationOffset: 0, relationsHasMore: false });
     const conflict = await graph.client.callTool({ name: "session_graph.apply", arguments: { expectedRevision: 0, topics: [{ id: "other", title: "Other" }] } });
     assert.equal(conflict.isError, true);
     assert.deepEqual(conflict.structuredContent, { status: "conflict", revision: 3 });

@@ -50,7 +50,11 @@ test("Session Window shows Graph reference failures for Main and Auxiliary witho
     recordedBy: { sessionId: "benchmark-main", sessionTitle: "Main", role: "main" },
     references: [{ role: "evidence", label: "Open Reference", href: "https://example.com/evidence?q=a%2Fb#heading" }], createdAt: "2026-10-26T00:00:00Z", updatedAt: "2026-10-26T00:00:00Z" };
   api.readSessionGraph = (async (_id: string, operation: string) => ({ status: "ok", revision: 1,
-    items: operation === "list_topics" ? [{ id: "topic", title: "Topic" }] : [record], total: 1, offset: 0,
+    items: operation === "overview" ? [{ id: "topic", title: "Topic", recordCount: 1,
+      recency: { oldestUpdatedAt: record.updatedAt, newestUpdatedAt: record.updatedAt }, latestRecordUpdatedAt: record.updatedAt,
+      ...Object.fromEntries(["requirements", "constraints", "decisions", "activities", "observations", "issues"].map((category) => [category, { count: 0, states: {}, records: [] }])), actors: []
+    }] : operation === "list_topics" ? [{ id: "topic", title: "Topic" }] : [record], total: 1, offset: 0,
+    recency: { oldestUpdatedAt: record.updatedAt, newestUpdatedAt: record.updatedAt }, topicRelations: [],
     hasMore: false, incomplete: false, relations: [], externalEndpoints: [], relationsTruncated: false, relationOffset: 0, relationsHasMore: false })) as WithMateWindowApi["readSessionGraph"];
   api.subscribeSessionGraph = () => () => {};
   let outcome: "failed" | "throw" | "opened" = "failed";
@@ -98,6 +102,10 @@ test("Session Window shows Graph reference failures for Main and Auxiliary witho
         assert.equal(header?.hasAttribute("inert"), false);
         await click(button("Graph"));
         assert.ok(doc.querySelector(".session-graph-preview"));
+      }
+      if (doc.querySelector(".topic-overview-card")) {
+        await click(doc.querySelector(".topic-overview-card"));
+        await click(button("Open Topic"));
       }
       if (!doc.querySelector(".session-graph-details")) await click(doc.querySelector(".session-graph-node"));
       outcome = "failed";

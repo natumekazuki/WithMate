@@ -1,0 +1,31 @@
+.topic-overview-header { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 10px 18px; border-bottom: 1px solid var(--line); }
+.topic-overview-header select { flex: 1; min-width: 140px; }
+.topic-overview-card { position: absolute; width: 240px; height: 112px; box-sizing: border-box; display: flex; flex-direction: column; align-items: stretch; gap: 3px; padding: 9px 12px; text-align: left; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); overflow: visible; }
+.topic-overview-card:hover { z-index: 6; }
+.topic-overview-card.is-selected { outline: 3px solid var(--teal); outline-offset: 1px; }
+.topic-overview-card.session-graph-recency-surface { position: absolute; }
+.topic-overview-card > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.topic-overview-card > span:not(.topic-overview-actors), .topic-overview-card > small { color: var(--muted); font-size: 11px; }
+.topic-overview-card > small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topic-overview-actors { display: flex; align-items: center; gap: 4px; min-height: 32px; overflow: hidden; }
+/* Keep the tooltip's containing block outside the clipped actor row. */
+.topic-overview-actors .session-graph-identity { position: static; flex-shrink: 0; }
+.topic-overview-actors .session-graph-identity-tooltip { top: calc(100% - 12px); left: 12px; right: 12px; min-width: 0; max-width: none; width: auto; overflow-wrap: anywhere; }
+.topic-overview-actors .session-graph-identity-tooltip::before { content: ""; position: absolute; bottom: 100%; left: 0; right: 0; height: 16px; }
+.topic-overview-actors .session-graph-actor-name { display: none; }
+.topic-overview-actors .character-avatar.small { width: 32px; height: 32px; }
+.topic-overview .topic-overview-relation { position: absolute; transform: translate(-50%, -50%); cursor: pointer; font-size: 12px; line-height: 1.5; }
+.topic-overview-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.topic-overview-footer > div { display: flex; align-items: center; gap: 10px; }
+.topic-overview-footer button, .topic-overview-detail button { border: 1px solid var(--line); border-radius: 5px; background: var(--surface); padding: 5px 9px; }
+.topic-overview-detail { position: relative; padding: 18px; overflow: auto; font-size: 13px; line-height: 1.6; }
+.topic-overview-detail > .surface-close-button { position: absolute; top: 18px; right: 18px; }
+.topic-overview-detail h2 { margin: 0 0 12px; padding-right: 30px; overflow-wrap: anywhere; font-size: 18px; line-height: 1.6; }
+.topic-overview-detail h3 { margin: 18px 0 7px; font-size: 14px; }
+.topic-overview-detail h3 small, .topic-overview-states { color: var(--muted); font-size: 12px; }
+.topic-overview-states { margin: 6px 0; }
+.topic-overview-records { list-style: none; padding: 0; margin: 6px 0; }
+.topic-overview-records li { margin: 7px 0; overflow-wrap: anywhere; }
+.topic-overview-records li button { border: 0; text-align: left; padding: 0; background: transparent; text-decoration: underline; text-underline-offset: 3px; }
+.topic-overview-records small, .topic-overview-related small { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; }
+.topic-overview-related { display: block; margin: 8px 0; width: 100%; text-align: left; overflow-wrap: anywhere; }

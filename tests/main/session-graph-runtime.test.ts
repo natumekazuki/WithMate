@@ -5,7 +5,8 @@ import { SessionGraphRuntimeService } from "../../src-electron/session-graph/ses
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { getSessionGraphAgentRuntimeOperations } from "../../src-shared/session-graph/session-graph-operation-schema.js";
-import type { SessionGraphIdentity, SessionGraphOperation, SessionGraphOperationResult, SessionGraphOwner, SessionGraphRequest } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphIdentity, SessionGraphOwner } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphStorageOperation, SessionGraphStorageRequest, SessionGraphStorageResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 
 function fixture() {
   const owner = { sessionId: "main", incarnationId: "incarnation" };
@@ -15,10 +16,10 @@ function fixture() {
     { sessionId: "aux", sessionTitle: "Aux", role: "auxiliary", character: { id: "character", name: "Character" } },
     { sessionId: "other-parent", sessionTitle: "Other", role: "main", character: { id: "character", name: "Character" } },
   ];
-  const calls: { request: SessionGraphRequest<SessionGraphOperation>; recorder?: SessionGraphIdentity; actors?: SessionGraphIdentity[] }[] = [];
-  const store: SessionGraphStore = { async execute<K extends SessionGraphOperation>(_owner: SessionGraphOwner, _operation: K, _request: SessionGraphRequest<K>, recorder?: SessionGraphIdentity, actors?: SessionGraphIdentity[]) {
+  const calls: { request: SessionGraphStorageRequest<SessionGraphStorageOperation>; recorder?: SessionGraphIdentity; actors?: SessionGraphIdentity[] }[] = [];
+  const store: SessionGraphStore = { async execute<K extends SessionGraphStorageOperation>(_owner: SessionGraphOwner, _operation: K, _request: SessionGraphStorageRequest<K>, recorder?: SessionGraphIdentity, actors?: SessionGraphIdentity[]) {
     calls.push({ request: _request, recorder, actors });
-    return { status: "ok", revision: 1 } as SessionGraphOperationResult<K>;
+    return { status: "ok", revision: 1 } as SessionGraphStorageResult<K>;
   } };
   const app = new SessionGraphApplicationService({ getStore: () => store, resolveSession(id): ResolvedSessionGraphSession | null {
     const identity = identities.find((item) => item.sessionId === id);
@@ -107,9 +108,9 @@ test("Session Graph rejects unresolved actor references before storage", async (
 test("Session Graph generation replacement rejects an in-flight request before storage", async () => {
   let resolutions = 0;
   let calls = 0;
-  const store: SessionGraphStore = { async execute<K extends SessionGraphOperation>() {
+  const store: SessionGraphStore = { async execute<K extends SessionGraphStorageOperation>() {
     calls++;
-    return { status: "ok", revision: 1 } as SessionGraphOperationResult<K>;
+    return { status: "ok", revision: 1 } as SessionGraphStorageResult<K>;
   } };
   const app = new SessionGraphApplicationService({ getStore: () => store, async resolveSession() {
     resolutions++;

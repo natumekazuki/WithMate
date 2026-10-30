@@ -752,6 +752,7 @@ async function resolveSessionGraphSession(sessionId: string): Promise<ResolvedSe
         id: subject.characterId ?? parent.characterId,
         name: snapshot?.name ?? parent.character,
         icon: subject.characterIconPath ?? snapshot?.iconFilePath ?? parent.characterIconPath,
+        theme: snapshot?.theme ? { main: snapshot.theme.main, sub: snapshot.theme.sub } : auxiliary ? undefined : parent.characterThemeColors,
       },
     },
     providerId: mainStoreContext.executionSelections.apply(subject).provider,

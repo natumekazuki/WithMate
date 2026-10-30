@@ -4,6 +4,7 @@ import SessionGraphWindowApp from "../../session-graph/SessionGraphWindowApp.js"
 import { WindowErrorBoundary } from "../../ui/error-boundary.js";
 import "../../styles.css";
 import "../../session-graph/session-graph.css";
+import "../../session-graph/topic-overview.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -1,7 +1,7 @@
 import type { SessionGraphOwner } from "../../src-shared/session-graph/session-graph-contract.js";
 import type { SessionGraphViewState, SessionGraphWindowPayload } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { sameSessionGraphOwner, type SessionGraphApplicationService, type SessionGraphReadOperation } from "./session-graph-application-service.js";
-import type { SessionGraphRequest } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphUiReadRequest } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 
 export type GraphWindow = {
   isDestroyed(): boolean; close(): void; show(): void; focus(): void; isMinimized(): boolean; restore(): void;
@@ -47,11 +47,11 @@ export class SessionGraphWindowService<W extends GraphWindow> {
     await this.refreshTitle(window, token);
     return structuredClone((await this.authorize(window, token)).payload);
   }
-  async read<K extends SessionGraphReadOperation>(window: W, token: string, operation: K, request: SessionGraphRequest<K>) {
+  async read<K extends SessionGraphReadOperation>(window: W, token: string, operation: K, request: SessionGraphUiReadRequest<K>) {
     if ((operation as string) === "apply") throw new Error("Graph windows are read-only.");
     const entry = await this.authorize(window, token);
-    const result = await this.deps.application.executeTrusted(entry.owner.sessionId, operation, request,
-      () => this.entries.get(token) === entry && !window.isDestroyed(), undefined, entry.owner);
+    const result = await this.deps.application.readTrusted(entry.owner.sessionId, operation, request,
+      () => this.entries.get(token) === entry && !window.isDestroyed(), entry.owner);
     await this.authorize(window, token);
     return result;
   }

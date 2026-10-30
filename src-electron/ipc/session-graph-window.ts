@@ -1,7 +1,7 @@
 import type { BrowserWindow } from "electron";
 import * as channels from "../../src-shared/ipc/withmate-ipc-channels.js";
 import { sessionGraphViewStateSchema, sessionGraphWindowOpenSchema } from "../../src-shared/session-graph/session-graph-window-contract.js";
-import { sessionGraphOperationRequestSchemas } from "../../src-shared/session-graph/session-graph-operation-schema.js";
+import { sessionGraphUiReadRequestSchemas } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 import type { SessionGraphWindowService } from "../session-graph/session-graph-window-service.js";
 import type { IpcHandleRegistrar } from "./contracts.js";
 import type { SessionGraphReadOperation } from "../session-graph/session-graph-application-service.js";
@@ -32,7 +32,7 @@ export function registerSessionGraphWindowHandlers(ipc: IpcHandleRegistrar, deps
   const token = (value: unknown): string => { if (typeof value !== "string" || !value) throw new TypeError("Invalid Graph token."); return value; };
   ipc.handle(channels.WITHMATE_GET_SESSION_GRAPH_WINDOW_PAYLOAD_CHANNEL, (event, value) => deps.service.payload(sender(event), token(value)));
   ipc.handle(channels.WITHMATE_READ_SESSION_GRAPH_WINDOW_CHANNEL, (event, value, operation, request) => {
-    if (typeof operation !== "string" || operation === "apply" || !Object.hasOwn(sessionGraphOperationRequestSchemas, operation)) throw new TypeError("Invalid Graph read operation.");
+    if (typeof operation !== "string" || !Object.hasOwn(sessionGraphUiReadRequestSchemas, operation)) throw new TypeError("Invalid Graph read operation.");
     return deps.service.read(sender(event), token(value), operation as SessionGraphReadOperation, request);
   });
   ipc.handle(channels.WITHMATE_UPDATE_SESSION_GRAPH_WINDOW_STATE_CHANNEL, (event, value, state) => deps.service.update(sender(event), token(value), sessionGraphViewStateSchema.parse(state)));
