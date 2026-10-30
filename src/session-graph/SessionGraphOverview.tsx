@@ -64,9 +64,15 @@ export function SessionGraphOverview({ api, sessionId, onOpenTopic, initialState
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [relation, setRelation] = useState<SessionGraphTopicRelation | null>(null);
+  const [tooltipsDismissed, setTooltipsDismissed] = useState(false);
   const [relationPage, setRelationPage] = useState<SessionGraphTopicRelationsResult | null>(null);
   const [relationBusy, setRelationBusy] = useState(false);
   const [relationError, setRelationError] = useState("");
+  useEffect(() => {
+    const dismissTooltips = (event: KeyboardEvent) => { if (event.key === "Escape") setTooltipsDismissed(true); };
+    window.addEventListener("keydown", dismissTooltips);
+    return () => window.removeEventListener("keydown", dismissTooltips);
+  }, []);
   const workspace = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<string, HTMLButtonElement>());
@@ -195,7 +201,8 @@ export function SessionGraphOverview({ api, sessionId, onOpenTopic, initialState
   const topicName = (id: string) => overview?.items.find((topic) => topic.id === id)?.title ?? "Topic";
   const currentRelationPage = relationPage?.revision === overview?.revision ? relationPage : null;
   const narrow = dimensions.width > 0 && dimensions.width < 680;
-  return <section className="session-graph-preview topic-overview" aria-label="Topic Overview">
+  return <section className={`session-graph-preview topic-overview${tooltipsDismissed ? " tooltips-dismissed" : ""}`} aria-label="Topic Overview"
+    onFocusCapture={() => { if (tooltipsDismissed) setTooltipsDismissed(false); }} onPointerOver={() => { if (tooltipsDismissed) setTooltipsDismissed(false); }}>
     <header className="topic-overview-header"><strong>Overview</strong><select aria-label="Select Topic" value={selection ?? ""} onChange={(event) => event.target.value ? selectTopic(event.target.value, event.currentTarget) : dismiss()}><option value="">All Topics</option>{overview?.items.map((topic) => <option key={topic.id} value={topic.id}>{topic.title}</option>)}</select></header>
     <div className="session-graph-load-status" aria-busy={busy}>{busy ? <LoadingIndicator label="Loading Topic Overview" inline /> : null}{error ? <span role="alert">{error} <button type="button" onClick={() => void refresh()}>Retry</button></span> : null}</div>
     <div className="session-graph-label-measure" aria-hidden="true">{edges.map((edge) => <span key={edge.id} className="session-graph-edge-label" ref={(element) => { if (element) measureLabels.current.set(edge.id, element); else measureLabels.current.delete(edge.id); }}>{edge.label}</span>)}</div>
