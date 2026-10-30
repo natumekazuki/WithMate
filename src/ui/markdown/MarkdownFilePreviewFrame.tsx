@@ -2,16 +2,18 @@ import type { ReactNode, Ref } from "react";
 
 import { ButtonContent } from "../button-content.js";
 import { MarkdownLink } from "./markdown-links.js";
+import type { MarkdownSourceAttributes } from "./markdown-source-ranges.js";
 
 export type MarkdownFilePreviewProps = {
   path: string;
   href: string;
   title?: string;
   children: ReactNode;
+  sourceAttributes?: MarkdownSourceAttributes;
 };
 
 export function MarkdownFilePreviewFrame({
-  path, href, title, link, format, loading, onReload, shellRef, children,
+  path, href, title, link, format, loading, onReload, shellRef, children, sourceAttributes,
 }: Omit<MarkdownFilePreviewProps, "children"> & {
   link: ReactNode;
   format: "HTML" | "PDF";
@@ -24,7 +26,7 @@ export function MarkdownFilePreviewFrame({
   return (
     <span ref={shellRef} className="message-file-preview" data-format={format.toLowerCase()}
       aria-label={title || `${format} Preview`}>
-      <span className="message-file-preview-header">
+      <span {...sourceAttributes} className="message-file-preview-header">
         <MarkdownLink href={href} title={path} aria-label={`Open ${path}`}>{link}</MarkdownLink>
         {onReload ? <span className="message-file-preview-auxiliary message-file-preview-controls">
           <button type="button" onClick={onReload} disabled={loading}

@@ -2,8 +2,8 @@ import { parentPort } from "node:worker_threads";
 import { normalizeMessage } from "../../src-shared/session/session-state.js";
 import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import { projectMessagePlainText } from "../../src-shared/session/message-search.js";
-import { createMessageSearchProjection, iterateMessageSearchMatches, type MessageSearchProjection } from "../../src-shared/session/message-find.js";
-import { CONVERSATION_QUERY_PAGE_SIZE, type ConversationNavigatorEntry, type ConversationSearchMatch } from "../../src-shared/session/conversation-page.js";
+import { createMessageSearchProjection, getMessageSearchMatchSourceRange, iterateMessageSearchMatches, messageSearchSourceRangesCorrespond, type MessageSearchProjection } from "../../src-shared/session/message-find.js";
+import { CONVERSATION_QUERY_PAGE_SIZE, type ConversationNavigatorEntry, type ConversationSearchMatch, type ConversationSearchAnchor } from "../../src-shared/session/conversation-page.js";
 import type { ConversationQueryRow } from "./conversation-query.js";
 
 export type ConversationProjectionInput = {
@@ -13,8 +13,9 @@ export type ConversationProjectionInput = {
   query: { kind: "search"; query: string; mode: "source" | "preview" } | { kind: "navigator"; filter: "all" | "bookmarks" };
   offset: number;
   countBefore: number;
+  anchor?: ConversationSearchAnchor;
 };
-export type ConversationProjectionResult = { count: number; items: Array<ConversationSearchMatch | ConversationNavigatorEntry> };
+export type ConversationProjectionResult = { count: number; items: Array<ConversationSearchMatch | ConversationNavigatorEntry>; anchorOrdinal?: number };
 
 const cache = new Map<string, { value: string | MessageSearchProjection; bytes: number }>();
 let cacheBytes = 0;
@@ -43,6 +44,7 @@ function projection<T extends string | MessageSearchProjection>(key: string, cre
 
 export function projectConversationBatch(input: ConversationProjectionInput): ConversationProjectionResult {
   let count = 0;
+  let anchorOrdinal: number | undefined;
   const items: ConversationProjectionResult["items"] = [];
   const retain = (create: () => ConversationProjectionResult["items"][number]) => {
     const index = input.countBefore + count;
@@ -58,7 +60,11 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
       const search = input.query.mode === "source" ? createMessageSearchProjection(message.text, responseProvider, "source")
         : projection(`${input.cacheScope}:${input.provider}:${row.seq}:search`, () => createMessageSearchProjection(message.text, responseProvider));
       let occurrenceIndex = 0;
-      for (const _match of iterateMessageSearchMatches(search, input.query.query, input.query.mode)) {
+      for (const match of iterateMessageSearchMatches(search, input.query.query, input.query.mode)) {
+        if (input.anchor?.messageIndex === row.seq && anchorOrdinal === undefined) {
+          const range = getMessageSearchMatchSourceRange(search, match);
+          if (range && messageSearchSourceRangesCorrespond(range, input.anchor)) anchorOrdinal = input.countBefore + count;
+        }
         const occurrence = occurrenceIndex++;
         retain(() => ({ messageIndex: row.seq, occurrenceIndex: occurrence }));
       }
@@ -70,7 +76,7 @@ export function projectConversationBatch(input: ConversationProjectionInput): Co
         accent: message.accent === true, isBookmarked: message.isBookmarked === true }));
     }
   }
-  return { count, items };
+  return { count, items, ...(anchorOrdinal === undefined ? {} : { anchorOrdinal }) };
 }
 
 // This worker owns only CPU projections: no database or filesystem capability is imported.

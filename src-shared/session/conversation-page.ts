@@ -37,6 +37,7 @@ export type ConversationQueryPage<T> = {
   messageCount: number;
   totalCount: number;
   offset: number;
+  anchorOrdinal?: number;
   items: T[];
 };
 
@@ -46,9 +47,25 @@ export type ConversationQueryOutcome<T> = ConversationQueryPage<T> | {
 
 export type ConversationQueryCancelRequest = Pick<ConversationQueryRequest, "requestId" | "producerId">;
 
+export type ConversationSearchAnchor = {
+  messageIndex: number;
+  startOffset: number;
+  endOffset: number;
+};
+
+export function isConversationSearchAnchor(value: unknown): value is ConversationSearchAnchor {
+  if (!value || typeof value !== "object") return false;
+  const anchor = value as ConversationSearchAnchor;
+  return Number.isSafeInteger(anchor.messageIndex) && anchor.messageIndex >= 0
+    && Number.isSafeInteger(anchor.startOffset) && anchor.startOffset >= 0
+    && Number.isSafeInteger(anchor.endOffset) && anchor.endOffset > anchor.startOffset;
+}
+
 export type ConversationSearchRequest = ConversationQueryRequest & {
   query: string;
   mode: "source" | "preview";
+  /** Initial request's raw-source selection; stamped page reads retain it when omitted. */
+  anchor?: ConversationSearchAnchor;
 };
 
 export type ConversationNavigatorRequest = ConversationQueryRequest & {

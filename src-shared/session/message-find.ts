@@ -7,6 +7,12 @@ type SourceRun = { renderedStart: number; renderedEnd: number; sourceStart: numb
 export type MessageSearchProjection = { sourceText: string; renderedText: string; sourceRuns: SourceRun[] };
 export type MessageSearchMatch = TextSearchMatch & { kind: "rendered" | "source"; renderedOccurrenceIndex?: number };
 
+/** Decoded tokens can map a visible match to a larger source token than the raw query. */
+export function messageSearchSourceRangesCorrespond(left: TextSearchMatch, right: TextSearchMatch): boolean {
+  return left.startOffset <= right.startOffset && left.endOffset >= right.endOffset
+    || right.startOffset <= left.startOffset && right.endOffset >= left.endOffset;
+}
+
 function decodedMarkdownToken(token: string): string {
   const tree = fromMarkdown(token);
   const paragraph = tree.children[0];
@@ -194,6 +200,36 @@ export function createMessageSearchProjection(sourceText: string, responseProvid
   let renderedStart = 0;
   for (const part of parts) { mapPart(part, sourceText, renderedStart, sourceRuns); renderedStart += part.text.length; }
   return { sourceText, renderedText, sourceRuns };
+}
+
+/** Resolve only a complete, contiguous source occurrence; generated text has no source range. */
+export function getMessageSearchMatchSourceRange(projection: MessageSearchProjection, match: MessageSearchMatch): TextSearchMatch | undefined {
+  if (match.kind === "source") return { startOffset: match.startOffset, endOffset: match.endOffset };
+  let low = 0;
+  let high = projection.sourceRuns.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (projection.sourceRuns[middle].renderedEnd <= match.startOffset) low = middle + 1;
+    else high = middle;
+  }
+  let renderedOffset = match.startOffset;
+  let startOffset: number | undefined;
+  let endOffset: number | undefined;
+  for (let index = low; index < projection.sourceRuns.length && renderedOffset < match.endOffset; index += 1) {
+    const run = projection.sourceRuns[index];
+    if (run.renderedStart > renderedOffset) return undefined;
+    const end = Math.min(match.endOffset, run.renderedEnd);
+    const literal = run.renderedEnd - run.renderedStart === run.sourceEnd - run.sourceStart;
+    if (!literal && (renderedOffset !== run.renderedStart || end !== run.renderedEnd)) return undefined;
+    const sourceStart = literal ? run.sourceStart + renderedOffset - run.renderedStart : run.sourceStart;
+    const sourceEnd = literal ? run.sourceStart + end - run.renderedStart : run.sourceEnd;
+    if (endOffset !== undefined && sourceStart !== endOffset) return undefined;
+    startOffset ??= sourceStart;
+    endOffset = sourceEnd;
+    renderedOffset = end;
+  }
+  return renderedOffset === match.endOffset && startOffset !== undefined && endOffset !== undefined
+    ? { startOffset, endOffset } : undefined;
 }
 
 export function* iterateMessageSearchMatches(projection: MessageSearchProjection, query: string, mode: "preview" | "source"): Generator<MessageSearchMatch> {

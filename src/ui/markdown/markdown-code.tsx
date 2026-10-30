@@ -19,6 +19,8 @@ import {
 } from "./markdown-context.js";
 import { MermaidViewport } from "./mermaid-viewport.js";
 import { renderMermaidWithImages, type MermaidImageError, type MermaidImageResolver } from "./mermaid-images.js";
+import { markdownSourceAttributes, type MarkdownSourceAttributes } from "./markdown-source-ranges.js";
+import type { Node } from "unist";
 
 type HastNode = {
   type?: string;
@@ -146,10 +148,12 @@ export const MermaidDiagram = memo(function MermaidDiagram({
   source,
   onOpenPath,
   resolveImageSource,
+  sourceAttributes,
 }: {
   source: string;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: MermaidImageResolver;
+  sourceAttributes?: MarkdownSourceAttributes;
 }) {
   const context = useContext(MarkdownRenderContext);
   const imageResolver = resolveImageSource ?? context.resolveImageSource;
@@ -234,7 +238,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
     || (isStreaming && renderState.status === "error");
   if (displayed)
     return (
-      <div className="message-code-block-shell mermaid" aria-busy={busy}>
+      <div {...sourceAttributes} className="message-code-block-shell mermaid" aria-busy={busy}>
         <MermaidViewport
           key={displayed.source}
           svg={displayed.svg}
@@ -244,7 +248,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
       </div>
     );
   return (
-    <div className="message-code-block-shell mermaid" aria-busy={renderState.status === "pending" || isStreaming}>
+    <div {...sourceAttributes} className="message-code-block-shell mermaid" aria-busy={renderState.status === "pending" || isStreaming}>
       <div className="message-mermaid fallback">
         {renderState.status === "error" && renderState.source === diagramSource && !isStreaming ? (
           <p className="message-mermaid-error">{renderState.message}</p>
@@ -291,7 +295,7 @@ export function MarkdownPre({
     isValidElement<{ className?: string; children?: ReactNode }>(child) &&
     resolveCodeLanguage(child.props.className) === "mermaid"
   ) {
-    return <MermaidDiagram source={extractTextContent(child.props.children)} />;
+    return <MermaidDiagram source={extractTextContent(child.props.children)} sourceAttributes={markdownSourceAttributes(node as Node | undefined)} />;
   }
   return codeBlock;
 }

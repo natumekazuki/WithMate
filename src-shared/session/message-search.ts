@@ -27,7 +27,7 @@ function projectNodeText(node: MarkdownSearchNode, parts?: MessageRenderedSearch
     || node.type === "code"
     || node.type === "yaml"
   ) {
-    if (node.type === "code" && node.lang?.toLocaleLowerCase() === "mermaid") {
+    if (node.type === "code" && (node.lang?.toLocaleLowerCase() === "mermaid" || node.lang === "math")) {
       return "";
     }
     const value = node.type === "yaml"
@@ -45,6 +45,7 @@ function projectNodeText(node: MarkdownSearchNode, parts?: MessageRenderedSearch
   }
   if (node.type === "html") {
     const text = node.value ?? "";
+    if (/^<br[ \t]*\/?>(?=$)/iu.test(text)) return "";
     if (text && parts) parts.push({ text, sourceStart: node.position?.start.offset ?? -1, sourceEnd: node.position?.end.offset ?? -1, type: node.type });
     return text;
   }
@@ -102,7 +103,7 @@ function hasSearchableFootnoteBackreferenceGap(definition: MarkdownSearchNode): 
 export function projectMessageRenderedSearchText(markdown: string, responseProvider?: string, parts?: MessageRenderedSearchPart[]): string {
   const providerExtensions = providerResponseMarkdownExtensions(responseProvider);
   const tree = fromMarkdown(markdown, {
-    extensions: [frontmatter(), gfm(), math(), ...providerExtensions.extensions],
+    extensions: [frontmatter(), gfm(), math({ singleDollarTextMath: false }), ...providerExtensions.extensions],
     mdastExtensions: [frontmatterFromMarkdown(), gfmFromMarkdown(), mathFromMarkdown(), ...providerExtensions.mdastExtensions],
   });
   const root = tree as MarkdownSearchNode;

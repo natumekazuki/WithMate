@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 import React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup as renderRawStaticMarkup } from "react-dom/server";
 import type { MarkdownLinkContextMenuResult } from "../../src-shared/window/markdown-link-context-menu.js";
 
 import {
@@ -24,6 +24,70 @@ import {
   ImageZoomControls,
   useImageViewport,
 } from "../../src/ui/image-viewport.js";
+
+// Structure assertions below are independent of the search consumer's source metadata.
+function renderToStaticMarkup(element: React.ReactNode): string {
+  return renderRawStaticMarkup(element).replace(/ data-md-(?:source|definition)-(?:start|end)="\d+"/g, "");
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Previewの意味要素は元Markdownの範囲を保持し、参照定義も最初の参照を選択できる範囲として渡す"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md" }
+// fault = "変換後の要素が原文範囲を失う、またはreference定義を別の原文位置へ対応付ける"
+// observable = "MessageRichTextのDOMにあるsource/definition範囲と、その範囲で切り出した入力文字列"
+// observation_boundary = "consumer"
+// scope = "Markdown Previewの構文・参照・生成表示のsource範囲"
+// lifecycle = "permanent"
+// impact = "URLや構文だけの検索で無関係な表示要素へ移動・強調してしまう"
+// distinction = "型検査と既存の表示testはMarkdown変換を越えた原文offsetの対応を確認しない"
+// @end-test-value
+test("MessageRichText は検索用原文範囲を意味要素・生成表示のshellへ渡す", () => {
+  const text = [
+    "---", "title: Metadata", "---", "# Heading", "", "**bold** *em* ~~gone~~", "",
+    "> quote", "", "- [x] task", "", "| A | B |", "| :- | -: |", "| a | b |", "",
+    "[first][ref] [second][ref] ![alt][ref] note[^n]", "",
+    "[ref]: https://example.com/hidden \"title\"", "[^n]: Footnote body", "",
+    "$$a^2$$", "", "```math", "b^2", "```", "", "```mermaid", "graph TD; A-->B", "```", "",
+    "```ts", "const x = 1;", "```", "", ":codex-file-citation{path=\"/tmp/file.ts\"}", "",
+    "visualize{\"path\":\"/tmp/report.html\",\"title\":\"Report\"}",
+  ].join("\n");
+  const dom = new JSDOM(renderRawStaticMarkup(React.createElement(MessageRichText, { text, sourceStart: 400, responseProvider: "codex" })));
+  const doc = dom.window.document;
+  function source(selector: string): string {
+    const element = doc.querySelector(selector);
+    assert.ok(element, selector);
+    const start = element.getAttribute("data-md-source-start");
+    const end = element.getAttribute("data-md-source-end");
+    assert.notEqual(start, null, selector);
+    assert.notEqual(end, null, selector);
+    return text.slice(Number(start), Number(end));
+  }
+  assert.equal(source(".message-frontmatter-table"), "---\ntitle: Metadata\n---");
+  assert.equal(source("h1"), "# Heading");
+  assert.equal(source("strong"), "**bold**");
+  assert.equal(source("em"), "*em*");
+  assert.equal(source("del"), "~~gone~~");
+  assert.equal(source("blockquote"), "> quote");
+  assert.equal(source(".message-list li"), "- [x] task");
+  assert.match(source(".message-table:not(.message-frontmatter-table)"), /\| :- \| -: \|/);
+  const references = doc.querySelectorAll("[data-md-definition-start]");
+  assert.equal(references.length, 4);
+  for (const element of Array.from(references).slice(0, 3)) {
+    assert.equal(text.slice(Number(element.getAttribute("data-md-definition-start")), Number(element.getAttribute("data-md-definition-end"))), '[ref]: https://example.com/hidden "title"');
+  }
+  assert.equal(source("a[href='https://example.com/hidden']"), "[first][ref]");
+  assert.equal(source(".message-image-shell"), "![alt][ref]");
+  assert.equal(source("sup"), "[^n]");
+  assert.equal(source("li[id*='fn-n']"), "[^n]: Footnote body");
+  const math = Array.from(doc.querySelectorAll("[data-md-source-start]")).filter((element) => element.querySelector(":scope > .katex, :scope > .katex-display"));
+  assert.deepEqual(math.map((element) => text.slice(Number(element.getAttribute("data-md-source-start")), Number(element.getAttribute("data-md-source-end")))), ["$$a^2$$", "```math\nb^2\n```"]);
+  assert.equal(source(".mermaid"), "```mermaid\ngraph TD; A-->B\n```");
+  assert.equal(source(".message-code-block-shell.copyable pre"), "```ts\nconst x = 1;\n```");
+  assert.equal(source("a[href='/tmp/file.ts']"), ':codex-file-citation{path="/tmp/file.ts"}');
+  assert.match(source(".message-file-preview-header"), /^visualize/);
+  assert.equal(doc.querySelector(".message-file-preview-content [data-md-source-start]"), null);
+});
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }

@@ -60,6 +60,48 @@ test("message search projection は Markdown source ではなく表示文字列�
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "表示検索はsingle dollarとliteral HTMLを保持し、属性なしbrと正常・エラー状態の数式をrendererと同じ検索文字列へ投影する"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md#goal" }
+// fault = "検索parserの数式設定、br判定、math fence分類がrendererと異なり表示一致の件数がずれる"
+// observable = "shared projectionと実rendererのDOM検索indexの文字列"
+// observation_boundary = "consumer"
+// scope = "Markdown表示検索のparser設定"
+// lifecycle = "permanent"
+// impact = "表示された金額を見落とすか、表示されない構文を表示一致として選択する"
+// distinction = "型検査はparser設定とrendererの文字列一致を保証しない。代表構文の小さいmounted DOM fixtureを直接照合する"
+// @end-test-value
+test("message search projection は数式とbrの表示条件をDOM indexと一致させる", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root")!;
+  const root = createRoot(container);
+  try {
+    for (const [markdown, expected] of [
+      ["$price$ and $$a^2$$ value", "$price$ and  value"],
+      ["first<br>second<br/>third<br />fourth<BR>fifth", "firstsecondthirdfourthfifth"],
+      ['first<br class="x">second </br> literal', 'first<br class="x">second </br> literal'],
+      ["before\n\n```math\na^2\n```\n\nafter", "beforeafter"],
+      ["before\n\n```math\n\\frac{needle\n```\n\nafter needle", "beforeafter needle"],
+      ["before $$\\frac{needle$$ after needle", "before  after needle"],
+      ["before\n\n```Math\na^2\n```\n\nafter", "beforea^2after"],
+    ]) {
+      await act(async () => root.render(React.createElement(MessageRichText, { text: markdown })));
+      const richText = container.querySelector<HTMLElement>(".rich-text");
+      assert.ok(richText);
+      const projected = projectMessageRenderedSearchText(markdown);
+      const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+      assert.equal(projected, expected, markdown);
+      assert.equal(indexed.normalizedText, projected.toLocaleLowerCase(), markdown);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("message search projection は YAML frontmatter table と DOM index を一致させる", () => {
   const markdown = [
     "---",
