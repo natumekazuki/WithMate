@@ -94,6 +94,12 @@ applyはtopic/record/relationのupsertとrelation解除を1transactionで処理�
 
 ## 閲覧UI
 
+UI専用readは`src-shared/session-graph/session-graph-ui-read-contract.ts`で公開MCP／CLI操作と区別する。`overview`はTopicのpageに、所属全recordの件数・最古/最新更新日時と、現行要求・制約・採用判断・活動・観測・未解決issueのカテゴリ集約を付ける。撤回・置換済みrecordは現行カテゴリから除外するが、時刻比較と全record件数には含める。活動は担当Session別にも集約し、進行・結果・採否・解消を同じ完了状態へ変換しない。状態省略は確認済み状態へ補完しない。各カテゴリの代表recordは更新順の最大3件であり、総件数や新しさの計算範囲ではない。`topic_records`でカテゴリ・担当を指定したthin summaryのpageから全対象recordへ辿れる。
+
+全体の`recency`は全Topicの所属record最大更新日時どうしの最古/最新であり、空Topicを比較対象から除外する。UIの`get_topic_view`は表示pageやfilterによらない当該Topic全recordの比較範囲を返す。Topic名やrelationだけの更新はrecordの新しさを変えない。これらの集約は読取transaction内で計算し、別のsummaryを保存しない。全record本文・参照・自由項目をoverviewへ転送しない。
+
+Topic間relationは保存済み端点のTopic・向き・kind別件数として全体集約し、`topic_relations`の同一条件のpageで実relation・labelと両端recordの要約を返す。一部record間の関係をTopic全体の依存へ変換しない。Topic page・集約・カテゴリpage・relation内訳は`expectedRevision`で揃え、競合・途中page・失敗を対象なしへ置き換えない。既存の親owner/incarnation・storage generation・Window sender/tokenの認可を共用する。
+
 展開したSession headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ戻る。再度Graphを押しても閉じない。Graphを開いた後にヘッダーを折り畳んだ場合、会話へ戻るとヘッダーの展開操作へfocusする。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
 
 中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。展開区間の履歴は各ビュー内に保持し、新しいWindowは選択記録の近傍または話題の俯瞰から開く。中央の会話復帰では入力、最後のGraph位置と展開区間を保持し、file/Templateとの切替は既存の離脱確認を通す。Main/Auxiliaryの選択や送信先は変えない。
@@ -106,7 +112,13 @@ applyはtopic/record/relationのupsertとrelation解除を1transactionで処理�
 
 中央のreadはowning parent Windowを認可し、独立WindowはMainが発行したtokenにWindow、親Main ID/incarnation、storage generationを結び付けて認可する。独立Windowから親IDを自己申告してGraphを読むことや、apply・provider権限への拡張は許さない。非同期read完了時にも失効を確認する。明示した参照リンクだけ既存のfile/link resolverへ親Sessionの認可で渡す。保存成功の通知は同じownerの中央と独立ビューへ届け、pollingや表示のたびのAI呼出しは使わない。
 
-話題を選び、図のnodeからrecordを選択して詳細と関連recordを読む。通常選択では現在の概要・展開範囲とnode位置を維持し、選択node・直接の隣接node・edgeを強調する。他のnodeと関係も残す。recordの重複した選択一覧は置かず、nodeへのTab/Enterと詳細の関連リンクでも移動できる。recordと関連リンクはkeyboardでも開ける対象menuから別窓にも開ける。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。
+入口の`All Topics`は親Graphの全Topicを横断する。空・孤立Topicも残し、選択したTopicのsummaryで現行の要求・制約、採用済み判断、活動の進捗、観測結果、未解決事項、担当別の活動を分けて表示する。各分類の代表recordから本文へ進め、省略分は同じrevisionの追加取得で辿る。撤回・置換済みを現行条件に含めず、以前の判断や解消済み事項はTopic詳細に残す。Topic間の線は種類・方向別に保存済みrecord関係を数えた入口であり、Topic全体への依存を意味しない。内訳から元recordの両端へ移動できる。全体用の要約保存や追加AI実行は行わない。
+
+`Open Topic`またはsummaryのrecordを明示選択してTopic詳細へ進む。`All Topics`で元の全体の選択・倍率・scrollへ戻る。全体/詳細の範囲と中央/独立Windowの表示場所は別の軸で、会話切替や中央Graphの開閉では範囲・閲覧状態を保持する。Topic詳細では図のnodeからrecordを選択して詳細と関連recordを読む。通常選択では現在の概要・展開範囲とnode位置を維持し、選択node・直接の隣接node・edgeを強調する。他のnodeと関係も残す。recordの重複した選択一覧は置かず、nodeへのTab/Enterと詳細の関連リンクでも移動できる。recordと関連リンクはkeyboardでも開ける対象menuから別窓にも開ける。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。
+
+新しさはrecordのサーバー保存日時`updatedAt`を使い、同内容の再保存でも進み、同一batchでは同時刻になり得る。Topic詳細は全所属recordの最小/最大日時、全体ビューは各Topicの全recordの最大日時を全Topicで比較する。表示page・選択・区間展開によって比較範囲を狭めない。空Topicは比較から除き、Topic自体やrelationだけの更新日時は代用しない。背景は古い`#1C212B`、中間`#263243`、新しい`#34465A`を時間幅の前半/後半で線形RGB補間し、同率最大のすべてへ`#D3DCE8`の内側上端帯を示す。record集約は構成recordの最大日時を使う。単一時刻は新しい背景と帯、対象が空なら帯なしとする。
+
+Graph背景は`#12161E`、選択外枠と接続線は`#6FB8C7`、通常の枠・線・アイコン外縁は`#98A2B3`、本文は`#EDF2F7`、補助文字は`#C4CEDB`。hover・選択・focusで新しさの背景を上書きせず、古い項目の文字を薄くしない。担当の信頼済みsnapshotに保持するCharacter main/sub色はアイコン周囲の小さい縁だけに使い、その外側に中立色の縁を置く。未設定は中立色、複数担当の集約を一人の色で代表させない。具体日時は詳細と支援技術へ提供し、常設Latest文字や点滅に依存しない。色・帯の更新だけでは並べ替え・全体再配置・fit・pan・選択変更を行わない。
 
 別Topic・未取得page・現在の範囲外へつながるnodeは、図中の件数付き接続表示で関係の存在を示す。hover・keyboard focusで種類・向き・行き先を確認でき、詳細の関連リンクから明示的に取得・移動する。全endpointを自動展開せず、追加pageで本体を取得した場合も同じIDのnodeを重複させない。
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { SessionGraphApplicationService } from "../../src-electron/session-graph/session-graph-application-service.js";
 import { SessionGraphWindowService } from "../../src-electron/session-graph/session-graph-window-service.js";
-import type { SessionGraphOperation, SessionGraphOperationResult } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphStorageOperation, SessionGraphStorageResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 import type { SessionGraphStore } from "../../src-electron/session-graph/session-graph-application-service.js";
 
 class Window {
@@ -17,7 +17,7 @@ function setup() {
   let incarnation = "one"; let available = true; let sequence = 0;
   let pending: (() => Promise<void>) | undefined;
   const generation = {};
-  const store: SessionGraphStore = { execute: async <K extends SessionGraphOperation>() => { await pending?.(); return { status: "ok" as const, revision: 1, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [] } as unknown as SessionGraphOperationResult<K>; } };
+  const store: SessionGraphStore = { execute: async <K extends SessionGraphStorageOperation>() => { await pending?.(); return { status: "ok" as const, revision: 1, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [] } as unknown as SessionGraphStorageResult<K>; } };
   const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: async (id) => available ? ({ owner: { sessionId: id, incarnationId: incarnation }, identity: { sessionId: id, sessionTitle: id, role: "main" as const }, providerId: "codex", generation }) : null });
   const windows: Window[] = []; const notifications: Window[] = [];
   const service = new SessionGraphWindowService({ application, createWindow: () => { const w = new Window(); windows.push(w); return w; }, load: async () => {}, token: () => String(++sequence), changed: () => {}, notify: (w) => notifications.push(w) });

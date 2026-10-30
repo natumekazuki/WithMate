@@ -1,4 +1,11 @@
 .session-graph-preview {
+  --ink: #EDF2F7;
+  --muted: #C4CEDB;
+  --line: #98A2B3;
+  --teal: #6FB8C7;
+  --surface-deep: #12161E;
+  --surface: #1C212B;
+  --surface-strong: #263243;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -98,7 +105,7 @@
 .session-graph-edges {
   position: absolute;
   pointer-events: none;
-  color: var(--muted);
+  color: var(--line);
 }
 .session-graph-edges path {
   fill: none;
@@ -152,15 +159,28 @@
   height: 112px;
   padding: 10px;
   gap: 4px 10px;
-  border: 1px solid var(--muted);
+  border: 1px solid var(--line);
   border-radius: 9px;
-  background: var(--surface-strong);
+  background: var(--session-graph-recency, #1C212B);
   text-align: left;
 }
 .session-graph-node:hover {
-  background: var(--surface);
   border-color: var(--teal);
 }
+.session-graph-recency-surface {
+  position: relative;
+  background: var(--session-graph-recency, #1C212B);
+}
+.session-graph-recency-surface[data-latest="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  border-radius: 8px 8px 0 0;
+  background: #D3DCE8;
+  pointer-events: none;
+}
+.session-graph-node.session-graph-recency-surface { position: absolute; }
 .session-graph-node.is-selected {
   outline: 2px solid var(--teal);
   outline-offset: 2px;
@@ -237,6 +257,22 @@
   flex-shrink: 0;
   border-radius: 6px;
   min-width: 0;
+}
+.session-graph-identity .character-avatar {
+  background: var(--surface-deep);
+  border-color: var(--line);
+  box-shadow: none;
+}
+.session-graph-identity .avatar-fallback { color: var(--ink); }
+.session-graph-identity .character-avatar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 2.5px solid;
+  border-color: var(--session-graph-character-main, #98A2B3) var(--session-graph-character-main, #98A2B3) var(--session-graph-character-sub, #98A2B3) var(--session-graph-character-sub, #98A2B3);
+  border-radius: inherit;
+  pointer-events: none;
 }
 .session-graph-actor-name { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .session-graph-node .session-graph-identity { flex-direction: column; gap: 4px; }

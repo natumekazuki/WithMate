@@ -176,7 +176,7 @@ export type WithMateWindowCatalogApi = {
 
 export type WithMateWindowSessionApi = {
   readSessionHtmlPreview(request: SessionHtmlPreviewRequest): Promise<SessionHtmlPreviewResult>;
-  readSessionGraph<K extends Exclude<import("../session-graph/session-graph-contract.js").SessionGraphOperation, "apply">>(sessionId: string, operation: K, request: import("../session-graph/session-graph-contract.js").SessionGraphRequest<K>): Promise<import("../session-graph/session-graph-contract.js").SessionGraphOperationResult<K>>;
+  readSessionGraph<K extends import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadOperation>(sessionId: string, operation: K, request: import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadRequest<K>): Promise<import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadResult<K>>;
   isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionMonitorPage(request?: SessionMonitorPageRequest | null): Promise<SessionMonitorPageResult>;

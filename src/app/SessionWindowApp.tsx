@@ -10,6 +10,7 @@ import { SessionGraphPreview, defaultSessionGraphViewState, type SessionGraphPre
 import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { ButtonContent } from "../ui/button-content.js";
 import "../session-graph/session-graph.css";
+import "../session-graph/topic-overview.css";
 
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";

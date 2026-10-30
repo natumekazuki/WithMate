@@ -3,7 +3,8 @@ import type { WorkerOptions } from "node:worker_threads";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { SessionGraphStorageV6 } from "../session-graph/session-graph-storage-v6.js";
-import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphOperationResult } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphOwner, SessionGraphIdentity } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphStorageOperation, SessionGraphStorageRequest, SessionGraphStorageResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
@@ -246,7 +247,7 @@ export type V6StorageWorkerBundle = {
   truncateWal(): Promise<boolean>;
   stores: {
     sessionGraph: {
-      execute<K extends SessionGraphOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[]): Promise<SessionGraphOperationResult<K>>;
+      execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots?: SessionGraphIdentity[]): Promise<SessionGraphStorageResult<K>>;
     };
     session: AsyncStore<Omit<SessionStorageV6, "getConversationQuerySnapshot" | "readConversationQueryBatch">> & ConversationQueryStore;
     turn: AsyncStore<SessionTurnStorageV6>;

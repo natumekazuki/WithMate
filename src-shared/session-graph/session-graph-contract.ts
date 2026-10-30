@@ -5,7 +5,7 @@ export type SessionGraphOwner = { sessionId: string; incarnationId: string };
 export const SESSION_GRAPH_RELATION_LIMIT = 400;
 export type SessionGraphIdentity = {
   sessionId: string; sessionTitle: string; role: "main" | "auxiliary";
-  character?: { id: string; name: string; icon?: string };
+  character?: { id: string; name: string; icon?: string; theme?: { main: string; sub: string } };
 };
 export type SessionGraphRecordInput = z.infer<typeof sessionGraphRecordInputSchema>;
 export type SessionGraphRecord = z.infer<typeof sessionGraphRecordSchema> & {

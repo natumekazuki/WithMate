@@ -87,6 +87,10 @@ agentが実行する場合は、選択モード、プロセスの差し替え、
 
 ブラウザー用の検証手段で実rendererを確認する場合は、`-RemoteDebuggingPort 0`を明示すると分離アプリだけにloopback用のdebug portを開きます。portは検証用user dataの`DevToolsActivePort`から確認できます。通常の起動ではこの指定を付けません。検証後はdebug port付きのプロセスを終了し、継続利用用には指定なしで起動し直します。
 
+撮影は、そのdebug接続で対象rendererのタブを選び、ブラウザー用のスクリーンショット機能でPNGへ保存します。対象の画面・viewport・選択状態を記録し、保存した画像を開いて内容を確認します。Session GraphはSession headerの`Graph`から全Topicの入口へ進み、Topicを選ぶとsummary、`Open Topic`でrecordの図を開きます。検証用のTopic／record／relationには現行のSession Graph操作を使い、古い未解決・完了した結論・空Topic・複数担当等、変更が影響する状態を分離したデータで再現します。
+
+非表示のブラウザーでproduction componentを確認するfixtureは作業SessionFolderに置き、実データや認証・認可の迂回に依存させません。APIを置き換えた箇所は確認結果へ明記し、実IPC／storageの確認と区別します。画像もSessionFolderに保存し、機密情報がないことを確かめて返答へ埋め込みます。可視Windowやデスクトップ操作が必要な場合は、agentの操作許可を別途確認してください。
+
 起動・終了時は次のルールを守ってください。
 
 - 検証用環境の起動はスクリプト経由に統一し、Electronや`release/win-unpacked/WithMate.exe`の直接起動で代替しません。手動で`WITHMATE_USER_DATA_PATH`や`--withmate-visual-check`を付けても、同じ管理対象になるとは限りません。配布物自体の検証は別目的として扱い、この検証用user dataを共用しません。
