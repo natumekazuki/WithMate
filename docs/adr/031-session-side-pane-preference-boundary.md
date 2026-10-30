@@ -1,8 +1,8 @@
-# 011 Session Side Pane Preference Boundary
+# 031 Session Side Pane Preference Boundary
 
-- 状態: Superseded by `docs/adr/015-chat-layout-preference-boundary.md`
+- 状態: Superseded by `docs/adr/032-chat-layout-preference-boundary.md`
 - 日付: 2026-08-02
-- Supersedes: `docs/adr/006-session-right-pane-preference-boundary.md`
+- Supersedes: `docs/adr/030-session-right-pane-preference-boundary.md`
 
 ## Context
 

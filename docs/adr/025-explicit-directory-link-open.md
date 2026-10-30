@@ -1,7 +1,7 @@
 # ADR 025: 明示的なdirectory linkのOS open
 
 - Status: Accepted
-- Supersedes: [ADR 020](020-file-preview-window-navigation.md)の登録root外directory拒否のみ
+- Supersedes: [ADR 034](034-file-preview-window-navigation.md)の登録root外directory拒否のみ
 
 ## 背景
 

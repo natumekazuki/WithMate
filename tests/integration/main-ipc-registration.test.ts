@@ -2070,7 +2070,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
 // @test-value v2
 // kind = "security"
 // claim = "リンク解決中にSession所有者・Preview resource・送信元windowが変わると、遅延したOS open前の再認可が失敗する"
-// oracle = { type = "contract", ref = "ADR 020 File preview window navigation: current Preview resource and owning Session authority" }
+// oracle = { type = "contract", ref = "ADR 034 File preview window navigation: current Preview resource and owning Session authority" }
 // fault = "初回認可だけでリンク解決後の古いrequestからOS openへ進む"
 // observable = "非同期解決後の再認可拒否とOS open相当の呼び出し回数"
 // observation_boundary = "public-boundary"

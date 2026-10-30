@@ -418,7 +418,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - `New Session` dialog はfooter左端の`Cancel`で閉じ、右端の`Start`で開始する。開始前の`Cancel`では作成せず、開始後は送信済みの作成を取り消さない。`Start`がdisabledでも`Cancel`は使用でき、重複する常設 Close control は置かない
   - Auxiliary 起動 dialog も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
-  - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする
+  - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 034 を正本とする
 - live Git Diff と chat artifact Diff は別機能とする。artifact の永続化・Diff modelは維持するが、Details UIには `Changed files` と `Open diff` を表示しない。File Explorer の Changes や中央 live Git Diff へ接続する判断は別consumerの契約で扱う
 - 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する

@@ -1,4 +1,4 @@
-# ADR 020: File preview window navigation
+# ADR 034: File preview window navigation
 
 - Status: Accepted
 

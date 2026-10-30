@@ -1,6 +1,6 @@
-# 006 Session Right Pane Preference Boundary
+# 030 Session Right Pane Preference Boundary
 
-- 状態: Superseded by ADR 011
+- 状態: Superseded by ADR 031
 - 日付: 2026-07-30
 
 ## Context

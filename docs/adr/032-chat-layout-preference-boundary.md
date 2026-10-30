@@ -1,8 +1,8 @@
-# 015 Chat Layout Preference Boundary
+# 032 Chat Layout Preference Boundary
 
 - 状態: Accepted
 - 日付: 2026-08-04
-- Supersedes: `docs/adr/011-session-side-pane-preference-boundary.md`
+- Supersedes: `docs/adr/031-session-side-pane-preference-boundary.md`
 
 ## 適用状態
 

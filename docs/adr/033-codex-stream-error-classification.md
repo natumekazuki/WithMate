@@ -1,4 +1,4 @@
-# 018 Codex Stream Error Classification
+# 033 Codex Stream Error Classification
 
 - 状態: Accepted
 - 日付: 2026-08-09
