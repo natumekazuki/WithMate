@@ -1,6 +1,11 @@
 import { createMessageSearchProjection, type MessageSearchProjection } from "../../../src-shared/session/message-find.js";
 import type { TextSearchMatch } from "../../../src-shared/text/find-text-matches.js";
 
+function hasRenderedSourceContent(element: HTMLElement): boolean {
+  const nonTextContent = "hr, .message-image-shell, .message-mermaid, .katex, .katex-error";
+  return Boolean(element.textContent?.trim() || element.matches(nonTextContent) || element.querySelector(nonTextContent));
+}
+
 /** Find the smallest rendered owner of a raw Markdown occurrence, not a similar label. */
 export function resolveMessageSourceMatchTarget(body: HTMLElement, match: TextSearchMatch): HTMLElement | null {
   let target: HTMLElement | null = null;
@@ -18,13 +23,16 @@ export function resolveMessageSourceMatchTarget(body: HTMLElement, match: TextSe
         target = element;
         targetLength = rangeEnd - rangeStart;
       }
-      if (!definitionTarget && Number(element.dataset.mdDefinitionStart) <= start && Number(element.dataset.mdDefinitionEnd) >= end) {
+      if (!definitionTarget && Number(element.dataset.mdDefinitionStart) <= start && Number(element.dataset.mdDefinitionEnd) >= end
+        && hasRenderedSourceContent(element)) {
         definitionTarget = element;
       }
     }
   }
-  // A paragraph alone does not identify hidden content such as an omitted image.
-  return target?.matches("p") ? definitionTarget : target ?? definitionTarget;
+  // An explicit reference identifies its definition more precisely than a containing ancestor.
+  if (definitionTarget) return definitionTarget;
+  // A paragraph or an empty ancestor does not identify hidden content such as an omitted image.
+  return target && !target.matches("p") && hasRenderedSourceContent(target) ? target : null;
 }
 
 export function createMessageSearchProjectionCache(provider?: string) {
@@ -66,6 +74,7 @@ const MESSAGE_RENDERED_SEARCH_EXCLUDED_SELECTOR = [
   ".message-file-preview-auxiliary",
   ".message-mermaid",
   ".katex",
+  ".katex-error",
   "[data-footnote-ref]",
   "[data-footnote-backref]",
   "[id$='footnote-label']",

@@ -62,7 +62,7 @@ test("message search projection は Markdown source ではなく表示文字列�
 
 // @test-value v2
 // kind = "contract"
-// claim = "表示検索はsingle dollarとliteral HTMLを保持し、属性なしbrと数式fenceをrendererと同じ検索文字列へ投影する"
+// claim = "表示検索はsingle dollarとliteral HTMLを保持し、属性なしbrと正常・エラー状態の数式をrendererと同じ検索文字列へ投影する"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md#goal" }
 // fault = "検索parserの数式設定、br判定、math fence分類がrendererと異なり表示一致の件数がずれる"
 // observable = "shared projectionと実rendererのDOM検索indexの文字列"
@@ -83,6 +83,8 @@ test("message search projection は数式とbrの表示条件をDOM indexと一�
       ["first<br>second<br/>third<br />fourth<BR>fifth", "firstsecondthirdfourthfifth"],
       ['first<br class="x">second </br> literal', 'first<br class="x">second </br> literal'],
       ["before\n\n```math\na^2\n```\n\nafter", "beforeafter"],
+      ["before\n\n```math\n\\frac{needle\n```\n\nafter needle", "beforeafter needle"],
+      ["before $$\\frac{needle$$ after needle", "before  after needle"],
       ["before\n\n```Math\na^2\n```\n\nafter", "beforea^2after"],
     ]) {
       await act(async () => root.render(React.createElement(MessageRichText, { text: markdown })));

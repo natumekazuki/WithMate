@@ -1765,15 +1765,15 @@ test("chat Find preserves each raw occurrence across Preview and Source order ch
 
 // @test-value v2
 // kind = "contract"
-// claim = "原文検索は参照定義の各出現を一度数え最初の表示参照へ移動し、画像pathは画像shell、未参照定義は所属messageを強調する"
+// claim = "原文検索は引用内の参照定義も各出現を一度数え最初の表示参照へ移動し、画像と水平線は対応要素、未参照定義と非表示画像は所属messageを強調する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/913" }
-// fault = "参照先の数だけ件数を増やす、未参照原文を捨てる、または無関係の表示文字を強調する"
-// observable = "Find件数、強調要素のlabel・画像shell class・message body属性と所属行"
+// fault = "参照先の数だけ件数を増やす、未参照原文や非text表示先を捨てる、または空の引用・装飾要素や無関係の表示文字を強調する"
+// observable = "Find件数、強調要素のlabel・画像shell class・水平線tag・message body属性と所属行"
 // observation_boundary = "component-behavior"
-// scope = "local Findのreference、画像、表示先なしの強調"
+// scope = "local Findのreference、画像、水平線、表示先なしの強調"
 // lifecycle = "permanent"
 // impact = "画像pathや未参照定義の一致を見失うか誤った場所を一致と理解する"
-// distinction = "parser metadata単体ではcolumnの結果選択とfallbackを確認できない。小さい2messageで一対多と表示先の境界を通す"
+// distinction = "parser metadata単体ではcolumnの結果選択とfallbackを確認できない。小さい3messageで一対多と非text表示先・非表示祖先の境界を通す"
 // @end-test-value
 test("chat Find targets first reference, image shell and message fallback", async () => {
   const previousIntersectionObserver = globalThis.IntersectionObserver;
@@ -1783,8 +1783,9 @@ test("chat Find targets first reference, image shell and message fallback", asyn
     disconnect() {}
   } });
   const mounted = await mountSessionMessageColumn({ messages: [
-    { role: "assistant", text: "[first][r] [second][r]\n\n[r]: C:/needle/needle.md\n\n[unused]: C:/orphan.md" },
-    { role: "assistant", text: "![picture](C:/image-path.png)" },
+    { role: "assistant", text: "[first][r] [second][r]\n\n> [r]: C:/needle/needle.md\n\n[unused]: C:/orphan.md" },
+    { role: "assistant", text: "**![picture](C:/image-path.png)**" },
+    { role: "assistant", text: "**![x](javascript:omitted)**\n\n***" },
   ] });
   const target = () => mounted.container.querySelector(".message-find-source-target");
   const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
@@ -1804,10 +1805,53 @@ test("chat Find targets first reference, image shell and message fallback", asyn
     assert.equal(count(), "1/1");
     assert.equal(target()?.getAttribute("data-message-body"), "true");
     assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "0");
+    await setMessageFindQuery(mounted, "omitted");
+    assert.equal(count(), "1/1");
+    assert.equal(target()?.getAttribute("data-message-body"), "true");
+    assert.equal(target()?.closest(".session-message-virtual-row")?.getAttribute("data-index"), "2");
+    await setMessageFindQuery(mounted, "***");
+    assert.equal(count(), "1/1");
+    assert.equal(target()?.tagName, "HR");
   } finally {
     await mounted.cleanup();
     Object.defineProperty(globalThis, "IntersectionObserver", { configurable: true, value: previousIntersectionObserver });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "数式エラーと通常本文に同じ語がある場合、Previewの表示一致は本文を強調し原文一致は数式全体を示してSourceでも同じ出現を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md; docs/design/message-rich-text.md#search-targets" }
+// fault = "数式エラー文字をDOM表示検索へ混ぜ、本文の選択を数式内へずらすか原文一致を見失う"
+// observable = "Find件数・説明、CSS Highlightの文字と親段落、数式target、Sourceの原文offset"
+// observation_boundary = "component-behavior"
+// scope = "local Findの不正math fenceと本文の選択"
+// lifecycle = "permanent"
+// impact = "未完成の数式を含む応答でも利用者が選んだ本文と数式を取り違えず確認できる"
+// distinction = "projection照合だけでは現在選択のDOM ordinalと要素強調・Source切替の接続を確認できない。短い1messageで2出現を辿る"
+// @end-test-value
+test("chat Find separates math errors from visible text highlights", async () => {
+  const text = "before\n\n```math\n\\frac{needle\n```\n\nafter needle";
+  const mounted = await mountSessionMessageColumn({ messages: [{ role: "assistant", text }] });
+  const highlights = installMessageFindHighlights(mounted);
+  const count = () => mounted.container.querySelector(".session-content-find-count")?.firstChild?.textContent;
+  try {
+    await setMessageFindQuery(mounted, "needle");
+    assert.equal(count(), "1/2");
+    const range = highlights.get("withmate-find-current")?.ranges[0];
+    assert.equal(range?.toString(), "needle");
+    assert.equal(range?.startContainer.parentElement?.closest("p")?.textContent, "after needle");
+    await act(async () => mounted.container.querySelector<HTMLButtonElement>("button[aria-label='Next match']")!.click());
+    assert.equal(count(), "2/2");
+    assert.equal(mounted.container.querySelector(".session-content-find-description")?.textContent, "Source Match");
+    assert.ok(mounted.container.querySelector(".message-find-source-target .katex-error"));
+    await mounted.rerender({ messageViewMode: "source" });
+    assert.equal(count(), "1/2");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.startOffset, text.indexOf("needle"));
+    await mounted.rerender({ messageViewMode: "preview" });
+    assert.equal(count(), "2/2");
+    assert.ok(mounted.container.querySelector(".message-find-source-target .katex-error"));
+  } finally { await mounted.cleanup(); }
 });
 
 // @test-value v2
