@@ -23,7 +23,6 @@ import {
   createStaticTextChatCompactActionDockProps,
   createStaticTextConversationMessageColumnProps,
 } from "../../src/chat/chat-window-adapter.js";
-import { SessionActionDockCompactRow } from "../../src/chat/approval/session-action-dock.js";
 import { SessionChatScreen } from "../../src/chat/shell/session-header.js";
 import { SessionSwitcher } from "../../src/chat/session-switcher.js";
 import { ComposerControllerRegistry } from "../../src/chat/composer-controller.js";
@@ -396,6 +395,63 @@ test("ChatWindow は preview と compact ActionDock 内に recovery actions を�
   assert.ok(dock.querySelector('button[aria-label="Main: Resend Previous Request"]'));
   assert.ok(dock.querySelector('button[aria-label="Main: Edit Previous Request"]'));
   dom.window.close();
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "会話が隠れている間の会話通知は、Prompt展開・compact・Terminal展開と実行中・停止中のどの組合せでも、表示中の操作列の先頭に1つだけ全状態を含む名前で描画され、読み上げは単一のlive regionに限られ、会話表示中は可視通知を出さない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/896: 表示場所・状態の扱いを共通化する; 支援技術への通知を一元化する" }
+// fault = "停止中のTerminal展開など特定のDockモードで通知が欠落する、モードや実行状態で通知の位置が変わる、非表示の行にも通知を重複描画する、代表表示で別の状態を名前から落とす、live regionを複数置く、または会話が見えているのに通知を出す"
+// observable = "各組合せのChatWindow静的DOMにおける会話通知buttonの件数・所属する表示中Dock行・操作列内の先頭位置・accessible name・title、通知用live regionの件数と文言"
+// observation_boundary = "component-behavior"
+// scope = "chat-window conversation attention placement"
+// lifecycle = "permanent"
+// impact = "Graph全体表示やPreview中に承認・質問を見落とす、またはDockの状態で通知の探し場所が変わる"
+// distinction = "SessionActionDockCompactRow単体testではChatWindowが表示中の行だけへ通知を渡すことと停止中Terminal展開の経路を観測できない"
+// @end-test-value
+test("ChatWindow は会話非表示時の通知を全Dockモードで表示中の操作列の先頭に1つだけ置く", () => {
+  const label = "Main: Approval required, New messages. Show Chat";
+  for (const [mode, expanded] of [["prompt", true], ["prompt", false], ["terminal", true]] as const) {
+    for (const isRunning of [false, true]) {
+      for (const isConversationHidden of [true, false]) {
+        const props = createChatWindowProps();
+        props.mainContent = isConversationHidden ? React.createElement("div", null, "File Preview") : undefined;
+        props.isActionDockExpanded = expanded;
+        props.actionDockModeControl = { mode, onChange: noop };
+        props.terminalContent = React.createElement("div", { className: "test-terminal" });
+        props.composerProps = { ...props.composerProps, isRunning };
+        props.compactActionDockProps = { ...props.compactActionDockProps, isRunning };
+        props.conversationAttention = {
+          targetLabel: "Main",
+          entries: [{ kind: "new-messages", key: "main:new-messages" }, { kind: "approval", key: "main:approval:1" }],
+          isConversationHidden,
+          onShowConversation: noop,
+        };
+        const dom = new JSDOM(renderToStaticMarkup(React.createElement(ChatWindow, props)));
+        const document = dom.window.document;
+        const buttons = document.querySelectorAll(".conversation-attention-button");
+        const context = `${mode} expanded=${expanded} running=${isRunning} hidden=${isConversationHidden}`;
+        const statuses = [...document.querySelectorAll("#session-action-dock [role='status']")]
+          .filter((status) => status.textContent?.includes("Approval required"));
+        if (!isConversationHidden) {
+          assert.equal(buttons.length, 0, context);
+          assert.equal(statuses.length, 0, context);
+          dom.window.close();
+          continue;
+        }
+        assert.equal(buttons.length, 1, context);
+        const button = buttons[0]!;
+        assert.equal(button.getAttribute("aria-label"), label, context);
+        assert.equal(button.getAttribute("title"), label, context);
+        assert.ok(button.closest(".session-action-dock-content.is-active"), context);
+        assert.equal(button.parentElement?.firstElementChild, button, context);
+        assert.match(button.parentElement?.className ?? "", /composer-toolbar-view-actions|session-action-dock-compact-actions/, context);
+        assert.equal(statuses.length, 1, context);
+        assert.equal(statuses[0]!.textContent, "Main: Approval required, New messages. Show the chat from the Action Dock to respond.", context);
+        dom.window.close();
+      }
+    }
+  }
 });
 
 // @test-value v2
@@ -1278,7 +1334,7 @@ test("SessionChatScreen は左右ペインを mounted のまま非表示・操�
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.match(html, /id="session-left-pane" class="session-left-pane-slot is-hidden" aria-hidden="true" inert=""/);
   assert.match(html, /id="session-right-pane" class="session-right-pane-slot is-hidden" aria-hidden="true" inert=""/);
-  assert.match(html, /class="session-central-surface" hidden=""><div>Messages<\/div><\/div>/);
+  assert.match(html, /class="session-central-surface" hidden=""><div class="session-conversation-region"><div>Messages<\/div><\/div><\/div>/);
   assert.match(html, /class="session-central-surface"><div>File Preview<\/div><\/div>/);
   assert.match(html, /<div>Composer<\/div>/);
   assert.match(html, /Latest Command/);
@@ -1584,33 +1640,6 @@ test("SessionChatScreen はConcurrent columnsの実幅不足を補正する", as
     Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
-});
-
-// @test-value v2
-// kind = "invariant"
-// claim = "Compact ActionDock は通常時の通知を維持しつつ不要な下書き表示を出さない"
-// oracle = { type = "contract", ref = "chat-action-dock" }
-// fault = "通常通知が消えるか、非送信状態に下書き表示を誤って出す"
-// observable = "Compact ActionDockのrender済みHTML"
-// observation_boundary = "component-behavior"
-// scope = "chat-action-dock"
-// lifecycle = "permanent"
-// @end-test-value
-test("SessionActionDockCompactRow は通常時の chat notice を下書き表示なしで維持する", () => {
-  const html = renderToStaticMarkup(
-    React.createElement(SessionActionDockCompactRow, {
-      isRunning: false,
-      chatNotice: "New messages",
-      showJumpToBottom: false,
-      onExpand() {},
-      onJumpToBottom() {},
-      onCancel() {},
-    }),
-  );
-
-  assert.match(html, /session-action-dock-compact-badge attention/);
-  assert.match(html, />New messages<\/span>/);
-  assert.doesNotMatch(html, /Draft|下書きなし|>Send<\/button>/);
 });
 
 // @test-value v2

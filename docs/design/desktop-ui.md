@@ -3,7 +3,7 @@
 UIの設計・変更・reviewでは、画面横断の原則と共通パターンを定めた[UI Design Guidelines](ui-design-guidelines.md)を参照する。
 
 ## Auxiliary Session (Issue #710)
-Mainと選択中Auxiliaryの末尾移動は`Scroll Main To Bottom`／`Scroll Auxiliary To Bottom`としてSettingsから個別にキー登録できる。既存の有効な割当を維持するため、全platformで初期は`Not Assigned`とし、`Reset`も指定commandだけ未割当へ戻す。登録後はComposer入力中も使え、送信対象とfocusを変えず指定列だけ末尾追従へ戻す。未取得・折りたたみ中の列、Auxiliaryの読込中・取得失敗、中央Preview表示中は実行しない。Terminal本文、IME変換中、key repeatでは会話shortcutの既存抑止を維持する。
+Mainと選択中Auxiliaryの末尾移動は`Scroll Main To Bottom`／`Scroll Auxiliary To Bottom`としてSettingsから個別にキー登録できる。既存の有効な割当を維持するため、全platformで初期は`Not Assigned`とし、`Reset`も指定commandだけ未割当へ戻す。登録後はComposer入力中も使え、送信対象とfocusを変えず指定列だけ末尾追従へ戻す。未取得・折りたたみ中の列、Graph表示中に送信対象でない列、Auxiliaryの読込中・取得失敗、中央Previewやfull表示のGraphで会話が隠れている間は実行しない。Terminal本文、IME変換中、key repeatでは会話shortcutの既存抑止を維持する。
 
 Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。splitter幅と選択中Auxiliaryは親Sessionごとのlocal preferenceとして復元し、幅はresize interactionの完了時だけ保存する。折りたたみ時はAuxiliary面・内部境界・タイトル枠内の操作を隠し、splitterだけを再展開導線として残す。折りたたみでActionDock対象や選択中Sessionを変更しない。
 
@@ -69,7 +69,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Implementation Boundary
 
-Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、`Back To Chat`で元の会話へ戻る。入口はヘッダーの展開時に表示する。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。`All Topics`で話題を横断し、Topicの要点・担当別進行・記録間関係からTopic/record詳細へ進む閲覧専用面である。全体とTopic詳細の往復、会話切替、Graph開閉で閲覧状態を保ち、送信先や下書きを変更しない。新しさの背景・最新帯、選択枠、担当アイコンの色縁を中央/独立Windowで共用する。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
+Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を、現在の送信対象の会話の隣に開く。Graph全体表示と2領域への復帰、`Close Graph`による元の会話分割への復帰、幅の扱いは同文書の閲覧UIに従う。入口はヘッダーの展開時に表示する。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。`All Topics`で話題を横断し、Topicの要点・担当別進行・記録間関係からTopic/record詳細へ進む閲覧専用面である。全体とTopic詳細の往復、会話切替、Graph開閉で閲覧状態を保ち、送信先や下書きを変更しない。新しさの背景・最新帯、選択枠、担当アイコンの色縁を中央/独立Windowで共用する。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
 
 Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。
 
@@ -84,7 +84,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - File Explorer と中央 file / Git preview は `file-explorer/session-files-feature.tsx` が独立した描画境界で `use-session-files-feature.tsx` を呼ぶ。タブ、再読込、preview requestと読込結果をその境界内に保持し、shellの安定したpane／preview hostへ表示する。Windowにはpreview有無、閉じる操作、composerへの挿入接続だけを渡す
 - `chat/runtime/session-context-feature.tsx` はContext tab、telemetry、Glossaryの検索・選択を所有する。会話へ必要なannotation matcherと用語を開く操作だけを共有し、検索入力や結果更新でWindowを再投影しない。Retryは最小turnを参照し、Latest Commandはliveと対象turnの通常artifactを使う
 - live本文・step・usageの表示snapshotは会話列、Contextの表示ownerが購読する。Window shellの購読は実行有無、入力待ち、本文出力開始、command実行有無、errorという操作・通知に必要な変化だけを反映し、本文tokenごとに他機能を再構築しない
-- 会話列は確定履歴の投影とlive末尾を分離し、保存確定時のmessage key、Bookmark、検索、navigatorを保持する。Previewや幅0で見えない会話列は表示用live購読と追従を休止し、再表示時に最新snapshotへ追いつく。runとdraft保存の寿命は表示状態から独立する
+- 会話列は確定履歴の投影とlive末尾を分離し、保存確定時のmessage key、Bookmark、検索、navigatorを保持する。Preview、幅0、Graph表示中の送信対象外などで見えない会話列は表示用live購読と追従を休止し、再表示時に最新snapshotへ追いつく。runとdraft保存の寿命は表示状態から独立する
 - selection toolbarの位置計測は対象列に選択がある時だけ行い、DOMのresize／mutation監視も選択中に限定する。選択・Copy／Quoteとkeyboard操作を維持する
 - splitterのdrag中は対象領域の寸法を局所更新し、pointer up／cancelで最後の表示値を状態ownerへ確定する。中央幅の保存も確定時だけ行い、clickとkeyboard変更はその操作内で確定する
 - Session Window は機能間の接続を担当し、Composer の入力・picker・表示 props、Context Pane の選択・表示投影、Shell の dock 操作・resize props は各機能 owner が組み立てる。`chat/session-chat-window-composition.tsx` は owner が返す表示面を共通 ChatWindow へ接続し、全機能の詳細状態を受け取る projection は持たない
@@ -405,7 +405,10 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - File PreviewのCopy File / Copy Image結果は、共有`AppNotification` primitiveを使ったheader内のoverlayとして表示する。通知は操作列のflex配置に参加せず、操作列の直下・右寄せに重なるため、既存の操作ボタンを移動・折り返しさせない
   - Copy成功はsuccess toneと`role="status"` / `aria-live="polite"`、Copy失敗はerror toneと`role="alert"` / `aria-live="assertive"`で表示する。下端の`session-file-preview-feedback`はpreview自体のエラー専用で、Copy成功通知には使わない。`AppNotification`の現在のconsumerはFile Previewだけとし、他画面への適用は各UIの意味と配置を確認してから行う
   - Ctrl+F は active な chat / Text / Markdown / Mermaid / HTML Source / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、Mermaid、HTML Source、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する。rich previewのCopy／Quoteはブラウザーが選択した本文を使い、倍率toolbarなど選択不可の操作表示を含めない
-  - file、live Git Diff、Template workspace から chat へ戻る操作は、左向き icon-only control と具体的な accessible name を持つ同じ navigation primitive を使う。run、approval、elicitation の状態は preview 中も確認できる
+  - file、live Git Diff、Template workspace から chat へ戻る操作は、左向き icon-only control と具体的な accessible name を持つ同じ navigation primitive を使う。戻る操作には会話の状態を重ねて表示しない
+  - 会話の通知: File Preview、Git Diff、Git History Diff、Prompt Template、Graph全体表示（幅不足でGraphだけを表示する場合を含む）で送信対象の会話が隠れている間、現在の送信対象Mainまたは選択中Auxiliaryの承認要求・回答必須の質問・回答任意の質問・新着をActionDockの1つのicon buttonで示す。Graphと会話の2領域では会話が見えているため表示しない。Prompt展開・compact・Terminal展開と実行中・停止中・取消中のいずれでも、表示中の操作列の先頭に置き、他の操作を動かさない
+  - 通知のiconは最も優先する状態（承認 → 回答必須 → 回答任意 → 新着）の形を示し、色だけに依存しない。tooltipとaccessible nameは`<対象会話>: <全状態>. Show Chat`とし、代表以外の状態も含める。押すと会話を表示する（Graph全体表示は2領域へ、その他は既存の離脱確認を通して中央表示を閉じる）。承認・質問では対象会話を末尾へ追従させ、要求のフォームへ到達させる。通知の到着だけでfocusや表示を変えず、押しても回答・承認・再送はしない
+  - 支援技術へは単一のpolite live regionで伝える。会話が隠れている間に現れた要求をSessionとrequest IDで識別して一度だけ読み上げ、同じ要求の再描画では再通知しない。解決・取消・終了で文言を消し、同じ文言でも別requestは再通知する。会話が見えている間に現れた要求は既知として扱い、Previewへ戻っても読み上げない。新着は会話が隠れている間に増えた本文を既存のpreview activityで判定し、会話を表示すると解除する
   - Template workspaceのSave / Delete処理中は入力を固定し、成功・失敗後に操作を戻す。本文・template IDを表示文言の変更で書き換えない
   - Template workspaceの診断エラーはアイコンで示し、詳細アイコンから非modal popoverで原文を開く。本文と回復操作の配置を保ち、画面端で位置・高さを補正する。重複見出しは置かず、本文右上のClose、Escape、入口の再操作、関連領域外のclickで閉じる。CloseとEscapeでは入口へfocusを戻し、外側で移ったfocusは奪わない。取得失敗にはRetryアイコンを併置し、短い失敗通知・操作名・開閉状態を支援技術へ伝える。名前や本文の入力不備・名前の重複は修正に必要な短い説明を表示し、失敗時の編集値は保持する
   - Skill 候補のような一時 surface は右上の × と具体的な accessible name を使い、`Escape` でも dismiss できる。view 間 navigation の Back とは表現を分ける

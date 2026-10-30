@@ -27,7 +27,6 @@ export type SessionFilesFeatureProps = {
     onBack: () => void;
     onCopyText: (text: string) => void;
     onQuoteText: (text: string) => void;
-    chatNotice: string;
   };
   previewEnabled: boolean;
   onPreviewActiveChange: (active: boolean) => void;

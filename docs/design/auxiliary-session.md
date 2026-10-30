@@ -3,7 +3,7 @@
 
 ## Goal
 
-AuxiliaryはMainと同じWindowで利用する独立した会話である。Main 1件とAuxiliary複数件を保持し、画面にはMainと選択中のAuxiliaryを表示する。非表示のAuxiliaryも会話、draft、Character、実行状態を保持し、後から同じ会話を継続できる。
+AuxiliaryはMainと同じWindowで利用する独立した会話である。Main 1件とAuxiliary複数件を保持し、画面にはMainと選択中のAuxiliaryを表示する。Session Graphを開いている間は、送信対象の会話だけをGraphの隣に表示する（[Session Graph](session-graph.md#閲覧ui)）。非表示のAuxiliaryも会話、draft、Character、実行状態を保持し、後から同じ会話を継続できる。
 
 Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionとして扱う。Main・兄弟Auxiliaryとのtranscript、provider context、Memoryを自動同期しない。
 

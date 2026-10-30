@@ -1,30 +1,25 @@
-import { useId, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 type BackNavigationButtonProps = {
   label: string;
   showLabel?: boolean;
   icon?: ReactNode;
-  notice?: ReactNode;
   disabled?: boolean;
   onBack: () => void;
 };
 
-export function BackNavigationButton({ label, showLabel = false, icon = "←", notice, disabled, onBack }: BackNavigationButtonProps) {
-  const noticeId = useId();
-
+export function BackNavigationButton({ label, showLabel = false, icon = "←", disabled, onBack }: BackNavigationButtonProps) {
   return (
     <button
       className="back-navigation-button"
       type="button"
       aria-label={label}
-      aria-describedby={notice ? noticeId : undefined}
       title={label}
       disabled={disabled}
       onClick={onBack}
     >
       <span className="back-navigation-button-icon" aria-hidden="true">{icon}</span>
       {showLabel ? <span className="back-navigation-button-label">{label}</span> : null}
-      {notice ? <span id={noticeId} className="back-navigation-button-notice">{notice}</span> : null}
     </button>
   );
 }

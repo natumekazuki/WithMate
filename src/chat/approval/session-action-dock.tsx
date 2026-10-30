@@ -52,7 +52,7 @@ export type SessionActionDockCompactRowProps = {
   dockModeSwitch?: ReactNode;
   providerQuota?: ReactNode;
   showExpandControl?: boolean;
-  chatNotice?: string;
+  attentionControl?: ReactNode;
   showJumpToBottom: boolean;
   showMessageViewModeControls?: boolean;
   messageViewMode?: MessageViewMode;
@@ -71,7 +71,7 @@ export function SessionActionDockCompactRow({
   dockModeSwitch = null,
   providerQuota = null,
   showExpandControl = true,
-  chatNotice,
+  attentionControl = null,
   showJumpToBottom,
   showMessageViewModeControls = false,
   messageViewMode = "preview",
@@ -90,12 +90,9 @@ export function SessionActionDockCompactRow({
         onClick={onExpand}
         aria-label="Expand action dock"
         title="Expand action dock"
-      >
-        {!isRunning && chatNotice ? (
-          <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
-        ) : null}
-      </button> : <span className="session-action-dock-compact-meta" aria-hidden="true" />}
+      /> : <span className="session-action-dock-compact-meta" aria-hidden="true" />}
       <div className="session-action-dock-compact-actions">
+        {attentionControl}
         {recoveryActions}
         <div
           className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}
@@ -115,9 +112,6 @@ export function SessionActionDockCompactRow({
         ) : null}
         </div>
         {targetDock ? <div className="session-action-dock-target-slot">{targetDock}</div> : null}
-        {isRunning && chatNotice ? (
-          <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
-        ) : null}
         {showJumpToBottom ? (
           <button
             className="drawer-toggle compact secondary message-jump-bottom-button composer-icon-button"

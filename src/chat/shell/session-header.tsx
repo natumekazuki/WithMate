@@ -257,6 +257,12 @@ export type SessionChatScreenProps = {
   auxiliaryWidthRatio?: number;
   concurrentTarget?: "main" | "auxiliary";
   mainContent?: ReactNode;
+  /** Shown beside the target conversation (`split`) or alone (`full`) without remounting. */
+  sideContent?: ReactNode;
+  sideContentMode?: "split" | "full";
+  sideContentWidthRatio?: number;
+  sideSplitter?: ReactNode;
+  onSideContentFitChange?: (fits: boolean) => void;
   workSurfaceOverlay?: ReactNode;
   supportingSurface?: ReactNode;
   errorSurface?: ReactNode;
@@ -293,6 +299,11 @@ export function SessionChatScreen({
   auxiliaryWidthRatio = 0.5,
   concurrentTarget = "main",
   mainContent,
+  sideContent,
+  sideContentMode = "split",
+  sideContentWidthRatio = 0.5,
+  sideSplitter = null,
+  onSideContentFitChange,
   workSurfaceOverlay = null,
   supportingSurface = null,
   errorSurface = null,
@@ -440,14 +451,51 @@ export function SessionChatScreen({
     observer?.observe(columns);
     return () => observer?.disconnect();
   }, [isAuxiliaryVisible, mainContent !== undefined]);
-  const singleChat = auxiliaryWidthRatio > 0 && auxiliaryWidthRatio < 1 && columnSizes.width > 0
-    && columnSizes.width < columnSizes.main + columnSizes.auxiliary + columnSizes.splitter;
+  const hasSideContent = sideContent !== undefined;
+  const isSideSplit = hasSideContent && sideContentMode === "split";
+  const centralSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const [sideSizes, setSideSizes] = useState({ width: 0, conversation: 0, side: 0, splitter: 0 });
+  useLayoutEffect(() => {
+    const surface = centralSurfaceRef.current;
+    if (!surface || !hasSideContent) return;
+    const view = surface.ownerDocument.defaultView!;
+    const measure = () => {
+      const minimum = (selector: string) => {
+        const element = surface.querySelector<HTMLElement>(selector);
+        return element ? Number.parseFloat(view.getComputedStyle(element).getPropertyValue("--session-region-min-width")) || 0 : 0;
+      };
+      const next = {
+        width: surface.getBoundingClientRect().width,
+        conversation: minimum(".session-conversation-region"),
+        side: minimum(".session-side-region"),
+        splitter: Number.parseFloat(view.getComputedStyle(surface).getPropertyValue("--session-dock-splitter-size")) || 0,
+      };
+      setSideSizes((current) => Object.keys(next).every((key) => current[key as keyof typeof next] === next[key as keyof typeof next]) ? current : next);
+    };
+    measure();
+    const Observer = view.ResizeObserver;
+    const observer = Observer ? new Observer(measure) : null;
+    observer?.observe(surface);
+    return () => observer?.disconnect();
+  }, [hasSideContent]);
+  // An unmeasured surface counts as fitting so the conversation is not hidden before layout.
+  const sideFits = sideSizes.width === 0 || sideSizes.width >= sideSizes.conversation + sideSizes.side + sideSizes.splitter;
+  useLayoutEffect(() => {
+    if (hasSideContent) onSideContentFitChange?.(sideFits);
+  }, [hasSideContent, onSideContentFitChange, sideFits]);
+  const sideContentWidth = sideSizes.width - sideSizes.splitter;
+  const effectiveSideRatio = sideContentWidth > 0
+    ? Math.max(sideSizes.side / sideContentWidth, Math.min(1 - sideSizes.conversation / sideContentWidth, sideContentWidthRatio))
+    : sideContentWidthRatio;
+  // Beside side content only the send target is shown; the Main/Auxiliary ratio is left untouched.
+  const singleChat = isSideSplit || (auxiliaryWidthRatio > 0 && auxiliaryWidthRatio < 1 && columnSizes.width > 0
+    && columnSizes.width < columnSizes.main + columnSizes.auxiliary + columnSizes.splitter);
   const contentWidth = columnSizes.width - columnSizes.splitter;
   const effectiveRatio = auxiliaryWidthRatio <= 0 ? 0 : auxiliaryWidthRatio >= 1 ? 1
     : contentWidth > 0 && !singleChat
       ? Math.max(columnSizes.auxiliary / contentWidth, Math.min(1 - columnSizes.main / contentWidth, auxiliaryWidthRatio))
       : auxiliaryWidthRatio;
-  const hasAuxiliaryHeader = auxiliaryWidthRatio > 0 && auxiliaryHeader != null;
+  const hasAuxiliaryHeader = auxiliaryHeader != null;
 
   return (
     <div
@@ -492,15 +540,21 @@ export function SessionChatScreen({
         aria-hidden={isCentralCollapsed}
         inert={isCentralCollapsed}
         className="chat-panel session-work-surface session-message-stack rise-3"
-        style={isAuxiliaryVisible && mainContent === undefined && columnSizes.main > 0
+        style={isAuxiliaryVisible && mainContent === undefined && !hasSideContent && columnSizes.main > 0
           ? { "--session-region-min-width": `${(auxiliaryWidthRatio <= 0 ? columnSizes.main : auxiliaryWidthRatio >= 1 ? columnSizes.auxiliary : columnSizes.main + columnSizes.auxiliary) + columnSizes.splitter}px` } as CSSProperties
           : undefined}
       >
         <div
-          className={`session-central-surface${isAuxiliaryVisible ? ` has-concurrent-chats concurrent-target-${concurrentTarget}` : ""}`}
-          style={isAuxiliaryVisible ? { "--auxiliary-width-ratio": auxiliaryWidthRatio } as CSSProperties : undefined}
+          ref={centralSurfaceRef}
+          className={`session-central-surface${isAuxiliaryVisible ? ` has-concurrent-chats concurrent-target-${concurrentTarget}` : ""}${
+            hasSideContent ? ` has-side-content side-content-${isSideSplit ? "split" : "full"}` : ""}`}
+          style={{
+            ...(isAuxiliaryVisible ? { "--auxiliary-width-ratio": auxiliaryWidthRatio } : {}),
+            ...(isSideSplit ? { gridTemplateColumns: `minmax(0, ${1 - effectiveSideRatio}fr) var(--session-dock-splitter-size) minmax(0, ${effectiveSideRatio}fr)` } : {}),
+          } as CSSProperties}
           hidden={mainContent !== undefined}
         >
+          <div className="session-conversation-region" hidden={hasSideContent && !isSideSplit}>
           {isAuxiliaryVisible ? (
             <div
               ref={columnsRef}
@@ -525,6 +579,9 @@ export function SessionChatScreen({
               </div>
             </div>
           ) : messageColumn}
+          </div>
+          {isSideSplit ? sideSplitter : null}
+          {hasSideContent ? <div id="session-side-region" className="session-side-region">{sideContent}</div> : null}
         </div>
         <div className="session-central-surface" hidden={mainContent === undefined}>
           {mainContent}

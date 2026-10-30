@@ -445,7 +445,7 @@ test("graph overview retains semantic boundaries, branches, cycles and unloaded 
 // kind = "contract"
 // claim = "区間展開からrecord詳細へ辿れ、操作名を持つ範囲navigationで位置・倍率・focusへ戻り、再表示・跨話題往復で追加取得した区間を保持する"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
-// fault = "group操作が全経路を無条件展開するか、全体へ戻るiconに操作名がなくなるか、範囲navigationが会話復帰を実行するか、戻る時に位置・倍率・focusを失うか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われる"
+// fault = "group操作が全経路を無条件展開するか、全体へ戻るiconに操作名がなくなるか、戻る時に位置・倍率・focusを失うか、詳細dismiss・再表示・跨話題往復で区間や追加pageが失われる"
 // observable = "展開後のgroupとrecord、全体へ戻るiconのaccessible nameとtitle・深い区間の可視labelと操作結果、詳細本文、再表示・跨話題往復後のnode集合、戻り先groupのfocusとviewport位置・倍率、部分取得中の集約可否"
 // observation_boundary = "component-behavior"
 // scope = "session-graph-overview-navigation"
@@ -465,7 +465,6 @@ test("graph preview retains expanded ranges across record and topic navigation",
   let memory: SessionGraphPreviewMemory | null = null;
   let state = { topicId: "topic", selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0 } as SessionGraphViewState;
   let truncated = false;
-  let chatReturns = 0;
   const api = {
     readSessionGraph: (async (_id: string, operation: string, request: { ids?: string[]; topicId?: string; offset?: number; limit?: number }) => {
       if (operation === "list_topics") return { status: "ok", revision: 1, items: [{ id: "topic", title: "Topic" }, { id: "other", title: "Other" }], total: 2, offset: 0, hasMore: false, incomplete: false };
@@ -479,7 +478,7 @@ test("graph preview retains expanded ranges across record and topic navigation",
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: () => () => {},
   };
-  const render = (key: string) => root.render(<SessionGraphPreview key={key} api={api} sessionId="main" onOpenPath={() => {}} onClose={() => { chatReturns++; }}
+  const render = (key: string) => root.render(<SessionGraphPreview key={key} api={api} sessionId="main" onOpenPath={() => {}}
     initialState={state} initialMemory={memory} onStateChange={(next) => { state = next; }} onMemoryChange={(next) => { memory = next; }} />);
   const click = async (selector: string) => {
     const target = dom.window.document.querySelector(selector);
@@ -541,9 +540,6 @@ test("graph preview retains expanded ranges across record and topic navigation",
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 3);
     assert.ok(dom.window.document.activeElement?.classList.contains("session-graph-group"));
     assert.deepEqual([viewport().scrollLeft, viewport().scrollTop, state.zoom], [46, 82, 1.1]);
-    assert.equal(chatReturns, 0);
-    await click("[aria-label='Back To Chat']");
-    assert.equal(chatReturns, 1);
     truncated = true;
     memory = null;
     await act(async () => render("truncated"));
@@ -954,7 +950,6 @@ test("graph preview preserves selection on notifications and navigates cross-top
         <PreviewWheelZoomStepContext.Provider value={7}><SessionGraphPreview
           api={api}
           sessionId="main"
-          onClose={() => {}}
           onOpenPath={(target) => opened.push(target)}
           onOpenWindow={(state) => windows.push(state)}
           onStateChange={(state) => { latestState = state; }}
@@ -1113,7 +1108,7 @@ test("graph preview preserves selection on notifications and navigates cross-top
     });
     assert.equal(dom.window.document.activeElement, dom.window.document.querySelector(".session-graph-node"));
     await act(async () => {
-      root.render(<SessionGraphPreview key="reopened" api={api} sessionId="main" initialState={savedState} initialMemory={savedMemory} onClose={() => {}} onOpenPath={() => {}} />);
+      root.render(<SessionGraphPreview key="reopened" api={api} sessionId="main" initialState={savedState} initialMemory={savedMemory} onOpenPath={() => {}} />);
     });
     assert.match(dom.window.document.querySelector(".session-graph-details")?.textContent ?? "", /Decision At Revision 2/);
     const restoredCanvas = dom.window.document.querySelector<HTMLElement>(".session-graph-viewport")!;
@@ -1121,12 +1116,12 @@ test("graph preview preserves selection on notifications and navigates cross-top
     assert.equal(restoredCanvas.scrollTop, 91);
     assert.equal(dom.window.document.querySelector(".session-graph-navigation")?.textContent?.includes("110%"), true);
     await act(async () => {
-      root.render(<SessionGraphPreview key="reopened-related" api={api} sessionId="main" initialState={relatedState} initialMemory={relatedMemory} onClose={() => {}} onOpenPath={() => {}} />);
+      root.render(<SessionGraphPreview key="reopened-related" api={api} sessionId="main" initialState={relatedState} initialMemory={relatedMemory} onOpenPath={() => {}} />);
     });
     await click(dom.window.document.querySelector(".session-graph-back-link"));
     assert.match(dom.window.document.querySelector(".session-graph-details")?.textContent ?? "", /Decision At Revision 2/);
     await act(async () => {
-      root.render(<SessionGraphPreview key="reopened-pages" api={api} sessionId="main" initialState={loadedState} initialMemory={loadedMemory} onClose={() => {}} onOpenPath={() => {}} />);
+      root.render(<SessionGraphPreview key="reopened-pages" api={api} sessionId="main" initialState={loadedState} initialMemory={loadedMemory} onOpenPath={() => {}} />);
     });
     await click(dom.window.document.querySelector("button[aria-label='Close Record Details']"));
     assert.equal(dom.window.document.querySelectorAll(".session-graph-node").length, 2);

@@ -125,7 +125,6 @@ function Provenance({ record }: { record: SessionGraphRecord }) {
 export function SessionGraphTopicView({
   api,
   sessionId,
-  onClose,
   onOpenPath,
   initialState = defaultSessionGraphViewState,
   onStateChange,
@@ -136,7 +135,6 @@ export function SessionGraphTopicView({
 }: {
   api: Pick<WithMateWindowApi, "readSessionGraph" | "subscribeSessionGraph">;
   sessionId: string;
-  onClose?(): void;
   onOpenPath(target: string): void;
   initialState?: SessionGraphViewState;
   onStateChange?(state: SessionGraphViewState): void;
@@ -647,7 +645,6 @@ export function SessionGraphTopicView({
       onPointerOver={() => setTooltipsDismissed(false)}
     >
       <header className="session-graph-toolbar">
-        {onClose ? <BackNavigationButton label="Back To Chat" icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>} onBack={onClose} /> : null}
         {topics.length ? (
           <select
             ref={topicSelectRef}

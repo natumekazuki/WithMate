@@ -668,8 +668,8 @@ test("staticTextChatRuntimeComposerCapabilityDefaults は runtime controls だ�
 // kind = "contract"
 // claim = "buildLiveSessionComposerDockPropsはcomposerとcompact ActionDockへ共通のjump・send・cancel情報を投影する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "composerとcompact ActionDockで末尾移動、送信・cancel、noticeのpropsが不一致になる"
-// observable = "composer.showJumpToBottom/chatNoticeとcompactActionDockのshowJumpToBottom・cancelButtonTitle・callback identity"
+// fault = "composerとcompact ActionDockで末尾移動、送信・cancelのpropsが不一致になる"
+// observable = "composer.showJumpToBottomとcompactActionDockのshowJumpToBottom・cancelButtonTitle・callback identity"
 // observation_boundary = "public-boundary"
 // scope = "live-session-composer-dock-adapter"
 // lifecycle = "permanent"
@@ -681,7 +681,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   const onExpandActionDock = () => {};
   const props = buildLiveSessionComposerDockProps({
     isRunning: true,
-    chatNotice: "New messages",
     composerBlocked: false,
     canSelectCustomAgent: true,
     isAgentPickerOpen: false,
@@ -745,9 +744,7 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   });
 
   assert.equal(props.composer.showJumpToBottom, true);
-  assert.equal(props.composer.chatNotice, "New messages");
   assert.equal("onCollapse" in props.composer, false);
-  assert.equal(props.compactActionDock.chatNotice, "New messages");
   assert.equal(props.compactActionDock.showJumpToBottom, true);
   assert.equal(props.compactActionDock.cancelButtonTitle, "Stop");
   assert.equal(props.compactActionDock.onExpand, onExpandActionDock);

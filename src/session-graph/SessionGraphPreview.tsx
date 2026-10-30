@@ -11,11 +11,10 @@ export type SessionGraphPreviewMemory = {
   overview?: SessionGraphOverviewMemory;
 };
 
-export function SessionGraphPreview({ api, sessionId, onClose, onOpenPath, initialState = defaultSessionGraphViewState,
+export function SessionGraphPreview({ api, sessionId, onOpenPath, initialState = defaultSessionGraphViewState,
   onStateChange, onOpenWindow, toolbarActions, initialMemory, onMemoryChange }: {
   api: Pick<WithMateWindowApi, "readSessionGraph" | "subscribeSessionGraph">;
   sessionId: string;
-  onClose?(): void;
   onOpenPath(target: string): void;
   initialState?: SessionGraphViewState;
   onStateChange?(state: SessionGraphViewState): void;
@@ -49,12 +48,11 @@ export function SessionGraphPreview({ api, sessionId, onClose, onOpenPath, initi
     api={api} sessionId={sessionId} initialState={topicState} initialMemory={memory.current.topic}
     onMemoryChange={(topic) => { memory.current.topic = topic; saveMemory(); }}
     onStateChange={publish}
-    onOpenPath={onOpenPath} onClose={onClose}
+    onOpenPath={onOpenPath}
     onOpenWindow={onOpenWindow ? (state) => onOpenWindow({ ...state, overview: overviewState.current }) : undefined}
     toolbarActions={<><BackNavigationButton label="All Topics" showLabel onBack={backToTopics} />{toolbarActions}</>} />;
   return <section className="session-graph-preview" aria-label="Session Graph">
     <header className="session-graph-toolbar">
-      {onClose ? <BackNavigationButton label="Back To Chat" onBack={onClose} /> : null}
       <strong>All Topics</strong>
       {toolbarActions}
     </header>
