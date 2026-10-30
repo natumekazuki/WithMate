@@ -1372,6 +1372,7 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
+            const isAwaitingSavedResponse = isAssistant && turnQueueMetadata?.get(messageKey)?.state === "completed";
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactDetailError = artifactDetailErrors[artifactKey];
@@ -1416,7 +1417,7 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
               <article
-                className={`message-row ${message.role}${sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
+                className={`message-row ${message.role}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
@@ -1663,7 +1664,8 @@ export function SessionMessageColumn({
                       </section>
                     ) : null}
                     {turnQueueMetadata?.get(messageKey) ? <SessionTurnQueueStatus receipt={turnQueueMetadata.get(messageKey)!} position={queuedTurnIds?.includes(turnQueueMetadata.get(messageKey)!.id) ? queuedTurnIds.indexOf(turnQueueMetadata.get(messageKey)!.id) + 1 : undefined} queueSize={queuedTurnIds?.length} busy={queueBusyId != null} busyKind={queueBusyId === turnQueueMetadata.get(messageKey)!.id ? queueBusyKind : null} onCancel={onCancelQueuedTurn ?? (() => {})} onRelease={onReleaseInterruptedTurn ?? (() => {})} onMove={onMoveQueuedTurn} moveDisabled={queueReorderDisabled} /> : null}
-                    {message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
+                    {isAwaitingSavedResponse ? <div className="pending-response-content"><PendingRunIndicator announcement="Loading response" /></div>
+                      : message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>
                 </div>
                 </article>

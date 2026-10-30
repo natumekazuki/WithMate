@@ -2,7 +2,7 @@ import type { SessionTurnQueueReceipt } from "../../../src-shared/session/sessio
 import type { MessageListProjection } from "../auxiliary/auxiliary-session-message-projection.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 
-export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: { submissions: readonly SessionTurnSubmission[]; hasActiveRun: boolean }) {
+export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: { submissions: readonly SessionTurnSubmission[]; hasActiveRun: boolean; responseKeys?: ReadonlyMap<string, string> }) {
   const owned = receipts.filter((receipt) => receipt.sessionId === owner.sessionId && receipt.incarnationId === owner.incarnationId)
     .sort((left, right) => left.queuePosition - right.queuePosition);
   const metadata = new Map<string, SessionTurnQueueReceipt>();
@@ -10,7 +10,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
   const tail: SessionTurnQueueReceipt[] = [];
   const hasUnreleasedInterruption = owned.some((receipt) => receipt.state === "interrupted" && receipt.releasedAt === null);
   const activeReceipt = options ? owned.find((receipt) => !receipt.inputTurnId && (receipt.state === "starting" || receipt.state === "running"))
-    ?? (!options.hasActiveRun ? owned.find((receipt) => receipt.state === "completed" && receipt.userMessageSeq !== null
+    ?? (!options.hasActiveRun ? owned.find((receipt) => !receipt.inputTurnId && receipt.state === "completed" && receipt.userMessageSeq !== null
         && options.submissions.some((submission) => submission.requestId === receipt.requestId)
         && !history.sources.some((source, index) => (source.kind === "session" || source.kind === "auxiliary" && source.sessionId === owner.sessionId)
           && source.messageIndex > receipt.userMessageSeq! && history.messages[index].role === "assistant"))
@@ -57,6 +57,23 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     projection.keys.splice(userIndex + 1, 0, `${key}-failure`);
     projection.sources.splice(userIndex + 1, 0, { kind: "turn-queue", receipt });
     projection.groups.splice(userIndex + 1, 0, projection.groups[userIndex]);
+  }
+  // A following turn may already be running while this completed turn's canonical body is still in flight.
+  for (const receipt of owned) {
+    const responseKey = options?.responseKeys?.get(receipt.requestId);
+    if (!responseKey || receipt.state !== "completed" || receipt.inputTurnId || receipt.userMessageSeq === null) continue;
+    const userIndex = projection.keys.indexOf(`turn-submission-${receipt.incarnationId}-${receipt.requestId}`);
+    if (userIndex < 0) continue;
+    const nextUserIndex = projection.keys.findIndex((key, index) => index > userIndex
+      && owned.some((next) => !next.inputTurnId && key === `turn-submission-${next.incarnationId}-${next.requestId}`));
+    const responseIndex = projection.messages.findIndex((message, index) => index > userIndex
+      && (nextUserIndex < 0 || index < nextUserIndex) && message.role === "assistant");
+    if (responseIndex >= 0) continue;
+    projection.messages.splice(userIndex + 1, 0, { role: "assistant", text: "" });
+    projection.keys.splice(userIndex + 1, 0, responseKey);
+    projection.sources.splice(userIndex + 1, 0, { kind: "turn-queue", receipt });
+    projection.groups.splice(userIndex + 1, 0, projection.groups[userIndex]);
+    metadata.set(responseKey, receipt);
   }
   const localTail: SessionTurnSubmission[] = [];
   let pendingSubmission: SessionTurnSubmission | undefined;
