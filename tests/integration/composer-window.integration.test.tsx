@@ -163,7 +163,7 @@ test("Session Windowの入力境界と切替後の最新値送信を実配線で
     if (current) drafts.set(id, { ...current, text: "", durableRevision: current.durableRevision + 1 });
     const session = await api.getSession(id);
     assert.ok(session);
-    const receipt: SessionTurnQueueReceipt = { sessionId: id, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: sent.length, state: "queued",
+    const receipt: SessionTurnQueueReceipt = { sessionId: id, incarnationId: request.incarnationId, id: request.clientRequestId!, requestId: request.clientRequestId!, sequence: sent.length, queuePosition: sent.length, state: "queued",
       captured: { request: { ...request, clientRequestId: request.clientRequestId! }, attachments: [], provider: session.provider, workspacePath: session.workspacePath },
       turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: session.updatedAt, updatedAt: session.updatedAt };
     receipts.set(`${id}:${receipt.requestId}`, receipt);

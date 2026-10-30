@@ -83,6 +83,18 @@ export class SessionTurnQueueService {
     }));
   }
 
+  reorderQueued(owner: SessionTurnQueueOwner, expectedQueuedIds: string[], queuedIds: string[]) {
+    this.requireAccepting();
+    return this.track(this.withLock(owner.sessionId, async () => {
+      this.requireAccepting();
+      try {
+        return await this.deps.store.reorderQueued(owner, expectedQueuedIds, queuedIds);
+      } finally {
+        if (this.isCurrentOwner(owner)) this.notify(owner);
+      }
+    }));
+  }
+
   sendQueuedInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     if (!expectedTurnId?.trim()) return Promise.reject(new Error("The active turn is required."));

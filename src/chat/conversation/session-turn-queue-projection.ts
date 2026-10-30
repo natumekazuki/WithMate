@@ -4,7 +4,7 @@ import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.
 
 export function projectSessionTurnQueue(history: MessageListProjection, receipts: readonly SessionTurnQueueReceipt[], owner: { sessionId: string; incarnationId: string }, options?: { submissions: readonly SessionTurnSubmission[]; hasActiveRun: boolean; responseKeys?: ReadonlyMap<string, string> }) {
   const owned = receipts.filter((receipt) => receipt.sessionId === owner.sessionId && receipt.incarnationId === owner.incarnationId)
-    .sort((left, right) => left.sequence - right.sequence);
+    .sort((left, right) => left.queuePosition - right.queuePosition);
   const metadata = new Map<string, SessionTurnQueueReceipt>();
   const projection: MessageListProjection = { messages: [...history.messages], keys: [...history.keys], sources: [...history.sources], groups: [...history.groups] };
   const tail: SessionTurnQueueReceipt[] = [];
@@ -65,7 +65,7 @@ export function projectSessionTurnQueue(history: MessageListProjection, receipts
     const userIndex = projection.keys.indexOf(`turn-submission-${receipt.incarnationId}-${receipt.requestId}`);
     if (userIndex < 0) continue;
     const nextUserIndex = projection.keys.findIndex((key, index) => index > userIndex
-      && owned.some((next) => next.sequence > receipt.sequence && !next.inputTurnId && key === `turn-submission-${next.incarnationId}-${next.requestId}`));
+      && owned.some((next) => !next.inputTurnId && key === `turn-submission-${next.incarnationId}-${next.requestId}`));
     const responseIndex = projection.messages.findIndex((message, index) => index > userIndex
       && (nextUserIndex < 0 || index < nextUserIndex) && message.role === "assistant");
     if (responseIndex >= 0) continue;

@@ -36,7 +36,9 @@ queued開始は`appendRunningTurnStart`の既存transactionで、user message、
 
 予約項目の現在Turnへの追加入力も既存steer append transactionでuser messageとreceipt完了を同時保存する。reply喪失時はcanonical receiptだけでなく現在metadataを再取得してruntimeの件数を復旧し、appendを再実行しない。
 
-active取得、request IDによる個別照会、cursor付きreceipt履歴取得を分ける。変更通知はowning Session Windowへ対象IDだけを送り、Homeや他Windowへ本文や履歴をbroadcastしない。実行・明示解放・shutdownの契約は[Session Run Lifecycle](session-run-lifecycle.md#gui-turn-queue)を参照する。
+並べ替えは同じowner／incarnationのqueued ID列をtransaction内で期待列と直接比較し、同一集合の新順序へ既存の`queue_position`値を再配分する。本文・添付・設定・受付ID・sequenceと開始済みreceiptは変更しない。競合では無変更の結果と現在のactive列を返し、保存例外では全更新をrollbackする。新規受付は末尾へ追加し、開始前のSteer拒否によるqueued復元は元のpositionを保持する。
+
+active取得は保存済み実行順、cursor付きreceipt履歴取得は不変の受付順とし、request IDによる個別照会と分ける。変更通知はowning Session Windowへ対象IDだけを送り、Homeや他Windowへ本文や履歴をbroadcastしない。実行・明示解放・shutdownの契約は[Session Run Lifecycle](session-run-lifecycle.md#gui-turn-queue)を参照する。
 
 ### Files認可metadata
 

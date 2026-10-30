@@ -28,9 +28,10 @@ function boundary() {
     return structuredClone(row);
   };
   const store: SessionTurnQueueStore = {
+    reorderQueued: async () => { throw new Error("Unexpected reorder"); },
     enqueue: async (owned, input) => {
       const row: SessionTurnQueueReceipt = {
-        ...owned, id: input.request.clientRequestId, requestId: input.request.clientRequestId, sequence: rows.length + 1,
+        ...owned, id: input.request.clientRequestId, requestId: input.request.clientRequestId, sequence: rows.length + 1, queuePosition: rows.length + 1,
         state: "queued", captured: structuredClone(input), turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
         createdAt: "now", updatedAt: "now",
       };

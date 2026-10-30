@@ -196,7 +196,7 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
 
 function queuedReceipt(session: Session): SessionTurnQueueReceipt {
   return { sessionId: session.id, incarnationId: getSessionIncarnationId(session), id: "queue-1", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
-    sequence: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+    sequence: 1, queuePosition: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
     captured: { provider: session.provider, workspacePath: session.workspacePath,
       request: { clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10", submitSource: "composer", userMessage: "captured message",
         executionOptions: captureSessionExecutionOptions(session) },
@@ -1268,7 +1268,7 @@ describe("SessionRuntimeService", () => {
       steerSessionTurn: async (input) => { sent.push(input); return { turnId: input.expectedTurnId }; },
     };
     const receipt: SessionTurnQueueReceipt = {
-      sessionId: stored.id, incarnationId: getSessionIncarnationId(stored), id: "queued-input", requestId: "queued-request", sequence: 1,
+      sessionId: stored.id, incarnationId: getSessionIncarnationId(stored), id: "queued-input", requestId: "queued-request", sequence: 1, queuePosition: 1,
       state: "starting", turnId: null, inputTurnId: "provider-turn", userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
       captured: { request: { userMessage: "queued @captured", clientRequestId: "queued-request", executionOptions: TEST_EXECUTION_OPTIONS },
         attachments: [{ id: "captured", kind: "file", source: "text", absolutePath: "captured-path", displayPath: "captured", workspaceRelativePath: "captured", isOutsideWorkspace: false }], provider: stored.provider, workspacePath: stored.workspacePath },

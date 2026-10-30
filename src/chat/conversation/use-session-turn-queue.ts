@@ -3,13 +3,14 @@ import type { WithMateWindowApi } from "../../../src-shared/ipc/withmate-window-
 import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTurnSubmission } from "../runtime/session-turn-submissions.js";
 
-export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput">>;
+export type SessionTurnQueueApi = Partial<Pick<WithMateWindowApi, "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns">>;
 const EMPTY_RECEIPTS: SessionTurnQueueReceipt[] = [];
 type QueueState = {
   owner: string; active: SessionTurnQueueReceipt[]; bridges: SessionTurnQueueReceipt[]; error: string; loading: boolean; ready: boolean;
   reconciledHistory?: { canonicalSignature: string; submissionSignature: string };
 };
-export type SessionTurnQueueActionKind = "cancel" | "release" | "input";
+export type SessionTurnQueueActionKind = "cancel" | "release" | "input" | "move-up" | "move-down";
+export type SessionTurnQueueMoveDirection = "up" | "down";
 type QueueAction = { owner: string; id: string; kind: SessionTurnQueueActionKind };
 
 export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessionId: string, incarnationId: string, enabled: boolean, canonicalUserSeqs: readonly number[] = [], submissions: readonly SessionTurnSubmission[] = []) {
@@ -26,6 +27,7 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
   const [revision, setRevision] = useState(0);
   const [pendingAction, setPendingAction] = useState<QueueAction | null>(null);
   const [actionError, setActionError] = useState<{ owner: string; message: string } | null>(null);
+  const [announcement, setAnnouncement] = useState<{ owner: string; message: string } | null>(null);
   const actionRef = useRef<QueueAction | null>(null);
   const generation = useRef(0);
   const currentOwner = useRef(owner);
@@ -94,15 +96,29 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     if (!enabled) return;
     return api?.onSessionTurnQueueChanged?.((changedId) => { if (changedId === sessionId) reload(); });
   }, [api, enabled, sessionId, reload]);
-  const act = useCallback(async (receipt: SessionTurnQueueReceipt, kind: SessionTurnQueueActionKind, expectedTurnId?: string) => {
+  const act = useCallback(async (receipt: SessionTurnQueueReceipt, kind: SessionTurnQueueActionKind, expectedTurnId?: string, order?: { expectedQueuedIds: string[]; queuedIds: string[] }) => {
     if (receipt.sessionId !== sessionId || receipt.incarnationId !== incarnationId) return;
     if (actionRef.current?.owner === owner) return;
     const action = { owner, id: receipt.id, kind };
     actionRef.current = action;
     setPendingAction(action);
     setActionError(null);
+    setAnnouncement(null);
     try {
-      if (kind === "input") {
+      if (kind === "move-up" || kind === "move-down") {
+        if (!order || !api?.reorderQueuedSessionTurns) throw new Error("Queue reordering is unavailable.");
+        const result = await api.reorderQueuedSessionTurns(sessionId, { incarnationId, ...order });
+        if (currentOwner.current === owner) {
+          // A pre-mutation read must not replace the confirmed order.
+          ++generation.current;
+          const positions = new Map(result.receipts.filter((item) => item.state === "queued").map((item) => [item.id, item.queuePosition]));
+          setState((current) => current.owner !== owner ? current : {
+            ...current, active: current.active.map((item) => item.state === "queued" && positions.has(item.id) ? { ...item, queuePosition: positions.get(item.id)! } : item),
+          });
+          if (result.outcome === "conflict") setActionError({ owner, message: "The queue changed before the move was saved." });
+          else setAnnouncement({ owner, message: `Queue order saved. Message moved to position ${order.queuedIds.indexOf(receipt.id) + 1} of ${order.queuedIds.length}.` });
+        }
+      } else if (kind === "input") {
         if (!expectedTurnId || !api?.sendQueuedSessionInput) throw new Error("Current-turn input is unavailable.");
         const accepted = await api.sendQueuedSessionInput(sessionId, receipt.id, expectedTurnId);
         if (accepted.sessionId !== sessionId || accepted.incarnationId !== incarnationId || accepted.id !== receipt.id) throw new Error("Input receipt identity changed.");
@@ -121,7 +137,9 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     } catch (error) {
       if (currentOwner.current === owner) {
         reload();
-        setActionError({ owner, message: error instanceof Error ? error.message : String(error) });
+        const message = error instanceof Error ? error.message : String(error);
+        setActionError({ owner, message: kind === "move-up" || kind === "move-down"
+          ? `The queue move could not be confirmed. Check the refreshed order before trying again. ${message}` : message });
       }
     } finally {
       if (actionRef.current === action) actionRef.current = null;
@@ -137,12 +155,26 @@ export function useSessionTurnQueue(api: SessionTurnQueueApi | undefined, sessio
     const known = state.owner === owner ? [...state.active, ...state.bridges] : [];
     return [...known, ...submissions.flatMap((submission) => submission.receipt && !known.some((receipt) => receipt.requestId === submission.requestId) ? [submission.receipt] : [])];
   }, [enabled, state.owner, owner, state.active, state.bridges, submissions]);
+  const queuedReceipts = useMemo(() => receipts.filter((receipt) => receipt.state === "queued").sort((left, right) => left.queuePosition - right.queuePosition), [receipts]);
+  const move = useCallback((receipt: SessionTurnQueueReceipt, direction: SessionTurnQueueMoveDirection) => {
+    const expectedQueuedIds = queuedReceipts.map((item) => item.id);
+    const index = expectedQueuedIds.indexOf(receipt.id);
+    const destination = index + (direction === "up" ? -1 : 1);
+    if (index < 0 || destination < 0 || destination >= expectedQueuedIds.length) return;
+    const queuedIds = [...expectedQueuedIds];
+    [queuedIds[index], queuedIds[destination]] = [queuedIds[destination], queuedIds[index]];
+    void act(receipt, direction === "up" ? "move-up" : "move-down", undefined, { expectedQueuedIds, queuedIds });
+  }, [act, queuedReceipts]);
   return {
     historyReconciled: state.owner === owner && state.reconciledHistory?.canonicalSignature === canonicalSignature
       && state.reconciledHistory.submissionSignature === submissionSignature,
-    receipts, error: enabled ? (actionError?.owner === owner ? actionError.message : state.owner === owner ? state.error : "") : "", loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
+    receipts, queuedReceipts, announcement: enabled && announcement?.owner === owner ? announcement.message : "",
+    error: enabled ? [actionError?.owner === owner ? actionError.message : "",
+      state.owner === owner && state.error ? (state.ready ? `Queue refresh failed. The displayed queue may be out of date. ${state.error}` : state.error) : "",
+    ].filter(Boolean).join(" ") : "",
+    loading: enabled && !!api?.listSessionTurnQueue && (state.owner !== owner || state.loading),
     busyId: pendingAction?.owner === owner ? pendingAction.id : null,
     busyKind: pendingAction?.owner === owner ? pendingAction.kind : null,
-    reload: retry, cancel, release, sendInput,
+    reload: retry, cancel, release, sendInput, move,
   };
 }

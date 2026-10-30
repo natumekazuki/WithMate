@@ -32,6 +32,7 @@ import {
   WITHMATE_LIST_SESSION_TURN_QUEUE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL,
   WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL,
+  WITHMATE_REORDER_QUEUED_SESSION_TURNS_CHANNEL,
   WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL,
   WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
@@ -127,6 +128,12 @@ export function registerSessionRuntimeHandlers(
   ipcMain.handle(WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, async (event, sessionId: string, id: string) => {
     await assertQueueSender(event, sessionId);
     return queue().cancelQueuedSessionTurn(sessionId, id);
+  });
+  ipcMain.handle(WITHMATE_REORDER_QUEUED_SESSION_TURNS_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").ReorderQueuedSessionTurnsRequest) => {
+    const parentId = await assertQueueSender(event, sessionId);
+    const result = await queue().reorderQueuedSessionTurns(sessionId, request);
+    assertOwningSessionWindowSender(event, parentId, deps);
+    return result;
   });
   ipcMain.handle(WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL, async (event, sessionId: string, id: string) => {
     await assertQueueSender(event, sessionId);

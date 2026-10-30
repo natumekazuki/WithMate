@@ -101,7 +101,7 @@ it("queue準備中のAuxiliary取消はquit中止後のcloseでも親を監視�
     });
     const receipt: SessionTurnQueueReceipt = {
       sessionId: auxiliary.id, incarnationId: getSessionIncarnationId(parent), id: "queue", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
-      sequence: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
+      sequence: 1, queuePosition: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
       createdAt: "now", updatedAt: "now",
       captured: { provider: parent.provider, workspacePath: parent.workspacePath, attachments: [],
         request: { clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10", submitSource: "composer",
@@ -498,7 +498,7 @@ describe("SessionWindowBridge", () => {
       });
       const receipt: SessionTurnQueueReceipt = {
         id: "queue-1", requestId: "request-1", sessionId: auxiliary.id, incarnationId: "incarnation-1",
-        sequence: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
+        sequence: 1, queuePosition: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null,
         createdAt: "2026-10-24T00:00:00Z", updatedAt: "2026-10-24T00:00:00Z",
         captured: { request: { userMessage: "Start", clientRequestId: "request-1", submitSource: "composer",
           executionOptions: captureSessionExecutionOptions(createSession()) },

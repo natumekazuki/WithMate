@@ -7,11 +7,149 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
-import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
+import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionTurnInput } from "../../src-shared/session/session-turn-state.js";
-import type { SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueCapturedInput, SessionTurnQueueOwner, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxの待機順変更は捕捉内容と受付履歴を保持して永続化し、列競合と書込失敗では部分変更せず、移行後も保存順でclaimする"
+// oracle = { type = "contract", ref = "GitHub Issue #912: Main/Aux未開始だけの順変更と列競合時非適用" }
+// fault = "sequenceやcaptureを書き換える、stale列を上書きする、position更新を部分commitする、または再open/旧schema更新で順序を失う"
+// observable = "Worker再open後のreceipt全field、履歴cursor、競合outcome、rollback後の順、claim ID列"
+// observation_boundary = "public-boundary"
+// scope = "実V6 Worker queue保存・Main/Aux owner・schema追加・順変更transaction"
+// lifecycle = "permanent"
+// impact = "指示内容の破壊、取消や開始済み指示の復活、意図しない順の実行を防ぐ"
+// distinction = "既存FIFO testは並べ替えやposition更新途中のrollbackを通らない。2 ownerを同じ小規模DBで確認する"
+// @end-test-value
+test("Main/Auxの順変更は原子的に保存し競合と履歴を保持する", async () => {
+  const f = await fixture();
+  const db = new DatabaseSync(f.options.dbPath);
+  let reopened: ReturnType<typeof createV6StorageWorkerBundle> | undefined;
+  try {
+    const aux = await f.bundle.stores.auxiliary.upsertAuxiliarySession({ ...f.session, id: "reorder-aux", parentSessionId: f.session.id,
+      title: "Aux", status: "active", runState: "idle", composerDraft: "draft", messages: [], displayAfterMessageIndex: null,
+      characterId: undefined, characterRuntimeSnapshot: undefined, createdAt: "created", updatedAt: "created", closedAt: "" });
+    const owners = [{ sessionId: f.session.id, incarnationId: getSessionIncarnationId(f.session) }, { sessionId: aux.id, incarnationId: aux.createdAt }];
+    const snapshots: Array<{ owner: SessionTurnQueueOwner; ids: string[]; receipts: SessionTurnQueueReceipt[] }> = [];
+    for (const owner of owners) {
+      const rows = [];
+      for (const text of ["one", "two", "three"]) rows.push(await f.bundle.stores.queue.enqueue(owner,
+        { ...f.captured(text), request: { ...f.captured(text).request, submitSource: "retry" },
+          attachments: [{ id: text, kind: "file", source: "text", absolutePath: "C:/workspace/input.txt", displayPath: "input.txt", workspaceRelativePath: "input.txt", isOutsideWorkspace: false }] }));
+      const ids = rows.map((row) => row.id);
+      await assert.rejects(f.bundle.stores.queue.reorderQueued(owner, ids, [ids[0]!, ids[0]!, ids[2]!]), /unique identities/);
+      await assert.rejects(f.bundle.stores.queue.reorderQueued({ ...owner, incarnationId: "stale" }, ids, [...ids].reverse()), /incarnation mismatch/);
+      db.exec(`CREATE TRIGGER fail_reorder BEFORE UPDATE OF queue_position ON session_turn_queue_v6
+        WHEN OLD.id = '${ids[1]}' BEGIN SELECT RAISE(ABORT, 'reorder failed'); END`);
+      await assert.rejects(f.bundle.stores.queue.reorderQueued(owner, ids, [...ids].reverse()), /reorder failed/);
+      db.exec("DROP TRIGGER fail_reorder");
+      assert.deepEqual(await f.bundle.stores.queue.listActive(owner), rows);
+      const result = await f.bundle.stores.queue.reorderQueued(owner, ids, [...ids].reverse());
+      assert.equal(result.outcome, "reordered");
+      assert.deepEqual(result.receipts.map((row) => row.id), [...ids].reverse());
+      for (const original of rows) {
+        const actual = result.receipts.find((row) => row.id === original.id)!;
+        assert.deepEqual({ ...actual, queuePosition: original.queuePosition, updatedAt: original.updatedAt }, original);
+      }
+      assert.equal((await f.bundle.stores.queue.reorderQueued(owner, ids, [...ids].reverse())).outcome, "conflict");
+      const page = await f.bundle.stores.queue.listReceipts(owner, { limit: 2 });
+      assert.deepEqual(page.receipts.map((row) => row.id), ids.slice(0, 2));
+      assert.equal((await f.bundle.stores.queue.listReceipts(owner, { cursor: page.nextCursor! })).receipts[0]?.id, ids[2]);
+      snapshots.push({ owner, ids, receipts: result.receipts });
+    }
+    assert.equal((await f.bundle.stores.auxiliary.getAuxiliaryDraft(aux.id))?.text, "draft");
+    await f.bundle.client.close();
+    reopened = createV6StorageWorkerBundle(f.options);
+    await reopened.initialize();
+    for (const snapshot of snapshots) {
+      assert.deepEqual(await reopened.stores.queue.listActive(snapshot.owner), snapshot.receipts);
+      const extra = await reopened.stores.queue.enqueue(snapshot.owner, { ...f.captured("extra"), request: { ...f.captured("extra").request, submitSource: "retry" } });
+      const reverse = [...snapshot.ids].reverse();
+      assert.equal((await reopened.stores.queue.reorderQueued(snapshot.owner, reverse, snapshot.ids)).outcome, "conflict");
+      await reopened.stores.queue.cancelQueued(snapshot.owner, extra.id);
+      await reopened.stores.queue.cancelQueued(snapshot.owner, snapshot.ids[1]!);
+      assert.equal((await reopened.stores.queue.reorderQueued(snapshot.owner, reverse, snapshot.ids)).outcome, "conflict");
+      assert.equal((await reopened.stores.queue.claimNext(snapshot.owner))?.id, snapshot.ids[2]);
+      assert.equal((await reopened.stores.queue.reorderQueued(snapshot.owner, [snapshot.ids[2]!, snapshot.ids[0]!], [snapshot.ids[0]!, snapshot.ids[2]!])).outcome, "conflict");
+      await reopened.stores.queue.settle(snapshot.owner, snapshot.ids[2]!, "completed");
+      assert.equal((await reopened.stores.queue.claimNext(snapshot.owner))?.id, snapshot.ids[0]);
+    }
+    await reopened.client.close();
+    reopened = undefined;
+    db.exec("ALTER TABLE session_turn_queue_v6 DROP COLUMN queue_position");
+    reopened = createV6StorageWorkerBundle(f.options);
+    await reopened.initialize();
+    for (const snapshot of snapshots) {
+      const receipts: SessionTurnQueueReceipt[] = (await reopened.stores.queue.listReceipts(snapshot.owner)).receipts;
+      assert.ok(receipts.every((receipt) => receipt.queuePosition === receipt.sequence));
+      assert.deepEqual(receipts.slice(0, 3).map((receipt) => receipt.captured), [...snapshot.receipts].reverse().map((receipt) => receipt.captured));
+    }
+  } finally {
+    await reopened?.client.close();
+    db.close();
+    await f.dispose();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "共通Session lockは追加と順変更を直列化し、保存返信不明を再送せず正本順で一度ずつdispatchする"
+// oracle = { type = "contract", ref = "GitHub Issue #912: 保存順で直列実行、追加競合非適用、応答不明の自動再送禁止" }
+// fault = "追加済み項目をstale順で消す、返信不明mutationを再送する、または旧順でdispatchする"
+// observable = "reorder呼出回数/結果、保存正本のID列、dispatchで受け取る本文/設定/添付と順、shutdown拒否"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueService + 実Worker QueueStoreのlock・返信喪失・dispatch境界"
+// lifecycle = "permanent"
+// impact = "並び変更時の受付喪失や異なる順序での指示実行を防ぐ"
+// distinction = "storage単独testではservice lock、drainと保存返信喪失時の再送回数を検証できない"
+// @end-test-value
+test("serviceは順変更の返信不明を再送せず保存順をdispatchする", async () => {
+  const f = await fixture();
+  const owner = { sessionId: f.session.id, incarnationId: getSessionIncarnationId(f.session) };
+  let held = true;
+  let loseReply = false;
+  let mutations = 0;
+  const dispatched: SessionTurnQueueCapturedInput[] = [];
+  const store = new Proxy(f.bundle.stores.queue, { get: (target, property) => property === "reorderQueued"
+    ? async (...args: Parameters<typeof target.reorderQueued>) => {
+      mutations += 1;
+      const result = await target.reorderQueued(...args);
+      if (loseReply) throw new Error("reorder reply lost");
+      return result;
+    } : Reflect.get(target, property) });
+  const service = new SessionTurnQueueService({ store, isRunInFlight: () => held,
+    dispatch: async (receipt) => { dispatched.push(receipt.captured); return { state: "completed" }; } });
+  try {
+    const first = await service.enqueue(owner, f.captured("first"));
+    const second = await service.enqueue(owner, f.captured("second"));
+    const original = [first.id, second.id];
+    const adding = service.enqueue(owner, f.captured("third"));
+    const stale = service.reorderQueued(owner, original, [...original].reverse());
+    const third = await adding;
+    assert.equal((await stale).outcome, "conflict");
+    const ids = [...original, third.id];
+    loseReply = true;
+    await assert.rejects(service.reorderQueued(owner, ids, [third.id, first.id, second.id]), /reply lost/);
+    assert.equal(mutations, 2);
+    assert.deepEqual((await store.listActive(owner)).map((receipt) => receipt.id), [third.id, first.id, second.id]);
+    assert.deepEqual(dispatched, []);
+    held = false;
+    service.wake(owner.sessionId);
+    await service.waitForPending();
+    assert.deepEqual(dispatched, [third.captured, first.captured, second.captured]);
+    assert.equal(mutations, 2);
+    service.beginShutdown();
+    assert.throws(() => service.reorderQueued(owner, [], []), /shutting down/);
+  } finally {
+    await service.close();
+    await f.dispose();
+  }
+});
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "withmate-queue-target-"));
@@ -272,8 +410,9 @@ test("旧Main queue schema移行はreceiptと受付順を保持する", async ()
     const before = db.prepare("SELECT * FROM session_turn_queue_v6").get();
     ensureV6Schema(db);
     const after = db.prepare("SELECT * FROM session_turn_queue_v6").get() as Record<string, unknown>;
-    const { auxiliary_session_id, input_turn_id, ...retained } = after;
+    const { auxiliary_session_id, input_turn_id, queue_position, ...retained } = after;
     assert.deepEqual(retained, { ...before });
+    assert.equal(queue_position, 42);
     assert.equal(auxiliary_session_id, null);
     assert.equal(input_turn_id, null);
     ensureV6Schema(db);

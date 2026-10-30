@@ -34,7 +34,7 @@ export type ConversationColumnSession = Pick<Session, "id"> & Partial<Pick<Sessi
 
 export type ConversationMessageColumnApi = Partial<Pick<WithMateWindowApi,
   "subscribeLiveSessionRun" | "getLiveSessionRun" | "resolveLiveApproval" | "resolveLiveElicitation" | "getSessionMessageArtifact" | "getConversationPage" | "searchConversation" | "listConversationNavigator" | "cancelConversationQuery"
-  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput"
+  | "listSessionTurnQueue" | "getSessionTurnQueueReceipt" | "listSessionTurnQueueReceipts" | "onSessionTurnQueueChanged" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" | "reorderQueuedSessionTurns"
   | "getUnreadSessionResult" | "markSessionResultRead" | "onSessionTurnUpdated"
 >>;
 
@@ -366,7 +366,7 @@ export function useConversationMessageColumn({
   for (const receipt of queue.receipts) {
     const key = responseKeys.get(receipt.requestId);
     if (!key || receipt.state !== "completed" || receipt.inputTurnId || receipt.userMessageSeq === null) continue;
-    const nextUserSeq = queue.receipts.reduce((boundary, next) => next.sequence > receipt.sequence && !next.inputTurnId && next.userMessageSeq !== null
+    const nextUserSeq = queue.receipts.reduce((boundary, next) => !next.inputTurnId && next.userMessageSeq !== null && next.userMessageSeq > receipt.userMessageSeq!
       ? Math.min(boundary, next.userMessageSeq) : boundary, Infinity);
     const savedResponseIndex = messages.findIndex((message, index) => message.role === "assistant"
       && getMessageHistoryIndex(message, index) > receipt.userMessageSeq! && getMessageHistoryIndex(message, index) < nextUserSeq);
@@ -775,14 +775,39 @@ export function useConversationMessageColumn({
     if (canSendQueuedInput && !composerRegistry.isFrozen && currentInputTurnId) queue.sendInput(receipt, currentInputTurnId);
   }, [canSendQueuedInput, composerRegistry, currentInputTurnId, queue.sendInput]);
   const inputAction = canSendQueuedInput ? sendQueuedInput : undefined;
+  const queuedTurnIds = useMemo(() => queue.queuedReceipts.map((receipt) => receipt.id), [queue.queuedReceipts]);
+  const queueMoveFocus = useRef<{ owner: string; id: string; direction: string; element: Element } | null>(null);
+  const moveQueuedTurn = useCallback((receipt: import("../../src-shared/session/session-turn-queue.js").SessionTurnQueueReceipt, direction: import("./conversation/use-session-turn-queue.js").SessionTurnQueueMoveDirection) => {
+    if (!enabled || composerRegistry.isFrozen || queue.busyId !== null || (session?.accessMode !== undefined && session.accessMode !== "active")) return;
+    const list = following.messageListRef.current;
+    const element = list?.ownerDocument.activeElement;
+    queueMoveFocus.current = element && list?.contains(element) ? { owner: pageOwner, id: receipt.id, direction, element } : null;
+    queue.move(receipt, direction);
+  }, [enabled, composerRegistry, session?.accessMode, queue.busyId, queue.move, following.messageListRef, pageOwner]);
+  useLayoutEffect(() => {
+    const pending = queueMoveFocus.current;
+    if (!pending || queue.busyId !== null) return;
+    queueMoveFocus.current = null;
+    const list = following.messageListRef.current;
+    if (!enabled || pending.owner !== pageOwner || !list || pending.element.isConnected) return;
+    const active = list.ownerDocument.activeElement;
+    if (active !== list && active !== list.ownerDocument.body) return;
+    // The queued head and tail have different component owners; restore by receipt after remount.
+    const status = Array.from(list.querySelectorAll<HTMLElement>("[data-queue-receipt-id]")).find((element) => element.dataset.queueReceiptId === pending.id);
+    const button = status?.querySelector<HTMLButtonElement>(`button[data-queue-move="${pending.direction}"]`);
+    (button && !button.disabled ? button : status ?? list).focus({ preventScroll: true });
+  }, [enabled, pageOwner, queue.busyId, queuedTurnIds, following.messageListRef]);
+  const moveAction = api?.reorderQueuedSessionTurns ? moveQueuedTurn : undefined;
+  const queueReorderDisabled = !enabled || queueActionsFrozen || (session?.accessMode !== undefined && session.accessMode !== "active");
   const renderQueueTail = useMemo(() => !isBrowsing
-    && (queuedProjection.tail.length > 0 || queuedProjection.localTail.length > 0 || conversation.liveReadError || queue.error || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver, markdownImageContext: MarkdownImageContext) => <>
-    {queuedProjection.tail.map((receipt, index) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} character={columnCharacter} receipt={receipt} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} position={receipt.state === "queued" ? queuedProjection.tail.slice(0, index + 1).filter((row) => row.state === "queued").length : undefined} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} />)}
+    && (queuedProjection.tail.length > 0 || queuedProjection.localTail.length > 0 || conversation.liveReadError || queue.error || queue.announcement || queue.loading && queue.receipts.length > 0) ? (resolveImageSource: MarkdownImageResolver, markdownImageContext: MarkdownImageContext) => <>
+    {queuedProjection.tail.map((receipt) => <SessionTurnQueueRow key={`${receipt.incarnationId}:${receipt.id}`} character={columnCharacter} receipt={receipt} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} position={receipt.state === "queued" ? queuedTurnIds.indexOf(receipt.id) + 1 : undefined} queueSize={queuedTurnIds.length} busy={queue.busyId !== null} busyKind={queue.busyId === receipt.id ? queue.busyKind : null} onCancel={queue.cancel} onRelease={queue.release} onSendInput={inputAction} onMove={moveAction} moveDisabled={queueReorderDisabled} />)}
     {queuedProjection.localTail.map((submission) => <SessionTurnSubmissionRow key={submission.requestId} character={columnCharacter} submission={submission} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} />)}
     {queue.loading && queue.receipts.length > 0 ? <LoadingIndicator inline label="Loading queued turns" /> : null}
+    <span className="visually-hidden" role="status">{queue.announcement}</span>
     {queue.error ? <div className="pending-run-error-note" role="alert">{queue.error}<button type="button" className="drawer-toggle compact secondary" onClick={queue.reload}>Retry Queue</button></div> : null}
     {conversation.liveReadError ? <div className="pending-run-error-note" role="alert">{conversation.liveReadError}<button type="button" className="drawer-toggle compact secondary" onClick={() => setLiveReadRevision((revision) => revision + 1)}>Retry Live Updates</button></div> : null}
-  </> : undefined, [isBrowsing, api, columnCharacter, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.reload, inputAction, conversation.liveReadError]);
+  </> : undefined, [isBrowsing, api, columnCharacter, queuedProjection.tail, queuedProjection.localTail, queue.busyId, queue.busyKind, queue.cancel, queue.release, queue.loading, queue.receipts.length, queue.error, queue.announcement, queue.reload, queuedTurnIds, moveAction, queueReorderDisabled, inputAction, conversation.liveReadError]);
   if (!session) return null;
   return {
     ...baseProps,
@@ -797,6 +822,9 @@ export function useConversationMessageColumn({
     turnQueueMetadata: queuedProjection.metadata,
     onCancelQueuedTurn: queue.cancel,
     onReleaseInterruptedTurn: queue.release,
+    onMoveQueuedTurn: moveAction,
+    queuedTurnIds,
+    queueReorderDisabled,
     queueBusyId: queue.busyId,
     queueBusyKind: queue.busyKind,
     renderQueueTail,

@@ -3,7 +3,7 @@ import { normalizeSessionTurnClientRequestId, normalizeSessionTurnSubmitSource, 
 import { captureSessionExecutionOptions, validateSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import type { SessionTurnQueueOwner, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import type { ReorderQueuedSessionTurnsRequest, SessionTurnQueueOwner, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import type { SessionTurnQueueService } from "../session/session-turn-queue-service.js";
 
 export type MainSessionTurnQueueFacadeDeps = {
@@ -103,6 +103,15 @@ export class MainSessionTurnQueueFacade {
   async cancelQueuedSessionTurn(sessionId: string, id: string) {
     this.deps.assertAccepting();
     return this.deps.service.cancelQueued(this.owner(await this.readSession(sessionId)), this.requireId(id));
+  }
+
+  async reorderQueuedSessionTurns(sessionId: string, input: ReorderQueuedSessionTurnsRequest) {
+    this.deps.assertAccepting();
+    const owner = this.owner(await this.readSession(sessionId));
+    if (!input || input.incarnationId !== owner.incarnationId) throw new Error("The Session identity changed. Reopen it before reordering.");
+    const result = await this.deps.service.reorderQueued(owner, input.expectedQueuedIds, input.queuedIds);
+    this.deps.assertActive();
+    return result;
   }
 
   async releaseInterruptedSessionTurn(sessionId: string, id: string) {
