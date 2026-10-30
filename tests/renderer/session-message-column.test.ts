@@ -5334,10 +5334,10 @@ test("SessionComposerExpanded は Model/Depth の値を保持し各利用制限�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Composerがfreezeされたとき、入力・Model/Depthを変更するtrigger・候補をdisabledにし、空欄shortcutの強制feedbackを表示する"
+// claim = "freeze済みComposerは入力・添付・Agent/Skill/Template・directory・Model/Depthの操作をdisabledにし、open要求が残っていてもAgent候補を表示せず、空欄shortcutの強制feedbackを表示する"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md: close/app quit flush; docs/design/desktop-ui.md: composer feedback" }
-// fault = "終了flush中にpicker・template・directory・Model/Depth操作が実行可能なまま残る、または空欄shortcutのMessage is empty表示が失われる"
-// observable = "freeze済みComposerの各操作buttonとModel trigger/Depth selectのdisabled属性、composer-sendability-feedbackの本文・textarea aria-describedby"
+// fault = "終了flush中に入力・picker・template・directory・Model/Depth操作が実行可能なまま残る、Agent候補を表示する、または空欄shortcutのMessage is empty表示が失われる"
+// observable = "freeze済みComposerのtextarea・操作button・Depth selectのdisabled属性、Agent triggerのaria-expandedと候補listbox不在、composer-sendability-feedbackの本文・textarea aria-describedby"
 // observation_boundary = "component-behavior"
 // scope = "frozen composer mutation controls and forced sendability feedback"
 // lifecycle = "permanent"
@@ -5369,16 +5369,20 @@ test("SessionComposerExpanded はfreeze中の変更操作を無効化し、強�
   );
   const renderedDocument = new JSDOM(html).window.document;
   for (const selector of [
-    ".composer-attachments-toolbar button", ".composer-agent-toolbar button",
-    ".composer-path-match-list button",
+    ".composer-attachments-toolbar button", 'button[aria-label="Custom Agent: Agent"]',
+    'button[title="Skill"]', 'button[title="Template"]', ".composer-additional-directory-toolbar button",
     '.composer-setting-model button[aria-label="Model"]', ".composer-setting-depth select",
   ]) {
     const controls = Array.from(renderedDocument.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(selector));
     assert.ok(controls.length > 0, selector);
     assert.ok(controls.every((control) => control.disabled), selector);
   }
+  const agentTrigger = renderedDocument.querySelector('button[aria-label="Custom Agent: Agent"]');
+  assert.equal(agentTrigger?.getAttribute("aria-expanded"), "false");
+  assert.equal(renderedDocument.querySelector('[role="listbox"][aria-label="Custom Agent Options"]'), null);
   const feedback = renderedDocument.querySelector("#composer-sendability-feedback");
   const textarea = renderedDocument.querySelector("textarea");
+  assert.equal(textarea?.disabled, true);
   assert.equal(feedback?.textContent, "Message is empty.");
   assert.match(textarea?.getAttribute("aria-describedby") ?? "", /composer-sendability-feedback/);
 });
