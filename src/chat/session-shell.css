@@ -1852,7 +1852,6 @@
 }
 
 .message-source-match {
-  margin-top: 8px;
   padding: 8px 10px;
   border-left: 2px solid var(--character-sub);
   background: var(--surface-deep);

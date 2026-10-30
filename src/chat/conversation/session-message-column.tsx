@@ -1541,9 +1541,9 @@ export function SessionMessageColumn({
                           <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
                         )}
                       </div>
-                      {sourceMatch && selectedFindMatch?.kind === "message" && selectedFindMatch.messageIndex === absoluteIndex
-                        ? <MessageSourceMatch text={message.text} match={sourceMatch} /> : null}
                     </div>
+                    {sourceMatch && selectedFindMatch?.kind === "message" && selectedFindMatch.messageIndex === absoluteIndex
+                      ? <MessageSourceMatch text={message.text} match={sourceMatch} /> : null}
 
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
                     {artifact ? (
