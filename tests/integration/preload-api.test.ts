@@ -795,6 +795,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionTurnQueue",
     "listSessionTurnQueueReceipts",
     "cancelQueuedSessionTurn",
+    "reorderQueuedSessionTurns",
     "releaseInterruptedSessionTurn",
     "sendQueuedSessionInput",
     "onSessionTurnQueueChanged",

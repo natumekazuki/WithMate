@@ -78,7 +78,9 @@ test("History Compareは検索0件でもFilterを保持して検索を解除で�
     assert.equal(container.querySelector('input[aria-label="Filter changed files"]'), filter);
     assert.equal(dom.window.document.activeElement, filter);
     assert.equal(filter.value, "no-such-file");
-    assert.equal(container.querySelector(".file-history-changed-files")?.textContent, "");
+    const fileList = container.querySelector('[role="list"][aria-label="Example changes"]');
+    assert.ok(fileList);
+    assert.equal(fileList.textContent, "");
     await act(async () => {
       setValue.call(filter, "");
       filter.dispatchEvent(new dom.window.Event("input", { bubbles: true }));

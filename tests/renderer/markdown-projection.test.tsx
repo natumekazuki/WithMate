@@ -21,6 +21,7 @@ import { markdownComponents, renderMarkdownFrontmatter } from "../../src/ui/mark
 import { MarkdownRenderContext } from "../../src/ui/markdown/markdown-context.js";
 import { markdownUrlTransform } from "../../src/ui/markdown/markdown-links.js";
 import { remarkHtmlLineBreaks } from "../../src/ui/markdown/markdown-plugins.js";
+import { rehypeSourceRanges, remarkReferenceSourceRanges } from "../../src/ui/markdown/markdown-source-ranges.js";
 
 function parser() {
   return unified().use(remarkParse).use(remarkFrontmatter)
@@ -284,8 +285,8 @@ test("MessageRichTextのstreaming finalは全文DOMに一致しcopy・link・選
         <div className="message-body rich-text" data-markdown-render-mode="full">
           <MarkdownRenderContext.Provider value={{ markdown: text, isStreaming: false, onCodeBlockCopyResult: () => undefined }}>
             <ReactMarkdown components={markdownComponents} urlTransform={markdownUrlTransform}
-              remarkPlugins={[remarkFrontmatter, remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]}
-              rehypePlugins={[rehypeKatex]} remarkRehypeOptions={{ handlers: { yaml: renderMarkdownFrontmatter } }}>
+              remarkPlugins={[remarkFrontmatter, remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks, remarkReferenceSourceRanges]}
+              rehypePlugins={[rehypeSourceRanges, rehypeKatex]} remarkRehypeOptions={{ handlers: { yaml: renderMarkdownFrontmatter } }}>
               {text}
             </ReactMarkdown>
           </MarkdownRenderContext.Provider>
