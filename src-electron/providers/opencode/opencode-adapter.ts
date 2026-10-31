@@ -76,7 +76,7 @@ async function readCurrentMessages(client: OpenCodeClient, sessionID: string, re
   let cursor: string | undefined;
   const visited = new Set<string>();
   do {
-    const page = await client.message.list({ sessionID, order: "desc", limit: 100, ...(cursor ? { cursor } : {}) }, { signal });
+    const page = await client.message.list({ sessionID, limit: 100, ...(cursor ? { cursor } : { order: "desc" }) }, { signal });
     for (const message of page.data) {
       if (message.id === requestID) {
         if (message.type !== "user" || message.metadata?.withmateRequestID !== requestID) throw new Error("OpenCode request attribution mismatch");
