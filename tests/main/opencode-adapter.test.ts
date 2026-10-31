@@ -25,7 +25,7 @@ function input(threadId = ""): RunSessionTurnInput {
 
 function event(type: string, data: unknown, id = crypto.randomUUID()): OpenCodeEvent { return { id, created: 1, type, data } as OpenCodeEvent; }
 
-function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
+function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unknownInbox?: "synthetic" | "owner-id" | "incarnation"; pendingInbox?: boolean; cleanupPending?: boolean; interactions?: boolean; form?: FormInfo1; lateInteraction?: "permission" | "form"; holdSnapshot?: () => Promise<void> } = {}) {
   const calls: string[] = [];
   let prompt: SessionPromptInput | undefined;
   let pending = Boolean(options.pendingInbox || options.unknownInbox);
@@ -66,6 +66,10 @@ function fixture(turn: RunSessionTurnInput, options: { disconnect?: boolean; unk
         await formReply;
       }
       if (options.lateInteraction === "permission") yield event("permission.asked", { id: "permission", sessionID: "child", action: "bash", resources: ["echo test"] });
+      if (options.form) {
+        yield event("form.created", { form: options.form });
+        await formReply;
+      }
       if (options.lateInteraction === "form") yield event("form.created", { form: { id: "form", sessionID: "child", title: "Choose", fields: [{ key: "answer", type: "string", options: [{ value: "yes", label: "Yes" }] }] } });
       yield event("session.text.delta", { sessionID: "root", assistantMessageID: "assistant", ordinal: 0, delta: "partial" });
       if (options.disconnect) return;
@@ -258,6 +262,121 @@ it("OpenCode routes child permissions and typed forms without permanent grants",
     assert.equal(approvals, mode === "never" ? 0 : 1);
     assert.ok(run.calls.includes(mode === "never" ? "permission:once" : "permission:reject"));
     assert.ok(run.calls.includes('form:{"answer":"yes"}'));
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCode questionの単一・複数質問は選択と自由入力を共通UIへ提示し、元のkeyと値で回答してturnを完了する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/914" }
+// fault = "customを拒否する、自由入力や必須指定・選択肢説明を失う、または単一文字列と複数回答配列を取り違える"
+// observable = "質問callbackのfields、native form.replyのanswer、完了したassistantText"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode question tool form round trip"
+// lifecycle = "permanent"
+// impact = "標準question toolによるturn失敗と回答の欠落を防ぐ"
+// distinction = "共通UI testはOpenCode form.createdからnative replyまでの変換とturn完了を通らず、型検査だけではcustomの拒否を検出しない"
+// @end-test-value
+it("OpenCode completes question forms with selected and custom answers", async () => {
+  const options = [{ value: "a", label: "A", description: "First choice" }, { value: "b", label: "B" }];
+  const single = { key: "q0", title: "Direction", description: "Which direction?", type: "string", options, custom: true } as const;
+  const multiple = { key: "q1", title: "Tools", type: "multiselect", options, custom: true } as const;
+  const cases: Array<{ fields: FormInfo1["fields"]; answer: Record<string, string | string[]> }> = [
+    { fields: [single], answer: { q0: "a" } },
+    { fields: [single], answer: { q0: "Another direction\nwith details" } },
+    { fields: [multiple], answer: { q1: ["a", "Another tool\nwith details"] } },
+    { fields: [single, multiple], answer: { q0: "b", q1: ["a", "Custom tool"] } },
+    { fields: [{ ...single, options: [] }, { ...multiple, options: [] }], answer: { q0: "Custom direction", q1: ["Custom tool"] } },
+  ];
+  for (const scenario of cases) {
+    const turn = input();
+    let questions = 0;
+    turn.onElicitationRequest = (request) => {
+      questions++;
+      assert.equal(request.provider, "opencode");
+      assert.equal(request.kind, "question");
+      assert.equal(request.blocking, true);
+      assert.deepEqual(request.fields.map((field) => field.name), scenario.fields.map((field) => field.key));
+      for (const field of request.fields) {
+        assert.equal(field.required, true);
+        assert.equal(field.type, field.name === "q0" ? "select" : "multi-select");
+        assert.ok(field.type === "select" || field.type === "multi-select");
+        assert.equal(field.allowFreeText, true);
+        assert.deepEqual(field.options, "options" in scenario.fields[0] && scenario.fields[0].options?.length ? [{ value: "a", label: "A — First choice" }, { value: "b", label: "B" }] : []);
+      }
+      assert.equal(request.fields[0].title, scenario.fields[0].title);
+      assert.equal(request.fields[0].description, scenario.fields[0].description);
+      return { action: "accept", content: scenario.answer };
+    };
+    const run = fixture(turn, { form: { id: "form", sessionID: "root", title: "Questions", metadata: { kind: "question" }, fields: scenario.fields } });
+    const result = await run.adapter.runSessionTurn(turn);
+    assert.equal(questions, 1);
+    assert.equal(result.assistantText, "final");
+    assert.deepEqual(run.calls.filter((call) => call.startsWith("form:")), [`form:${JSON.stringify(scenario.answer)}`]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCode questionだけ未指定requiredを必須化し、明示required・generic formのoptional・選択制約と既定値を維持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: OpenCodeAdapter form contract" }
+// fault = "全formを必須化するかnativeのrequired、custom、既定値や複数選択数の制約を上書きする"
+// observable = "変換後fieldのrequired、allowFreeText、defaultValue、minItems、maxItems"
+// observation_boundary = "component-behavior"
+// scope = "OpenCode form field semantics"
+// lifecycle = "permanent"
+// distinction = "question往復fixtureにはgeneric formのoptionalとnativeの明示制約がなく、型検査は値の保持を検出しない"
+// @end-test-value
+it("OpenCode preserves explicit form constraints outside question defaults", () => {
+  const form: FormInfo1 = { id: "form", sessionID: "root", title: "Form", fields: [
+    { key: "text", type: "string" },
+    { key: "choice", type: "string", required: false, custom: false, options: [{ value: "a", label: "A" }], default: "a" },
+    { key: "many", type: "multiselect", required: true, custom: true, options: [{ value: "a", label: "A" }], default: ["a"], minItems: 1, maxItems: 2 },
+  ] };
+  const generic = buildOpenCodeElicitation(form, "generic").fields;
+  assert.deepEqual(generic.map((field) => field.required), [false, false, true]);
+  const question = buildOpenCodeElicitation({ ...form, metadata: { kind: "question" } }, "question").fields;
+  assert.deepEqual(question.map((field) => field.required), [true, false, true]);
+  const choice = question[1];
+  assert.equal(choice.type, "select");
+  assert.ok(choice.type === "select");
+  assert.equal(choice.allowFreeText, false);
+  assert.equal(choice.defaultValue, "a");
+  const many = question[2];
+  assert.equal(many.type, "multi-select");
+  assert.ok(many.type === "multi-select");
+  assert.equal(many.allowFreeText, true);
+  assert.deepEqual(many.defaultValue, ["a"]);
+  assert.equal(many.minItems, 1);
+  assert.equal(many.maxItems, 2);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeの選択肢付き文字列は自由入力の有無にかかわらず長さとformatの制約を共通fieldへ保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: OpenCode string constraints; review F-1" }
+// fault = "enum変換でminLength、maxLength、formatを失いnativeが拒否する回答をUIへ許可する"
+// observable = "変換後select fieldのminLength、maxLength、format、optionsとallowFreeText"
+// observation_boundary = "component-behavior"
+// scope = "OpenCode constrained string selection projection"
+// lifecycle = "permanent"
+// distinction = "renderer testと型検査はnative formから制約値が引き継がれることを保証しない"
+// @end-test-value
+it("OpenCode retains native string constraints on selection fields", () => {
+  for (const format of ["email", "uri", "date", "date-time"] as const) {
+    for (const custom of [true, false]) {
+      const form: FormInfo1 = { id: "form", sessionID: "root", title: "Constrained", fields: [
+        { key: "answer", type: "string", options: [{ value: "preset", label: "Preset" }], custom, minLength: 3, maxLength: 50, format },
+      ] };
+      const field = buildOpenCodeElicitation(form, "request").fields[0];
+      assert.equal(field.type, "select");
+      assert.ok(field.type === "select");
+      assert.equal(field.allowFreeText, custom);
+      assert.equal(field.minLength, 3);
+      assert.equal(field.maxLength, 50);
+      assert.equal(field.format, format);
+      assert.deepEqual(field.options, [{ value: "preset", label: "Preset" }]);
+    }
   }
 });
 

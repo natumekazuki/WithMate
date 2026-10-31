@@ -113,7 +113,7 @@ type LiveElicitationFieldBase = {
   required: boolean;
 };
 
-export type LiveElicitationSelectField = LiveElicitationFieldBase & {
+export type LiveElicitationSelectField = LiveElicitationFieldBase & Pick<LiveElicitationTextField, "minLength" | "maxLength" | "format"> & {
   type: "select";
   options: LiveElicitationChoiceOption[];
   defaultValue?: string;

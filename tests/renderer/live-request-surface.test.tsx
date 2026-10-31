@@ -5,7 +5,8 @@ import React from "react";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationSelectField } from "../../src-shared/session/runtime-state.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
 import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../src/settings/shortcut-registry.js";
 
@@ -225,7 +226,7 @@ const elicitationRequest: LiveElicitationRequest = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "質問の画像と通常fileのpasteは対象sessionへ保存され、改行を保持した同じrequestの同じfieldの文字列回答になる"
+// claim = "質問のfile-backed画像と通常fileのpasteは元の名前で対象sessionへ保存され、改行を保持した同じrequestの同じfieldの文字列回答になる"
 // oracle = { type = "contract", ref = "Issue #862: multiline free answer and attachment paths in the original question response; docs/design/desktop-ui.md#question-forms" }
 // fault = "pasteを通常composerや別質問へ挿入する、sessionを誤る、または添付を別promptや別payloadへ分離する"
 // observable = "保存APIのsessionIdとfile内容、各textarea値、元requestのSubmit payload"
@@ -251,11 +252,12 @@ test("LiveRequestSurface はmixed pasteを対象質問の文字列回答に保�
   });
   try {
     Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      isClipboardFileBacked: () => true,
       async savePastedSessionFile(input: { sessionId: string; fileName: string; data: ArrayBuffer }) {
         saved.push({ sessionId: input.sessionId, fileName: input.fileName, content: new TextDecoder().decode(input.data) });
         return `C:/session-files/${input.fileName}`;
       },
-    } });
+    } satisfies Pick<WithMateWindowApi, "isClipboardFileBacked" | "savePastedSessionFile"> });
     const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer A"]')!;
     const note = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note A"]')!;
     const otherAnswer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer B"]')!;
@@ -881,6 +883,135 @@ test("LiveRequestSurface は自由入力の複数選択を候補と併用でき�
   } finally {
     await mounted.cleanup();
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "選択の自由回答はnative文字列の長さとformatを満たすまで送信せず、有効値を未加工で返しoptional未回答は省略する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: OpenCode string constraints; review F-1" }
+// fault = "制約違反を送信する、入力をtrimして長さや返却値を変える、またはoptional未回答をformatで拒否する"
+// observable = "不正入力後のalertとcallback件数、有効入力後の元文字列payload、optional空欄のpayload"
+// observation_boundary = "component-behavior"
+// scope = "constrained select answer validation"
+// lifecycle = "permanent"
+// distinction = "adapter projection testや型検査はDOM入力からSubmit前validationへの接続を通らない"
+// @end-test-value
+test("LiveRequestSurface validates native constraints before submitting custom selections", async () => {
+  const cases: Array<{ constraints: Pick<LiveElicitationSelectField, "minLength" | "maxLength" | "format">; invalid: string[]; valid: string }> = [
+    { constraints: { minLength: 3, maxLength: 5 }, invalid: ["ab", "toolong"], valid: " a " },
+    { constraints: { maxLength: 1 }, invalid: ["😀"], valid: "a" },
+    { constraints: { format: "email" }, invalid: ["not-an-email"], valid: "a@example.test" },
+    { constraints: { format: "uri" }, invalid: ["not a URI"], valid: "https://example.test/a" },
+    { constraints: { format: "date" }, invalid: ["2026-02-30", "not a date"], valid: "2026-02-28" },
+    { constraints: { format: "date-time" }, invalid: ["not a date-time"], valid: "2026-11-01T00:00:00+09:00" },
+  ];
+  for (const scenario of cases) {
+    const mounted = await mountElicitation({ requestId: "constrained", provider: "opencode", kind: "question", mode: "form", message: "Constrained", fields: [
+      { type: "select", name: "answer", title: "Answer", required: true, allowFreeText: true, options: [], ...scenario.constraints },
+    ] });
+    try {
+      const input = mounted.container.querySelector<HTMLTextAreaElement>("textarea")!;
+      for (const invalid of scenario.invalid) {
+        await enterText(mounted.dom, input, invalid);
+        await submit(mounted.container);
+        assert.deepEqual(mounted.responses, []);
+        assert.ok(mounted.container.querySelector('[role="alert"]'));
+        assert.equal(input.value, invalid);
+      }
+      await enterText(mounted.dom, input, scenario.valid);
+      await submit(mounted.container);
+      assert.deepEqual(mounted.responses, [{ action: "accept", content: { answer: scenario.valid } }]);
+      assert.equal(mounted.container.querySelector('[role="alert"]'), null);
+    } finally { await mounted.cleanup(); }
+  }
+  const optional = await mountElicitation({ requestId: "optional", provider: "opencode", mode: "form", message: "Optional", fields: [
+    { type: "select", name: "answer", title: "Answer", required: false, allowFreeText: true, options: [], minLength: 3, format: "email" },
+  ] });
+  try {
+    await submit(optional.container);
+    assert.deepEqual(optional.responses, [{ action: "accept" }]);
+  } finally { await optional.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "単一選択の候補外既定値は選択済み自由入力として表示され、編集・draft復元・空欄への削除が送信へ反映される"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: selection defaults; review F-2" }
+// fault = "見えない既定値を送る、選択候補の既定値を自由回答へ移す、または復元・編集・削除で元の既定値を再送する"
+// observable = "textarea初期値とradioの選択状態、再描画後のdraft、未編集・編集・削除後のpayload"
+// observation_boundary = "component-behavior"
+// scope = "single selection custom defaults"
+// lifecycle = "permanent"
+// distinction = "defaultなしの自由入力testは候補外既定値の表示・編集・削除とdraft初期化を検証しない"
+// @end-test-value
+test("LiveRequestSurface exposes custom single defaults for editing and removal", async () => {
+  const request: LiveElicitationRequest = { requestId: "single-default", provider: "opencode", kind: "question", mode: "form", message: "Defaults", fields: [
+    { type: "select", name: "direction", title: "Direction", required: false, allowFreeText: true, options: [{ value: "a", label: "A" }], defaultValue: "Existing custom answer" },
+    { type: "select", name: "mode", title: "Mode", required: true, allowFreeText: true, options: [{ value: "a", label: "A" }], defaultValue: "a" },
+  ] };
+  const drafts: LiveElicitationDrafts = new Map();
+  const mounted = await mountElicitation(request, { drafts });
+  try {
+    const input = () => mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Direction Custom Answer"]')!;
+    const custom = () => mounted.container.querySelector<HTMLInputElement>('input[aria-label="Direction Custom Answer"]')!;
+    assert.equal(input().value, "Existing custom answer");
+    assert.equal(custom().checked, true);
+    const mode = mounted.container.querySelector('[role="radiogroup"][aria-label="Mode"]')!;
+    assert.equal(mode.querySelector<HTMLInputElement>('input[value="a"]')!.checked, true);
+    assert.equal(mode.querySelector<HTMLTextAreaElement>("textarea")!.value, "");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses.pop(), { action: "accept", content: { direction: "Existing custom answer", mode: "a" } });
+    await enterText(mounted.dom, input(), "Edited\nanswer");
+    await mounted.render({ ...request, requestId: "other-default" }, { drafts });
+    await mounted.render(request, { drafts });
+    assert.equal(input().value, "Edited\nanswer");
+    assert.equal(custom().checked, true);
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses.pop(), { action: "accept", content: { direction: "Edited\nanswer", mode: "a" } });
+    await enterText(mounted.dom, input(), "");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { mode: "a" } }]);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "複数選択の候補外既定値は個々の選択済み項目で表示され、未編集では元配列を返し、選択解除と自由入力で各値を置換・削除できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#question-forms: selection defaults; review F-2" }
+// fault = "既定自由回答を隠すか結合し、削除後も送信するか既存値・配列shapeを失う"
+// observable = "全checkboxの表示・選択状態、未編集・置換・削除後のpayload、空の必須回答の拒否"
+// observation_boundary = "component-behavior"
+// scope = "multiple selection custom defaults"
+// lifecycle = "permanent"
+// distinction = "単一選択やdefaultなしのtestは複数の候補外既定値と選択解除後の配列保持を通らない"
+// @end-test-value
+test("LiveRequestSurface exposes every custom multiselect default without merging values", async () => {
+  const request: LiveElicitationRequest = { requestId: "multi-default", provider: "opencode", kind: "question", mode: "form", message: "Defaults", fields: [
+    { type: "multi-select", name: "tools", title: "Tools", required: true, allowFreeText: true, options: [{ value: "a", label: "A" }], defaultValue: ["a", "Custom 1", "Custom 2"] },
+  ] };
+  const mounted = await mountElicitation(request);
+  try {
+    const checkboxes = [...mounted.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    assert.deepEqual(checkboxes.map((input) => ({ label: input.parentElement!.textContent, checked: input.checked })), [
+      { label: "A", checked: true }, { label: "Custom 1", checked: true }, { label: "Custom 2", checked: true },
+    ]);
+    const input = mounted.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    assert.equal(input.value, "");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses.pop(), { action: "accept", content: { tools: ["a", "Custom 1", "Custom 2"] } });
+    await act(async () => checkboxes[1].click());
+    await enterText(mounted.dom, input, "Changed\nvalue");
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses.pop(), { action: "accept", content: { tools: ["a", "Custom 2", "Changed\nvalue"] } });
+    await enterText(mounted.dom, input, "");
+    await act(async () => { checkboxes[0].click(); checkboxes[2].click(); });
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, []);
+    assert.ok(mounted.container.querySelector('[role="alert"]'));
+    await act(async () => checkboxes[0].click());
+    await submit(mounted.container);
+    assert.deepEqual(mounted.responses, [{ action: "accept", content: { tools: ["a"] } }]);
+  } finally { await mounted.cleanup(); }
 });
 
 // @test-value v2
