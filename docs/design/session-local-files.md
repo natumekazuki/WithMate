@@ -2,7 +2,9 @@
 
 WithMateはSessionごとにrepository外のmanaged directory `session-files/{sessionId}/`を用意する。provider内部のsession stateやlog directoryとは分け、画像やfileをcomposerへ添付するときの保存先とする。`sessionId`は安全なpath segmentへ正規化し、directory traversalを許さない。
 
-Main Sessionの新規作成では、`New Session`のworkspace選択やCharacter authoringにかかわらず、新しいSession IDのdirectoryを排他的に作成してからSessionを保存する。既存の同名directoryやSession recordを上書き・再利用しない。directoryの準備はprovider operation coordinator外で行い、保存時にstorage identityと起動設定を再検証する。`New Session`で`Session Folder`を選んだ場合は、作成したdirectoryをSessionのworkspaceとする。未作成の既存Sessionでは、turnでproviderへpathを渡す前にdirectoryを作成する。
+Main Sessionの新規作成では、`New Session`のworkspace選択やCharacter authoringにかかわらず、新しいSession IDのdirectoryを排他的に作成してからSessionを保存する。既存の同名directoryやSession recordを上書き・再利用しない。directoryの準備はprovider operation coordinator外で行い、保存時にstorage identityと起動設定を再検証する。
+
+`New Session`で`Session Folder`を選んだ場合は、作成したdirectoryをSessionのworkspaceとする。未作成の既存Sessionでは、turnでproviderへpathを渡す前にdirectoryを作成する。
 
 ## Access Contract
 
@@ -36,6 +38,6 @@ Settingsの`Clean Session Files`は保存済みSessionのmanaged folder内だけ
 
 実行中のMain／Auxiliaryを持つSession、いずれかのSessionのWorkspaceと重なるfolder、孤立folder、シンボリックリンク・junctionとそのリンク先は掃除対象にしない。Mainが解決したmanaged pathだけを使い、rendererから削除pathや全ファイル一覧を受け取らない。
 
-計算時の対象はMainの最新一件の一時snapshotに保持する。実行ではSession incarnation、最終利用日時、storage owner、実行状態、Workspace、directoryとfileのmetadataを再確認し、計算後に増えたfileを追加せず、変更・消失したfileは除外する。新しい計算と実行で前のsnapshotを失効させる。永続的な削除台帳やhashは持たない。
+計算時の対象はMainの最新一件の一時snapshotに保持する。実行ではSession incarnation、最終利用日時、storage owner、実行状態、Workspace、directoryとfileのmetadataを再確認する。計算後に増えたfileを追加せず、変更・消失したfileは除外する。新しい計算と実行で前のsnapshotを失効させる。永続的な削除台帳やhashは持たない。
 
 削除はfileごとに成功・失敗・除外を返す。SessionFolderルートは必ず残し、計算した下位directoryは空の場合だけ削除する。非同期filesystem I/Oを使い、通常fileが残るdirectoryや計算後に追加されたdirectoryを再帰削除しない。実装は`src-electron/files/session-folder-cleanup-service.ts`、UIは[Settings UI](settings-ui.md#session-folder-cleanup)を正本とする。

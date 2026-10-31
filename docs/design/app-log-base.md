@@ -3,7 +3,7 @@
 
 ## Goal
 
-WithMate のクラッシュやフリーズを調査するため、アプリ起動から終了までの重要イベント、Main/Renderer の未捕捉例外、Renderer / child process の異常終了、IPC 失敗、ロード失敗を JSONL とクラッシュダンプ保存先で追跡できるようにする。
+WithMate のクラッシュやフリーズを調査するため、アプリ起動から終了までの重要イベントを追跡できるようにする。対象はMain/Renderer の未捕捉例外、Renderer / child process の異常終了、IPC 失敗、ロード失敗であり、JSONL とクラッシュダンプ保存先で確認する。
 
 ## Position
 

@@ -36,7 +36,11 @@ Depthはmodelがadvertiseする任意文字列の配列であり、固定enumに
 
 model IDは`<native provider>/<model>`とし、最初の`/`で分ける。残りの`/`はmodel IDに保持する。`opencode-go/...`、`opencode/...`、`openai/...`等を同じWithMate provider `opencode`内で扱い、Depthをnative variantへ渡す。`#variant`をmodel IDへ保存しない。native一覧で選択modelのenabled状態、variant、添付modalityを確認する。
 
-一覧取得とturn実行は、PATH上の公式CLI `2.2.1`と同梱`@opencode/client` `2.2.1`を使い、既存native DB・global／project設定・API key／OAuth・起動元環境変数を同じstandalone経路で解決する。CLIの`--version`をDBを開く前に照合し、異なる版では一覧取得・実行を止める。新しい版で使用済みのDBのdowngradeは行わない。WithMate所有の`serve --stdio` processを使い、既存の共有serviceへ接続したり、それを変更・停止したりしない。service専用のmanaged環境変数はstandaloneには適用されないため、必要な設定はWithMateの起動元環境またはOpenCodeのstandalone認証へ利用者が設定する。
+一覧取得とturn実行は、PATH上の公式CLI `2.2.1`と同梱`@opencode/client` `2.2.1`を使い、既存native DB・global／project設定・API key／OAuth・起動元環境変数を同じstandalone経路で解決する。
+
+CLIの`--version`をDBを開く前に照合し、異なる版では一覧取得・実行を止める。新しい版で使用済みのDBのdowngradeは行わない。
+
+WithMate所有の`serve --stdio` processを使い、既存の共有serviceへ接続したり、それを変更・停止したりしない。service専用のmanaged環境変数はstandaloneには適用されないため、必要な設定はWithMateの起動元環境またはOpenCodeのstandalone認証へ利用者が設定する。
 
 一覧の取得は認証成功の確認ではない。WithMateはGo用keyを編集・注入せず、OAuth接続・credential import・アカウント切替UIも提供しない。WithMateにだけGo keyを登録していた利用者は、OpenCode側へ自分で登録する必要がある。保存済みkeyはOpenCodeへ自動移送せず、対象fieldだけを起動時に除去する。他providerのkey、有効化・Skill設定、会話とthreadは保持する。
 

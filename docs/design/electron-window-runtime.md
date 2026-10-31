@@ -100,7 +100,11 @@ Window復元候補のsnapshotは任意保存とし、open完了・quit準備は�
 
 Home／Session Monitorには別の`withmate:live-session-run-status` eventで`runState`・`cancellationState`を明示投影し、承認待ちのときだけ`approvalPending: true`を付加する。非待機時は`approvalPending`を省略する。本文、reasoning、step、operation、承認・質問詳細を生成・転送・保持せず、本文サイズと独立したpayloadにする。Settings／MemoryReview等はこの通知の宛先に含めない。Home／Monitorは通知をsummary再取得の契機とし、表示の正本は既存のsummary応答とする。
 
-Auxiliaryの配送用親関連は実行受付とruntimeの保存済みactive会話読込みから得る。admissionの予約とは分け、run呼出しが収束した後も取消実終了待ち・retained live・background通知・終端`null`へ適用する。admission・実行（取消実終了待ちを含む）・保持liveがすべてなくなった時に、終端通知の配送後に解除する。Auxiliaryのclose・親Session削除でも解除し、遅い会話読込みで不要な関連を再登録しない。persistent storeのclose・交換時に破棄し、古いstorage ownerの登録・通知・解除を新しいownerへ適用しない。Session Window内のdetail consumer、controls projection、初回取得・detail再open・古い取得の破棄は既存の単一live ingressが所有する。
+Auxiliaryの配送用親関連は実行受付とruntimeの保存済みactive会話読込みから得る。admissionの予約とは分け、run呼出しが収束した後も取消実終了待ち・retained live・background通知・終端`null`へ適用する。admission・実行（取消実終了待ちを含む）・保持liveがすべてなくなった時に、終端通知の配送後に解除する。
+
+Auxiliaryのclose・親Session削除でも解除し、遅い会話読込みで不要な関連を再登録しない。persistent storeのclose・交換時に破棄し、古いstorage ownerの登録・通知・解除を新しいownerへ適用しない。
+
+Session Window内のdetail consumer、controls projection、初回取得・detail再open・古い取得の破棄は既存の単一live ingressが所有する。
 
 ### AuxWindowService
 
@@ -141,11 +145,17 @@ current 実装の API surface は次の domain に分かれる。
 
 `src-electron/terminal/`がWindowと親Sessionに属するPTYの作成・入出力・終了を管理し、`src/terminal/`がタブとxtermを所有する。専用のtyped preload APIを使い、Mainは送信元が登録済みSession Windowのmain frameであることを確認する。rendererの指定したSession IDやcwdで起動せず、保存済み親Sessionのworkspaceを使う。他Windowの端末へ入力・resize・終了・出力購読を許可しない。
 
-node-ptyはタブごとのElectron utility process内で起動要求時にloadし、WindowsはSystemRoot内のWindows PowerShell、macOSは`/bin/zsh`を実行する。native moduleや非同期socketの異常をMain・他の端末から隔離し、hostの予期しない終了は当該タブの`Failed`として通知する。Mainとhostの接続にはElectronのメッセージAPIを使う。workspace内や相対PATHの同名プログラムをshellに選ばず、cwdの文字列をtrimしない。load・shell・cwd・spawnの失敗は端末単位の失敗として返し、外部Terminalへのfallbackや自動respawnは行わない。
+node-ptyはタブごとのElectron utility process内で起動要求時にloadし、WindowsはSystemRoot内のWindows PowerShell、macOSは`/bin/zsh`を実行する。native moduleや非同期socketの異常をMain・他の端末から隔離し、hostの予期しない終了は当該タブの`Failed`として通知する。
+
+Mainとhostの接続にはElectronのメッセージAPIを使う。workspace内や相対PATHの同名プログラムをshellに選ばず、cwdの文字列をtrimしない。load・shell・cwd・spawnの失敗は端末単位の失敗として返し、外部Terminalへのfallbackや自動respawnは行わない。
 
 出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、Memory、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
 
-タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。Window close時も個別タブと同じ判定で、実行中・起動中・判別不能な端末があれば終了を非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認は省略し、AI実行中ならWindowを閉じても実行を継続する確認へまとめる。確認待ちの重複closeを抑止し、承認後も既存のdraft flushを待つ。確認結果は元のWindow identityへ限定する。
+タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。
+
+Window close時も個別タブと同じ判定で、実行中・起動中・判別不能な端末があれば終了を非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認は省略し、AI実行中ならWindowを閉じても実行を継続する確認へまとめる。
+
+確認待ちの重複closeを抑止し、承認後も既存のdraft flushを待つ。確認結果は元のWindow identityへ限定する。
 
 ## HTML Preview Isolation
 
@@ -192,7 +202,9 @@ node-ptyはタブごとのElectron utility process内で起動要求時にload�
 - entry HTML には meta CSP を入れ、renderer script / style / connect を `self` と Vite dev server (`http://localhost:4173`, `ws://localhost:4173`) に限定する
 - preload 経由で必要最小限の API だけ渡す
 
-current実装ではpreloadが`contextBridge`と`ipcRenderer.invoke/on`の薄い橋渡しだけを担当し、Codex App Serverのstdio transportとGitHub Copilot / Claude Agent SDKはMain Process側で動かしている。Codexの承認・質問・追加入力もtyped preload経由でMainの現在turnへ中継し、Rendererへprocess起動権限を渡さない。
+current実装ではpreloadが`contextBridge`と`ipcRenderer.invoke/on`の薄い橋渡しだけを担当する。Codex App Serverのstdio transportとGitHub Copilot / Claude Agent SDKはMain Process側で動かしている。
+
+Codexの承認・質問・追加入力もtyped preload経由でMainの現在turnへ中継し、Rendererへprocess起動権限を渡さない。
 ただし `npm run electron:start` の Home Window では `sandbox: true` が入ると `window.withmate` 注入が回帰し、renderer が `Home は Electron から起動してね。` の fallback へ落ちる事象を確認した。  
 preload API / IPC の成立を優先し、現行実装は `sandbox: false` を維持する。
 

@@ -5,7 +5,11 @@ UIの設計・変更・reviewでは、画面横断の原則と共通パターン
 ## Auxiliary Session (Issue #710)
 Mainと選択中Auxiliaryの末尾移動は`Scroll Main To Bottom`／`Scroll Auxiliary To Bottom`としてSettingsから個別にキー登録できる。既存の有効な割当を維持するため、全platformで初期は`Not Assigned`とし、`Reset`も指定commandだけ未割当へ戻す。登録後はComposer入力中も使え、送信対象とfocusを変えず指定列だけ末尾追従へ戻す。未取得・折りたたみ中の列、Auxiliaryの読込中・取得失敗、中央Preview表示中は実行しない。Terminal本文、IME変換中、key repeatでは会話shortcutの既存抑止を維持する。
 
-Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。splitter幅と選択中Auxiliaryは親Sessionごとのlocal preferenceとして復元し、幅はresize interactionの完了時だけ保存する。折りたたみ時はAuxiliary面・内部境界・タイトル枠内の操作を隠し、splitterだけを再展開導線として残す。折りたたみでActionDock対象や選択中Sessionを変更しない。
+Session WindowはMain左と選択中Auxiliary右を同じchat shellで表示できる。Auxiliaryは複数保持し、中央のタイトル枠内にある`＋`から既存会話を閉じず最終使用順の一覧へ反映する。Auxiliary中央の左右矢印と表示名一覧はstable Session IDで選択し、一覧行はCharacter iconと非AIの会話previewだけを表示する。
+
+実行中のAuxiliaryはicon内にcompactなprocessing indicatorを重ね、行高とpreviewの幅を変えない。splitter幅と選択中Auxiliaryは親Sessionごとのlocal preferenceとして復元し、幅はresize interactionの完了時だけ保存する。
+
+折りたたみ時はAuxiliary面・内部境界・タイトル枠内の操作を隠し、splitterだけを再展開導線として残す。折りたたみでActionDock対象や選択中Sessionを変更しない。
 
 Auxiliary追加のprovider pickerはHome `New Session`、Character authoringと同じloading / error / ready 0件の状態境界を使い、開始処理中のbusyをalertへ変換しない。
 
@@ -69,7 +73,11 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 ## UI Implementation Boundary
 
-Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、`Back To Chat`で元の会話へ戻る。入口はヘッダーの展開時に表示する。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。`All Topics`で話題を横断し、Topicの要点・担当別進行・記録間関係からTopic/record詳細へ進む閲覧専用面である。全体とTopic詳細の往復、会話切替、Graph開閉で閲覧状態を保ち、送信先や下書きを変更しない。新しさの背景・最新帯、選択枠、担当アイコンの色縁を中央/独立Windowで共用する。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
+Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を中央previewで開き、`Back To Chat`で元の会話へ戻る。入口はヘッダーの展開時に表示する。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。
+
+`All Topics`で話題を横断し、Topicの要点・担当別進行・記録間関係からTopic/record詳細へ進む閲覧専用面である。全体とTopic詳細の往復、会話切替、Graph開閉で閲覧状態を保ち、送信先や下書きを変更しない。
+
+新しさの背景・最新帯、選択枠、担当アイコンの色縁を中央/独立Windowで共用する。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
 
 Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示す。保存済みで通知・投影だけが失敗した場合はtitleの表示を正本summaryから復旧し、保存済みであることと他Windowの再openによる更新をalertで伝える。復旧readも失敗した場合はcommit済みtitleを表示に保持し、再openでの再取得を案内する。保存応答・復旧readが遅れても、別会話・別incarnation・後続のtitle保存へ古いtitleやalertを反映しない。
 
