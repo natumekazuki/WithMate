@@ -306,7 +306,7 @@ describe("CharacterContextApplicationService", () => {
   // @test-value v1
   // kind = "security"
   // claim = "Character contextの公開responseはidentity-freeなtop-levelとMemory preview fieldだけを返し、維持対象のbaseline・affect・memory version情報を保持する"
-  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:59-61" }
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:70-72" }
   // failure_mode = "内部request identityまたはMemory owner・scope・body・file・sourceが公開responseへ混入し、providerやagent consumerへactor identityまたは非公開Memory詳細が漏れる"
   // scope = "CharacterContextApplicationService.getContext public projection"
   // lifecycle = "permanent"

@@ -6,7 +6,7 @@ Accepted
 
 ## 適用状態
 
-binding registry、generation、operation grant、turn capability、runtime owner selection は現行 Agent / Auxiliary runtime に引き続き適用する。本文中の Companion 固有記述は当時の判断として保持するが、Companion は `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` で撤去され、保存履歴の互換性や merge / discard は現行契約ではない。この適用状態の変更は、現行 Session の authority 境界を失効させない。
+binding registry、generation、operation grant、turn capability は現行 Agent / Auxiliary runtime に引き続き適用する。runtime owner selection も同様に適用する。本文中の Companion 固有記述は当時の判断として保持するが、Companion は `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` で撤去され、保存履歴の互換性や merge / discard は現行契約ではない。この適用状態の変更は、現行 Session の authority 境界を失効させない。
 
 ## Subsequent decisions
 
@@ -16,17 +16,19 @@ binding registry、generation、operation grant、turn capability、runtime owne
 
 ADR 027は、新しいprovider → 共有localhost HTTP MCPの入口について、同一接続のidentity challengeを短命・turn限定credentialへ部分的に置換する実装へ適用した判断である。手動stdio MCP、内側のruntime exchange、CLIのchallengeは引き続き適用し、本ADRのbinding registry、generation、grant、actorとlogical turnの識別を維持する。適用範囲は[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)を参照する。
 
-CodexのSDK client / thread cacheと同一turn内stale-thread retryに関する本文は現行Codexには適用しない。CodexはturnごとのApp Server processにbinding environmentを明示し、保存済みthreadを`thread/resume`する。resume拒否で自動的に新threadへ切り替えない。binding registry、lease、generation、turn capability、redactionとbackgroundへのbinding非継承の判断は維持し、実行境界の現行契約は[Provider Adapter](../design/provider-adapter.md)を参照する。
+CodexのSDK client / thread cacheと同一turn内stale-thread retryに関する本文は現行Codexには適用しない。CodexはturnごとのApp Server processにbinding environmentを明示し、保存済みthreadを`thread/resume`する。resume拒否で自動的に新threadへ切り替えない。binding registry、lease、generation、turn capability、redactionとbackgroundへのbinding非継承の判断は維持する。実行境界の現行契約は[Provider Adapter](../design/provider-adapter.md)を参照する。
 
-ADR 024は、agent-facing Memory CRUDと`memory.file_usage`について、本ADRの`optional` policy、bindingなしのlocal-user/operator経路、explicit Character selectorを部分的に置換する。provider executionから使うMCPとagent-bound CLI fallbackはbindingを必須とし、actor-relative targetだけを受け付ける。operator CLIのexplicit target/identityは別authority modeとして維持する。本ADRのbinding registry、generation、operation grant、turn capability、runtime owner selectionの契約は維持する。
+ADR 024は、agent-facing Memory CRUDと`memory.file_usage`について、本ADRの次の条項を部分的に置換する。`optional` policy、bindingなしのlocal-user/operator経路、explicit Character selectorである。provider executionから使うMCPとagent-bound CLI fallbackはbindingを必須とし、actor-relative targetだけを受け付ける。
+
+operator CLIのexplicit target/identityは別authority modeとして維持する。本ADRのbinding registry、generation、operation grant、turn capability、runtime owner selectionの契約は維持する。
 
 ## Context
 
-WithMateが起動したprovider executionからSession scopedなAgent APIを呼ぶ場合、request body、CLI引数、promptへ記載されたSession IDはactor identityの根拠にならない。callerが転記する値では、誤転記、stale context、別Sessionの指定を区別できない。
+WithMateが起動したprovider executionからSession scopedなAgent APIを呼ぶ場合を考える。request body、CLI引数、promptへ記載されたSession IDはactor identityの根拠にならない。callerが転記する値では、誤転記、stale context、別Sessionの指定を区別できない。
 
-一方、現行のSession schemaにはSessionRole、root/parent hierarchy、Role contract revision、Session/Turn operation permissionのaccepted contractがない。runtime bindingの導入と同時にそれらの既定値を決めると、後続のSession orchestration APIより先にauthority contractを固定してしまう。
+一方、現行のSession schemaには次のaccepted contractがない。SessionRole、root/parent hierarchy、Role contract revision、Session/Turn operation permissionである。runtime bindingの導入と同時にそれらの既定値を決めると、後続のSession orchestration APIより先にauthority contractを固定してしまう。
 
-Codex SDKとGitHub Copilot SDKのstdio runtimeはいずれもclient作成時にchild runtimeへ渡すenvironmentを指定し、adapterはclientとthread/sessionをcacheする。Electron main processのglobal `process.env`をturn前後に書き換える方式では、並行Session間のidentity分離を保証できない。
+Codex SDKとGitHub Copilot SDKのstdio runtimeはいずれも、client作成時にchild runtimeへ渡すenvironmentを指定できる。adapterはclientとthread/sessionをcacheする。Electron main processのglobal `process.env`をturn前後に書き換える方式では、並行Session間のidentity分離を保証できない。
 
 ## Decision
 

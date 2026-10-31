@@ -13,13 +13,13 @@ Auxiliaryの準備済みCharacterを再抽選しない判断は、Issue #749の�
 
 Auxiliaryの追加Directoryを作成commit時に親から取得して個別保存する判断は適用対象外とする。Additional Directoryは親Mainだけに保存し、全AuxiliaryのFiles認可と次turnの実行contextは現在の親一覧を参照する。実行中turnの捕捉済み認可は維持する。他の実行設定の継承とownership境界の適用状態は変更しない。後継判断と現行契約は[Auxiliary SessionのContext boundary](../design/auxiliary-session.md#context-boundary)と[Database SchemaのAdditional Directory](../design/database-schema.md#additional-directory)を参照する。
 
-directory workspace の New Session で設定解決から保存までを coordinator 内で処理する判断は、Main Session 作成時に workspace 種別にかかわらず SessionFolder を作成する現行契約には適用しない。folder 準備を coordinator 外で行い、保存時に再検証する後継の扱いは [Session Local Files](../design/session-local-files.md) に記載する。
+directory workspace の New Session で設定解決から保存までを coordinator 内で処理する判断は、次の現行契約には適用しない。Main Session 作成時は、workspace 種別にかかわらず SessionFolder を作成する。folder 準備を coordinator 外で行い、保存時に再検証する後継の扱いは [Session Local Files](../design/session-local-files.md) に記載する。
 
 本文中の Companion 作成・閲覧・merge・discard に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行の Main / Auxiliary / Character / SessionFolder 契約を失効させず、撤去済み Companion service の再公開も行わない。
 
 ## Context
 
-New Session と New Companion の launch dialog には、model、reasoning effort、approval mode、sandbox mode、Codex Reviewer、Codex Speed、custom agent を表示しない。一方、同じ provider を使う新規作業では、直近 Session の選択を維持したい。
+New Session と New Companion の launch dialog には、実行設定を表示しない。対象は model、reasoning effort、approval mode、sandbox mode、Codex Reviewer、Codex Speed、custom agent である。一方、同じ provider を使う新規作業では、直近 Session の選択を維持したい。
 
 Home が保持する Session summary は Character のランダム選択にも使われるが、固定 Character では読み込み完了を待たない。このキャッシュから実行権限を決めると、未取得または取得失敗時だけ既定値で起動し、直近 Session と異なる権限になる。
 

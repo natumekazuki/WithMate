@@ -7,7 +7,7 @@
 
 ## Context
 
-Session File Explorer の preview は、認可済み root 内の file handle に読込対象を結び付ける。一方、「既定アプリで開く」「Explorer で表示」「ファイルをコピー」は Electron と OS が path を受け取る API であり、認可済み file handle をそのまま外部 application や clipboard consumer へ渡せない。
+Session File Explorer の preview は、認可済み root 内の file handle に読込対象を結び付ける。一方、「既定アプリで開く」「Explorer で表示」「ファイルをコピー」は Electron と OS が path を受け取る API である。認可済み file handle をそのまま外部 application や clipboard consumer へ渡すことはできない。
 
 認可後から OS が path を解決するまでの間に、別 process が親 directory を junction または symlink へ差し替えると、OS が認可時とは異なる実体を開く可能性がある。この競合を避けるには認可済み内容を一時 file へ複製して開く方法があるが、編集結果が元 file へ反映されず、Explorer で元の場所を示せない。
 

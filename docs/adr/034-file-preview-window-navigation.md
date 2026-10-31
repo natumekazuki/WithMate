@@ -8,7 +8,7 @@
 
 ## Context
 
-File Explorer already owns an in-session central preview, while chat file links previously delegated local paths directly to the operating system. A detached preview must not create a second renderer or path-authorization policy.
+File Explorer already owns an in-session central preview. Chat file links previously delegated local paths directly to the operating system. A detached preview must not create a second renderer or path-authorization policy.
 
 ## Decision
 
@@ -36,4 +36,10 @@ File Explorer already owns an in-session central preview, while chat file links 
 
 ## Consequences
 
-The main process remains the canonical navigation boundary. Renderer callers submit a validated root-scoped or absolute-file resource, or a raw link target with the current preview resource as its base. Absolute-file preview access does not change Session roots, Additional Directories, or provider instructions. File handles, canonical paths, and file identity are confirmed before inspect, read, open, or reveal operations. Preview entry loading rechecks session and window liveness for every caller sharing the load before reporting success. The encoded Windows-path parsing fixed with ISSUE-240 remains shared through `resolveOpenPathTarget`.
+The main process remains the canonical navigation boundary. Renderer callers submit a validated root-scoped or absolute-file resource.
+
+They may also submit a raw link target with the current preview resource as its base. Absolute-file preview access does not change Session roots, Additional Directories, or provider instructions.
+
+File handles, canonical paths, and file identity are confirmed before any inspect, read, open, or reveal operation. Preview entry loading rechecks session and window liveness for every caller sharing the load before reporting success.
+
+The encoded Windows-path parsing fixed with ISSUE-240 remains shared through `resolveOpenPathTarget`.

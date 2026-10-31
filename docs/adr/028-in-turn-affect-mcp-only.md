@@ -10,7 +10,7 @@ Accepted
 
 ## Context
 
-通常turn内のAgentによるAffect MCPと、turn完了後の専用LLM評価が併存していた。Issue #879の2026-10-26追加決定では、Affect更新をMemoryと同じ通常turn内MCPへ統一し、Codex、Copilot、Claude、OpenCodeに共通の追加生成・専用queue・retry・復旧を廃止する。
+通常turn内のAgentによるAffect MCPと、turn完了後の専用LLM評価が併存していた。Issue #879の2026-10-26追加決定では、Affect更新をMemoryと同じ通常turn内MCPへ統一した。Codex、Copilot、Claude、OpenCodeに共通の追加生成・専用queue・retry・復旧を廃止する。
 
 ## Decision
 

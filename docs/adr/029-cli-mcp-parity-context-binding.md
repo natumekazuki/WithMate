@@ -23,7 +23,7 @@ Issue #905はWithMateの全公開操作についてCLIとMCPの双方向対応�
 
 ADR 020・021・024・027のCLI専用operator権限、一般Memoryの一律binding必須、通常CLIをMCP障害時だけに限る判断を置換する。ADR 022のCLI／MCPに対するSession-bound repository指定だけの制限を置換し、rendererのSession scopeは変えない。ADR 028の通常turn内AffectをMCP入口だけに限定する部分を置換し、専用post-turn評価を設けない判断は維持する。各ADRの本文は当時の判断として保持する。
 
-runtime credential、binding registry、generation、grant、captured turn、共有HTTP MCPの接続認証、application boundary、保存済みデータとmutationの整合契約は維持する。旧CLI explicit identity入力の互換経路は設けず、両入口の公開schemaへ統一する。
+runtime credential、binding registry、generation、grant、captured turn、共有HTTP MCPの接続認証は維持する。application boundary、保存済みデータとmutationの整合契約も維持する。旧CLI explicit identity入力の互換経路は設けず、両入口の公開schemaへ統一する。
 
 現行の操作契約は[Memory／Affect](../runbooks/memory-affect-mcp.md)、[Glossary](../runbooks/repository-glossary.md)、[Session Graph](../design/session-graph.md)、継続的な変更規約は[Development Workflow](../runbooks/development-workflow.md)を正本とする。
 

@@ -59,7 +59,7 @@ crash時に復元できず、同時publishのlast-writer競合、stale owner、�
 
 ### instanceごとにdiscovery namespaceを分ける
 
-bound経路の固定には有効だが、operatorの候補一覧、stale回収、legacy互換、Memory/Session共通のactive集合を別実装にしやすく、共有registry coreより責務が分散するため単独案としては採用しない。
+bound経路の固定には有効だが、operatorの候補一覧、stale回収、legacy互換、Memory/Session共通のactive集合を別実装にしやすい。共有registry coreより責務が分散するため、単独案としては採用しない。
 
 ### registryとactive leaseをadapterごとに別実装する
 

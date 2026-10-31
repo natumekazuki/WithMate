@@ -640,7 +640,7 @@ describe("composeProviderPrompt", () => {
   // @test-value v2
   // kind = "security"
   // claim = "provider promptのCharacter Affect Contextはidentityを含めず、baseline・affect version・全effective component・Memory previewを契約どおり投影する"
-  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:59-61" }
+  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md:70-72" }
   // fault = "公開contextから除いたuser・Character・Session identityまたはMemory非公開fieldをprompt assemblyが再投影し、providerへ漏らす"
   // observable = "provider向けCharacter Affect Context JSON envelopeとsystem section順序"
   // observation_boundary = "component-behavior"
