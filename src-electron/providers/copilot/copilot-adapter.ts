@@ -1932,7 +1932,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
               requestId: event.data.requestId,
               message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
             });
-            if (observingTurn) {
+            if (observingTurn && !cancellationCleanup) {
               interactionFailure ??= error;
               handleAbort();
             }

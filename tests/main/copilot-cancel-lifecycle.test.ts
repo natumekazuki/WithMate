@@ -11,7 +11,7 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 
 function deferred<T>() {
@@ -30,9 +30,14 @@ async function until(check: () => boolean) {
 }
 
 class FakeSession {
+  readonly inputAck = deferred<{ success: boolean }>();
+  readonly inputAckStarted = deferred<void>();
   readonly rpc = { eventLog: {
     registerInterest: async ({ eventType }: { eventType: string }) => ({ handle: eventType }),
     releaseInterest: async () => ({}),
+  }, ui: {
+    handlePendingUserInput: async () => { this.inputAckStarted.resolve(); return this.inputAck.promise; },
+    handlePendingElicitation: async () => { this.inputAckStarted.resolve(); return this.inputAck.promise; },
   } };
   readonly sessionId = "preserved-thread";
   readonly listeners = new Set<(event: SessionEvent) => void>();
@@ -77,9 +82,11 @@ class FakeSession {
     for (const reply of this.sends) reply.reject(new Error("Connection is closed."));
     this.abortReply.reject(new Error("Connection is closed."));
     this.disconnectReply.reject(new Error("Connection is closed."));
+    this.inputAck.reject(new Error("Connection is closed."));
     // Unused RPC gates are fixture controls, not dispatched requests.
     void this.abortReply.promise.catch(() => undefined);
     void this.disconnectReply.promise.catch(() => undefined);
+    void this.inputAck.promise.catch(() => undefined);
   }
 }
 
@@ -158,7 +165,7 @@ class FakeClient {
   }
 }
 
-function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; realForceStop?: boolean } = {}) {
+function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; realForceStop?: boolean; elicitationResponse?: LiveElicitationResponse } = {}) {
   let stored = buildNewSession({
     provider: "copilot", taskTitle: "cancel lifecycle", workspaceLabel: "fixture", workspacePath: process.cwd(),
     branch: "fixture", characterId: "fixture", character: "Fixture", characterIconPath: "",
@@ -226,7 +233,7 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     createSessionTurn: (entry) => { const turn = { id: turns.length + 1, ...entry }; turns.push(turn); return turn; },
     updateSessionTurn: (id, entry) => { const index = turns.findIndex((turn) => turn.id === id); turns[index] = { id, ...entry }; },
     setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
-    waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+    waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => options.elicitationResponse ?? { action: "cancel" },
     setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {},
     invalidateProviderSessionThread: (_provider, id) => adapter.invalidateSessionThread(id),
     broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -291,6 +298,53 @@ it("Copilotのprogress burstは全量処理しconsumer完了と実失敗を区�
   }
 });
 
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotの回答ACK待ち中のCancelは取消として保存し、Cancelより先の回答失敗は後続Cancelでも失敗のまま保存する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md; docs/adr/002-provider-turn-terminal-and-cancellation.md" }
+// fault = "取消cleanupの切断を回答失敗へ昇格するか、先行した回答失敗をCancelで隠す"
+// observable = "共通runtimeが保存するturn phase・runState・エラーと、所有client停止・child exit・listener解放"
+// observation_boundary = "consumer"
+// scope = "Copilot user input / MCP elicitation ACKとCancelの交差から共通runtime終端保存まで"
+// lifecycle = "permanent"
+// impact = "利用者の取消を障害履歴にすることと、実際の回答障害を取消で消すことを防ぐ"
+// distinction = "既存のACK拒否testと実行中取消testは両者の交差順序と保存phaseを確認せず、deferred ACKを使う6経路で直接確認する"
+// @end-test-value
+it("Copilotの回答ACK待ちCancelと先行回答エラーを区別して保存する", { timeout: 5000 }, async () => {
+  for (const eventType of ["user_input.requested", "elicitation.requested"]) {
+    for (const order of ["cancel-first", "failure-only", "failure-before-cancel"]) {
+      const f = fixture({ elicitationResponse: { action: "accept", content: { answer: "Example" } } });
+      const run = f.start();
+      const session = await f.current();
+      session.sends[0].resolve("sent");
+      session.emit("assistant.message", { messageId: "before", content: "Question follows." });
+      session.emit(eventType, eventType === "user_input.requested"
+        ? { requestId: "question", question: "Name?" }
+        : { requestId: "question", mode: "form", message: "Name?", elicitationSource: "fixture",
+            requestedSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] } });
+      await session.inputAckStarted.promise;
+      if (order === "cancel-first") f.cancel();
+      else {
+        session.inputAck.reject(new Error("input RPC unavailable"));
+        if (order === "failure-before-cancel") {
+          await session.abortStarted.promise;
+          f.cancel();
+        }
+      }
+      await run;
+      const canceled = order === "cancel-first";
+      assert.equal(f.turns[0].phase, canceled ? "canceled" : "failed");
+      assert.equal(f.stored().runState, canceled ? "idle" : "error");
+      if (canceled) assert.equal(f.stored().messages.at(-1)?.runFailure, undefined);
+      else assert.match(f.turns[0].errorMessage ?? "", /input RPC unavailable/);
+      assert.equal(f.clients[0].stopCalls, 1);
+      assert.equal(f.clients[0].child.exitCode, 0);
+      assert.equal(session.listeners.size, 0);
+      assert.equal(f.service.isRunInFlight(f.stored().id), false);
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
