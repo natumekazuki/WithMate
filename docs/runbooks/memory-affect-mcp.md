@@ -25,9 +25,13 @@ CLIとMCPは27の公開操作を同じtool registry、input schema、runtime cli
 
 `memory.append`、`memory.forget`、`memory.move_entry`はidempotency keyを必須とし、`memory.forget`と`memory.move_entry`はreasonも必須とする。`memory.forget`の`dryRun: true`はMemory、protected object、監査event、idempotency stateを変更しない。`memory.move_entry`はdry-runを受け付けない。成功responseの`replayed: true`は同一requestの再送を表す。keyを異なるrequestへ再利用した結果はdomain conflictであり、availability failureではない。
 
-`memory.get_file`と`memory.export_files`は、target照合後に新しい出力fileだけを作成する。既存fileを上書きしないためdestructive annotationは付けないが、external side effectを持ち、同じrequestの再実行は既存file errorになり得るためread-onlyまたはidempotentとは表示しない。
+`memory.get_file`と`memory.export_files`は、target照合後に新しい出力fileだけを作成する。既存fileを上書きしないためdestructive annotationは付けない。ただし、external side effectを持ち、同じrequestの再実行は既存file errorになり得る。そのためread-onlyまたはidempotentとは表示しない。
 
-Characterのget/search/inspectと一般Memoryの検索・取得・一覧・診断はread-onlyである。Characterのappraise/append_episodeと一般Memoryのappendはbounded writeである。明示target、具体的な理由、idempotency key、変更後のread-backを満たす場合、Character Memoryのcorrect/forgetと一般Memoryのforget/move_entryをユーザーの代理として実行できる。一般Memoryのbulk forgetは実行前にdry-runする。Affectのcorrect/resetは `explicitUserRequest: true` と具体的な `reason` を必要とし、expectedVersionによる競合検証を維持する。
+Characterのget/search/inspectと一般Memoryの検索・取得・一覧・診断はread-onlyである。Characterのappraise/append_episodeと一般Memoryのappendはbounded writeである。
+
+Character Memoryのcorrect/forgetと一般Memoryのforget/move_entryをユーザーの代理として実行できる。条件は明示target、具体的な理由、idempotency key、変更後のread-backである。一般Memoryのbulk forgetは実行前にdry-runする。
+
+Affectのcorrect/resetは `explicitUserRequest: true` と具体的な `reason` を必要とし、expectedVersionによる競合検証を維持する。
 
 ### 認証とSession binding
 
@@ -127,7 +131,9 @@ Session bindingを受け継いだprocessでは、通常CLIをMCP障害の有無�
 
 `affect-correct` / `affect-reset` は明示指示の `explicitUserRequest:true`、具体的なreason、最新expectedVersionを渡す。authorityやCharacter/Session IDは渡さない。`character-memory-correct`のreasonは自由記述、`character-memory-forget`は `user_request`、`incorrect`、`outdated`、`privacy`、`other` のいずれかである。
 
-`--fallback-from mcp` は通常CLIの開始条件ではなく、MCPの実transport障害後に同じ要求を明示的に再照合する限定経路である。MCP initializeと `tools/list` の正常送出後、serverが `details.fallbackEligible:true` を返した場合だけ使用する。同じruntime generation、binding、current turn、method/path/bodyへ発行された短命admissionをconsumeし、接続selectorやcaller identityを受け付けない。structured domain error、authority拒否、version/idempotency conflict、migration/storage errorは開始理由にならない。変更request、期限切れ、stale turnも拒否する。
+`--fallback-from mcp` は通常CLIの開始条件ではなく、MCPの実transport障害後に同じ要求を明示的に再照合する限定経路である。MCP initializeと `tools/list` の正常送出後、serverが `details.fallbackEligible:true` を返した場合だけ使用する。同じruntime generation、binding、current turn、method/path/bodyへ発行された短命admissionをconsumeし、接続selectorやcaller identityを受け付けない。
+
+structured domain error、authority拒否、version/idempotency conflict、migration/storage errorは開始理由にならない。変更request、期限切れ、stale turnも拒否する。
 
 writeの `effect:unknown` は保存結果不明を表す。idempotent writeは入力とkeyを変えず再照合する。`memory.get_file` / `memory.export_files` は非idempotentな出力操作であり、このfallbackでは自動再試行せず、出力先をread-onlyで確認して明示的な復旧判断を行う。
 
@@ -151,9 +157,15 @@ metricsとapp logには会話本文、Memory本文、secretを記録しない。
 
 ## Turn lifecycle
 
-通常のWithMate Sessionは各turnの応答前にapplication serviceから最新context versionを取得し、Character Definitionとは別の最小envelopeをpromptへ注入する。保存済みAffectとMemoryの取得、取得時のafterglow projectionは追加LLMを使わない。Agentが記録する意味のある感情変化を認識した場合は、通常turn中にruntime binding付きの`character_affect.appraise`で保存する。感情が後で解消、反転、減衰しても先行eventは残す。具体的なeventがないturnでMCP appraisalを儀式的に呼ぶ必要はない。
+通常のWithMate Sessionは各turnの応答前にapplication serviceから最新context versionを取得する。Character Definitionとは別の最小envelopeをpromptへ注入する。保存済みAffectとMemoryの取得、取得時のafterglow projectionは追加LLMを使わない。
 
-同じturnの後続appraisalには直前の成功応答で返されたversionを渡す。別時点または別の根拠を持つeventはfamily、target、label、意味が似ていても新しいkeyを使う。同一requestのtimeout、response loss、client resendだけはrequestを変えず同じkeyで照合する。`effect: unknown`は同じrequestとkeyでreconcileし、未commitの`effect: none` version conflictは最新contextから再評価する。requestを変更した場合は新しいkeyを使う。linked Memory episodeは同じappraisalの`memoryEpisode`だけで保存し、別routeへ重複送信しない。
+Agentが記録する意味のある感情変化を認識した場合は、通常turn中にruntime binding付きの`character_affect.appraise`で保存する。感情が後で解消、反転、減衰しても先行eventは残す。具体的なeventがないturnでMCP appraisalを儀式的に呼ぶ必要はない。
+
+同じturnの後続appraisalには直前の成功応答で返されたversionを渡す。別時点または別の根拠を持つeventはfamily、target、label、意味が似ていても新しいkeyを使う。
+
+同一requestのtimeout、response loss、client resendだけはrequestを変えず同じkeyで照合する。`effect: unknown`は同じrequestとkeyでreconcileし、未commitの`effect: none` version conflictは最新contextから再評価する。requestを変更した場合は新しいkeyを使う。
+
+linked Memory episodeは同じappraisalの`memoryEpisode`だけで保存し、別routeへ重複送信しない。
 
 MCPを呼ばないturnも正常に完了でき、terminal保存はAffectの追加評価やenqueueに依存しない。呼出し省略・失敗・取消を別LLM評価、補完turn、変化なしeventで埋めない。turn中に保存が確定したevent／episodeは、その後の応答失敗・取消で巻き戻さない。Memory／Affectの利用説明は共通MCP instructionsとschemaを正本とし、provider別指示や専用Memory Skillへ複製しない。
 

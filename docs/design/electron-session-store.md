@@ -18,7 +18,19 @@ summaryのinvalidationは`WindowBroadcastService`が`ids`または`all`として
 
 ドロップが許されない確定データと、次回復元のための任意checkpointを区別する。任意checkpointは現在値の適用・使用とは別ラインで保存し、保存の遅延・失敗を現在値の巻戻し、操作や実行の待機条件にしない。再起動時に未保存の現在値を復元できないことは許容する。
 
-Session identity、確定message、最小turnの実行記録、provider thread、Auxiliary draft、Character定義、Bookmark等の明示的な整理操作、Settingsの明示的なSave、catalog更新は必須保存の契約を維持する。任意保存との切分けは、入力検証、owner照合、実行中の操作制約を緩和しない。
+次の項目は必須保存の契約を維持する。
+
+- Session identity
+- 確定message
+- 最小turnの実行記録
+- provider thread
+- Auxiliary draft
+- Character定義
+- Bookmark等の明示的な整理操作
+- Settingsの明示的なSave
+- catalog更新
+
+任意保存との切分けは、入力検証、owner照合、実行中の操作制約を緩和しない。
 
 ### SessionPersistenceService
 
@@ -26,11 +38,19 @@ Session identity、確定message、最小turnの実行記録、provider thread�
 
 表示用pageを全履歴の保存入力として扱わない。Rendererからの設定更新は現在の保存済み履歴を保ったままmetadataへ適用し、storageの全会話保存は`messageCount`／`historyIndex`を持つ部分projectionを拒否する。turn runtimeの読取はmetadata、Character snapshot、全体messageCountを返し、会話全体をhydrateしない。実行中は当該turnで追加した本文だけを保持し、Provider threadや必要consumerの履歴取得を表示pageの取得・解放へ結合しない。Memory等の明示的なfull readを維持する。
 
-開始・steer・terminalは既存storage owner内の専用commandを使い、Session incarnation、expected countと保存順序を照合する。steerとterminalは対象のrunning turnも照合し、追加message以外の既存body／artifactを読み戻して比較しない。terminal messageとturnの終端更新は同じtransactionで確定し、metadataと件数のACKだけを返す。既存のtitle、Pin、Bookmark、実行設定、Auxiliary draftは置換しない。setup失敗やthread再試行はownerと元runState／threadを照合したmetadata checkpointを使用する。結果不明のcommandを自動再送しない。Rendererへ返す終端結果は保存済みの最新60件を別途取得する。
+開始・steer・terminalは既存storage owner内の専用commandを使い、Session incarnation、expected countと保存順序を照合する。steerとterminalは対象のrunning turnも照合し、追加message以外の既存body／artifactを読み戻して比較しない。
+
+terminal messageとturnの終端更新は同じtransactionで確定し、metadataと件数のACKだけを返す。既存のtitle、Pin、Bookmark、実行設定、Auxiliary draftは置換しない。
+
+setup失敗やthread再試行はownerと元runState／threadを照合したmetadata checkpointを使用する。結果不明のcommandを自動再送しない。Rendererへ返す終端結果は保存済みの最新60件を別途取得する。
 
 ### Turn Queue
 
-永続受付は`session_turn_queue_v6`を正本とし、Main／Auxiliaryの対象ID・incarnationとGUI request IDで一意にする。受付時の本文・実行設定・添付path descriptor・provider／workspaceを保存し、同じIDの再送は捕捉済み要求との直接比較で照合する。Auxiliaryの通常送信はdurable draftの照合・consumeとreceipt INSERTを同じtransactionで行い、既知receipt照会をdraft revision照合より先に行う。前回依頼の明示再送（`submitSource: retry`）は現在のdraftを送信元とせず、draftの本文・revisionを変更しない。対象owner・incarnation・親のwrite guardとreceiptのdedupは通常送信と共通にする。受付はtransaction commit後にACKする。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。
+永続受付は`session_turn_queue_v6`を正本とし、Main／Auxiliaryの対象ID・incarnationとGUI request IDで一意にする。受付時の本文・実行設定・添付path descriptor・provider／workspaceを保存し、同じIDの再送は捕捉済み要求との直接比較で照合する。
+
+Auxiliaryの通常送信はdurable draftの照合・consumeとreceipt INSERTを同じtransactionで行い、既知receipt照会をdraft revision照合より先に行う。前回依頼の明示再送（`submitSource: retry`）は現在のdraftを送信元とせず、draftの本文・revisionを変更しない。
+
+対象owner・incarnation・親のwrite guardとreceiptのdedupは通常送信と共通にする。受付はtransaction commit後にACKする。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。
 
 queued開始は`appendRunningTurnStart`の既存transactionで、user message、最小turn、queue receiptのturn ID／user seqとrunning状態を同時保存する。terminalも既存append transactionへreceipt終端を含める。確定したterminalの返信喪失を、後からinterruptedに退行させない。queue専用commandも既存Workerのtyped proxy／generation境界を使い、Mainの同期SQLite接続やSession全履歴保存を追加しない。
 
@@ -48,7 +68,9 @@ contextはrequestごとに現在の正本から解決する。画像chunkやPin�
 
 ### 実行設定と Send
 
-Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は固定provider、非空model、reasoningと権限設定の入力形式を検証し、その turn の prompt、Provider adapter、最小turn記録 に同じ設定を渡す。SDK一覧への掲載やcatalog revisionを実行の条件にしない。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
+Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は固定provider、非空model、reasoningと権限設定の入力形式を検証し、その turn の prompt、Provider adapter、最小turn記録 に同じ設定を渡す。
+
+SDK一覧への掲載やcatalog revisionを実行の条件にしない。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
 
 Main の `CurrentExecutionSelections` は会話 owner ごとの小さい選択値だけを保持する。同じアプリ内で Window を開き直した場合はこの値を復元し、storage generation の変更、owner の削除・incarnation の変更では破棄する。新規会話の初期値は provider ごとの現在選択を優先し、存在しなければ保存済みの直近値を使う。アプリ再起動では保存済み checkpoint から復元する。
 
@@ -56,7 +78,11 @@ Main の `CurrentExecutionSelections` は会話 owner ごとの小さい選択�
 
 タイトルと Bookmark は対象 metadata / message だけを更新し、会話全体の置換を行わない。metadata の条件付き更新結果も必要な項目だけを返す。
 
-Mainのtitle更新は、storage commandの成功をcommit境界とする。保存前の失敗はrejectし、commit後のcache更新・Window通知失敗は`SetSessionTitleResult`の`status: "committed"`と`projectionUpdated: false`で返す。storage ownerの失効も、成功したstorage commandの後では投影失敗として扱い、新しいownerのcacheへ書き込まない。Rendererは保存済みtitleを保持し、通知・投影失敗時は`getSessionSummary()`の正本からtitleだけを復旧する。通知失敗と復旧失敗は保存失敗と区別して表示し、保存の再送やSession全体のrollbackは行わない。応答と復旧readはSession ID、incarnation、最新のtitle保存requestが一致する場合だけ反映し、別会話や後続のtitle更新へ古い結果を適用しない。
+Mainのtitle更新は、storage commandの成功をcommit境界とする。保存前の失敗はrejectし、commit後のcache更新・Window通知失敗は`SetSessionTitleResult`の`status: "committed"`と`projectionUpdated: false`で返す。
+
+storage ownerの失効も、成功したstorage commandの後では投影失敗として扱い、新しいownerのcacheへ書き込まない。Rendererは保存済みtitleを保持し、通知・投影失敗時は`getSessionSummary()`の正本からtitleだけを復旧する。
+
+通知失敗と復旧失敗は保存失敗と区別して表示し、保存の再送やSession全体のrollbackは行わない。応答と復旧readはSession ID、incarnation、最新のtitle保存requestが一致する場合だけ反映し、別会話や後続のtitle更新へ古い結果を適用しない。
 
 最新のtitle保存がrejectした場合も、先行保存の遅延応答を捨てたことでcommit済みtitleが表示から失われないよう、正本summaryからtitleだけを再照合する。編集入力と保存失敗の表示は保持し、再照合を新しい保存成功とは扱わない。
 
@@ -66,7 +92,12 @@ Header・Action Dock・Side Paneの復元設定は、Rendererへ即時適用し�
 
 layoutの現在値はserviceの寿命中保持し、App SettingsまたはDB全体のreset成功時に破棄する。resetは任意checkpointの完了を待たず、未開始の旧checkpointを失効させる。dispatch前には既存のstorage ownerを照合し、旧serviceのqueueを新しいDB世代へ持ち越さない。
 
-Settingsのcredential変更でthreadをresetする場合は、MainのID・incarnation・provider・元thread、AuxiliaryのID・親・作成時刻・provider・元threadをtransaction内で照合し、対象fieldだけを条件付き更新する。本文、draft、messages、無関係な削除は全collection snapshotで巻き戻さない。後段失敗時は更新成功を確認できた行だけreverse CASし、結果不明の書込みへ無条件の逆書込みをしない。SDK model候補の更新ではSession runtime metadataを変更しない。
+Settingsのcredential変更でthreadをresetする場合は、次の項目をtransaction内で照合する。
+
+- MainのID・incarnation・provider・元thread
+- AuxiliaryのID・親・作成時刻・provider・元thread
+
+対象fieldだけを条件付き更新する。本文、draft、messages、無関係な削除は全collection snapshotで巻き戻さない。後段失敗時は更新成功を確認できた行だけreverse CASし、結果不明の書込みへ無条件の逆書込みをしない。SDK model候補の更新ではSession runtime metadataを変更しない。
 
 provider cleanupは短いownership境界の外で完了を待つ。同じproviderのcleanupが残る間はそのproviderの新規turn admissionを拒否し、無関係なproviderは止めない。rollbackは開始時のstorage ownerとreset境界を再確認する。復元に成功した場合はSettingsとSessionのinvalidationを再配信し、Auxiliaryの更新通知は親Session IDへ送る。
 
