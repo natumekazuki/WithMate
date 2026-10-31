@@ -31,11 +31,33 @@ turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設�
 
 質問formの記録は通常assistant messageの`elicitationRecords`へ保存し、Main／Auxiliaryの表示pageにも含める。質問文・選択肢・form回答状態に加え、質問種別と本文内の位置`textRange`を保持する。範囲を持つ質問は元の本文に含まれ、長さ0の範囲は本文を持たない質問の挿入位置を表す。位置のない既存記録は本文の後ろに表示する。入力値や既定値、再操作用のlive requestは保存しない。保存されたpending状態は失効済みとして読み、古い要求を復元しない。既存message JSONの任意fieldを使い、別tableや質問専用の永続queueは持たない。
 
-Turn Queueは親Session ID、任意のAuxiliary ID、対象incarnation、GUI request ID、受付順、実行順、捕捉値、状態、最小turn ID／user seq、追加入力先Turn ID、結果不明後の明示解放時刻を保持する。受付順の`sequence`は不変で履歴cursorにも使用し、並べ替え可能な`queue_position`を実行順の正本とする。新規受付と当該列を持たない既存DBの初期値はsequenceとする。Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親または対象Auxiliary削除でreceiptも削除する。receiptは通常messageとは別の受付・実行状態であり、会話本文やturnの正本を置換しない。受付・開始・終端のtransaction境界は[Electron Session Store](electron-session-store.md#turn-queue)を参照する。
+Turn Queueは次の項目を保持する。
 
-会話の表示用readはmetadataと最新60件を返し、過去の本文は60件単位で取得する。messageの`historyIndex`は保存行の`seq`で、`messageCount`は会話全体の件数である。Mainの表示metadataは末尾pageより前にある場合も最新user messageを保持する。表示pageは保存用full Sessionとは区別し、storageの全文保存入口はpageを拒否する。rendererのmetadata更新はincarnationを照合した最新保存履歴へ適用し、paged本文で履歴を置換しない。turn runtimeはmetadataと全体件数、当該turnで追加したmessageだけを保持し、開始・追加入力・終端を専用commandで追加する。履歴を必要とするconsumerのfull readは明示的な別経路で保持する。
+- 親Session ID
+- 任意のAuxiliary ID
+- 対象incarnation
+- GUI request ID
+- 受付順
+- 実行順
+- 捕捉値
+- 状態
+- 最小turn ID／user seq
+- 追加入力先Turn ID
+- 結果不明後の明示解放時刻
 
-全履歴検索とMessages navigatorは、storage ownerの短いindexed cursor batchと、DBを所有しないCPU Workerで処理する。検索のsourceは保存本文、previewはMarkdownの表示検索投影を使い、全件のmatch数、messageの`seq`、message内の`occurrenceIndex`を維持する。結果は任意offsetから最大64件と総件数を返し、全本文・全matchの配列を転送・保持しない。Navigatorはuser／assistantだけを対象とし、Bookmarkを投影前に絞り、previewは最大160 Unicode codepointとする。継続pageはrequest ID、generation、会話owner、対象revisionを照合し、変更・取消・失効を成功0件と区別する。所有と取消・上限は[V6 Database Foundation](v6-database-foundation.md#runtime-ownerとschema)を参照する。
+受付順の`sequence`は不変で履歴cursorにも使用し、並べ替え可能な`queue_position`を実行順の正本とする。新規受付と当該列を持たない既存DBの初期値はsequenceとする。
+
+Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親または対象Auxiliary削除でreceiptも削除する。receiptは通常messageとは別の受付・実行状態であり、会話本文やturnの正本を置換しない。受付・開始・終端のtransaction境界は[Electron Session Store](electron-session-store.md#turn-queue)を参照する。
+
+会話の表示用readはmetadataと最新60件を返し、過去の本文は60件単位で取得する。messageの`historyIndex`は保存行の`seq`で、`messageCount`は会話全体の件数である。Mainの表示metadataは末尾pageより前にある場合も最新user messageを保持する。
+
+表示pageは保存用full Sessionとは区別し、storageの全文保存入口はpageを拒否する。rendererのmetadata更新はincarnationを照合した最新保存履歴へ適用し、paged本文で履歴を置換しない。turn runtimeはmetadataと全体件数、当該turnで追加したmessageだけを保持し、開始・追加入力・終端を専用commandで追加する。履歴を必要とするconsumerのfull readは明示的な別経路で保持する。
+
+全履歴検索とMessages navigatorは、storage ownerの短いindexed cursor batchと、DBを所有しないCPU Workerで処理する。検索のsourceは保存本文、previewはMarkdownの表示検索投影を使い、全件のmatch数、messageの`seq`、message内の`occurrenceIndex`を維持する。
+
+結果は任意offsetから最大64件と総件数を返し、全本文・全matchの配列を転送・保持しない。Navigatorはuser／assistantだけを対象とし、Bookmarkを投影前に絞り、previewは最大160 Unicode codepointとする。
+
+継続pageはrequest ID、generation、会話owner、対象revisionを照合し、変更・取消・失効を成功0件と区別する。所有と取消・上限は[V6 Database Foundation](v6-database-foundation.md#runtime-ownerとschema)を参照する。
 
 Memoryのowner、scope、忘却、idempotency、保護対象fileは[V6 Memory Foundation](v6-memory-foundation.md)と[V6 Memory Protected Objects](v6-memory-protected-objects.md)を参照する。Characterの定義fileは`<userData>/characters/<character-id>/`に置き、catalog metadataとsession snapshotの境界は[Character Storage](character-storage.md)を参照する。
 
@@ -61,7 +83,9 @@ list／追加／解除は既存のtyped IPCからstorage Workerへ渡し、親Se
 
 `app_settings`の`coding_provider_settings_json`にある`opencode.apiKey`はstorage ownerの起動時にそのfieldだけを除去する。他providerのkey、OpenCodeの有効化・Skill設定、Session・会話・threadは保持する。通常の設定更新serviceによるthread invalidationは通さず、読込・保存境界でもOpenCode keyを空へ正規化する。keyをnative OpenCodeへ自動移送せず、移行元DB・backup全体の削除やsecure eraseは行わない。
 
-OpenCodeのnative DBはWithMateのSQLiteとは別にOpenCodeが所有し、通常はPC CLIの既存DBを使う。`v6.3.29-preview.20`／`v6.3.29-preview.21`のWithMate専用DBにある会話は、同梱CLI `2.2.5`と公式export／importでroot・全childのID、owner、履歴を保持してnative DBへ移す。成功後だけWithMateのthread参照を`native:<ID>`へ更新し、旧DB・WithMateの会話は残す。credentialは移さない。DBの取り違え、owner不一致、未解消pending、active thread、移行・再開失敗では送信せず明示エラーにし、新規threadへfallbackしない。詳細は[Thread Management](provider-adapter.md#thread-management)を参照する。
+OpenCodeのnative DBはWithMateのSQLiteとは別にOpenCodeが所有し、通常はPC CLIの既存DBを使う。`v6.3.29-preview.20`／`v6.3.29-preview.21`のWithMate専用DBにある会話は、同梱CLI `2.2.5`と公式export／importでroot・全childのID、owner、履歴を保持してnative DBへ移す。成功後だけWithMateのthread参照を`native:<ID>`へ更新し、旧DB・WithMateの会話は残す。credentialは移さない。
+
+DBの取り違え、owner不一致、未解消pending、active thread、移行・再開失敗では送信せず明示エラーにし、新規threadへfallbackしない。詳細は[Thread Management](provider-adapter.md#thread-management)を参照する。
 
 SDK model一覧は`provider_model_cache`へproviderとcontext keyの組を主キーに保存する。`provider_json`と`fetched_at`を保持し、context keyやcredentialをrendererへ渡さない。更新契約は[Provider Model Discovery](model-catalog.md)を参照する。V6 schema更新では`model_catalog_models`、`model_catalog_providers`、`model_catalog_revisions`を削除する。公開済みSessionの`catalog_revision`列の保存値は保持するが、実行設定の検証には使わず、Session、会話、draft、最小turnをcatalog変更で移行しない。
 
@@ -71,4 +95,8 @@ V6 schema更新は`character_affect_turn_settlements`を`DROP TABLE IF EXISTS`�
 
 各migrationのsource読取りは元DBのschema、row、journal modeと、共有blob・Character fileを変更しない。新しいV6 DBがinvalidなら、黙って置換しない。既存の空V6 DBとV4が共存する場合も継続データを移し、完了markerで再copyを防ぐ。migration実装は`src-electron/storage/migrations/`、既存データの選択は`app-database-path.ts`で確認する。
 
-起動時の退役データcleanupは、管理対象のV6・移行元DB・backupからCompanion専用table／行、専有file・blob・SessionFolderと専用Git namespaceだけを対象とする。通常Session／最小turn、共有Memory／Affect本文、共有file・blob、target branch、他worktree、stashは保持する。退役Session由来の共有データはsource linkageを除去またはNULL化する。詳細な対象判定は`src-electron/storage/migrations/companion-removal.ts`と関連helperを正本とし、一般のDB resetやmigrationによるユーザーデータの無断破棄へ拡張しない。
+起動時の退役データcleanupは、管理対象のV6・移行元DB・backupからCompanion専用table／行、専有file・blob・SessionFolderと専用Git namespaceだけを対象とする。
+
+通常Session／最小turn、共有Memory／Affect本文、共有file・blob、target branch、他worktree、stashは保持する。退役Session由来の共有データはsource linkageを除去またはNULL化する。
+
+詳細な対象判定は`src-electron/storage/migrations/companion-removal.ts`と関連helperを正本とし、一般のDB resetやmigrationによるユーザーデータの無断破棄へ拡張しない。

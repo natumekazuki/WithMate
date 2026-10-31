@@ -12,7 +12,11 @@
 
 Session のターン完了まで時間がかかる場合、ユーザーは WithMate 以外のアプリで作業を続ける。対象の Session Window が前面にないと、完了に気づくために WithMate を定期的に確認する必要がある。
 
-通知には Windows のネイティブ通知、アプリ内表示、独自の Windows toast XML が候補になる。通知はターン本体の terminal result を損なわない補助的な外部副作用として扱う必要がある。また、Session には Character icon があるが、画像形式やファイル状態によって Windows 通知へ利用できない場合がある。返答本文を通知へ含める場合は、ロック画面や Action Center に作業内容が表示され得るため、完了通知とは別に利用者が明示的に有効化できる必要がある。preview 生成は Electron main process の完了処理中に同期実行されるため、入力サイズを制限しない全量解析は Window 応答と turn cleanup を停止させる可能性がある。
+通知には Windows のネイティブ通知、アプリ内表示、独自の Windows toast XML が候補になる。通知はターン本体の terminal result を損なわない補助的な外部副作用として扱う必要がある。
+
+また、Session には Character icon があるが、画像形式やファイル状態によって Windows 通知へ利用できない場合がある。返答本文を通知へ含める場合は、ロック画面や Action Center に作業内容が表示され得るため、完了通知とは別に利用者が明示的に有効化できる必要がある。
+
+preview 生成は Electron main process の完了処理中に同期実行されるため、入力サイズを制限しない全量解析は Window 応答と turn cleanup を停止させる可能性がある。
 
 ## Decision
 

@@ -4,7 +4,11 @@ providerのquotaはapp全体、context usageはSessionごとの一時的な観�
 
 ## Codex・Claude・OpenCodeの取得と更新
 
-有効なCodex・Claude・OpenCodeについて、設定の初期化後に非同期で1回、以後5分ごとに取得する。Homeの起動完了は取得を待たない。Main・Auxiliaryのturn終端では同providerの3秒後の取得を予約し、短時間の終端はまとめる。短命な取得processやHTTP requestの頻繁な発行を避けるため、成功した取得（適用外を含む）の完了後60秒間はprovider単位で再取得を抑制する。抑制中の取得要求は、その60秒の期限で発火する1件へ集約し、後続turnで期限を延期しない。Windowのsnapshot取得はcache参照のみで、Windowの開閉・focusは取得契機にしない。
+有効なCodex・Claude・OpenCodeについて、設定の初期化後に非同期で1回、以後5分ごとに取得する。Homeの起動完了は取得を待たない。Main・Auxiliaryのturn終端では同providerの3秒後の取得を予約し、短時間の終端はまとめる。
+
+短命な取得processやHTTP requestの頻繁な発行を避けるため、成功した取得（適用外を含む）の完了後60秒間はprovider単位で再取得を抑制する。抑制中の取得要求は、その60秒の期限で発火する1件へ集約し、後続turnで期限を延期しない。
+
+Windowのsnapshot取得はcache参照のみで、Windowの開閉・focusは取得契機にしない。
 
 Mainはproviderごとの同時取得を重複抑止する。WithMateの認証設定変更・有効化では旧cache・予約・最短間隔の状態を破棄して即時取得し、無効化では停止する。clear・reset・disposeでは進行中取得のsignalをabortし、破棄前の応答とその完了処理が新しいcache・取得管理へ戻らないようにする。終了・DB再作成時は取得processのcleanupを待つ。Copilotにはこの60秒の抑制を適用せず、既存の取得・予約を維持する。
 
@@ -14,7 +18,11 @@ Copilotの件数snapshotと、Codex・Claude・OpenCode Goの`rateLimits`を分�
 
 ## 共通の残量表示
 
-HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率をcompactな横並びで表示する。監視一覧のscrollとは独立し、幅が足りなければproviderや期間表示の単位で折り返す。期間名と割合は分断しない。直下のclick専用splitterで残量一覧を開閉し、非表示でもcomponentとcache購読を維持して再表示へ反映する。詳細はprovider別popupで確認する。Session WindowはAction Dockの最上段操作欄に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭に置き、専用段は追加しない。常時表示ではOpenCode Goを除くprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。残量部分の幅が足りない場合はその部分だけ横scrollでき、keyboardからも到達できる。操作欄全体が収まらない狭幅では既存操作の折り返しを許容する。
+HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率をcompactな横並びで表示する。監視一覧のscrollとは独立し、幅が足りなければproviderや期間表示の単位で折り返す。期間名と割合は分断しない。直下のclick専用splitterで残量一覧を開閉し、非表示でもcomponentとcache購読を維持して再表示へ反映する。詳細はprovider別popupで確認する。
+
+Session WindowはAction Dockの最上段操作欄に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭に置き、専用段は追加しない。
+
+常時表示ではOpenCode Goを除くprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。残量部分の幅が足りない場合はその部分だけ横scrollでき、keyboardからも到達できる。操作欄全体が収まらない狭幅では既存操作の折り返しを許容する。
 
 `src/provider-usage/`がcache購読、残率projection、一覧と詳細popupを所有する。使用率は`100 - usedPercentage`へ変換し、既存の`remainingPercentage`はそのまま使う。不正値は`—`とし、0／100／無制限を推測しない。Codexの標準bucketとClaudeの5時間・週間を通常表示し、追加bucket・モデル別枠は詳細に分離する。OpenCode Goは5時間・週間・月間を通常表示する。月間は固定日数へ置換せず`Monthly`とする。CopilotはAI credits系を優先し、premium系等の主snapshotを通常表示する。返却されない期間を追加せず、別枠の合算をしない。
 
@@ -32,7 +40,9 @@ Codex・Claude・OpenCodeの実行中の部分通知はapp-wide cacheへ接続�
 
 WithMateの`opencode`は実行経路を表し、`opencode-go/...`、`opencode/...`、`openai/...`等のnative接続先を含む。OpenCode GoはConsoleのworkspace・memberに紐づく契約サービスであり、OpenCode経由の全接続先の使用量・残量ではない。[公式Go仕様](https://opencode.ai/v2/docs/console/go/)が示すGoの利用枠と、他接続先の契約残量を合算・相互代用しない。Goの5時間・週間・月間の`percent`は各窓のallowance使用率、`resetsAt`はreset時刻であり、残率やtoken数ではない（[上流schema](https://github.com/anomalyco/opencode/blob/3ebcf9a32c7b28f658cfee80775448929361727a/packages/schema/src/usage-limits.ts)）。
 
-MonitorとAction Dockのquota名は`OpenCode Go`と明示し、Action Dockでもこの名前を省略しない。実行provider名の`OpenCode`は変更しない。正常取得でGo枠が返らない場合だけquota行・詳細入口を非表示にし、購読は維持する。未取得・loading・取得失敗は枠なしと判定せず、既存の状態表示と失敗時の前回値保持を使う。Go以外のmodel選択だけで枠を消さず、Main／Auxiliaryで同じapp-wide cacheを参照する。各Sessionのproject設定で接続する全accountの残量を示すものではなく、他接続先へGo残量を流用しない。turnのtoken／costとSession contextは実行結果の観測であり、Go契約枠へ換算しない。
+MonitorとAction Dockのquota名は`OpenCode Go`と明示し、Action Dockでもこの名前を省略しない。実行provider名の`OpenCode`は変更しない。正常取得でGo枠が返らない場合だけquota行・詳細入口を非表示にし、購読は維持する。未取得・loading・取得失敗は枠なしと判定せず、既存の状態表示と失敗時の前回値保持を使う。
+
+Go以外のmodel選択だけで枠を消さず、Main／Auxiliaryで同じapp-wide cacheを参照する。各Sessionのproject設定で接続する全accountの残量を示すものではなく、他接続先へGo残量を流用しない。turnのtoken／costとSession contextは実行結果の観測であり、Go契約枠へ換算しない。
 
 ## Copilotの取得と更新
 
@@ -44,8 +54,14 @@ Session WindowはCopilotの`Premium Requests`残量をcompactに示し、詳細�
 
 quota残量やreset時刻をCopilotの値から推測せず、各providerのturn usageはprovider結果と通常artifactで扱う。Claude SDKのAPI換算額は本人契約の実請求額として表示しない。providerごとの取得・実行責務は[Provider Adapter](provider-adapter.md)を参照する。
 
-Codex App Serverの`thread/tokenUsage/updated`は`total`がthread累計、`last`が最後のmodel responseの使用量である。現在turnのusageは累計から開始前のbaselineを各token項目ごとに差し引き、負値は0とする。現在turnのusageを受け取る前に同threadの過去turn累計を観測した場合はそれをbaselineに使い、なければ最初の現在turn通知の`total - last`を使う。以後は同じbaselineから差分を更新するため、複数responseを含め、重複通知は加算しない。異なるthreadの通知と、現在turnのusage取得後に届く別turnの通知はusageへ反映しない。Main・Auxiliary・Backgroundは同じ集計を使ってprovider結果へturn使用量を返し、Main・Auxiliaryでは通常artifactにも保存する。これは契約全体の消費量やquota残量ではない。
+Codex App Serverの`thread/tokenUsage/updated`は`total`がthread累計、`last`が最後のmodel responseの使用量である。現在turnのusageは累計から開始前のbaselineを各token項目ごとに差し引き、負値は0とする。
 
-ClaudeのMain・Auxiliaryはuser / project / local設定を読み込むが、Backgroundとquota取得は副作用を隔離するため読み込まない。Backgroundとquota取得の認証・接続先は親プロセスの環境変数とSDKが参照する既存CLIログインに依存する。Main・Auxiliaryも同じ経路で解決される場合は補助処理も同じ契約枠を消費するが、設定ファイルだけにある`apiKeyHelper`や認証・接続先の環境変数に依存する場合は、認証失敗や異なる利用先・消費枠となり得る。同一の認証・課金経路を無条件に保証せず、WithMateから認証情報をコピーしたり、失敗時に別の認証へ切り替えたりしない。
+現在turnのusageを受け取る前に同threadの過去turn累計を観測した場合はそれをbaselineに使い、なければ最初の現在turn通知の`total - last`を使う。以後は同じbaselineから差分を更新するため、複数responseを含め、重複通知は加算しない。
+
+異なるthreadの通知と、現在turnのusage取得後に届く別turnの通知はusageへ反映しない。Main・Auxiliary・Backgroundは同じ集計を使ってprovider結果へturn使用量を返し、Main・Auxiliaryでは通常artifactにも保存する。これは契約全体の消費量やquota残量ではない。
+
+ClaudeのMain・Auxiliaryはuser / project / local設定を読み込むが、Backgroundとquota取得は副作用を隔離するため読み込まない。Backgroundとquota取得の認証・接続先は親プロセスの環境変数とSDKが参照する既存CLIログインに依存する。
+
+Main・Auxiliaryも同じ経路で解決される場合は補助処理も同じ契約枠を消費するが、設定ファイルだけにある`apiKeyHelper`や認証・接続先の環境変数に依存する場合は、認証失敗や異なる利用先・消費枠となり得る。同一の認証・課金経路を無条件に保証せず、WithMateから認証情報をコピーしたり、失敗時に別の認証へ切り替えたりしない。
 
 Claudeの新規sessionはSDKのmodel別usageを合計する。resumeではmodel別usageが過去turnを含む累積になるため、当該turnのmain loopに限った`result.usage`を使い、subagentや内部補助処理の消費は含めない。いずれも契約全体の消費量や残量の計測ではない。

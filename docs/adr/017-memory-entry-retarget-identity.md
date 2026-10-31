@@ -8,7 +8,7 @@ Accepted
 
 Memory保守では、誤ったowner / scope targetへ保存されたentryを修正する経路が必要になる。実装案として、移動先へcopyして移動元をforgetする方式と、既存entryのtarget tupleを更新する方式を検討した。
 
-entryはprotected file attachmentを所有でき、`supersedes`または`related` relationへ参加できる。copy-and-forgetではentry IDが変わり、relation endpoint、`superseded_by_id`、protected object owner、tag count、source / audit projectionを原子的に張り替える必要がある。不完全な張り替えは、外部から観測できるidentity分裂を残す。
+entryはprotected file attachmentを所有でき、`supersedes`または`related` relationへ参加できる。copy-and-forgetではentry IDが変わる。そのため、relation endpoint、`superseded_by_id`、protected object owner、tag count、source / audit projectionを原子的に張り替える必要がある。不完全な張り替えは、外部から観測できるidentity分裂を残す。
 
 ## Decision
 

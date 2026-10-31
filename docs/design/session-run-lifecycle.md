@@ -2,7 +2,9 @@
 
 ## Auxiliary Session (Issue #710)
 
-AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、共有credential変更では親配下の全Auxiliary runを列挙して扱う。会話ごとの実行設定選択はMain / Auxiliaryの実行中も変更でき、対象会話の次送信へ反映する。実行中turnの捕捉済み設定は変えない。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
+AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、共有credential変更では親配下の全Auxiliary runを列挙して扱う。
+
+会話ごとの実行設定選択はMain / Auxiliaryの実行中も変更でき、対象会話の次送信へ反映する。実行中turnの捕捉済み設定は変えない。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
 
 
 ## Goal
@@ -63,7 +65,7 @@ Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り�
 
 確定した失敗・取消では、admission／setup／provider cleanup／追加入力／terminal保存の実guard解放後に後続を開始する。Promiseの返却やCancel受付だけでは解放としない。同providerのSettings cleanup中、quit、DB maintenance中もclaimしない。結果不明の実行は自動再実行せず、同Sessionの後続を保留する。`Release Later Turns`は不明な要求そのものの再実行ではなく後続の明示解放であり、実guardを迂回しない。
 
-atomic開始後に結果不明となった要求の明示解放は、実guard解放後だけ、同incarnation・receiptのturn ID／user seq・最新running最小turnに一致するSessionの実行metadataをidle／interruptedへ収束させる。早期解放はreceiptの解放だけを保存し、後続claim前に収束する。本文・thread・設定や最小turnの未確定結果を上書きせず、過去receiptを新しいTurnへ適用しない。
+atomic開始後に結果不明となった要求の明示解放では、実guard解放後にだけSessionの実行metadataをidle／interruptedへ収束させる。収束の対象は、同incarnation・receiptのturn ID／user seq・最新running最小turnに一致するSessionに限る。早期解放はreceiptの解放だけを保存し、後続claim前に収束する。本文・thread・設定や最小turnの未確定結果を上書きせず、過去receiptを新しいTurnへ適用しない。
 
 予約項目の現在Turnへの入力は通常claim／取消と同じSession lockで`starting`へclaimし、捕捉済み添付を検証してからproviderへ送る。受理したuser messageとreceiptの`completed`を同じtransactionで保存する。provider未呼出を証明できる失敗だけ予約へ戻し、送信結果不明では`interrupted`として後続を保留する。追加入力の解放は現在Turnのruntime状態を書き換えず、元要求を再送しない。
 

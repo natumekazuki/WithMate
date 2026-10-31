@@ -22,9 +22,19 @@ format は `docs/design/character-definition-format.md`、storage / snapshot は
 
 起動入力は mode、保存済み `characterId`、provider と通常 Session runtime options に限定する。Editor draft、`character.md` body、notes、theme、起動時 user instruction は送らない。
 
-provider は必須で、空白除去後の catalog ID を完全一致で解決し、同じ値を Skill root と Session 作成に使う。選択 provider が不明または無効な場合は、別 provider へ fallback せず workspace mutation 前に拒否する。provider picker の取得中は spinner と busy / accessible status、取得失敗は詳細iconと`Retry`、取得済み 0 件だけは作成不可の説明を表示し、loading / error / ready 0 件を混同しない。実エラーは非modal詳細で開き、`Retry`はprovider候補と設定だけを再取得する。Characterの編集内容を再読込・初期化せず、取得成功後に開始可能な状態へ戻す。
+provider は必須で、空白除去後の catalog ID を完全一致で解決し、同じ値を Skill root と Session 作成に使う。選択 provider が不明または無効な場合は、別 provider へ fallback せず workspace mutation 前に拒否する。
 
-Character と同梱 Skill の読取り、生成内容のメモリ上の準備は provider operation coordinator 外で行い、その間は既存 workspace を変更しない。反映前に Character 単位の workspace coordinator を取得し、Session storage identity、provider の有効性、Character と directory が準備時から変わっていないことを確認する。managed files とSessionFolderはその Character の境界内かつ provider operation coordinator 外で準備し、Session保存時に Main Session command facade がprovider operation coordinator内で起動設定とstorage identityを再検証する。maintenance は Character 操作を drain する。準備失敗では既存 files を保持するが、反映開始後の I/O 失敗に対する filesystem transaction や自動復元は提供しない。canonical files や Character directory 全体を後始末として削除しない。
+provider picker の取得中は spinner と busy / accessible status、取得失敗は詳細iconと`Retry`、取得済み 0 件だけは作成不可の説明を表示する。loading / error / ready 0 件を混同しない。
+
+実エラーは非modal詳細で開き、`Retry`はprovider候補と設定だけを再取得する。Characterの編集内容を再読込・初期化せず、取得成功後に開始可能な状態へ戻す。
+
+Character と同梱 Skill の読取り、生成内容のメモリ上の準備は provider operation coordinator 外で行い、その間は既存 workspace を変更しない。
+
+反映前に Character 単位の workspace coordinator を取得する。Session storage identity、provider の有効性、Character と directory が準備時から変わっていないことを確認する。
+
+managed files とSessionFolderはその Character の境界内かつ provider operation coordinator 外で準備する。Session保存時に Main Session command facade がprovider operation coordinator内で起動設定とstorage identityを再検証する。maintenance は Character 操作を drain する。
+
+準備失敗では既存 files を保持するが、反映開始後の I/O 失敗に対する filesystem transaction や自動復元は提供しない。canonical files や Character directory 全体を後始末として削除しない。
 
 Session 準備処理は canonical Character files を書き直さない。optional な `character-notes.md` がない場合も起動時には作成せず、Skill が選んだ mode と記録要否に応じて同梱 template から作成する。catalog metadata は Session title、icon、theme の投影にだけ使う。これにより未保存 draft、line ending、末尾改行を起動副作用から分離する。
 
@@ -74,11 +84,29 @@ app 管理 Skill の正本は `resources/skills/withmate-character-authoring/` �
 - full authoring 用の generalization / voice test、marker不足・過剰、複数ターン継続、regression / protected-trait、seven-scenario relationship smoke test
 - conversation-and-work を標準とする作業中のCharacter Presence、Task-execution / Conversation-work Continuity、Work Likeness / Task Integrity / Collaboration Comfort、event provenance
 
-Skill は局所的な語尾、反応、呼称頻度の修正を targeted update とし、新規作成、Character Kernel への再構成、全面改稿、事実・関係性・public description の位置付けを変える作業を full authoring とする。format、8,000 文字上限、output boundary、依頼箇所の review は両 mode で確認する。source 調査、全 rubric、Baseline / Anchor-presence、Name-swap / Combination、Phrase-suppression、Voice-restoration、Marker-underuse / Marker-overuse、Unseen-scenario、Paraphrase diversity、Core-tension、Long-form retention、Multi-turn continuity / Return-to-baseline、Regression / Protected-trait、7 ケースの relationship smoke test は full authoring、source に依存する変更、またはユーザーが調査を求めた場合に行う。未実施やinconclusiveの検証はpassと扱わない。
+Skill は局所的な語尾、反応、呼称頻度の修正を targeted update とする。新規作成、Character Kernel への再構成、全面改稿、事実・関係性・public description の位置付けを変える作業を full authoring とする。format、8,000 文字上限、output boundary、依頼箇所の review は両 mode で確認する。
+
+次の検証は full authoring、source に依存する変更、またはユーザーが調査を求めた場合に行う。
+
+- source 調査と全 rubric
+- Baseline / Anchor-presence
+- Name-swap / Combination
+- Phrase-suppression
+- Voice-restoration
+- Marker-underuse / Marker-overuse
+- Unseen-scenario
+- Paraphrase diversity
+- Core-tension
+- Long-form retention
+- Multi-turn continuity / Return-to-baseline
+- Regression / Protected-trait
+- 7 ケースの relationship smoke test
+
+未実施やinconclusiveの検証はpassと扱わない。
 
 full authoring の新しい runtime 定義は、完成返答の `Examples` や場面別台詞集を置かず、未知場面へ一般化できる生成規則で構成する。targeted update は旧 section や既存 `Examples` があることだけで全面 rewrite せず、有用な identity signal を保持する。推奨 Kernel 構造を storage parser の hard contract へ昇格せず、既存 Character を自動 migration しない。
 
-`character-notes.md` は optional のまま扱う。targeted update では記録すべき source、material な解釈、revision guardrail がある場合だけ template から作成し、full authoring では作成して evidence と判断を記録する。
+`character-notes.md` は optional のまま扱う。targeted update では、記録すべき source、material な解釈、revision guardrail がある場合だけ template から作成する。full authoring では作成して evidence と判断を記録する。
 
 ## Runtime And Validation
 

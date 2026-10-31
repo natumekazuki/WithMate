@@ -119,19 +119,28 @@ Sessionのランダム選択とactive Character 0件時のneutral fallbackはHom
 
 通常のMain／Auxiliaryはstable Character ownerと、最新1件の`CharacterRuntimeSnapshot`を保存する。作成時のsnapshotを初期値とし、送信開始時に保存済みsnapshotを前回値として扱う。作成時専用snapshotや版履歴は別保存しない。
 
-active Characterでは、送信開始時に同じstable IDのcanonical `character.md`を1回読み、保存済み`definitionMarkdown`と本文全体を比較する。同じ本文なら再生成しない。変更された有効な定義では、`definitionMarkdown`、`definitionSha256`、`definitionByteSize`、`snapshotAt`だけを更新し、ID、表示名、説明、icon、themeを維持する。snapshotが未保存のMainでは、有効なstable ownerのcatalog metadataと定義から初回snapshotを生成する。Auxiliaryは前述の旧形式投影と不正な新形式snapshotの拒否を維持する。更新したsnapshotはrunning turnの開始保存で確定し、そのturnのpromptに使う。会話履歴とprovider threadは保持する。
+active Characterでは、送信開始時に同じstable IDのcanonical `character.md`を1回読み、保存済み`definitionMarkdown`と本文全体を比較する。同じ本文なら再生成しない。変更された有効な定義では、`definitionMarkdown`、`definitionSha256`、`definitionByteSize`、`snapshotAt`だけを更新し、ID、表示名、説明、icon、themeを維持する。
+
+snapshotが未保存のMainでは、有効なstable ownerのcatalog metadataと定義から初回snapshotを生成する。Auxiliaryは前述の旧形式投影と不正な新形式snapshotの拒否を維持する。更新したsnapshotはrunning turnの開始保存で確定し、そのturnのpromptに使う。会話履歴とprovider threadは保持する。
 
 archived Characterではcanonical fileを読まず、保存済みsnapshotで継続する。archived Characterの保存済みsnapshotがない場合、catalogにownerが存在しない場合、またはactive Characterの定義が欠落・読取り不能・不正な場合は送信を明示的に失敗させる。snapshot、履歴、threadを破棄せず、最新定義を反映したように扱わない。既存のneutral通常SessionはCharacterなしのまま継続する。
 
 汎用Session／Auxiliary updateは保存済み`characterId`とsnapshotの差し替えを永続化前に拒否する。通常の定義更新は内部の送信開始経路だけが所有し、同名Characterへのowner切り替えやcatalog metadataへの追従は行わない。既存の長期Sessionも保存済みsnapshotを前回値として扱い、DB migrationを必要としない。
 
-`character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影せず、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
+`character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影しない。この場合に限り、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
 
-V6 の既存 row で stable owner と snapshot owner が一致しない場合は、owner を維持して snapshot と provider thread ID を read projection から同時に無効化する。
+V6 の既存 row で stable owner と snapshot owner が一致しない場合は、owner を維持する。snapshot と provider thread ID を read projection から同時に無効化する。
 
-relational owner と runtime policy owner のどちらもない legacy row は、表示名や snapshot から Character ID を推測せず、Character ID の生成領域外にある予約 ID `withmate:unresolved-character-owner` へ回復する。この ID は public create と runtime snapshot 解決では拒否し、実 Character を再解決しない。
+relational owner と runtime policy owner のどちらもない legacy row は、表示名や snapshot から Character ID を推測しない。Character ID の生成領域外にある予約 ID `withmate:unresolved-character-owner` へ回復する。この ID は public create と runtime snapshot 解決では拒否し、実 Character を再解決しない。
 
-snapshot の field shape は `src-shared/character/character-catalog.ts`、normalization と prompt projection は `src-shared/character/character-runtime-snapshot.ts`、通常turnの更新は`src-electron/session/session-runtime-service.ts`とAuxiliary runtime、authoring turn の再解決は `src-electron/character/character-authoring-service.ts` を正本とする。stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 固有契約は `docs/adr/010-character-authoring-project-contract.md` を参照する。
+snapshot の各要素の正本は次のとおり。
+
+- field shape: `src-shared/character/character-catalog.ts`
+- normalization と prompt projection: `src-shared/character/character-runtime-snapshot.ts`
+- 通常turnの更新: `src-electron/session/session-runtime-service.ts`とAuxiliary runtime
+- authoring turn の再解決: `src-electron/character/character-authoring-service.ts`
+
+stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 固有契約は `docs/adr/010-character-authoring-project-contract.md` を参照する。
 
 ## Data Safety
 

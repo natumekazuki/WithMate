@@ -605,7 +605,7 @@ describe("SettingsCatalogService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "通常 settings 保存後の layout 更新を最新 projection へ反映する"
-  // oracle = { type = "adr", ref = "docs/adr/015-chat-layout-preference-boundary.md" }
+  // oracle = { type = "adr", ref = "docs/adr/032-chat-layout-preference-boundary.md" }
   // fault = "保存待機中の layout 更新が broadcast projection から欠落する"
   // observable = "updated/broadcast chatLayoutPreference"
   // observation_boundary = "public-boundary"
@@ -708,7 +708,7 @@ describe("SettingsCatalogService", () => {
   // @test-value v2
   // kind = "invariant"
   // claim = "通常 settings 更新の rollback は並行保存された chat layout を巻き戻さない"
-  // oracle = { type = "adr", ref = "docs/adr/015-chat-layout-preference-boundary.md" }
+  // oracle = { type = "adr", ref = "docs/adr/032-chat-layout-preference-boundary.md" }
   // fault = "失敗 rollback が最新 layout まで復元前値へ戻す"
   // observable = "rollback 後の chatLayoutPreference"
   // observation_boundary = "public-boundary"

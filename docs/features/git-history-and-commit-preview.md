@@ -58,4 +58,4 @@ commitに含まれるfileは、中央surfaceまたは独立したFile Preview Wi
 ## 関連文書
 
 - [Desktop UI](../design/desktop-ui.md)
-- [ADR 020: File Preview Window Navigation](../adr/020-file-preview-window-navigation.md)
+- [ADR 034: File Preview Window Navigation](../adr/034-file-preview-window-navigation.md)

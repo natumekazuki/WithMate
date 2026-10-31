@@ -121,7 +121,7 @@ async function createNavigation() {
 // @test-value v2
 // kind = "security"
 // claim = "Files preview IPCから認可済みrootのresourceを親owner付きで開き、同一resourceを再利用し、不正sender・absolute直指定・traversal・失効rootは開かない"
-// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md: Local Path Operation Boundary; docs/adr/020-file-preview-window-navigation.md" }
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md: Local Path Operation Boundary; docs/adr/034-file-preview-window-navigation.md" }
 // fault = "IPC認可またはFiles root検証を迂回する、owner/view/titleを落とす、同一resourceを別Windowにする、Window失敗をopenedへ変換する"
 // observable = "公開open結果、Window payloadと生成数、拒否Error"
 // observation_boundary = "public-boundary"
@@ -195,7 +195,7 @@ test("Files preview操作はIPCからroot認可・owner・Window再利用・失�
 // @test-value v2
 // kind = "security"
 // claim = "Files link操作はroot内外fileをpreviewしdirectoryとexternalだけをOS portへ渡し、missing・base不一致・遅延中sender/owner変更・Preview終了とOS失敗を公開結果に反映する"
-// oracle = { type = "contract", ref = "docs/adr/020-file-preview-window-navigation.md; docs/design/electron-window-runtime.md: Local Path Operation Boundary" }
+// oracle = { type = "contract", ref = "docs/adr/034-file-preview-window-navigation.md; docs/design/electron-window-runtime.md: Local Path Operation Boundary" }
 // fault = "file linkをOSへ渡す、absolute previewで権限を追加する、directory再認可を省く、解決/OS失敗をopenedへ変換する"
 // observable = "open結果、resource payload、許可root集合、OS portの呼出先と回数"
 // observation_boundary = "public-boundary"

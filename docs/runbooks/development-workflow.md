@@ -35,7 +35,11 @@ WithMateが提供するMCPまたはCLIの機能を追加・変更・廃止する
 
 ### 型検査と依存境界
 
-`typecheck`はSQLite実行ownerと依存方向のcheckも実行します。依存方向checkは`src/`、`src-shared/`、`src-electron/`、`src-cli/`全体のimport・re-export・dynamic importをtype-onlyも含めて検査します。RendererとsharedからNode/Electron/Provider SDKへの依存、sharedからReactへの依存、および実行環境の境界を逆流する相対importを拒否します。preloadはpreload内とshared、CLIはCLI内とsharedおよび限定したMainのplatform adapterを参照できます。Storage Workerの検証済みhandler entryだけは動的解決を許可し、実際のentry解決をWorker testで確認します。
+`typecheck`はSQLite実行ownerと依存方向のcheckも実行します。依存方向checkは`src/`、`src-shared/`、`src-electron/`、`src-cli/`全体のimport・re-export・dynamic importをtype-onlyも含めて検査します。
+
+RendererとsharedからNode/Electron/Provider SDKへの依存、sharedからReactへの依存、および実行環境の境界を逆流する相対importを拒否します。
+
+preloadはpreload内とshared、CLIはCLI内とsharedおよび限定したMainのplatform adapterを参照できます。Storage Workerの検証済みhandler entryだけは動的解決を許可し、実際のentry解決をWorker testで確認します。
 
 ### テストの選択と実行
 

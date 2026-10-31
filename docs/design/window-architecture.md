@@ -17,7 +17,9 @@ Homeは作業中のchatを抱えず、Sessionはcatalogやapp共通設定の編�
 
 ## PDF readerの隔離境界
 
-中央・独立File Previewの`SessionFilePreview`と、Codexの`visualize` PDFを表示する本文の`MarkdownPdfPreview`は、認可済みのPDF bytesを共通の`PdfFilePreview`から別originの`withmate-pdf://reader/index.html` iframeへ渡す。本文用の読込はPDF専用の`inspectSessionPdf`／`readSessionPdfChunk`を使い、local画像と同じlink解決・Session／base resource認可を維持してPDF headerとrevisionを検査する。iframeは`allow-scripts allow-same-origin`のsandboxで動作し、preloadとWithMate APIを持たない。Mainの`pdf-reader-protocol.ts`と`pdf-reader-assets.ts`は専用buildの同梱assetだけを配信し、CSPで通信・workerを同originへ限定し、frame navigationとform送信・入れ子frame・objectを制限する。PDF.jsのscripting managerは使用せず、文書内JavaScriptやLaunch、フォーム送信を有効化しない。
+中央・独立File Previewの`SessionFilePreview`と、Codexの`visualize` PDFを表示する本文の`MarkdownPdfPreview`は、認可済みのPDF bytesを共通の`PdfFilePreview`から別originの`withmate-pdf://reader/index.html` iframeへ渡す。本文用の読込はPDF専用の`inspectSessionPdf`／`readSessionPdfChunk`を使い、local画像と同じlink解決・Session／base resource認可を維持してPDF headerとrevisionを検査する。
+
+iframeは`allow-scripts allow-same-origin`のsandboxで動作し、preloadとWithMate APIを持たない。Mainの`pdf-reader-protocol.ts`と`pdf-reader-assets.ts`は専用buildの同梱assetだけを配信し、CSPで通信・workerを同originへ限定し、frame navigationとform送信・入れ子frame・objectを制限する。PDF.jsのscripting managerは使用せず、文書内JavaScriptやLaunch、フォーム送信を有効化しない。
 
 ホストとreaderの通信契約は`src-shared/file-explorer/pdf-reader-contract.ts`に置く。両側で送信元window、origin、frame instance IDを照合し、ready後に一度だけ転送用bytesをコピーして渡す。テーマとwheel刻みの更新、Find commandは文書の再転送とは分離する。resource切替・Reloadではiframeを作り直し、旧frameのmessageを無視する。reader内の文書とworker・描画資源の破棄はreaderが所有する。
 
@@ -35,7 +37,9 @@ Home関連の追加・修正では、`HomeApp`への責務集中を抑えるた�
 
 ## Sessionの起動と継続
 
-HomeのNew Sessionでtitle、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。通常Sessionはstable Character ownerと表示metadataを維持し、active Characterの定義変更だけを送信開始時に反映する。詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。
+HomeのNew Sessionでtitle、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。
+
+通常Sessionはstable Character ownerと表示metadataを維持し、active Characterの定義変更だけを送信開始時に反映する。詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。
 
 Sessionの実行状態はMainが所有する。Windowを閉じてもSession recordは残り、実行中のcloseでは確認を経て継続または中止を選ぶ。close時のAuxiliary draft flush、アプリ終了、取消の詳細は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
 
@@ -47,6 +51,10 @@ Homeはapp起動時の管理Windowとして扱う。Sessionは同じSession ID�
 
 共有するSession metadata、Character catalogとWindow registryはMain側の正本から投影し、各Windowの入力途中状態はそのWindowが保持する。Character metadataと定義file、runtime snapshotの境界は[Character Storage](character-storage.md)を参照する。
 
-HomeのPreviewsはMainのSession Window mapとFile Preview／Session GraphのWindow registryを親Session単位に投影し、Main／Auxiliaryから開いたpreviewを同じ親へまとめる。Mainの投影は開いているSessionをWindow map順に置き、previewが0件でも残す。その後ろへSession Windowが閉じていてpreviewが残る親を加える。Home専用hookはこの投影を現在のPreview Window数の降順に並べ、同数では投影の順序を維持する。previewの開閉通知による再取得でも件数と表示順を更新する。Recent Sessionsの取得範囲では一覧を制限しない。Homeからの前面化は既存Windowの表示内容を変更せず、個別Closeと親単位Closeはpreviewだけを閉じる。通常のCloseでSessionを終了済みにせず、後から同じresourceを再度開ける。Session削除等によるpreviewの終了・再open拒否とは区別する。
+HomeのPreviewsはMainのSession Window mapとFile Preview／Session GraphのWindow registryを親Session単位に投影する。Main／Auxiliaryから開いたpreviewを同じ親へまとめる。Mainの投影は開いているSessionをWindow map順に置き、previewが0件でも残す。
+
+その後ろへSession Windowが閉じていてpreviewが残る親を加える。Home専用hookはこの投影を現在のPreview Window数の降順に並べ、同数では投影の順序を維持する。previewの開閉通知による再取得でも件数と表示順を更新する。Recent Sessionsの取得範囲では一覧を制限しない。
+
+Homeからの前面化は既存Windowの表示内容を変更せず、個別Closeと親単位Closeはpreviewだけを閉じる。通常のCloseでSessionを終了済みにせず、後から同じresourceを再度開ける。Session削除等によるpreviewの終了・再open拒否とは区別する。
 
 独立Graphは閲覧ビューごとに生成し、同じ親・話題の複数Windowを許可する。`SessionGraphWindowService`がtokenと親Mainのincarnation・storage generationを保持し、read-only IPCを認可する。親Windowの通常Closeでは残し、Main削除・reset・app終了で失効する。中央と独立ビューは正本の更新通知を共有し、閲覧位置を同期しない。詳細は[Session Graph](session-graph.md#閲覧ui)を参照する。
