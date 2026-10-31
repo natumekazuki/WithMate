@@ -34,9 +34,6 @@ jobs:
   test:
     name: Test shard ${{ matrix.shard }} / 3
     runs-on: windows-latest
-    env:
-      TEMP: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +73,9 @@ jobs:
           '@ | node
 
       - name: Test
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
         run: npm.cmd run test:shard -- --shard=${{ matrix.shard }}/3
 
   ci:
