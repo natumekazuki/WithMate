@@ -11,7 +11,8 @@ assert.ok(shell && (expectedMajor === 7 || expectedMajor === 5), "Pass the shell
 const workspace = process.cwd();
 // Keep the test independent of user profiles and do not persist test commands in history.
 const script = "Import-Module PSReadLine; Set-PSReadLineOption -HistorySaveStyle SaveNothing;\n"
-  + Buffer.from(integration.args[2], "base64").toString("utf16le");
+  + Buffer.from(integration.args[2], "base64").toString("utf16le")
+  + "\n[Console]::WriteLine('WITHMATE_SHELL version=' + $PSVersionTable.PSVersion + '; language=' + $ExecutionContext.SessionState.LanguageMode + '; PSReadLine=' + (Get-Module PSReadLine).Version + '; originalHook=' + [bool]$global:__WithMateReadLine + '; installedHook=' + ([string]$function:PSConsoleHostReadLine).Contains('__WithMateReadLineIdleEligible'))";
 const pty = spawn(shell,
   ["-NoProfile", "-NoExit", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
   { cwd: workspace, cols: 120, rows: 24, env: process.env });
