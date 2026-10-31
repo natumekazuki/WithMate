@@ -30,6 +30,10 @@ async function until(check: () => boolean) {
 }
 
 class FakeSession {
+  readonly rpc = { eventLog: {
+    registerInterest: async ({ eventType }: { eventType: string }) => ({ handle: eventType }),
+    releaseInterest: async () => ({}),
+  } };
   readonly sessionId = "preserved-thread";
   readonly listeners = new Set<(event: SessionEvent) => void>();
   readonly retainedListeners = new Set<(event: SessionEvent) => void>();

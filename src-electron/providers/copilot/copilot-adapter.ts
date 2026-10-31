@@ -51,7 +51,7 @@ import {
 import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection, buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection, readCopilotQuotaSnapshots } from "./copilot-quota-telemetry.js";
-import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection } from "./copilot-elicitation.js";
+import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection, buildLiveElicitationRequestFromCopilotUserInput } from "./copilot-elicitation.js";
 import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
 import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
@@ -775,6 +775,8 @@ const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "session.idle",
   "permission.requested",
   "permission.completed",
+  "user_input.requested",
+  "elicitation.requested",
   "tool.execution_start",
   "tool.execution_complete",
 ]);
@@ -1227,40 +1229,6 @@ export function applyCopilotBackgroundTaskEvent(
     default:
       return false;
   }
-}
-
-async function respondToCopilotElicitation(
-  session: CopilotSession,
-  requestId: string,
-  response: LiveElicitationResponse,
-): Promise<void> {
-  const rpc = session.rpc as unknown as {
-    ui: {
-      elicitation: (params: Record<string, unknown>) => Promise<unknown>;
-    };
-  };
-  const payloads: Record<string, unknown>[] = [
-    {
-      requestId,
-      result: response,
-    },
-    {
-      requestId,
-      action: response.action,
-      ...(response.content ? { content: response.content } : {}),
-    },
-  ];
-  let lastError: unknown = null;
-  for (const payload of payloads) {
-    try {
-      await rpc.ui.elicitation(payload);
-      return;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("Could not send the elicitation response.");
 }
 
 export async function resolveCopilotSessionForSettings(args: {
@@ -1875,6 +1843,9 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const streamState = createCopilotTurnStreamState(redactor);
     let observingTurn = true;
     let progressFailure: unknown;
+    let interactionFailure: unknown;
+    const interestHandles: string[] = [];
+    const interactionTasks: Promise<void>[] = [];
     let stopForProgressFailure = () => {};
     const progressDelivery = new ProviderProgressDelivery(onProgress, (error) => {
       progressFailure ??= error;
@@ -1926,39 +1897,66 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         || (event.type === "tool.execution_partial_result" && event.data.partialOutput.trim())) {
         onAcquiredToolResult?.();
       }
-      if (event.type === "elicitation.requested" && input.onElicitationRequest) {
-        const request = buildElicitationRequestProjection(input.providerCatalog.id, event);
-        const redactedRequest = {
-          ...redactor.sanitize(request),
-          requestId: request.requestId,
+      if (event.type === "elicitation.requested" || event.type === "user_input.requested") {
+        const request = event.type === "user_input.requested"
+          ? buildLiveElicitationRequestFromCopilotUserInput(input.providerCatalog.id, event)
+          : buildElicitationRequestProjection(input.providerCatalog.id, event);
+        if (!request) {
+          this.writeLog({ level: "warn", kind: "provider.unsupported-interaction", message: "Unsupported Copilot elicitation schema; declining the entire request." });
+        }
+        const redactedRequest = request ? {
+          ...redactor.sanitize(request), requestId: request.requestId,
           textPosition: redactor.sanitizeText(streamState.assistantText).length,
-        };
-        void scheduleLiveState()
-          .then(() => observingTurn ? input.onElicitationRequest!(redactedRequest) : undefined)
-          .then((response) => observingTurn && response ? respondToCopilotElicitation(session, request.requestId, response) : undefined)
+        } : null;
+        interactionTasks.push(scheduleLiveState()
+          .then(() => observingTurn && redactedRequest && input.onElicitationRequest
+            ? input.onElicitationRequest(redactedRequest, input.signal)
+            : { action: request ? "cancel" : "decline" } as LiveElicitationResponse)
+          .then(async (response) => {
+            if (!observingTurn || cancellationCleanup) return;
+            const answer = response.action === "accept" ? response.content?.answer : "";
+            const result = event.type === "user_input.requested"
+              ? await session.rpc.ui.handlePendingUserInput({ requestId: event.data.requestId, response: {
+                  answer: typeof answer === "string" ? answer : "",
+                  wasFreeform: !event.data.choices?.includes(typeof answer === "string" ? answer : ""),
+                } })
+              : await session.rpc.ui.handlePendingElicitation({ requestId: event.data.requestId, result: response });
+            if (!result.success) throw new Error("Copilot input request is no longer pending.");
+          })
           .catch((error: unknown) => {
             logCopilotRuntime("elicitation handling failed", {
               provider: input.providerCatalog.id,
               model: input.executionOptions.model,
               workspacePath,
               threadId: session.sessionId,
-              requestId: request.requestId,
+              requestId: event.data.requestId,
               message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
             });
             if (observingTurn) {
+              interactionFailure ??= error;
               handleAbort();
             }
-          });
+          }));
       }
       void scheduleLiveState().catch(() => undefined);
     });
 
     const completion = waitForCopilotSessionCompletion(session);
-    const send = Promise.resolve().then(() => session.send({
-      prompt: prompt.inputBodyText,
-      ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-    }));
-    const execution = Promise.all([send, completion.wait]).then(() => progressDelivery.drain());
+    const send = Promise.resolve().then(async () => {
+      for (const eventType of ["user_input.requested", "elicitation.requested"]) {
+        const { handle } = await session.rpc.eventLog.registerInterest({ eventType });
+        interestHandles.push(handle);
+      }
+      if (!observingTurn || input.signal?.aborted) return;
+      return session.send({
+        prompt: prompt.inputBodyText,
+        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+      });
+    });
+    const execution = Promise.all([send, completion.wait]).then(async () => {
+      await Promise.all(interactionTasks);
+      await progressDelivery.drain();
+    });
     let cancellationCleanup: Promise<never> | undefined;
     let cancellationFailures: string[] = [];
     let rejectCancellation!: (error: unknown) => void;
@@ -1992,6 +1990,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     stopForProgressFailure = handleAbort;
     if (progressFailure) handleAbort();
     input.signal?.addEventListener("abort", handleAbort, { once: true });
+    if (input.signal?.aborted) handleAbort();
 
     try {
       try {
@@ -2004,6 +2003,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       observingTurn = false;
       completion.dispose();
       if (progressFailure) throw progressFailure;
+      if (interactionFailure) throw interactionFailure;
 
       if (streamState.streamErrorMessage) {
         const partialResult = await this.buildTurnResult(
@@ -2054,7 +2054,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         throw error;
       }
 
-      const failure = progressFailure ?? error;
+      const failure = progressFailure ?? interactionFailure ?? error;
       const message = failure instanceof Error ? failure.message : String(failure);
       const partialResult = await this.buildTurnResult(
         input.agentRuntimeBinding,
@@ -2096,13 +2096,21 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       throw new ProviderTurnError(
         redactor.sanitizeText(message),
         partialResult,
-        !progressFailure && (Boolean(input.signal?.aborted) || isCanceledProviderMessage(message)),
+        !progressFailure && !interactionFailure && (Boolean(input.signal?.aborted) || isCanceledProviderMessage(message)),
       );
     } finally {
       observingTurn = false;
       completion.dispose();
       unsubscribe();
       input.signal?.removeEventListener("abort", handleAbort);
+      if (!cancellationCleanup) {
+        for (const handle of interestHandles) {
+          await session.rpc.eventLog.releaseInterest({ handle }).catch((error: unknown) => {
+            this.writeLog({ level: "warn", kind: "provider.interaction-interest-release-failed",
+              message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)) });
+          });
+        }
+      }
     }
   }
 
