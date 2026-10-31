@@ -14,6 +14,7 @@ Renderer が provider ごとの差異を知らずに、`Session Window` の送�
 WithMate では provider 実行境界を Main Process に置く。
 
 理由:
+
 - CLI ログイン状態を安全に引き継ぎやすい
 - Electron Renderer へ provider 実行権限を持ち込まなくてよい
 - session store と thread id を同じ責務で管理できる
@@ -183,11 +184,12 @@ the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動�
 - OpenCodeの認証はnative設定・既存credential・起動元環境へ任せ、WithMate専用keyを注入しない。保存済み`codingProviderSettings.opencode.apiKey`はstorage owner起動時に対象fieldだけ除去し、他providerのkey、provider設定、会話、threadを保持する。このcleanupは通常の設定変更によるthread invalidationを通さず、OpenCodeへkeyを自動コピーしない
 
 理由:
-- provider prompt は過去の `session.messages` を毎 turn 再送せず、会話継続は provider 側の `threadId` に依存するため、model / reasoning depth 変更だけで `threadId` を消すと履歴が途切れる
-- Copilotはsettings key差分時にcacheを切り替えて`resumeSession(threadId, config)`を試す。Codexは新しいApp Serverへ明示IDと今回のruntime parameterを渡す
-- Codexの`thread/resume`が拒否された場合は保存済みIDを保持してエラーを返し、自動で新threadへ切り替えない。Copilotのstale session回復はError Handlingに従う
-- coding credential を切り替えたあとに旧 client / 旧 thread 文脈を引き継ぐと runtime 差し替えが不透明になる
-- そのため model / reasoning depth 変更は conversation continuity を優先し、credential 変更は security boundary として thread を切り替える
+
+- provider prompt は過去の `session.messages` を毎 turn 再送しない。会話継続は provider 側の `threadId` に依存する。そのため、model / reasoning depth 変更だけで `threadId` を消すと履歴が途切れる。
+- Copilotはsettings key差分時にcacheを切り替えて`resumeSession(threadId, config)`を試す。Codexは新しいApp Serverへ明示IDと今回のruntime parameterを渡す。
+- Codexの`thread/resume`が拒否された場合は保存済みIDを保持してエラーを返す。自動で新threadへ切り替えない。Copilotのstale session回復はError Handlingに従う。
+- coding credential を切り替えたあとに旧 client / 旧 thread 文脈を引き継ぐと runtime 差し替えが不透明になる。
+- そのため model / reasoning depth 変更は conversation continuity を優先し、credential 変更は security boundary として thread を切り替える。
 
 ## Session Metadata Dependency
 
@@ -276,9 +278,12 @@ Codex App Serverのnative itemsとworkspace snapshot差分からsummaryを組み
 - model / reasoning -> run checks
 
 diff 本文は turn items からは直接取れないため、Main Process 側で `before / after` スナップショットを補完取得する。
-CodexAdapter は `workspacePath + allowedAdditionalDirectories` ごとに process memory の `WorkspaceSnapshotIndex` を持つ。初回または invalidation 時は full rebuild し、全 session thread の invalidation 時は index cache も破棄する。その後の turn 開始時・終了時は index refresh を通して snapshot を取得する。既存 file の mtime / size だけが変わった場合は、全 file 本文を読み直さず、変化した file だけ再読込する。
 
-turn 終了後の snapshot は provider outcome に対する enrichment である。取得が deadline を超えた場合は turn 自体を失敗へ変更せず、取得済み item から result を確定し、diff が不完全になり得ることを provider metadata と app log に残す。
+CodexAdapter は `workspacePath + allowedAdditionalDirectories` ごとに process memory の `WorkspaceSnapshotIndex` を持つ。初回または invalidation 時は full rebuild し、全 session thread の invalidation 時は index cache も破棄する。その後の turn 開始時・終了時は index refresh を通して snapshot を取得する。
+
+既存 file の mtime / size だけが変わった場合は、全 file 本文を読み直さず、変化した file だけ再読込する。
+
+turn 終了後の snapshot は provider outcome に対する enrichment である。取得が deadline を超えても turn 自体を失敗へ変更しない。取得済み item から result を確定し、diff が不完全になり得ることを provider metadata と app log に残す。
 
 `fileChange`だけで変更候補を確定でき、`commandExecution` / `mcpToolCall`のような副作用範囲が不明なoperationが無い場合は、候補ファイルだけをtrusted candidateとしてrefreshする。副作用範囲が不明な場合でも、directory構造とignore sourceが変わっていなければ、known fileのstat差分からincremental refreshする。directory mtime変化、ignore source変化、snapshot limit超過またはlimit hit状態、不確定なignore状態がある場合はfull rebuildへfallbackする。
 
@@ -328,17 +333,25 @@ CodexAdapterは同時turnで1つのprojection Workerを共有し、最後のturn
 
 assistant／reasoningはitem単位で更新し、arrival順の全量連結とbounded previewを必要時だけ生成する。command deltaは全reasoningを走査せず、terminalの一括item適用後に集約する。変更していないstepは再projection・再redactionしない。表示に影響しない通知ではsnapshotを生成しないが、取得済みnative itemsと未知itemのraw情報は保持する。
 
-live更新は33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。WorkerからMainへのstep配送は既存changesのupserts/removesだけとし、無変更operationのDetailsを再送しない。Codex progressは`changes.snapshot = false`、stateのcollectionsは空配列とし、制御通知も同じ契約を使う。`SessionRuntimeService`はchangesを既存のMain live stateへ統合し、同ID更新の位置と追加順を維持する。完全状態は`SessionObservabilityService`が保持し、Window再接続・snapshot取得・取消partialのconsumerへ返す。adapterに完全状態のMapを重複保持しない。他providerのsnapshot付きprogressはstateを利用する。
+live更新は33msを目安に生成し、未完了のlive要求は1件とdirty flagだけを持つ。WorkerからMainへのstep配送は既存changesのupserts/removesだけとし、無変更operationのDetailsを再送しない。
+
+Codex progressは`changes.snapshot = false`、stateのcollectionsは空配列とし、制御通知も同じ契約を使う。`SessionRuntimeService`はchangesを既存のMain live stateへ統合し、同ID更新の位置と追加順を維持する。
+
+完全状態は`SessionObservabilityService`が保持し、Window再接続・snapshot取得・取消partialのconsumerへ返す。adapterに完全状態のMapを重複保持しない。他providerのsnapshot付きprogressはstateを利用する。
 
 最後のdeltaの後にもtimerで最新表示へ追いつき、終了・取消時は最終changesをflushする。承認・取消・terminalの入力入口閉鎖とerror通知はlive timerを待たない。progressは一時的な表示の更新であり、保存queueを持たない。
 
 stdio transportは正常な受信frame、未消費event、送信frameを件数・容量だけで拒否しない。通知・server requestは到着順に保持し、`nextEvent`で取り出した参照は直ちに解放する。FIFOは毎回配列全体を移動せず、消費済み領域をまとめて除去する。RPC応答はeventキューを経由せずIDで解決し、承認・質問・取消・追加入力の応答を塞がないためにstdout全体の読取を停止しない。不正UTF-8／JSON／envelope、通信断、実際のwrite失敗は引き続き失敗とする。
 
-Worker clientは未応答commandの件数・容量だけで受付を拒否せず、容量計測用のJSON化も行わない。adapterは各turnの通知を最大32 eventまたは次のmacrotaskでまとめて配送し、未完了8 batchでは完了を待って次の配送へ進む。通知の順序と各投影変更を保持し、32 event読取ごとにもyieldする。別threadの通知と不要な別turn通知はWorkerへ転送しないが、usage baselineに必要な過去turnのtokenUsageは保持する。承認・質問・取消・terminalの制御はMainに残し、終了・取消・失敗時にも受信済みbatchを反映してpartialを回収する。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
+Worker clientは未応答commandの件数・容量だけで受付を拒否せず、容量計測用のJSON化も行わない。adapterは各turnの通知を最大32 eventまたは次のmacrotaskでまとめて配送し、未完了8 batchでは完了を待って次の配送へ進む。
+
+通知の順序と各投影変更を保持し、32 event読取ごとにもyieldする。別threadの通知と不要な別turn通知はWorkerへ転送しないが、usage baselineに必要な過去turnのtokenUsageは保持する。
+
+承認・質問・取消・terminalの制御はMainに残し、終了・取消・失敗時にも受信済みbatchを反映してpartialを回収する。5秒以内に応答しないWorkerやWorker異常では要求をrejectし、Mainでの全量projection fallbackや自動再実行をしない。
 
 runの解放は先行commandの後に配送し、Workerのowner削除応答かWorker異常終了なしにclient登録だけを失わない。native itemsとredactorを孤立したownerとして保持し続けない。
 
-最終assistant本文、operations、必要なprovider metadataはWorkerで集約・秘匿化し、artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。正常なWorker入力へ容量上限を適用しない。通常turnのraw JSONを独立して永続化しない。
+最終assistant本文、operations、必要なprovider metadataはWorkerで集約・秘匿化する。artifactのfilesystem snapshot／diffはMainで補完する。live previewの長さでfinal本文を切らず、取消・失敗時も取得済みpartialを回収する。正常なWorker入力へ容量上限を適用しない。通常turnのraw JSONを独立して永続化しない。
 
 ## Error Handling
 

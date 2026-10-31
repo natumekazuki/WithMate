@@ -4,7 +4,7 @@
 
 V6 Memory に、画像、スクリーンショット、ソース断片、ログ archive など、SQLite の `TEXT` に直接保存するより file として保持した方が自然な補助資料を紐づけられるようにする。
 
-Protected Object は Memory entry 本文の代替ではない。Memory entry は引き続き `title` / `preview` / `body` / `tags` によって検索、理解、整理できる text-first domain とし、file は必要時だけ WithMate 経由で復元する暗号化 object として扱う。
+Protected Object は Memory entry 本文の代替ではない。Memory entry は引き続き `title` / `preview` / `body` / `tags` によって検索、理解、整理できる text-first domain とする。file は必要時だけ WithMate 経由で復元する暗号化 object として扱う。
 
 成立させること:
 
@@ -80,7 +80,7 @@ type MemoryProtectedObject = {
 };
 ```
 
-`objectId` は random opaque id とする。元 file path や元 file name から生成しない。file system 上の実体 path は `objectId` と shard rule から Memory object store が決定し、DB や renderer response に実 path を出さない。
+`objectId` は random opaque id とする。元 file path や元 file name から生成しない。file system 上の実体 path は `objectId` と shard rule から Memory object store が決定する。DB や renderer response に実 path を出さない。
 
 `rawSha256` は重複検出や integrity 用に使えるが、同一内容の存在を推測できる情報でもある。初期実装では dedupe を必須にせず、保持する場合も agent-facing response には出さない。
 
@@ -133,7 +133,7 @@ file write は次の順序を基本にする。
 9. DB transaction 失敗時は今回 prepare した object file を best-effort delete し、削除できず残った場合だけ orphan object として GC 対象にする。
 
 巨大 file を quota 判定前に全読み込みしない。
-初期 importer は `stat` による inspection と暗号化済み object write を分けられる形にし、application service 側で `usedBytes + incomingOriginalBytes` の quota preflight を済ませてから file read / encrypt / object write へ進む。
+初期 importer は `stat` による inspection と暗号化済み object write を分けられる形にする。application service 側で `usedBytes + incomingOriginalBytes` の quota preflight を済ませてから、file read / encrypt / object write へ進む。
 
 ## Encryption
 
@@ -152,7 +152,7 @@ Protected Object の保護は file name ではなく暗号化で行う。
 - 復号済み bytes は通常 API response や renderer state に常駐させない。
 - 復号済み temp file は標準 read path にしない。明示 export で caller が指定した output path へ書く。
 
-暗号化は at-rest data leakage を軽減するための境界である。同一 OS user で起動中 WithMate runtime に正規 access できる主体からの access は、Memory API の permission / target validation によって制御する。
+暗号化は at-rest data leakage を軽減するための境界である。同一 OS user で起動中 WithMate runtime に正規 access できる主体からの access は、Memory API の permission / target validation で制御する。
 
 ## Quota
 
@@ -174,8 +174,11 @@ usedBytes + incomingOriginalBytes + estimatedOverhead <= quotaBytes
 ```
 
 quota 超過時は file write を開始せず、append request 全体を error にする。Memory entry だけを部分保存しない。
-storage 層では entry と protected object metadata を同じ transaction で登録し、quota 超過、object metadata 登録失敗、idempotency conflict のいずれでも partial entry / partial object metadata を残さない。
-application service は file 付き append で entry id を先に発行し、`entryId + objectId` を暗号化 AAD として使う。request fingerprint は input file metadata 由来の安定値を service から渡し、暗号 nonce や object id の違いで同一 idempotency key が conflict しないようにする。
+
+storage 層では entry と protected object metadata を同じ transaction で登録する。quota 超過、object metadata 登録失敗、idempotency conflict のいずれでも partial entry / partial object metadata を残さない。
+
+application service は file 付き append で entry id を先に発行し、`entryId + objectId` を暗号化 AAD として使う。request fingerprint は input file metadata 由来の安定値を service から渡す。暗号 nonce や object id の違いで、同一 idempotency key が conflict しないようにする。
+
 idempotency key が指定された file 付き append では、service が import 前に storage の replay preflight を行う。既に完了済みの同一 request は file inspection / file read / object write を行わず、保存済み entry を返す。
 
 error response の概念:
@@ -194,7 +197,7 @@ error response の概念:
 }
 ```
 
-parallel append で quota を突破しないよう、quota check と object metadata registration は storage service 側で reservation / transaction として扱う。
+parallel append で quota を突破しないよう、quota check と object metadata registration は storage service 側で扱う。両方を reservation / transaction として処理する。
 
 usage は少なくとも次を区別できるようにする。
 
@@ -272,8 +275,11 @@ withmate-memory export-files --project <absolute-project-path> --entry-id <entry
 ```
 
 service は request target と object owner / scope を照合し、target 外 object を `not_found` に畳む。
+
 初期実装では `get-file` の単一 object export を先に提供し、caller が指定した output path へ復号 bytes を書き出す。既存 output file は上書きしない。
-response は `objectId`、`entryId`、`outputPath`、`bytesWritten`、`contentType`、`displayName` のみを返し、object store path、key id、hash、復号済み bytes は返さない。
+
+response は `objectId`、`entryId`、`outputPath`、`bytesWritten`、`contentType`、`displayName` のみを返す。object store path、key id、hash、復号済み bytes は返さない。
+
 `export-files` は entry 単位の複数 file export として提供する。caller が指定した output directory を作成し、各 file は object id を prefix にした安全な file name で書き出す。既存 output file は上書きしない。
 
 ### Usage
@@ -303,7 +309,7 @@ withmate-memory file-usage
 ```
 
 容量を消費している Memory entry 単位の候補が必要な場合は、`--largest --limit 20` を指定する。
-候補は active entry に紐づく active object の `originalBytes` 合計で並べ、file path、object store path、key id、hash、復号済み content は返さない。
+候補は active entry に紐づく active object の `originalBytes` 合計で並べる。file path、object store path、key id、hash、復号済み content は返さない。
 
 ```json
 {
@@ -376,7 +382,12 @@ GC の対象:
 - metadata があるが file がない missing object の repair report
 - staging file の cleanup
 
-Memory Review から実行する GC は dry-run と cleanup を分ける。dry-run は DB / file system を変更せず、cleanup は `delete_pending` object の file delete 成功または既に missing の場合に metadata を `deleted` に進める。active metadata に紐づく object は削除対象にしない。orphan file / staging cleanup の renderer response は件数と bytes の summary に限定し、object store path、key material、hash は返さない。
+Memory Review から実行する GC は dry-run と cleanup を分ける。
+
+- dry-run は DB / file system を変更しない。
+- cleanup は `delete_pending` object の file delete 成功、または既に missing の場合に metadata を `deleted` に進める。
+- active metadata に紐づく object は削除対象にしない。
+- orphan file / staging cleanup の renderer response は件数と bytes の summary に限定する。object store path、key material、hash は返さない。
 
 ## UI Policy
 

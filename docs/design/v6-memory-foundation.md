@@ -171,8 +171,16 @@ OwnerとScopeは別概念とする。
 | `project` | `project` | Characterに依存しないproject decision / convention |
 | `user` | `global` | provider / host / projectに依存しないuser preference / convention / constraint |
 
-`project` owner + `character` scope、`session` scope、`user` owner + `global` scope以外の`user` owner、`user` owner以外の`global` scopeはschema上予約してもよいが、append対象にはしない。`user` owner + `global` scopeはexact pairだけを許可し、secret、token、project固有の非公開情報ではなく、user共通のpreference / convention / constraintに限定して扱う。
-session中に得た決定・制約・継続文脈をagentがdurable Memory entryとしてappendすることは許可するが、V6 foundationはmutableなSession working stateをfirst-class domainとして扱わない。
+次のowner / scopeはschema上予約してもよいが、append対象にはしない。
+
+- `project` owner + `character` scope
+- `session` scope
+- `user` owner + `global` scope以外の`user` owner
+- `user` owner以外の`global` scope
+
+`user` owner + `global` scopeはexact pairだけを許可する。secret、token、project固有の非公開情報ではなく、user共通のpreference / convention / constraintに限定して扱う。
+
+session中に得た決定・制約・継続文脈を、agentがdurable Memory entryとしてappendすることは許可する。ただし、V6 foundationはmutableなSession working stateをfirst-class domainとして扱わない。
 
 ### Entry
 
@@ -254,7 +262,7 @@ entry stateと関連fieldの整合性はcontractとstorage hydrationで検証す
 - `forgotten`: `forgottenAt`がforget時刻。superseded entryを後からforgetした場合は`supersededBy`を保持してよい。
 
 `forgotten`は通常利用対象から外す論理状態である。privacy reasonではtitle / body / preview / tagsを縮退し、fingerprint / mutation eventだけを残す。
-generic hard delete、archive、purge、irreversible redactionは別操作として扱い、foundationのagent-facing APIには公開しない。
+generic hard delete、archive、purge、irreversible redactionは別操作として扱う。foundationのagent-facing APIには公開しない。
 
 ### Character Snapshot Boundary
 
@@ -303,9 +311,10 @@ generic hard delete、archive、purge、irreversible redactionは別操作とし
 ## API Contract
 
 以下の型はapplication service内部のcanonical request / responseを示し、versionを持つ。CLI/MCPのpublic inputはactor-relative targetを使い、top-levelのschemaVersionやidentityをcallerから受け取らない。runtimeがcanonical requestへ変換する。
-response shapeは操作ごとに自然な形にし、統一のためだけの共通envelopeは強制しない。
-CLI/MCP共通の公開入出力shapeは`memory.schema` / CLI `schema`とMCP `tools/list`で確認する。27操作の対応・認可・操作手順は[Memory / Affect Runbook](../runbooks/memory-affect-mcp.md)を参照する。
-error responseは共通envelopeよりもmachine-readable `code`、人間向け`message`、必要に応じた`field`を優先する。
+
+- response shapeは操作ごとに自然な形にし、統一のためだけの共通envelopeは強制しない。
+- CLI/MCP共通の公開入出力shapeは`memory.schema` / CLI `schema`とMCP `tools/list`で確認する。27操作の対応・認可・操作手順は[Memory / Affect Runbook](../runbooks/memory-affect-mcp.md)を参照する。
+- error responseは共通envelopeよりもmachine-readable `code`、人間向け`message`、必要に応じた`field`を優先する。
 
 ### `memory.search`
 
@@ -445,9 +454,10 @@ type MemoryAppendResponse = {
 ```
 
 `created`は元のidempotent append operationが新entryを作成したかを表す。
-入力の`tags`省略は空配列と同じ正規化値になり、タグを自動生成しない。`title`と`preview`は検索・一覧用の明示入力を必須とし、本文から自動補完しない。正規化後の`MemoryAppendRequest`と保存entryには常に`tags`配列がある。省略と明示的な空配列は同じidempotency keyで再送しても同一requestとして扱う。既存の全項目明示入力と保存形式は維持する。
-idempotent replayでは現在のpermission、entry state、owner / scope accessを再検証し、現在のentryからsummaryを再構築する。
-idempotency storageには旧title / preview / tagsを含むresponse JSONを保存しない。
+
+入力の`tags`省略は空配列と同じ正規化値になり、タグを自動生成しない。`title`と`preview`は検索・一覧用の明示入力を必須とし、本文から自動補完しない。正規化後の`MemoryAppendRequest`と保存entryには常に`tags`配列がある。
+
+省略と明示的な空配列は、同じidempotency keyで再送しても同一requestとして扱う。既存の全項目明示入力と保存形式は維持する。idempotent replayでは現在のpermission、entry state、owner / scope accessを再検証し、現在のentryからsummaryを再構築する。idempotency storageには旧title / preview / tagsを含むresponse JSONを保存しない。
 
 app側validation:
 
@@ -514,15 +524,15 @@ type MemoryForgetResponse = {
 };
 ```
 
-request-levelのprincipal不足、operation permission不足、target permission不足は`MEMORY_PRINCIPAL_REQUIRED` / `MEMORY_UNAUTHORIZED` / `MEMORY_FORBIDDEN`のerrorとして返す。
-`memory.forget`はfirst releaseでは単一target必須とし、serviceがentry IDからtargetを推論して複数targetへ分割しない。
-entry単位では、明示targetからアクセス不能なIDを`not_found`へ畳む。
-内部auditではアクセス不能とnot foundを区別してよいが、agent-facing responseで他ownerのentry存在確認に使える差分を出さない。
-`dryRun`は実forgetと同じtarget照合結果とpreviewを返すが、entry、protected object、mutation event、idempotencyを変更しない。
+- request-levelのprincipal不足、operation permission不足、target permission不足は、`MEMORY_PRINCIPAL_REQUIRED` / `MEMORY_UNAUTHORIZED` / `MEMORY_FORBIDDEN`のerrorとして返す。
+- `memory.forget`はfirst releaseでは単一target必須とし、serviceがentry IDからtargetを推論して複数targetへ分割しない。
+- entry単位では、明示targetからアクセス不能なIDを`not_found`へ畳む。
+- 内部auditではアクセス不能とnot foundを区別してよいが、agent-facing responseで他ownerのentry存在確認に使える差分を出さない。
+- `dryRun`は実forgetと同じtarget照合結果とpreviewを返すが、entry、protected object、mutation event、idempotencyを変更しない。
 
 ### `memory.move_entry`
 
-wrong-scope entryは、単一entry IDと明示した異なる`from` / `to` targetでretargetする。entry ID、relation、protected object attachmentを保持し、entry rowのtarget tupleとmove audit eventを一つのtransactionで確定する。idempotency key replayではrequest fingerprintと現在のdestination targetを再検証する。判断理由は`docs/adr/017-memory-entry-retarget-identity.md`を参照する。
+wrong-scope entryは、単一entry IDと明示した異なる`from` / `to` targetでretargetする。entry ID、relation、protected object attachmentを保持する。entry rowのtarget tupleとmove audit eventは、一つのtransactionで確定する。idempotency key replayではrequest fingerprintと現在のdestination targetを再検証する。判断理由は`docs/adr/017-memory-entry-retarget-identity.md`を参照する。
 
 ### Tag Canonicalization
 
@@ -570,22 +580,48 @@ CLI stdoutはJSONが基本で、`audit --format jsonl|markdown` だけが表示�
 ### Runtime discovery
 
 current CLIは`WITHMATE_MEMORY_API_URL`、OSユーザー共通runtime registry、または互換用runtime discovery fileからlocalhost APIを発見する。registryは複数のactive entryを正本とし、selectorなしではactive候補が一意な場合だけ選択する。複数候補は`WITHMATE_RUNTIME_AMBIGUOUS`を返し、`--instance <applicationInstanceId>`で明示選択できる。
-registry entryはsafe metadataとhash化したcredential参照だけを保持する。credential documentはapplication instanceとMemory固有runtime generationを分離して持つ。legacy generation fileは`withmate-memory-discovery-v2` documentとして`baseUrl`、credential、`applicationInstanceId`、`runtimeGenerationId`、legacy aliasの`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。`memory-v6.current.json`はgenerationを指すpair pointerであり、canonical registryのactive候補が一意な場合だけcleanup時にchallenge済みgenerationへhandoffする。
-`--api-url`または`WITHMATE_MEMORY_API_URL`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
-Windows registry rootは`%LOCALAPPDATA%\WithMate\runtime-discovery\v1`とする。既定のlegacy discovery fileは`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
-app側writerはruntime directoryをOS userだけが読める権限で作成し、POSIXではsymlink directory、他user所有、group / other readableなdirectoryを拒否または修正する。discovery fileは0600相当でexclusive temporary fileから置き換える。
-current app起動配線は`src-electron/memory/memory-v6-runtime.ts`で行う。main processは起動ごとに`applicationInstanceId`を一度だけ生成し、Memory runtimeは起動ごとに独立した`runtimeGenerationId`を生成する。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost API、credential generation、registry entry、lease heartbeatの順でpublishし、最後にlegacy pointerをbest-effort更新する。app shutdown時は自分のpublication IDとidentity tupleが一致するentryだけをunpublishし、listener停止後に自generationを削除する。V6 DB、ACL、capacity validationなどでMemory runtimeだけ起動できない場合でも通常app bootは継続し、未完成entryやcredentialを公開しない。
+
+- registry entryはsafe metadataとhash化したcredential参照だけを保持する。credential documentはapplication instanceとMemory固有runtime generationを分離して持つ。
+- legacy generation fileは`withmate-memory-discovery-v2` documentとして`baseUrl`、credential、`applicationInstanceId`、`runtimeGenerationId`、legacy aliasの`runtimeInstanceId`、`publishedAt`を公開する。CLIはloopback HTTP URL以外を拒否する。
+- `memory-v6.current.json`はgenerationを指すpair pointerである。canonical registryのactive候補が一意な場合だけ、cleanup時にchallenge済みgenerationへhandoffする。
+- `--api-url`または`WITHMATE_MEMORY_API_URL`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了する。discovery fileへfallbackしない。
+- Windows registry rootは`%LOCALAPPDATA%\WithMate\runtime-discovery\v1`とする。
+- 既定のlegacy discovery fileは、`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
+- app側writerはruntime directoryをOS userだけが読める権限で作成する。POSIXではsymlink directory、他user所有、group / other readableなdirectoryを拒否または修正する。
+- discovery fileは0600相当でexclusive temporary fileから置き換える。
+
+current app起動配線は`src-electron/memory/memory-v6-runtime.ts`で行う。main processは起動ごとに`applicationInstanceId`を一度だけ生成し、Memory runtimeは起動ごとに独立した`runtimeGenerationId`を生成する。
+
+app ready後、`withmate-v6.db`をbest-effortでbootstrapする。その後、localhost API、credential generation、registry entry、lease heartbeatの順でpublishする。最後にlegacy pointerをbest-effort更新する。
+
+app shutdown時は、自分のpublication IDとidentity tupleが一致するentryだけをunpublishする。listener停止後に自generationを削除する。V6 DB、ACL、capacity validationなどでMemory runtimeだけ起動できない場合でも、通常app bootは継続する。未完成entryやcredentialは公開しない。
+
 全 window close では app process を終了せず、Windows でも runtime API / CLI discovery を維持する。`app.requestSingleInstanceLock()` と `second-instance` handler により、Start Menu などから再起動された場合は既存 process の Home を再表示・focus する。
-Settings の `launchAtLoginEnabled` が有効な場合、packaged app だけが Electron login item へ `--background` 付きで登録する。dev / visual-check の unpackaged app は、引数なしの `electron.exe` をOSの起動先へ登録しないため、保存済み設定にかかわらずlogin itemを変更しない。`--background` 起動では Boot window / Home window を表示せず、runtime API と CLI discovery だけを立ち上げる。
-runtime APIはapp起動ごとの短命`apiSecret`、`applicationInstanceId`、Memory `runtimeGenerationId`を要求する。CLI/MCPはoperation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`でapplication instance、generation、owner challengeを検証する。lease期限切れでもchallenge成功runtimeはactiveとし、期限切れかつchallenge失敗だけをstaleとする。app log、status、diagnostics、error detailsにはruntime endpoint URL、credential path、userData path、binding reference、secretを出さない。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
+
+Settings の `launchAtLoginEnabled` が有効な場合、packaged app だけが Electron login item へ `--background` 付きで登録する。dev / visual-check の unpackaged app は、引数なしの `electron.exe` をOSの起動先へ登録しない。そのため、保存済み設定にかかわらずlogin itemを変更しない。`--background` 起動では Boot window / Home window を表示せず、runtime API と CLI discovery だけを立ち上げる。
+
+runtime APIは、app起動ごとの短命`apiSecret`、`applicationInstanceId`、Memory `runtimeGenerationId`を要求する。CLI/MCPはoperation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`で検証する。検証対象はapplication instance、generation、owner challengeである。lease期限切れでもchallenge成功runtimeはactiveとし、期限切れかつchallenge失敗だけをstaleとする。
+
+app log、status、diagnostics、error detailsには、次の情報を出さない。
+
+- runtime endpoint URL
+- credential path
+- userData path
+- binding reference
+- secret
+
+V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
 
 ### Target resolutionと診断範囲
 
-projectの絶対pathはruntime側でGit repositoryへ解決する。repository subdirectoryでもroot / common dir / remoteからproject scopeを決定し、同じrepositoryの別worktreeは同一project scopeとして扱う。relative pathを受け付けない。owner / scopeのallowlist、entry access、mutation permissionはapplication serviceで再検証する。
+projectの絶対pathはruntime側でGit repositoryへ解決する。repository subdirectoryでも、root / common dir / remoteからproject scopeを決定する。同じrepositoryの別worktreeは同一project scopeとして扱う。relative pathを受け付けない。owner / scopeのallowlist、entry access、mutation permissionはapplication serviceで再検証する。
 
 Session bindingによるtarget inventory・audit・largest entry詳細の権限絞り込みはpaginationとcursor生成より前に行う。bound scopeは現在Character・許可Project・共有user-globalであり、記憶を作成したSessionだけに狭めない。`characters`は現在Characterのid/name/descriptionのみを返し、renderer metadataは返さない。
 
-status、instances、metrics、quota / usage集計はbindingなしでも利用できる。metricsとquota集計はruntime / DB全体値で、Session別集計ではない。binding付きinstancesは選択ownerへ限定する。largest entry詳細は無bindingでは一般user-global / Project、binding付きでは現在Character / 許可Project / 共有user-globalに限定し、object store path、key、hashを返さない。
+- status、instances、metrics、quota / usage集計はbindingなしでも利用できる。
+- metricsとquota集計はruntime / DB全体値で、Session別集計ではない。
+- binding付きinstancesは選択ownerへ限定する。
+- largest entry詳細は、無bindingでは一般user-global / Project、binding付きでは現在Character / 許可Project / 共有user-globalに限定する。object store path、key、hashは返さない。
 
 ## Runtime Memory API Security
 
@@ -609,14 +645,15 @@ CLIはuser-facingだが、API endpointはユーザーが直接叩く前提にし
 ## Storage
 
 V6 MemoryはV6 DB foundation上の新規tableとして実装する。
-legacy Memory tableは読まない、書かない、意味変更しない。
-V5以前のsession / legacy MemoryはV6 first releaseのmigration対象にしない。
-SQL正本は`src-electron/storage/database-schema-v6.ts`に置く。
-storage実装は`src-electron/memory/memory-v6-storage.ts`に置き、解決済みowner / scopeに対するinventory、query-free list、append、get、lexical/tag search、supersede、forget preview/mutation、retarget、tag catalog、mutation event、idempotencyを扱う。
-storage helper型とtarget SQL helperは`src-electron/memory/memory-v6-schema.ts`に置く。
-permission、project path / id解決、Character id解決はstorageへ入れず、application service層で扱う。
-project pathのread/searchとdry-run、失敗したmutationではscopeを作らず、成功したappend/moveで必要なscopeを作る。
-storageはvalidな`withmate-v6.db`だけを開き、legacy DB pathへV6 schemaを作らない。
+
+- legacy Memory tableは読まない、書かない、意味変更しない。
+- V5以前のsession / legacy MemoryはV6 first releaseのmigration対象にしない。
+- SQL正本は`src-electron/storage/database-schema-v6.ts`に置く。
+- storage実装は`src-electron/memory/memory-v6-storage.ts`に置く。解決済みowner / scopeに対するinventory、query-free list、append、get、lexical/tag search、supersede、forget preview/mutation、retarget、tag catalog、mutation event、idempotencyを扱う。
+- storage helper型とtarget SQL helperは`src-electron/memory/memory-v6-schema.ts`に置く。
+- permission、project path / id解決、Character id解決はstorageへ入れず、application service層で扱う。
+- project pathのread/searchとdry-run、失敗したmutationではscopeを作らない。成功したappend/moveで必要なscopeを作る。
+- storageはvalidな`withmate-v6.db`だけを開き、legacy DB pathへV6 schemaを作らない。
 
 ## Application Service
 
@@ -750,12 +787,13 @@ CREATE TABLE IF NOT EXISTS memory_idempotency_forget_results_v6 (
 ```
 
 重要なのはlegacy tableとの意味分離である。
-idempotencyは`binding_id_hash / key / operation / owner / scope`をidentityに含める。`binding_id_hash`は実行principalを識別し、無bindingの一般Memoryでは`local-user`、binding付きでは解決されたbindingのhashを保存する。
-`request_fingerprint`が同一idempotency identityで一致しない場合は、retryではなくconflictとして扱う。
-batch forgetの再現結果は`memory_idempotency_forget_results_v6`にentryごとに保存する。
-append / supersede / forgetはtransaction内で実行し、失敗時にpartial stateを残さない。
-forgetは解決済みtargetを必須とし、target外entry IDは存在確認に使えないよう`not_found`へ畳む。
-`privacy` reasonのforgetではtitle / body / preview / tagsを縮退し、通常searchとtag catalogから除外する。
+
+- idempotencyは`binding_id_hash / key / operation / owner / scope`をidentityに含める。`binding_id_hash`は実行principalを識別し、無bindingの一般Memoryでは`local-user`、binding付きでは解決されたbindingのhashを保存する。
+- `request_fingerprint`が同一idempotency identityで一致しない場合は、retryではなくconflictとして扱う。
+- batch forgetの再現結果は`memory_idempotency_forget_results_v6`にentryごとに保存する。
+- append / supersede / forgetはtransaction内で実行し、失敗時にpartial stateを残さない。
+- forgetは解決済みtargetを必須とし、target外entry IDは存在確認に使えないよう`not_found`へ畳む。
+- `privacy` reasonのforgetではtitle / body / preview / tagsを縮退し、通常searchとtag catalogから除外する。
 
 ## Retrieval
 
@@ -817,9 +855,9 @@ foundationではMemory Management Windowを戻さない。
 - runtime API secret、discovery documentのsecret値はdiagnostics stateへ含めない。UIにはsecret値を表示しない。
 - diagnosticsは`generatedAt`、`runtime`、`cliShim`、`lastErrors`の4 fieldだけを持ち、provider別状態、managed Skill同期状態、provider instruction sampleを投影しない。
 
-current実装では、Settings Diagnosticsから`Memory Review` windowを開き、active entryの検索、full body閲覧、agent-facing APIとは分離したapp-internal IPC経由のforgetを行える。
-Review UIはruntime API secret、discovery documentのsecret値をrendererへ渡さず、main process側のReview serviceからV6 Memory storageを扱う。
-manual correctionはappend + supersedesによる訂正方針を維持する。
+current実装では、Settings Diagnosticsから`Memory Review` windowを開ける。active entryの検索、full body閲覧、agent-facing APIとは分離したapp-internal IPC経由のforgetを行える。
+
+Review UIはruntime API secret、discovery documentのsecret値をrendererへ渡さない。main process側のReview serviceからV6 Memory storageを扱う。manual correctionはappend + supersedesによる訂正方針を維持する。
 
 ## Legacy Data
 
