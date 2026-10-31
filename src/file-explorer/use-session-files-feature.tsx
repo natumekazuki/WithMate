@@ -136,7 +136,6 @@ export function useSessionFilesFeature(input: {
     onBack: () => void;
     onCopyText: (text: string) => void;
     onQuoteText: (text: string) => void;
-    chatNotice: string;
   }) {
     const {
       selectedFilePreview, selectedFileDiffScopes, selectedFileDiffAvailabilityMessage,
@@ -147,7 +146,6 @@ export function useSessionFilesFeature(input: {
       backNavigation: { label: "Back To Chat", onBack: bindings.onBack },
       onCopyText: bindings.onCopyText,
       onQuoteText: bindings.onQuoteText,
-      chatNotice: bindings.chatNotice,
     };
     if (fileRootGitHistoryDiffPendingPreview) {
       return (

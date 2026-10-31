@@ -30,6 +30,10 @@ export function projectSessionRunControls(state: LiveState) {
     hasApprovalRequest: Boolean(state?.approvalRequest),
     hasElicitationRequest: elicitations.length > 0,
     hasBlockingElicitationRequest: elicitations.some((request) => request.blocking !== false),
+    // Request identities as stable strings so equal snapshots keep the same controls.
+    approvalRequestId: state?.approvalRequest?.requestId ?? "",
+    blockingElicitationRequestIds: elicitations.filter((request) => request.blocking !== false).map((request) => request.requestId).join("\n"),
+    optionalElicitationRequestIds: elicitations.filter((request) => request.blocking === false).map((request) => request.requestId).join("\n"),
     hasInProgressStep: Boolean(state?.steps.some((step) => step.status === "in_progress")),
     errorMessage: state?.errorMessage ?? "",
     cancellationState: state?.cancellationState,

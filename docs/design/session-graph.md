@@ -100,9 +100,11 @@ UI専用readは`src-shared/session-graph/session-graph-ui-read-contract.ts`で�
 
 Topic間relationは保存済み端点のTopic・向き・kind別件数として全体集約し、`topic_relations`の同一条件のpageで実relation・labelと両端recordの要約を返す。一部record間の関係をTopic全体の依存へ変換しない。Topic page・集約・カテゴリpage・relation内訳は`expectedRevision`で揃え、競合・途中page・失敗を対象なしへ置き換えない。既存の親owner/incarnation・storage generation・Window sender/tokenの認可を共用する。
 
-展開したSession headerの`Graph`で中央previewを開き、`Back To Chat`で会話へ戻る。再度Graphを押しても閉じない。Graphを開いた後にヘッダーを折り畳んだ場合、会話へ戻るとヘッダーの展開操作へfocusする。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
+展開したSession headerの`Graph`で、中央を現在の送信対象の会話1つと共有Graphの2領域にする。送信対象がMainならMain、AuxiliaryならActionDockで選択中のAuxiliaryの会話を表示し、Auxiliaryの未作成・折り畳み中でもMain＋Graphを使える。Graphを開くためにAuxiliaryを作成したり、送信対象を変えたりしない。Graph toolbarの`Expand Graph`で中央全体をGraphにし（Graph全体表示）、`Show Chat Beside Graph`で2領域へ戻る。`Close Graph`で閉じ、開く前のMain／Auxiliaryの分割幅・折り畳みへ戻る。再度`Graph`を押しても閉じない。Graphを開いた後にヘッダーを折り畳んだ場合、閉じるとヘッダーの展開操作へfocusする。隣の`Open Graph In New Window`またはCtrl/Cmd付きのGraph操作は、元の表示を変えずに独立Windowを追加する。Graphは閲覧専用で、作成・編集・位置調整を人へ要求しない。
 
-中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。展開区間の履歴は各ビュー内に保持し、新しいWindowは選択記録の近傍または話題の俯瞰から開く。中央の会話復帰では入力、最後のGraph位置と展開区間を保持し、file/Templateとの切替は既存の離脱確認を通す。Main/Auxiliaryの選択や送信先は変えない。
+2領域の間はdrag・左右矢印キーで幅を変えられ、その比率はSession Window内でMain／Auxiliaryの分割幅と別に保持する（永続化しない）。会話とGraphはどちらも360pxを最小幅とし、両方を確保できない幅ではGraph全体表示と同じくGraphだけを表示する。幅が戻ると2領域へ戻り、幅を理由に送信対象を変えない。Graphの開閉・全体表示・復帰・幅変更はMain／Auxiliaryの分割幅、送信対象、選択Auxiliary、会話・下書き・実行状態を変えない。Graph表示中にユーザーが変えた送信対象・選択Auxiliaryは、閉じた後も保持する。表示中はMain／Auxiliaryの切替で表示する会話だけを替え、送信対象がAuxiliaryならAuxiliary切替も表示する。2領域とGraph全体表示は同じGraphを作り直さずに切り替え、幅の変更でnative scrollがclampされても、読んでいた位置（倍率・scrollLeft/Top）へ戻す。File／Diff／Templateを中央に開くとGraphは閉じる。
+
+中央と独立Windowは同じ図componentを使う。各ビューの話題、選択記録、倍率、scrollは独立し、別窓作成時だけ初期値を引き継ぐ。同じ親・話題の複数Windowも許可し、新規作成と既存Windowのfocusを区別する。展開区間の履歴は各ビュー内に保持し、新しいWindowは選択記録の近傍または話題の俯瞰から開く。中央Graphを閉じて開き直した場合も入力、最後のGraph位置と展開区間を保持し、file/Templateとの切替は既存の離脱確認を通す。
 
 関連記録を辿った場合だけ、詳細内の`Back To <記録名>`から元の話題・記録・倍率・scrollへ戻れる。通常のrecord選択と詳細dismissは詳細の選択履歴だけをリセットする。表示範囲外へ関連移動した場合は、詳細を閉じたり別のnodeを通常選択した後も、toolbarの`Back To Previous Range`から元の範囲・順序・倍率・scrollと移動元nodeのfocusへ戻れる。話題の直接選択は両方の戻り先をリセットする。復帰履歴は範囲のIDと閲覧状態を保持し、過去のrecord・relationを復元しない。同じ話題では元のID集合へ取得済みの最新payloadを対応付け、異なる話題へ戻る時は元の取得範囲を同一revisionで再検証してから表示する。再検証の失敗・競合は古いsnapshotの成功表示に置き換えず、戻り先を保持して再試行できる。詳細の×と詳細内のEscapeは選択を解除し、元のnodeへfocusを戻す。狭幅では詳細を図の作業面に重ね、その間は背面の図を操作対象から外す。ComposerやSession全体をmodalにはしない。
 
@@ -114,7 +116,7 @@ Topic間relationは保存済み端点のTopic・向き・kind別件数として�
 
 入口の`All Topics`は親Graphの全Topicを横断する。空・孤立Topicも残し、選択したTopicのsummaryで現行の要求・制約、採用済み判断、活動の進捗、観測結果、未解決事項、担当別の活動を分けて表示する。各分類の代表recordから本文へ進め、省略分は同じrevisionの追加取得で辿る。撤回・置換済みを現行条件に含めず、以前の判断や解消済み事項はTopic詳細に残す。Topic間の線は種類・方向別に保存済みrecord関係を数えた入口であり、Topic全体への依存を意味しない。内訳から元recordの両端へ移動できる。全体用の要約保存や追加AI実行は行わない。
 
-`Open Topic`またはsummaryのrecordを明示選択してTopic詳細へ進む。`All Topics`で元の全体の選択・倍率・scrollへ戻る。全体/詳細の範囲と中央/独立Windowの表示場所は別の軸で、会話切替や中央Graphの開閉では範囲・閲覧状態を保持する。Topic詳細では図のnodeからrecordを選択して詳細と関連recordを読む。通常選択では現在の概要・展開範囲とnode位置を維持し、選択node・直接の隣接node・edgeを強調する。他のnodeと関係も残す。recordの重複した選択一覧は置かず、nodeへのTab/Enterと詳細の関連リンクでも移動できる。recordと関連リンクはkeyboardでも開ける対象menuから別窓にも開ける。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。
+`Open Topic`またはsummaryのrecordを明示選択してTopic詳細へ進む。`All Topics`で元の全体の選択・倍率・scrollへ戻る。全体/詳細の範囲、中央の2領域/Graph全体表示、中央/独立Windowの表示場所はそれぞれ別の軸で、会話切替、2領域とGraph全体表示の切替、中央Graphの開閉では範囲・閲覧状態を保持する。Topic詳細では図のnodeからrecordを選択して詳細と関連recordを読む。通常選択では現在の概要・展開範囲とnode位置を維持し、選択node・直接の隣接node・edgeを強調する。他のnodeと関係も残す。recordの重複した選択一覧は置かず、nodeへのTab/Enterと詳細の関連リンクでも移動できる。recordと関連リンクはkeyboardでも開ける対象menuから別窓にも開ける。配置は取得した任意のrecord/関係から計算し、サンプル固有のIDや座標を持たない。
 
 新しさはrecordのサーバー保存日時`updatedAt`を使い、同内容の再保存でも進み、同一batchでは同時刻になり得る。Topic詳細は全所属recordの最小/最大日時、全体ビューは各Topicの全recordの最大日時を全Topicで比較する。表示page・選択・区間展開によって比較範囲を狭めない。空Topicは比較から除き、Topic自体やrelationだけの更新日時は代用しない。背景は古い`#1C212B`、中間`#263243`、新しい`#34465A`を時間幅の前半/後半で線形RGB補間し、同率最大のすべてへ`#D3DCE8`の内側上端帯を示す。record集約は構成recordの最大日時を使う。単一時刻は新しい背景と帯、対象が空なら帯なしとする。
 
@@ -128,7 +130,7 @@ Graph背景は`#12161E`、選択外枠と接続線は`#6FB8C7`、通常の枠・
 
 通常表示は話題の俯瞰図とする。図の幅・高さから可読cardが収まる目安を計算し、取得済みrecordがそれを超える場合、同じ種類・label・方向が続く直列区間を件数付きの`Expand Path`へ集約する。入辺・出辺が各1本で、両端のrecordを取得済みの区間だけを対象とし、分岐・合流、関係の種類・label・向きの変更、循環、未取得の接続先に接するrecordは個別表示を保つ。関係取得上限に達した部分Graphでは接続の完全性を確定できないため集約しない。recordの任意切捨てや文字を潰す自動Fitは行わない。
 
-集約nodeは実recordではなく、件数と区間の先頭・末尾titleを表示する。接続は破線で描き、区間の両端を直接のrelationで結ばない。開くとその区間と取得済みの境界recordを表示し、長い場合はより短い区間へ段階的に分ける。各recordへ必ず到達でき、上部toolbarの全体へ戻るツリー型icon（`Back To Overview`）／可視label付き`Back To Previous Range`で元の範囲・倍率・位置と展開元のfocusへ戻る。全体へ戻るツリー型iconにはhoverのtitleとaccessible nameを持たせる。深い区間では隣の`Overview`から俯瞰へ直接戻れる。会話復帰の`Back To Chat`と区別し、展開区間の先頭・末尾titleを別の見出し行へ重ねない。狭幅ではtoolbar操作を折り返す。展開後の通常選択でも範囲と位置を維持し、内部の関係を詳細から辿れる。分岐や循環が多い図は集約だけで画面内に収まるとは限らず、native scrollとCtrl操作を残す。
+集約nodeは実recordではなく、件数と区間の先頭・末尾titleを表示する。接続は破線で描き、区間の両端を直接のrelationで結ばない。開くとその区間と取得済みの境界recordを表示し、長い場合はより短い区間へ段階的に分ける。各recordへ必ず到達でき、上部toolbarの全体へ戻るツリー型icon（`Back To Overview`）／可視label付き`Back To Previous Range`で元の範囲・倍率・位置と展開元のfocusへ戻る。全体へ戻るツリー型iconにはhoverのtitleとaccessible nameを持たせる。深い区間では隣の`Overview`から俯瞰へ直接戻れる。展開区間の先頭・末尾titleを別の見出し行へ重ねない。狭幅ではtoolbar操作を折り返す。展開後の通常選択でも範囲と位置を維持し、内部の関係を詳細から辿れる。分岐や循環が多い図は集約だけで画面内に収まるとは限らず、native scrollとCtrl操作を残す。
 
 配置は無向の幅優先順で接続recordを近づけ、連結成分を分断せず矩形のまとまりとして幅・高さへ詰める。孤立nodeと小さな成分は同じ行も利用し、viewport内に収まる候補を優先する。幅と高さの比率を配置評価へ使うが、任意件数・任意長のlabelを1画面に収める保証はしない。行・列は時系列や依存方向を表さず、意味と方向は関係のlabelと矢印で示す。
 

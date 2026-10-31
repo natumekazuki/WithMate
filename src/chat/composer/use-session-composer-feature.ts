@@ -102,7 +102,6 @@ export type SessionComposerFeatureBridge = {
     forceBlockedFeedback: boolean;
     isMessageListFollowing: boolean;
     isPromptTemplateWorkspaceOpen: boolean;
-    chatNotice?: string;
     providerCatalog: ModelCatalogProvider | null | undefined;
     models: readonly ModelCatalogItem[];
     modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
@@ -585,7 +584,6 @@ export function useSessionComposerFeature(input: {
       selectedModelFallbackLabel: runtimeOptions.selectedModelFallbackLabel,
       reasoningOptions: runtimeOptions.reasoningSelectOptions,
       selectedReasoningEffort: bridge.session.reasoningEffort,
-      chatNotice: bridge.runtime.chatNotice,
       onPickFile: () => void bridge.operations.files.pick("file"),
       onPickFolder: () => void bridge.operations.files.pick("folder"),
       onPickImage: () => void bridge.operations.files.pick("image"),

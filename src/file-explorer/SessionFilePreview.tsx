@@ -113,7 +113,6 @@ type SessionFilePreviewProps = {
   onOpenDiff?: (scope: FileRootGitDiffScope) => Promise<string | null>;
   diffLoadingScope?: FileRootGitDiffScope | null;
   diffAvailabilityMessage?: string;
-  chatNotice?: string;
 };
 
 type LoadedFile = {
@@ -575,7 +574,6 @@ export function SessionFilePreview({
   onOpenDiff,
   diffLoadingScope = null,
   diffAvailabilityMessage = "",
-  chatNotice = "",
 }: SessionFilePreviewProps) {
   const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
   const currentFileActionsAvailable = !isSessionFileGitCommitResource(request);
@@ -1184,7 +1182,6 @@ export function SessionFilePreview({
         {backNavigation ? (
           <BackNavigationButton
             label={backNavigation.label}
-            notice={chatNotice || undefined}
             onBack={backNavigation.onBack}
           />
         ) : null}
@@ -1531,7 +1528,6 @@ export type SessionDiffPreviewProps = {
   onReload?: () => Promise<string | null>;
   loading?: boolean;
   reloadPending?: boolean;
-  chatNotice?: string;
   contextLabel?: string;
 };
 
@@ -1548,7 +1544,6 @@ export function SessionDiffPreview({
   onReload,
   loading = false,
   reloadPending = false,
-  chatNotice = "",
   contextLabel,
 }: SessionDiffPreviewProps) {
   const keyboardShortcuts = useShortcutSettings();
@@ -1667,7 +1662,6 @@ export function SessionDiffPreview({
         {backNavigation ? (
           <BackNavigationButton
             label={backNavigation.label}
-            notice={chatNotice || undefined}
             onBack={backNavigation.onBack}
           />
         ) : null}

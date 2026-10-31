@@ -77,7 +77,7 @@ export type SessionComposerExpandedProps = {
   recoveryActions?: ReactNode;
   dockModeSwitch?: ReactNode;
   providerQuota?: ReactNode;
-  chatNotice?: string;
+  attentionControl?: ReactNode;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
   showAttachmentControls?: boolean;
@@ -180,7 +180,7 @@ export function SessionComposerExpanded({
   recoveryActions = null,
   dockModeSwitch = null,
   providerQuota = null,
-  chatNotice,
+  attentionControl = null,
   composerBlocked,
   canSelectCustomAgent,
   showAttachmentControls = true,
@@ -401,16 +401,13 @@ export function SessionComposerExpanded({
     !!targetDock ||
     !!recoveryActions ||
     !!providerQuota ||
-    !!chatNotice ||
+    !!attentionControl ||
     isRunning;
 
   return (
     <div className="composer">
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
-          {chatNotice ? (
-            <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
-          ) : null}
           {showAttachmentControls ? (
             <ComposerAttachmentMenu
               disabled={!isActive || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen}
@@ -562,8 +559,9 @@ export function SessionComposerExpanded({
             </div>
           ) : null}
           {providerQuota ? <div className="session-provider-quota-slot">{providerQuota}</div> : null}
-          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch || recoveryActions ? (
+          {isRunning || showJumpToBottom || showMessageViewModeControls || targetDock || dockModeSwitch || recoveryActions || attentionControl ? (
             <div className="composer-toolbar-view-actions">
+              {attentionControl}
               {recoveryActions}
               <div
                 className={`session-action-dock-cancel-slot${isRunning ? " is-active" : ""}`}

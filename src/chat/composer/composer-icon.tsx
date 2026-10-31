@@ -1,7 +1,8 @@
 export type ComposerIconName =
   | "attach" | "template" | "skill" | "agent" | "folder-add" | "path" | "folders"
   | "main" | "auxiliary" | "preview" | "source" | "prompt" | "terminal"
-  | "send" | "resend" | "edit" | "stop" | "close" | "error" | "jump-bottom";
+  | "send" | "resend" | "edit" | "stop" | "close" | "error" | "jump-bottom"
+  | "approval" | "question" | "question-optional" | "new-messages" | "expand" | "restore";
 
 function iconBody(name: ComposerIconName) {
   switch (name) {
@@ -44,6 +45,18 @@ function iconBody(name: ComposerIconName) {
       return <><circle cx="12" cy="12" r="9" /><path d="M12 7v6m0 3v1" /></>;
     case "jump-bottom":
       return <path d="M12 3v13m-6-6 6 6 6-6M4 21h16" />;
+    case "approval":
+      return <><path d="M12 3 4 6v6c0 4.5 3.4 8 8 9 4.6-1 8-4.5 8-9V6Z" /><path d="m8.5 12 2.5 2.5 4.5-5" /></>;
+    case "question":
+      return <><circle cx="12" cy="12" r="9" fill="currentColor" fillOpacity=".22" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7m0 3v.5" /></>;
+    case "question-optional":
+      return <><circle cx="12" cy="12" r="9" strokeDasharray="3 2.4" /><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7m0 3v.5" /></>;
+    case "new-messages":
+      return <><path d="M20 12.5A7.5 7.5 0 0 1 9 19l-5 1.5L5.5 16A7.5 7.5 0 1 1 20 12.5Z" /><circle cx="19" cy="5" r="2.6" fill="currentColor" stroke="none" /></>;
+    case "expand":
+      return <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />;
+    case "restore":
+      return <path d="M4 14h6v6M20 10h-6V4M10 14l-7 7M14 10l7-7" />;
   }
 }
 

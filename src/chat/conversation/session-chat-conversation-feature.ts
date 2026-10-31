@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
@@ -19,7 +19,7 @@ export type SessionChatConversationFeatureInput = Omit<
   sessionId: string;
   character: CharacterProfile;
   messages: Message[];
-  mainContent?: ReactNode;
+  isConversationVisible: boolean;
 };
 
 export type SessionChatConversationFeature = ChatWindowProps["messageColumnProps"];
@@ -34,12 +34,13 @@ export function useSessionChatConversationFeature() {
 
   return {
     buildSurface(input: SessionChatConversationFeatureInput): SessionChatConversationFeature {
+      const { isConversationVisible, ...messageColumnInput } = input;
       return buildLiveSessionMessageColumnProps(
         buildLiveSessionCommonMessageColumnProps({
-          ...input,
+          ...messageColumnInput,
           expandedArtifacts,
           onToggleArtifact,
-          isContentActive: input.mainContent === undefined,
+          isContentActive: isConversationVisible,
         }),
       );
     },

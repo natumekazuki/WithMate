@@ -5085,10 +5085,10 @@ test("SessionActionDockCompactRow は通常時に preview/source と jump を表
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockはidle、noticeあり、runningの全状態で同じmeta領域から展開できる"
+// claim = "compact ActionDockはidle、会話通知あり、runningの全状態で同じmeta領域から展開でき、会話通知は展開buttonではなく操作列に置く"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "runningでmeta領域のbuttonが消え、実行状態によって同じ領域から展開できない"
-// observable = "各状態のbuttonのaccessible name、notice、click後のonExpand呼出回数"
+// fault = "runningか会話通知の有無でmeta領域のbuttonが消える、実行状態によって同じ領域から展開できない、または会話通知が展開buttonへ入り押すとDockを開くだけになる"
+// observable = "各状態のbuttonのaccessible name、展開button内の要素不在、操作列内の会話通知、click後のonExpand呼出回数"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock expand interaction"
 // lifecycle = "permanent"
@@ -5110,11 +5110,11 @@ test("SessionActionDockCompactRow は状態によらずmeta領域から展開す
 
   try {
     root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-    for (const [isRunning, chatNotice] of [[false, undefined], [false, "New messages"], [true, "New messages"]] as const) {
+    for (const [isRunning, hasAttention] of [[false, false], [false, true], [true, true]] as const) {
       await act(async () => {
         root?.render(React.createElement(SessionActionDockCompactRow, {
           isRunning,
-          chatNotice,
+          attentionControl: hasAttention ? React.createElement("button", { type: "button", className: "test-attention" }, "Main: New messages. Show Chat") : null,
           showJumpToBottom: false,
           onExpand: () => { expandCount += 1; },
           onJumpToBottom() {},
@@ -5128,9 +5128,10 @@ test("SessionActionDockCompactRow は状態によらずmeta領域から展開す
       assert.equal(button.type, "button");
       assert.equal(button.tabIndex, 0);
       assert.equal(row?.querySelectorAll(".session-action-dock-compact-expand-button").length, 1);
-      assert.equal(row?.querySelector(".session-action-dock-compact-badge.attention")?.textContent, chatNotice ?? undefined);
+      assert.equal(button.childElementCount, 0);
+      assert.equal(row?.querySelectorAll(".session-action-dock-compact-actions > .test-attention").length, hasAttention ? 1 : 0);
       await act(async () => button.click());
-      assert.equal(expandCount, isRunning ? 3 : chatNotice ? 2 : 1);
+      assert.equal(expandCount, isRunning ? 3 : hasAttention ? 2 : 1);
     }
   } finally {
     await act(async () => root?.unmount());
@@ -5144,10 +5145,10 @@ test("SessionActionDockCompactRow は状態によらずmeta領域から展開す
 
 // @test-value v2
 // kind = "contract"
-// claim = "compact ActionDockは実行中にCancel、Main / Auxiliary、jump操作を同じ列に維持する"
+// claim = "compact ActionDockは実行中に会話通知、Cancel、Main / Auxiliary、jump操作を同じ列に維持し、会話通知は先頭に置く"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Action Dock" }
-// fault = "実行中のcompact ActionDockからCancel、Main / Auxiliary、jump操作が欠けるか、Cancelがtarget slotの直前にない"
-// observable = "SessionActionDockCompactRowの実行中DOMにおけるjump button、Cancel、target slot、操作列のDOM順"
+// fault = "実行中のcompact ActionDockから会話通知、Cancel、Main / Auxiliary、jump操作が欠けるか、会話通知が先頭にない、またはCancelがtarget slotの直前にない"
+// observable = "SessionActionDockCompactRowの実行中DOMにおける会話通知、jump button、Cancel、target slot、操作列のDOM順"
 // observation_boundary = "component-behavior"
 // scope = "compact ActionDock running presentation"
 // lifecycle = "permanent"
@@ -5159,7 +5160,7 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
     React.createElement(SessionActionDockCompactRow, {
       isRunning: true,
       targetDock: React.createElement("span", { className: "test-target-dock" }, "Main / Auxiliary"),
-      chatNotice: "New messages",
+      attentionControl: React.createElement("button", { type: "button", className: "test-attention" }, "Main: New messages. Show Chat"),
       showJumpToBottom: true,
       cancelButtonTitle: "実行をキャンセル",
       onExpand() {},
@@ -5168,7 +5169,6 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
     }),
   );
 
-  assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("Cancel") < html.indexOf("Jump To Latest"));
   const renderedDocument = new JSDOM(html).window.document;
@@ -5179,7 +5179,8 @@ test("SessionActionDockCompactRow は実行中に jump button と Cancel を描�
   const targetSlot = actions?.querySelector(":scope > .session-action-dock-target-slot");
   assert.ok(cancelSlot);
   assert.ok(targetSlot);
-  assert.equal(actions.firstElementChild, cancelSlot);
+  assert.equal(actions.firstElementChild?.className, "test-attention");
+  assert.equal(actions.firstElementChild?.nextElementSibling, cancelSlot);
   assert.equal(cancelSlot.nextElementSibling, targetSlot);
   assert.equal(targetSlot.textContent, "Main / Auxiliary");
 });

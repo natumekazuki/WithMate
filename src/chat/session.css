@@ -87,25 +87,16 @@
   width: 100%;
 }
 
-.session-action-dock-compact-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--ink);
-  font-size: 0.72rem;
-  letter-spacing: 0.02em;
-}
-
-.session-action-dock-compact-badge.running {
-  background: rgba(56, 189, 248, 0.16);
-  color: #c8f1ff;
-}
-
-.session-action-dock-compact-badge.attention {
-  background: rgba(251, 191, 36, 0.18);
+/* Attention keeps the warm notice color and adds a ring so it does not rely on hue alone. */
+.session-page .composer-icon-button.conversation-attention-button {
+  border-color: rgba(251, 191, 36, 0.55);
+  background: rgba(251, 191, 36, 0.16);
   color: #fde68a;
+}
+
+.session-page .composer-icon-button.conversation-attention-button.kind-new-messages {
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.1);
 }
 
 .session-page .session-action-dock-cancel-slot > .session-send-button,
