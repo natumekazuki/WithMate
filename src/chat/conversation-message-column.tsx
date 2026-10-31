@@ -80,6 +80,8 @@ export type ConversationColumnControls = {
   captureMessageListSend: (scrollToLatestOnSend: boolean) => (() => void);
   onToggleAllMessageCollapse: () => void;
   followLatest: () => void;
+  /** Scrolls the pending approval or question form into view; returns whether its top is inside the list afterwards. */
+  revealRequest: () => boolean;
   messageNavigatorEntries: readonly MessageNavigatorEntry[];
   messageNavigatorPage?: MessageNavigatorPage;
   onJumpToMessage: (key: string) => void;
@@ -564,6 +566,21 @@ export function useConversationMessageColumn({
     setPageLoading(false);
     following.followMessageListLatest();
   }, [conversation, following.followMessageListLatest]);
+  const revealRequest = useCallback(() => {
+    const list = following.messageListRef.current;
+    const request = list?.querySelector<HTMLElement>(".live-approval-card[data-live-request-id]")
+      ?? list?.querySelector<HTMLElement>(".live-elicitation-card[data-live-request-id]");
+    if (!request) return false;
+    // Following keeps the list pinned to the bottom, so pause it before moving to the form.
+    const isInView = () => {
+      const requestBounds = request.getBoundingClientRect();
+      const listBounds = list!.getBoundingClientRect();
+      return requestBounds.top >= listBounds.top - 1 && requestBounds.top <= listBounds.bottom - 1;
+    };
+    following.pauseMessageListFollowing();
+    if (!isInView()) request.scrollIntoView({ block: "center" });
+    return isInView();
+  }, [following.messageListRef, following.pauseMessageListFollowing]);
   const onMessageListScroll = useCallback((_event: UIEvent<HTMLDivElement>) => {
     if (!enabled) return;
     following.handleMessageListScroll();
@@ -713,11 +730,12 @@ export function useConversationMessageColumn({
       captureMessageListSend,
       onToggleAllMessageCollapse,
       followLatest,
+      revealRequest,
       messageNavigatorEntries,
       messageNavigatorPage,
       onJumpToMessage,
     });
-  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, captureMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
+  }, [allMessagesCollapsed, collapseTargets, collapsedMessageKeys, followLatest, revealRequest, captureMessageListSend, following.isMessageListFollowing, messageNavigatorEntries, navigator.items, navigator.loading, navigator.error, navigatorFilter, navigatorOffset, onColumnControls, onJumpToMessage, sessionId]);
   const reloadLiveRun = async (requestId: string, requestKind: "approval" | "elicitation", eventRevision: number) => {
     if (!api?.getLiveSessionRun) return;
     const latestLiveRun = await api.getLiveSessionRun(sessionId);

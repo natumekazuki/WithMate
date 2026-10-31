@@ -19,9 +19,9 @@ const entriesFor = (input: Partial<Parameters<typeof resolveConversationAttentio
 
 // @test-value v2
 // kind = "contract"
-// claim = "会話非表示中の支援技術通知は新しい要求だけを一度読み上げ、同じ要求の再描画では再通知せず、解決で解除し、同じ文言の別requestと別会話の要求は再通知し、会話表示中に出た要求は戻った後に読み上げない"
+// claim = "会話非表示中の支援技術通知は新しい要求だけを一度読み上げ、同じ要求の再描画では再通知せず、解決で解除し（通知済みの要求の一部だけが解消しても古い文言を残さず）、同じ文言の別requestと別会話の要求は再通知し、会話表示中に出た要求は戻った後に読み上げない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/896: 支援技術への通知を一元化する" }
-// fault = "rerenderごとに同じ要求を読み上げる、解決後も古い文言を残す、文言だけで重複判定して別requestを通知しない、会話表示中に見た要求をPreviewへ戻った時に再通知する、nonblocking質問を回答必須と読み上げる、または対象会話の取り違えで通知を落とす"
+// fault = "rerenderごとに同じ要求を読み上げる、解決後や一部解消後も古い文言を残す、文言だけで重複判定して別requestを通知しない、会話表示中に見た要求をPreviewへ戻った時に再通知する、nonblocking質問を回答必須と読み上げる、または対象会話の取り違えで通知を落とす"
 // observable = "各状態遷移後のannouncement messageとserial（serialの増加が新しい読み上げ）"
 // observation_boundary = "public-boundary"
 // scope = "conversation attention announcement state transitions"
@@ -48,6 +48,16 @@ test("conversation attention announces each hidden request once and clears resol
     message: "Main: Approval required. Show the chat from the Action Dock to respond.",
   }, "a different request with the same wording is announced again");
 
+  assert.deepEqual(step(entriesFor({ approvalRequestId: "approval-3", hasUnreadMessages: true }), true), {
+    announced: true,
+    message: "Main: Approval required, New messages. Show the chat from the Action Dock to respond.",
+  });
+  assert.deepEqual(step(entriesFor({ hasUnreadMessages: true }), true), { announced: false, message: "" },
+    "resolving one announced request clears the text even while another entry remains");
+  assert.deepEqual(step(entriesFor({ approvalRequestId: "approval-2" }), true), {
+    announced: true,
+    message: "Main: Approval required. Show the chat from the Action Dock to respond.",
+  });
   assert.deepEqual(step(entriesFor({ approvalRequestId: "approval-2", optionalElicitationRequestIds: "question-1" }), true), {
     announced: true,
     message: "Main: Input requested. Show the chat from the Action Dock to respond.",

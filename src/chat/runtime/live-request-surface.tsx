@@ -273,6 +273,7 @@ function LiveElicitationCard({
   return (
     <section
       className="live-elicitation-card"
+      data-live-request-id={request.requestId}
       role="group"
       aria-label={request.blocking === false ? "Input requested" : "Input required"}
       aria-busy={isSubmitting || undefined}
@@ -585,6 +586,7 @@ function LiveApprovalCard({
   return (
     <section
       className="live-approval-card"
+      data-live-request-id={request.requestId}
       role="group"
       aria-label="Approval required"
       aria-busy={isApprovalSubmitting || undefined}

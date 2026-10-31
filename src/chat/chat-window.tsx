@@ -709,11 +709,29 @@ export function ChatWindow({
 
   // Notice actions reveal the conversation first; requests are reached once its column is rendered.
   const followAfterRevealRef = useRef(false);
+  const revealFrameRef = useRef<number | null>(null);
+  const revealRequestRef = useRef<(() => boolean) | null>(null);
+  revealRequestRef.current = targetColumnControls?.revealRequest ?? null;
   useEffect(() => {
     if (!followAfterRevealRef.current || !isConversationVisible || !targetColumnControls) return;
     followAfterRevealRef.current = false;
+    // Bring the pending request form into view; scrolling never focuses or answers it.
     targetColumnControls.followLatest();
+    // The re-shown column catches up with the live run and restores its previous position
+    // asynchronously, so keep the form in view until the position stays settled.
+    let frames = 0;
+    let settledFrames = 0;
+    const poll = () => {
+      revealFrameRef.current = null;
+      settledFrames = revealRequestRef.current?.() ? settledFrames + 1 : 0;
+      if (settledFrames >= 20 || ++frames >= 120) return;
+      revealFrameRef.current = window.requestAnimationFrame(poll);
+    };
+    revealFrameRef.current = window.requestAnimationFrame(poll);
   }, [isConversationVisible, targetColumnControls]);
+  useEffect(() => () => {
+    if (revealFrameRef.current !== null) window.cancelAnimationFrame(revealFrameRef.current);
+  }, []);
   const attentionControl = conversationAttention ? (
     <ConversationAttentionButton attention={{
       ...conversationAttention,

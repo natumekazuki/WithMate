@@ -60,12 +60,14 @@ export function orderedAttentionKinds(entries: readonly ConversationAttentionEnt
 export type AttentionAnnouncementState = {
   /** Entries that the user has already been told about or has seen in the conversation. */
   known: ReadonlySet<string>;
+  /** Entries the current message was announced for; the message ends when any of them resolves. */
+  announced: ReadonlySet<string>;
   message: string;
   /** Changes for every new announcement so an identical message is announced again. */
   serial: number;
 };
 
-export const initialAttentionAnnouncementState: AttentionAnnouncementState = { known: new Set(), message: "", serial: 0 };
+export const initialAttentionAnnouncementState: AttentionAnnouncementState = { known: new Set(), announced: new Set(), message: "", serial: 0 };
 
 /**
  * Announces entries that appear while the conversation is hidden. Re-renders keep the
@@ -86,12 +88,13 @@ export function advanceAttentionAnnouncement(
     const next = kinds.some((kind) => kind !== "new-messages")
       ? "Show the chat from the Action Dock to respond."
       : "Show the chat from the Action Dock to read them.";
-    return { known, message: `${targetLabel}: ${labels}. ${next}`, serial: state.serial + 1 };
+    return { known, announced: new Set(fresh.map((entry) => entry.key)), message: `${targetLabel}: ${labels}. ${next}`, serial: state.serial + 1 };
   }
-  const message = isConversationHidden && entries.length > 0 ? state.message : "";
+  const isMessageCurrent = isConversationHidden && [...state.announced].every((key) => known.has(key));
+  const message = isMessageCurrent ? state.message : "";
   return message === state.message && known.size === state.known.size && entries.every((entry) => state.known.has(entry.key))
     ? state
-    : { known, message, serial: state.serial };
+    : { known, announced: isMessageCurrent ? state.announced : new Set(), message, serial: state.serial };
 }
 
 /** The single assistive-technology announcement for conversation attention. */
