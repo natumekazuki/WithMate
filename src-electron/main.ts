@@ -2105,9 +2105,9 @@ function requireAuxiliarySessionService(): AuxiliarySessionService {
         assertPersistentStoreOwnerIsActive(owner, "Auxiliary session character snapshot");
         return snapshot;
       },
-      resolveSessionLaunchSelection: async (providerId) => {
+      resolveSessionLaunchSelection: async (providerId, workspacePath) => {
         assertPersistentStoreOwnerIsActive(owner, "Auxiliary session launch selection");
-        const selection = await requireSessionLaunchSelectionService().resolve(providerId);
+        const selection = await requireSessionLaunchSelectionService().resolve(providerId, workspacePath);
         assertPersistentStoreOwnerIsActive(owner, "Auxiliary session launch selection");
         return selection;
       },
