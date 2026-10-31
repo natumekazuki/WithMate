@@ -65,7 +65,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 - 送信中は重複操作を止め、受付失敗時は有効なformと入力値を保持してerrorを示す。通常チャットの本文からform回答を推測せず、通常割り込みだけでは回答済みにしない。
 - 添付の選択・保存中は対象入力と`Submit`を無効化する。単一選択では同じfieldの通常・自由回答radioも無効化し、添付完了による回答選択の上書きを防ぐ。他fieldと`Close`は維持し、成功・失敗後に対象fieldの再選択を許可する。添付失敗時は入力を保持してerrorを表示し、要求の終了・切替後に完了した選択・保存結果を別のSession・質問・fieldへ挿入しない。
 - 回答・拒否・Close・要求失効・turn終了後はformを閉じ、元の質問文と選択肢を通常の会話として残す。回答済み等の状態ラベルは表示しない。通常チャットで回答したかどうかは判定しない。
-- 通常質問の操作は`Close / Submit`とし、×と通常送信と共通の紙飛行機iconを使う。操作名はtooltipとaccessible nameへ残し、busy中もbuttonの寸法を維持する。Closeは質問だけを終了する。Codex nativeでは空の`answers`を返し、Claudeでは質問toolを拒否してturn自体は中断しない。turn停止は既存のCancelから行う。MCP formは`Reject / Close / Submit`、URL要求は`Reject / Close / Complete`の可視labelを維持する。
+- 通常質問の操作は`Close / Submit`とし、×と通常送信と共通の紙飛行機iconを使う。操作名はtooltipとaccessible nameへ残し、busy中もbuttonの寸法を維持する。Closeは質問だけを終了する。Codex nativeでは空の`answers`、Copilotでは空の`answer`を返し、Claudeでは質問toolを拒否してturn自体は中断しない。turn停止は既存のCancelから行う。MCP formは`Reject / Close / Submit`、URL要求は`Reject / Close / Complete`の可視labelを維持する。
 - 終端時の記録は通常assistant messageへ保存し、次turnや会話再表示でも操作を復元しない。記録にはformの入力値・既定値を保存しない。非同期回答を受け付けた本文は通常user messageとして保存する。強制終了前のlive formや未送信回答の復元は行わない。
 
 ## UI Implementation Boundary

@@ -66,7 +66,9 @@ providerごとの差は次。
   - custom agent は `~/.copilot/agents` と workspace `.github/agents` を探索し、picker には `user-invocable: true` の定義だけを出す。turn の送信値は `customAgents` / `agent` に変換する
   - rich command timeline は未対応
   - `on-request` で non-read-only permission request が来た場合は、Main Process の `onApprovalRequest` bridge を通して Session UI の approval card へ中継し、user の `approve / deny` を SDK `PermissionHandler` へ返す
-  - `elicitation.requested` が来た場合は、Main Process の `onElicitationRequest` bridge を通して Session UI の form / url card へ中継し、user の `accept / decline / cancel` を RPC で返す
+  - turn送信前に`user_input.requested`と`elicitation.requested`のconsumer interestを登録し、通常終了時に解放する。取消時は専用CLI processの停止で破棄する。SDKのhandler callbackは併用せず、eventのrequest IDを回答まで保持する
+  - `user_input.requested`は`kind: "question"`として共通質問UIへ中継する。選択肢は単一選択、`allowFreeform`省略時は自由回答可、選択肢なしはtext入力とし、`handlePendingUserInput`へ回答と`wasFreeform`を返す。Close／UI不在は空の回答で質問を終了し、turn自体は中断しない
+  - `elicitation.requested`は同じ`onElicitationRequest` bridgeからform / URL UIへ中継し、`handlePendingElicitation`へ`accept / decline / cancel`を返す。変換できないfieldが1つでもあれば全体を`decline`し診断を残す。UI不在は`cancel`とし、不完全なformを受理しない。質問・elicitationの回答RPCの拒否・失敗はturn失敗として扱うが、取消cleanup開始後の切断は新たな回答失敗へ昇格させない。取消より先に発生した回答失敗は維持する
   - Electron main process では `src-electron/providers/provider-binary-paths.ts` を正本にして staged native Copilot CLI binary を明示して起動する
   - `LatestCommand` と artifact `operationTimeline` には、`shell / powershell / bash` に加えて `create / edit / replace / move / delete` のような mutating tool も `command_execution` として正規化して返す
   - `artifact` は snapshot diff fallback を使って `changedFiles / runChecks / operationTimeline` を最小構成で返す

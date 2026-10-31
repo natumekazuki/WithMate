@@ -7,7 +7,7 @@ import type { CopilotClient, CopilotSession, PermissionRequest, SessionEvent } f
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
-import type { LiveRunStep, LiveApprovalRequest, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { LiveRunStep, LiveApprovalRequest, LiveSessionRunState, LiveElicitationRequest, LiveElicitationResponse } from "../../src-shared/session/runtime-state.js";
 import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src-shared/settings/model-catalog.js";
@@ -34,7 +34,7 @@ import {
   toCopilotReasoningEffort,
 } from "../../src-electron/providers/copilot/copilot-adapter.js";
 import { applyCopilotAssistantEvent } from "../../src-electron/providers/copilot/copilot-turn-events.js";
-import { buildLiveElicitationRequestFromCopilotEvent } from "../../src-electron/providers/copilot/copilot-elicitation.js";
+import { buildLiveElicitationRequestFromCopilotEvent, buildLiveElicitationRequestFromCopilotUserInput } from "../../src-electron/providers/copilot/copilot-elicitation.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../../src-electron/providers/mcp-elicitation.js";
 import {
   buildCopilotProviderQuotaTelemetry,
@@ -150,6 +150,207 @@ const CUSTOM_AGENT_CONFIGS = [
     tools: null,
   },
 ] as const;
+
+function createInteractionRpc() {
+  return { eventLog: {
+    registerInterest: async ({ eventType }: { eventType: string }) => ({ handle: eventType }),
+    releaseInterest: async () => ({}),
+  } };
+}
+
+function interactionTurn(event: SessionEvent, response?: LiveElicitationResponse, acknowledge = async () => ({ success: true }), signal?: AbortSignal) {
+  const input = createRunSessionInput({ customAgentName: "" });
+  input.signal = signal;
+  const calls = { send: 0, abort: 0 };
+  const requests: LiveElicitationRequest[] = [];
+  const replies: { method: string; payload: unknown }[] = [];
+  const interests: string[] = [];
+  const released: string[] = [];
+  const logs: string[] = [];
+  const listeners = new Set<(event: SessionEvent) => void>();
+  const emit = (type: string, data: Record<string, unknown>) => {
+    for (const listener of listeners) listener({ type, data } as SessionEvent);
+  };
+  const reply = async (method: string, payload: unknown) => {
+    replies.push({ method, payload });
+    emit("tool.execution_complete", { toolCallId: "ask", success: true });
+    emit("session.idle", {});
+    return acknowledge();
+  };
+  const session = {
+    sessionId: "interaction-thread",
+    rpc: {
+      eventLog: {
+        async registerInterest({ eventType }: { eventType: string }) { interests.push(eventType); return { handle: eventType }; },
+        async releaseInterest({ handle }: { handle: string }) { released.push(handle); return {}; },
+      },
+      ui: {
+        handlePendingUserInput: (payload: unknown) => reply("userInput", payload),
+        handlePendingElicitation: (payload: unknown) => reply("elicitation", payload),
+      },
+    },
+    on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
+    async send() {
+      calls.send += 1;
+      assert.deepEqual(interests, ["user_input.requested", "elicitation.requested"]);
+      emit("assistant.message", { messageId: "before", content: "Before" });
+      for (const listener of listeners) listener(event);
+      return "sent";
+    },
+    async abort() { calls.abort += 1; emit("session.idle", {}); },
+    async disconnect() {},
+  };
+  if (response) input.onElicitationRequest = (request) => { requests.push(request); return response; };
+  const adapter = new CopilotAdapter({ turnCancelGraceMs: 0, log: (entry) => { logs.push(entry.message); } });
+  const ports = adapter as unknown as {
+    getSession(): Promise<unknown>;
+    runSessionTurnOnce(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<RunSessionTurnResult>;
+  };
+  ports.getSession = async () => ({ session, selection: { requestedModel: "gpt-4.1", resolvedModel: "gpt-4.1", requestedReasoningEffort: "high", resolvedReasoningEffort: "high" },
+    client: { stop: async () => [], forceStop: async () => {} }, clientKey: "interaction-client" });
+  return { run: () => ports.runSessionTurnOnce(input, EMPTY_PROMPT), requests, replies, interests, released, logs, calls, listeners };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilot質問は候補と自由回答の許可を保ち、候補なしはtext入力として表示できる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/915" }
+// fault = "allowFreeform省略をfalseへ変える、候補を失う、または通常質問をMCP formとして返す"
+// observable = "SDK eventから変換したkind・request ID・質問文・fieldと選択肢"
+// observation_boundary = "component-behavior"
+// scope = "Copilot user_input.requested projection"
+// lifecycle = "permanent"
+// impact = "利用者が回答を入力できないか、許可されていない自由回答を送る"
+// distinction = "SDK型検査ではWithMateの質問fieldへの意味の写像を保証できず、小さい入力表で継続確認する"
+// @end-test-value
+it("Copilotの質問は選択肢と自由回答の制約を共通fieldへ保持する", () => {
+  for (const allowFreeform of [undefined, true, false]) {
+    const request = buildLiveElicitationRequestFromCopilotUserInput("copilot", { type: "user_input.requested", data: {
+      requestId: "question-1", question: "Which color?", choices: ["Red", "Blue"], allowFreeform,
+    } } as SessionEvent & { type: "user_input.requested" });
+    assert.deepEqual(request, { requestId: "question-1", provider: "copilot", kind: "question", mode: "form", message: "Which color?", fields: [{
+      type: "select", name: "answer", title: "Which color?", required: true,
+      options: [{ value: "Red", label: "Red" }, { value: "Blue", label: "Blue" }], allowFreeText: allowFreeform !== false,
+    }] });
+  }
+  for (const choices of [undefined, []]) {
+    assert.deepEqual(buildLiveElicitationRequestFromCopilotUserInput("copilot", { type: "user_input.requested", data: {
+      requestId: "text-1", question: "Your name?", choices,
+    } } as SessionEvent & { type: "user_input.requested" }).fields, [{ type: "text", name: "answer", title: "Your name?", required: true }]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilot質問を同一request IDでUIへ渡し、選択・自由回答・Close・UI不在をnative回答へ変換してturnを完了する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "interestを登録しない、別requestへ返信する、wasFreeformを誤る、またはCloseでturnを中断する"
+// observable = "UI callbackのrequestと本文位置、SDK回答payload、interest解放と正常turn result"
+// observation_boundary = "public-boundary"
+// scope = "Copilot turn interaction bridge"
+// lifecycle = "permanent"
+// impact = "質問が配信されないかtoolが待機し続け、利用者の回答を誤って送る"
+// distinction = "projection単体ではevent購読・回答RPC・turn終了を確認できず、外部通信なしで4経路を検証する"
+// @end-test-value
+it("Copilot質問の回答とCloseを元のnative requestへ返す", async () => {
+  for (const response of [{ action: "accept", content: { answer: "Blue" } }, { action: "accept", content: { answer: "Green" } }, { action: "cancel" }, undefined] as const) {
+    const fixture = interactionTurn({ type: "user_input.requested", data: { requestId: "ask-1", question: "Which color?", choices: ["Red", "Blue"] } } as SessionEvent, response);
+    const result = await fixture.run();
+    assert.equal(result.assistantText, "Before");
+    assert.deepEqual(fixture.replies, [{ method: "userInput", payload: { requestId: "ask-1", response: {
+      answer: response?.action === "accept" ? response.content.answer : "", wasFreeform: response?.action !== "accept" || response.content.answer !== "Blue",
+    } } }]);
+    assert.deepEqual(fixture.released, fixture.interests);
+    assert.equal(fixture.requests.length, response ? 1 : 0);
+    if (response) {
+      assert.equal(fixture.requests[0].kind, "question");
+      assert.equal(fixture.requests[0].requestId, "ask-1");
+      assert.equal(fixture.requests[0].textPosition, "Before".length);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilot MCP formは全fieldを変換できる場合だけUIへ提示し、unsupported fieldを含む要求全体をdeclineする"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "unsupported fieldを落とした不完全なformをacceptするか、回答をpending elicitation RPC以外へ送る"
+// observable = "UIへ渡るfield、handlePendingElicitationへの要求単位の回答とunsupported診断"
+// observation_boundary = "public-boundary"
+// scope = "Copilot elicitation schema and response bridge"
+// lifecycle = "permanent"
+// impact = "必須の入力が欠けたまま外部toolに受理されるか、元の要求が保留のままになる"
+// distinction = "既存schema単体testでは要求全体の拒否と実turnの回答RPCを検出できず、小さいschema表で保証する"
+// @end-test-value
+it("Copilot MCP elicitationは不完全なformを受理せず要求単位で回答する", async () => {
+  for (const unsupported of [false, true]) {
+    const response: LiveElicitationResponse = { action: "accept", content: { name: "Project" } };
+    const fixture = interactionTurn({ type: "elicitation.requested", data: { requestId: "mcp-1", message: "Project", mode: "form", elicitationSource: "server",
+      requestedSchema: { type: "object", properties: { name: { type: "string" }, ...(unsupported ? { nested: { type: "object" } } : {}) }, required: ["name"] },
+    } } as unknown as SessionEvent, response);
+    await fixture.run();
+    assert.equal(fixture.requests.length, unsupported ? 0 : 1);
+    assert.deepEqual(fixture.replies, [{ method: "elicitation", payload: { requestId: "mcp-1", result: unsupported ? { action: "decline" } : response } }]);
+    assert.equal(fixture.logs.some(log => log.includes("Unsupported Copilot elicitation schema")), unsupported);
+    assert.deepEqual(fixture.released, fixture.interests);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotの入力回答はnative ACK前にturn成功とせず、拒否・通信失敗を取消ではなく失敗として返す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "idleが先に届くと回答RPC失敗を無視してturnを成功にする"
+// observable = "ACK待機中の未完了、ACK拒否・例外で返るProviderTurnErrorとcanceled=false"
+// observation_boundary = "public-boundary"
+// scope = "Copilot interaction RPC acknowledgement"
+// lifecycle = "permanent"
+// impact = "届いていない回答を成功扱いしてユーザーへ伝える"
+// distinction = "通常回答testはACK前のidleやRPC失敗を再現せず、deferred ACKで順序を決定して確認する"
+// @end-test-value
+it("Copilotはidleが先でも回答ACKを待ち拒否とRPC失敗を報告する", { timeout: 1000 }, async () => {
+  for (const rejectRpc of [false, true]) {
+    const ack = Promise.withResolvers<{ success: boolean }>();
+    const fixture = interactionTurn({ type: "user_input.requested", data: { requestId: "ack-1", question: "Name?" } } as SessionEvent,
+      { action: "accept", content: { answer: "Name" } }, () => ack.promise);
+    let settled = false;
+    const result = fixture.run();
+    void result.then(() => { settled = true; }, () => { settled = true; });
+    while (fixture.replies.length === 0) await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(settled, false);
+    if (rejectRpc) ack.reject(new Error("input RPC unavailable"));
+    else ack.resolve({ success: false });
+    await assert.rejects(result, (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.equal(error.canceled, false);
+      assert.match(error.message, rejectRpc ? /input RPC unavailable/ : /no longer pending/);
+      return true;
+    });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotのbootstrap中に取消済みとなったturnは未送信のまま既存取消経路で終了する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "既発火abortを見落とし、送信せず届かないidleを待ち続ける"
+// observable = "ProviderTurnErrorのcanceled、sendとabort回数、turn後のlistener解放"
+// observation_boundary = "public-boundary"
+// scope = "Copilot pre-send cancellation"
+// lifecycle = "permanent"
+// impact = "Cancel後にturnと再送guardが終了しない"
+// distinction = "実行中sendの既存取消testはbootstrap終了時の既発火signalを確認せず、未送信fixtureで有限時間に確認する"
+// @end-test-value
+it("Copilotはbootstrap終了時に取消済みでも未送信で終了する", { timeout: 1000 }, async () => {
+  const fixture = interactionTurn({ type: "session.idle", data: {} } as SessionEvent, undefined, undefined, AbortSignal.abort());
+  await assert.rejects(fixture.run(), (error: unknown) => {
+    assert.ok(error instanceof ProviderTurnError);
+    assert.equal(error.canceled, true);
+    return true;
+  });
+  assert.deepEqual(fixture.calls, { send: 0, abort: 1 });
+  assert.equal(fixture.listeners.size, 0);
+});
 
 function resolveCustomAgents(_workspacePath: string, selectedAgentName: string) {
   return {
@@ -1743,6 +1944,7 @@ it("Copilot 多数eventでもnative metadataと全本文を保持する", async 
   const body = "answer".repeat(20000);
   const session = {
     sessionId: "bounded",
+    rpc: createInteractionRpc(),
     on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
     async send() {
       const emit = (event: unknown) => { for (const listener of listeners) listener(event as SessionEvent); };
@@ -1796,6 +1998,7 @@ it("Copilot final projectionはbinding referenceを通常履歴から除去す�
   const listeners = new Set<(event: SessionEvent) => void>();
   const session = {
     sessionId: "thread-redaction",
+    rpc: createInteractionRpc(),
     on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
     async send() {
       const emit = (event: unknown) => { for (const listener of listeners) listener(event as SessionEvent); };
@@ -1893,6 +2096,7 @@ it("Copilot tool errorは秘匿後にpreview化しliveと全terminal artifactを
     const liveOperations = new Map<string, LiveRunStep>();
     const session = {
       sessionId: "thread-error-boundary",
+      rpc: createInteractionRpc(),
       on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
       async send() {
         const emit = (type: string, data: Record<string, unknown>) => {
@@ -1975,6 +2179,7 @@ it("Copilot 長文でもmetadataと正常・cancel partialを保持する", asyn
     const body = `本文${"あ😀".repeat(180_000)}`;
     const session = {
       sessionId: "raw-retention-thread",
+      rpc: createInteractionRpc(),
       on(listener: (event: SessionEvent) => void) { listeners.add(listener); return () => listeners.delete(listener); },
       async send() {
         for (let index = 0; index < 100; index += 1) {
@@ -2019,12 +2224,23 @@ it("Copilot 長文でもmetadataと正常・cancel partialを保持する", asyn
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotのturn完了は背景quota取得の完了を待たない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
+// fault = "完了経路でquota取得をawaitしてturnが停止する"
+// observable = "quota取得未完了でも返るturn resultとquota取得回数"
+// observation_boundary = "public-boundary"
+// scope = "Copilot turn completion"
+// lifecycle = "permanent"
+// @end-test-value
 it("Session完了後のquota telemetry停止はturn resultを待たせない", async () => {
   const input = createRunSessionInput();
   const prompt = EMPTY_PROMPT;
   const listeners = new Set<(event: { type: string; data: Record<string, unknown> }) => void>();
   const session = {
     sessionId: "thread-quota-background",
+    rpc: createInteractionRpc(),
     on(listener: (event: { type: string; data: Record<string, unknown> }) => void) {
       listeners.add(listener);
       return () => listeners.delete(listener);
