@@ -5,6 +5,7 @@ import React from "react";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { ElicitationRecord, LiveApprovalRequest, LiveElicitationRequest } from "../../src-shared/session/runtime-state.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveRequestSurfaceProps, type LiveElicitationDrafts } from "../../src/chat/runtime/live-request-surface.js";
 import { getShortcutDispatcher, SHORTCUT_COMMAND_IDS } from "../../src/settings/shortcut-registry.js";
@@ -225,7 +226,7 @@ const elicitationRequest: LiveElicitationRequest = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "質問の画像と通常fileのpasteは対象sessionへ保存され、改行を保持した同じrequestの同じfieldの文字列回答になる"
+// claim = "質問のfile-backed画像と通常fileのpasteは元の名前で対象sessionへ保存され、改行を保持した同じrequestの同じfieldの文字列回答になる"
 // oracle = { type = "contract", ref = "Issue #862: multiline free answer and attachment paths in the original question response; docs/design/desktop-ui.md#question-forms" }
 // fault = "pasteを通常composerや別質問へ挿入する、sessionを誤る、または添付を別promptや別payloadへ分離する"
 // observable = "保存APIのsessionIdとfile内容、各textarea値、元requestのSubmit payload"
@@ -251,11 +252,12 @@ test("LiveRequestSurface はmixed pasteを対象質問の文字列回答に保�
   });
   try {
     Object.defineProperty(mounted.dom.window, "withmate", { value: {
+      isClipboardFileBacked: () => true,
       async savePastedSessionFile(input: { sessionId: string; fileName: string; data: ArrayBuffer }) {
         saved.push({ sessionId: input.sessionId, fileName: input.fileName, content: new TextDecoder().decode(input.data) });
         return `C:/session-files/${input.fileName}`;
       },
-    } });
+    } satisfies Pick<WithMateWindowApi, "isClipboardFileBacked" | "savePastedSessionFile"> });
     const answer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer A"]')!;
     const note = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Note A"]')!;
     const otherAnswer = mounted.container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Answer B"]')!;
