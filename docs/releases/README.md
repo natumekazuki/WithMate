@@ -8,6 +8,12 @@ WithMateのrepository内リリースノートです。各リリースで利用�
 
 リリース後の利用確認と収録Issueの完了は[Development Workflowの完了運用](../runbooks/development-workflow.md#課題の対応予定とmilestone)に従います。preview利用後に問題なしと判断しても、公開時点の記載は書き換えず、受入結果や新たに見つかった不具合はIssue／PRへ記録します。IssueのCloseは正式公開やMilestone完了を意味しません。
 
+## 公開元と順序
+
+- previewは版別の開発ブランチから公開できます。正式版は開発ブランチでversion、リリースノート、必要な検証を整え、`master`宛てのPRでCIの成功を確認してから統合します。
+- 正式版のタグ`vX.Y.Z`は、`master`上の公開対象commitへ付与します。配布物はそのcommitから作成し、ソース・タグとともに公開対象を揃えます。GitHub Releasesへの配布物アップロードは、公開方法として指定された場合に行います。
+- 正式公開と対象Issueの完了・正当な延期を確認した後にMilestoneをCloseします。公開方法に関係なく、merge、push、タグ付与、公開等には操作範囲の承認が必要です。
+
 ## 保存と参照
 
 - リリースノートとこの索引は、一般文書・ADRとは別枠でrepository内に恒久保存します。過去のノートも削除せず、GitHub Releasesのみへの移管や期限付き保存は行いません。今後作成するノートにも同じ規則を適用します。
@@ -24,6 +30,7 @@ WithMateのrepository内リリースノートです。各リリースで利用�
 
 | Version | Release Notes |
 | --- | --- |
+| v6.3.29 | [WithMate v6.3.29](v6.3.29.md) |
 | v6.3.29-preview.21 | [WithMate v6.3.29-preview.21](v6.3.29-preview.21.md) |
 | v6.3.29-preview.20 | [WithMate v6.3.29-preview.20](v6.3.29-preview.20.md) |
 | v6.3.29-preview.19 | [WithMate v6.3.29-preview.19](v6.3.29-preview.19.md) |
