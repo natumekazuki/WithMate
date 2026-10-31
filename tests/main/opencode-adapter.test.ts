@@ -168,6 +168,95 @@ it("OpenCode completes only the current root request and replaces provisional te
 
 // @test-value v2
 // kind = "contract"
+// claim = "OpenCodeは降順の初回pageからcursorを引き継ぎ、現在入力までの全pageを使ってturn結果を返す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/916" }
+// fault = "cursorとorderを同時に送るか、複数pageの現在入力後のmessageを欠落・逆順にする"
+// observable = "message.listの要求とadapterが返す確定本文"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode current request message pagination"
+// lifecycle = "permanent"
+// impact = "100件を超えるturnが失敗する、または回答を正しい順序で表示できなくなる"
+// distinction = "単一pageのturn testと型検査では、cursor付き要求のAPI制約とpage間の順序を確認できない"
+// @end-test-value
+it("OpenCode continues descending message pages with the cursor alone", async () => {
+  const turn = input(); const run = fixture(turn);
+  const requests: Array<Parameters<typeof run.client.message.list>[0]> = [];
+  const assistant = (id: string, text?: string): SessionMessageInfo => ({ id, type: "assistant", time: { created: 3 }, agent: "build",
+    model: { providerID: "opencode-go", id: "glm-5.3" }, content: text ? [{ type: "text", text }] : [] });
+  run.client.message.list = async (request) => {
+    requests.push(request);
+    if (!request.cursor) return { data: [
+      { id: "idle", type: "idle", outcome: "succeeded", time: { created: 4 } }, assistant("newest", "final"),
+      ...Array.from({ length: 98 }, (_, index) => assistant(`filler-${index}`)),
+    ], cursor: { next: "next-page" } };
+    const prompt = run.getPrompt()!;
+    return { data: [assistant("older", "earlier"),
+      { id: prompt.id!, type: "user", text: prompt.text, metadata: prompt.metadata, time: { created: 2 } },
+      assistant("prior-turn", "must not appear")], cursor: {} };
+  };
+  const result = await run.adapter.runSessionTurn(turn);
+  assert.deepEqual(requests, [
+    { sessionID: "root", order: "desc", limit: 100 },
+    { sessionID: "root", cursor: "next-page", limit: 100 },
+  ]);
+  assert.equal(result.assistantText, "earlier\n\nfinal");
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "OpenCodeはpageを跨いで現在入力を探す際、同じcursorが再出現したら失敗する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/916" }
+// fault = "進まないcursorを再要求し続ける"
+// observable = "adapterの失敗とmessage.listの呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode current request message cursor guard"
+// lifecycle = "permanent"
+// impact = "終了済みturnの結果取得が無限に続く"
+// distinction = "正常なcursorのpage testではcursor停滞時の終了を確認できない"
+// @end-test-value
+it("OpenCode rejects a repeated message cursor", async () => {
+  const turn = input(); const run = fixture(turn);
+  let requests = 0;
+  run.client.message.list = async () => {
+    if (++requests > 2) throw new Error("Unexpected extra message page");
+    return { data: [], cursor: { next: "same-cursor" } };
+  };
+  await assert.rejects(run.adapter.runSessionTurn(turn), /messages cursor did not advance/);
+  assert.equal(requests, 2);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "OpenCodeは後続pageで見つけた現在入力のIDとtypeとrequest metadataを照合する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/916" }
+// fault = "一致するIDだけで他のtypeや異なるrequest metadataを現在入力とみなす"
+// observable = "adapterの帰属不一致エラーとmessage.listの呼出し回数"
+// observation_boundary = "public-boundary"
+// scope = "OpenCode paginated current request attribution"
+// lifecycle = "permanent"
+// impact = "別のmessageを境界として誤認し、今回のturnの結果を誤って確定する"
+// distinction = "正常な複数pageのtestではID以外の帰属照合を確認できない"
+// @end-test-value
+it("OpenCode rejects unattributable current input on a later page", async () => {
+  for (const mismatch of ["type", "metadata"] as const) {
+    const turn = input(); const run = fixture(turn);
+    let requests = 0;
+    run.client.message.list = async (request) => {
+      requests++;
+      if (!request.cursor) return { data: [], cursor: { next: "next-page" } };
+      const prompt = run.getPrompt()!;
+      const message: SessionMessageInfo = mismatch === "type"
+        ? { id: prompt.id!, type: "assistant", time: { created: 2 }, agent: "build", model: { providerID: "opencode-go", id: "glm-5.3" }, content: [] }
+        : { id: prompt.id!, type: "user", text: prompt.text, metadata: { ...prompt.metadata, withmateRequestID: "other-request" }, time: { created: 2 } };
+      return { data: [message], cursor: {} };
+    };
+    await assert.rejects(run.adapter.runSessionTurn(turn), /request attribution mismatch/);
+    assert.equal(requests, 2);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "OpenCodeの切断は取得済み本文とthreadをpartial errorへ保持しpromptを再送しない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
 // fault = "EOFを成功にするか再送で同じ入力の副作用を重複実行する"
