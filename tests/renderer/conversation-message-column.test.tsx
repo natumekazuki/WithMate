@@ -326,6 +326,8 @@ test("HTML previewのFind通知はactiveなMain/Auxiliary会話の検索を開�
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { get: () => 600 });
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", { get: () => 800 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", { get: () => 600 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { get: () => 800 });
   Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", { value() {} });
   Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", { value() {} });
   const intersection = installIntersectionObserver();
@@ -1135,6 +1137,8 @@ test("queue move retains focus across the active queued head and tail", async ()
   dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { get: () => 600 });
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", { get: () => 800 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", { get: () => 600 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { get: () => 800 });
   const intersection = installIntersectionObserver();
   let items: SessionTurnQueueReceipt[] = [];
   let finish!: () => void;

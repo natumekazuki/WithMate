@@ -1838,6 +1838,8 @@ test("ChatWindowのCollapseは対象messageの有無に応じてdisabledを切�
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 600 });
   Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 800 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 600 });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 800 });
   class TestResizeObserver {
     observe() {}
     unobserve() {}

@@ -1,6 +1,6 @@
 # Coding Agent Capability Matrix
 
-WithMateが現在のSession UIから利用できるprovider機能を示す。provider APIの一般的な対応表ではなく、WithMateのadapterとUIに接続済みの範囲である。Codexは公式CLIのApp Server、CopilotとClaudeは公式SDK、OpenCodeはPCのPATH上の公式CLI `2.2.1`と同梱client `2.2.1`を使用する。実行・認可の責務は[Provider Adapter](provider-adapter.md)を参照する。
+WithMateが現在のSession UIから利用できるprovider機能を示す。provider APIの一般的な対応表ではなく、WithMateのadapterとUIに接続済みの範囲である。Codexは公式CLIのApp Server、CopilotとClaudeは公式SDK、OpenCodeはPCのPATH上の公式CLI `2.2.5`と同梱client `2.2.5`を使用する。実行・認可の責務は[Provider Adapter](provider-adapter.md)を参照する。
 
 | 機能 | Codex | GitHub Copilot | Claude Agent | OpenCode | WithMateの境界 |
 | --- | --- | --- | --- | --- | --- |

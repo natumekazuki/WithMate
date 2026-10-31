@@ -168,9 +168,17 @@ function installElementSize(dom: JSDOM): () => void {
   const prototype = dom.window.HTMLElement.prototype;
   const previousOffsetWidth = Object.getOwnPropertyDescriptor(prototype, "offsetWidth");
   const previousOffsetHeight = Object.getOwnPropertyDescriptor(prototype, "offsetHeight");
+  const previousClientWidth = Object.getOwnPropertyDescriptor(prototype, "clientWidth");
+  const previousClientHeight = Object.getOwnPropertyDescriptor(prototype, "clientHeight");
   Object.defineProperty(prototype, "offsetWidth", { configurable: true, get: () => 800 });
   Object.defineProperty(prototype, "offsetHeight", { configurable: true, get: () => 600 });
+  Object.defineProperty(prototype, "clientWidth", { configurable: true, get: () => 800 });
+  Object.defineProperty(prototype, "clientHeight", { configurable: true, get: () => 600 });
   return () => {
+    if (previousClientWidth) Object.defineProperty(prototype, "clientWidth", previousClientWidth);
+    else Reflect.deleteProperty(prototype, "clientWidth");
+    if (previousClientHeight) Object.defineProperty(prototype, "clientHeight", previousClientHeight);
+    else Reflect.deleteProperty(prototype, "clientHeight");
     if (previousOffsetWidth) {
       Object.defineProperty(prototype, "offsetWidth", previousOffsetWidth);
     } else {

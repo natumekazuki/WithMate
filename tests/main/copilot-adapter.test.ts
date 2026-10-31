@@ -1035,38 +1035,74 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(adapter.sessions.size, 1);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Copilotのplatformとarchから対応するSDK native package名を返す"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "別OS用packageを選ぶか非対応archを許可する"
+  // observable = "resolveNativeCopilotPackageNameの返却値"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("platform / arch から native Copilot package 名を決める", () => {
-    assert.equal(resolveNativeCopilotPackageName("win32", "x64"), "@github/copilot-win32-x64");
-    assert.equal(resolveNativeCopilotPackageName("darwin", "arm64"), "@github/copilot-darwin-arm64");
-    assert.equal(resolveNativeCopilotPackageName("linux", "x64"), "@github/copilot-linux-x64");
+    assert.equal(resolveNativeCopilotPackageName("win32", "x64"), "@github/copilot-sdk-win32-x64");
+    assert.equal(resolveNativeCopilotPackageName("darwin", "arm64"), "@github/copilot-sdk-darwin-arm64");
+    assert.equal(resolveNativeCopilotPackageName("linux", "x64"), "@github/copilot-sdk-linux-x64");
     assert.equal(resolveNativeCopilotPackageName("win32", "ia32"), null);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Electron開発時はSDK native packageのruntime wrapperを使う"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "package内prebuilds階層を落とすかPATH版を優先する"
+  // observable = "resolveCopilotCliPathのpackage照会と返却値"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("Electron では native Copilot CLI binary を優先して使う", () => {
     const resolved = resolveCopilotCliPath(
       (specifier) => {
-        assert.equal(specifier, "@github/copilot-win32-x64/package.json");
+        assert.equal(specifier, "@github/copilot-sdk-win32-x64/package.json");
         return path.join("C:\\sdk", "package.json");
       },
-      (candidate) => candidate === path.join("C:\\sdk", "copilot.exe"),
+      (candidate) => candidate === path.join("C:\\sdk", "prebuilds", "win32-x64", "copilot-runtime.exe"),
       "win32",
       "x64",
       undefined,
     );
 
-    assert.equal(resolved, path.join("C:\\sdk", "copilot.exe"));
+    assert.equal(resolved, path.join("C:\\sdk", "prebuilds", "win32-x64", "copilot-runtime.exe"));
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "package.json非公開時はnative root exportをlocal commandより優先する"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "subpath解決失敗で利用可能なnative実行物を無視する"
+  // observable = "root export照会とlocal commandでない返却path"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("Electron では package.json subpath が非公開でも Copilot native binary を優先して使う", () => {
-    const expected = path.join("C:\\sdk", "copilot.exe");
+    const expected = path.join("C:\\sdk", "prebuilds", "win32-x64", "copilot-runtime.exe");
     const resolved = resolveCopilotCliPath(
       (specifier) => {
-        if (specifier === "@github/copilot-win32-x64/package.json") {
+        if (specifier === "@github/copilot-sdk-win32-x64/package.json") {
           throw Object.assign(new Error("Package subpath './package.json' is not defined by exports"), {
             code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
           });
         }
-        assert.equal(specifier, "@github/copilot-win32-x64");
+        assert.equal(specifier, "@github/copilot-sdk-win32-x64");
         return expected;
       },
       (candidate) =>
@@ -1080,14 +1116,26 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal(resolved, expected);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "配布時はASAR外のstaged Copilot SDK runtime wrapperを最優先する"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "配布済みwrapperより開発環境packageを参照する"
+  // observable = "開発package未照会とstaged pathの返却"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("packaged runtime では staged Copilot CLI binary を最優先する", () => {
     const resourcesPath = "C:\\Program Files\\WithMate\\resources";
     const expected = path.join(
       resourcesPath,
       "provider-binaries",
       "@github",
-      "copilot-win32-x64",
-      "copilot.exe",
+      "copilot-sdk-win32-x64",
+      "prebuilds", "win32-x64", "copilot-runtime.exe",
     );
 
     const resolved = resolveCopilotCliPath(

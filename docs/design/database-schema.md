@@ -61,7 +61,7 @@ list／追加／解除は既存のtyped IPCからstorage Workerへ渡し、親Se
 
 `app_settings`の`coding_provider_settings_json`にある`opencode.apiKey`はstorage ownerの起動時にそのfieldだけを除去する。他providerのkey、OpenCodeの有効化・Skill設定、Session・会話・threadは保持する。通常の設定更新serviceによるthread invalidationは通さず、読込・保存境界でもOpenCode keyを空へ正規化する。keyをnative OpenCodeへ自動移送せず、移行元DB・backup全体の削除やsecure eraseは行わない。
 
-OpenCodeのnative DBはWithMateのSQLiteとは別にOpenCodeが所有し、通常はPC CLIの既存DBを使う。`v6.3.29-preview.20`／`v6.3.29-preview.21`のWithMate専用DBにある会話は、同梱CLI `2.2.1`と公式export／importでroot・全childのID、owner、履歴を保持してnative DBへ移す。成功後だけWithMateのthread参照を`native:<ID>`へ更新し、旧DB・WithMateの会話は残す。credentialは移さない。DBの取り違え、owner不一致、未解消pending、active thread、移行・再開失敗では送信せず明示エラーにし、新規threadへfallbackしない。詳細は[Thread Management](provider-adapter.md#thread-management)を参照する。
+OpenCodeのnative DBはWithMateのSQLiteとは別にOpenCodeが所有し、通常はPC CLIの既存DBを使う。`v6.3.29-preview.20`／`v6.3.29-preview.21`のWithMate専用DBにある会話は、同梱CLI `2.2.5`と公式export／importでroot・全childのID、owner、履歴を保持してnative DBへ移す。成功後だけWithMateのthread参照を`native:<ID>`へ更新し、旧DB・WithMateの会話は残す。credentialは移さない。DBの取り違え、owner不一致、未解消pending、active thread、移行・再開失敗では送信せず明示エラーにし、新規threadへfallbackしない。詳細は[Thread Management](provider-adapter.md#thread-management)を参照する。
 
 SDK model一覧は`provider_model_cache`へproviderとcontext keyの組を主キーに保存する。`provider_json`と`fetched_at`を保持し、context keyやcredentialをrendererへ渡さない。更新契約は[Provider Model Discovery](model-catalog.md)を参照する。V6 schema更新では`model_catalog_models`、`model_catalog_providers`、`model_catalog_revisions`を削除する。公開済みSessionの`catalog_revision`列の保存値は保持するが、実行設定の検証には使わず、Session、会話、draft、最小turnをcatalog変更で移行しない。
 

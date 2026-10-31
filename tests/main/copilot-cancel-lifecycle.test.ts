@@ -157,8 +157,8 @@ class FakeClient {
     if (this.forceMode === "pending") await this.forceReply.promise;
     if (this.forceMode === "reject") throw new Error("force stop unavailable");
     this.closeTransport();
-    // Match SDK 1.0.11: drop the child handle even when kill fails, and do not
-    // await child exit. Transport disposal and process exit are separate gates.
+    // Exercise transport disposal without process-exit confirmation, including
+    // failed termination. The adapter must retain its captured child lifetime.
     const child = this.cliProcess;
     this.cliProcess = null;
     try { child?.kill(); } catch { /* SDK suppresses kill failures. */ }
@@ -495,23 +495,28 @@ it("取消の遅いcleanupは同一keyの新clientと無関係clientに触れな
 
 // @test-value v2
 // kind = "contract"
-// claim = "SDKがkill失敗を無視してforceStopをresolveしても旧child実exitまでruntime guardを保持し停止失敗をlogへ残す"
+// claim = "実SDKのforceStopがchild終了を待つ場合とstop後にhandleを失う場合の両方で旧child実exitまでguardを保持する"
 // oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md; Issue #782" }
-// fault = "SDKの接続切断と成功応答を旧childの停止証明に置換して再送する"
-// observable = "kill false後の停止失敗log、runtime in-flight、Send拒否、捕捉した旧child exit後のguard解除"
+// fault = "SDKの接続切断を停止証明にするかstopで失ったchild handleを追跡せず再送する"
+// observable = "kill false後のruntime in-flightとSend拒否、handle欠落時のkill失敗log、実exit後のguard解除"
 // observation_boundary = "public-boundary"
 // scope = "Real Copilot SDK forceStop without process startup through runtime terminating guard"
 // lifecycle = "permanent"
 // impact = "停止不能な旧処理と新処理の二重実行を防ぐ"
-// distinction = "mockのみの停止成功testではSDKがkill falseを隠すこととstop後のhandle欠落を検証できない"
+// distinction = "mockのみの停止成功testでは実SDKのexit待機とstop後のhandle欠落の両経路を検証できない"
 // @end-test-value
-it("SDKがkill失敗を隠しても旧child実exitまでguardを維持する", { timeout: 5000 }, async () => {
+it("実SDKの停止待機とchild handle欠落でも実exitまでguardを維持する", { timeout: 5000 }, async () => {
   for (const stopMode of ["reject", "failed-kill"] as const) {
     const f = fixture({ runtimeGraceMs: 0, realForceStop: true }); const run = f.start(); const session = await f.current();
     const owner = f.clients[0]; owner.stopMode = stopMode; owner.child.killAccepted = false;
-    f.cancel(); await run; await until(() => f.logs.some((message) => message.includes("kill request was not accepted")));
-    assert.equal(owner.forceCalls, 1, "real SDK forceStop resolved despite the kill failure");
-    assert.equal(owner.child.killCalls, 2, "adapter still signals the captured old child");
+    f.cancel(); await run; await owner.forceStarted.promise;
+    if (stopMode === "failed-kill") {
+      await until(() => f.logs.some((message) => message.includes("kill request was not accepted")));
+      assert.equal(owner.child.killCalls, 2, "adapter still signals the captured old child after the SDK loses its handle");
+    } else {
+      await until(() => owner.child.killCalls === 1);
+    }
+    assert.equal(owner.forceCalls, 1);
     assert.equal(f.service.isRunInFlight(f.stored().id), true);
     await assert.rejects(f.start("blocked"), /already running/);
     assert.equal(session.listeners.size, 0, "recovery does not require idle from a disconnected session");

@@ -25,18 +25,18 @@ test("OpenCode checks the CLI version before resolving the unchanged native envi
     runCommand: async (_executable, args, options) => {
       calls.push([...args]);
       assert.deepEqual(options.env, env);
-      return args[0] === "--version" ? "opencode v2.2.1\n" : databasePath + "\n";
+      return args[0] === "--version" ? "opencode v2.2.5\n" : databasePath + "\n";
     },
   });
   assert.deepEqual(calls, [["--version"], ["debug", "paths", "db"]]);
   assert.equal(result.databasePath, databasePath);
   assert.deepEqual(result.env, env);
   assert.notEqual(result.env, env);
-  for (const version of ["opencode v2.1.4", "opencode v2.2.0", "opencode v2.2.2", "2.2.1", "invalid"]) {
+  for (const version of ["opencode v2.1.4", "opencode v2.2.0", "opencode v2.2.1", "opencode v2.2.6", "2.2.5", "invalid"]) {
     let count = 0;
     await assert.rejects(resolveOpenCodeEnvironment({ cwd: process.cwd(), executable: process.execPath }, {
       runCommand: async () => { count++; return version; },
-    }), /2\.2\.1 is required/u);
+    }), /2\.2\.5 is required/u);
     assert.equal(count, 1);
   }
 });
@@ -56,7 +56,7 @@ test("OpenCode checks the CLI version before resolving the unchanged native envi
 test("OpenCode rejects invalid database announcements and pre-aborted lookup", async () => {
   for (const output of ["relative.sqlite", "", path.join(process.cwd(), "db") + "\nextra"]) {
     await assert.rejects(resolveOpenCodeEnvironment({ cwd: process.cwd(), executable: process.execPath }, {
-      runCommand: async (_executable, args) => args[0] === "--version" ? "opencode v2.2.1" : output,
+      runCommand: async (_executable, args) => args[0] === "--version" ? "opencode v2.2.5" : output,
     }), /absolute database path/u);
   }
   let count = 0;
@@ -92,7 +92,7 @@ test("OpenCode resolves the official npm shim but does not bypass unknown Window
     const runCommand = async (executable: string, args: readonly string[]) => {
       commands++;
       assert.equal(executable, await realpath(binary));
-      return args[0] === "--version" ? "opencode v2.2.1" : path.join(root, "native.sqlite");
+      return args[0] === "--version" ? "opencode v2.2.5" : path.join(root, "native.sqlite");
     };
     const result = await resolveOpenCodeEnvironment({ cwd: root, env: { Path: root } }, { platform: "win32", runCommand });
     assert.equal(result.executable, await realpath(binary));

@@ -96,14 +96,26 @@ describe("provider-binary-paths", () => {
     assert.equal(resolveProviderBinarySpec("claude", "linux", "x64"), null);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "providerとplatformに対応する公式native package名と相対実行pathを返す"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "誤ったnative packageまたは実行pathを選択する"
+  // observable = "resolveProviderBinarySpecの返却値と非対応archのnull"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("provider ごとの native package spec を返す", () => {
     assert.deepEqual(resolveProviderBinarySpec("codex", "win32", "x64"), {
       packageSpecifier: "@openai/codex-win32-x64",
       binaryRelativePath: ["vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"],
     });
     assert.deepEqual(resolveProviderBinarySpec("copilot", "darwin", "arm64"), {
-      packageSpecifier: "@github/copilot-darwin-arm64",
-      binaryRelativePath: ["copilot"],
+      packageSpecifier: "@github/copilot-sdk-darwin-arm64",
+      binaryRelativePath: ["prebuilds", "darwin-arm64", "copilot-runtime"],
     });
     assert.equal(resolveProviderBinarySpec("codex", "win32", "ia32"), null);
   });
@@ -132,13 +144,25 @@ describe("provider-binary-paths", () => {
     assert.equal(resolved, expected);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "開発時はCopilot SDK native packageのpackage.json基準でruntime wrapperを解決する"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "package内のprebuilds階層を落とすか別packageを参照する"
+  // observable = "package resolverの引数と解決された実行path"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("development runtime では package.json 基準で native binary を解決する", () => {
-    const packageJsonPath = path.join("F:\\repo", "node_modules", "@github", "copilot-win32-x64", "package.json");
-    const expected = path.join("F:\\repo", "node_modules", "@github", "copilot-win32-x64", "copilot.exe");
+    const packageJsonPath = path.join("F:\\repo", "node_modules", "@github", "copilot-sdk-win32-x64", "package.json");
+    const expected = path.join("F:\\repo", "node_modules", "@github", "copilot-sdk-win32-x64", "prebuilds", "win32-x64", "copilot-runtime.exe");
     const resolved = resolveDevelopmentProviderBinaryPath(
       "copilot",
       (specifier) => {
-        assert.equal(specifier, "@github/copilot-win32-x64/package.json");
+        assert.equal(specifier, "@github/copilot-sdk-win32-x64/package.json");
         return packageJsonPath;
       },
       (candidate) => candidate === expected,
@@ -149,17 +173,29 @@ describe("provider-binary-paths", () => {
     assert.equal(resolved, expected);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "package.jsonが非公開の場合もnative実行物のroot exportを解決できる"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "非公開subpathで解決を止めるか実行pathを重複付加する"
+  // observable = "root exportの照会と返却path"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("development runtime では package.json subpath が非公開でも root export から native binary を解決する", () => {
-    const expected = path.join("F:\\repo", "node_modules", "@github", "copilot-win32-x64", "copilot.exe");
+    const expected = path.join("F:\\repo", "node_modules", "@github", "copilot-sdk-win32-x64", "prebuilds", "win32-x64", "copilot-runtime.exe");
     const resolved = resolveDevelopmentProviderBinaryPath(
       "copilot",
       (specifier) => {
-        if (specifier === "@github/copilot-win32-x64/package.json") {
+        if (specifier === "@github/copilot-sdk-win32-x64/package.json") {
           throw Object.assign(new Error("Package subpath './package.json' is not defined by exports"), {
             code: "ERR_PACKAGE_PATH_NOT_EXPORTED",
           });
         }
-        assert.equal(specifier, "@github/copilot-win32-x64");
+        assert.equal(specifier, "@github/copilot-sdk-win32-x64");
         return expected;
       },
       (candidate) => candidate === expected,
@@ -170,10 +206,22 @@ describe("provider-binary-paths", () => {
     assert.equal(resolved, expected);
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "stage対象にCodexとCopilot SDKの公式native packageを含める"
+  // oracle = { type = "contract", ref = "docs/design/distribution-packaging.md#build-boundary" }
+  // fault = "実行時解決対象packageをstage一覧から除外する"
+  // observable = "listSupportedProviderBinaryPackageSpecifiersの包含"
+  // observation_boundary = "public-boundary"
+  // scope = "Copilot native runtime resolution"
+  // lifecycle = "permanent"
+  // impact = "SDKに対応する実行物を起動・配布できなくなる"
+  // distinction = "package配置とruntime文字列pathの対応は型検査で確認できず、外部processなしで検査する"
+  // @end-test-value
   it("stage 対象 package の一覧に provider native package を含む", () => {
     const specifiers = listSupportedProviderBinaryPackageSpecifiers();
 
     assert.equal(specifiers.includes("@openai/codex-win32-x64"), true);
-    assert.equal(specifiers.includes("@github/copilot-win32-x64"), true);
+    assert.equal(specifiers.includes("@github/copilot-sdk-win32-x64"), true);
   });
 });

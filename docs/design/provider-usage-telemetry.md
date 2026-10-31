@@ -24,7 +24,7 @@ HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効
 
 - Codexは短命なApp Serverで`account/rateLimits/read`だけを呼び、thread・model turn・loginを作らない。複数bucketの応答を優先し、窓長は返却値を使う。WithMateまたは環境変数の`CODEX_API_KEY`が指定されている場合はChatGPT契約枠の適用外とし、既存ChatGPTログインへの切替取得をしない。[公式RPC仕様](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)に従う。
 - Claudeは固定SDKの`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`を空のstreaming inputで呼ぶ。モデルprompt、tools、MCP、hooks、session保存を使わず、managed設定がある場合は起動前に拒否する。5時間・週間・モデル別週間窓を投影し、`rate_limits_available: false`は適用外、有効な観測値のない不正応答は失敗とする。実験APIのため、固定SDK更新時には取得契約を再確認する。
-- OpenCodeは公式CLI／client `2.2.1`の`experimental.usage.limits`を短命なnative processで取得する。起動元の`process.cwd()`をlocationに使い、認証とConsole workspaceの解決はOpenCodeへ任せる。独自Go HTTP API、credential読出し、Session作成・model実行は行わない。正常応答の`go`だけを投影し、Console予算は含めない。応答の`data`が`null`または`go`がなければadapterは`null`を返し、Mainは空の`unsupported`へ投影する。API失敗・不正な使用率やreset・process cleanup失敗は取得失敗とする。実験APIのため固定版更新時には取得契約を再確認する。
+- OpenCodeは公式CLI／client `2.2.5`の`experimental.usage.limits`を短命なnative processで取得する。起動元の`process.cwd()`をlocationに使い、認証とConsole workspaceの解決はOpenCodeへ任せる。独自Go HTTP API、credential読出し、Session作成・model実行は行わない。正常応答の`go`だけを投影し、Console予算は含めない。応答の`data`が`null`または`go`がなければadapterは`null`を返し、Mainは空の`unsupported`へ投影する。API失敗・不正な使用率やreset・process cleanup失敗は取得失敗とする。実験APIのため固定版更新時には取得契約を再確認する。
 
 Codex・Claude・OpenCodeの実行中の部分通知はapp-wide cacheへ接続しない。workspaceごとに認証先が異なり得ることや、部分窓・単位を保証できないことから、独立取得の完全snapshotを正本とする。通知のためだけの常駐processは作らない。
 

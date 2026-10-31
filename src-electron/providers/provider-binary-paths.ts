@@ -68,42 +68,42 @@ function resolveCopilotSpec(
     case "win32":
       if (arch === "x64") {
         return {
-          packageSpecifier: "@github/copilot-win32-x64",
-          binaryRelativePath: ["copilot.exe"],
+          packageSpecifier: "@github/copilot-sdk-win32-x64",
+          binaryRelativePath: ["prebuilds", `win32-${arch}`, "copilot-runtime.exe"],
         };
       }
       if (arch === "arm64") {
         return {
-          packageSpecifier: "@github/copilot-win32-arm64",
-          binaryRelativePath: ["copilot.exe"],
+          packageSpecifier: "@github/copilot-sdk-win32-arm64",
+          binaryRelativePath: ["prebuilds", `win32-${arch}`, "copilot-runtime.exe"],
         };
       }
       return null;
     case "darwin":
       if (arch === "x64") {
         return {
-          packageSpecifier: "@github/copilot-darwin-x64",
-          binaryRelativePath: ["copilot"],
+          packageSpecifier: "@github/copilot-sdk-darwin-x64",
+          binaryRelativePath: ["prebuilds", `${platform}-${arch}`, "copilot-runtime"],
         };
       }
       if (arch === "arm64") {
         return {
-          packageSpecifier: "@github/copilot-darwin-arm64",
-          binaryRelativePath: ["copilot"],
+          packageSpecifier: "@github/copilot-sdk-darwin-arm64",
+          binaryRelativePath: ["prebuilds", `${platform}-${arch}`, "copilot-runtime"],
         };
       }
       return null;
     case "linux":
       if (arch === "x64") {
         return {
-          packageSpecifier: "@github/copilot-linux-x64",
-          binaryRelativePath: ["copilot"],
+          packageSpecifier: "@github/copilot-sdk-linux-x64",
+          binaryRelativePath: ["prebuilds", `${platform}-${arch}`, "copilot-runtime"],
         };
       }
       if (arch === "arm64") {
         return {
-          packageSpecifier: "@github/copilot-linux-arm64",
-          binaryRelativePath: ["copilot"],
+          packageSpecifier: "@github/copilot-sdk-linux-arm64",
+          binaryRelativePath: ["prebuilds", `${platform}-${arch}`, "copilot-runtime"],
         };
       }
       return null;

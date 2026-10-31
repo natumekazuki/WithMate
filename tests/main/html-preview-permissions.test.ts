@@ -129,7 +129,7 @@ test("permission approval remains frame- and media-specific and expires with the
 test("display and device handlers require explicit selection and cancel stale choices", async () => {
   const h = await harness();
   try {
-    const capture = new Promise<Electron.Streams>((resolve) => h.session.display!({
+    const capture = new Promise<Electron.Streams | null>((resolve) => h.session.display!({
       frame: h.contents.mainFrame as unknown as WebFrameMain, securityOrigin: "https://preview.test",
       userGesture: true, videoRequested: true, audioRequested: false,
     }, resolve));
@@ -137,6 +137,7 @@ test("display and device handlers require explicit selection and cancel stale ch
     assert.equal(h.prompts.length, 1);
     h.replies.shift()!(1);
     const stream = await capture;
+    assert.ok(stream);
     assert.equal("id" in stream.video! ? stream.video.id : undefined, "window:2");
     let prevented = false;
     const device = new Promise<string>((resolve) => h.session.emit("select-usb-device", { preventDefault() { prevented = true; } }, {
@@ -208,7 +209,7 @@ test("canceled display source discovery cannot enqueue a stale prompt", async ()
   let resolveSources!: (sources: { id: string; name: string }[]) => void;
   const h = await harness(new Promise((resolve) => { resolveSources = resolve; }));
   try {
-    const streams: Electron.Streams[] = [];
+    const streams: (Electron.Streams | null)[] = [];
     h.session.display!({
       frame: h.contents.mainFrame as unknown as WebFrameMain, securityOrigin: "https://preview.test",
       userGesture: true, videoRequested: true, audioRequested: false,
