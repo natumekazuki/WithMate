@@ -204,6 +204,19 @@ export function SessionGraphTopicView({
   const snapshot = (): SessionGraphViewState => ({ topicId: topicId || null, selectedId, zoom,
     scrollLeft: viewportRef.current?.scrollLeft ?? stateRef.current.scrollLeft,
     scrollTop: viewportRef.current?.scrollTop ?? stateRef.current.scrollTop });
+  // The position the reader chose, with the viewport size it was chosen at. A resize clamps
+  // scrollLeft/Top before the layout catches up, so scrolls seen at another size are not intent.
+  const scrollIntent = useRef<{ left: number; top: number; width: number; height: number } | null>(null);
+  const recordScrollIntent = () => {
+    const view = viewportRef.current;
+    if (view) scrollIntent.current = { left: view.scrollLeft, top: view.scrollTop, width: view.clientWidth, height: view.clientHeight };
+  };
+  const handleViewportScroll = () => {
+    const view = viewportRef.current;
+    const intent = scrollIntent.current;
+    if (view && (!intent || (intent.width === view.clientWidth && intent.height === view.clientHeight))) recordScrollIntent();
+    publishState();
+  };
   const publishState = () => { stateRef.current = snapshot(); onStateChange?.(stateRef.current); };
   useEffect(() => {
     const host = workspaceRef.current;
@@ -567,11 +580,21 @@ export function SessionGraphTopicView({
     finishReturn(returning);
   };
   useLayoutEffect(() => {
-    if (view && viewportSize !== null && pendingScroll.current && viewportRef.current) {
-      viewportRef.current.scrollLeft = pendingScroll.current.scrollLeft;
-      viewportRef.current.scrollTop = pendingScroll.current.scrollTop;
+    const viewport = viewportRef.current;
+    if (view && viewportSize !== null && pendingScroll.current && viewport) {
+      viewport.scrollLeft = pendingScroll.current.scrollLeft;
+      viewport.scrollTop = pendingScroll.current.scrollTop;
       pendingScroll.current = null;
-    }
+      recordScrollIntent();
+    } else if (viewport && scrollIntent.current && (scrollIntent.current.width !== viewport.clientWidth
+      || scrollIntent.current.height !== viewport.clientHeight)) {
+      // Resized by the split/full switch or the window: return to the position the reader was at.
+      viewport.scrollLeft = scrollIntent.current.left;
+      viewport.scrollTop = scrollIntent.current.top;
+      if (viewport.scrollLeft === scrollIntent.current.left && viewport.scrollTop === scrollIntent.current.top) {
+        scrollIntent.current = { ...scrollIntent.current, width: viewport.clientWidth, height: viewport.clientHeight };
+      }
+    } else recordScrollIntent();
     publishState();
     if (focusLoadedCount.current) {
       focusLoadedCount.current = false;
@@ -735,7 +758,7 @@ export function SessionGraphTopicView({
         <div className="session-graph-column" inert={narrow && !!selectedId} aria-hidden={narrow && !!selectedId || undefined}>
           <div
             ref={viewportRef}
-            onScroll={publishState}
+            onScroll={handleViewportScroll}
             className={`session-graph-viewport${pan.isPanning ? " is-panning" : ""}`}
             onPointerDown={(event) => {
               pan.startPan(event);
