@@ -1,4 +1,6 @@
-import { focusRovingItemByKey } from "../a11y.js";
+import { focusRovingItemByKey } from "../ui/a11y.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ErrorDetailsButton } from "../ui/error-details.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE } from "./launch-feedback.js";
 
 type Provider = {
@@ -6,12 +8,18 @@ type Provider = {
   label: string;
 };
 
+export type ProviderLaunchLoadStatus = "loading" | "loaded" | "error";
+
 export type ProviderLaunchPickerProps = {
   id: string;
   providers: Array<Provider>;
   selectedProviderId: string | null;
   onSelectProvider: (providerId: string) => void;
   ariaLabel?: string;
+  loadStatus?: ProviderLaunchLoadStatus;
+  loadError?: string;
+  onRetryLoad?: () => void;
+  disabled?: boolean;
 };
 
 export function ProviderLaunchPicker({
@@ -20,39 +28,61 @@ export function ProviderLaunchPicker({
   selectedProviderId,
   onSelectProvider,
   ariaLabel = "Coding Provider",
+  loadStatus = "loaded",
+  loadError = "",
+  onRetryLoad,
+  disabled = false,
 }: ProviderLaunchPickerProps) {
-  if (providers.length === 0) {
-    return (
-      <article className="empty-list-card compact">
-        <p>{LAUNCH_EMPTY_PROVIDER_MESSAGE}</p>
-      </article>
-    );
-  }
-
+  const loading = loadStatus === "loading";
+  const selectionDisabled = disabled || loadStatus !== "loaded";
   return (
-    <div
-      id={id}
-      className="choice-list launch-provider-list"
-      role="listbox"
-      aria-label={ariaLabel}
-      aria-orientation="horizontal"
-      onKeyDown={(event) => {
-        focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
-      }}
-    >
-      {providers.map((provider) => (
-        <button
-          key={provider.id}
-          className={`choice-chip${provider.id === selectedProviderId ? " active" : ""}`}
-          type="button"
-          role="option"
-          aria-selected={provider.id === selectedProviderId}
-          tabIndex={provider.id === selectedProviderId ? 0 : -1}
-          onClick={() => onSelectProvider(provider.id)}
+    <div className="launch-provider-picker">
+      <div className="launch-provider-options" data-loading={loading || undefined}>
+        <div
+          id={id}
+          className="choice-list launch-provider-list"
+          role="listbox"
+          aria-label={ariaLabel}
+          aria-orientation="horizontal"
+          aria-disabled={selectionDisabled || undefined}
+          onKeyDown={(event) => {
+            if (!selectionDisabled) {
+              focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+            }
+          }}
         >
-          {provider.label}
-        </button>
-      ))}
+          {providers.map((provider) => (
+            <button
+              key={provider.id}
+              className={`choice-chip${provider.id === selectedProviderId ? " active" : ""}`}
+              type="button"
+              role="option"
+              aria-selected={provider.id === selectedProviderId}
+              tabIndex={!selectionDisabled && provider.id === selectedProviderId ? 0 : -1}
+              disabled={selectionDisabled}
+              onClick={() => onSelectProvider(provider.id)}
+            >
+              {provider.label}
+            </button>
+          ))}
+        </div>
+        {loading ? <LoadingIndicator label="Loading coding providers" inline /> : null}
+        {loadStatus === "loaded" && providers.length === 0 ? (
+          <p className="launch-provider-empty">{LAUNCH_EMPTY_PROVIDER_MESSAGE}</p>
+        ) : null}
+        {loadStatus === "error" && onRetryLoad ? (
+          <div className="launch-provider-error">
+            <span className="visually-hidden" role="alert">Could not load coding providers.</span>
+            <ErrorDetailsButton message={loadError || "Could not load coding providers."} label="Provider Load Error Details" />
+            <button className="drawer-toggle compact secondary" type="button" disabled={disabled} onClick={onRetryLoad}>Retry</button>
+          </div>
+        ) : null}
+      </div>
+      {loadStatus === "error" && !onRetryLoad ? (
+        <p className="launch-provider-error" role="alert" aria-live="assertive">
+          {loadError || "Could not load coding providers."}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -67,6 +97,10 @@ export function ProviderLaunchField({
   selectedProviderId,
   onSelectProvider,
   ariaLabel,
+  loadStatus,
+  loadError,
+  onRetryLoad,
+  disabled,
 }: ProviderLaunchFieldProps) {
   return (
     <section className="launch-section minimal">
@@ -80,6 +114,10 @@ export function ProviderLaunchField({
           selectedProviderId={selectedProviderId}
           onSelectProvider={onSelectProvider}
           ariaLabel={ariaLabel}
+          loadStatus={loadStatus}
+          loadError={loadError}
+          onRetryLoad={onRetryLoad}
+          disabled={disabled}
         />
       </div>
     </section>

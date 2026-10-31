@@ -1,8 +1,8 @@
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type {
   SessionMonitorContextMenuRequest,
   SessionMonitorContextMenuResult,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 export function buildSessionMonitorContextMenuFeedback(result: SessionMonitorContextMenuResult): string {
   return result.status === "failed" ? result.message : "";
@@ -26,6 +26,6 @@ export function runSessionMonitorContextMenu(
     })
     .catch((error) => {
       console.error(error);
-      setFeedback(error instanceof Error ? error.message : "Session Monitorの操作に失敗しました。");
+      setFeedback(error instanceof Error ? error.message : "Could not complete session monitor action.");
     });
 }

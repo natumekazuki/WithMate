@@ -1,22 +1,27 @@
 import type { ReactNode } from "react";
 
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
 import type { HomeRightPaneProps } from "./HomeRightPane.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeHeaderProps } from "./HomeHeader.js";
+import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 type HomeRightPaneHandlers = {
+  onChangeSearchText: (value: string) => void;
+  onSearchCompositionStart?: () => void;
+  onSearchCompositionEnd?: (value: string) => void;
+  onOpenLaunchDialog: () => void;
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
   onRestoreSessionWindows: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
-  onOpenSession: (sessionId: string) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
+  onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowSessionMonitorContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -25,42 +30,89 @@ type HomeRightPaneHandlers = {
 };
 
 export type HomeRightPanePropsInput = {
+  searchText: string;
+  searchInputText: string;
+  canCreateSession: boolean;
+  providerQuota?: ReactNode;
   rightPaneView: HomeRightPaneProps["rightPaneView"];
+  approvalMonitorEntries: HomeMonitorEntry[];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
+  auxiliaryDataState: HomeMonitorAuxiliaryDataState;
+  auxiliaryRefreshing?: boolean;
+  sessionWindowsDataState?: "loading" | "loaded" | "error";
+  monitorRunningEmptyMessage?: string;
+  monitorNonRunningEmptyMessage?: string;
   sessionMonitorFeedback?: string;
+  onRetrySessionSummaries?: () => void;
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
+  characterLoadStatus?: HomeCharacterLoadStatus;
   characterListFeedback?: string;
+  onRetryCharacters?: () => void;
   handlers: HomeRightPaneHandlers;
-  canUsePrimaryFeatures?: boolean;
   sessionWindowRestoreIds?: readonly string[];
   sessionWindowRestorePending?: boolean;
   sessionWindowRestoreFeedback?: string;
+  mateLoadStatus?: HomeHeaderProps["mateLoadStatus"];
+  mateLoadError?: string;
+  onRetryMateStatus?: () => void;
 };
 
 export function buildHomeRightPaneProps({
+  searchText,
+  searchInputText,
+  canCreateSession,
+  providerQuota,
   rightPaneView,
+  approvalMonitorEntries,
   runningMonitorEntries,
   nonRunningMonitorEntries,
+  auxiliaryDataState,
+  auxiliaryRefreshing,
+  sessionWindowsDataState,
+  monitorRunningEmptyMessage,
+  monitorNonRunningEmptyMessage,
   sessionMonitorFeedback,
+  onRetrySessionSummaries,
   monitorWindowIcon,
   characterEntries,
+  characterLoadStatus,
   characterListFeedback,
+  onRetryCharacters,
   handlers,
-  canUsePrimaryFeatures,
   sessionWindowRestoreIds,
   sessionWindowRestorePending,
   sessionWindowRestoreFeedback,
-}: HomeRightPanePropsInput): HomeRightPaneProps {
+  mateLoadStatus,
+  mateLoadError,
+  onRetryMateStatus,
+}: HomeRightPanePropsInput): HomeRightPaneProps & HomeHeaderProps {
   return {
+    searchText,
+    searchInputText,
+    canCreateSession,
+    onChangeSearchText: handlers.onChangeSearchText,
+    onSearchCompositionStart: handlers.onSearchCompositionStart,
+    onSearchCompositionEnd: handlers.onSearchCompositionEnd,
+    onOpenLaunchDialog: handlers.onOpenLaunchDialog,
+    providerQuota,
     rightPaneView,
+    approvalMonitorEntries,
     runningMonitorEntries,
     nonRunningMonitorEntries,
+    auxiliaryDataState,
+    auxiliaryRefreshing,
+    sessionWindowsDataState,
+    monitorRunningEmptyMessage,
+    monitorNonRunningEmptyMessage,
     sessionMonitorFeedback,
+    onRetrySessionSummaries,
     monitorWindowIcon,
     characterEntries,
+    characterLoadStatus,
     characterListFeedback,
+    onRetryCharacters,
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,
     onOpenSettingsWindow: handlers.onOpenSettingsWindow,
@@ -68,11 +120,12 @@ export function buildHomeRightPaneProps({
     onCreateCharacter: handlers.onCreateCharacter,
     onEditCharacter: handlers.onEditCharacter,
     onOpenSession: handlers.onOpenSession,
-    onOpenCompanionReview: handlers.onOpenCompanionReview,
     onShowSessionMonitorContextMenu: handlers.onShowSessionMonitorContextMenu,
-    canUsePrimaryFeatures,
     sessionWindowRestoreIds,
     sessionWindowRestorePending,
     sessionWindowRestoreFeedback,
+    mateLoadStatus,
+    mateLoadError,
+    onRetryMateStatus,
   };
 }

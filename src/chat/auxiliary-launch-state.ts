@@ -1,5 +1,10 @@
-import type { ModelCatalogProvider } from "../model-catalog.js";
-import type { AuxiliarySession, CreateAuxiliarySessionInput } from "../auxiliary-session-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import type {
+  AuxiliaryCreationContext,
+  AuxiliaryCreationResult,
+  AuxiliarySession,
+  CreateAuxiliarySessionInput,
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import { LAUNCH_EMPTY_PROVIDER_MESSAGE, LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 
@@ -10,7 +15,65 @@ export type AuxiliaryLaunchProviderItem = {
 
 export const AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK = LAUNCH_EMPTY_PROVIDER_MESSAGE;
 export const AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK = LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
-export const AUXILIARY_LAUNCH_START_FAILED_FEEDBACK = "Auxiliary Session の開始に失敗したよ。";
+export const AUXILIARY_LAUNCH_START_FAILED_FEEDBACK = "Could not start the Auxiliary session.";
+export const AUXILIARY_LAUNCH_CANCEL_FAILED_FEEDBACK = "Could not cancel Auxiliary session creation.";
+
+export type AuxiliaryLaunchCreationState = {
+  request: {
+    parentSessionId: string;
+    clientRequestId: string;
+    creationContext: AuxiliaryCreationContext;
+  } | null;
+  status: AuxiliaryCreationResult["status"] | null;
+};
+
+export function canCancelAuxiliaryLaunchCreation(
+  status: AuxiliaryCreationResult["status"] | null | undefined,
+): boolean {
+  return status === "preparing" || status === "queued";
+}
+
+export function isAuxiliaryLaunchCreationActive(
+  status: AuxiliaryCreationResult["status"] | null | undefined,
+): boolean {
+  return status === "preparing" || status === "queued" || status === "committing";
+}
+
+export function blocksAuxiliaryLaunchRetry(
+  status: AuxiliaryCreationResult["status"] | null | undefined,
+): boolean {
+  return isAuxiliaryLaunchCreationActive(status) || status === "unknown";
+}
+
+export function matchesAuxiliaryLaunchCreationRequest(
+  session: Pick<AuxiliarySession, "parentSessionId" | "clientRequestId" | "creationContext">,
+  request: AuxiliaryLaunchCreationState["request"],
+): boolean {
+  return Boolean(
+    request
+    && session.parentSessionId === request.parentSessionId
+    && session.clientRequestId === request.clientRequestId
+    && session.creationContext?.generationId === request.creationContext.generationId
+    && session.creationContext?.parentIncarnationId === request.creationContext.parentIncarnationId,
+  );
+}
+
+export function resolveAuxiliaryLaunchCreationFeedback(
+  result: AuxiliaryCreationResult,
+): string {
+  switch (result.status) {
+    case "cancelled":
+      return "Auxiliary session creation was canceled.";
+    case "expired":
+      return "Creation ended because the parent session changed.";
+    case "unknown":
+      return "Could not confirm the Auxiliary session creation result.";
+    case "failed":
+      return AUXILIARY_LAUNCH_START_FAILED_FEEDBACK;
+    default:
+      return "";
+  }
+}
 
 export function buildAuxiliaryLaunchProviderItems(
   providers: readonly ModelCatalogProvider[],
@@ -29,12 +92,16 @@ export function buildCreateAuxiliarySessionInput(input: {
   provider: string;
   runtimeSelection?: CreateAuxiliarySessionInput["runtimeSelection"];
   defaults?: AuxiliaryLaunchSessionDefaults | null;
+  clientRequestId?: string;
+  creationContext?: AuxiliaryCreationContext;
 }): CreateAuxiliarySessionInput {
   if (input.runtimeSelection === "latest-session") {
     return {
       parentSessionId: input.parentSessionId,
       provider: input.provider,
       runtimeSelection: input.runtimeSelection,
+      ...(input.clientRequestId ? { clientRequestId: input.clientRequestId } : {}),
+      ...(input.creationContext ? { creationContext: input.creationContext } : {}),
     };
   }
   return {
@@ -46,6 +113,8 @@ export function buildCreateAuxiliarySessionInput(input: {
     codexSandboxMode: input.defaults?.codexSandboxMode,
     ...(input.defaults?.codexSpeed !== undefined ? { codexSpeed: input.defaults.codexSpeed } : {}),
     customAgentName: input.defaults?.customAgentName,
+    ...(input.clientRequestId ? { clientRequestId: input.clientRequestId } : {}),
+    ...(input.creationContext ? { creationContext: input.creationContext } : {}),
   };
 }
 

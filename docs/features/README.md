@@ -1,11 +1,18 @@
 # Feature Guides
 
-WithMateの利用者向け機能ガイドです。リリースごとの変更一覧は[Release Notes](../releases/README.md)、実装上の責務や不変条件は`docs/design/`と`docs/adr/`を参照してください。
+WithMateの利用者向け機能ガイドです。機能ごとの使い方をまとめています。
+
+関連する文書:
+
+- 設計・実装上の責務と文書の保存区分: [Documentation Map](../design/documentation-map.md)
+- 設計判断の履歴と適用状態: [ADR](../adr/)
+- versionごとの変更一覧: [Release Notes](../releases/README.md)
 
 ## Sessionと画面操作
 
 - [Git履歴とcommit preview](git-history-and-commit-preview.md)
 - [Messageの縮小表示とnavigator](session-message-collapse-and-navigation.md)
+- [Messageのブックマークとnavigator絞り込み](message-bookmark-filter.md)
 - [キーボードショートカット](keyboard-shortcuts.md)
 - [Session Windowの復元](session-window-restore.md)
 - [メッセージ画像のlightbox](message-image-lightbox.md)

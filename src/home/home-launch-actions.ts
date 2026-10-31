@@ -1,25 +1,39 @@
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../companion-state.js";
-import { createCompanionSessionSummary } from "../companion-state.js";
-import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../session-state.js";
-import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
-import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
-import { projectHomeSessionSummary } from "../session-state.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
+import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../../src-shared/session/session-state.js";
+import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
+import type { OpenSessionWindowIdsLoadStatus } from "../app/open-session-window-subscription.js";
+import { projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
 import {
-  buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionRequestFromLaunchDraft,
   resolveLaunchValidationMessage,
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 
 export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
+export type HomeLaunchFeedbackSource = "launch" | "readiness" | "creation-error";
+export type HomeLaunchResult = { title: string; message: string };
 
-export type HomeLaunchCompanionSessionCreator = (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
+export function resolveRandomHomeLaunchFeedback(
+  characterUsageStatus: SessionSummariesLoadStatus,
+  openSessionsStatus: OpenSessionWindowIdsLoadStatus,
+): string {
+  if (characterUsageStatus !== "loaded") {
+    return characterUsageStatus === "loading"
+      ? "Session history is not ready yet. Try again when it finishes."
+      : "Session history is unavailable, so random selection cannot start.";
+  }
+  if (openSessionsStatus !== "loaded") {
+    return openSessionsStatus === "loading"
+      ? "Open session windows are not ready yet. Try again when the check finishes."
+      : "Open session windows are unavailable, so random selection cannot start.";
+  }
+  return "";
+}
+
 
 export type StartHomeLaunchInput = {
   draft: HomeLaunchDraft;
-  requestedMode?: HomeLaunchDraft["mode"];
   launchStarting: boolean;
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
@@ -31,14 +45,13 @@ export type StartHomeLaunchInput = {
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
   sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   createSession: HomeLaunchSessionCreator;
-  createCompanionSession: HomeLaunchCompanionSessionCreator;
   openSessionWindow: (sessionId: string) => Promise<void>;
-  openCompanionReviewWindow: (sessionId: string) => Promise<void>;
   closeLaunchDialog: () => void;
-  setLaunchFeedback: (message: string) => void;
+  setLaunchFeedback: (message: string, source?: HomeLaunchFeedbackSource) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
+  isCurrentAttempt: () => boolean;
+  onDetachedResult: (result: HomeLaunchResult) => void;
   upsertSessionSummary: (summary: HomeSessionSummary) => void;
-  upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
   random?: () => number;
 };
 
@@ -47,7 +60,6 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  const requestedMode = input.requestedMode ?? input.draft.mode;
   const validationMessage = resolveLaunchValidationMessage({
     draft: input.draft,
     mateState: input.mateState,
@@ -59,59 +71,31 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  if (input.draft.characterSelectionMode === "random" && input.sessionCharacterUsageLoadStatus !== "loaded") {
-    input.setLaunchFeedback(
-      input.sessionCharacterUsageLoadStatus === "loading"
-        ? "Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"
-        : "Session 履歴を読み込めていないため、ランダム選択を開始できないよ。",
-    );
+  const readinessFeedback = input.draft.characterSelectionMode === "random"
+    ? resolveRandomHomeLaunchFeedback(input.sessionCharacterUsageLoadStatus, input.openSessionWindowIdsLoadStatus)
+    : "";
+  if (readinessFeedback) {
+    input.setLaunchFeedback(readinessFeedback, "readiness");
     return;
   }
 
-  if (input.draft.characterSelectionMode === "random" && input.openSessionWindowIdsLoadStatus !== "loaded") {
-    input.setLaunchFeedback(
-      input.openSessionWindowIdsLoadStatus === "loading"
-        ? "開いている Session Window を確認してるよ。完了してからもう一度開始してね。"
-        : "開いている Session Window を確認できないため、ランダム選択を開始できないよ。",
-    );
-    return;
-  }
-
-  input.setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
+  input.setLaunchFeedback("");
   input.setLaunchStarting(true);
+
+  let createdSessionId: string | null = null;
+  const reportFailure = (message: string) => {
+    if (input.isCurrentAttempt()) {
+      input.setLaunchFeedback(message, "creation-error");
+    } else {
+      input.onDetachedResult({ title: input.draft.title, message });
+    }
+  };
 
   try {
     const openSessionWindowIdSet = new Set(input.openSessionWindowIds);
     const openSessionCharacterIds = input.sessions
       .filter((session) => openSessionWindowIdSet.has(session.id))
       .map((session) => session.characterId);
-
-    if (requestedMode === "companion") {
-      const companionInput = buildCreateCompanionSessionInputFromLaunchDraft({
-        draft: input.draft,
-        mateProfile: input.mateProfile,
-        selectedProviderId: input.selectedProviderId,
-        characterEntries: input.characterEntries,
-        sessions: input.sessionCharacterUsage,
-        openSessionCharacterIds,
-        random: input.random,
-      });
-      if (!companionInput) {
-        input.setLaunchFeedback("Companion の開始条件が揃ってないよ。");
-        return;
-      }
-
-      const createdSession = await input.createCompanionSession(companionInput);
-      if (!createdSession) {
-        input.setLaunchFeedback("Companion を開始できなかったよ。");
-        return;
-      }
-
-      input.upsertCompanionSessionSummary(createCompanionSessionSummary(createdSession));
-      input.closeLaunchDialog();
-      await input.openCompanionReviewWindow(createdSession.id);
-      return;
-    }
 
     const sessionInput = buildCreateSessionRequestFromLaunchDraft({
       draft: input.draft,
@@ -123,22 +107,35 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       random: input.random,
     });
     if (!sessionInput) {
-      input.setLaunchFeedback("Session の開始条件が揃ってないよ。");
+      input.setLaunchFeedback("Session requirements are incomplete.");
       return;
     }
 
     const createdSession = await input.createSession(sessionInput);
     if (!createdSession) {
-      input.setLaunchFeedback("Session を開始できなかったよ。");
+      reportFailure("Could not confirm session creation. Check Recent Sessions before trying again.");
       return;
     }
 
+    createdSessionId = createdSession.id;
     input.upsertSessionSummary(projectHomeSessionSummary(createdSession));
+    if (!input.isCurrentAttempt()) {
+      input.onDetachedResult({
+        title: input.draft.title,
+        message: "Session created. Open it from Recent Sessions.",
+      });
+      return;
+    }
     input.closeLaunchDialog();
     await input.openSessionWindow(createdSession.id);
   } catch (error) {
-    input.setLaunchFeedback(error instanceof Error ? error.message : "開始に失敗したよ。");
+    const detail = error instanceof Error ? error.message : "Could not start session.";
+    reportFailure(createdSessionId
+      ? `Session created, but its window could not be opened. Open it from Recent Sessions. ${detail}`
+      : `Could not confirm session creation. Check Recent Sessions before trying again. ${detail}`);
   } finally {
-    input.setLaunchStarting(false);
+    if (input.isCurrentAttempt()) {
+      input.setLaunchStarting(false);
+    }
   }
 }

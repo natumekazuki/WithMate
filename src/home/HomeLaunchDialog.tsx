@@ -1,29 +1,37 @@
-import { useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
-import { focusRovingItemByKey, useDialogA11y } from "../a11y.js";
+import { focusRovingItemByKey, useDialogA11y } from "../ui/a11y.js";
 import { LaunchDialogFooter, LaunchDialogShell } from "../launch/launch-dialog-shell.js";
-import { ProviderLaunchField } from "../launch/provider-launch-picker.js";
-import { buildCharacterThemeStyle } from "../theme-utils.js";
-import { CharacterAvatar } from "../ui-utils.js";
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
-import type { HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
+import { DirectoryPathField } from "../launch/directory-path-field.js";
+import type { DirectoryPathValidationState } from "../launch/directory-path-validation.js";
+import { ProviderLaunchField, type ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
+import { buildCharacterThemeStyle } from "../ui/theme-utils.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
+import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
+import { ErrorDetailsButton } from "../ui/error-details.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
   title: string;
   sessionFolderSelected: boolean;
   workspacePathInput: string;
-  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidation: DirectoryPathValidationState;
   workspaceValidationMessage: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
+  providerLoadStatus?: ProviderLaunchLoadStatus;
+  providerLoadError?: string;
   selectedLaunchProviderId: string | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacterId: string | null;
   randomCharacterSelected: boolean;
   charactersLoaded: boolean;
+  characterLoadStatus?: HomeCharacterLoadStatus;
   canStartSession: boolean;
   launchFeedback: string;
+  launchCreationError?: string;
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
@@ -44,13 +52,17 @@ export function HomeLaunchDialog({
   workspaceValidation,
   workspaceValidationMessage,
   enabledLaunchProviders,
+  providerLoadStatus = "loaded",
+  providerLoadError = "",
   selectedLaunchProviderId,
   characterOptions,
   selectedCharacterId,
   randomCharacterSelected,
   charactersLoaded,
+  characterLoadStatus,
   canStartSession,
   launchFeedback,
+  launchCreationError = "",
   launchStarting,
   onClose,
   onChangeTitle,
@@ -63,17 +75,23 @@ export function HomeLaunchDialog({
   onStartSession,
 }: HomeLaunchDialogProps) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
+  const [startLabel, setStartLabel] = useState("Start");
+  useLayoutEffect(() => {
+    if (!launchStarting) setStartLabel(launchCreationError ? "Retry" : "Start");
+  }, [launchCreationError, launchStarting]);
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open,
     onClose,
     initialFocusRef: titleInputRef,
+    closeOnEscape: false,
   });
 
   if (!open) {
     return null;
   }
 
-  const workspaceValidationActive = workspaceValidation === "debouncing" || workspaceValidation === "pending";
+  const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
+  const providerLoadReady = providerLoadStatus === "loaded";
 
   return (
     <LaunchDialogShell
@@ -82,21 +100,36 @@ export function HomeLaunchDialog({
       onKeyDown={handleDialogKeyDown}
       ariaLabel="New Session"
       showDismissControl={false}
+      closeOnBackdropClick={false}
       dialogClassName="home-launch-dialog"
       footer={
-        <LaunchDialogFooter
-          feedback={launchFeedback}
-          startButtonLabel={launchStarting ? "Starting..." : "Start New Session"}
-          startButtonDisabled={!canStartSession || launchStarting}
-          startButtonAriaDisabled={!canStartSession || launchStarting}
-          onStart={onStartSession}
-        />
+        <>
+          <div className="home-launch-feedback">
+            {!launchStarting && (launchCreationError
+              ? <div className="home-launch-error" key={launchCreationError}>
+                  <ErrorDetailsButton message={launchCreationError} label="Session Creation Error Details" />
+                  <span role="alert">Check Recent Sessions before trying again.</span>
+                </div>
+              : launchFeedback ? <p className="launch-feedback" role="status">{launchFeedback}</p> : null)}
+          </div>
+          <LaunchDialogFooter
+            feedback=""
+            startButtonLabel={startLabel}
+            startButtonDisabled={!canStartSession || !providerLoadReady || launchStarting}
+            startButtonAriaDisabled={!canStartSession || !providerLoadReady || launchStarting}
+            startButtonBusy={launchStarting}
+            startButtonLoadingText="Starting session"
+            cancelButtonLabel="Cancel"
+            onCancel={onClose}
+            onStart={onStartSession}
+          />
+        </>
       }
     >
       <section className="launch-section minimal">
         <div className="launch-field">
           <label className="launch-field-label" htmlFor="launch-session-title">
-            セッションタイトル
+            Session Title
           </label>
           <input
             id="launch-session-title"
@@ -110,43 +143,16 @@ export function HomeLaunchDialog({
       </section>
 
       <section className="launch-section workspace-picker minimal">
-        <div className="launch-field">
-          <div className="launch-field-heading">
-            <label className="launch-field-label" htmlFor="launch-workspace-path">
-              Workspace
-            </label>
-            <span
-              id="launch-workspace-path-error"
-              className="launch-field-error"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              title={workspaceValidationMessage || undefined}
-            >
-              {workspaceValidationMessage}
-            </span>
-          </div>
-          <div className="launch-field-input-shell workspace-validation-input" aria-busy={workspaceValidationActive}>
-            <input
-              id="launch-workspace-path"
-              className="launch-field-input"
-              type="text"
-              value={workspacePathInput}
-              placeholder="C:\\path\\to\\workspace"
-              aria-invalid={workspaceValidation === "invalid"}
-              aria-describedby={workspaceValidationMessage ? "launch-workspace-path-error" : undefined}
-              onChange={(event) => onChangeWorkspacePath(event.target.value)}
-            />
-            {workspaceValidationActive ? (
-              <span className="workspace-validation-spinner" aria-hidden="true" />
-            ) : null}
-          </div>
-          {workspaceValidationActive ? (
-            <span className="visually-hidden" role="status" aria-live="polite">
-              Workspace パスを確認しています
-            </span>
-          ) : null}
-        </div>
+        <DirectoryPathField
+          id="launch-workspace-path"
+          label="Workspace"
+          value={workspacePathInput}
+          validation={workspaceValidation}
+          errorMessage={workspaceValidationMessage}
+          checkingLabel="Checking workspace path…"
+          placeholder="C:\\path\\to\\workspace"
+          onChange={onChangeWorkspacePath}
+        />
         <div className="section-head compact-actions workspace-picker-actions">
           <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
             Browse
@@ -157,7 +163,7 @@ export function HomeLaunchDialog({
             aria-pressed={sessionFolderSelected}
             onClick={onSelectSessionFolder}
           >
-            SessionFolder
+            Session Folder
           </button>
         </div>
       </section>
@@ -165,6 +171,8 @@ export function HomeLaunchDialog({
       <ProviderLaunchField
         fieldId="launch-provider-picker"
         providers={enabledLaunchProviders}
+        loadStatus={providerLoadStatus}
+        loadError={providerLoadError}
         selectedProviderId={selectedLaunchProviderId}
         onSelectProvider={onSelectProvider}
       />
@@ -172,12 +180,16 @@ export function HomeLaunchDialog({
       <section className="launch-section minimal home-launch-character-section">
         <div className="launch-field">
           <span className="launch-field-label">Character</span>
-          {!charactersLoaded ? (
+          {resolvedCharacterLoadStatus === "loading" ? (
             <div className="launch-character-neutral">
+              <LoadingIndicator label="Loading characters" inline />
+            </div>
+          ) : resolvedCharacterLoadStatus === "error" ? (
+            <div className="launch-character-neutral" role="status">
               <span className="character-avatar tiny" aria-hidden="true">W</span>
               <div className="launch-character-copy">
-                <strong>読み込み中</strong>
-                <span>Character を読み込んでるよ...</span>
+                <strong>Unavailable</strong>
+                <span>Could not load characters.</span>
               </div>
             </div>
           ) : characterOptions.length === 0 ? (
@@ -208,8 +220,7 @@ export function HomeLaunchDialog({
               >
                 <span className="character-avatar tiny" aria-hidden="true">R</span>
                 <span className="launch-character-copy">
-                  <strong>ランダム</strong>
-                  <span>最近使っていないCharacterを優先</span>
+                  <strong>Random</strong>
                 </span>
               </button>
               {characterOptions.map((character) => (

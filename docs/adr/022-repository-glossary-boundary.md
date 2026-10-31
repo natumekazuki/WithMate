@@ -4,6 +4,10 @@
 
 Accepted
 
+## Subsequent decisions
+
+[ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI／MCPのrepository指定をSession bindingだけに限定する判断は現行運用の適用対象外とする。明示repositoryによる無binding操作を同じruntime認証とapplication serviceへ接続する。binding指定時のscope、proactive条件、rendererのSession境界、checkout file正本とmutation契約は維持する。以下の本文は当時の判断として保持する。
+
 ## Context
 
 リポジトリ固有の語をSession message内で説明するには、手編集できる正本、provider Sessionに限定した変更権限、外部編集への追従、Markdown構造を壊さない表示投影が必要になる。用語集内容をWithMate DB、Session data、Memory、managed Skillへ複製すると、外部編集後にどれが現在値か判定できない。rendererやCLIがpathを自己申告する方式では、別checkoutへauthorityを広げられる。

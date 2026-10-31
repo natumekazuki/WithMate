@@ -1,0 +1,2147 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import os from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
+import { describe, it } from "node:test";
+
+import { buildNewSession, projectSessionSummary } from "../../src-shared/session/session-state.js";
+import type { CreateSessionInput, Session } from "../../src-shared/session/session-state.js";
+import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
+import { CurrentExecutionSelections } from "../../src-electron/session/current-execution-selections.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { createSessionPersistenceAssembly } from "../../src-electron/session/session-persistence-assembly.js";
+
+function createSession(overrides?: Partial<Session>): Session {
+  return {
+    ...buildNewSession({
+      taskTitle: "Persistence Test",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    }),
+    ...overrides,
+  };
+}
+
+function createProviderCatalog(id: string, enabled = true): ModelCatalogProvider {
+  return {
+    id,
+    label: id,
+    defaultModelId: enabled ? `${id}-default` : `${id}-disabled`,
+    defaultReasoningEffort: "medium",
+    models: [
+      {
+        id: enabled ? `${id}-default` : `${id}-disabled`,
+        label: `${id} default`,
+        reasoningEfforts: ["low", "medium", "high"],
+      },
+    ],
+  };
+}
+
+function createSnapshot(): ModelCatalogSnapshot {
+  return {
+    providers: [
+      createProviderCatalog("codex"),
+      createProviderCatalog("copilot"),
+    ],
+  };
+}
+
+function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnapshot>): CharacterRuntimeSnapshot {
+  return {
+    characterId: "char-a",
+    name: "A",
+    description: "保存済み Character",
+    iconFilePath: "",
+    theme: { main: "#6f8cff", sub: "#6fb8c7" },
+    definitionMarkdown: [
+      "---",
+      "schema: withmate.character.v1",
+      "name: A",
+      "---",
+      "# Character",
+      "保存済み snapshot の character.md。",
+    ].join("\n"),
+    definitionSha256: "sha256-character-definition",
+    definitionByteSize: 128,
+    snapshotAt: "2026-06-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("SessionPersistenceService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "metadataとturn内messageだけを持つruntimeのsteer/terminal保存は全履歴件数とturn identityをstorageへ渡し、確定ACKのtitle/pin/設定を投影する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#sessionpersistenceservice; docs/design/session-run-lifecycle.md" }
+  // fault = "turn内配列indexを履歴indexとして保存する、full保存へ渡す、または古いruntime metadataでACKの現行title/pin/設定を上書きする"
+  // observable = "storage command入力のcount/turn/message、返却Session countとmessage、cacheと通知"
+  // observation_boundary = "component-behavior"
+  // scope = "runtime-incremental-persistence-projection"
+  // lifecycle = "permanent"
+  // impact = "長い会話でsteerやterminalが別履歴位置へ保存され、並行した整理操作や次turn設定が失われる"
+  // distinction = "SQL単体checkでは検出できないservice入力組立てとACKからcacheへの投影を少量fixtureで検証する"
+  // @end-test-value
+  it("runtimeの小さい保存入力と確定metadata投影を保持する", async () => {
+    const runtime = createSession({ id: "incremental", incarnationId: "owner-a", status: "running", runState: "running", messages: [{ role: "user", text: "start" }], messageCount: 501 });
+    let cached = [runtime];
+    const commands: unknown[] = [];
+    const broadcasts: string[][] = [];
+    const ack = (count: number, next: Partial<Session> = {}) => ({
+      summary: projectSessionSummary({ ...runtime, ...next, taskTitle: "latest title", isPinned: true, model: "next model" }),
+      characterRuntimeSnapshot: null,
+      messageCount: count,
+    });
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: () => cached[0] ?? null,
+      getStoredSession: () => { throw new Error("Unexpected full read"); },
+      isSessionRunInFlight: () => true,
+      upsertStoredSession: () => { throw new Error("Unexpected full write"); },
+      appendStoredSessionSteer: (input) => { commands.push(input); return ack(502); },
+      appendStoredSessionTerminal: (input) => { commands.push(input); return ack(503, input.metadata); },
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => [],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (ids) => { broadcasts.push(Array.from(ids ?? [])); },
+    });
+    const steered = await service.appendRunningInput(runtime, "input", 42);
+    const completed: Session = { ...steered, status: "idle", runState: "idle", messageCount: 503, messages: [...steered.messages, { role: "assistant", text: "done" }] };
+    const terminalCommit = { turnId: 42, sessionId: runtime.id, phase: "completed" as const, assistantMessageSeq: 502, threadId: "thread", errorMessage: "", completedAt: "2026-10-10T00:00:00.000Z" };
+    const stored = await service.appendTerminalSession(completed, terminalCommit);
+    assert.deepEqual(commands, [
+      { sessionId: runtime.id, incarnationId: "owner-a", expectedMessageCount: 501, turnId: 42, userMessage: { role: "user", text: "input" }, updatedAt: runtime.updatedAt },
+      { sessionId: runtime.id, incarnationId: "owner-a", expectedMessageCount: 502, assistantMessage: { role: "assistant", text: "done" }, metadata: { status: "idle", runState: "idle", threadId: completed.threadId, updatedAt: completed.updatedAt }, terminalCommit },
+    ]);
+    assert.equal(stored.messageCount, 503);
+    assert.deepEqual(stored.messages.map((message) => message.text), ["start", "input", "done"]);
+    assert.equal(stored.taskTitle, "latest title");
+    assert.equal(stored.isPinned, true);
+    assert.equal(stored.model, "next model");
+    assert.equal(cached[0]?.runState, "idle");
+    assert.equal(cached[0]?.taskTitle, "latest title");
+    assert.deepEqual(cached[0]?.messages, []);
+    assert.deepEqual(broadcasts, [[runtime.id], [runtime.id]]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "title更新は実DB保存失敗をrejectし、commit後cache/通知/owner失効を保存済み結果として返して履歴を保持する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send; Issue #738 STORAGE-1" }
+  // fault = "commit後例外を保存失敗としてrejectする、保存失敗時にcacheを更新する、またはtitle復旧で履歴を上書きする"
+  // observable = "serviceのcommit結果/拒否、V6 DB再読込titleとmessages、cache title、通知対象"
+  // observation_boundary = "public-boundary"
+  // scope = "main-title-commit-boundary"
+  // lifecycle = "permanent"
+  // impact = "保存済みtitleが失敗として見え、再送や古いSessionへのrollbackで確定状態が失われる"
+  // distinction = "SQL個別更新testと異なり、実DB保存からserviceのcache/通知例外と呼出側結果までを結合して確認する"
+  // @end-test-value
+  it("title保存とcommit後投影失敗を実DBで区別する", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-title-commit-"));
+    try {
+      for (const fault of ["none", "storage", "cache", "broadcast", "owner"] as const) {
+        const dbPath = path.join(directory, `${fault}.db`);
+        const storage = new SessionStorageV6(dbPath);
+        try {
+          const session = storage.insertSession(createSession({
+            id: `title-${fault}`, taskTitle: "Before",
+            messages: [{ role: "user", text: "keep history" }],
+          }));
+          if (fault === "storage") {
+            const db = new DatabaseSync(dbPath);
+            try {
+              db.exec("CREATE TRIGGER reject_title BEFORE UPDATE OF title ON sessions_v6 BEGIN SELECT RAISE(ABORT, 'title write rejected'); END;");
+            } finally { db.close(); }
+          }
+          let cached = [session];
+          let ownerActive = true;
+          const broadcasts: string[][] = [];
+          const service = createSessionPersistenceAssembly({
+            owner: { assertActive: () => { if (!ownerActive) throw new Error("storage owner expired"); } },
+            storage: {
+              setSessionTitle: (id: string, owner: string, title: string) => {
+                storage.setSessionTitle(id, owner, title);
+                if (fault === "owner") ownerActive = false;
+              },
+            } as never,
+            pinStorage: {} as never,
+            cache: {
+              getSessions: () => cached,
+              setSessions: (next) => {
+                if (fault === "cache") throw new Error("cache unavailable");
+                cached = next;
+              },
+              getSession: (id) => cached.find((item) => item.id === id) ?? null,
+            },
+            runtime: { isSessionRunInFlight: () => false },
+            auxiliary: { listAuxiliarySessionRuntimeIdentities: () => [] },
+            settings: { getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: createSnapshot },
+            character: { createCharacterRuntimeSnapshot: () => null },
+            effects: {
+              syncSessionDependencies: () => undefined,
+              clearSessionContextTelemetry: () => undefined,
+              clearSessionBackgroundActivities: () => undefined,
+              invalidateProviderSessionThread: () => undefined,
+              revokeSessionAgentRuntimeBindings: () => undefined,
+              closeSessionWindow: () => undefined,
+              discardSessionWindow: () => undefined,
+              broadcastSessions: (ids) => {
+                broadcasts.push(Array.from(ids ?? []));
+                if (fault === "broadcast") throw new Error("window send failed");
+              },
+            },
+          });
+          const pending = service.setSessionTitle(session.id, session.incarnationId!, "After");
+          if (fault === "storage") {
+            await assert.rejects(pending, /title write rejected/);
+          } else {
+            assert.deepEqual(await pending, { status: "committed", projectionUpdated: fault === "none" });
+          }
+          assert.equal(storage.getSessionSummary(session.id)?.taskTitle, fault === "storage" ? "Before" : "After");
+          assert.deepEqual(storage.getSession(session.id)?.messages.map((message) => message.text), ["keep history"]);
+          assert.equal(cached[0]?.taskTitle, fault === "storage" || fault === "cache" || fault === "owner" ? "Before" : "After");
+          assert.deepEqual(broadcasts, fault === "storage" || fault === "owner" ? [] : [[session.id]]);
+        } finally { storage.close(); }
+      }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "titleとbookmarkのservice更新は履歴を全体保存せず、running/開始中のtitle変更を拒否してcacheへ反映する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session metadataとmessage保存境界" }
+  // fault = "titleまたはbookmark更新がfull read/writeを経由する、またはrunning/開始中のtitle変更を保存する"
+  // observable = "狭いstorage呼出し、cache title、broadcast対象、running/開始中の拒否とfull read/write呼出し数"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-narrow-metadata"
+  // lifecycle = "permanent"
+  // impact = "長い履歴の操作が重くなり、並行するturnの本文を上書きする"
+  // distinction = "V6 SQLテストとは異なり、serviceからfull read/writeへ戻らない接続経路を観測する"
+  // @end-test-value
+  it("titleとbookmarkは狭いstorage呼出しだけを行う", async () => {
+    const session = createSession({ id: "narrow-service", incarnationId: "owner-a" });
+    let cached = [session];
+    let inFlight = false;
+    const writes: string[] = [];
+    const broadcasts: string[][] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      getStoredSession: () => { throw new Error("full read"); },
+      isSessionRunInFlight: () => inFlight,
+      upsertStoredSession: () => { throw new Error("full write"); },
+      setStoredSessionTitle: (id, owner, title) => { writes.push(`title:${id}:${owner}:${title}`); },
+      setStoredSessionMessageBookmark: (id, owner, index, bookmarked) => { writes.push(`bookmark:${id}:${owner}:${index}:${bookmarked}`); },
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => [],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
+    });
+    await service.setSessionTitle(session.id, "owner-a", "Updated");
+    await service.setSessionMessageBookmark(session.id, "owner-a", 3, true);
+    assert.deepEqual(writes, ["title:narrow-service:owner-a:Updated", "bookmark:narrow-service:owner-a:3:true"]);
+    assert.equal(cached[0]?.taskTitle, "Updated");
+    assert.deepEqual(broadcasts, [[session.id]]);
+    inFlight = true;
+    await assert.rejects(service.setSessionTitle(session.id, "owner-a", "Starting title"), /running session cannot be updated/);
+    inFlight = false;
+    cached = [{ ...cached[0]!, status: "running", runState: "running" }];
+    await assert.rejects(service.setSessionTitle(session.id, "owner-a", "Running title"), /running session cannot be updated/);
+    assert.deepEqual(writes, ["title:narrow-service:owner-a:Updated", "bookmark:narrow-service:owner-a:3:true"]);
+    assert.equal(cached[0]?.taskTitle, "Updated");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "実行中の次設定とdirectory更新は旧captureを変えずcheckpoint失敗とstale保存で巻き戻らず並行steer本文を保持する"
+  // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#実行設定と-send" }
+  // fault = "running選択を拒否するか元captureを編集するかcheckpoint/古い保存で次選択を戻すかread-only/旧ownerを受理する"
+  // observable = "旧captureと選択memory、directory更新後の並行steer本文/設定、read-only/旧owner拒否、retry/terminal保存引数と通知数"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-overlay"
+  // lifecycle = "permanent"
+  // impact = "表示・後続保存に旧設定が残り、利用者の実行設定選択が失われる"
+  // distinction = "SQL列更新テストでなく、同じmutation queue内の選択記憶と後続upsertの競合を確認する"
+  // @end-test-value
+  it("実行中も次送信用選択を保持しstale保存へoverlayする", async () => {
+    const session = createSession({
+      id: "selection-service", incarnationId: "owner-a", provider: "codex",
+      catalogRevision: 2, model: "codex-default", reasoningEffort: "low",
+      messages: [{ role: "user", text: "prompt" }],
+      status: "running", runState: "running",
+    });
+    const runningCapture = captureSessionExecutionOptions(session);
+    let cached = [session];
+    let stored = session;
+    const selections = new CurrentExecutionSelections();
+    const broadcasts: string[][] = [];
+    const storedModels: string[] = [];
+    let directoryReads = 0;
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      getStoredSession: () => {
+        const snapshot = stored;
+        if (directoryReads++ === 0) void service.appendRunningInput(session, "concurrent input", 1);
+        return snapshot;
+      },
+      appendStoredSessionSteer: () => {
+        stored = { ...stored, messages: [...stored.messages, { role: "user", text: "concurrent input" }] };
+        return { summary: projectSessionSummary(stored), characterRuntimeSnapshot: stored.characterRuntimeSnapshot, messageCount: stored.messages.length };
+      },
+      isSessionRunInFlight: () => true,
+      upsertStoredSession: (next) => { storedModels.push(`${next.model}:${next.reasoningEffort}`); stored = next; return next; },
+      upsertStoredTerminalSession: (next) => { storedModels.push(`${next.model}:${next.reasoningEffort}`); stored = next; return next; },
+      setStoredSessionExecutionOptions: () => { throw new Error("checkpoint unavailable"); },
+      overlayCurrentExecutionOptions: (next) => selections.apply(next),
+      rememberExecutionOptions: (next, options) => selections.remember(next, options),
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => [stored],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
+    });
+    const selected = {
+      ...captureSessionExecutionOptions(session), reasoningEffort: "high" as const,
+      approvalMode: "on-request" as const, codexSandboxMode: "danger-full-access" as const,
+      codexSpeed: "fast" as const, codexReviewer: "auto-review" as const,
+    };
+    assert.deepEqual(await service.setSessionExecutionOptions(session.id, "owner-a", selected), {
+      status: "accepted", checkpointSaved: false,
+    });
+    assert.deepEqual(captureSessionExecutionOptions(selections.apply(session)), selected);
+    assert.deepEqual(captureSessionExecutionOptions(cached[0]!), selected);
+    assert.deepEqual(broadcasts, []);
+    assert.deepEqual(captureSessionExecutionOptions(session), runningCapture);
+    const directories = await service.updateSession({ ...cached[0]!, allowedAdditionalDirectories: ["C:/next-context"] });
+    assert.deepEqual(directories.allowedAdditionalDirectories, ["C:\\next-context"]);
+    assert.deepEqual(directories.messages, [...session.messages, { role: "user", text: "concurrent input" }]);
+    assert.deepEqual(captureSessionExecutionOptions(directories), selected);
+    await assert.rejects(service.setSessionExecutionOptions(session.id, "obsolete-owner", selected), /could not be found/i);
+    cached = [{ ...cached[0]!, accessMode: "legacy_readonly" }];
+    await assert.rejects(service.setSessionExecutionOptions(session.id, "owner-a", selected), /read-only/i);
+    cached = [{ ...cached[0]!, accessMode: "active" }];
+    assert.deepEqual(broadcasts, [[session.id], [session.id]]);
+    await service.upsertSessionPreservingPin({ ...session, reasoningEffort: "medium" });
+    await service.upsertTerminalSession({ ...session, status: "idle", reasoningEffort: "medium" }, {
+      turnId: 1, sessionId: session.id, phase: "completed", assistantMessageSeq: 0,
+      threadId: "", errorMessage: "", completedAt: "2026-09-27T00:00:00.000Z",
+    });
+    assert.deepEqual(storedModels, ["codex-default:high", "codex-default:high", "codex-default:high"]);
+    assert.deepEqual(captureSessionExecutionOptions(stored), selected);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "先行する実行オプションcheckpointが保留中でも新選択はメモリへ即時反映され、turn保存をglobal queueで塞がない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session実行オプションとturn保存" }
+  // fault = "selection受理をcheckpoint完了まで直列化し、次の選択またはturn保存を古いcheckpointで待たせる"
+  // observable = "B checkpoint保留中のC memory/cache、turn保存到達、checkpoint順序と最終選択"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-checkpoint-order"
+  // lifecycle = "permanent"
+  // impact = "UIを開き直すと古い選択が見え、送信が任意checkpointに妨げられる"
+  // distinction = "storage成功後の値だけでなく、pending checkpoint中のメモリ正本とSend進行を観測する"
+  // @end-test-value
+  it("B checkpoint保留中にC選択を受理しturn保存を進める", async () => {
+    const session = createSession({
+      id: "selection-pending", incarnationId: "owner-a", provider: "codex",
+      catalogRevision: 2, model: "codex-default", reasoningEffort: "low",
+      messages: [{ role: "user", text: "prompt" }],
+    });
+    let cached = [session];
+    const selections = new CurrentExecutionSelections();
+    let releaseB!: () => void;
+    let reachedB!: () => void;
+    const bWait = new Promise<void>((resolve) => { releaseB = resolve; });
+    const bReached = new Promise<void>((resolve) => { reachedB = resolve; });
+    const checkpoints: string[] = [];
+    let turnSaved = false;
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next) => { turnSaved = true; return next; },
+      setStoredSessionExecutionOptions: async (_id, _owner, options) => {
+        checkpoints.push(options.reasoningEffort);
+        if (options.reasoningEffort === "medium") { reachedB(); await bWait; }
+      },
+      overlayCurrentExecutionOptions: (next) => selections.apply(next),
+      rememberExecutionOptions: (next, options) => selections.remember(next, options),
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => cached,
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const base = captureSessionExecutionOptions(session);
+    const b = service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "medium" });
+    await bReached;
+    const c = service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "high" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(selections.apply(session).reasoningEffort, "high");
+    assert.equal(cached[0]?.reasoningEffort, "high");
+    const send = service.upsertSessionPreservingPin({ ...session, reasoningEffort: "low" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(turnSaved, true);
+    assert.equal((await send).reasoningEffort, "high");
+    releaseB();
+    await Promise.all([b, c]);
+    assert.deepEqual(checkpoints, ["medium", "high"]);
+    assert.equal(selections.apply(session).reasoningEffort, "high");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "古いcatalog取得が後から完了しても、後続の検証済み実行オプション選択を上書きしない"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md: Session実行オプションとturn保存" }
+  // fault = "先着Bの遅いcatalog応答が後着Cの受理後にBをremember/checkpointする"
+  // observable = "B superseded拒否、C memory、checkpointされたeffort一覧"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-validation-order"
+  // lifecycle = "permanent"
+  // impact = "後のユーザー選択が古い非同期応答に戻される"
+  // distinction = "checkpointの直列順でなく、validation完了順が要求順と逆転する競合を固定する"
+  // @end-test-value
+  it("遅れたB catalog応答はC選択を戻さない", async () => {
+    const session = createSession({ id: "selection-catalog", incarnationId: "owner-a", provider: "codex", catalogRevision: 2, model: "codex-default" });
+    let cached = [session];
+    let releaseB!: (snapshot: ModelCatalogSnapshot) => void;
+    let catalogCalls = 0;
+    const bCatalog = new Promise<ModelCatalogSnapshot>((resolve) => { releaseB = resolve; });
+    const selections = new CurrentExecutionSelections();
+    const checkpoints: string[] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next) => next,
+      setStoredSessionExecutionOptions: (_id, _owner, options) => { checkpoints.push(options.reasoningEffort); },
+      overlayCurrentExecutionOptions: (next) => selections.apply(next),
+      rememberExecutionOptions: (next, options) => selections.remember(next, options),
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => cached,
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: () => ++catalogCalls === 1 ? bCatalog : createSnapshot(),
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const base = captureSessionExecutionOptions(session);
+    const b = service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "medium" });
+    await service.setSessionExecutionOptions(session.id, "owner-a", { ...base, reasoningEffort: "high" });
+    releaseB(createSnapshot());
+    await assert.rejects(b, /superseded/);
+    assert.equal(selections.apply(session).reasoningEffort, "high");
+    assert.deepEqual(checkpoints, ["high"]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "catalog待ちでSessionが同ID再作成された時、古いownerの選択はメモリにもstorageにも記録しない"
+  // oracle = { type = "contract", ref = "AGENTS.md: Session incarnationとデータ保護" }
+  // fault = "非同期catalog取得前に読んだ古いSessionを検証し、再作成された行へ選択を適用する"
+  // observable = "古いownerの拒否、remember/storage呼出しなし、新owner cache不変"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-service-selection-owner"
+  // lifecycle = "permanent"
+  // impact = "削除済みSessionの選択が新しい会話へ漏れて実行条件を変える"
+  // distinction = "storageのincarnation SQL guardだけでなく、その前のin-memory selection記憶を防ぐ"
+  // @end-test-value
+  it("catalog待ち中の同ID再作成では選択を記憶しない", async () => {
+    const old = createSession({ id: "owner-race", incarnationId: "old-owner", catalogRevision: 2, model: "codex-default" });
+    const recreated = { ...old, incarnationId: "new-owner", taskTitle: "New session" };
+    let cached = [old];
+    let releaseCatalog!: (snapshot: ModelCatalogSnapshot) => void;
+    let reachedCatalog!: () => void;
+    const catalogReady = new Promise<void>((resolve) => { reachedCatalog = resolve; });
+    const catalogWait = new Promise<ModelCatalogSnapshot>((resolve) => { releaseCatalog = resolve; });
+    const calls: string[] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cached,
+      setSessions: (next) => { cached = next; },
+      getSession: (id) => cached.find((item) => item.id === id) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (next) => next,
+      setStoredSessionExecutionOptions: () => { calls.push("storage"); },
+      rememberExecutionOptions: () => { calls.push("remember"); },
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => cached,
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: () => { reachedCatalog(); return catalogWait; },
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const update = service.setSessionExecutionOptions(old.id, "old-owner", captureSessionExecutionOptions(old));
+    await catalogReady;
+    cached = [recreated];
+    releaseCatalog(createSnapshot());
+    await assert.rejects(update, /could not be found/i);
+    assert.deepEqual(calls, []);
+    assert.equal(cached[0]?.taskTitle, "New session");
+  });
+
+  it("setSessionPinnedは実行状態とupdatedAtを変えずにcacheとbroadcastを更新する", async () => {
+    const session = createSession({
+      id: "pin-target",
+      status: "running",
+      runState: "running",
+      accessMode: "legacy_readonly",
+      sourceSchemaVersion: 4,
+      updatedAt: "2026-08-09T04:38:00.000Z",
+      isPinned: false,
+    });
+    let cachedSessions = [session];
+    const broadcasts: string[][] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cachedSessions,
+      setSessions: (next) => { cachedSessions = next; },
+      getSession: () => session,
+      isSessionRunInFlight: () => true,
+      upsertStoredSession: (next) => next,
+      replaceStoredSessions: () => undefined,
+      setStoredSessionPinned: (sessionId, isPinned) => ({
+        ...projectSessionSummary(session),
+        id: sessionId,
+        isPinned,
+      }),
+      listStoredSessions: () => [session],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
+    });
+
+    const saved = await service.setSessionPinned(session.id, true);
+
+    assert.equal(saved.isPinned, true);
+    assert.equal(saved.updatedAt, session.updatedAt);
+    assert.equal(cachedSessions[0]?.status, "running");
+    assert.equal(cachedSessions[0]?.runState, "running");
+    assert.equal(cachedSessions[0]?.isPinned, true);
+    assert.deepEqual(broadcasts, [[session.id]]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "pinと共通Directory変更後のstaleなrunning/retry/terminal保存は最新の設定を保持し終端本文を保存する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts upsertSessionPreservingPin/upsertTerminalSession" }
+  // fault = "並行したstale保存が最新のpinまたは共通Directoryを戻すかterminal本文を失う"
+  // observable = "保存SessionのisPinned/Directory/runState/最終本文とcacheのisPinned/Directory"
+  // observation_boundary = "public-boundary"
+  // scope = "session persistence pin concurrency"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("pinとDirectory変更の後にstaleなrunning・retry・terminal保存が続いても最新の設定を維持する", async () => {
+    const runningSession = createSession({
+      id: "pin-during-run",
+      status: "running",
+      runState: "running",
+      isPinned: false,
+    });
+    const directories = [path.resolve("C:/current-shared")];
+    const selectedSession = { ...runningSession, allowedAdditionalDirectories: directories };
+    let cachedSessions = [selectedSession];
+    let storedSession = selectedSession;
+    const service = new SessionPersistenceService({
+      getSessions: () => cachedSessions,
+      setSessions: (next) => { cachedSessions = next; },
+      getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+      isSessionRunInFlight: () => true,
+      upsertStoredSession: (next) => {
+        storedSession = next;
+        return next;
+      },
+      upsertStoredTerminalSession: (next) => {
+        storedSession = next;
+        return next;
+      },
+      replaceStoredSessions: () => undefined,
+      setStoredSessionPinned: (sessionId, isPinned) => {
+        storedSession = { ...storedSession, isPinned };
+        return { ...projectSessionSummary(storedSession), id: sessionId, isPinned };
+      },
+      listStoredSessions: () => [storedSession],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const staleCompletedSession = createSession({
+      ...runningSession,
+      status: "idle",
+      runState: "idle",
+      isPinned: false,
+      messages: [...runningSession.messages, { role: "assistant", text: "done" }],
+    });
+
+    const pinWrite = service.setSessionPinned(runningSession.id, true);
+    const staleRunningWrite = service.upsertSessionPreservingPin({
+      ...runningSession,
+      threadId: "thread-stale",
+      isPinned: false,
+    });
+    const staleRetryWrite = service.upsertSessionPreservingPin({
+      ...runningSession,
+      threadId: "",
+      isPinned: false,
+    });
+    const terminalWrite = service.upsertTerminalSession(staleCompletedSession, {
+      turnId: 1,
+      sessionId: staleCompletedSession.id,
+      phase: "completed",
+      assistantMessageSeq: staleCompletedSession.messages.length - 1,
+      threadId: staleCompletedSession.threadId,
+      errorMessage: "",
+      completedAt: "2026-08-16T00:00:00.000Z",
+    });
+    await Promise.all([pinWrite, staleRunningWrite, staleRetryWrite, terminalWrite]);
+
+    assert.equal(storedSession.isPinned, true);
+    assert.deepEqual(storedSession.allowedAdditionalDirectories, directories);
+    assert.equal(storedSession.runState, "idle");
+    assert.equal(storedSession.messages.at(-1)?.text, "done");
+    assert.equal(cachedSessions[0]?.isPinned, true);
+    assert.deepEqual(cachedSessions[0]?.allowedAdditionalDirectories, directories);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "確定済みterminal保存はdependency/cache/broadcast投影の失敗で未保存扱いにならない"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md terminal persistence and projection boundaries" }
+  // fault = "永続化成功後のprojection例外を保存失敗として返すか後続projectionを省略する"
+  // observable = "返却Sessionと保存Sessionの終端state/本文および各projectionの呼出記録"
+  // observation_boundary = "public-boundary"
+  // scope = "terminal persistence outcome"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("terminal commit後のprojection failureを保存済み結果へ波及させない", async () => {
+    for (const failingProjection of ["dependency", "cache", "broadcast"] as const) {
+      const runningSession = createSession({
+        id: `terminal-projection-${failingProjection}`,
+        status: "running",
+        runState: "running",
+      });
+      const terminalSession = createSession({
+        ...runningSession,
+        status: "idle",
+        runState: "idle",
+        messages: [...runningSession.messages, { role: "assistant", text: "done" }],
+      });
+      let cachedSessions = [runningSession];
+      let persistedSession = runningSession;
+      const attemptedProjections: string[] = [];
+      const service = new SessionPersistenceService({
+        getSessions: () => cachedSessions,
+        setSessions(nextSessions) {
+          attemptedProjections.push("cache");
+          if (failingProjection === "cache") {
+            throw new Error("cache projection failed");
+          }
+          cachedSessions = nextSessions;
+        },
+        getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+        isSessionRunInFlight: () => true,
+        upsertStoredSession(next) {
+          persistedSession = next;
+          return next;
+        },
+        upsertStoredTerminalSession(next) {
+          persistedSession = next;
+          return next;
+        },
+        replaceStoredSessions: () => undefined,
+        setStoredSessionPinned: (_sessionId, isPinned) => ({ ...persistedSession, isPinned }),
+        listStoredSessions: () => [persistedSession],
+        getAppSettings: () => normalizeAppSettings({}),
+        getModelCatalogSnapshot: createSnapshot,
+        syncSessionDependencies() {
+          attemptedProjections.push("dependency");
+          if (failingProjection === "dependency") {
+            throw new Error("dependency projection failed");
+          }
+        },
+        clearSessionContextTelemetry: () => undefined,
+        clearSessionBackgroundActivities: () => undefined,
+        invalidateProviderSessionThread: () => undefined,
+        closeSessionWindow: () => undefined,
+        broadcastSessions() {
+          attemptedProjections.push("broadcast");
+          if (failingProjection === "broadcast") {
+            throw new Error("broadcast projection failed");
+          }
+        },
+      });
+
+      const result = await service.upsertTerminalSession(terminalSession, {
+        turnId: 1,
+        sessionId: terminalSession.id,
+        phase: "completed",
+        assistantMessageSeq: terminalSession.messages.length - 1,
+        threadId: terminalSession.threadId,
+        errorMessage: "",
+        completedAt: "2026-08-16T00:00:00.000Z",
+      });
+
+      assert.equal(result.runState, "idle");
+      assert.equal(result.messages.at(-1)?.text, "done");
+      assert.equal(persistedSession.runState, "idle");
+      assert.deepEqual(attemptedProjections, ["dependency", "cache", "broadcast"]);
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "createSessionのprovider解決は非同期catalog/settingsを待ち、無効providerを拒否する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#resolveCharacterAuthoringProvider" }
+  // fault = "非同期provider解決を待たずPromiseをprovider値として扱う"
+  // observable = "provider解決結果と無効providerの拒否"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-provider-resolution"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("createSession は有効な provider と model を解決して保存する", async () => {
+    const storedSessions: Session[] = [];
+    const syncedSessionIds: string[] = [];
+    const broadcastedSessionIds: string[][] = [];
+    const snapshot = createSnapshot();
+    const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
+    const snapshotCharacterIds: string[] = [];
+    const storeOperations: string[] = [];
+    let persistedSession: Session | null = null;
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession() {
+        return null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, operation) {
+        storeOperations.push(operation);
+        persistedSession = session;
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      async getAppSettings() {
+        return normalizeAppSettings({
+          providers: {
+            codex: { enabled: true },
+            copilot: { enabled: false },
+          },
+        });
+      },
+      async getModelCatalogSnapshot() {
+        return snapshot;
+      },
+      createCharacterRuntimeSnapshot(characterId) {
+        snapshotCharacterIds.push(characterId);
+        return characterRuntimeSnapshot;
+      },
+      syncSessionDependencies(session) {
+        syncedSessionIds.push(session.id);
+      },
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
+      },
+    });
+
+    assert.equal(await service.resolveCharacterAuthoringProvider("codex"), "codex");
+    await assert.rejects(
+      () => service.resolveCharacterAuthoringProvider("unknown-provider"),
+      /Provider unknown-provider model discovery is unavailable/,
+    );
+    await assert.rejects(
+      () => service.resolveCharacterAuthoringProvider("copilot"),
+      /Provider copilot is disabled/,
+    );
+
+    const created = await service.createSession({
+      taskTitle: "New Session",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      provider: "codex",
+      model: "codex-default",
+      reasoningEffort: "medium",
+      customAgentName: "",
+      allowedAdditionalDirectories: ["C:/workspace/..", "C:/workspace/external"],
+    } satisfies CreateSessionInput);
+
+    assert.equal(created.provider, "codex");
+    assert.equal(created.model, "codex-default");
+    assert.equal(created.reasoningEffort, "medium");
+    assert.equal(created.customAgentName, "");
+    assert.equal(created.allowedAdditionalDirectories.length, 1);
+    assert.deepEqual(snapshotCharacterIds, ["char-a"]);
+    assert.deepEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    assert.notEqual(created.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    assert.deepEqual(persistedSession!.characterRuntimeSnapshot, characterRuntimeSnapshot);
+    assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
+    assert.deepEqual(syncedSessionIds, [created.id]);
+    assert.deepEqual(broadcastedSessionIds, [[created.id]]);
+    assert.deepEqual(storeOperations, ["create"]);
+
+    await assert.rejects(
+      () => service.createSession({
+        taskTitle: "Character authoring",
+        workspaceLabel: "character authoring",
+        workspacePath: "C:/characters/char-a",
+        branch: "main",
+        sessionKind: "character-authoring",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        provider: "copilot",
+        customAgentName: "",
+        allowedAdditionalDirectories: [],
+      }),
+      /Provider copilot is disabled/,
+    );
+    assert.deepEqual(storeOperations, ["create"]);
+
+    await assert.rejects(
+      () => service.createSession({
+        taskTitle: "Character authoring",
+        workspaceLabel: "character authoring",
+        workspacePath: "C:/characters/char-a",
+        branch: "main",
+        sessionKind: "character-authoring",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        provider: "unknown-provider",
+        customAgentName: "",
+        allowedAdditionalDirectories: [],
+      }),
+      /Provider unknown-provider model discovery is unavailable/,
+    );
+    assert.deepEqual(storeOperations, ["create"]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "既存Session IDとの衝突時は新規入力で既存Sessionを上書きしない"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#createSession" }
+  // fault = "衝突したIDの既存Sessionを破壊または置換する"
+  // observable = "reject結果、upsert回数、既存Sessionの主要属性"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-create-collision"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("createSession は指定 ID が既存 Session と衝突する場合に上書きしない", async () => {
+    const existing = createSession({
+      id: "existing-session",
+      status: "running",
+      runState: "running",
+      threadId: "thread-existing",
+    });
+    let upsertCount = 0;
+    const service = new SessionPersistenceService({
+      getSessions: () => [existing],
+      setSessions() {},
+      getSession: (sessionId) => sessionId === existing.id ? existing : null,
+      getStoredSession: () => existing,
+      isSessionRunInFlight: () => true,
+      upsertStoredSession(session, _operation) {
+        upsertCount += 1;
+        return session;
+      },
+      replaceStoredSessions() {},
+      listStoredSessions: () => [existing],
+      deleteStoredSession() {},
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: () => createSnapshot(),
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    await assert.rejects(
+      service.createSession({
+        id: existing.id,
+        taskTitle: "forged replacement",
+        workspaceLabel: "forged",
+        workspacePath: "C:/forged",
+        branch: "",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      /A Session with the same ID already exists/,
+    );
+    assert.equal(upsertCount, 0);
+    assert.equal(existing.threadId, "thread-existing");
+    assert.equal(existing.workspacePath, "C:/workspace");
+
+    let storageOnlyUpsertCount = 0;
+    const storageOnlyService = new SessionPersistenceService({
+      getSessions: () => [],
+      setSessions() {},
+      getSession: () => null,
+      getStoredSession: (sessionId) => sessionId === existing.id ? existing : null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession() {
+        storageOnlyUpsertCount += 1;
+        return existing;
+      },
+      replaceStoredSessions() {},
+      listStoredSessions: () => [existing],
+      deleteStoredSession() {},
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: () => createSnapshot(),
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    await assert.rejects(
+      storageOnlyService.createSession({
+        id: existing.id,
+        taskTitle: "storage-only forged replacement",
+        workspaceLabel: "forged",
+        workspacePath: "C:/forged",
+        branch: "",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }),
+      /A Session with the same ID already exists/,
+    );
+    assert.equal(storageOnlyUpsertCount, 0);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "createSessionへ渡されたCharacterRuntimeSnapshotをfallback生成結果より優先して保存する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#createSession" }
+  // fault = "入力snapshotを破棄してfallback snapshotを保存する"
+  // observable = "作成Sessionと永続化Sessionのsnapshot identityおよびfallback呼び出し回数"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-create-runtime-snapshot"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("createSession は input の CharacterRuntimeSnapshot を優先して保存する", async () => {
+    const storedSessions: Session[] = [];
+    const inputSnapshot = createCharacterRuntimeSnapshot({
+      definitionMarkdown: "# Character\ninput snapshot",
+      definitionSha256: "sha256-input",
+    });
+    let fallbackSnapshotCalls = 0;
+    let persistedSession: Session | null = null;
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession() {
+        return null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, _operation) {
+        persistedSession = session;
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      createCharacterRuntimeSnapshot() {
+        fallbackSnapshotCalls += 1;
+        return createCharacterRuntimeSnapshot({ definitionSha256: "sha256-fallback" });
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const created = await service.createSession({
+      taskTitle: "New Session",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      characterRuntimeSnapshot: inputSnapshot,
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    } satisfies CreateSessionInput);
+
+    assert.equal(fallbackSnapshotCalls, 0);
+    assert.deepEqual(created.characterRuntimeSnapshot, inputSnapshot);
+    assert.notEqual(created.characterRuntimeSnapshot, inputSnapshot);
+    assert.deepEqual(persistedSession!.characterRuntimeSnapshot, inputSnapshot);
+    assert.equal(storedSessions[0]?.characterRuntimeSnapshot, null);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "summary-only更新で入力にない既存messagesを保持して保存する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#upsertSession" }
+  // fault = "summary更新で既存messagesを空配列または入力値へ置換する"
+  // observable = "永続化Sessionと返却Sessionのmessage本文"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-summary-message-preservation"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("upsertSession は summary-only session 更新でも既存 messages を保持する", async () => {
+    const fullSession = createSession({
+      id: "session-with-messages",
+      taskTitle: "Before",
+      messages: [
+        { role: "user", text: "残すメッセージ" },
+        { role: "assistant", text: "残す返答" },
+      ],
+    });
+    const summaryOnlySession: Session = {
+      ...fullSession,
+      taskTitle: "After",
+      messages: [],
+      stream: [],
+    };
+    let storedSession: Session | null = null;
+    const inMemorySessions = [summaryOnlySession];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return inMemorySessions;
+      },
+      setSessions(nextSessions) {
+        inMemorySessions.splice(0, inMemorySessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return inMemorySessions.find((session) => session.id === sessionId) ?? null;
+      },
+      getStoredSession(sessionId) {
+        return sessionId === fullSession.id ? fullSession : null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, _operation) {
+        storedSession = session;
+        return session;
+      },
+      replaceStoredSessions() {},
+      listStoredSessions() {
+        return [];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = await service.upsertSession(summaryOnlySession);
+
+    assert.deepEqual(
+      storedSession!.messages.map((message) => message.text),
+      ["残すメッセージ", "残す返答"],
+    );
+    assert.deepEqual(updated.messages.map((message) => message.text), ["残すメッセージ", "残す返答"]);
+    assert.deepEqual(inMemorySessions[0]?.messages, []);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "createSessionはmodelとcustomAgentNameの前後空白を除き、指定したreasoningEffortを保存する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#createSession" }
+  // fault = "modelまたはcustomAgentNameの入力空白を未正規化のまま保存する"
+  // observable = "作成Sessionのmodel、reasoningEffort、customAgentName"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-create-runtime-selection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("createSession は model と customAgentName をtrimし指定したreasoningEffortを保存する", async () => {
+    const storedSessions: Session[] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession() {
+        return null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, _operation) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({
+          codingProviderSettings: {
+            codex: { enabled: true },
+            copilot: { enabled: true },
+          },
+        });
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const created = await service.createSession({
+      taskTitle: "New Session",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+      provider: "copilot",
+      model: " copilot-default ",
+      reasoningEffort: "high",
+      customAgentName: " planner ",
+    } satisfies CreateSessionInput);
+
+    assert.equal(created.provider, "copilot");
+    assert.equal(created.model, "copilot-default");
+    assert.equal(created.reasoningEffort, "high");
+    assert.equal(created.customAgentName, "planner");
+    assert.equal(storedSessions.length, 1);
+    assert.equal(storedSessions[0]?.model, "copilot-default");
+    assert.equal(storedSessions[0]?.reasoningEffort, "high");
+    assert.equal(storedSessions[0]?.customAgentName, "planner");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "provider変更時はtelemetryをclearし、thread reset時は旧provider thread cacheをinvalidateする"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#updateSession" }
+  // fault = "provider変更またはthread reset後に旧provider状態を残す"
+  // observable = "clear/invalidate呼び出し記録と保存Sessionのprovider/threadId"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-provider-thread-reset"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は provider 変更時に telemetry をクリアし、thread reset 時は provider cache を invalidate する", async () => {
+    const baseSession = createSession({ provider: "codex", model: "codex-default", threadId: "thread-1" });
+    const storedSessions: Session[] = [baseSession];
+    const clearedTelemetry: string[] = [];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((session) => session.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, _operation) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry(sessionId) {
+        clearedTelemetry.push(sessionId);
+      },
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = await service.updateSession({ ...baseSession, provider: "copilot", model: "copilot-default" });
+    assert.equal(updated.provider, "copilot");
+    assert.equal(updated.threadId, "");
+    assert.deepEqual(clearedTelemetry, [baseSession.id]);
+    assert.deepEqual(invalidatedThreads, [{ providerId: "codex", sessionId: baseSession.id }]);
+
+    const sameProviderThreadReset = createSession({
+      id: "same-provider-thread-reset",
+      provider: "codex",
+      model: "codex-default",
+      threadId: "thread-to-delete",
+    });
+    storedSessions.splice(0, storedSessions.length, sameProviderThreadReset);
+    await service.updateSession({ ...sameProviderThreadReset, threadId: "" });
+    assert.deepEqual(invalidatedThreads, [
+      { providerId: "codex", sessionId: baseSession.id },
+      { providerId: "codex", sessionId: sameProviderThreadReset.id },
+    ]);
+
+    const withoutThread = createSession({
+      id: "session-without-thread",
+      provider: "codex",
+      model: "codex-default",
+      threadId: "",
+    });
+    storedSessions.splice(0, storedSessions.length, withoutThread);
+    await service.updateSession({ ...withoutThread, provider: "copilot", model: "copilot-default" });
+    assert.deepEqual(invalidatedThreads, [
+      { providerId: "codex", sessionId: baseSession.id },
+      { providerId: "codex", sessionId: sameProviderThreadReset.id },
+      { providerId: "codex", sessionId: withoutThread.id },
+    ]);
+
+    storedSessions.splice(0, storedSessions.length, createSession({ id: baseSession.id, runState: "running", status: "running" }));
+    await assert.rejects(
+      () => service.updateSession({ ...storedSessions[0], taskTitle: "blocked" }),
+      /A running session cannot be updated/,
+    );
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Main Sessionのfull-session更新は保存済みApprovalがneverの間、他項目を更新しても現在のReviewerを保持する"
+  // oracle = { type = "contract", ref = "CODEX-AUTO-REVIEW-AR-3" }
+  // fault = "直接IPCまたはstale payloadがnever中のReviewerを変更し、後のinteractive復帰で意図しない値が有効になる"
+  // scope = "session-persistence-service"
+  // observable = "保存後のSession codexReviewer"
+  // observation_boundary = "public-boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は保存済みApprovalがneverの間Reviewerを保持する", async () => {
+    const storedSession = createSession({
+      approvalMode: "never",
+      codexReviewer: "user",
+    });
+    const cachedSession = createSession({
+      ...storedSession,
+      approvalMode: "never",
+      codexReviewer: "auto-review",
+    });
+    const storedSessions: Session[] = [cachedSession];
+    const service = new SessionPersistenceService({
+      getSessions: () => storedSessions,
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession: (sessionId) => storedSessions.find((session) => session.id === sessionId) ?? null,
+      getStoredSession: (sessionId) => sessionId === storedSession.id ? storedSession : null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession(session, _operation) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions: () => [...storedSessions],
+      deleteStoredSession() {},
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = await service.updateSession({
+      ...cachedSession,
+      taskTitle: "Renamed Session",
+      codexReviewer: "user",
+    });
+
+    assert.equal(updated.taskTitle, "Renamed Session");
+    assert.equal(updated.codexReviewer, "auto-review");
+    assert.equal(storedSessions[0]?.codexReviewer, "auto-review");
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "保存済みCharacter ownerまたはruntime snapshot identityの差し替えを永続化前に拒否する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#updateSession" }
+  // fault = "既存Character identityと異なる更新を保存し、owner境界を破壊する"
+  // observable = "reject結果と永続化呼び出しの不在"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-character-identity-guard"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は保存済み Character owner / runtime snapshot の差し替えを永続化前に拒否する", async () => {
+    const characterRuntimeSnapshot = createCharacterRuntimeSnapshot();
+    const storedSession = createSession({ characterRuntimeSnapshot });
+    const cachedSession = createSession({
+      id: storedSession.id,
+      characterRuntimeSnapshot: null,
+    });
+    const invalidUpdates = [
+      {
+        ...storedSession,
+        characterId: "char-b",
+      },
+      {
+        ...storedSession,
+        characterId: "char-b",
+        characterRuntimeSnapshot: createCharacterRuntimeSnapshot({
+          characterId: "char-b",
+          name: "B",
+        }),
+      },
+      {
+        ...storedSession,
+        characterRuntimeSnapshot: null,
+      },
+    ];
+
+    for (const invalidUpdate of invalidUpdates) {
+      let upsertCallCount = 0;
+      const cachedSessions: Session[] = [cachedSession];
+      const service = new SessionPersistenceService({
+        getSessions() {
+          return cachedSessions;
+        },
+        setSessions(nextSessions) {
+          cachedSessions.splice(0, cachedSessions.length, ...nextSessions);
+        },
+        getSession(sessionId) {
+          return sessionId === cachedSession.id ? cachedSession : null;
+        },
+        getStoredSession(sessionId) {
+          return sessionId === storedSession.id ? storedSession : null;
+        },
+        isSessionRunInFlight() {
+          return false;
+        },
+      upsertStoredSession(session, _operation) {
+          upsertCallCount += 1;
+          return session;
+        },
+        replaceStoredSessions() {},
+        listStoredSessions() {
+          return [storedSession];
+        },
+        deleteStoredSession() {},
+        getAppSettings() {
+          return normalizeAppSettings({});
+        },
+        getModelCatalogSnapshot() {
+          return createSnapshot();
+        },
+        syncSessionDependencies() {},
+        clearSessionContextTelemetry() {},
+        clearSessionBackgroundActivities() {},
+        invalidateProviderSessionThread() {},
+        closeSessionWindow() {},
+        broadcastSessions() {},
+      });
+
+      await assert.rejects(
+        () => service.updateSession(invalidUpdate),
+        /Character owner and runtime snapshot cannot be updated/,
+      );
+      assert.equal(upsertCallCount, 0);
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "model/reasoning変更では既存threadIdを維持する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#updateSession" }
+  // fault = "選択変更だけでprovider threadを破棄し、継続中会話を切断する"
+  // observable = "更新後SessionのthreadIdとmodel/reasoning"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-model-selection-update"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は model / reasoning 変更時に threadId を維持する", async () => {
+    const baseSession = createSession({
+      provider: "copilot",
+      model: "copilot-default",
+      reasoningEffort: "medium",
+      threadId: "thread-keep",
+    });
+    const storedSessions: Session[] = [baseSession];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const snapshot = createSnapshot();
+    const copilot = snapshot.providers.find((provider) => provider.id === "copilot");
+    assert.ok(copilot);
+    copilot.models.push({
+      id: "copilot-alt",
+      label: "copilot alternate",
+      reasoningEfforts: ["low", "medium", "high"],
+    });
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((session) => session.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, _operation) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return snapshot;
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = await service.updateSession({
+      ...baseSession,
+      model: "copilot-alt",
+      reasoningEffort: "high",
+      threadId: "thread-keep",
+    });
+
+    assert.equal(updated.model, "copilot-alt");
+    assert.equal(updated.reasoningEffort, "high");
+    assert.equal(updated.threadId, "thread-keep");
+    assert.deepEqual(invalidatedThreads, []);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "runtime parameter変更では既存threadIdを維持する"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#updateSession" }
+  // fault = "runtime parameter変更だけでprovider threadをresetする"
+  // observable = "更新後SessionのthreadIdとruntime parameter"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-runtime-parameter-update"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("updateSession は runtime parameter 変更時に threadId を維持する", async () => {
+    const baseSession = createSession({
+      provider: "codex",
+      model: "codex-default",
+      reasoningEffort: "medium",
+      approvalMode: "untrusted",
+      codexSandboxMode: "workspace-write",
+      allowedAdditionalDirectories: ["C:/external-a"],
+      threadId: "thread-keep",
+    });
+    const storedSessions: Session[] = [baseSession];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((session) => session.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, _operation) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const updated = await service.updateSession({
+      ...baseSession,
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+      allowedAdditionalDirectories: ["C:/external-b"],
+      threadId: "thread-keep",
+    });
+
+    assert.equal(updated.threadId, "thread-keep");
+    assert.deepEqual(updated.allowedAdditionalDirectories, [path.resolve("C:/external-b")]);
+    assert.deepEqual(invalidatedThreads, []);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "legacy read-only Sessionへのupdate/upsertを拒否する"
+  // oracle = { type = "contract", ref = "src/session-state.ts#isReadOnlySession" }
+  // fault = "read-onlyデータを通常Sessionとして更新し永続化する"
+  // observable = "reject結果とstored sessionの不変性"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-legacy-readonly-guard"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("legacy read-only session は update/upsert できない", async () => {
+    const legacySession = createSession({
+      accessMode: "legacy_readonly",
+      sourceSchemaVersion: 3,
+      characterIconPath: "",
+    });
+    const storedSessions: Session[] = [legacySession];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((session) => session.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      upsertStoredSession(session, _operation) {
+        storedSessions.splice(0, storedSessions.length, session);
+        return session;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession() {},
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    await assert.rejects(
+      () => service.updateSession({ ...legacySession, taskTitle: "Blocked Update" }),
+      /Read-only sessions cannot be updated/,
+    );
+    await assert.rejects(
+      () => service.upsertSession({ ...legacySession, taskTitle: "Blocked Upsert" }),
+      /Read-only sessions cannot be updated/,
+    );
+    assert.equal(storedSessions[0]?.taskTitle, legacySession.taskTitle);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "親Session削除時のDeleteSessionsResultはcascade削除対象のAuxiliary IDを返す"
+  // oracle = { type = "adr", ref = "docs/adr/006-windows-session-turn-notifications.md" }
+  // fault = "親Sessionに紐づくAuxiliaryのIDを削除結果へ含めず、Auxiliary通知の撤去対象を失う"
+  // observable = "DeleteSessionsResult.deletedAuxiliarySessionIds"
+  // observation_boundary = "component-behavior"
+  // scope = "session-persistence-delete-notification-targets"
+  // lifecycle = "permanent"
+  // distinction = "Auxiliaryのruntime cleanupだけでは確認できない、削除結果から通知keyを上位へ渡す契約を検証する"
+  // @end-test-value
+  it("deleteSession は関連状態を片付けて window close を呼ぶ", async () => {
+    const session = createSession();
+    const storedSessions: Session[] = [session];
+    const deleted: string[] = [];
+    const clearedBackground: string[] = [];
+    const closedWindows: string[] = [];
+    const revokedBindings: string[] = [];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const broadcastedSessionIds: string[][] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      listAuxiliarySessionRuntimeIdentities(parentSessionIds) {
+        assert.deepEqual(parentSessionIds, [session.id]);
+        return [{ id: "auxiliary-a", parentSessionId: session.id, provider: "copilot" }];
+      },
+      upsertStoredSession(next) {
+        storedSessions.splice(0, storedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession(sessionId) {
+        deleted.push(sessionId);
+        const remaining = storedSessions.filter((entry) => entry.id !== sessionId);
+        storedSessions.splice(0, storedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities(sessionId) {
+        clearedBackground.push(sessionId);
+      },
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
+      revokeSessionAgentRuntimeBindings(sessionId) {
+        revokedBindings.push(sessionId);
+      },
+      closeSessionWindow(sessionId) {
+        closedWindows.push(sessionId);
+      },
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
+      },
+    });
+
+    const result = await service.deleteSession(session.id);
+
+    assert.deepEqual(result.deletedAuxiliarySessionIds, ["auxiliary-a"]);
+    assert.deepEqual(deleted, [session.id]);
+    assert.deepEqual(clearedBackground, [session.id, "auxiliary-a"]);
+    assert.deepEqual(closedWindows, [session.id, "auxiliary-a"]);
+    assert.deepEqual(revokedBindings, [session.id, "auxiliary-a"]);
+    assert.deepEqual(invalidatedThreads, [
+      { providerId: session.provider, sessionId: session.id },
+      { providerId: "copilot", sessionId: "auxiliary-a" },
+    ]);
+    assert.deepEqual(broadcastedSessionIds, [[session.id]]);
+    assert.equal(storedSessions.length, 0);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "active Auxiliaryが実行中の親SessionをdeleteSessionで削除できない"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#deleteSession" }
+  // fault = "子turn実行中の親Sessionを削除し、継続中turnの保存対象を失う"
+  // observable = "deleteの拒否とstored parent sessionの保持"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-delete-running-parent-guard"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("deleteSession は active Auxiliary が実行中の親 Session を削除しない", async () => {
+    const parentSession = createSession({ id: "parent" });
+    const storedSessions: Session[] = [parentSession];
+    const deleted: string[] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      listRunningActiveAuxiliaryParentIds(sessionIds) {
+        assert.deepEqual(sessionIds, [parentSession.id]);
+        return new Set([parentSession.id]);
+      },
+      upsertStoredSession(next) {
+        storedSessions.splice(0, storedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      deleteStoredSession(sessionId) {
+        deleted.push(sessionId);
+        const remaining = storedSessions.filter((entry) => entry.id !== sessionId);
+        storedSessions.splice(0, storedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    await assert.rejects(
+      () => service.deleteSession(parentSession.id),
+      /A running session cannot be deleted/,
+    );
+
+    assert.deepEqual(deleted, []);
+    assert.deepEqual(storedSessions.map((session) => session.id), [parentSession.id]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "bulk削除はcutoff対象のidle Sessionだけを削除しrunning Sessionをskipする"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#deleteSessionsLastActiveBefore" }
+  // fault = "running Sessionをbulk削除し、実行中状態を破壊する"
+  // observable = "削除対象idsとstored sessions"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-bulk-delete-running-skip"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("deleteSessionsLastActiveBefore は対象だけ bulk 削除し running は skip する", async () => {
+    const oldSession = createSession({ id: "old", updatedAt: "2026-06-01T00:00:00.000Z" });
+    const runningSession = createSession({
+      id: "running",
+      status: "running",
+      runState: "running",
+      updatedAt: "2026-06-01T01:00:00.000Z",
+    });
+    const recentSession = createSession({ id: "recent", updatedAt: "2026-07-02T00:00:00.000Z" });
+    const storedSessions: Session[] = [oldSession, runningSession, recentSession];
+    const deletedBatches: string[][] = [];
+    const clearedTelemetry: string[] = [];
+    const clearedBackground: string[] = [];
+    const closedWindows: string[] = [];
+    const broadcastedSessionIds: string[][] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight(sessionId) {
+        return sessionId === runningSession.id;
+      },
+      upsertStoredSession(next) {
+        storedSessions.splice(0, storedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      listStoredSessionIdsLastActiveBefore() {
+        return [oldSession.id, runningSession.id];
+      },
+      deleteStoredSessions(sessionIds) {
+        deletedBatches.push([...sessionIds]);
+        const deletedSessionIds = new Set(sessionIds);
+        const remaining = storedSessions.filter((entry) => !deletedSessionIds.has(entry.id));
+        storedSessions.splice(0, storedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry(sessionId) {
+        clearedTelemetry.push(sessionId);
+      },
+      clearSessionBackgroundActivities(sessionId) {
+        clearedBackground.push(sessionId);
+      },
+      invalidateProviderSessionThread() {},
+      closeSessionWindow(sessionId) {
+        closedWindows.push(sessionId);
+      },
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
+      },
+    });
+
+    const result = await service.deleteSessionsLastActiveBefore({
+      cutoffDate: "2026-07-01",
+      cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      cutoffIso: "2026-07-01T00:00:00.000Z",
+    });
+
+    assert.deepEqual(result.deletedSessionIds, [oldSession.id]);
+    assert.deepEqual(result.skippedRunningSessionIds, [runningSession.id]);
+    assert.deepEqual(deletedBatches, [[oldSession.id]]);
+    assert.deepEqual(clearedTelemetry, [oldSession.id]);
+    assert.deepEqual(clearedBackground, [oldSession.id]);
+    assert.deepEqual(closedWindows, [oldSession.id]);
+    assert.deepEqual(broadcastedSessionIds, [[oldSession.id]]);
+    assert.deepEqual(storedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "bulk削除はactive Auxiliary実行中の親Sessionをskipする"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#deleteSessionsLastActiveBefore" }
+  // fault = "子turn実行中の親Sessionを削除する"
+  // observable = "削除結果と親Sessionの存在"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-bulk-delete-running-parent-skip"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("deleteSessionsLastActiveBefore は active Auxiliary が実行中の親 Session を skip する", async () => {
+    const parentSession = createSession({ id: "parent", updatedAt: "2026-06-01T00:00:00.000Z" });
+    const oldSession = createSession({ id: "old", updatedAt: "2026-06-01T01:00:00.000Z" });
+    const recentSession = createSession({ id: "recent", updatedAt: "2026-07-02T00:00:00.000Z" });
+    const storedSessions: Session[] = [parentSession, oldSession, recentSession];
+    const deletedBatches: string[][] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return storedSessions;
+      },
+      setSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return storedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight() {
+        return false;
+      },
+      listRunningActiveAuxiliaryParentIds(sessionIds) {
+        assert.deepEqual(sessionIds, [parentSession.id, oldSession.id]);
+        return new Set([parentSession.id]);
+      },
+      upsertStoredSession(next) {
+        storedSessions.splice(0, storedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...storedSessions];
+      },
+      listStoredSessionIdsLastActiveBefore() {
+        return [parentSession.id, oldSession.id];
+      },
+      deleteStoredSessions(sessionIds) {
+        deletedBatches.push([...sessionIds]);
+        const deletedSessionIds = new Set(sessionIds);
+        const remaining = storedSessions.filter((entry) => !deletedSessionIds.has(entry.id));
+        storedSessions.splice(0, storedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {},
+      closeSessionWindow() {},
+      broadcastSessions() {},
+    });
+
+    const result = await service.deleteSessionsLastActiveBefore({
+      cutoffDate: "2026-07-01",
+      cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      cutoffIso: "2026-07-01T00:00:00.000Z",
+    });
+
+    assert.deepEqual(result.deletedSessionIds, [oldSession.id]);
+    assert.deepEqual(result.skippedRunningSessionIds, [parentSession.id]);
+    assert.deepEqual(deletedBatches, [[oldSession.id]]);
+    assert.deepEqual(storedSessions.map((session) => session.id), [parentSession.id, recentSession.id]);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "bulk削除はcache未読込でもstored Sessionを対象にする"
+  // oracle = { type = "contract", ref = "src-electron/session/session-persistence-service.ts#deleteSessionsLastActiveBefore" }
+  // fault = "cacheにない対象を見落としてstored Sessionを残す"
+  // observable = "stored session削除結果と通知対象"
+  // observation_boundary = "public-boundary"
+  // scope = "session-persistence-bulk-delete-stored-cache-miss"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("deleteSessionsLastActiveBefore は cache 未読込の stored session も削除する", async () => {
+    const uncachedOldSession = createSession({ id: "uncached-old", updatedAt: "2026-06-01T00:00:00.000Z" });
+    const runningSession = createSession({
+      id: "running",
+      status: "running",
+      runState: "running",
+      updatedAt: "2026-06-01T01:00:00.000Z",
+    });
+    const recentSession = createSession({ id: "recent", updatedAt: "2026-07-02T00:00:00.000Z" });
+    const cachedSessions: Session[] = [runningSession, recentSession];
+    const persistedSessions: Session[] = [uncachedOldSession, runningSession, recentSession];
+    const deletedBatches: string[][] = [];
+    const clearedTelemetry: string[] = [];
+    const clearedBackground: string[] = [];
+    const closedWindows: string[] = [];
+    const broadcastedSessionIds: string[][] = [];
+
+    const service = new SessionPersistenceService({
+      getSessions() {
+        return cachedSessions;
+      },
+      setSessions(nextSessions) {
+        cachedSessions.splice(0, cachedSessions.length, ...nextSessions);
+      },
+      getSession(sessionId) {
+        return cachedSessions.find((entry) => entry.id === sessionId) ?? null;
+      },
+      isSessionRunInFlight(sessionId) {
+        return sessionId === runningSession.id;
+      },
+      upsertStoredSession(next) {
+        persistedSessions.splice(0, persistedSessions.length, next);
+        return next;
+      },
+      replaceStoredSessions(nextSessions) {
+        persistedSessions.splice(0, persistedSessions.length, ...nextSessions);
+      },
+      listStoredSessions() {
+        return [...persistedSessions];
+      },
+      listStoredSessionIdsLastActiveBefore() {
+        return [uncachedOldSession.id, runningSession.id];
+      },
+      deleteStoredSessions(sessionIds) {
+        deletedBatches.push([...sessionIds]);
+        const deletedSessionIds = new Set(sessionIds);
+        const remaining = persistedSessions.filter((entry) => !deletedSessionIds.has(entry.id));
+        persistedSessions.splice(0, persistedSessions.length, ...remaining);
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      getModelCatalogSnapshot() {
+        return createSnapshot();
+      },
+      syncSessionDependencies() {},
+      clearSessionContextTelemetry(sessionId) {
+        clearedTelemetry.push(sessionId);
+      },
+      clearSessionBackgroundActivities(sessionId) {
+        clearedBackground.push(sessionId);
+      },
+      invalidateProviderSessionThread() {},
+      closeSessionWindow(sessionId) {
+        closedWindows.push(sessionId);
+      },
+      broadcastSessions(sessionIds) {
+        broadcastedSessionIds.push(Array.from(sessionIds ?? []));
+      },
+    });
+
+    const result = await service.deleteSessionsLastActiveBefore({
+      cutoffDate: "2026-07-01",
+      cutoffTimestampMs: Date.parse("2026-07-01T00:00:00.000Z"),
+      cutoffIso: "2026-07-01T00:00:00.000Z",
+    });
+
+    assert.deepEqual(result.deletedSessionIds, [uncachedOldSession.id]);
+    assert.deepEqual(result.skippedRunningSessionIds, [runningSession.id]);
+    assert.deepEqual(deletedBatches, [[uncachedOldSession.id]]);
+    assert.deepEqual(clearedTelemetry, [uncachedOldSession.id]);
+    assert.deepEqual(clearedBackground, [uncachedOldSession.id]);
+    assert.deepEqual(closedWindows, [uncachedOldSession.id]);
+    assert.deepEqual(broadcastedSessionIds, [[uncachedOldSession.id]]);
+    assert.deepEqual(cachedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+    assert.deepEqual(persistedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+  });
+
+});

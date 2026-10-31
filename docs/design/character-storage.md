@@ -1,39 +1,27 @@
 # Character Storage
 
-## Auxiliary Character Snapshot (Issue #710)
+## Auxiliary Character Snapshot
+新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と初期`CharacterRuntimeSnapshot`を会話作成時に保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、再起動で再抽選を行わない。送信開始時の定義更新はMainと同じRuntime Snapshot契約に従い、親や同名Characterへ差し替えない。
 
-新規AuxiliaryはMain Processでactive候補からMainのstable IDを除外してCharacterをweighted random選択し、`characterId`と`CharacterRuntimeSnapshot`を会話作成時に固定保存する。他Auxiliaryとの同一Characterは許容する。既存会話の切り替え、再表示、retry、再起動で再抽選・catalog再生成を行わない。snapshotがない旧形式行だけは親の保存済みidentityを互換利用し、不正な新形式snapshotは親へfallbackせず失敗として扱う。
-
-- 作成日: 2026-03-12
-- 更新日: 2026-07-30
-- 対象: V5 Core の Character catalog / storage / snapshot 境界
+snapshotを持たない旧形式Auxiliaryは親の保存済みidentityを投影し、送信開始時に採用したsnapshotをAuxiliary自身へ保存する。不正な新形式snapshotを親へ差し替えることはしない。
 
 ## Goal
 
-V5 Core では、SingleMate の `current` 固定ではなく、複数 Character を保存、列挙、取得、更新できる catalog boundary を提供する。
+複数 Character を保存、列挙、取得、更新できる catalog boundary を提供する。
 
-この文書は V5 Core の Character storage 正本である。current runtime の session / companion prompt injection は後続 branch で接続するが、Character 実装ではこの storage 境界を優先する。
+この文書は Character storage の正本である。runtime の session prompt injection はこの storage 境界を優先する。
 
 ## Scope
 
-V5 Core に含める:
+保存対象:
 
 - SQLite 上の Character metadata
 - `characters/<character-id>/character.md` file body
 - optional `characters/<character-id>/character-notes.md`
 - optional managed icon file `characters/<character-id>/icon.<ext>`
 - archive
-- session / companion snapshot 用 domain model
+- session snapshot 用 domain model
 - renderer から Main Process 経由で使う IPC / preload API
-
-V5 Core に含めない:
-
-- `meta.json` 正本の file-only catalog
-- Character 定義自動生成
-- 詳細 Editor / section Editor
-- Character Update Workspace
-- provider instruction sync への Character 書き込み
-- Memory / Growth / MateTalk 再設計
 
 ## Source Of Truth
 
@@ -43,7 +31,7 @@ V5 Core に含めない:
 | runtime definition body | `characters/<character-id>/character.md` |
 | authoring notes | `characters/<character-id>/character-notes.md` |
 | managed icon body | `characters/<character-id>/icon.<ext>` |
-| session runtime input | session / companion 作成時に保存する `CharacterRuntimeSnapshot` |
+| session runtime input | sessionに保存する最新の `CharacterRuntimeSnapshot` |
 
 Renderer は filesystem を直接走査しない。Character catalog は Main Process service 経由で取得する。
 
@@ -51,7 +39,7 @@ Renderer は filesystem を直接走査しない。Character catalog は Main Pr
 
 ```text
 <userData>/
-  withmate-v4.db
+  withmate-v6.db
   characters/
     <character-id>/
       character.md
@@ -81,18 +69,18 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 | `icon_file_path` | optional icon path。managed icon は `characters/<character-id>/icon.<ext>` の app data 相対 path |
 | `theme_main` / `theme_sub` | UI theme color snapshot の元値 |
 | `state` | `active` / `archived` |
-| `is_default` | 互換性のため残すlegacy metadata。sourceとpublic projectionは参照しない |
+| `is_default` | 互換性のため残す列。sourceとpublic projectionは参照しない |
 | `created_at` / `updated_at` / `archived_at` | lifecycle timestamps |
 
-`is_default`列とunique indexは、既存DBとの互換性のため物理削除しない。Character作成・archive・一覧・launch解決では読み書きせず、既存rowの値も初期化時に変更しない。table rebuildを伴う別migrationが必要になった時点で物理削除を再検討する。
+`is_default`列とunique indexは、タグ付きDBとの互換性のため保持する。Character作成・archive・一覧・launch解決では読み書きせず、既存rowの値も初期化時に変更しない。
 
-既存 V4 DB への安全な追加にするため、`characters` table は V4 required table 判定には入れず、`CharacterStorage` 初期化時に `CREATE TABLE IF NOT EXISTS` で作成する。
+`CharacterStorage` は `characters` table を初期化する。現行V6 schemaと旧DBからの継続は `database-schema.md` に記す。
 
 ## Files
 
 ### `character.md`
 
-- V5 Character runtime definition の正本。
+- Character runtime definition の正本。
 - format と validation は `docs/design/character-definition-format.md` に従う。
 - storage / import / raw editor は schema、name、body、size、null byte、path safety を検証する。
 
@@ -100,18 +88,18 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 
 - authoring notes / evidence / revision notes 用の補助ファイル。
 - runtime prompt の常設入力にしない。
-- V5 Core では null byte と size limit だけを検証する。
+- null byte と size limit を検証する。
 
 ### `icon.<ext>`
 
-- Character 一覧、Editor preview、session / companion snapshot の avatar 表示に使う代表画像。
+- Character 一覧、Editor preview、session snapshot の avatar 表示に使う代表画像。
 - Renderer は filesystem を直接解決せず、storage service が materialize した `iconFilePath` を受け取る。
 - 外部絶対 path の取り込みは保存時にコピーし、保存後の正本は app data 配下の managed icon とする。
 - 新しく取り込む icon は PNG、JPG、JPEG に限定する。既存の非対応 icon は同じ参照を維持する限り継続して使用できる。
 
 ## Service API
 
-V5 Core の storage service は次を提供する:
+storage service は次を提供する:
 
 - `listCharacters({ includeArchived? })`
 - `getCharacter(characterId)`
@@ -121,22 +109,38 @@ V5 Core の storage service は次を提供する:
 - `archiveCharacter(characterId)`
 - `resolveLaunchCharacter({ characterId? })`
 - `createRuntimeSnapshot(characterId)`
+- 内部send-start用の`refreshRuntimeSnapshot(characterId, previousSnapshot)`
 
 `resolveLaunchCharacter` は、明示された `characterId` がactive Characterを指す場合だけ返す。Character未指定、不明、archivedの場合は`null`を返し、特定Characterや更新日時順の先頭へ暗黙にfallbackしない。
 
-Session / Companionのランダム選択とactive Character 0件時のneutral fallbackはHome launch境界が所有し、ADR 004に従う。
+Sessionのランダム選択とactive Character 0件時のneutral fallbackはHome launch境界が所有し、ADR 004に従う。
 
 ## Runtime Snapshot
 
-通常 Session と Companion の `CharacterRuntimeSnapshot` は、作成時に保存する immutable input である。汎用 update は保存済み `characterId` と snapshot の差し替えを永続化前に拒否し、runtime prompt は catalog の現在値ではなく保存済み snapshot を使う。
+通常のMain／Auxiliaryはstable Character ownerと、最新1件の`CharacterRuntimeSnapshot`を保存する。作成時のsnapshotを初期値とし、送信開始時に保存済みsnapshotを前回値として扱う。作成時専用snapshotや版履歴は別保存しない。
 
-`character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影せず、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
+active Characterでは、送信開始時に同じstable IDのcanonical `character.md`を1回読み、保存済み`definitionMarkdown`と本文全体を比較する。同じ本文なら再生成しない。変更された有効な定義では、`definitionMarkdown`、`definitionSha256`、`definitionByteSize`、`snapshotAt`だけを更新し、ID、表示名、説明、icon、themeを維持する。
 
-V6 の既存 row で stable owner と snapshot owner が一致しない場合は、owner を維持して snapshot と provider thread ID を read projection から同時に無効化する。
+snapshotが未保存のMainでは、有効なstable ownerのcatalog metadataと定義から初回snapshotを生成する。Auxiliaryは前述の旧形式投影と不正な新形式snapshotの拒否を維持する。更新したsnapshotはrunning turnの開始保存で確定し、そのturnのpromptに使う。会話履歴とprovider threadは保持する。
 
-relational owner と runtime policy owner のどちらもない legacy row は、表示名や snapshot から Character ID を推測せず、Character ID の生成領域外にある予約 ID `withmate:unresolved-character-owner` へ回復する。この ID は public create と runtime snapshot 解決では拒否し、実 Character を再解決しない。
+archived Characterではcanonical fileを読まず、保存済みsnapshotで継続する。archived Characterの保存済みsnapshotがない場合、catalogにownerが存在しない場合、またはactive Characterの定義が欠落・読取り不能・不正な場合は送信を明示的に失敗させる。snapshot、履歴、threadを破棄せず、最新定義を反映したように扱わない。既存のneutral通常SessionはCharacterなしのまま継続する。
 
-snapshot の field shape は `src/character/character-catalog.ts`、normalization と prompt projection は `src/character/character-runtime-snapshot.ts`、authoring turn の再解決は `src-electron/character-authoring-service.ts` を正本とする。stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 例外は `docs/adr/010-character-authoring-project-contract.md` を参照する。
+汎用Session／Auxiliary updateは保存済み`characterId`とsnapshotの差し替えを永続化前に拒否する。通常の定義更新は内部の送信開始経路だけが所有し、同名Characterへのowner切り替えやcatalog metadataへの追従は行わない。既存の長期Sessionも保存済みsnapshotを前回値として扱い、DB migrationを必要としない。
+
+`character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影しない。この場合に限り、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
+
+V6 の既存 row で stable owner と snapshot owner が一致しない場合は、owner を維持する。snapshot と provider thread ID を read projection から同時に無効化する。
+
+relational owner と runtime policy owner のどちらもない legacy row は、表示名や snapshot から Character ID を推測しない。Character ID の生成領域外にある予約 ID `withmate:unresolved-character-owner` へ回復する。この ID は public create と runtime snapshot 解決では拒否し、実 Character を再解決しない。
+
+snapshot の各要素の正本は次のとおり。
+
+- field shape: `src-shared/character/character-catalog.ts`
+- normalization と prompt projection: `src-shared/character/character-runtime-snapshot.ts`
+- 通常turnの更新: `src-electron/session/session-runtime-service.ts`とAuxiliary runtime
+- authoring turn の再解決: `src-electron/character/character-authoring-service.ts`
+
+stable owner の判断理由は `docs/adr/009-stable-character-runtime-owner.md`、authoring 固有契約は `docs/adr/010-character-authoring-project-contract.md` を参照する。
 
 ## Data Safety
 
@@ -145,12 +149,10 @@ snapshot の field shape は `src/character/character-catalog.ts`、normalizatio
 - `character.md` の invalid update は metadata update と分離して拒否する。
 - Character 作成中に icon コピー後の validation / DB update が失敗した場合は、作成中の `characters/<character-id>/` directory を削除する。
 - Character metadata 更新で managed icon を置換した場合は旧 icon file を best-effort で削除する。削除に失敗しても DB は新しい icon を指し、保存全体は失敗させない。
-- archive は directory を削除しない。過去 session snapshot と audit 参照を優先する。
+- archive は directory を削除しない。過去 session snapshot と通常履歴の参照を優先する。
 - 同名 Character を再作成しても、過去 session を name fallback で自動再接続しない。
 - app database reset / recreate では SQLite metadata と `characters/` file body を同時に削除する。DB だけを消して orphan `character.md` / `character-notes.md` / `icon.<ext>` を残さない。
 
 ## Related Docs
 
 - `docs/design/character-definition-format.md`
-- `docs/design/v5-character-transition.md`
-- `docs/plans/20260613-v5-character-core-branches.md`

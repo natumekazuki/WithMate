@@ -10,6 +10,6 @@
   },
   "include": [
     "src-electron/**/*.ts",
-    "src/withmate-window.ts"
+    "src-shared/**/*.ts"
   ]
 }

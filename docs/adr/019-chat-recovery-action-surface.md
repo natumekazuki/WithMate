@@ -1,7 +1,15 @@
 # 019 Chat Recovery Action Surface
 
-- 状態: Accepted
+- 状態: Superseded（配置と表示内容）
 - 日付: 2026-08-09
+
+## 適用状態
+
+独立surfaceをmessage stackへ置く判断と、前回依頼を操作面へ表示しない判断は、[Issue #871](https://github.com/natumekazuki/WithMate/issues/871)の改善で適用対象外となった。後継の現行定義は[Desktop UIのterminal state後の再送導線](../design/desktop-ui.md#session-window)を参照する。共通ChatWindowから既存Action Dockの各上段操作列へ回復操作を配置し、compact / Terminal / file preview中の到達性を維持する。失敗理由は応答側へ集約し、操作対象の取り違えを防ぐ対象名・前回依頼previewを操作に隣接させる。回復操作の出現だけではDockを展開しない原則は維持する。
+
+本文中のCompanionに関する記述は当時の設計判断として保持するが、Companionの撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。以下の本文は当時の判断を保持する。
+
+Issue #871のUI見直しにより、上記後継判断のうち対象名・前回依頼previewを操作に隣接させる部分も適用対象外とする。対象会話は既存のMain / Auxiliary切替、依頼と停止状態はchat transcriptで確認できるため、回復操作の通常表示は`Resend` / `Edit`の2つのicon-only操作に限定する。前回依頼の全文dialogと停止状態badgeは設けない。対象付きtooltip・accessible name、実行記録の取得失敗時の`Retry`、draft置換確認は維持する。現行契約の正本は上記Desktop UIとする。
 
 ## Context
 

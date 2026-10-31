@@ -1,4 +1,6 @@
 import { type CSSProperties, type ReactNode, type RefObject } from "react";
+import type { ModelSelectOption } from "../settings/model-select-options.js";
+import type { ModelCatalogItem } from "../../src-shared/settings/model-catalog.js";
 
 import {
   ChatRightPaneShell,
@@ -34,19 +36,18 @@ export type TextChatWindowProjectionInput = {
   draft: string;
   placeholder?: string;
   sendButtonTitleWhenEnabled?: string;
-  modelOptions: ChatSelectOption[];
+  modelOptions: ModelSelectOption[];
   selectedModel: string;
   selectedModelFallbackLabel: string;
   reasoningOptions: ChatSelectOption[];
   selectedReasoningEffort: string;
   pendingRunIndicatorAnnouncement?: string;
-  pendingRunIndicatorText?: string;
   messageListRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   onDraftChange: (value: string) => void;
   onCopyMessageText?: ChatWindowProps["messageColumnProps"]["onCopyMessageText"];
   onQuoteMessageText?: ChatWindowProps["messageColumnProps"]["onQuoteMessageText"];
-  onChangeModel: (model: string) => void;
+  onChangeModel: (model: ModelCatalogItem) => void;
   onChangeReasoningEffort: (reasoningEffort: string) => void;
   onSubmit: () => void;
   onToggleHeaderExpanded: () => void;
@@ -82,7 +83,6 @@ export function buildTextChatWindowProps({
   reasoningOptions,
   selectedReasoningEffort,
   pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
   messageListRef,
   composerTextareaRef,
   onDraftChange,
@@ -99,7 +99,7 @@ export function buildTextChatWindowProps({
   isActionDockExpanded = true,
   onToggleActionDock,
   rightPaneHeaderTitle = pageTitle,
-  rightPaneAriaLabel = "補助情報",
+  rightPaneAriaLabel = "Additional information",
   rightPaneClassName,
   composerCapabilityProps,
 }: TextChatWindowProjectionInput): ChatWindowProps {
@@ -123,6 +123,7 @@ export function buildTextChatWindowProps({
       messages,
       messageListRef,
       isRunning,
+      pendingRunIndicatorAnnouncement,
       onCopyMessageText,
       onQuoteMessageText,
     }),
@@ -132,8 +133,6 @@ export function buildTextChatWindowProps({
       placeholder,
       composerTextareaRef,
       isRunning,
-      pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText,
       feedback,
       sendButtonTitleWhenEnabled,
       modelOptions,
@@ -148,8 +147,6 @@ export function buildTextChatWindowProps({
       ...composerCapabilityProps,
     }),
     compactActionDockProps: createStaticTextChatCompactActionDockProps({
-      pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText,
       onExpand: onToggleActionDock,
     }),
     headerSplitter: (

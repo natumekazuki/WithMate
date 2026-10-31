@@ -1,10 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 
-import { focusRovingItemByKey } from "../a11y.js";
+import { focusRovingItemByKey } from "../ui/a11y.js";
+import { ComposerIcon } from "./composer/composer-icon.js";
+import { ButtonContent } from "../ui/button-content.js";
 
 type ComposerAttachmentMenuProps = {
   disabled: boolean;
+  busy?: boolean;
+  targetLabel?: string;
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   onPickFile: () => void;
@@ -36,6 +40,8 @@ const MENU_THEME_PROPERTIES = ["--ink", "--muted", "--character-main-soft"] as c
 
 export function ComposerAttachmentMenu({
   disabled,
+  busy = false,
+  targetLabel,
   isOpen,
   onOpenChange,
   onPickFile,
@@ -46,27 +52,29 @@ export function ComposerAttachmentMenu({
   onPickSessionFolder,
   onPickSessionImage,
 }: ComposerAttachmentMenuProps) {
+  const menuId = useId();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPosition, setMenuPosition] = useState<ComposerAttachmentMenuPosition | null>(null);
+  const isMenuPositioned = menuPosition !== null;
 
   const attachItems: ComposerAttachmentMenuItem[] = [
     {
       label: "File",
-      ariaLabel: "元のファイルを参照として添付",
+      ariaLabel: "Attach the original file as a reference",
       title: "Pick a file and insert its original path as a reference",
       onSelect: onPickFile,
     },
     {
       label: "Folder",
-      ariaLabel: "元のフォルダーを参照として添付",
+      ariaLabel: "Attach the original folder as a reference",
       title: "Pick a folder and insert its original path as a reference",
       onSelect: onPickFolder,
     },
     {
       label: "Image",
-      ariaLabel: "元の画像を参照として添付",
+      ariaLabel: "Attach the original image as a reference",
       title: "Pick an image and insert its original path as a reference",
       onSelect: onPickImage,
     },
@@ -74,35 +82,41 @@ export function ComposerAttachmentMenu({
   const sessionItems: ComposerAttachmentMenuItem[] = [
     {
       label: "Copy",
-      ariaLabel: "ファイルをSession Filesへコピーして添付",
+      ariaLabel: "Copy files to Session files and attach them",
       title: "Copy files into Session Files and insert references",
       onSelect: onAddToSessionFiles,
     },
     {
       label: "File",
-      ariaLabel: "Session Files内のファイルを添付",
+      ariaLabel: "Attach a file from Session files",
       title: "Pick files from Session Files and insert references",
       onSelect: onPickSessionFiles,
     },
     {
       label: "Folder",
-      ariaLabel: "Session Files内のフォルダーを添付",
+      ariaLabel: "Attach a folder from Session files",
       title: "Pick a folder from Session Files and insert a reference",
       onSelect: onPickSessionFolder,
     },
     {
       label: "Image",
-      ariaLabel: "Session Files内の画像を添付",
+      ariaLabel: "Attach an image from Session files",
       title: "Pick an image from Session Files and insert a reference",
       onSelect: onPickSessionImage,
     },
   ];
 
   useEffect(() => {
-    if (isOpen) {
+    if (disabled && isOpen) {
+      onOpenChange(false);
+    }
+  }, [disabled, isOpen, onOpenChange]);
+
+  useEffect(() => {
+    if (isOpen && isMenuPositioned) {
       menuRef.current?.querySelector<HTMLElement>("[role=\"menuitem\"]")?.focus();
     }
-  }, [isOpen]);
+  }, [isOpen, isMenuPositioned]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -173,6 +187,7 @@ export function ComposerAttachmentMenu({
     }
     if (event.key === "Tab") {
       onOpenChange(false);
+      triggerRef.current?.focus();
       return;
     }
     focusRovingItemByKey(event, { orientation: "both" });
@@ -196,7 +211,11 @@ export function ComposerAttachmentMenu({
             className="composer-attachment-menu-item"
             aria-label={item.ariaLabel}
             title={item.title}
+            disabled={disabled}
             onClick={() => {
+              if (disabled) {
+                return;
+              }
               onOpenChange(false);
               item.onSelect();
             }}
@@ -215,16 +234,15 @@ export function ComposerAttachmentMenu({
   const menu = isOpen ? createPortal(
     <div
       ref={menuRef}
-      id="composer-attachment-menu"
+      id={menuId}
       className="composer-attachment-menu"
       role="menu"
-      aria-label="添付を追加"
+      aria-label="Add attachment"
       style={menuStyle}
       onKeyDown={handleMenuKeyDown}
     >
-      <span className="composer-attachment-menu-title">Add attachment</span>
-      {renderSection("composer-attach-source", "Attach", attachItems, 0)}
-      {renderSection("composer-session-files", "Session files", sessionItems, attachItems.length)}
+      {renderSection(`${menuId}-source`, "Attach", attachItems, 0)}
+      {renderSection(`${menuId}-session-files`, "Session Files", sessionItems, attachItems.length)}
     </div>,
     document.body,
   ) : null;
@@ -233,12 +251,15 @@ export function ComposerAttachmentMenu({
     <div ref={rootRef} className="composer-attachment-menu-shell">
       <button
         ref={triggerRef}
-        className={`drawer-toggle compact secondary composer-attachment-trigger${isOpen ? " is-open" : ""}`}
+        className={`drawer-toggle compact secondary composer-attachment-trigger composer-icon-button${isOpen ? " is-open" : ""}`}
         type="button"
         disabled={disabled}
         aria-expanded={isOpen}
         aria-haspopup="menu"
-        aria-controls={isOpen ? "composer-attachment-menu" : undefined}
+        aria-controls={isOpen ? menuId : undefined}
+        aria-busy={busy || undefined}
+        aria-label={targetLabel ? `Attach to ${targetLabel}` : "Attach"}
+        title={targetLabel ? `Attach to ${targetLabel}` : "Attach a file, folder, image, or Session file"}
         onClick={() => onOpenChange(!isOpen)}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown") {
@@ -247,8 +268,7 @@ export function ComposerAttachmentMenu({
           }
         }}
       >
-        <span className="composer-attachment-trigger-plus" aria-hidden="true">＋</span>
-        Attach
+        <ButtonContent busy={busy}><ComposerIcon name="attach" /><span className="visually-hidden">Attach</span></ButtonContent>
       </button>
       {menu}
     </div>

@@ -1,12 +1,8 @@
 # Distribution Packaging
 
-- 作成日: 2026-04-04
-- 対象: Electron アプリの配布ビルド
-
 ## Goal
 
-WithMate を開発用の `electron:start` 実行だけでなく、Windows と macOS 向けに配布可能な形へまとめる。  
-current milestone では、署名や notarization まで確定せず、まず未署名ビルドを再現できる packaging 導線を正本化する。
+WithMateをWindowsとmacOS向けの未署名artifactへまとめる。packagingの実行設定は`package.json`の`build`セクションを正本とする。
 
 ## Tooling
 
@@ -25,8 +21,8 @@ current milestone では、署名や notarization まで確定せず、まず未
 - output: `release/` 配下の installer
 - Start Menu shortcut: `WithMate`
 - installer から導入した app は Start Menu 検索から `WithMate` で起動できる想定にする
-- Memory CLI は install root の `withmate-memory.cmd` と `%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-memory.cmd` alias で公開し、user `Path` registry 値は直接編集しない
-- Memory CLI artifactのcanonical pathはrepositoryで`resources/cli/withmate-memory.mjs`、Windows install root基準で`resources/resources/cli/withmate-memory.mjs`とし、Skill catalog配下へ置かない
+- Memory／Glossary／Session Graph CLI は install root の `withmate-memory.cmd`、`withmate-glossary.cmd`、`withmate-session-graph.cmd` と同名の `%LOCALAPPDATA%\Microsoft\WindowsApps` alias で公開し、user `Path` registry 値は直接編集しない
+- repositoryのartifactはMemoryが`resources/cli/withmate-memory.mjs`、Session Graphが`resources/cli/withmate-session-graph.mjs`、Glossaryが`resources/skills/withmate-glossary/bin/withmate-glossary.mjs`。Windows install rootからは各pathの先頭に`resources/`を付ける。MemoryとGraphはSkill catalogへ置かない
 
 ### macOS
 
@@ -35,6 +31,13 @@ current milestone では、署名や notarization まで確定せず、まず未
 - output: `release/` 配下の `.dmg`
 - Memory CLI は Settings > Diagnostics から `~/.local/bin/withmate-memory` shim と管理 metadata を install / uninstall できる。既存の非管理 `withmate-memory` は上書き・削除しない
 - `~/.local/bin` が app process の `PATH` に無い場合、Diagnostics は `installed-path-missing` として表示する。provider Skill directoryへのMemory CLI同期は行わない
+
+全CLI artifactは`<process.resourcesPath>/resources/`配下へ同梱する。macOSでGlossary／Session Graphを直接呼ぶ場合は、`ELECTRON_RUN_AS_NODE=1`を付けてapp executableへ対応する`.mjs`と引数を渡す。例えばSession Graphのhelpは次で確認できる。
+
+```sh
+ELECTRON_RUN_AS_NODE=1 /Applications/WithMate.app/Contents/MacOS/WithMate \
+  /Applications/WithMate.app/Contents/Resources/resources/cli/withmate-session-graph.mjs help
+```
 
 ## Script Policy
 
@@ -57,34 +60,31 @@ current milestone では、署名や notarization まで確定せず、まず未
   - `package.json`
 - provider native package 本体は `files` の除外規則で app bundle 側から外し、`resources/provider-binaries/` 側だけを runtime の正本にする
 - `asar` は有効化する
-- provider native package は `scripts/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
-- packaged runtime の binary path 解決は `src-electron/provider-binary-paths.ts` を正本にする
-- `Codex` は `codexPathOverride` で staged binary を明示し、`Copilot` は `cliPath` に staged binary を渡す
+- `node-pty`のprebuildsとConPTY付随ファイルは`asarUnpack`でASAR外へ配置する。
+- Windowsでは`beforePack` hookがtarget architectureの`node-pty`同梱prebuildと付随DLL／実行ファイルを確認し、`node-pty`だけを`@electron/rebuild`の対象から除外する。欠損・空ファイル時はpackagingを失敗させ、source buildへ自動fallbackしない。他のproduction／optional native依存はrebuild対象を維持する。処理後は`npmRebuild`だけを無効にし、electron-builderによるproduction依存の収集・同梱は維持する。
+- Windows artifactから`node-pty/build/`を除外し、ローカルのsource build結果より同梱prebuildが利用されるようにする。Windows以外はelectron-builderの既定rebuildを利用する。
+- provider native package は `scripts/build/stage-provider-binaries.ts` で `build/provider-binaries/` へ stage し、`extraResources` で `resources/provider-binaries/` 配下へ配布する
+- Claudeの公式実行物は`@anthropic-ai/claude-agent-sdk`に固定した版のoptional dependencyを未改変でstageする。Windows / macOSのx64 / arm64を対象にし、開発時は`node_modules`、配布時はASAR外の`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-<platform>-<arch>/claude[.exe]`を解決する
+- OpenCodeの通常実行・model一覧はPCのPATH上の公式CLI `2.2.5`を使い、同梱`@opencode/client`も`2.2.5`へexact pinする。起動前の`--version`が異なる場合はDBを開かず停止し、同梱版へのfallback、自動download／upgrade、既存DBのdowngradeは行わない。同梱`@opencode/cli` `2.2.5`は公開済みSessionのWithMate専用DBから公式export／importでthreadを移す場合だけ使用する。Windows／macOSのx64／arm64向け公式native packageをstageし、x64は`-baseline`を使う。Windowsのpackage名は`@opencode/cli-windows-<arch>`、macOSは`@opencode/cli-darwin-<arch>`（x64は末尾に`-baseline`）、実行物は`bin/opencode[.exe]`とする。license／noticeは`resources/provider-licenses/opencode/`から同梱し、stage先の`@opencode/licenses/`にも配置する
+- packaged runtime の binary path 解決は `src-electron/providers/provider-binary-paths.ts` を正本にする
+- Codexは固定版`@openai/codex`の公式native実行物をstageし、SDKを経由せずstaged binaryの`app-server --listen stdio://`を直接起動する。Copilotは`@github/copilot-sdk-<platform>-<arch>`全体をstageし、`prebuilds/<platform>-<arch>/copilot-runtime[.exe]`を`RuntimeConnection.forStdio`へ渡す。`runtime.node`と付随assetsも同じpackage配置で保持する
+- Codex／OpenCodeのWindows process ownershipは共通の`providers/owned-process.ts`と`providers/windows-job-object.ts`で`koffi`を通したJob Objectを使う。supervisorをJobへ割り当ててからCLIを起動し、root終了後の子孫も所有する。Job取得・割当て不能時は起動を失敗させ、非所有processへfallbackしない。`koffi`はproduction dependencyとして同梱する
 
 ## Platform Constraint
 
-- current の Windows 環境では `win` の実ビルド確認を優先する
 - macOS artifact の実ビルドは macOS machine または macOS CI runner を前提にする
-- current task では macOS 向け設定と手順までは repo に含めるが、local 実ビルド確認までは要求しない
 
 ## Signing Policy
 
-- current milestone では署名と notarization を未導入とする
+- Windows code signingとmacOS signing／notarizationは未導入とする
 - macOS build は `mac.identity = null` で未署名前提にする
-- Windows code signing certificate も current task では扱わない
-- 正式配布前に別 task で次を扱う
-  - Windows code signing
-  - macOS signing
-  - macOS notarization
 
 ## Asset Policy
 
 - packaging icon は `build/` 配下で管理する
-- source asset は `scripts/generate-app-icon.ts`
-- `build/icon.svg` は生成物として扱い、Git 管理しない
+- `npm run icon:generate`が`build/icon.svg`、`build/icon.png`、`build/icon.ico`を生成する
 - Windows packaging は `build/icon.ico` を使う
-- macOS packaging は `build/icon.png` を source asset として使う
-- icon asset の再生成は `npm run icon:generate` を正本にする
+- macOS packaging は `build/icon.png` を使う
 
 ## Manual Verification
 
@@ -94,7 +94,9 @@ minimum の確認は次とする。
 2. `npm run dist:dir`
 3. Windows 環境では必要に応じて `npm run dist:win`
 4. Windows installer 導入後、Start Menu 検索で `WithMate` を入力して起動できることを確認する
-5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe` と `resources/provider-binaries/@github/copilot-win32-x64/copilot.exe` が存在することを確認する
+5. Windows unpacked 出力では `resources/provider-binaries/@openai/codex-win32-x64/vendor/.../codex.exe`、`resources/provider-binaries/@github/copilot-sdk-win32-x64/prebuilds/win32-x64/copilot-runtime.exe`、`resources/provider-binaries/@anthropic-ai/claude-agent-sdk-win32-x64/claude.exe`、`resources/provider-binaries/@opencode/cli-windows-x64-baseline/bin/opencode.exe` が存在することを確認する
+6. Windows unpackedアプリのSession WindowでTerminalを開き、PowerShellの入力・出力、サイズ変更、タブ終了とWindow終了時のPTY解放を確認する。開発環境のnative loadだけで配布検証済みにしない
+7. Windows unpackedアプリでCodex App Serverの起動・turn終了・取消を確認し、koffiのnative load、ElectronのNode-mode supervisor、Jobによる子孫終了が成立することを確認する。Node上のtransport testを配布物の実確認へ代替しない
 
 macOS artifact の実確認は macOS 環境で次を行う。
 

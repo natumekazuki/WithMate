@@ -1,3 +1,24 @@
+<#
+.SYNOPSIS
+Build and launch an isolated WithMate visual-check environment.
+.DESCRIPTION
+Uses %APPDATA%\WithMate-visual-check. Reuse preserves that directory and lets
+normal application startup apply migrations. Fresh accepts only a missing or
+empty directory. Copy replaces it with a snapshot of %APPDATA%\WithMate.
+.PARAMETER DataMode
+Reuse (default), Fresh, or Copy. Reuse requires an existing directory.
+Fresh never deletes existing data. Copy replaces existing visual-check data.
+.PARAMETER ValidateOnly
+Validate the selected mode and build without stopping processes, preparing
+user data, or launching Electron. Dependencies may be installed.
+.PARAMETER RemoteDebuggingPort
+Enable loopback-only browser inspection for the isolated app. Use 0 to choose
+an available port. Omit this parameter for a normal visual-check launch.
+.EXAMPLE
+.\scripts\start-withmate-visual-check.ps1 -DataMode Fresh
+.EXAMPLE
+.\scripts\start-withmate-visual-check.ps1 -DataMode Copy
+#>
 [CmdletBinding()]
 param(
   [Parameter(Position = 0)]
@@ -5,7 +26,13 @@ param(
 
   [string]$ElectronPath,
 
-  [switch]$ValidateOnly
+  [ValidateSet("Copy", "Fresh", "Reuse")]
+  [string]$DataMode = "Reuse",
+
+  [switch]$ValidateOnly,
+
+  [ValidateRange(0, 65535)]
+  [Nullable[int]]$RemoteDebuggingPort = $null
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,6 +119,39 @@ function Assert-NotReparsePoint {
   $item = Get-Item -LiteralPath $Path -Force
   if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
     throw "$Label must not be a junction or symbolic link: $Path"
+  }
+}
+
+function Assert-VisualCheckUserData {
+  param(
+    [Parameter(Mandatory = $true)][string]$Mode,
+    [Parameter(Mandatory = $true)][string]$SourcePath,
+    [Parameter(Mandatory = $true)][string]$DestinationPath
+  )
+
+  Assert-NotReparsePoint -Path $DestinationPath -Label "Visual-check userData"
+  $destinationExists = Test-Path -LiteralPath $DestinationPath
+  if ($destinationExists -and -not (Test-Path -LiteralPath $DestinationPath -PathType Container)) {
+    throw "Visual-check userData must be a directory: $DestinationPath"
+  }
+
+  switch ($Mode) {
+    "Copy" {
+      Assert-NotReparsePoint -Path $SourcePath -Label "Source userData"
+      if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) {
+        throw "Source userData was not found: $SourcePath"
+      }
+    }
+    "Fresh" {
+      if ($destinationExists -and (Get-ChildItem -LiteralPath $DestinationPath -Force | Select-Object -First 1)) {
+        throw "Fresh requires an empty visual-check directory. Back up or move its contents before retrying, or use -DataMode Reuse: $DestinationPath"
+      }
+    }
+    "Reuse" {
+      if (-not $destinationExists) {
+        throw "Visual-check userData was not found. Choose -DataMode Fresh or -DataMode Copy for the first launch: $DestinationPath"
+      }
+    }
   }
 }
 
@@ -430,12 +490,6 @@ $resolvedSourceUserDataPath = Resolve-FullPath (Join-Path $env:APPDATA "WithMate
 if (-not (Test-Path -LiteralPath (Join-Path $resolvedWorktreePath "package.json") -PathType Leaf)) {
   throw "WorktreePath is not a WithMate repository: $resolvedWorktreePath"
 }
-Assert-NotReparsePoint -Path $resolvedSourceUserDataPath -Label "Source userData"
-Assert-NotReparsePoint -Path $resolvedUserDataPath -Label "Visual-check userData"
-if (-not (Test-Path -LiteralPath $resolvedSourceUserDataPath -PathType Container)) {
-  throw "Source userData was not found: $resolvedSourceUserDataPath"
-}
-
 $requiredElectronVersion = Get-RequiredElectronVersion -RepositoryPath $resolvedWorktreePath
 $lifecycleLockPath = "$resolvedUserDataPath.lifecycle.lock"
 $lifecycleLock = $null
@@ -443,6 +497,16 @@ try {
   $lifecycleLock = Enter-VisualCheckLifecycleLock `
     -LockPath $lifecycleLockPath `
     -Timeout ([TimeSpan]::FromMinutes(10))
+
+  Assert-VisualCheckUserData `
+    -Mode $DataMode `
+    -SourcePath $resolvedSourceUserDataPath `
+    -DestinationPath $resolvedUserDataPath
+
+  Write-Host "Visual-check data mode: $DataMode ($resolvedUserDataPath)"
+  if ($DataMode -eq "Copy") {
+    Write-Host "Copy will replace existing visual-check data with a snapshot of $resolvedSourceUserDataPath"
+  }
 
   Ensure-NpmDependencies `
     -RepositoryPath $resolvedWorktreePath `
@@ -488,6 +552,7 @@ try {
     [pscustomobject]@{
       WorktreePath = $resolvedWorktreePath
       UserDataPath = $resolvedUserDataPath
+      DataMode = $DataMode
       ElectronPath = $resolvedElectronPath
       ElectronVersion = $requiredElectronVersion
       MainPath = $mainPath
@@ -496,20 +561,38 @@ try {
     return
   }
 
+  # Recheck after the build before stopping processes or changing user data.
+  Assert-VisualCheckUserData `
+    -Mode $DataMode `
+    -SourcePath $resolvedSourceUserDataPath `
+    -DestinationPath $resolvedUserDataPath
+
   Stop-ExistingVisualCheckProcess `
     -RepositoryPath $resolvedWorktreePath `
     -UserDataPath $resolvedUserDataPath `
     -ProcessMarker $VisualCheckProcessMarker
 
-  Recreate-VisualCheckUserData `
-    -SourcePath $resolvedSourceUserDataPath `
-    -DestinationPath $resolvedUserDataPath
+  switch ($DataMode) {
+    "Copy" {
+      Recreate-VisualCheckUserData `
+        -SourcePath $resolvedSourceUserDataPath `
+        -DestinationPath $resolvedUserDataPath
+    }
+    "Fresh" {
+      New-Item -ItemType Directory -Path $resolvedUserDataPath -Force | Out-Null
+    }
+  }
 
   $env:WITHMATE_USER_DATA_PATH = $resolvedUserDataPath
   Remove-Item Env:VITE_DEV_SERVER_URL -ErrorAction SilentlyContinue
+  $launchArguments = @($mainPath, $VisualCheckProcessMarker)
+  if ($null -ne $RemoteDebuggingPort) {
+    $launchArguments += "--remote-debugging-address=127.0.0.1"
+    $launchArguments += "--remote-debugging-port=$RemoteDebuggingPort"
+  }
   $process = Start-Process `
     -FilePath $resolvedElectronPath `
-    -ArgumentList @($mainPath, $VisualCheckProcessMarker) `
+    -ArgumentList $launchArguments `
     -WorkingDirectory $resolvedWorktreePath `
     -PassThru
 
@@ -532,6 +615,7 @@ try {
     ProcessId = $process.Id
     WorktreePath = $resolvedWorktreePath
     UserDataPath = $resolvedUserDataPath
+    DataMode = $DataMode
     ElectronPath = $resolvedElectronPath
     ElectronVersion = $requiredElectronVersion
   }

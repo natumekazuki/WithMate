@@ -1,4 +1,4 @@
-import type { AppSettings } from "../app-state.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   buildDeleteOldSessionsConfirmMessage,
   buildDeleteOldSessionsSuccessMessage,
@@ -12,25 +12,13 @@ import {
   type ResetAppDatabaseResult,
   type ResetAppDatabaseRequest,
   type ResetAppDatabaseTarget,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 export type HomeSettingsApi = {
-  importModelCatalogFile: () => Promise<{ revision: number } | null>;
-  exportModelCatalogFile: () => Promise<string | null>;
   updateAppSettings: (settings: AppSettings) => Promise<AppSettings>;
   resetAppDatabase: (request: ResetAppDatabaseRequest) => Promise<ResetAppDatabaseResult>;
   deleteSessionsLastActiveBefore: (request: DeleteSessionsLastActiveBeforeRequest) => Promise<DeleteSessionsResult>;
 };
-
-export async function importHomeModelCatalog(api: HomeSettingsApi): Promise<string> {
-  const snapshot = await api.importModelCatalogFile();
-  return snapshot ? `model catalog revision ${snapshot.revision} を読み込んだよ。` : "読み込みをキャンセルしたよ。";
-}
-
-export async function exportHomeModelCatalog(api: HomeSettingsApi): Promise<string> {
-  const savedPath = await api.exportModelCatalogFile();
-  return savedPath ? `model catalog を保存したよ: ${savedPath}` : "保存をキャンセルしたよ。";
-}
 
 export async function saveHomeSettings(
   api: HomeSettingsApi,
@@ -39,7 +27,7 @@ export async function saveHomeSettings(
   const nextSettings = await api.updateAppSettings(settings);
   return {
     nextSettings,
-    feedback: "設定を保存したよ。",
+    feedback: "Settings saved.",
   };
 }
 
@@ -61,7 +49,7 @@ export async function resetHomeDatabase({
   if (normalizedTargets.length === 0) {
     return {
       kind: "noop",
-      feedback: "初期化対象を 1 つ以上選んでね。",
+      feedback: "Select at least one reset target.",
     };
   }
 
@@ -96,7 +84,7 @@ export async function deleteOldSessions({
   if (!normalizedCutoffDate) {
     return {
       kind: "noop",
-      feedback: "削除基準日を選んでね。",
+      feedback: "Select a cleanup date.",
     };
   }
 

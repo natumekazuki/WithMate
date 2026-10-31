@@ -2,19 +2,29 @@
 
 ## 概要
 
-Home WindowのRecent Sessionsは、Session本文を含む全件読込ではなく、一覧表示に必要なsummaryをpage単位で取得します。Session数が増えても、Home起動時のdatabase読込とrendererへの転送量を一定範囲へ抑えます。
+Home Windowの`RecentSessions`は、Session本文を含む全件読込ではなく、一覧表示に必要なsummaryをpage単位で取得します。Session数が増えても、Home起動時のdatabase読込とrendererへの転送量を一定範囲へ抑えます。
 
 ## 一覧の読込
 
 最初に先頭pageを取得し、一覧末尾へ到達した時点で次のpageを追加します。追加読込中は既存のrowを残し、同じpageを重複して要求しません。
 
-summaryには、一覧表示、検索、pin、open状態の判定に必要な項目だけを含めます。message本文、audit log、Character snapshot本文などは一覧queryで展開しません。
+summaryには、一覧表示、検索、pin、open状態の判定に必要な項目だけを含めます。message本文、artifact detail、Character snapshot本文などは一覧queryで展開しません。
 
 ## 再取得時の状態維持
 
 Sessionのtitle、pin、実行状態などが更新された場合は一覧を再取得します。既に複数pageを読み込んでいる場合、先頭pageだけへ戻さず、同じ範囲を再構成します。
 
+通知、focus復帰、検索・open Window IDの変更による再取得は、Home専用ownerで実行中1件と最新pending1件へ集約します。pendingは必要なscopeを引き継ぎ、検索変更の先頭pageへの置換を優先します。対象IDは100件まで保持し、超過した場合は全scopeへ昇格します。実行時に最新の検索、open ID、既読page数を使います。
+
+検索だけの変更ではRecent／Pinnedの先頭pageを置換し、open summaryとCharacter利用履歴の取得状態を維持します。初回取得、open Window ID変更、focus復帰、Session更新通知はopen summaryと利用履歴も更新します。検索変更で実行中の取得が失効しても、その更新scopeとpending通知を最新の検索へ引き継ぎ、未反映の更新を落としません。
+
+検索入力はHome共通の300ms debounceとIME確定待ちを経て適用し、Session取得側で追加のdebounceは行いません。初回・open Window ID変更の120ms集約は維持します。検索変更時もRecent／Pinnedの表示済みpageを消さず、各scopeの新しい取得が成功した時点で先頭pageへ置換します。保持中のpageを新しい検索語で先に除外せず、open summaryだけの行とMonitorは適用済みの共通検索語で絞り込みます。
+
+ID通知でもlastActive順、pin、検索membership、Character利用順が変わり得るため、Recent／Pinnedの既読範囲と利用履歴は再取得します。`detailChanged: false`もsummaryの更新通知として扱います。open summaryは通知IDと現在openなIDの交差集合を更新し、未取得・取得失敗時と全scope要求ではopen集合全体を再取得します。
+
 再取得後も可能な限りscroll位置を維持します。削除や検索条件の変更でrow集合が変わった場合は、現在の結果に合わせて位置を調整します。
+
+Recent／Pinnedの取得失敗は、表示済みrowを保持したまま一覧領域に表示します。`Retry`で再取得でき、追加pageの失敗時は続きのpageを再試行します。取得エラーはNew Sessionの開始エラーとは別に管理し、対象の取得が成功すると解消します。
 
 ## queryの分離
 
@@ -22,7 +32,10 @@ Home用summary page、open Sessionの詳細、検索条件は別の契約とし�
 
 database更新通知にはquery generationを使用します。古いgenerationの非同期結果を、更新後の一覧へ反映しません。
 
+新しい要求・検索・open ID変更・Window終了で失効した取得は、次pageまたは次のopen ID chunkを発行しません。open IDは100件ずつ逐次取得します。既に発行したbackend readの取消は行いません。最新要求の取得が成功するまではloaded扱いにせず、部分失敗を正常emptyに変換しません。
+
+Recent、Pinned、open Session summary、Character利用履歴の成功・失敗は独立して反映します。追加pageの取得は、進行中のopen summaryや利用履歴の結果を失効させません。Random開始は表示用pageではなく専用の利用履歴とopen summaryを使い、その情報が取得中・取得失敗なら開始しません。
+
 ## 関連文書
 
-- [Data Loading Performance Audit](../design/data-loading-performance-audit.md)
 - [Electron Session Store](../design/electron-session-store.md)

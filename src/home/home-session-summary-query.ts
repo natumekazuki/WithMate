@@ -1,18 +1,10 @@
 import type {
   HomeSessionSummary,
-  SessionCharacterUsage,
   HomeSessionSummaryPageResult,
-} from "../session-state.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+} from "../../src-shared/session/session-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 export const HOME_SESSION_SUMMARY_OPEN_ID_CHUNK_SIZE = 100;
-
-export type HomeSessionSummarySnapshot = {
-  recent: HomeSessionSummaryPageResult;
-  pinned: HomeSessionSummaryPageResult;
-  open: HomeSessionSummary[];
-  characterUsage: SessionCharacterUsage[];
-};
 
 export type HomeLoadedSessionSummaryPage = {
   requestCursor: string | null;
@@ -27,7 +19,7 @@ export type HomeSessionSummaryPageCollection = {
 
 export type HomeSessionSummaryQueryApi = Pick<
   WithMateWindowApi,
-  "listSessionSummaryPage" | "listSessionCharacterUsage"
+  "listSessionSummaryPage"
 >;
 
 function chunkSessionIds(sessionIds: readonly string[]): string[][] {
@@ -56,43 +48,27 @@ export function mergeSessionSummaryEntries(...sources: readonly HomeSessionSumma
 export function buildHomeSessionSummaryEntries(
   pages: HomeSessionSummaryPageCollection,
 ): HomeSessionSummary[] {
+  const openById = new Map(pages.open.map((summary) => [summary.id, summary]));
   return mergeSessionSummaryEntries(
     ...pages.pinned.map(({ page }) => page.entries),
     ...pages.recent.map(({ page }) => page.entries),
     pages.open,
-  );
+  ).map((summary) => openById.get(summary.id) ?? summary);
 }
 
 export async function listOpenSessionSummaryEntries(
   api: HomeSessionSummaryQueryApi,
   openSessionIds: readonly string[],
+  isCurrent: () => boolean = () => true,
 ): Promise<HomeSessionSummary[]> {
   const chunks = chunkSessionIds(Array.from(new Set(openSessionIds)));
-  if (chunks.length === 0) {
-    return [];
+  const entries: HomeSessionSummary[][] = [];
+  for (const sessionIds of chunks) {
+    if (!isCurrent()) break;
+    const page = await api.listSessionSummaryPage({ scope: "open", sessionIds, searchText: "" });
+    entries.push(page.entries);
   }
-
-  const pages = await Promise.all(chunks.map((sessionIds) => api.listSessionSummaryPage({
-    scope: "open",
-    sessionIds,
-    searchText: "",
-  })));
-  return mergeSessionSummaryEntries(...pages.map((page) => page.entries));
-}
-
-export async function fetchHomeSessionSummarySnapshot(
-  api: HomeSessionSummaryQueryApi,
-  searchText: string,
-  openSessionIds: readonly string[],
-  options: { includeCharacterUsage?: boolean } = {},
-): Promise<HomeSessionSummarySnapshot> {
-  const [recent, pinned, open, characterUsage] = await Promise.all([
-    api.listSessionSummaryPage({ scope: "recent", searchText }),
-    api.listSessionSummaryPage({ scope: "pinned", searchText }),
-    listOpenSessionSummaryEntries(api, openSessionIds),
-    options.includeCharacterUsage === false ? Promise.resolve([]) : api.listSessionCharacterUsage(),
-  ]);
-  return { recent, pinned, open, characterUsage };
+  return mergeSessionSummaryEntries(...entries);
 }
 
 export async function fetchHomeSessionSummaryPage(
@@ -113,12 +89,14 @@ export async function fetchHomeSessionSummaryPages(
   scope: "recent" | "pinned",
   searchText: string,
   loadedPageCount: number,
+  isCurrent: () => boolean = () => true,
 ): Promise<HomeLoadedSessionSummaryPage[]> {
   const pageCount = Math.max(1, Math.floor(Number.isFinite(loadedPageCount) ? loadedPageCount : 1));
   const pages: HomeLoadedSessionSummaryPage[] = [];
   let requestCursor: string | null = null;
 
   for (let index = 0; index < pageCount; index += 1) {
+    if (!isCurrent()) break;
     const page = await fetchHomeSessionSummaryPage(api, scope, requestCursor, searchText);
     pages.push({ requestCursor, page });
     if (!page.hasMore || !page.nextCursor) {

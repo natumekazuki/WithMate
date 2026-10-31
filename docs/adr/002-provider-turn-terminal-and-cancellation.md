@@ -3,6 +3,12 @@
 - 状態: Accepted
 - 日付: 2026-07-13
 
+## 現在の適用範囲
+
+terminal outcomeとtransport cleanupの分離、取消のbounded収束、admission guard、snapshot enrichmentの判断は維持する。本文のCodex SDK event名、iterator close、SDK childへのAbortControllerによる停止は現行Codexには適用しない。Codex App Serverのnative `turn/completed`、所有processのbounded cleanupとWindows Job Objectへの置換後の契約は[Provider Adapter](../design/provider-adapter.md)を正本とする。以下の本文は当時の判断として保持する。
+
+独立Auditの詳細保存・閲覧とprogress永続化に関する本文の判断は現行運用の適用対象外とする。操作結果は通常履歴のartifact、実行phase・Timing・Affect correlationは最小turnを正本とする後継判断へ置換した。現行契約は[Session Run Lifecycle](../design/session-run-lifecycle.md)、[Provider Adapter](../design/provider-adapter.md)、[Database Schema](../design/database-schema.md)を参照する。本文は当時の判断として保持する。
+
 ## Context
 
 Codex SDK の streaming API は terminal event を返した後も、transport の EOF または child process の終了待ちを継続する場合がある。WithMate が EOF を turn 完了条件として待つと、provider 側では turn が完了していても Session が `running` のまま残り、Cancel も収束しない。
@@ -12,7 +18,7 @@ Codex SDK の streaming API は terminal event を返した後も、transport �
 ## Decision
 
 - provider SDK が定義する terminal event を turn outcome の正本とし、stream EOF は transport cleanup として扱う
-- Codex では最初の `turn.completed` または `turn.failed` を terminal event とする。`error` event の分類は [ADR 018](018-codex-stream-error-classification.md) で更新する
+- Codex では最初の `turn.completed` または `turn.failed` を terminal event とする。`error` event の分類は [ADR 033](033-codex-stream-error-classification.md) で更新する
 - terminal event 後の iterator close は bounded grace 内で行い、超過時は adapter-owned `AbortController` で SDK child process の停止を促す
 - EOF が terminal event より先に到達した場合は protocol failure とし、取得済み partial result を保持する
 - user cancel は composer / Character / Session / Audit を含む setup 全体で監視し、依存処理が停止しても bounded grace 後に呼び出しを収束させる

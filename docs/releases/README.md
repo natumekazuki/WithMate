@@ -2,8 +2,58 @@
 
 WithMateのrepository内リリースノートです。各リリースで利用者が認識できる追加機能、変更、互換性、検証結果をまとめます。
 
+正式版・previewを問わず、リリース時は対象commitへのリリースタグ付与とリリースノート作成を必須とします。互換性・継続性の維持対象はGitのリリースタグとその参照先commitで判定します。タグ付きcommitで成立したデータ形式・公開契約は継続性を維持し、タグより後の未リリースの途中状態だけを理由としたversion更新、追加migration、旧形式維持、互換分岐は行いません。この境界はユーザーデータの破棄や環境の再作成を許可せず、既存の明示された移行契約も無断で変更しません。
+
+リリースノートには対象タグ・バージョン、変更内容、互換性・移行、実際の検証結果を記載し、下の一覧へ追加します。結果と利用上の注意の記載は[Development Workflowの報告方針](../runbooks/development-workflow.md#報告)に従います。ノートの作成だけではリリース済みと扱いません。
+
+リリース後の利用確認と収録Issueの完了は[Development Workflowの完了運用](../runbooks/development-workflow.md#課題の対応予定とmilestone)に従います。preview利用後に問題なしと判断しても、公開時点の記載は書き換えず、受入結果や新たに見つかった不具合はIssue／PRへ記録します。IssueのCloseは正式公開やMilestone完了を意味しません。
+
+## 公開元と順序
+
+- previewは版別の開発ブランチから公開できます。正式版は開発ブランチでversion、リリースノート、必要な検証を整え、`master`宛てのPRでCIの成功を確認してから統合します。
+- 正式版のタグ`vX.Y.Z`は、`master`上の公開対象commitへ付与します。配布物はそのcommitから作成し、ソース・タグとともに公開対象を揃えます。GitHub Releasesへの配布物アップロードは、公開方法として指定された場合に行います。
+- 正式公開と対象Issueの完了・正当な延期を確認した後にMilestoneをCloseします。公開方法に関係なく、merge、push、タグ付与、公開等には操作範囲の承認が必要です。
+
+## 保存と参照
+
+- リリースノートとこの索引は、一般文書・ADRとは別枠でrepository内に恒久保存します。過去のノートも削除せず、GitHub Releasesのみへの移管や期限付き保存は行いません。今後作成するノートにも同じ規則を適用します。
+- 当時のリリース内容、互換性、移行、検証結果、利用上の注意は履歴として保持します。後の機能削除や仕様変更を理由に当時の記載を消したり、現在の仕様へ上書きしたりしません。
+- 当時の設計・機能説明・図等への履歴参照は、内容と存在を確認したcommit SHAへのリンクに固定します。対象release tagの版を確認できる場合はtagも使えます。削除予定の資料だけでなく、一般文書への履歴参照全体を対象にします。
+- 全リンクを機械的に同じtagへ置き換えません。リリース後に追加された資料は存在する版と内容を確認し、リリース時点の資料と偽らないようにします。不要な作業記録へのリンクは除去できます。
+- 索引から保存対象ノートへの相対リンクと、ノート内の節リンクは維持できます。参照されていること自体を一般文書・専用assetsの保存理由にせず、資料を削除するときはリンク・画像も確認します。
+- 変更内容、利用者への影響、必要な移行・注意点はノート本文だけで理解できるようにします。planやレポートの本文を丸ごと移したり、一般文書をノートへ改名したりして保存基準を迂回しません。
+- 新規ノートの対象tag・参照commitの実在と参照内容をリリース時に確認します。この保存規則や文書整理だけではtag付与・push・公開を許可しません。
+
+一般文書・ADRとの区分は[Documentation Map](../design/documentation-map.md#文書の保存区分)を参照してください。
+
+## 一覧
+
 | Version | Release Notes |
 | --- | --- |
+| v6.3.29 | [WithMate v6.3.29](v6.3.29.md) |
+| v6.3.29-preview.21 | [WithMate v6.3.29-preview.21](v6.3.29-preview.21.md) |
+| v6.3.29-preview.20 | [WithMate v6.3.29-preview.20](v6.3.29-preview.20.md) |
+| v6.3.29-preview.19 | [WithMate v6.3.29-preview.19](v6.3.29-preview.19.md) |
+| v6.3.29-preview.18 | [WithMate v6.3.29-preview.18](v6.3.29-preview.18.md) |
+| v6.3.29-preview.17 | [WithMate v6.3.29-preview.17](v6.3.29-preview.17.md) |
+| v6.3.29-preview.16 | [WithMate v6.3.29-preview.16](v6.3.29-preview.16.md) |
+| v6.3.29-preview.15 | [WithMate v6.3.29-preview.15](v6.3.29-preview.15.md) |
+| v6.3.29-preview.14 | [WithMate v6.3.29-preview.14](v6.3.29-preview.14.md) |
+| v6.3.29-preview.13 | [WithMate v6.3.29-preview.13](v6.3.29-preview.13.md) |
+| v6.3.29-preview.12 | [WithMate v6.3.29-preview.12](v6.3.29-preview.12.md) |
+| v6.3.29-preview.11 | [WithMate v6.3.29-preview.11](v6.3.29-preview.11.md) |
+| v6.3.29-preview.10 | [WithMate v6.3.29-preview.10](v6.3.29-preview.10.md) |
+| v6.3.29-preview.9 | [WithMate v6.3.29-preview.9](v6.3.29-preview.9.md) |
+| v6.3.29-preview.8 | [WithMate v6.3.29-preview.8](v6.3.29-preview.8.md) |
+| v6.3.29-preview.7 | [WithMate v6.3.29-preview.7](v6.3.29-preview.7.md) |
+| v6.3.29-preview.6 | [WithMate v6.3.29-preview.6](v6.3.29-preview.6.md) |
+| v6.3.29-preview.5 | [WithMate v6.3.29-preview.5](v6.3.29-preview.5.md) |
+| v6.3.29-preview.4 | [WithMate v6.3.29-preview.4](v6.3.29-preview.4.md) |
+| v6.3.29-preview.3 | [WithMate v6.3.29-preview.3](v6.3.29-preview.3.md) |
+| v6.3.29-preview.2 | [WithMate v6.3.29-preview.2](v6.3.29-preview.2.md) |
+| v6.3.29-preview.1 | [WithMate v6.3.29-preview.1](v6.3.29-preview.1.md) |
+| v6.3.29-preview.0 | [WithMate v6.3.29-preview.0](v6.3.29-preview.0.md) |
+| v6.3.28 | [WithMate v6.3.28](v6.3.28.md) |
 | v6.3.27 | [WithMate v6.3.27](v6.3.27.md) |
 | v6.3.26 | [WithMate v6.3.26](v6.3.26.md) |
 | v6.3.25 | [WithMate v6.3.25](v6.3.25.md) |

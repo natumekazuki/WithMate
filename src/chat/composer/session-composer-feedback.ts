@@ -1,0 +1,229 @@
+export type ComposerSendabilityState = {
+  isRunning: boolean;
+  canSendInput: boolean;
+  canQueueTurn: boolean;
+  isBlankDraft: boolean;
+  isBusy: boolean;
+  busyReason: string;
+  blockedReason: string;
+  inputErrors: string[];
+  primaryFeedback: string;
+  secondaryFeedback: string[];
+  feedbackTone: "blocked" | "helper" | null;
+  shouldShowFeedback: boolean;
+  isSendDisabled: boolean;
+};
+
+export type TextComposerSubmitPreflightResult =
+  | { status: "ready"; message: string }
+  | { status: "blocked"; reason: "empty"; feedback: string }
+  | { status: "blocked"; reason: "running" };
+
+export const BLANK_DRAFT_FEEDBACK = "Message is empty.";
+export const COMPOSER_SEND_BLOCKED_FALLBACK = "Message cannot be sent.";
+
+export function buildComposerSendabilityState({
+  runState,
+  canSendInput = false,
+  canQueueTurn = false,
+  busyReason = "",
+  blockedReason,
+  inputErrors,
+  draftText,
+}: {
+  runState: string | null | undefined;
+  canSendInput?: boolean;
+  canQueueTurn?: boolean;
+  busyReason?: string;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+}): ComposerSendabilityState {
+  const normalizedBlockedReason = blockedReason.trim();
+  const normalizedBusyReason = busyReason.trim();
+  const normalizedInputErrors = inputErrors.map((error) => error.trim()).filter(Boolean);
+  const isRunning = runState === "running";
+  const isBlankDraft = draftText.trim().length === 0;
+  const isBusy = normalizedBusyReason.length > 0;
+
+  if (isRunning && !canSendInput && !canQueueTurn) {
+    return {
+      isRunning,
+      canSendInput: false,
+      canQueueTurn: false,
+      isBlankDraft,
+      isBusy,
+      busyReason: normalizedBusyReason,
+      blockedReason: normalizedBlockedReason,
+      inputErrors: normalizedInputErrors,
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+      isSendDisabled: true,
+    };
+  }
+
+  const primaryFeedback =
+    normalizedBlockedReason
+    || normalizedInputErrors[0]
+    || "";
+  const secondaryFeedback = normalizedBlockedReason ? normalizedInputErrors : normalizedInputErrors.slice(1);
+  const feedbackTone = primaryFeedback
+    ? normalizedBlockedReason || normalizedInputErrors.length > 0
+      ? "blocked"
+      : null
+    : null;
+
+  return {
+    isRunning,
+    canSendInput: isRunning && canSendInput,
+    canQueueTurn: isRunning && canQueueTurn,
+    isBlankDraft,
+    isBusy,
+    busyReason: normalizedBusyReason,
+    blockedReason: normalizedBlockedReason,
+    inputErrors: normalizedInputErrors,
+    primaryFeedback,
+    secondaryFeedback,
+    feedbackTone,
+    shouldShowFeedback: !!primaryFeedback || secondaryFeedback.length > 0,
+    isSendDisabled: isBusy || !!normalizedBlockedReason || normalizedInputErrors.length > 0 || isBlankDraft,
+  };
+}
+
+export function withForcedComposerBlockedFeedback(
+  state: ComposerSendabilityState,
+  shouldForceBlockedFeedback: boolean,
+): ComposerSendabilityState {
+  if (!shouldForceBlockedFeedback || (state.isRunning && !state.canSendInput && !state.canQueueTurn) || !state.isSendDisabled || state.shouldShowFeedback) {
+    return state;
+  }
+
+  if (state.isBusy) {
+    return state;
+  }
+
+  return {
+    ...state,
+    primaryFeedback: BLANK_DRAFT_FEEDBACK,
+    secondaryFeedback: [],
+    feedbackTone: "helper",
+    shouldShowFeedback: true,
+  };
+}
+
+export function resolveComposerSendabilityState({
+  runState,
+  canSendInput,
+  canQueueTurn,
+  busyReason,
+  blockedReason,
+  inputErrors,
+  draftText,
+  forceBlockedFeedback,
+}: {
+  runState: string | null | undefined;
+  canSendInput?: boolean;
+  canQueueTurn?: boolean;
+  busyReason?: string;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+  forceBlockedFeedback: boolean;
+}): ComposerSendabilityState {
+  return withForcedComposerBlockedFeedback(
+    buildComposerSendabilityState({
+      runState,
+      canSendInput,
+      canQueueTurn,
+      busyReason,
+      blockedReason,
+      inputErrors,
+      draftText,
+    }),
+    forceBlockedFeedback,
+  );
+}
+
+export function getComposerSendButtonTitle(state: ComposerSendabilityState): string | undefined {
+  if (state.isRunning && !state.canSendInput && !state.canQueueTurn) {
+    return "Cancel run";
+  }
+
+  if (!state.isSendDisabled) {
+    return state.canQueueTurn ? "Save this input for the next turn" : state.canSendInput ? "Send input to the current turn" : "Send message";
+  }
+
+  if (state.isBusy && !state.primaryFeedback && state.inputErrors.length === 0 && !state.blockedReason) {
+    return undefined;
+  }
+
+  return state.primaryFeedback
+    || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : COMPOSER_SEND_BLOCKED_FALLBACK);
+}
+
+export function getComposerSendBlockedMessage(
+  state: ComposerSendabilityState,
+  fallback = COMPOSER_SEND_BLOCKED_FALLBACK,
+): string | null {
+  if (!state.isSendDisabled) {
+    return null;
+  }
+
+  return state.primaryFeedback || fallback;
+}
+
+export function resolveComposerSendPreflight({
+  runState,
+  blockedReason,
+  inputErrors,
+  draftText,
+  fallbackBlockedMessage,
+}: {
+  runState: string | null | undefined;
+  blockedReason: string;
+  inputErrors: string[];
+  draftText: string;
+  fallbackBlockedMessage?: string;
+}): {
+  sendability: ComposerSendabilityState;
+  blockedMessage: string | null;
+} {
+  const sendability = buildComposerSendabilityState({
+    runState,
+    blockedReason,
+    inputErrors,
+    draftText,
+  });
+
+  return {
+    sendability,
+    blockedMessage: getComposerSendBlockedMessage(sendability, fallbackBlockedMessage),
+  };
+}
+
+export function resolveTextComposerSubmitPreflight({
+  draftText,
+  isRunning,
+  emptyFeedback = BLANK_DRAFT_FEEDBACK,
+}: {
+  draftText: string;
+  isRunning: boolean;
+  emptyFeedback?: string;
+}): TextComposerSubmitPreflightResult {
+  const message = draftText.trim();
+  if (!message) {
+    return {
+      status: "blocked",
+      reason: "empty",
+      feedback: emptyFeedback,
+    };
+  }
+
+  if (isRunning) {
+    return { status: "blocked", reason: "running" };
+  }
+
+  return { status: "ready", message };
+}

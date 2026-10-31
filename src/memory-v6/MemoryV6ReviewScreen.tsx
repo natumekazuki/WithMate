@@ -1,19 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useDialogA11y } from "../a11y.js";
-import type { MemoryEntryKind, MemoryForgetReason } from "./memory-contract.js";
+import { useDialogA11y } from "../ui/a11y.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ButtonContent } from "../ui/button-content.js";
+import { MemoryReviewError, type MemoryReviewFailure } from "./MemoryReviewError.js";
+import type { MemoryEntryKind, MemoryForgetReason } from "../../src-shared/memory/memory-contract.js";
 import type {
   MemoryV6ReviewApi,
   MemoryV6ReviewEntryDetail,
   MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchHit,
-} from "./memory-review-state.js";
-import type { MemoryFileUsageResponse } from "./memory-response-contract.js";
+} from "../../src-shared/memory/memory-review-state.js";
+import type { MemoryFileUsageResponse } from "../../src-shared/memory/memory-response-contract.js";
 
 type MemoryV6ReviewScreenProps = {
   homePageClassName: string;
   getApi: () => MemoryV6ReviewApi | null;
 };
+
+type SearchOptions = { cursor?: string; append?: boolean };
+type OperationFeedback = { message: string; error?: false }
+  | (MemoryReviewFailure & { error: true; label: string });
+
+const DESKTOP_RUNTIME_NOTICE = "Memory review requires the desktop runtime.";
 
 const MEMORY_KIND_OPTIONS: MemoryEntryKind[] = [
   "decision",
@@ -27,6 +36,18 @@ const MEMORY_KIND_OPTIONS: MemoryEntryKind[] = [
   "note",
 ];
 
+const MEMORY_KIND_LABELS: Record<MemoryEntryKind, string> = {
+  decision: "Decision",
+  constraint: "Constraint",
+  convention: "Convention",
+  context: "Context",
+  deferred: "Deferred",
+  preference: "Preference",
+  relationship: "Relationship",
+  boundary: "Boundary",
+  note: "Note",
+};
+
 const FORGET_REASON_OPTIONS: MemoryForgetReason[] = [
   "user_request",
   "incorrect",
@@ -35,14 +56,19 @@ const FORGET_REASON_OPTIONS: MemoryForgetReason[] = [
   "other",
 ];
 
+const FORGET_REASON_LABELS: Record<MemoryForgetReason, string> = {
+  user_request: "User Request",
+  incorrect: "Incorrect",
+  outdated: "Outdated",
+  privacy: "Privacy",
+  other: "Other",
+};
+
 function ownerLabel(entry: Pick<MemoryV6ReviewSearchHit, "owner" | "scope">): string {
   return `${entry.owner.type}:${entry.owner.id} / ${entry.scope.type}:${entry.scope.id}`;
 }
 
 function formatTags(entry: Pick<MemoryV6ReviewSearchHit, "tags">): string {
-  if (entry.tags.length === 0) {
-    return "no tags";
-  }
   return entry.tags.map((tag) => `${tag.type}:${tag.value}`).join(" / ");
 }
 
@@ -78,14 +104,29 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const [selectedEntry, setSelectedEntry] = useState<MemoryV6ReviewEntryDetail | null>(null);
   const [selectedEntryId, setSelectedEntryId] = useState("");
   const [forgetReason, setForgetReason] = useState<MemoryForgetReason>("user_request");
-  const [feedback, setFeedback] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState<(MemoryReviewFailure & { options?: SearchOptions }) | null>(null);
+  const [usageError, setUsageError] = useState<MemoryReviewFailure | null>(null);
+  const [entryError, setEntryError] = useState<MemoryReviewFailure | null>(null);
+  const [entryFeedback, setEntryFeedback] = useState<OperationFeedback | null>(null);
+  const [gcFeedback, setGcFeedback] = useState<OperationFeedback | null>(null);
+  const [usageLoading, setUsageLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [entryLoading, setEntryLoading] = useState(false);
   const [forgetting, setForgetting] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [runningGc, setRunningGc] = useState(false);
+  const [runningGc, setRunningGc] = useState<"dry-run" | "cleanup" | null>(null);
   const [confirmForgetOpen, setConfirmForgetOpen] = useState(false);
   const cancelForgetButtonRef = useRef<HTMLButtonElement | null>(null);
+  const exportFilesButtonRef = useRef<HTMLButtonElement | null>(null);
+  const forgetButtonRef = useRef<HTMLButtonElement | null>(null);
+  const confirmForgetActionsRef = useRef<HTMLElement | null>(null);
+  const gcActionsRef = useRef<HTMLDivElement | null>(null);
+  const entryRequestIdRef = useRef(0);
+  const searchRequestIdRef = useRef(0);
+  const refreshRequestIdRef = useRef(0);
+  const usageRequestIdRef = useRef(0);
 
   const closeForgetConfirm = () => {
     if (!forgetting) {
@@ -108,10 +149,17 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     limit: 50,
   }), [query, selectedKind]);
 
-  const runSearch = async (options?: { cursor?: string; append?: boolean }) => {
+  const runSearch = async (options?: SearchOptions) => {
+    const requestId = ++searchRequestIdRef.current;
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setSearchError({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE, options });
+      if (options?.append) {
+        setLoadingMore(false);
+      } else {
+        setLoading(false);
+        setLoadingMore(false);
+      }
       return;
     }
     const append = options?.append === true;
@@ -119,6 +167,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setLoadingMore(true);
     } else {
       setLoading(true);
+      setLoadingMore(false);
       setNextCursor("");
     }
     try {
@@ -126,104 +175,165 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
         ...searchRequest,
         ...(options?.cursor ? { cursor: options.cursor } : {}),
       });
+      if (requestId !== searchRequestIdRef.current) {
+        return;
+      }
       setItems((currentItems) => append ? [...currentItems, ...result.items] : result.items);
       setNextCursor(result.nextCursor ?? "");
-      setFeedback(!append && result.items.length === 0 ? "一致する active Memory はありません。" : "");
+      setSearchError(null);
       if (!append && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
+        ++entryRequestIdRef.current;
+        setEntryLoading(false);
         setSelectedEntry(null);
         setSelectedEntryId("");
+        setEntryError(null);
+        setConfirmForgetOpen(false);
       }
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory の検索に失敗しました。");
+      if (requestId === searchRequestIdRef.current) {
+        setSearchError({ message: error instanceof Error ? error.message : "Could not search Memory entries.", options });
+      }
     } finally {
-      if (append) {
-        setLoadingMore(false);
-      } else {
-        setLoading(false);
+      if (requestId === searchRequestIdRef.current) {
+        if (append) {
+          setLoadingMore(false);
+        } else {
+          setLoading(false);
+        }
       }
     }
   };
 
   const loadFileUsage = async () => {
+    const requestId = ++usageRequestIdRef.current;
+    setUsageLoading(true);
     const api = getApi();
     if (!api) {
+      setUsageError({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE });
+      setUsageLoading(false);
       return;
     }
     try {
-      setFileUsage(await api.getMemoryV6FileUsage());
+      const nextFileUsage = await api.getMemoryV6FileUsage();
+      if (requestId === usageRequestIdRef.current) {
+        setFileUsage(nextFileUsage);
+        setUsageError(null);
+      }
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory file usage の読み込みに失敗しました。");
+      if (requestId === usageRequestIdRef.current) {
+        setUsageError({ message: error instanceof Error ? error.message : "Could not load Memory file usage." });
+      }
+    } finally {
+      if (requestId === usageRequestIdRef.current) {
+        setUsageLoading(false);
+      }
     }
   };
 
   const refreshReview = async () => {
-    await Promise.all([runSearch(), loadFileUsage()]);
+    const requestId = ++refreshRequestIdRef.current;
+    setRefreshing(true);
+    try {
+      await Promise.all([runSearch(), loadFileUsage()]);
+    } finally {
+      if (requestId === refreshRequestIdRef.current) {
+        setRefreshing(false);
+      }
+    }
   };
 
   useEffect(() => {
-    void refreshReview();
+    void runSearch();
   }, [searchRequest]);
 
   useEffect(() => {
-    document.title = "WithMate Memory Review";
+    void loadFileUsage();
+    document.title = "Memory Review";
   }, []);
 
   const selectEntry = async (entryId: string) => {
+    const requestId = ++entryRequestIdRef.current;
+    setSelectedEntryId(entryId);
+    if (entryId !== selectedEntryId) {
+      setSelectedEntry(null);
+      setEntryError(null);
+      setEntryFeedback(null);
+    }
+    setConfirmForgetOpen(false);
+    setEntryLoading(true);
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setEntryLoading(false);
+      setEntryError({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE });
       return;
     }
-    setSelectedEntryId(entryId);
     try {
       const entry = await api.getMemoryV6Entry(entryId);
+      if (requestId !== entryRequestIdRef.current) {
+        return;
+      }
+      setEntryLoading(false);
+      if (!entry || entry.id !== entryId) {
+        setSelectedEntry(null);
+        const notice = "Memory entry was not found or is no longer active.";
+        setEntryError({ message: notice, notice });
+        return;
+      }
       setSelectedEntry(entry);
-      setFeedback(entry ? "" : "Memory entry は見つからないか、すでに inactive です。");
+      setEntryError(null);
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory entry の読み込みに失敗しました。");
+      if (requestId !== entryRequestIdRef.current) {
+        return;
+      }
+      setEntryLoading(false);
+      setEntryError({ message: error instanceof Error ? error.message : "Could not load the Memory entry." });
     }
   };
 
   const forgetSelectedEntry = async () => {
-    if (!selectedEntryId || !selectedEntry || forgetting) {
+    if (!selectedEntryId || !selectedEntry || selectedEntry.id !== selectedEntryId || forgetting) {
       return;
     }
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setEntryFeedback({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE, error: true, label: "Memory Forget Error" });
       return;
     }
     setForgetting(true);
+    setEntryFeedback(null);
     try {
       const result = await api.forgetMemoryV6Entry(selectedEntryId, forgetReason);
-      setFeedback(`Forget result: ${result.status}`);
+      ++entryRequestIdRef.current;
+      setEntryLoading(false);
+      setEntryError(null);
+      setEntryFeedback({ message: `Forget result: ${result.status}` });
       setSelectedEntry(null);
       setSelectedEntryId("");
       setConfirmForgetOpen(false);
       await refreshReview();
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory entry の forget に失敗しました。");
+      setEntryFeedback({ message: error instanceof Error ? error.message : "Could not forget the Memory entry.", notice: "Forget Failed", error: true, label: "Memory Forget Error" });
     } finally {
       setForgetting(false);
     }
   };
 
   const exportSelectedEntryFiles = async () => {
-    if (!selectedEntryId || !selectedEntry || exporting) {
+    if (!selectedEntryId || !selectedEntry || selectedEntry.id !== selectedEntryId || exporting) {
       return;
     }
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setEntryFeedback({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE, error: true, label: "Memory File Export Error" });
       return;
     }
     setExporting(true);
-    setFeedback("");
+    setEntryFeedback(null);
     try {
       const result = await api.exportMemoryV6EntryFiles(selectedEntryId);
-      setFeedback(result ? `${result.exportedCount} files exported.` : "Memory file export をキャンセルしました。");
+      setEntryFeedback({ message: result ? `${result.exportedCount} files exported.` : "Memory file export canceled." });
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory file export に失敗しました。");
+      setEntryFeedback({ message: error instanceof Error ? error.message : "Could not export Memory files.", notice: "File Export Failed", error: true, label: "Memory File Export Error" });
     } finally {
       setExporting(false);
     }
@@ -233,28 +343,30 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     if (runningGc) {
       return;
     }
-    if (!dryRun && !window.confirm("Delete pending Memory files and orphan protected object files?")) {
+    if (!dryRun && !window.confirm("Delete pending Memory files, orphan protected object files, and stale staging files? This permanently removes files that are no longer referenced by active Memory entries.")) {
       return;
     }
     const api = getApi();
     if (!api) {
-      setFeedback("Memory Review には desktop runtime が必要です。");
+      setGcFeedback({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE, error: true, label: "Memory File GC Error" });
       return;
     }
-    setRunningGc(true);
-    setFeedback("");
+    const gcAction = dryRun ? "dry-run" : "cleanup";
+    const entryRequestId = entryRequestIdRef.current;
+    setRunningGc(gcAction);
+    setGcFeedback(null);
     try {
       const report = await api.runMemoryV6ProtectedObjectGc({ dryRun, limit: 100 });
       setGcReport(report);
       await refreshReview();
-      if (selectedEntryId) {
+      if (selectedEntryId && selectedEntryId === selectedEntry?.id && entryRequestId === entryRequestIdRef.current) {
         await selectEntry(selectedEntryId);
       }
-      setFeedback(dryRun ? "Memory file GC dry-run completed." : "Memory file GC cleanup completed.");
+      setGcFeedback({ message: dryRun ? "Memory file GC dry-run completed." : "Memory file GC cleanup completed." });
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : "Memory file GC に失敗しました。");
+      setGcFeedback({ message: error instanceof Error ? error.message : "Could not run Memory file GC.", notice: "File GC Failed", error: true, label: "Memory File GC Error" });
     } finally {
-      setRunningGc(false);
+      setRunningGc(null);
     }
   };
 
@@ -265,10 +377,18 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
           <header className="memory-review-header">
             <div>
               <h1>Memory Review</h1>
-              <p>V6 Memory の active entry を確認し、不要な entry を検索対象から外す。</p>
             </div>
-            <button className="launch-toggle" type="button" onClick={() => void refreshReview()} disabled={loading}>
-              {loading ? "Refreshing" : "Refresh"}
+            <button
+              className="launch-toggle"
+              type="button"
+              onClick={() => void refreshReview()}
+              disabled={refreshing || loading || loadingMore}
+              aria-busy={refreshing}
+              aria-label={refreshing ? "Refreshing Memory review" : "Refresh Memory review"}
+            >
+              <ButtonContent busy={refreshing} busyLabel="Refreshing Memory review.">
+                Refresh
+              </ButtonContent>
             </button>
           </header>
 
@@ -279,91 +399,40 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="title, body, tag, owner"
               />
             </label>
             <label className="settings-provider-input">
               <span>Kind</span>
               <select value={selectedKind} onChange={(event) => setSelectedKind(event.target.value as MemoryEntryKind | "")}>
-                <option value="">All kinds</option>
-                {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
+                <option value="">All Kinds</option>
+                {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind]}</option>)}
               </select>
             </label>
           </div>
 
-          {feedback ? <p className="settings-feedback memory-review-feedback">{feedback}</p> : null}
-
-          {fileUsage ? (
-            <section className="memory-review-usage" aria-label="Memory file usage">
-              <div className="memory-review-usage-summary">
-                <div>
-                  <span>Used</span>
-                  <strong>{formatBytes(fileUsage.usedBytes)}</strong>
-                  <small>{formatPercent(fileUsage.usedBytes, fileUsage.quotaBytes)} of {formatBytes(fileUsage.quotaBytes)}</small>
-                </div>
-                <div>
-                  <span>Available</span>
-                  <strong>{formatBytes(fileUsage.availableBytes)}</strong>
-                  <small>{fileUsage.objectCount} active objects</small>
-                </div>
-                <div>
-                  <span>Pending delete</span>
-                  <strong>{formatBytes(fileUsage.pendingDeleteBytes)}</strong>
-                  <small>{fileUsage.pendingDeleteCount} objects</small>
-                </div>
-              </div>
-              {fileUsage.largestEntries && fileUsage.largestEntries.length > 0 ? (
-                <div className="memory-review-largest-entries">
-                  <span>Largest entries</span>
-                  <div>
-                    {fileUsage.largestEntries.map((entry) => (
-                      <button key={entry.entryId} type="button" onClick={() => void selectEntry(entry.entryId)}>
-                        <strong>{entry.title || "(untitled)"}</strong>
-                        <small>{formatBytes(entry.totalFileBytes)} / {entry.fileCount} files</small>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-              <div className="memory-review-gc-actions">
-                <button type="button" onClick={() => void runProtectedObjectGc(true)} disabled={runningGc}>
-                  {runningGc ? "Running" : "GC dry-run"}
-                </button>
-                <button type="button" onClick={() => void runProtectedObjectGc(false)} disabled={runningGc}>
-                  Cleanup GC
-                </button>
-              </div>
-              {gcReport ? (
-                <div className="memory-review-gc-report" aria-label="Memory file GC report">
-                  <span>{gcReport.dryRun ? "Dry-run" : "Cleanup"}</span>
-                  <small>
-                    pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
-                  </small>
-                  <small>
-                    orphan {gcReport.orphanFiles.candidates} / deleted {gcReport.orphanFiles.deleted} / failed {gcReport.orphanFiles.failed}
-                  </small>
-                  <small>
-                    staging {gcReport.stagingFiles.candidates} / deleted {gcReport.stagingFiles.deleted} / failed {gcReport.stagingFiles.failed}
-                  </small>
-                  <small>missing active {gcReport.missingActiveObjects}</small>
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-
           <div className="memory-review-grid">
-            <section className="memory-review-list" aria-label="Memory entries">
+            <section className="memory-review-list" aria-label="Memory entries" aria-busy={loading || loadingMore || undefined}>
+              {searchError ? (
+                <MemoryReviewError label="Memory Search Error" {...searchError}>
+                  <button type="button" className="launch-toggle" aria-label="Retry Memory search" aria-busy={loading || loadingMore} disabled={loading || loadingMore} onClick={() => void runSearch(searchError.options)}>
+                    <ButtonContent busy={loading || loadingMore} busyLabel="Loading Memory entries.">Retry</ButtonContent>
+                  </button>
+                </MemoryReviewError>
+              ) : loading ? (
+                <LoadingIndicator inline className="settings-loading-inline" label="Loading Memory entries" />
+              ) : null}
               {items.map((item) => (
                 <button
                   key={item.id}
                   className={`memory-review-item ${selectedEntryId === item.id ? "active" : ""}`.trim()}
                   type="button"
+                  aria-pressed={selectedEntryId === item.id}
                   onClick={() => void selectEntry(item.id)}
                 >
                   <span className="memory-review-item-title">{item.title || "(untitled)"}</span>
                   <span className="memory-review-item-preview">{item.preview}</span>
                   <span className="memory-review-item-meta">{item.kind} / {ownerLabel(item)}</span>
-                  <span className="memory-review-item-meta">{formatTags(item)}</span>
+                  {item.tags.length > 0 ? <span className="memory-review-item-meta">{formatTags(item)}</span> : null}
                 </button>
               ))}
               {nextCursor ? (
@@ -372,80 +441,201 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   type="button"
                   onClick={() => void runSearch({ cursor: nextCursor, append: true })}
                   disabled={loading || loadingMore}
+                  aria-busy={loadingMore || undefined}
+                  aria-label={loadingMore ? "Loading more Memory entries" : "Load more Memory entries"}
                 >
-                  {loadingMore ? "Loading more" : "Load more"}
+                  <ButtonContent busy={loadingMore} busyLabel="Loading more Memory entries.">
+                    Load More
+                  </ButtonContent>
                 </button>
               ) : null}
-              {items.length === 0 && !loading ? <p className="settings-note">active Memory entry はありません。</p> : null}
             </section>
 
-            <section className="memory-review-detail" aria-label="Memory entry detail">
-              {selectedEntry ? (
-                <>
-                  <div className="memory-review-detail-head">
-                    <div>
-                      <h2>{selectedEntry.title || "(untitled)"}</h2>
-                      <p>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</p>
-                    </div>
-                    <span>{selectedEntry.updatedAt}</span>
-                  </div>
-                  <dl className="memory-review-meta">
-                    <div>
-                      <dt>Source</dt>
-                      <dd>{selectedEntry.source.sessionId ?? "none"} / {selectedEntry.source.providerId ?? "none"}</dd>
-                    </div>
-                    <div>
-                      <dt>Tags</dt>
-                      <dd>{formatTags(selectedEntry)}</dd>
-                    </div>
-                  </dl>
-                  {selectedEntry.files && selectedEntry.files.length > 0 ? (
-                    <section className="memory-review-files" aria-label="Protected files">
-                      <div className="memory-review-files-head">
-                        <h3>Protected files</h3>
-                        <button type="button" onClick={() => void exportSelectedEntryFiles()} disabled={exporting}>
-                          {exporting ? "Exporting" : "Export files"}
-                        </button>
-                      </div>
-                      <ul>
-                        {selectedEntry.files.map((file, index) => (
-                          <li key={`${file.role}-${file.mediaKind}-${file.displayName}-${index}`}>
-                            <div>
-                              <strong>{file.displayName || file.mediaKind}</strong>
-                              <span>{file.role} / {file.mediaKind} / {formatBytes(file.originalBytes)}</span>
-                            </div>
-                            <p>{file.summary}</p>
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                  ) : null}
-                  <div className="memory-review-body">
-                    <pre>{selectedEntry.body}</pre>
-                  </div>
-                  <div className="memory-review-forget-row">
-                    <label className="settings-provider-input">
-                      <span>Forget reason</span>
-                      <select value={forgetReason} onChange={(event) => setForgetReason(event.target.value as MemoryForgetReason)}>
-                        {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
-                      </select>
-                    </label>
-                    <button
-                      className="launch-toggle danger-button"
-                      type="button"
-                      onClick={() => setConfirmForgetOpen(true)}
-                      disabled={forgetting}
-                    >
-                      {forgetting ? "Forgetting" : "Forget Entry"}
+            <section className="memory-review-detail" aria-label="Memory entry detail" aria-busy={entryLoading}>
+              <div className="memory-review-detail-content" tabIndex={0} role="region" aria-label="Memory entry content">
+                {entryError ? (
+                  <MemoryReviewError label="Memory Entry Error" {...entryError}>
+                    <button type="button" className="launch-toggle" aria-label="Retry Memory entry" aria-busy={entryLoading} disabled={entryLoading} onClick={() => void selectEntry(selectedEntryId)}>
+                      <ButtonContent busy={entryLoading} busyLabel="Loading Memory entry.">Retry</ButtonContent>
                     </button>
-                  </div>
-                </>
+                  </MemoryReviewError>
+                ) : entryLoading ? <LoadingIndicator inline className="settings-loading-inline" label="Loading Memory entry" /> : null}
+                {selectedEntry && selectedEntry.id === selectedEntryId ? (
+                  <>
+                    <div className="memory-review-detail-head">
+                      <div>
+                        <h2>{selectedEntry.title || "(untitled)"}</h2>
+                        <p>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</p>
+                      </div>
+                      <span>{selectedEntry.updatedAt}</span>
+                    </div>
+                    <dl className="memory-review-meta">
+                      <div>
+                        <dt>Source</dt>
+                        <dd>{selectedEntry.source.sessionId ?? "none"} / {selectedEntry.source.providerId ?? "none"}</dd>
+                      </div>
+                      {selectedEntry.tags.length > 0 ? (
+                        <div>
+                          <dt>Tags</dt>
+                          <dd>{formatTags(selectedEntry)}</dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                    {selectedEntry.files && selectedEntry.files.length > 0 ? (
+                      <section className="memory-review-files" aria-label="Protected files">
+                        <div className="memory-review-files-head">
+                          <h3>Protected Files</h3>
+                          <button
+                            ref={exportFilesButtonRef}
+                            type="button"
+                            onClick={() => void exportSelectedEntryFiles()}
+                            disabled={exporting || refreshing || entryLoading}
+                            aria-busy={exporting || undefined}
+                            aria-label={exporting ? "Exporting Memory files" : "Export Memory files"}
+                          >
+                            <ButtonContent busy={exporting} busyLabel="Exporting Memory files.">
+                              Export Files
+                            </ButtonContent>
+                          </button>
+                        </div>
+                        <ul>
+                          {selectedEntry.files.map((file, index) => (
+                            <li key={`${file.role}-${file.mediaKind}-${file.displayName}-${index}`}>
+                              <div>
+                                <strong>{file.displayName || file.mediaKind}</strong>
+                                <span>{file.role} / {file.mediaKind} / {formatBytes(file.originalBytes)}</span>
+                              </div>
+                              <p>{file.summary}</p>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    ) : null}
+                    <div className="memory-review-body">
+                      <pre>{selectedEntry.body}</pre>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+              {entryFeedback && !confirmForgetOpen ? entryFeedback.error
+                ? <MemoryReviewError {...entryFeedback} recoveryRef={entryFeedback.label === "Memory Forget Error" ? forgetButtonRef : exportFilesButtonRef} />
+                : <p className="settings-feedback memory-review-feedback" role="status">{entryFeedback.message}</p>
+                : null}
+              {selectedEntry && selectedEntry.id === selectedEntryId ? (
+                <div className="memory-review-forget-row">
+                  <label className="settings-provider-input">
+                    <span>Forget Reason</span>
+                    <select value={forgetReason} onChange={(event) => setForgetReason(event.target.value as MemoryForgetReason)}>
+                      {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{FORGET_REASON_LABELS[reason]}</option>)}
+                    </select>
+                  </label>
+                  <button
+                    ref={forgetButtonRef}
+                    className="launch-toggle danger-button"
+                    type="button"
+                    onClick={() => setConfirmForgetOpen(true)}
+                    disabled={forgetting || entryLoading}
+                    aria-busy={forgetting || undefined}
+                    aria-label={forgetting ? "Forgetting Memory entry" : "Forget Memory entry"}
+                  >
+                    <ButtonContent busy={forgetting} busyLabel="Forgetting Memory entry.">
+                      Forget Entry
+                    </ButtonContent>
+                  </button>
+                </div>
               ) : null}
             </section>
           </div>
+
+          <section className="memory-review-usage" aria-label="Memory file usage" aria-busy={usageLoading} tabIndex={0}>
+            {usageError ? (
+              <MemoryReviewError label="Memory File Usage Error" {...usageError}>
+                <button type="button" className="launch-toggle" aria-label="Retry Memory file usage" aria-busy={usageLoading} disabled={usageLoading} onClick={() => void loadFileUsage()}>
+                  <ButtonContent busy={usageLoading} busyLabel="Loading Memory file usage.">Retry</ButtonContent>
+                </button>
+              </MemoryReviewError>
+            ) : usageLoading ? <LoadingIndicator inline label="Loading Memory file usage" /> : null}
+            {fileUsage ? (
+              <>
+                <div className="memory-review-usage-summary">
+                  <div>
+                    <span>Used</span>
+                    <strong>{formatBytes(fileUsage.usedBytes)}</strong>
+                    <small>{formatPercent(fileUsage.usedBytes, fileUsage.quotaBytes)} of {formatBytes(fileUsage.quotaBytes)}</small>
+                  </div>
+                  <div>
+                    <span>Available</span>
+                    <strong>{formatBytes(fileUsage.availableBytes)}</strong>
+                    <small>{fileUsage.objectCount} active objects</small>
+                  </div>
+                  <div>
+                    <span>Pending Delete</span>
+                    <strong>{formatBytes(fileUsage.pendingDeleteBytes)}</strong>
+                    <small>{fileUsage.pendingDeleteCount} objects</small>
+                  </div>
+                </div>
+                {fileUsage.largestEntries && fileUsage.largestEntries.length > 0 ? (
+                  <div className="memory-review-largest-entries">
+                    <span>Largest Entries</span>
+                    <div>
+                      {fileUsage.largestEntries.map((entry) => (
+                        <button key={entry.entryId} type="button" onClick={() => void selectEntry(entry.entryId)}>
+                          <strong>{entry.title || "(untitled)"}</strong>
+                          <small>{formatBytes(entry.totalFileBytes)} / {entry.fileCount} files</small>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <div ref={gcActionsRef} className="memory-review-gc-actions">
+                  <button
+                    type="button"
+                    onClick={() => void runProtectedObjectGc(true)}
+                    disabled={runningGc !== null || refreshing}
+                    aria-busy={runningGc === "dry-run"}
+                    aria-label={runningGc === "dry-run" ? "Running Memory file GC dry run" : "Run Memory file GC dry run"}
+                  >
+                    <ButtonContent busy={runningGc === "dry-run"} busyLabel="Running Memory file GC dry run.">
+                      GC Dry Run
+                    </ButtonContent>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void runProtectedObjectGc(false)}
+                    disabled={runningGc !== null || refreshing}
+                    aria-busy={runningGc === "cleanup"}
+                    aria-label={runningGc === "cleanup" ? "Running Memory file GC cleanup" : "Run Memory file GC cleanup"}
+                  >
+                    <ButtonContent busy={runningGc === "cleanup"} busyLabel="Running Memory file GC cleanup.">
+                      Run GC Cleanup
+                    </ButtonContent>
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {gcFeedback ? gcFeedback.error
+              ? <MemoryReviewError {...gcFeedback} recoveryRef={gcActionsRef} />
+              : <p className="settings-feedback memory-review-feedback" role="status">{gcFeedback.message}</p>
+              : null}
+            {gcReport ? (
+              <div className="memory-review-gc-report" aria-label="Memory file GC report">
+                <span>{gcReport.dryRun ? "Dry Run" : "Cleanup"}</span>
+                <small>
+                  Pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
+                </small>
+                <small>
+                  Orphan {gcReport.orphanFiles.candidates} / deleted {gcReport.orphanFiles.deleted} / failed {gcReport.orphanFiles.failed}
+                </small>
+                <small>
+                  Staging {gcReport.stagingFiles.candidates} / deleted {gcReport.stagingFiles.deleted} / failed {gcReport.stagingFiles.failed}
+                </small>
+                <small>Missing active {gcReport.missingActiveObjects}</small>
+              </div>
+            ) : null}
+          </section>
         </section>
       </main>
-      {confirmForgetOpen && selectedEntry ? (
+      {confirmForgetOpen && selectedEntry && selectedEntry.id === selectedEntryId ? (
         <div className="memory-review-modal-backdrop" role="presentation" onClick={closeForgetConfirm}>
           <section
             ref={forgetDialogRef}
@@ -457,7 +647,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             onKeyDown={handleForgetDialogKeyDown}
           >
             <header>
-              <h2 id="memory-review-forget-title">Memory entry を検索対象から除外</h2>
+              <h2 id="memory-review-forget-title">Forget Memory Entry</h2>
               <button
                 className="diff-close"
                 type="button"
@@ -469,14 +659,19 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               </button>
             </header>
             <div className="memory-review-modal-body">
-              <p>この memory entry を検索対象から除外しますか？</p>
+              <p>Remove this Memory entry from search?</p>
               <strong>{selectedEntry.title || selectedEntry.id}</strong>
-              <span>reason: {forgetReason}</span>
+              <span>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</span>
+              <span>Reason: {forgetReason}</span>
               {forgetReason === "privacy" ? (
-                <span>privacy reason では title、body、preview、tags も削除されます。</span>
+                <span>For privacy requests, the title, body, preview, and tags are also deleted.</span>
               ) : null}
+              {entryFeedback ? entryFeedback.error
+                ? <MemoryReviewError {...entryFeedback} recoveryRef={confirmForgetActionsRef} />
+                : <p role="status">{entryFeedback.message}</p>
+                : null}
             </div>
-            <footer>
+            <footer ref={confirmForgetActionsRef}>
               <button
                 ref={cancelForgetButtonRef}
                 className="launch-toggle"
@@ -486,8 +681,17 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               >
                 Cancel
               </button>
-              <button className="launch-toggle danger-button" type="button" onClick={() => void forgetSelectedEntry()} disabled={forgetting}>
-                {forgetting ? "Forgetting" : "Forget Entry"}
+              <button
+                className="launch-toggle danger-button"
+                type="button"
+                onClick={() => void forgetSelectedEntry()}
+                disabled={forgetting}
+                aria-busy={forgetting || undefined}
+                aria-label={forgetting ? "Forgetting Memory entry" : "Forget Memory entry"}
+              >
+                <ButtonContent busy={forgetting} busyLabel="Forgetting Memory entry.">
+                  Forget Entry
+                </ButtonContent>
               </button>
             </footer>
           </section>

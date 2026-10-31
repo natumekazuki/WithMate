@@ -1,0 +1,1046 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { describe, it } from "node:test";
+
+import {
+  MEMORY_FILE_QUOTA_DEFAULT_BYTES,
+  createDefaultAppSettings,
+} from "../../src-shared/settings/provider-settings-state.js";
+import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
+
+describe("AppSettingsStorage", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "storage起動でOpenCode用credentialだけを除去し、他providerとfile設定を保持して再保存でもcredentialを復活させない"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+  // fault = "起動時にcredentialを保存したまま返さないだけにするか、他設定を失うか、古いsnapshotから再保存する"
+  // observable = "起動・保存・再open後のSQLite設定JSONとgetSettingsの値"
+  // observation_boundary = "public-boundary"
+  // scope = "opencode-credential-storage-lifecycle"
+  // lifecycle = "permanent"
+  // impact = "廃止したcredentialの保持・再利用や既存provider設定の消失を防ぐ"
+  // distinction = "normalizer単体では実SQLiteの起動cleanupと保存境界を検証できない"
+  // @end-test-value
+  it("起動と保存でOpenCode credentialだけを除去し他の設定を保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-opencode-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      const snapshot = storage.getSettings();
+      snapshot.launchAtLoginEnabled = true;
+      snapshot.codingProviderSettings.codex.apiKey = "codex-fixture";
+      snapshot.codingProviderSettings.copilot = {
+        enabled: true, apiKey: "copilot-fixture", skillRootPath: "C:/copilot",
+        skillRelativePath: "skills", instructionRelativePath: "instructions.md",
+      };
+      snapshot.codingProviderSettings.opencode = {
+        enabled: true, apiKey: "retired-fixture", skillRootPath: "C:/opencode",
+        skillRelativePath: "skills", instructionRelativePath: "AGENTS.md",
+      };
+      storage.updateSettings({ ...snapshot, codingProviderSettings: { ...snapshot.codingProviderSettings, opencode: { ...snapshot.codingProviderSettings.opencode, apiKey: "" } } });
+      storage.close();
+      storage = undefined;
+      const database = new DatabaseSync(dbPath);
+      try {
+        database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+          .run(JSON.stringify(snapshot.codingProviderSettings), "coding_provider_settings_json");
+      } finally {
+        database.close();
+      }
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        storage = new AppSettingsStorage(dbPath);
+        const rawDatabase = new DatabaseSync(dbPath);
+        try {
+          const row = rawDatabase.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+            .get("coding_provider_settings_json") as { setting_value: string };
+          const raw = JSON.parse(row.setting_value);
+          assert.equal(Object.hasOwn(raw.opencode, "apiKey"), false);
+          assert.deepEqual(raw, {
+            ...snapshot.codingProviderSettings,
+            opencode: { enabled: true, skillRootPath: "C:/opencode", skillRelativePath: "skills", instructionRelativePath: "AGENTS.md" },
+          });
+        } finally {
+          rawDatabase.close();
+        }
+        const current = storage.getSettings();
+        assert.equal(current.launchAtLoginEnabled, true);
+        assert.equal(current.codingProviderSettings.opencode.apiKey, "");
+        const saved = storage.updateSettings(snapshot);
+        assert.deepEqual(saved.codingProviderSettings, {
+          ...current.codingProviderSettings,
+          opencode: { ...current.codingProviderSettings.opencode, apiKey: "" },
+        });
+        const rawDatabaseAfterSave = new DatabaseSync(dbPath);
+        try {
+          const row = rawDatabaseAfterSave.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+            .get("coding_provider_settings_json") as { setting_value: string };
+          assert.equal(JSON.parse(row.setting_value).opencode.apiKey, "");
+        } finally {
+          rawDatabaseAfterSave.close();
+        }
+        storage.close();
+        storage = undefined;
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "承認通知は既定有効で独立保存され、再openで値を保持し、欠落・不正値とresetでは有効へ戻る"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#decision" }
+  // fault = "承認通知の設定を保存しないかturn通知と混同するか欠落時に無効となる"
+  // observable = "保存、再open、欠落・不正値、reset後のgetSettingsとupdateSettingsの値"
+  // observation_boundary = "public-boundary"
+  // scope = "approval-notification-settings-persistence"
+  // lifecycle = "permanent"
+  // impact = "承認通知の選択が再起動で失われるか既存利用者に通知されない"
+  // distinction = "normalizerやUIだけではSQLiteへの独立key保存と再読込みを検証できない"
+  // @end-test-value
+  it("承認通知設定を独立して永続化し既定有効へ戻せる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, true);
+      const saved = storage.updateSettings({
+        ...storage.getSettings(), sessionApprovalNotificationEnabled: false, sessionTurnNotificationEnabled: true,
+      });
+      assert.equal(saved.sessionApprovalNotificationEnabled, false);
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, false);
+      assert.equal(storage.getSettings().sessionTurnNotificationEnabled, true);
+      assert.equal(storage.resetSettings().sessionApprovalNotificationEnabled, true);
+      storage.close();
+      storage = undefined;
+
+      for (const invalid of ["invalid", null]) {
+        const database = new DatabaseSync(dbPath);
+        try {
+          if (invalid === null) {
+            database.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("session_approval_notification_enabled");
+          } else {
+            database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+              .run(invalid, "session_approval_notification_enabled");
+          }
+        } finally {
+          database.close();
+        }
+        storage = new AppSettingsStorage(dbPath);
+        assert.equal(storage.getSettings().sessionApprovalNotificationEnabled, true);
+        storage.close();
+        storage = undefined;
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "preview wheelの刻みは新規と既存DBの欠落時に5となり、保存した境界値1と100を再open後も保持する"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
+  // fault = "新しい設定keyの既定値補完やwrite/readが欠落し、再起動で選択した刻みか他の設定を失う"
+  // observable = "getSettingsとupdateSettingsのpreviewWheelZoomStep、再open後のlaunchAtLoginEnabledとkeyboardShortcuts"
+  // observation_boundary = "public-boundary"
+  // scope = "preview-wheel-zoom-step-sqlite-persistence"
+  // lifecycle = "permanent"
+  // impact = "利用者のzoom設定が再起動で変わるか、同時保存する他の設定が失われる"
+  // distinction = "normalizer単体や型検査では分からない実SQLiteの欠落key補完と再openによる永続化を確認する"
+  // @end-test-value
+  it("preview wheel zoom stepは欠落時5を補い、境界値を再open後も保持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().previewWheelZoomStep, 5);
+      const keyboardShortcuts = storage.getSettings().keyboardShortcuts;
+      storage.updateSettings({ ...storage.getSettings(), launchAtLoginEnabled: true });
+      storage.close();
+      storage = undefined;
+
+      const database = new DatabaseSync(dbPath);
+      try {
+        database.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("preview_wheel_zoom_step");
+      } finally {
+        database.close();
+      }
+      storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().previewWheelZoomStep, 5);
+      for (const value of [1, 100]) {
+        assert.equal(
+          storage.updateSettings({ ...storage.getSettings(), previewWheelZoomStep: value }).previewWheelZoomStep,
+          value,
+        );
+        storage.close();
+        storage = undefined;
+        storage = new AppSettingsStorage(dbPath);
+        assert.equal(storage.getSettings().previewWheelZoomStep, value);
+        assert.equal(storage.getSettings().launchAtLoginEnabled, true);
+        assert.deepEqual(storage.getSettings().keyboardShortcuts, keyboardShortcuts);
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "preview wheelの不正な刻みは保存前とDB読取り時に拒否し、失敗した保存で既存設定を変更しない"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
+  // fault = "storageが不正な刻みを既定値として成功扱いするか、拒否前に他の設定まで書き換える"
+  // observable = "updateSettingsとgetSettingsの例外、失敗後のpreviewWheelZoomStepとlaunchAtLoginEnabled"
+  // observation_boundary = "public-boundary"
+  // scope = "preview-wheel-zoom-step-sqlite-rejection"
+  // lifecycle = "permanent"
+  // impact = "無効入力が保存済みと表示されるか、既存設定の一部が意図せず変わる"
+  // distinction = "normalizer単体では分からないstorage入口の拒否とDB読取りの不正値伝播を有限ケースで確認する"
+  // @end-test-value
+  it("preview wheel zoom stepの不正な保存値とDB値を拒否する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      for (const value of [0, 101, 1.5, NaN, Infinity]) {
+        assert.throws(
+          () => storage!.updateSettings({
+            ...storage!.getSettings(),
+            launchAtLoginEnabled: true,
+            previewWheelZoomStep: value,
+          }),
+          /Preview wheel zoom step must be an integer between 1 and 100/,
+        );
+        assert.equal(storage.getSettings().previewWheelZoomStep, 5);
+        assert.equal(storage.getSettings().launchAtLoginEnabled, false);
+      }
+      storage.close();
+      storage = undefined;
+      for (const value of ["", "invalid", "0", "101", "1.5", "NaN", "Infinity"]) {
+        const database = new DatabaseSync(dbPath);
+        try {
+          database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+            .run(value, "preview_wheel_zoom_step");
+        } finally {
+          database.close();
+        }
+        storage = new AppSettingsStorage(dbPath);
+        assert.throws(
+          () => storage!.getSettings(),
+          /Preview wheel zoom step must be an integer between 1 and 100/,
+        );
+        storage.close();
+        storage = undefined;
+      }
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("glossary proactive create limitは初期値5を保存し、0を維持し、欠落・不正値をfallbackしない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialStorage = new AppSettingsStorage(dbPath);
+      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 5);
+      initialStorage.updateSettings({
+        ...initialStorage.getSettings(),
+        glossaryProactiveCreateLimit: 0,
+      });
+      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 0);
+      initialStorage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("invalid", "glossary_proactive_create_limit");
+      invalidDatabase.close();
+      const invalidStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidStorage.getSettings().glossaryProactiveCreateLimit, null);
+      invalidStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("glossary_proactive_create_limit");
+      missingDatabase.close();
+      const missingStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingStorage.getSettings().glossaryProactiveCreateLimit, null);
+      missingStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "AppSettingsStorageの起動時cleanupは廃止microcopy行だけを削除し、他の設定値を保持する"
+  // oracle = { type = "contract", ref = "src-electron/app/app-settings-storage.ts#AppSettingsStorage" }
+  // fault = "廃止行が残るか、起動時cleanupが無関係なAppSettingsまで削除する"
+  // observable = "仮DBの廃止key行とlaunchAtLoginEnabled"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-obsolete-microcopy-cleanup"
+  // lifecycle = "permanent"
+  // impact = "削除対象の旧設定が再利用されるか、他のユーザー設定が失われる"
+  // distinction = "廃止値の不在だけでなく、同じDB起動後の既存設定保持を同時に確認する"
+  // @end-test-value
+  it("起動時に廃止microcopy設定だけを削除する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialStorage = new AppSettingsStorage(dbPath);
+      initialStorage.close();
+
+      const legacyDatabase = new DatabaseSync(dbPath);
+      const insert = legacyDatabase.prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+      `);
+      insert.run("user_microcopy_catalog_json", JSON.stringify({ legacy: true }), new Date().toISOString());
+      insert.run("user_microcopy_catalog_english_migrated", "true", new Date().toISOString());
+      legacyDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("true", "launch_at_login_enabled");
+      legacyDatabase.close();
+
+      const reopenedStorage = new AppSettingsStorage(dbPath);
+      assert.equal(reopenedStorage.getSettings().launchAtLoginEnabled, true);
+      reopenedStorage.close();
+
+      const inspectedDatabase = new DatabaseSync(dbPath);
+      const obsoleteRows = inspectedDatabase
+        .prepare("SELECT setting_key FROM app_settings WHERE setting_key LIKE 'user_microcopy_catalog_%'")
+        .all() as Array<{ setting_key: string }>;
+      inspectedDatabase.close();
+      assert.deepEqual(obsoleteRows, []);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy right pane visibility を canonical side pane へ一度だけ移行する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialStorage = new AppSettingsStorage(dbPath);
+      initialStorage.close();
+
+      const legacyDatabase = new DatabaseSync(dbPath);
+      legacyDatabase.prepare("DELETE FROM app_settings WHERE setting_key = ?").run("session_side_pane");
+      legacyDatabase
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value
+        `)
+        .run("session_right_pane_visible", "true", new Date().toISOString());
+      legacyDatabase.close();
+
+      const migratedStorage = new AppSettingsStorage(dbPath);
+      assert.equal(migratedStorage.getSettings().chatLayoutPreference.sidePane, "context");
+      migratedStorage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      migratedStorage.close();
+
+      const staleLegacyDatabase = new DatabaseSync(dbPath);
+      staleLegacyDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("false", "session_right_pane_visible");
+      staleLegacyDatabase.close();
+
+      const reopenedStorage = new AppSettingsStorage(dbPath);
+      assert.equal(reopenedStorage.getSettings().chatLayoutPreference.sidePane, "files");
+      reopenedStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("Session turn notification setting の欠損値と不正値は既定の有効へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare(`
+          UPDATE app_settings
+          SET setting_value = ?
+          WHERE setting_key = ?
+        `)
+        .run("invalid", "session_turn_notification_enabled");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().sessionTurnNotificationEnabled, true);
+      invalidValueStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("session_turn_notification_enabled");
+      missingDatabase.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingValueStorage.getSettings().sessionTurnNotificationEnabled, true);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("Session turn notification response preview setting の欠損値と不正値は既定の無効へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare(`
+          UPDATE app_settings
+          SET setting_value = ?
+          WHERE setting_key = ?
+        `)
+        .run("invalid", "session_turn_notification_response_preview_enabled");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().sessionTurnNotificationResponsePreviewEnabled, false);
+      invalidValueStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("session_turn_notification_response_preview_enabled");
+      missingDatabase.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingValueStorage.getSettings().sessionTurnNotificationResponsePreviewEnabled, false);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "foreground prompt context の4項目は app settings DB に個別保存され、旧DBの欠損・不正値は既定有効へ戻る"
+  // oracle = { type = "contract", ref = "Prompt context settings persistence" }
+  // fault = "toggle を保存しても次回読み込みで失われるか、既存DBの欠損・不正値で注入が意図せず無効になる"
+  // observable = "AppSettingsStorage の保存・再読込結果"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-prompt-context-persistence"
+  // lifecycle = "permanent"
+  // impact = "Settings の次回 turn 反映と既存利用者の注入互換性が崩れる"
+  // distinction = "4つの新規 key を各項目単独のfalse保存、再読込、欠損、不正値で横断確認する"
+  // @end-test-value
+  it("foreground prompt context の個別設定を保存・再読込し、欠損と不正値を既定へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      assert.equal(storage.getSettings().characterDefinitionEnabled, true);
+      assert.equal(storage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(storage.getSettings().conversationTimingEnabled, true);
+      assert.equal(storage.getSettings().toolCallPresenceEnabled, true);
+      storage.updateSettings({
+        ...storage.getSettings(),
+        characterDefinitionEnabled: false,
+        characterAffectContextEnabled: false,
+        conversationTimingEnabled: false,
+        toolCallPresenceEnabled: false,
+      });
+      assert.equal(storage.getSettings().characterAffectContextEnabled, false);
+      assert.equal(storage.getSettings().characterDefinitionEnabled, false);
+      assert.equal(storage.getSettings().conversationTimingEnabled, false);
+      assert.equal(storage.getSettings().toolCallPresenceEnabled, false);
+      storage.close();
+
+      const reopenedStorage = new AppSettingsStorage(dbPath);
+      assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, false);
+      assert.equal(reopenedStorage.getSettings().characterAffectContextEnabled, false);
+      assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
+      assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, false);
+      reopenedStorage.updateSettings({
+        ...reopenedStorage.getSettings(),
+        characterDefinitionEnabled: true,
+        characterAffectContextEnabled: true,
+        conversationTimingEnabled: false,
+        toolCallPresenceEnabled: true,
+      });
+      assert.equal(reopenedStorage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, true);
+      assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
+      assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, true);
+      reopenedStorage.close();
+
+      const promptContextFields = [
+        "characterDefinitionEnabled",
+        "characterAffectContextEnabled",
+        "conversationTimingEnabled",
+        "toolCallPresenceEnabled",
+      ] as const;
+      for (const disabledField of promptContextFields) {
+        const isolatedStorage = new AppSettingsStorage(dbPath);
+        isolatedStorage.updateSettings({
+          ...isolatedStorage.getSettings(),
+          characterDefinitionEnabled: disabledField === "characterDefinitionEnabled" ? false : true,
+          characterAffectContextEnabled: disabledField === "characterAffectContextEnabled" ? false : true,
+          conversationTimingEnabled: disabledField === "conversationTimingEnabled" ? false : true,
+          toolCallPresenceEnabled: disabledField === "toolCallPresenceEnabled" ? false : true,
+        });
+        isolatedStorage.close();
+
+        const isolatedReloadedStorage = new AppSettingsStorage(dbPath);
+        const isolatedSettings = isolatedReloadedStorage.getSettings();
+        assert.equal(isolatedSettings.characterDefinitionEnabled, disabledField !== "characterDefinitionEnabled");
+        assert.equal(isolatedSettings.characterAffectContextEnabled, disabledField !== "characterAffectContextEnabled");
+        assert.equal(isolatedSettings.conversationTimingEnabled, disabledField !== "conversationTimingEnabled");
+        assert.equal(isolatedSettings.toolCallPresenceEnabled, disabledField !== "toolCallPresenceEnabled");
+        isolatedReloadedStorage.close();
+      }
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key IN (?, ?, ?, ?)")
+        .run("invalid", "character_definition_enabled", "character_affect_context_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().characterDefinitionEnabled, true);
+      assert.equal(invalidValueStorage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(invalidValueStorage.getSettings().conversationTimingEnabled, true);
+      assert.equal(invalidValueStorage.getSettings().toolCallPresenceEnabled, true);
+      invalidValueStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key IN (?, ?, ?, ?)")
+        .run("character_definition_enabled", "character_affect_context_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+      missingDatabase.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingValueStorage.getSettings().characterAffectContextEnabled, true);
+      assert.equal(missingValueStorage.getSettings().characterDefinitionEnabled, true);
+      assert.equal(missingValueStorage.getSettings().conversationTimingEnabled, true);
+      assert.equal(missingValueStorage.getSettings().toolCallPresenceEnabled, true);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("send scroll setting の欠損値と不正値は既定の有効へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("invalid", "scroll_to_latest_on_send");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().scrollToLatestOnSend, true);
+      invalidValueStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("scroll_to_latest_on_send");
+      missingDatabase.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingValueStorage.getSettings().scrollToLatestOnSend, true);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "app settings と chat layout projection が再読込後も一致する"
+  // oracle = { type = "contract", ref = "AppSettingsStorage persisted settings" }
+  // fault = "layout preference または provider settings が再読込で失われる"
+  // observable = "保存・再読込後の AppSettings"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-persistence"
+  // lifecycle = "permanent"
+  // impact = "設定変更が次回起動へ反映されない"
+  // distinction = "provider settings と layout projection の保存境界を確認する"
+  // @end-test-value
+  it("coding provider settings を canonical key で保存して再読込できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+      storage.close();
+
+      const layoutReopened = new AppSettingsStorage(dbPath);
+      assert.equal(layoutReopened.getSettings().chatLayoutPreference.sidePane, "context");
+      const updated = layoutReopened.updateSettings({
+        ...createDefaultAppSettings(),
+        memoryGenerationEnabled: false,
+        launchAtLoginEnabled: true,
+        sessionTurnNotificationEnabled: false,
+        sessionTurnNotificationResponsePreviewEnabled: true,
+        autoCollapseActionDockOnSend: false,
+        scrollToLatestOnSend: false,
+        chatLayoutPreference: {
+          header: "visible",
+          actionDock: "expanded",
+          sidePane: "context",
+        },
+        keyboardShortcuts: {
+          overrides: {
+            "session.message.toggle-collapse": {
+              windows: { key: "x", ctrlKey: true, shiftKey: true },
+            },
+          },
+        },
+        memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
+        codingProviderSettings: {
+          codex: {
+            enabled: false,
+            apiKey: "codex-key",
+            skillRootPath: "C:/skills/codex",
+            skillRelativePath: ".codex/skills",
+            instructionRelativePath: "AGENTS.md",
+          },
+          copilot: {
+            enabled: true,
+            apiKey: "copilot-key",
+            skillRootPath: "C:/skills/copilot",
+            skillRelativePath: "skills",
+            instructionRelativePath: "copilot-instructions.md",
+          },
+        },
+        memoryExtractionProviderSettings: {
+          codex: {
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+            outputTokensThreshold: 240,
+            timeoutSeconds: 240,
+          },
+          copilot: {
+            model: "gpt-5",
+            reasoningEffort: "low",
+            outputTokensThreshold: 180,
+            timeoutSeconds: 360,
+          },
+        },
+        mateMemoryGenerationSettings: {
+          priorityList: [
+            {
+              provider: "copilot",
+              model: "gpt-5.4",
+              reasoningEffort: "high",
+              timeoutSeconds: 300,
+            },
+            {
+              provider: "codex",
+              model: "gpt-5.4-mini",
+              reasoningEffort: "medium",
+              timeoutSeconds: 180,
+            },
+          ],
+          triggerIntervalMinutes: 90,
+        },
+      });
+      layoutReopened.close();
+
+      const reopened = new AppSettingsStorage(dbPath);
+      const loaded = reopened.getSettings();
+      reopened.close();
+
+      assert.deepEqual(loaded, updated);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "保存済みの有効なB/N割当を読込・無関係設定更新・再openで維持し、末尾移動の個別割当も共存して保存できる"
+  // oracle = { type = "contract", ref = "docs/features/keyboard-shortcuts.md: 初期未割当と既存割当の維持; docs/releases/README.md: 保存データ継続性" }
+  // fault = "末尾command追加により既存割当を読込正規化で削除するか、再保存・再openで既存または新しい割当を失う"
+  // observable = "保存済みJSONを入力にしたgetSettings、updateSettings、再open後のkeyboardShortcuts"
+  // observation_boundary = "public-boundary"
+  // scope = "keyboard-shortcut-storage-continuity"
+  // lifecycle = "permanent"
+  // impact = "利用中のキー設定が永続値から失われ、再起動後も復元できない"
+  // distinction = "rendererの正規化testではDB読込・無関係設定保存・再openのconsumerを確認できない。使い捨てDB1個で3platformを検証する"
+  // @end-test-value
+  it("既存のB/N割当と末尾移動の個別割当を保存・再openで維持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-shortcut-continuity-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const oldSettings: KeyboardShortcutSettings = { overrides: {
+      "session.message.toggle-collapse": {
+        windows: { key: "b", ctrlKey: true, shiftKey: true },
+        linux: { key: "b", ctrlKey: true, shiftKey: true },
+        macos: { key: "b", metaKey: true, shiftKey: true },
+      },
+      "session.conversation.toggle-target": {
+        windows: { key: "n", ctrlKey: true, shiftKey: true },
+        linux: { key: "n", ctrlKey: true, shiftKey: true },
+        macos: { key: "n", metaKey: true, shiftKey: true },
+      },
+    } };
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      storage.close();
+      const database = new DatabaseSync(dbPath);
+      try {
+        database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+          .run(JSON.stringify(oldSettings), "keyboard_shortcuts_json");
+      } finally {
+        database.close();
+      }
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().keyboardShortcuts, oldSettings);
+      storage.updateSettings({ ...storage.getSettings(), launchAtLoginEnabled: true });
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().keyboardShortcuts, oldSettings);
+      const assigned: KeyboardShortcutSettings = { overrides: {
+        ...oldSettings.overrides,
+        "session.main.scroll-to-bottom": {
+          windows: { key: "u", ctrlKey: true, shiftKey: true },
+          linux: { key: "u", ctrlKey: true, shiftKey: true },
+          macos: { key: "u", metaKey: true, shiftKey: true },
+        },
+        "session.auxiliary.scroll-to-bottom": {
+          windows: { key: "i", ctrlKey: true, shiftKey: true },
+          linux: { key: "i", ctrlKey: true, shiftKey: true },
+          macos: { key: "i", metaKey: true, shiftKey: true },
+        },
+      } };
+      storage.updateSettings({ ...storage.getSettings(), keyboardShortcuts: assigned });
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().keyboardShortcuts, assigned);
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("keyboard shortcutの無効なplatform overrideだけを除外して有効値を再loadできる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const persistedDatabase = new DatabaseSync(dbPath);
+      persistedDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run(JSON.stringify({
+          overrides: {
+            "session.message.toggle-collapse": {
+              windows: { key: "x" },
+              linux: { key: "x", altKey: true, shiftKey: true },
+              macos: { key: "x", metaKey: true, shiftKey: true },
+            },
+            "session.composer.submit": {
+              windows: { key: "Enter", altKey: true },
+              linux: { key: "Enter", ctrlKey: true, altKey: true },
+              macos: { key: "Enter", altKey: true },
+            },
+            "session.message.find": {
+              windows: { key: "g", ctrlKey: true },
+            },
+            "unknown.command": {
+              windows: { key: "x", ctrlKey: true, shiftKey: true },
+            },
+          },
+        }), "keyboard_shortcuts_json");
+      persistedDatabase.close();
+
+      const reopened = new AppSettingsStorage(dbPath);
+      const loaded = reopened.getSettings();
+      reopened.close();
+
+      assert.deepEqual(loaded.keyboardShortcuts.overrides, {
+        "session.message.toggle-collapse": {
+          linux: { key: "x", altKey: true, shiftKey: true },
+          macos: { key: "x", metaKey: true, shiftKey: true },
+        },
+        "session.composer.submit": {
+          windows: { key: "Enter", altKey: true },
+          macos: { key: "Enter", altKey: true },
+        },
+      });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "chat layout の単一項目更新は他の app settings を維持する"
+  // oracle = { type = "contract", ref = "Chat layout preference update boundary" }
+  // fault = "layout 更新で他設定が巻き戻るか再読込結果が変わる"
+  // observable = "更新後と再読込後の chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "chat-layout-persistence"
+  // lifecycle = "permanent"
+  // impact = "window 初期 layout が保存値と乖離する"
+  // distinction = "専用 update 経路と通常 settings 保存の干渉を確認する"
+  // @end-test-value
+  it("chat layout の対象1項目だけを更新し、他の app settings と再読込結果を維持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().chatLayoutPreference, {
+        header: "hidden",
+        actionDock: "compact",
+        sidePane: "none",
+      });
+
+      storage.updateSettings({
+        ...createDefaultAppSettings(),
+        memoryGenerationEnabled: false,
+      });
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      storage.close();
+
+      const reopened = new AppSettingsStorage(dbPath);
+      const loaded = reopened.getSettings();
+      reopened.close();
+
+      assert.deepEqual(loaded.chatLayoutPreference, {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "files",
+      });
+      assert.equal(loaded.memoryGenerationEnabled, false);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "chat layout 専用更新は対象 storage key だけを UPSERT する"
+  // oracle = { type = "contract", ref = "Chat layout storage key isolation" }
+  // fault = "専用更新が無関係な storage key を変更する"
+  // observable = "app_settings の対象 key 値"
+  // observation_boundary = "public-boundary"
+  // scope = "chat-layout-storage-isolation"
+  // lifecycle = "permanent"
+  // impact = "並行 settings 更新で保存値が破壊される"
+  // distinction = "header 更新時の他 layout key 保持を確認する"
+  // @end-test-value
+  it("chat layout 専用更新は指定された storage key だけを UPSERT する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const storage = new AppSettingsStorage(dbPath);
+    const directDatabase = new DatabaseSync(dbPath);
+
+    try {
+      directDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("sentinel-action-dock", "session_action_dock_presentation");
+      directDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("sentinel-side-pane", "session_side_pane");
+
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      const rows = directDatabase
+        .prepare(`
+          SELECT setting_key, setting_value
+          FROM app_settings
+          WHERE setting_key IN (?, ?, ?)
+          ORDER BY setting_key
+        `)
+        .all(
+          "session_header_visibility",
+          "session_action_dock_presentation",
+          "session_side_pane",
+        ) as Array<{
+          setting_key: string;
+          setting_value: string;
+        }>;
+
+      assert.deepEqual(rows.map((row) => ({ ...row })), [
+        { setting_key: "session_action_dock_presentation", setting_value: "sentinel-action-dock" },
+        { setting_key: "session_header_visibility", setting_value: "visible" },
+        { setting_key: "session_side_pane", setting_value: "sentinel-side-pane" },
+      ]);
+    } finally {
+      directDatabase.close();
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "通常 settings 更新は先行する chat layout 更新を stale snapshot で巻き戻さない"
+  // oracle = { type = "contract", ref = "Concurrent app settings update boundary" }
+  // fault = "stale settings snapshot が最新 layout を上書きする"
+  // observable = "通常更新後の chatLayoutPreference"
+  // observation_boundary = "public-boundary"
+  // scope = "chat-layout-concurrent-update"
+  // lifecycle = "permanent"
+  // impact = "別 window の layout 操作が失われる"
+  // distinction = "layout 専用保存と通常 settings 保存の ordering を確認する"
+  // @end-test-value
+  it("通常の settings 更新は先に保存された chat layout を stale snapshot で巻き戻さない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      const staleSettings = storage.getSettings();
+
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+      const updated = storage.updateSettings({
+        ...staleSettings,
+        launchAtLoginEnabled: true,
+      });
+      storage.close();
+
+      const reopened = new AppSettingsStorage(dbPath);
+      const loaded = reopened.getSettings();
+      reopened.close();
+
+      assert.equal(updated.launchAtLoginEnabled, true);
+      assert.deepEqual(updated.chatLayoutPreference, {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "context",
+      });
+      assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "resetSettings は priority なしの canonical app settings を再生成する"
+  // oracle = { type = "contract", ref = "AppSettingsStorage reset" }
+  // fault = "reset 後に廃止済み priority または旧 layout key が復活する"
+  // observable = "resetSettings 後の settings と再読込結果"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-reset"
+  // lifecycle = "permanent"
+  // impact = "設定リセット後の Session layout が不整合になる"
+  // distinction = "reset と default projection の canonical shape を確認する"
+  // @end-test-value
+  it("resetSettings で app settings を canonical default へ戻し、再読込後も維持される", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.updateSettings({
+        ...createDefaultAppSettings(),
+        memoryGenerationEnabled: false,
+        launchAtLoginEnabled: true,
+        sessionTurnNotificationEnabled: false,
+        sessionTurnNotificationResponsePreviewEnabled: true,
+        autoCollapseActionDockOnSend: false,
+        chatLayoutPreference: {
+          header: "visible",
+          actionDock: "expanded",
+          sidePane: "context",
+        },
+        codingProviderSettings: {
+          codex: {
+            enabled: false,
+            apiKey: "custom-key",
+            skillRootPath: "C:/skills/codex",
+            skillRelativePath: ".codex/skills",
+            instructionRelativePath: "AGENTS.md",
+          },
+          copilot: {
+            enabled: true,
+            apiKey: "copilot-key",
+            skillRootPath: "C:/skills/copilot",
+            skillRelativePath: "skills",
+            instructionRelativePath: "copilot-instructions.md",
+          },
+        },
+        memoryExtractionProviderSettings: {
+          codex: {
+            model: "gpt-5.4-mini",
+            reasoningEffort: "medium",
+            outputTokensThreshold: 240,
+            timeoutSeconds: 240,
+          },
+          copilot: {
+            model: "gpt-5",
+            reasoningEffort: "low",
+            outputTokensThreshold: 180,
+            timeoutSeconds: 360,
+          },
+        },
+        mateMemoryGenerationSettings: {
+          priorityList: [
+            {
+              provider: "copilot",
+              model: "gpt-5.4",
+              reasoningEffort: "high",
+              timeoutSeconds: 300,
+            },
+          ],
+          triggerIntervalMinutes: 90,
+        },
+      });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+
+      const reset = storage.resetSettings();
+      storage.close();
+
+      const reopened = new AppSettingsStorage(dbPath);
+      const loaded = reopened.getSettings();
+      reopened.close();
+
+      assert.deepEqual(reset, createDefaultAppSettings());
+      assert.deepEqual(loaded, createDefaultAppSettings());
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+});

@@ -13,13 +13,13 @@ type HomeAppRouterProps = {
   isSettingsWindowMode: boolean;
   isMemoryReviewWindowMode: boolean;
   getMemoryReviewApi: ComponentProps<typeof MemoryV6ReviewScreen>["getApi"];
-  settingsWindowReady: boolean;
   settingsContent: ReactNode;
-  isMateStateLoading: boolean;
   mateProfileEditorOpen: boolean;
   mateSetupContent: ReactNode;
   isMonitorWindowMode: boolean;
   monitorContent: ReactNode;
+  header: ReactNode;
+  rightPaneLabel: "Monitor" | "Characters" | "Previews";
   recentSessionsPanel: ReactNode;
   rightPane: ReactNode;
   launchDialog: ReactNode;
@@ -31,26 +31,25 @@ export function HomeAppRouter({
   isSettingsWindowMode,
   isMemoryReviewWindowMode,
   getMemoryReviewApi,
-  settingsWindowReady,
   settingsContent,
-  isMateStateLoading,
   mateProfileEditorOpen,
   mateSetupContent,
   isMonitorWindowMode,
   monitorContent,
+  header,
+  rightPaneLabel,
   recentSessionsPanel,
   rightPane,
   launchDialog,
 }: HomeAppRouterProps) {
   if (!desktopRuntime) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Home は Electron から起動してね。" />;
+    return <HomeStatusScreen homePageClassName={homePageClassName} message="Home is available from the Electron desktop app." />;
   }
 
   if (isSettingsWindowMode) {
     return (
       <SettingsWindowScreen
         homePageClassName={homePageClassName}
-        ready={settingsWindowReady}
         content={settingsContent}
       />
     );
@@ -58,10 +57,6 @@ export function HomeAppRouter({
 
   if (isMemoryReviewWindowMode) {
     return <MemoryV6ReviewScreen homePageClassName={homePageClassName} getApi={getMemoryReviewApi} />;
-  }
-
-  if (isMateStateLoading) {
-    return <HomeStatusScreen homePageClassName={homePageClassName} message="Mate 状態を読み込んでるよ..." />;
   }
 
   if (mateProfileEditorOpen) {
@@ -75,6 +70,8 @@ export function HomeAppRouter({
   return (
     <HomeDashboardScreen
       homePageClassName={homePageClassName}
+      header={header}
+      rightPaneLabel={rightPaneLabel}
       recentSessionsPanel={recentSessionsPanel}
       rightPane={rightPane}
       launchDialog={launchDialog}

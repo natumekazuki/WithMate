@@ -1,190 +1,106 @@
 # Electron Session Store
 
-- 作成日: 2026-03-12
-- 対象: Electron Main Process が持つ session / audit / memory persistence の責務分離
+Session、Auxiliary、turn、設定、catalogの永続化はMainが公開するserviceとstorage Workerのtyped commandで扱う。SQLiteの実行owner、schema、tableは[Database Schema](database-schema.md)を参照する。Rendererは`window.withmate`のpreload APIを通し、DBへ直接接続しない。
 
-## Goal
+## 読取と通知
 
-Electron Main Process が `session metadata` と session payload の source of truth を持ち、  
-SQLite-backed store により window 間整合と再起動後の復元を両立する current 実装を説明する。
+Homeは`listSessionSummaryPage()`でrecent、pinned、open Sessionと検索結果をboundedに取得する。全Session本文をHomeへ送らない。Session Windowは対象IDの`getSessionSummary()`で基本情報を取得し、`getSession()`による会話の読込みと独立してheaderやFilesを表示する。summary取得はmessage、stream、artifactのtableを読まず、全件一覧も取得しない。summaryから作った表示用projectionを会話の保存・送信には使わない。変更通知を受けた対象を再取得し、会話取得の失敗は既に取得した情報を保持したまま局所的に再試行できる。
 
-## Position
+Rendererの`getSession()`／`getAuxiliarySession()`は最新60件の表示用本文とmetadataを返す。storage Workerの専用readはSQLで取得範囲を限定し、全会話をhydrateしてから切り出さない。Mainの実行中cache、turn完了や更新のIPC応答も表示用の同じ範囲へ投影する。`messageCount`は全履歴件数、各messageの`historyIndex`は保存行の`seq`であり、ページ内の配列indexと区別する。Mainの再送用最新user messageは表示範囲外でも別途保持する。
 
-- この文書は persistence orchestration の supporting doc として扱う
-- table / JSON カラムの正本は `docs/design/database-schema.md` を参照する
-- running session の lifecycle と background hook は `docs/design/session-run-lifecycle.md` を参照する
-- BrowserWindow / preload / bootstrap detail は `docs/design/electron-window-runtime.md` を参照する
+`getConversationPage()`は指定位置または最新の60件を返す。会話IDとincarnationを照合し、Rendererは取得中の会話切替・後続取得・Bookmark変更によって古くなった応答を適用しない。本文保持は最新tailと閲覧pageに限定し、artifact詳細は従来どおり必要時に取得する。1件の本文を切り詰めるbyte上限は設けず、保存本文を保持する。
 
-## Scope
+全文検索は`searchConversation()`でstorage Workerが履歴行を逐次走査する。Sourceの原文とPreviewのMarkdown投影はRendererと同じ純粋関数を使い、履歴indexと一致箇所番号だけを返す。Messages navigatorは利用時に`listConversationNavigator()`で履歴index、短いpreview、Bookmark等を取得し、移動先の本文だけをpage取得する。検索とnavigatorの走査時間・結果metadataは履歴量に依存するが、全履歴本文をRendererへ常駐させない。
 
-- Main Process 内の SQLite-backed session / audit / memory persistence
-- preload 経由の session query / command API
-- persistence service の責務境界
-- Home / Session Renderer の store 参照切り替え
+summaryのinvalidationは`WindowBroadcastService`が`ids`または`all`として配信し、IDが上限を超えた場合は切り捨てず`all`へ切り替える。Homeは古いquery responseをgenerationで失効させ、既に取得したpageを必要範囲で再同期する。
 
-## Out Of Scope
+## 書込みとowner
 
-- BrowserWindow の生成や再利用 policy
-- provider adapter の詳細
-- table 定義の全文
-- renderer UI の詳細
+ドロップが許されない確定データと、次回復元のための任意checkpointを区別する。任意checkpointは現在値の適用・使用とは別ラインで保存し、保存の遅延・失敗を現在値の巻戻し、操作や実行の待機条件にしない。再起動時に未保存の現在値を復元できないことは許容する。
 
-## Decision
+次の項目は必須保存の契約を維持する。
 
-- Main Process は SQLite を正本にし、必要時だけ `Session[]` をメモリへ投影する
-- Renderer は `window.withmate` 経由でのみ session / audit / settings に触る
-- Homeのsession一覧は `listSessionSummaryPage()` をstorage query ownerへ送り、recent / pinned / openをboundedに取得する。検索もstorage側で行い、Homeへ全summary配列を返さない
-- session summary の変更通知は `scope: "ids"` または `scope: "all"` のinvalidationを `WindowBroadcastService` からHome / Session windowへ配信する。IDは最大256件で、超過時に切り捨てず `all` へ切り替える
-- Session windowはinvalidationを受けた対象だけ `getSession()` で再 hydrateする。Homeはquery generationで古いresponseを失効させ、検索条件変更時だけcursor chainを初期化する。focus、open Session ID変更、invalidationでは読み込み済みrecent / pinned pageとopen special entryを保持したままboundedに再同期する
-- session CRUD と bulk write path は `SessionPersistenceService` に集約する
-- turn 実行は `SessionRuntimeService`、window lifecycle hook は `SessionWindowBridge` が担う
-- Session / Project / Character Memory の session 起点補助は `SessionMemorySupportService` が担う
-- Session Memory / Character Reflection の background orchestration は `MemoryOrchestrationService` が担う
-- persistent store の初期化 / close / recreate は `PersistentStoreLifecycleService` が担う
+- Session identity
+- 確定message
+- 最小turnの実行記録
+- provider thread
+- Auxiliary draft
+- Character定義
+- Bookmark等の明示的な整理操作
+- Settingsの明示的なSave
+- catalog更新
 
-## Runtime Model
-
-```mermaid
-flowchart LR
-    HR[Home Renderer] -->|window.withmate| PL[Preload]
-    SR[Session Renderer] -->|window.withmate| PL
-    PL -->|ipc invoke / subscribe| MP[Main Process]
-    MP --> PERSIST[Persistence Services]
-    PERSIST --> STORE[(SQLite / file storage)]
-    MP --> BROADCAST[WindowBroadcastService]
-    BROADCAST -->|bounded query invalidation| PL
-    PL --> HR
-    PL --> SR
-```
-
-## Persistence Services
+任意保存との切分けは、入力検証、owner照合、実行中の操作制約を緩和しない。
 
 ### SessionPersistenceService
 
-- `createSession`
-- `updateSession`
-- `deleteSession`
-- `deleteSessionsLastActiveBefore`
-- `upsertSession`
-- `replaceAllSessions`
-- `listSessions`
-- `getSession`
+`SessionPersistenceService`が作成、既存行更新、削除、期間削除を担当する。owner付きstorage command、cache projection、Window side effectの組み立ては`src-electron/session/session-persistence-assembly.ts`が担う。実行中のturnとcancelは`SessionRuntimeService`、Windowのclose／quitは`SessionWindowBridge`とlifecycle側で扱う。作成と既存行限定更新を分け、削除済み行を遅延更新で再作成しない。
 
-`sessions` table を正本にしつつ、Main Process 内の in-memory projection と同期する。
-session 削除の副作用は単一削除と cutoff bulk 削除で同じ内部経路を通す。
-cutoff bulk 削除では storage が `last_active_at` から対象 id を列挙し、実行中の session は削除対象から skip する。
+表示用pageを全履歴の保存入力として扱わない。Rendererからの設定更新は現在の保存済み履歴を保ったままmetadataへ適用し、storageの全会話保存は`messageCount`／`historyIndex`を持つ部分projectionを拒否する。turn runtimeの読取はmetadata、Character snapshot、全体messageCountを返し、会話全体をhydrateしない。実行中は当該turnで追加した本文だけを保持し、Provider threadや必要consumerの履歴取得を表示pageの取得・解放へ結合しない。Memory等の明示的なfull readを維持する。
 
-### AuditLogService
+開始・steer・terminalは既存storage owner内の専用commandを使い、Session incarnation、expected countと保存順序を照合する。steerとterminalは対象のrunning turnも照合し、追加message以外の既存body／artifactを読み戻して比較しない。
 
-- `listSessionAuditLogs`
-- `createAuditLog`
-- `updateAuditLog`
-- `clearSessionAuditLogs`
+terminal messageとturnの終端更新は同じtransactionで確定し、metadataと件数のACKだけを返す。既存のtitle、Pin、Bookmark、実行設定、Auxiliary draftは置換しない。
 
-`audit_logs` の read / write を一箇所に集約する。
+setup失敗やthread再試行はownerと元runState／threadを照合したmetadata checkpointを使用する。結果不明のcommandを自動再送しない。Rendererへ返す終端結果は保存済みの最新60件を別途取得する。
 
-### SessionMemorySupportService
+### Turn Queue
 
-- `session_memories` の同期
-- project scope / character scope の同期
-- project promotion / retrieval
-- character memory 保存補助
-- monologue append
+永続受付は`session_turn_queue_v6`を正本とし、Main／Auxiliaryの対象ID・incarnationとGUI request IDで一意にする。受付時の本文・実行設定・添付path descriptor・provider／workspaceを保存し、同じIDの再送は捕捉済み要求との直接比較で照合する。
 
-session 実行後の memory 補助処理を persistence 側へつなぐ。
+Auxiliaryの通常送信はdurable draftの照合・consumeとreceipt INSERTを同じtransactionで行い、既知receipt照会をdraft revision照合より先に行う。前回依頼の明示再送（`submitSource: retry`）は現在のdraftを送信元とせず、draftの本文・revisionを変更しない。
+
+対象owner・incarnation・親のwrite guardとreceiptのdedupは通常送信と共通にする。受付はtransaction commit後にACKする。返信不明は正本照会で収束させ、mutationやprovider実行を自動再送しない。
+
+queued開始は`appendRunningTurnStart`の既存transactionで、user message、最小turn、queue receiptのturn ID／user seqとrunning状態を同時保存する。terminalも既存append transactionへreceipt終端を含める。確定したterminalの返信喪失を、後からinterruptedに退行させない。queue専用commandも既存Workerのtyped proxy／generation境界を使い、Mainの同期SQLite接続やSession全履歴保存を追加しない。
+
+予約項目の現在Turnへの追加入力も既存steer append transactionでuser messageとreceipt完了を同時保存する。reply喪失時はcanonical receiptだけでなく現在metadataを再取得してruntimeの件数を復旧し、appendを再実行しない。
+
+並べ替えは同じowner／incarnationのqueued ID列をtransaction内で期待列と直接比較し、同一集合の新順序へ既存の`queue_position`値を再配分する。本文・添付・設定・受付ID・sequenceと開始済みreceiptは変更しない。競合では無変更の結果と現在のactive列を返し、保存例外では全更新をrollbackする。新規受付は末尾へ追加し、開始前のSteer拒否によるqueued復元は元のpositionを保持する。
+
+active取得は保存済み実行順、cursor付きreceipt履歴取得は不変の受付順とし、request IDによる個別照会と分ける。変更通知はowning Session Windowへ対象IDだけを送り、Homeや他Windowへ本文や履歴をbroadcastしない。実行・明示解放・shutdownの契約は[Session Run Lifecycle](session-run-lifecycle.md#gui-turn-queue)を参照する。
+
+### Files認可metadata
+
+Filesのcontextとsender owner解決は、Main／親のsummaryとAuxiliary metadataだけを読み、会話本文やartifactを取得しない。Auxiliary metadataもserviceのCharacter snapshot検証を通し、親workspaceと親incarnation、親Mainを正本とする共通Additional Directoryを使用する。各読取の前後で捕捉したstorage ownerを確認し、削除やgeneration交換、読取失敗を旧cacheや親Characterへのfallbackで成功扱いしない。
+
+contextはrequestごとに現在の正本から解決する。画像chunkやPinのawait前後の認可、sender／resourceの一致、realpath、file identityとrevisionの確認は独立して維持し、古いcontextを跨requestのcacheとして使用しない。
+
+### 実行設定と Send
+
+Main / Auxiliary の表示中の実行設定は現在選択であり、Model・Depth・Approval・SandboxのいずれもDBへの保存完了を表示・送信の前提にしない。Send は非同期処理を始める前に `executionOptions` を捕捉する。Main は固定provider、非空model、reasoningと権限設定の入力形式を検証し、その turn の prompt、Provider adapter、最小turn記録 に同じ設定を渡す。
+
+SDK一覧への掲載やcatalog revisionを実行の条件にしない。DB の Session、開始保存の応答、terminal 保存の応答から実行設定を再決定しない。
+
+Main の `CurrentExecutionSelections` は会話 owner ごとの小さい選択値だけを保持する。同じアプリ内で Window を開き直した場合はこの値を復元し、storage generation の変更、owner の削除・incarnation の変更では破棄する。新規会話の初期値は provider ごとの現在選択を優先し、存在しなければ保存済みの直近値を使う。アプリ再起動では保存済み checkpoint から復元する。
+
+選択 checkpoint は対象 metadata だけを更新する任意保存である。受理済みの選択では checkpoint 失敗を報告するが、現在選択の巻戻しや Send の阻止には使わない。選択自体が拒否された場合は、現在選択を再取得して表示を戻し、理由を示す。開始時の user message と実行記録の必須保存とは区別する。新しい選択が C、実行中 turn の捕捉値が B の場合、Provider と最小turn記録は B、UI と次の Send は C を維持する。
+
+タイトルと Bookmark は対象 metadata / message だけを更新し、会話全体の置換を行わない。metadata の条件付き更新結果も必要な項目だけを返す。
+
+Mainのtitle更新は、storage commandの成功をcommit境界とする。保存前の失敗はrejectし、commit後のcache更新・Window通知失敗は`SetSessionTitleResult`の`status: "committed"`と`projectionUpdated: false`で返す。
+
+storage ownerの失効も、成功したstorage commandの後では投影失敗として扱い、新しいownerのcacheへ書き込まない。Rendererは保存済みtitleを保持し、通知・投影失敗時は`getSessionSummary()`の正本からtitleだけを復旧する。
+
+通知失敗と復旧失敗は保存失敗と区別して表示し、保存の再送やSession全体のrollbackは行わない。応答と復旧readはSession ID、incarnation、最新のtitle保存requestが一致する場合だけ反映し、別会話や後続のtitle更新へ古い結果を適用しない。
+
+最新のtitle保存がrejectした場合も、先行保存の遅延応答を捨てたことでcommit済みtitleが表示から失われないよう、正本summaryからtitleだけを再照合する。編集入力と保存失敗の表示は保持し、再照合を新しい保存成功とは扱わない。
 
 ### SettingsCatalogService
 
-- `app_settings`
-- `model_catalog_*`
-- reset / import / export と関連 invalidation
+Header・Action Dock・Side Paneの復元設定は、Rendererへ即時適用し、Mainでも変更された項目の現在値を保持する。DB保存は任意checkpointとして別ラインで行い、同じアプリ内の設定再取得では現在値を重ねる。保存失敗は診断ログへ残すが、表示を巻き戻さない。Settings Windowの明示的なSaveの必須保存とは区別する。
 
-session 以外の app-wide persistence をまとめて扱う。
+layoutの現在値はserviceの寿命中保持し、App SettingsまたはDB全体のreset成功時に破棄する。resetは任意checkpointの完了を待たず、未開始の旧checkpointを失効させる。dispatch前には既存のstorage ownerを照合し、旧serviceのqueueを新しいDB世代へ持ち越さない。
 
-### PersistentStoreLifecycleService
+Settingsのcredential変更でthreadをresetする場合は、次の項目をtransaction内で照合する。
 
-- store 初期化
-- close
-- close 時の WAL truncate checkpoint
-- DB 再生成前の WAL truncate checkpoint
+- MainのID・incarnation・provider・元thread
+- AuxiliaryのID・親・作成時刻・provider・元thread
 
-Main Process の bootstrap / reset から persistent store を束ねる。
-WAL truncate checkpoint は best-effort とし、失敗しても close / recreate を中断しない。
+対象fieldだけを条件付き更新する。本文、draft、messages、無関係な削除は全collection snapshotで巻き戻さない。後段失敗時は更新成功を確認できた行だけreverse CASし、結果不明の書込みへ無条件の逆書込みをしない。SDK model候補の更新ではSession runtime metadataを変更しない。
 
-### WAL Maintenance Timer
+provider cleanupは短いownership境界の外で完了を待つ。同じproviderのcleanupが残る間はそのproviderの新規turn admissionを拒否し、無関係なproviderは止めない。rollbackは開始時のstorage ownerとreset境界を再確認する。復元に成功した場合はSettingsとSessionのinvalidationを再配信し、Auxiliaryの更新通知は親Session IDへ送る。
 
-- Main Process が `startWalMaintenance()` / `stopWalMaintenance()` で interval を管理する
-- interval は 5 分ごとに WAL size を確認し、64 MiB を超えている場合だけ truncate checkpoint を実行する
-- interval 側の checkpoint は短い busy timeout を使い、Main Process の event loop block を抑える
+## Lifecycle
 
-## Query / Command Boundary
-
-Renderer は `window.withmate` から session 系 API を呼ぶ。  
-Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPersistenceService`、`AuditLogService` などへ振り分ける。
-
-### 主な query
-
-- `listSessions`
-- `getSession`
-- `listSessionAuditLogs`
-- `listSessionSkills`
-- `listSessionCustomAgents`
-
-### 主な command
-
-- `createSession`
-- `updateSession`
-- `deleteSession`
-- `deleteSessionsLastActiveBefore`
-- `runSessionTurn`
-- `cancelSessionTurn`
-
-## Persistence Boundary
-
-- `sessions`
-  - session metadata
-  - `messages_json`
-  - `stream_json`
-  - `session_kind` による用途分離
-- `session_memories`
-  - `Session Memory v1`
-- `audit_logs`
-  - turn 実行と background task の監査ログ
-- `project_scopes` / `project_memory_entries`
-  - project 単位の durable knowledge
-- `character_scopes` / `character_memory_entries`
-  - character 単位の関係性記憶
-
-table 詳細と JSON カラム一覧は `docs/design/database-schema.md` を参照する。
-
-## Renderer Responsibilities
-
-### Home Renderer
-
-- boundedなsession summary pageの取得、cursor chain、検索generationの管理
-- session invalidation受信時のloaded recent / pinned page、open special entryのbounded refresh
-- random Character用のCharacter usage projectionとopen Session ID chunkの利用
-- Settings / Model Catalog 操作
-- `createSession()` 後の Session Window 起動
-
-### Session Renderer
-
-- 初回 `getSession()` と軽量 invalidation 通知受信時の再 hydrate
-- title / approval / model / reasoning depth の更新
-- turn 実行と cancel
-- audit log / observability 表示
-
-## Relation To Current Docs
-
-- `database-schema.md`
-  - table / JSON カラムの正本
-- `session-run-lifecycle.md`
-  - turn 実行と background task の lifecycle
-- `electron-window-runtime.md`
-  - BrowserWindow / preload / bootstrap detail
-
-## Open Questions
-
-- `messages_json` / `stream_json` を今後どの粒度で正規化するか
-- audit log export を後で追加するか
-- `Session Memory` / `Project Memory` / `Character Memory` の renderer expose をどこまで広げるか
+`PersistentStoreLifecycleService`はstoreの初期化、close、再生成をまとめる。WAL maintenanceとshutdownはcurrent storage Worker generationに従い、旧generationの遅延応答を新しいDBへ適用しない。turnのterminal保存、取消、Window close後の継続、結果不明の扱いは[Session Run Lifecycle](session-run-lifecycle.md)、artifact detailは通常履歴の遅延取得APIを使う。

@@ -1,0 +1,585 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { afterEach, describe, it } from "node:test";
+
+import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
+import {
+  GlossaryApplicationService,
+  projectGlossaryCheckoutAuthority,
+} from "../../src-electron/glossary/glossary-application-service.js";
+import { GlossaryRuntimeService } from "../../src-electron/glossary/glossary-runtime-service.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
+import { createMemoryV6HttpServer } from "../../src-electron/memory/memory-v6-http-server.js";
+import type { MemoryV6Service } from "../../src-electron/memory/memory-v6-service.js";
+import {
+  GLOSSARY_RUNTIME_OPERATION_PATHS,
+  getGlossaryAgentRuntimeOperations,
+} from "../../src-shared/glossary/glossary-operation-schema.js";
+import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../../src-shared/glossary/glossary-contract.js";
+import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
+
+const execFileAsync = promisify(execFile);
+const temporaryDirectories: string[] = [];
+
+async function createRepository(): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-glossary-runtime-"));
+  temporaryDirectories.push(root);
+  await execFileAsync("git", ["init", "--quiet", "--initial-branch=main", root], { windowsHide: true });
+  return root;
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+async function createRuntime(root: string, options: { proactiveLimit?: number | null; beforeResolveActor?: () => Promise<void> } = {}) {
+  const applicationService = new GlossaryApplicationService();
+  const registry = new AgentRuntimeBindingRegistry();
+  const actor = {
+    id: "session-a",
+    providerId: "codex",
+    characterId: "character-a",
+    workspacePath: root,
+  };
+  const target = await applicationService.resolvePrimaryCheckout(root);
+  const binding = registry.issueOrReuse({
+    actorSessionId: actor.id,
+    providerId: actor.providerId,
+    authoritySnapshot: { glossaryPrimaryCheckout: projectGlossaryCheckoutAuthority(target) },
+    operationGrants: getGlossaryAgentRuntimeOperations(),
+  });
+  const runtime = new GlossaryRuntimeService({
+    applicationService,
+    bindingRegistry: registry,
+    resolveActorSession: async (sessionId) => {
+      await options.beforeResolveActor?.();
+      return sessionId === actor.id ? actor : null;
+    },
+    getProactiveCreateLimit: async () => options.proactiveLimit,
+    providerAgentRuntimeTurns: new ProviderAgentRuntimeTurnCoordinator(),
+  });
+  const call = (
+    operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS,
+    body: unknown,
+    reference = binding.bindingReference,
+    turnCapability?: string,
+  ) =>
+    runtime.route({
+      method: "POST",
+      path: GLOSSARY_RUNTIME_OPERATION_PATHS[operation],
+      body,
+      transport: "mcp",
+      bindingReference: reference,
+      turnCapability,
+    });
+  return { actor, applicationService, binding, call, registry, runtime, target };
+}
+
+describe("GLOSSARY-CHECKOUT-AUTHORITY runtime service", () => {
+  it("list-targetsはbinding発行時のprimary checkout 1件だけをopaque IDで返す", async () => {
+    const root = await createRepository();
+    const { call } = await createRuntime(root);
+
+    const response = await call("list_targets", { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION });
+    assert.equal(response?.status, 200);
+    const value = response?.value as {
+      schemaVersion: string;
+      targets: Array<{ checkoutId: string; isPrimary: boolean; pathLabel: string; branch: string }>;
+    };
+    assert.equal(value.schemaVersion, GLOSSARY_RUNTIME_SCHEMA_VERSION);
+    assert.equal(value.targets.length, 1);
+    assert.equal(value.targets[0].isPrimary, true);
+    assert.equal(value.targets[0].pathLabel, path.basename(root));
+    assert.equal(value.targets[0].branch, "main");
+    assert.ok(value.targets[0].checkoutId);
+  });
+
+  it("primary selectorと同generationのcheckoutIdだけを同じtargetへ解決する", async () => {
+    const root = await createRepository();
+    const { call } = await createRuntime(root);
+    const listed = await call("list_targets", { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION });
+    const checkoutId = (listed?.value as { targets: Array<{ checkoutId: string }> }).targets[0].checkoutId;
+
+    const primary = await call("list", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" },
+    });
+    const opaque = await call("list", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "checkout", checkoutId },
+    });
+    const unknown = await call("list", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "checkout", checkoutId: "another-session-target" },
+    });
+
+    assert.deepEqual(opaque?.value, primary?.value);
+    assert.equal(unknown?.status, 404);
+    assert.equal((unknown?.value as { code: string }).code, "GLOSSARY_CHECKOUT_NOT_FOUND");
+  });
+
+  it("binding欠落、失効generation、actor workspace差し替えをside effect前に拒否する", async () => {
+    const firstRoot = await createRepository();
+    const secondRoot = await createRepository();
+    const { actor, binding, call, registry } = await createRuntime(firstRoot);
+    const body = {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" },
+      mode: "explicit",
+      entry: { term: "Runtime", definition: "authority" },
+    };
+
+    const missing = await call("create", body, "");
+    assert.equal(missing?.status, 401);
+    assert.equal((missing?.value as { code: string }).code, "GLOSSARY_SESSION_BINDING_REQUIRED");
+
+    actor.workspacePath = secondRoot;
+    const replaced = await call("create", body);
+    assert.equal(replaced?.status, 401);
+    assert.equal((replaced?.value as { code: string }).code, "GLOSSARY_SESSION_BINDING_INVALID");
+    await assert.rejects(() => readFile(path.join(firstRoot, ".withmate", "glossary.yaml"), "utf8"));
+    await assert.rejects(() => readFile(path.join(secondRoot, ".withmate", "glossary.yaml"), "utf8"));
+
+    registry.issueOrReuse({
+      actorSessionId: actor.id,
+      providerId: actor.providerId,
+      authoritySnapshot: { generation: "replacement" },
+      operationGrants: getGlossaryAgentRuntimeOperations(),
+    });
+    const stale = await call("list_targets", { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION }, binding.bindingReference);
+    assert.equal(stale?.status, 401);
+    assert.equal((stale?.value as { code: string }).code, "GLOSSARY_SESSION_BINDING_INVALID");
+  });
+});
+
+describe("Glossary runtime mutation policy", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "explicit MCP createはcurrent turn capability付きで保存しupdateは明示依頼marker欠落を拒否する"
+  // oracle = { type = "adr", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md; docs/adr/022-repository-glossary-boundary.md" }
+  // fault = "current turn capabilityのあるcreateを拒否する、または明示依頼markerなしにupdateする"
+  // observable = "createのapplied結果とupdateのinvalid request応答"
+  // observation_boundary = "public-boundary"
+  // scope = "Glossary runtime explicit mutation authority"
+  // lifecycle = "permanent"
+  // impact = "正当な明示変更を妨げるかユーザー未承認の用語変更を許可する"
+  // distinction = "schema単体testはruntime turnとapplication保存の組込みを通らない"
+  // @end-test-value
+  it("explicit createをapplication serviceへ委譲し、update/deleteの明示依頼markerをschemaで要求する", async () => {
+    const root = await createRepository();
+    const { actor, binding, call, runtime } = await createRuntime(root);
+    const turn = await runtime.beginProviderTurn(actor.id, binding);
+    const created = await call("create", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" },
+      mode: "explicit",
+      entry: { term: "Runtime", aliases: ["RT"], definition: "plain text" },
+    }, binding.bindingReference, turn.binding.turnCapability);
+    assert.equal(created?.status, 200);
+    assert.equal((created?.value as { outcome: string }).outcome, "applied");
+
+    const rejected = await call("update", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" },
+      expectedRevision: (created?.value as { revision: string }).revision,
+      targetTerm: "Runtime",
+      entry: { term: "Runtime", definition: "changed" },
+    });
+    assert.equal(rejected?.status, 400);
+    assert.equal((rejected?.value as { code: string }).code, "GLOSSARY_INVALID_REQUEST");
+    runtime.endProviderTurn(turn.handle);
+  });
+
+  // @test-value v2
+  // kind = "security"
+  // claim = "actor解決待ちで終了したturnのGlossary createは次turnへ再帰属せずeffect noneで拒否する"
+  // oracle = { type = "adr", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
+  // fault = "非同期actor解決後にcurrent turnを再取得し旧requestへ新turn権限を与える"
+  // observable = "旧requestの拒否effectとglossary file不在、新turn createのapplied結果"
+  // observation_boundary = "public-boundary"
+  // scope = "GlossaryRuntimeServiceの非同期actor authorizerとcaptured turn境界"
+  // lifecycle = "permanent"
+  // impact = "終了済みproviderが次turnの権限でrepository用語を変更することを防ぐ"
+  // distinction = "静的stale capability testではauthorizer待ち中のturn切替を再現しない"
+  // @end-test-value
+  it("actor解決中に終了したGlossary turnは次turnへ付け替えない", async () => {
+    const root = await createRepository();
+    let entered!: () => void;
+    let release!: () => void;
+    const enteredPromise = new Promise<void>((resolve) => { entered = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const { actor, binding, call, runtime } = await createRuntime(root, { beforeResolveActor: async () => { entered(); await gate; } });
+    const old = await runtime.beginProviderTurn(actor.id, binding);
+    const body = { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION, selector: { kind: "primary" }, mode: "explicit", entry: { term: "Captured", definition: "same actor different turn" } };
+    const pending = call("create", body, binding.bindingReference, old.binding.turnCapability);
+    await enteredPromise;
+    runtime.endProviderTurn(old.handle);
+    const next = await runtime.beginProviderTurn(actor.id, binding);
+    release();
+    const denied = await pending;
+    assert.equal(denied?.status, 401);
+    assert.equal((denied?.value as { effect: string }).effect, "none");
+    await assert.rejects(readFile(path.join(root, ".withmate", "glossary.yaml")), { code: "ENOENT" });
+    const accepted = await call("create", body, binding.bindingReference, next.binding.turnCapability);
+    assert.equal((accepted?.value as { outcome: string }).outcome, "applied");
+    runtime.endProviderTurn(next.handle);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "proactive createは非同期Settings値が欠落・不正ならfallbackせず拒否する"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "非同期Settings値を待たずにfallbackまたはmutationを許可する"
+  // observable = "proactive createの拒否結果とglossary fileの不在"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-runtime-mutation-policy"
+  // lifecycle = "permanent"
+  // impact = "不正なSettings値でGlossary mutationを許可するとprovider turnのquota契約を迂回する"
+  // distinction = "型検査ではなく実runtimeの拒否statusと永続化不在を確認する"
+  // @end-test-value
+  it("proactive createはSettings値が欠落・不正ならfallbackせず拒否する", async () => {
+    const root = await createRepository();
+    const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: null });
+    const turn = await runtime.beginProviderTurn(actor.id, binding);
+    const response = await call("create", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" },
+      mode: "proactive",
+      entry: { term: "Runtime", definition: "plain text" },
+    }, binding.bindingReference, turn.binding.turnCapability);
+    assert.equal(response?.status, 400);
+    assert.equal((response?.value as { code: string }).code, "GLOSSARY_INVALID_REQUEST");
+    await assert.rejects(() => readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8"));
+    runtime.endProviderTurn(turn.handle);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "同じturnでは完全同一retryだけを許し、複数proactive callでSettings上限を迂回させない"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "同一turnの異なるproactive requestを重複適用してSettings上限を迂回する"
+  // observable = "各proactive responseのoutcome/statusと保存済みglossary entries"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-runtime-mutation-policy"
+  // lifecycle = "permanent"
+  // impact = "retry判定を誤ると同一turnのquota上限を超えて副作用を重複適用する"
+  // distinction = "単一mutationの成功ではなくretry収束と複数callのquota境界を確認する"
+  // @end-test-value
+  it("同じturnでは完全同一retryだけを許し、複数proactive callでSettings上限を迂回させない", async () => {
+    const root = await createRepository();
+    const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: 2 });
+    const turn = await runtime.beginProviderTurn(actor.id, binding);
+    const firstBody = {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" as const },
+      mode: "proactive" as const,
+      entry: { term: "Runtime", definition: "plain text" },
+    };
+
+    const first = await call("create", firstBody, binding.bindingReference, turn.binding.turnCapability);
+    const retry = await call("create", firstBody, binding.bindingReference, turn.binding.turnCapability);
+    const second = await call("create", {
+      ...firstBody,
+      entry: { term: "Projection", definition: "second call" },
+    }, binding.bindingReference, turn.binding.turnCapability);
+
+    assert.equal((first?.value as { outcome: string }).outcome, "applied");
+    assert.equal((retry?.value as { outcome: string }).outcome, "converged");
+    assert.equal(second?.status, 400);
+    assert.equal((second?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
+    const stored = await readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8");
+    assert.match(stored, /Runtime/);
+    assert.doesNotMatch(stored, /Projection/);
+
+    runtime.endProviderTurn(turn.handle);
+    const nextTurn = await runtime.beginProviderTurn(actor.id, binding);
+    const next = await call("create", {
+      ...firstBody,
+      entry: { term: "Projection", definition: "next turn" },
+    }, binding.bindingReference, nextTurn.binding.turnCapability);
+    assert.equal((next?.value as { outcome: string }).outcome, "applied");
+    runtime.endProviderTurn(nextTurn.handle);
+
+    const rejectedTurn = await runtime.beginProviderTurn(actor.id, binding);
+    const oversizedFirst = await call("create_batch", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" },
+      mode: "proactive",
+      entries: [
+        { term: "One", definition: "one" },
+        { term: "Two", definition: "two" },
+        { term: "Three", definition: "three" },
+      ],
+    }, binding.bindingReference, rejectedTurn.binding.turnCapability);
+    const smallerSecond = await call("create", {
+      ...firstBody,
+      entry: { term: "Smaller", definition: "must remain rejected" },
+    }, binding.bindingReference, rejectedTurn.binding.turnCapability);
+    assert.equal((oversizedFirst?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
+    assert.equal((smallerSecond?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
+    runtime.endProviderTurn(rejectedTurn.handle);
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "前turnの遅延proactive requestを次turnのquotaへ誤帰属させない"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "失効したturn capabilityを次turnの非同期quotaへ誤帰属してmutationを許可する"
+  // observable = "遅延requestの拒否とcurrent turn requestの適用結果"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-runtime-mutation-policy"
+  // lifecycle = "permanent"
+  // impact = "失効turnのrequestを次turnへ帰属すると権限外のGlossary mutationが実行される"
+  // distinction = "同一turn内quotaではなくturn capabilityの世代境界を確認する"
+  // @end-test-value
+  it("前turnの遅延proactive requestを次turnのquotaへ誤帰属させない", async () => {
+    const root = await createRepository();
+    const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: 1 });
+    const firstTurn = await runtime.beginProviderTurn(actor.id, binding);
+    runtime.endProviderTurn(firstTurn.handle);
+    const nextTurn = await runtime.beginProviderTurn(actor.id, binding);
+    const body = {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" as const },
+      mode: "proactive" as const,
+      entry: { term: "Late", definition: "must not apply" },
+    };
+
+    const late = await call("create", body, binding.bindingReference, firstTurn.binding.turnCapability);
+    const current = await call("create", {
+      ...body,
+      entry: { term: "Current", definition: "current turn" },
+    }, binding.bindingReference, nextTurn.binding.turnCapability);
+
+    assert.equal(late?.status, 401);
+    assert.equal((late?.value as { code: string }).code, "GLOSSARY_SESSION_BINDING_INVALID");
+    assert.equal((current?.value as { outcome: string }).outcome, "applied");
+    const stored = await readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8");
+    assert.doesNotMatch(stored, /Late/);
+    assert.match(stored, /Current/);
+    runtime.endProviderTurn(nextTurn.handle);
+  });
+});
+
+describe("Glossary authenticated runtime exchange", () => {
+  // @test-value v2
+  // kind = "security"
+  // claim = "認証済みCLI/MCPはbindingなしの明示repositoryで9操作を実行し、認証・binding scope・明示依頼・CASを迂回しない"
+  // oracle = { type = "contract", ref = "docs/runbooks/repository-glossary.md#Managed Skill、MCP、CLI" }
+  // fault = "repository指定を無認証で許可する、無効bindingを捨てる、または既存fileの競合を上書きする"
+  // observable = "実HTTP exchangeのstatus/code/outcomeと保存fileのentry値"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-authenticated-explicit-repository"
+  // lifecycle = "permanent"
+  // distinction = "mock parityでは検出できない実認証とruntime認可からapplication/file commitまでを両adapterで確認する"
+  // impact = "Sessionを持たない利用の権限逸脱と意図しないrepository上書きを防ぐ"
+  // @end-test-value
+  it("CLIとMCPは明示repositoryで同じ保存契約を使い認証とscopeを維持する", async () => {
+    const root = await createRepository();
+    const other = await createRepository();
+    const { actor, binding, registry, runtime } = await createRuntime(root);
+    const server = createMemoryV6HttpServer({
+      service: {} as MemoryV6Service, apiSecret: "api-secret", operatorApiSecret: "operator-secret", mcpApiSecret: "mcp-secret",
+      runtimeInstanceId: "runtime-a", agentRuntimeBindingRegistry: registry,
+      resolveActorSession: (id) => id === actor.id ? actor : null, routeAgentRuntimeExtension: (request) => runtime.route(request),
+    });
+    await server.start();
+    try {
+      const address = server.address(); assert.ok(address);
+      const api = { baseUrl: `http://127.0.0.1:${address.port}`, apiSecret: "api-secret", runtimeInstanceId: "runtime-a", runtimeGenerationId: "runtime-a" };
+      for (const adapter of ["cli", "mcp"] as const) {
+        const selector = { kind: "repository", path: other };
+        const exchange = async (operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS, body: Record<string, unknown> = {}, bindingReference?: string, secret?: string) => {
+          const response = await callWithMateMemoryRuntime({ api, credential: { adapter, adapterSecret: secret ?? (adapter === "cli" ? "operator-secret" : "mcp-secret") } }, {
+            method: "POST", path: GLOSSARY_RUNTIME_OPERATION_PATHS[operation], body: { schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION, selector, ...body },
+          }, { signal: AbortSignal.timeout(10_000), exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH, bindingReference });
+          return { status: response.status, value: response.value as Record<string, unknown> };
+        };
+        assert.equal((await exchange("list", {}, undefined, "wrong-secret")).status, 401);
+        assert.equal((await exchange("list", {}, "invalid-binding")).value.code, "GLOSSARY_SESSION_BINDING_INVALID");
+        assert.equal((await exchange("list", {}, binding.bindingReference)).value.code, "GLOSSARY_SESSION_BINDING_FORBIDDEN");
+        assert.equal((await exchange("list", { selector: { kind: "primary" } })).value.code, "GLOSSARY_SESSION_BINDING_REQUIRED");
+        assert.equal((await exchange("list", { selector: { kind: "repository", path: "relative" } })).value.code, "GLOSSARY_TARGET_INVALID");
+        assert.equal((await exchange("create", { mode: "proactive", entry: { term: "Forbidden", definition: "no turn" } })).value.code, "GLOSSARY_SESSION_BINDING_REQUIRED");
+        assert.equal((await exchange("create", { selector: { kind: "repository", path: root }, mode: "explicit", entry: { term: "NoTurn", definition: "bound" } }, binding.bindingReference)).value.code, "GLOSSARY_SESSION_BINDING_INVALID");
+        const targets = await exchange("list_targets");
+        assert.equal(targets.status, 200);
+        assert.deepEqual((targets.value.targets as Array<{ selector: unknown }>)[0].selector, selector);
+        const term = `Term-${adapter}`;
+        const entry = { term, definition: "initial" };
+        assert.equal((await exchange("create", { mode: "explicit", entry })).value.outcome, "applied");
+        assert.equal((await exchange("create", { mode: "explicit", entry: { ...entry, definition: "overwrite" } })).value.code, "GLOSSARY_CONFLICT");
+        assert.equal((await exchange("create_batch", { mode: "explicit", entries: [{ term: `Batch-${adapter}`, definition: "batch" }] })).value.outcome, "applied");
+        assert.equal((await exchange("list")).value.ok, true);
+        assert.equal((await exchange("search", { query: term })).value.total, 1);
+        const read = await exchange("get", { termOrAlias: term });
+        const revision = read.value.revision;
+        assert.equal((await exchange("update", { expectedRevision: revision, targetTerm: term, entry: { ...entry, definition: "updated" } })).value.code, "GLOSSARY_INVALID_REQUEST");
+        assert.equal((await exchange("update", { expectedRevision: revision, targetTerm: term, entry: { ...entry, definition: "updated" }, explicitUserRequest: true })).value.outcome, "applied");
+        assert.equal((await exchange("update", { expectedRevision: revision, targetTerm: term, entry: { ...entry, definition: "stale" }, explicitUserRequest: true })).value.code, "GLOSSARY_CONFLICT");
+        const updated = await exchange("get", { termOrAlias: term });
+        assert.deepEqual(updated.value.entry, { ...entry, aliases: [], definition: "updated" });
+        assert.equal((await exchange("validate")).value.ok, true);
+        assert.equal((await exchange("delete", { expectedRevision: updated.value.revision, targetTerm: term })).value.code, "GLOSSARY_INVALID_REQUEST");
+        assert.equal((await exchange("delete", { expectedRevision: updated.value.revision, targetTerm: term, explicitUserRequest: true })).value.outcome, "applied");
+        assert.equal((await exchange("get", { termOrAlias: term })).value.code, "GLOSSARY_NOT_FOUND");
+      }
+      const stored = await readFile(path.join(other, ".withmate", "glossary.yaml"), "utf8");
+      assert.match(stored, /Batch-cli/); assert.match(stored, /Batch-mcp/);
+      assert.doesNotMatch(stored, /Forbidden|overwrite|stale/);
+      await assert.rejects(readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8"));
+    } finally { await server.stop(); }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "Glossaryのauthenticated exchangeはMCP/CLI adapterへ同じapplication routeをdispatchし、direct HTTPを公開しない"
+  // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md; docs/adr/024-provider-common-memory-mcp-boundary.md" }
+  // fault = "MCP/CLI routeのauthorityを迂回してdirect HTTPへGlossary operationを公開する"
+  // observable = "MCP・CLI・generic exchange・direct HTTP・extension exchangeのstatusと保存結果"
+  // observation_boundary = "public-boundary"
+  // scope = "glossary-authenticated-runtime-exchange"
+  // lifecycle = "permanent"
+  // impact = "公開境界を誤るとbinding/turn capabilityを経由しないGlossary mutationが実行される"
+  // distinction = "単なるschema検証ではなくtransportごとのdispatch可否とpayload上限を実観測する"
+  // @end-test-value
+  it("MCPとCLI adapterを同じschema・authority・application serviceへdispatchし、direct HTTPは公開しない", async () => {
+    const root = await createRepository();
+    const { actor, binding, registry, runtime } = await createRuntime(root, { proactiveLimit: 1 });
+    const server = createMemoryV6HttpServer({
+      service: {} as MemoryV6Service,
+      apiSecret: "api-secret",
+      operatorApiSecret: "operator-secret",
+      mcpApiSecret: "mcp-secret",
+      runtimeInstanceId: "runtime-a",
+      agentRuntimeBindingRegistry: registry,
+      resolveActorSession: (sessionId) => sessionId === actor.id ? actor : null,
+      routeAgentRuntimeExtension: (request) => runtime.route(request),
+    });
+    await server.start();
+    try {
+      const address = server.address();
+      assert.ok(address);
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const operation = {
+        method: "POST" as const,
+        path: GLOSSARY_RUNTIME_OPERATION_PATHS.list,
+        body: {
+          schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+          selector: { kind: "primary" },
+        },
+      };
+      const api = {
+        baseUrl,
+        apiSecret: "api-secret",
+        runtimeInstanceId: "runtime-a",
+        runtimeGenerationId: "runtime-a",
+      };
+      const mcp = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        operation,
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
+      );
+      const cli = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "cli", adapterSecret: "operator-secret" } },
+        operation,
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
+      );
+      assert.equal(mcp.status, 200);
+      assert.deepEqual(cli.value, mcp.value);
+
+      const genericSmallExchange = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        operation,
+        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
+      );
+      assert.equal(genericSmallExchange.status, 404);
+
+      const providerTurn = await runtime.beginProviderTurn(actor.id, binding);
+      const proactive = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        {
+          method: "POST",
+          path: GLOSSARY_RUNTIME_OPERATION_PATHS.create,
+          body: {
+            schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+            selector: { kind: "primary" },
+            mode: "proactive",
+            entry: { term: "Turn scoped", definition: "authenticated capability" },
+          },
+        },
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          turnCapability: providerTurn.binding.turnCapability,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
+      );
+      runtime.endProviderTurn(providerTurn.handle);
+      assert.equal(proactive.status, 200);
+      assert.equal((proactive.value as { outcome: string }).outcome, "applied");
+
+      const direct = await fetch(`${baseUrl}${GLOSSARY_RUNTIME_OPERATION_PATHS.list}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-withmate-memory-api-secret": "api-secret",
+        },
+        body: JSON.stringify(operation.body),
+      });
+      assert.equal(direct.status, 404);
+
+      const largeBatchOperation = {
+        method: "POST" as const,
+        path: GLOSSARY_RUNTIME_OPERATION_PATHS.create_batch,
+        body: {
+          schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+          selector: { kind: "primary" as const },
+          mode: "explicit" as const,
+          entries: Array.from({ length: 6 }, (_, index) => ({
+            term: `Large ${index}`,
+            definition: `${index}${"x".repeat(45_000)}`,
+          })),
+        },
+      };
+      const genericExchange = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        largeBatchOperation,
+        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
+      );
+      assert.equal(genericExchange.status, 413);
+
+      const batchTurn = await runtime.beginProviderTurn(actor.id, binding);
+      const extensionExchange = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        largeBatchOperation,
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          turnCapability: batchTurn.binding.turnCapability,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
+      );
+      assert.equal(extensionExchange.status, 200);
+      runtime.endProviderTurn(batchTurn.handle);
+      assert.equal((extensionExchange.value as { outcome: string }).outcome, "applied");
+      const stored = await readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8");
+      assert.match(stored, /Large 5/);
+    } finally {
+      await server.stop();
+    }
+  });
+});

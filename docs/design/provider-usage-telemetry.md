@@ -1,221 +1,67 @@
 # Provider Usage Telemetry
 
-- 作成日: 2026-03-25
-- 対象: coding provider の quota / context usage を WithMate UI に表示するための telemetry 設計
+providerのquotaはapp全体、context usageはSessionごとの一時的な観測値として扱う。型の正本は`src-shared/session/runtime-state.ts`、Mainのcacheと通知は`src-electron/session/session-observability-service.ts`に置く。telemetry自体はSession DBへ保存しない。確定turnのtoken usageは通常履歴のartifactに保存する。
 
-## Goal
+## Codex・Claude・OpenCodeの取得と更新
 
-provider ごとの使用状況を WithMate で観測し、Session Window から必要最小限の usage 情報を確認できるようにする。
+有効なCodex・Claude・OpenCodeについて、設定の初期化後に非同期で1回、以後5分ごとに取得する。Homeの起動完了は取得を待たない。Main・Auxiliaryのturn終端では同providerの3秒後の取得を予約し、短時間の終端はまとめる。
 
-第 1 slice は `GitHub Copilot` を対象にする。
+短命な取得processやHTTP requestの頻繁な発行を避けるため、成功した取得（適用外を含む）の完了後60秒間はprovider単位で再取得を抑制する。抑制中の取得要求は、その60秒の期限で発火する1件へ集約し、後続turnで期限を延期しない。
 
-## Position
+Windowのsnapshot取得はcache参照のみで、Windowの開閉・focusは取得契機にしない。
 
-- 状態: supporting doc
-- provider 境界の正本は `docs/design/provider-adapter.md`
-- current UI 反映の正本は `docs/design/desktop-ui.md`
-- 本書は quota / context telemetry の構造と更新経路の詳細を補足する
+Mainはproviderごとの同時取得を重複抑止する。WithMateの認証設定変更・有効化では旧cache・予約・最短間隔の状態を破棄して即時取得し、無効化では停止する。clear・reset・disposeでは進行中取得のsignalをabortし、破棄前の応答とその完了処理が新しいcache・取得管理へ戻らないようにする。終了・DB再作成時は取得processのcleanupを待つ。Copilotにはこの60秒の抑制を適用せず、既存の取得・予約を維持する。
 
-## Scope
+未取得は`null`、取得中は`loading`、成功は`ready`、失敗は`error`、契約枠の適用外または取得未対応は`unsupported`とする。失敗時も最終成功値とその`updatedAt`を保持し、成功前の`updatedAt`は`null`にする。失敗直後のturn終端などでは再試行せず、当該取得開始から5分後以降に再試行する。取得不能を使用率0・残量100%・無制限へ変換しない。raw errorや認証情報はtelemetryへ載せない。
 
-- app 全体で共有する provider quota telemetry
-- session ごとに持つ provider context telemetry
-- Main Process memory cache と IPC 契約
-- Session Window の最小 UI
+Copilotの件数snapshotと、Codex・Claude・OpenCode Goの`rateLimits`を分ける。後者は取得元の窓ID、0〜100の使用率、取得できる期間・reset時刻を持ち、総件数や未返却の窓・resetを補完しない。
 
-## Out Of Scope
+## 共通の残量表示
 
-- DB 永続化
-- Home に詳細 usage dashboard を常設すること
-- Codex 側の quota / reset 可視化
-- billing 設定や budget 操作
+HomeのMonitorと独立Monitorは共通の`HomeMonitorContent`上部に、有効providerごとの詳細icon・名前・通常枠の残率をcompactな横並びで表示する。監視一覧のscrollとは独立し、幅が足りなければproviderや期間表示の単位で折り返す。期間名と割合は分断しない。直下のclick専用splitterで残量一覧を開閉し、非表示でもcomponentとcache購読を維持して再表示へ反映する。詳細はprovider別popupで確認する。
 
-## State Model
+Session WindowはAction Dockの最上段操作欄に、Main／Auxiliaryの現在の送信対象providerだけを表示する。Promptでは添付操作群とCancel予約領域の間、Terminal／compactでは操作欄の先頭に置き、専用段は追加しない。
 
-usage telemetry は `global` と `session` の 2 層に分ける。
+常時表示ではOpenCode Goを除くprovider名とRemaining labelを省く。詳細iconは先頭の固定幅領域に置き、割合と期間を折り返さない。残量部分の幅が足りない場合はその部分だけ横scrollでき、keyboardからも到達できる。操作欄全体が収まらない狭幅では既存操作の折り返しを許容する。
 
-### Global Provider Quota
+`src/provider-usage/`がcache購読、残率projection、一覧と詳細popupを所有する。使用率は`100 - usedPercentage`へ変換し、既存の`remainingPercentage`はそのまま使う。不正値は`—`とし、0／100／無制限を推測しない。Codexの標準bucketとClaudeの5時間・週間を通常表示し、追加bucket・モデル別枠は詳細に分離する。OpenCode Goは5時間・週間・月間を通常表示する。月間は固定日数へ置換せず`Monthly`とする。CopilotはAI credits系を優先し、premium系等の主snapshotを通常表示する。返却されない期間を追加せず、別枠の合算をしない。
 
-`Premium Requests` は provider account 単位の状態なので、session とは独立した shared state に置く。
+詳細popupの通常表示はprovider、各枠の残率、有効なreset時刻に絞る。未取得のreset欄、繰り返しのRemaining label、取得経路の説明、通常時の更新日時は表示しない。未取得・loading・適用外・失敗は短い状態表示で識別し、失敗時に前回値があれば値・失敗indicator・前回値であること・最終成功時刻を併記する。cache read失敗時はRetryを維持する。詳細はkeyboardで開閉できる。
 
-```ts
-type ProviderQuotaSnapshot = {
-  quotaKey: string;
-  entitlementRequests: number;
-  usedRequests: number;
-  remainingPercentage: number;
-  overage: number;
-  overageAllowedWithExhaustedQuota: boolean;
-  resetDate?: string;
-};
+新UIのsnapshotは`getProviderQuotaTelemetry(providerId, { cacheOnly: true })`で読み、購読通知を反映する。遅い初回snapshotで通知や送信先変更後の表示を巻き戻さない。Window追加・focus・詳細開閉に伴うremote取得やrendererの独自pollingは行わない。Copilotの既存Context表示向けsnapshot取得は従来のstale時refreshを維持する。
 
-type ProviderQuotaTelemetry = {
-  provider: "copilot";
-  updatedAt: string;
-  snapshots: ProviderQuotaSnapshot[];
-};
-```
+- Codexは短命なApp Serverで`account/rateLimits/read`だけを呼び、thread・model turn・loginを作らない。複数bucketの応答を優先し、窓長は返却値を使う。WithMateまたは環境変数の`CODEX_API_KEY`が指定されている場合はChatGPT契約枠の適用外とし、既存ChatGPTログインへの切替取得をしない。[公式RPC仕様](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt)に従う。
+- Claudeは固定SDKの`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({ skipBehaviors: true })`を空のstreaming inputで呼ぶ。モデルprompt、tools、MCP、hooks、session保存を使わず、managed設定がある場合は起動前に拒否する。5時間・週間・モデル別週間窓を投影し、`rate_limits_available: false`は適用外、有効な観測値のない不正応答は失敗とする。実験APIのため、固定SDK更新時には取得契約を再確認する。
+- OpenCodeは公式CLI／client `2.2.5`の`experimental.usage.limits`を短命なnative processで取得する。起動元の`process.cwd()`をlocationに使い、認証とConsole workspaceの解決はOpenCodeへ任せる。独自Go HTTP API、credential読出し、Session作成・model実行は行わない。正常応答の`go`だけを投影し、Console予算は含めない。応答の`data`が`null`または`go`がなければadapterは`null`を返し、Mainは空の`unsupported`へ投影する。API失敗・不正な使用率やreset・process cleanup失敗は取得失敗とする。実験APIのため固定版更新時には取得契約を再確認する。
 
-第 1 slice では `copilot premium requests` 相当の snapshot が主対象だが、複数 quota key を保持できる形にして固定しすぎない。
+Codex・Claude・OpenCodeの実行中の部分通知はapp-wide cacheへ接続しない。workspaceごとに認証先が異なり得ることや、部分窓・単位を保証できないことから、独立取得の完全snapshotを正本とする。通知のためだけの常駐processは作らない。
 
-### Session Provider Telemetry
+## OpenCodeの実行経路と契約枠
 
-`Context Usage` は会話文脈ごとの状態なので、session 単位で持つ。
+WithMateの`opencode`は実行経路を表し、`opencode-go/...`、`opencode/...`、`openai/...`等のnative接続先を含む。OpenCode GoはConsoleのworkspace・memberに紐づく契約サービスであり、OpenCode経由の全接続先の使用量・残量ではない。[公式Go仕様](https://opencode.ai/v2/docs/console/go/)が示すGoの利用枠と、他接続先の契約残量を合算・相互代用しない。Goの5時間・週間・月間の`percent`は各窓のallowance使用率、`resetsAt`はreset時刻であり、残率やtoken数ではない（[上流schema](https://github.com/anomalyco/opencode/blob/3ebcf9a32c7b28f658cfee80775448929361727a/packages/schema/src/usage-limits.ts)）。
 
-```ts
-type SessionContextTelemetry = {
-  provider: "copilot";
-  sessionId: string;
-  updatedAt: string;
-  tokenLimit: number;
-  currentTokens: number;
-  messagesLength: number;
-  systemTokens?: number;
-  conversationTokens?: number;
-  toolDefinitionsTokens?: number;
-};
-```
+MonitorとAction Dockのquota名は`OpenCode Go`と明示し、Action Dockでもこの名前を省略しない。実行provider名の`OpenCode`は変更しない。正常取得でGo枠が返らない場合だけquota行・詳細入口を非表示にし、購読は維持する。未取得・loading・取得失敗は枠なしと判定せず、既存の状態表示と失敗時の前回値保持を使う。
 
-session local telemetry は Main Process memory のみで保持し、session close や app restart で消えてよい。
+Go以外のmodel選択だけで枠を消さず、Main／Auxiliaryで同じapp-wide cacheを参照する。各Sessionのproject設定で接続する全accountの残量を示すものではなく、他接続先へGo残量を流用しない。turnのtoken／costとSession contextは実行結果の観測であり、Go契約枠へ換算しない。
 
-## Source Mapping
+## Copilotの取得と更新
 
-### Copilot
+`CopilotAdapter`は`client.rpc.account.getQuota()`による初期取得と、実行中の`assistant.usage`に含まれるquota snapshotからprovider quotaを更新する。`session.usage_info`は対象Sessionのcontext telemetryとして受け取る。Mainはprovider単位のquota cacheとSession単位のcontext cacheを持ち、snapshot取得と購読をrendererへ公開する。quotaの更新をSessionごとのDB保存やartifact結果の更新と混同しない。
 
-`Premium Requests` は次の 2 経路で更新する。
+Session WindowはCopilotの`Premium Requests`残量をcompactに示し、詳細でused／entitlement／resetを読めるようにする。`Context`は必要時に開き、token limit、current tokens、message数を確認する。まだ値がないときは利用不可として表示し、値を推測しない。表示の配置は[Desktop UI](desktop-ui.md)に従う。
 
-- 初期取得
-  - `client.rpc.account.getQuota()`
-- 実行中更新
-  - `assistant.usage.data.quotaSnapshots`
+## Codex・Claudeと境界
 
-`Context Usage` は次の event を使う。
+quota残量やreset時刻をCopilotの値から推測せず、各providerのturn usageはprovider結果と通常artifactで扱う。Claude SDKのAPI換算額は本人契約の実請求額として表示しない。providerごとの取得・実行責務は[Provider Adapter](provider-adapter.md)を参照する。
 
-- `session.usage_info`
+Codex App Serverの`thread/tokenUsage/updated`は`total`がthread累計、`last`が最後のmodel responseの使用量である。現在turnのusageは累計から開始前のbaselineを各token項目ごとに差し引き、負値は0とする。
 
-current の `CopilotAdapter` は `assistant.usage` の token 数だけを使い、`session.usage_info` は drop している。第 1 slice では telemetry 用に保持する。
+現在turnのusageを受け取る前に同threadの過去turn累計を観測した場合はそれをbaselineに使い、なければ最初の現在turn通知の`total - last`を使う。以後は同じbaselineから差分を更新するため、複数responseを含め、重複通知は加算しない。
 
-### Codex
+異なるthreadの通知と、現在turnのusage取得後に届く別turnの通知はusageへ反映しない。Main・Auxiliary・Backgroundは同じ集計を使ってprovider結果へturn使用量を返し、Main・Auxiliaryでは通常artifactにも保存する。これは契約全体の消費量やquota残量ではない。
 
-第 1 slice では未対応。
+ClaudeのMain・Auxiliaryはuser / project / local設定を読み込むが、Backgroundとquota取得は副作用を隔離するため読み込まない。Backgroundとquota取得の認証・接続先は親プロセスの環境変数とSDKが参照する既存CLIログインに依存する。
 
-理由:
-- current `@openai/codex-sdk` は turn usage token 数しか返さない
-- quota remaining / reset を取るには別 REST 経路が必要
+Main・Auxiliaryも同じ経路で解決される場合は補助処理も同じ契約枠を消費するが、設定ファイルだけにある`apiKeyHelper`や認証・接続先の環境変数に依存する場合は、認証失敗や異なる利用先・消費枠となり得る。同一の認証・課金経路を無条件に保証せず、WithMateから認証情報をコピーしたり、失敗時に別の認証へ切り替えたりしない。
 
-## Update Timing
-
-### Global Quota
-
-`Premium Requests` は app 全体で共有し、次のタイミングで更新する。
-
-1. Home または Session から Copilot 情報が初めて必要になった時
-   - `getQuota()` を 1 回呼ぶ
-2. Copilot turn 開始時
-   - cache が stale なら background refresh
-3. Copilot turn 中
-   - `assistant.usage.quotaSnapshots` を受けたら即時更新
-4. ユーザー明示 refresh
-   - 将来追加余地。第 1 slice では必須にしない
-
-quota は session ごとに取り直さず、Main Process 側の shared cache を renderer に配る。
-
-### Session Context
-
-`Context Usage` は session ごとに次のタイミングで更新する。
-
-1. Copilot turn 中
-   - `session.usage_info` を受けるたび更新
-2. turn 完了後
-   - 最後の値をそのまま保持
-3. session 切替時
-   - 対象 session の telemetry を表示する
-
-session open 直後に値がまだ無い場合は empty state でよい。
-
-## Cache Policy
-
-- global quota cache は Main Process memory に置く
-- session context cache も Main Process memory に置く
-- DB 保存はしない
-- global quota には短い stale 判定を持たせる
-  - 例: 5 分
-- `assistant.usage.quotaSnapshots` が届いた場合は stale 判定を待たず上書きする
-
-## IPC Contract
-
-renderer からは `listSessions` と同じく snapshot + subscribe で扱う。
-
-```ts
-type WithMateWindowApi = {
-  getProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
-  getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
-  subscribeProviderQuotaTelemetry(
-    listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void,
-  ): () => void;
-  subscribeSessionContextTelemetry(
-    listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void,
-  ): () => void;
-};
-```
-
-第 1 slice では provider id は実質 `copilot` 固定でもよいが、shared contract は provider-neutral にしておく。
-
-## Session Window UI
-
-### Premium Requests
-
-Session Window では `Latest Command` の下に、最小の quota strip を置く。
-
-- 常時表示する情報
-  - provider label
-  - `remaining`
-- 補足表示
-  - hover / details / 小さな副表示で `used / entitlement / reset`
-
-第 1 slice の primary copy 例:
-
-- `Premium Requests 72%`
-- `Premium Requests 120 / 420 left`
-
-どちらを主表示にするかは実装時に調整してよいが、`残量が一目で分かる` を優先する。
-
-### Context Usage
-
-`Context Usage` は default で非表示に寄せる。
-
-- 常時表示しない
-- 小さい `Context` toggle または `details` summary だけ置く
-- 開いた時だけ
-  - `currentTokens / tokenLimit`
-  - `messagesLength`
-  - 必要なら `systemTokens / conversationTokens`
-
-つまり右 pane の常設面積は
-
-- `Latest Command`
-- `Premium Requests` の薄い strip
-- `Context` toggle 1 行
-
-までに抑える。
-
-## Error / Empty State
-
-- Copilot quota 未取得
-  - `Premium Requests unavailable`
-- session context 未取得
-  - `まだ context usage はないよ。`
-- provider が Copilot 以外
-  - 第 1 slice では表示しない
-
-## Persistence Policy
-
-- usage telemetry は session DB / audit log へ保存しない
-- telemetry は operational UI のための transient state として扱う
-- audit は既存どおり token usage と transport payload を保存する
-
-## References
-
-- `docs/design/provider-adapter.md`
-- `docs/design/desktop-ui.md`
-- `docs/plans/archive/2026/03/20260325-rate-limit-surface-survey/result.md`
+Claudeの新規sessionはSDKのmodel別usageを合計する。resumeではmodel別usageが過去turnを含む累積になるため、当該turnのmain loopに限った`result.usage`を使い、subagentや内部補助処理の消費は含めない。いずれも契約全体の消費量や残量の計測ではない。

@@ -1,11 +1,14 @@
-import type { AppSettings } from "../app-state.js";
+import { useRef, useState } from "react";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
-} from "../provider-settings-state.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
-import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
-import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
+  PREVIEW_WHEEL_ZOOM_STEP_MIN,
+  PREVIEW_WHEEL_ZOOM_STEP_MAX,
+  isPreviewWheelZoomStep,
+} from "../../src-shared/settings/provider-settings-state.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
+import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import {
   getMemoryFileQuotaMegabytes,
   getMemoryFileQuotaMegabytesInputBounds,
@@ -13,6 +16,9 @@ import {
 } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
+  SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL,
+  SETTINGS_CHARACTER_DEFINITION_LABEL,
+  SETTINGS_CONVERSATION_TIMING_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
@@ -25,102 +31,157 @@ import {
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
   SETTINGS_PROVIDER_FILE_SETTINGS_HELP,
   SETTINGS_PROVIDER_FILE_SETTINGS_LABEL,
-  SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER,
-  SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP,
   SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL,
   SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL,
   SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
+  SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
+  SETTINGS_TOOL_CALL_PRESENCE_LABEL,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { ButtonContent } from "../ui/button-content.js";
+import { LoadError } from "../ui/load-error.js";
+import { SettingsActionButton } from "./SettingsActionButton.js";
+import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
-  providerCatalogLoaded: boolean;
-  modelCatalogRevisionLabel: string;
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
+  settingsDraftLoaded: boolean;
+  memoryV6DiagnosticsLoadStatus: "loading" | "loaded" | "error";
+  memoryV6DiagnosticsLoadError: string;
+  onRetryMemoryV6Diagnostics: () => void;
+  appSettingsLoadStatus: "loading" | "loaded" | "error";
+  appSettingsLoadError: string;
+  onRetryAppSettings: () => void;
+  modelCatalogLoadStatus: "loading" | "loaded" | "error";
+  modelCatalogLoadError: string;
+  onRetryModelCatalog: () => void;
   settingsDirty: boolean;
   settingsFeedback: string;
+  settingsErrors: ReadonlyMap<string, string>;
   sessionCleanupCutoffDate: string;
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeCharacterDefinitionEnabled: (enabled: boolean) => void;
+  onChangeCharacterAffectContextEnabled: (enabled: boolean) => void;
+  onChangeConversationTimingEnabled: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
+  onChangePreviewWheelZoomStep: (value: number) => void;
   onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
+  onChangeSessionApprovalNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
+  onChangeToolCallPresenceEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
-  onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
   onChangeProviderSkillRootPath: (providerId: string, skillRootPath: string) => void;
   onChangeProviderSkillRelativePath: (providerId: string, skillRelativePath: string) => void;
   onChangeProviderInstructionRelativePath: (providerId: string, instructionRelativePath: string) => void;
-  onBrowseProviderSkillRootPath: (providerId: string) => void;
-  onBrowseProviderSkillRelativePath: (providerId: string) => void;
-  onBrowseProviderInstructionRelativePath: (providerId: string) => void;
-  onImportModelCatalog: () => void;
-  onExportModelCatalog: () => void;
-  onOpenAppLogFolder: () => void;
-  onOpenCrashDumpFolder: () => void;
-  onOpenMemoryV6Review: () => void;
-  onInstallMemoryV6CliShim: () => void;
-  onUninstallMemoryV6CliShim: () => void;
-  onDeleteSessionsLastActiveBefore: () => void;
-  onSaveSettings: () => void;
+  onBrowseProviderSkillRootPath: (providerId: string) => void | Promise<void>;
+  onBrowseProviderSkillRelativePath: (providerId: string) => void | Promise<void>;
+  onBrowseProviderInstructionRelativePath: (providerId: string) => void | Promise<void>;
+  onOpenAppLogFolder: () => void | Promise<void>;
+  onOpenCrashDumpFolder: () => void | Promise<void>;
+  onOpenMemoryV6Review: () => void | Promise<void>;
+  onInstallMemoryV6CliShim: () => void | Promise<void>;
+  onUninstallMemoryV6CliShim: () => void | Promise<void>;
+  onDeleteSessionsLastActiveBefore: () => void | Promise<void>;
+  onSaveSettings: () => void | Promise<void>;
 };
 
-const MICROCOPY_SLOT_LABEL: Record<MicrocopySlot, string> = {
-  "chat.pending.response_waiting": "Chat / 応答待機",
-  "dock.status.approval": "ActionDock / 承認待機",
-  "dock.status.working": "ActionDock / 処理中",
-  "dock.status.responding": "ActionDock / 応答生成中",
-  "dock.status.preparing": "ActionDock / 応答準備中",
-  "retry.interrupted.title": "Retry / 中断",
-  "retry.failed.title": "Retry / 失敗",
-  "retry.canceled.title": "Retry / キャンセル",
-  "composer.error.path_not_found": "Composer / パスなし",
-  "empty.latest_command.waiting": "Empty / command 待機",
-  "empty.latest_command": "Empty / command なし",
-  "empty.changed_files": "Empty / 変更なし",
-  "empty.context": "Empty / context なし",
+type SettingsActionKey =
+  | "open-logs"
+  | "open-crash-dumps"
+  | "review-memory"
+  | "install-cli-shim"
+  | "uninstall-cli-shim"
+  | `browse-root:${string}`
+  | `browse-skill:${string}`
+  | `browse-instruction:${string}`
+  | "delete-sessions"
+  | "save-settings";
+
+function settingsActionsConflict(action: SettingsActionKey, pending: SettingsActionKey): boolean {
+  // Save can update Session runtime settings; cleanup deletes those Sessions.
+  const updatesSettingsOrSessions = (key: SettingsActionKey) =>
+    key === "save-settings" || key === "delete-sessions";
+  // Keep native file dialogs single-flight, including provider draft pickers.
+  const opensFileDialog = (key: SettingsActionKey) =>
+    key.startsWith("browse-");
+  const updatesCliShim = (key: SettingsActionKey) =>
+    key === "install-cli-shim" || key === "uninstall-cli-shim";
+  return action === pending
+    || (updatesSettingsOrSessions(action) && updatesSettingsOrSessions(pending))
+    || (opensFileDialog(action) && opensFileDialog(pending))
+    || (updatesCliShim(action) && updatesCliShim(pending));
+}
+
+type PromptContextToggleProps = {
+  id: string;
+  label: string;
+  checked: boolean;
+  onChange: (enabled: boolean) => void;
 };
 
-const microcopyTextareaValue = (value: AppSettings["userMicrocopyCatalog"][MicrocopySlot]): string => {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  return (value ?? []).join("\n");
-};
+function PromptContextToggle({ id, label, checked, onChange }: PromptContextToggleProps) {
+  return (
+    <div className="settings-provider-toggle-row settings-section-toggle">
+      <label className="settings-provider-name" htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+    </div>
+  );
+}
 
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
-  providerCatalogLoaded,
-  modelCatalogRevisionLabel,
   memoryV6Diagnostics,
+  settingsDraftLoaded,
+  memoryV6DiagnosticsLoadStatus,
+  memoryV6DiagnosticsLoadError,
+  onRetryMemoryV6Diagnostics,
+  appSettingsLoadStatus,
+  appSettingsLoadError,
+  onRetryAppSettings,
+  modelCatalogLoadStatus,
+  modelCatalogLoadError,
+  onRetryModelCatalog,
   settingsDirty,
   settingsFeedback,
+  settingsErrors,
   sessionCleanupCutoffDate,
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeCharacterDefinitionEnabled,
+  onChangeCharacterAffectContextEnabled,
+  onChangeConversationTimingEnabled,
   onChangeScrollToLatestOnSend,
+  onChangePreviewWheelZoomStep,
   onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
+  onChangeSessionApprovalNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
+  onChangeToolCallPresenceEnabled,
   onChangeMemoryFileQuotaMegabytes,
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
-  onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
   onChangeProviderSkillRootPath,
   onChangeProviderSkillRelativePath,
@@ -128,8 +189,6 @@ export function HomeSettingsContent({
   onBrowseProviderSkillRootPath,
   onBrowseProviderSkillRelativePath,
   onBrowseProviderInstructionRelativePath,
-  onImportModelCatalog,
-  onExportModelCatalog,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
   onOpenMemoryV6Review,
@@ -138,14 +197,62 @@ export function HomeSettingsContent({
   onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
+  const [busyActions, setBusyActions] = useState<ReadonlySet<SettingsActionKey>>(() => new Set());
+  const busyActionsRef = useRef(new Set<SettingsActionKey>());
+  const [invalidPreviewWheelZoomStep, setInvalidPreviewWheelZoomStep] = useState<string | null>(null);
+  const [cleaningSessionFiles, setCleaningSessionFiles] = useState(false);
+  const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
   const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
   const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
+  const runAction = async (action: SettingsActionKey, callback: () => void | Promise<void>) => {
+    if ([...busyActionsRef.current].some((pending) => settingsActionsConflict(action, pending))) {
+      return;
+    }
+    busyActionsRef.current.add(action);
+    setBusyActions(new Set(busyActionsRef.current));
+    try {
+      await callback();
+    } finally {
+      busyActionsRef.current.delete(action);
+      setBusyActions(new Set(busyActionsRef.current));
+    }
+  };
+  const actionIsBusy = (action: SettingsActionKey) => busyActions.has(action);
+  const actionIsBlocked = (action: SettingsActionKey) =>
+    [...busyActions].some((pending) => settingsActionsConflict(action, pending));
 
   return (
     <>
       <div className="settings-panel settings-panel-window">
         <div className="settings-panel-window-scroll">
           <section className="settings-section">
+          {!settingsDraftLoaded ? (
+            <section className="settings-section-card">
+              <div className="settings-field">
+                <strong>App</strong>
+                {appSettingsLoadStatus === "loading" ? <LoadingIndicator label="Loading app settings" /> : null}
+                {appSettingsLoadStatus === "error" ? (
+                  <LoadError message={appSettingsLoadError || "Could not load app settings."} onRetry={onRetryAppSettings} />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+          {!settingsDraftLoaded ? (
+            <section className="settings-section-card">
+              <div className="settings-field">
+                <strong>Coding Agent Providers</strong>
+                {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
+                {modelCatalogLoadStatus === "error" ? (
+                  <LoadError
+                    message={modelCatalogLoadError || "Could not load model catalog."}
+                    onRetry={onRetryModelCatalog}
+                  />
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+          <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
+          {settingsDraftLoaded ? <>
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>App</strong>
@@ -178,6 +285,14 @@ export function HomeSettingsContent({
                 />
               </label>
               <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.sessionApprovalNotificationEnabled}
+                  onChange={(event) => onChangeSessionApprovalNotificationEnabled(event.target.checked)}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
                 <span className="settings-provider-name">{SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL}</span>
                 <input
                   type="checkbox"
@@ -193,33 +308,78 @@ export function HomeSettingsContent({
                   onChange={(event) => onChangeScrollToLatestOnSend(event.target.checked)}
                 />
               </label>
-            </div>
-          </section>
-
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>Default Microcopy</strong>
-              <p className="settings-note">1 行を 1 候補として保存する。空の slot は system default に戻る。</p>
-              <div className="settings-provider-list">
-                {MICROCOPY_SLOTS.map((slot) => (
-                  <label key={slot} className="settings-provider-input">
-                    <span>{MICROCOPY_SLOT_LABEL[slot]}</span>
-                    <textarea
-                      className="settings-microcopy-textarea"
-                      value={microcopyTextareaValue(settingsDraft.userMicrocopyCatalog[slot])}
-                      onChange={(event) => onChangeUserMicrocopySlot(slot, event.target.value)}
-                      rows={3}
-                      spellCheck={false}
-                    />
-                  </label>
-                ))}
+              <div className="settings-provider-input">
+                <div className="settings-inline-input-row settings-preview-zoom-row">
+                  <label className="settings-provider-name" htmlFor="settings-preview-wheel-zoom-step">Preview Wheel Zoom Step</label>
+                  <input
+                    id="settings-preview-wheel-zoom-step"
+                    type="number"
+                    min={PREVIEW_WHEEL_ZOOM_STEP_MIN}
+                    max={PREVIEW_WHEEL_ZOOM_STEP_MAX}
+                    step={1}
+                    required
+                    value={invalidPreviewWheelZoomStep ?? settingsDraft.previewWheelZoomStep}
+                    aria-invalid={previewWheelZoomStepInvalid}
+                    aria-describedby={previewWheelZoomStepInvalid ? "settings-preview-wheel-zoom-step-error" : undefined}
+                    onChange={(event) => {
+                      const rawValue = event.target.value;
+                      const value = event.target.valueAsNumber;
+                      if (isPreviewWheelZoomStep(value)) {
+                        setInvalidPreviewWheelZoomStep(null);
+                        onChangePreviewWheelZoomStep(value);
+                      } else {
+                        setInvalidPreviewWheelZoomStep(rawValue);
+                      }
+                    }}
+                  />
+                </div>
+                {previewWheelZoomStepInvalid ? <p id="settings-preview-wheel-zoom-step-error" className="settings-help" role="alert">
+                  Enter a whole number from 1 to 100.
+                </p> : null}
               </div>
             </div>
           </section>
 
           <section className="settings-section-card">
             <div className="settings-field">
+              <strong>Prompt Context</strong>
+              <PromptContextToggle
+                id="settings-prompt-context-character-definition"
+                label={SETTINGS_CHARACTER_DEFINITION_LABEL}
+                checked={settingsDraft.characterDefinitionEnabled}
+                onChange={onChangeCharacterDefinitionEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-character-affect"
+                label={SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL}
+                checked={settingsDraft.characterAffectContextEnabled}
+                onChange={onChangeCharacterAffectContextEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-conversation-timing"
+                label={SETTINGS_CONVERSATION_TIMING_LABEL}
+                checked={settingsDraft.conversationTimingEnabled}
+                onChange={onChangeConversationTimingEnabled}
+              />
+              <PromptContextToggle
+                id="settings-prompt-context-tool-call-presence"
+                label={SETTINGS_TOOL_CALL_PRESENCE_LABEL}
+                checked={settingsDraft.toolCallPresenceEnabled}
+                onChange={onChangeToolCallPresenceEnabled}
+              />
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
               <strong>Coding Agent Providers</strong>
+              {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
+              {modelCatalogLoadStatus === "error" ? (
+                <LoadError
+                  message={modelCatalogLoadError || "Could not load model catalog."}
+                  onRetry={onRetryModelCatalog}
+                />
+              ) : null}
               {providerSettingRows.length > 0 ? (
                 <div className="settings-provider-list">
                   {providerSettingRows.map(({ provider, settings }) => (
@@ -232,10 +392,21 @@ export function HomeSettingsContent({
                           onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
                         />
                       </label>
+                      {provider.id === "claude" ? (
+                        <p className="settings-help">
+                          Uses local Claude Code authentication and billing settings. Sign in with the official CLI before starting a session.
+                        </p>
+                      ) : null}
+                      {provider.id === "opencode" ? (
+                        <p className="settings-help">Configure authentication in OpenCode.</p>
+                      ) : null}
                       <div className="settings-provider-file-settings">
                         <div>
                           <strong>{SETTINGS_PROVIDER_FILE_SETTINGS_LABEL}</strong>
                           <p className="settings-help">{SETTINGS_PROVIDER_FILE_SETTINGS_HELP}</p>
+                          {provider.id === "opencode" ? (
+                            <p className="settings-help">Use the OpenCode config root with AGENTS.md and skills/&lt;name&gt;/SKILL.md. Custom paths are not registered with OpenCode automatically.</p>
+                          ) : null}
                         </div>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL}</span>
@@ -248,13 +419,23 @@ export function HomeSettingsContent({
                               autoComplete="off"
                               spellCheck={false}
                             />
-                            <button
+                            <SettingsActionButton
+                              failure={settingsErrors.get(`browse-root:${provider.id}`)}
+                              actionLabel={`Choose Root Directory for ${provider.label}`}
                               className="launch-toggle"
                               type="button"
-                              onClick={() => onBrowseProviderSkillRootPath(provider.id)}
+                              onClick={() => void runAction(`browse-root:${provider.id}`, () => onBrowseProviderSkillRootPath(provider.id))}
+                              disabled={actionIsBlocked(`browse-root:${provider.id}`)}
+                              aria-busy={actionIsBusy(`browse-root:${provider.id}`)}
+                              aria-label={actionIsBusy(`browse-root:${provider.id}`) ? `Opening provider root directory for ${provider.label}` : "Browse"}
                             >
-                              選択
-                            </button>
+                              <ButtonContent
+                                busy={actionIsBusy(`browse-root:${provider.id}`)}
+                                busyLabel={`Opening provider root directory for ${provider.label}.`}
+                              >
+                                Browse
+                              </ButtonContent>
+                            </SettingsActionButton>
                           </div>
                         </label>
                         <label className="settings-provider-input">
@@ -268,15 +449,24 @@ export function HomeSettingsContent({
                               autoComplete="off"
                               spellCheck={false}
                             />
-                            <button
+                            <SettingsActionButton
+                              failure={settingsErrors.get(`browse-skill:${provider.id}`)}
+                              actionLabel={`Choose Skill Folder for ${provider.label}`}
                               className="launch-toggle"
                               type="button"
-                              onClick={() => onBrowseProviderSkillRelativePath(provider.id)}
+                              onClick={() => void runAction(`browse-skill:${provider.id}`, () => onBrowseProviderSkillRelativePath(provider.id))}
+                              disabled={actionIsBlocked(`browse-skill:${provider.id}`)}
+                              aria-busy={actionIsBusy(`browse-skill:${provider.id}`)}
+                              aria-label={actionIsBusy(`browse-skill:${provider.id}`) ? `Opening skill folder for ${provider.label}` : "Browse"}
                             >
-                              選択
-                            </button>
+                              <ButtonContent
+                                busy={actionIsBusy(`browse-skill:${provider.id}`)}
+                                busyLabel={`Opening skill folder for ${provider.label}.`}
+                              >
+                                Browse
+                              </ButtonContent>
+                            </SettingsActionButton>
                           </div>
-                          <p className="settings-help">{SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_HELP}</p>
                         </label>
                         <label className="settings-provider-input">
                           <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
@@ -289,39 +479,45 @@ export function HomeSettingsContent({
                               autoComplete="off"
                               spellCheck={false}
                             />
-                            <button
+                            <SettingsActionButton
+                              failure={settingsErrors.get(`browse-instruction:${provider.id}`)}
+                              actionLabel={`Choose Instruction File for ${provider.label}`}
                               className="launch-toggle"
                               type="button"
-                              onClick={() => onBrowseProviderInstructionRelativePath(provider.id)}
+                              onClick={() => void runAction(`browse-instruction:${provider.id}`, () => onBrowseProviderInstructionRelativePath(provider.id))}
+                              disabled={actionIsBlocked(`browse-instruction:${provider.id}`)}
+                              aria-busy={actionIsBusy(`browse-instruction:${provider.id}`)}
+                              aria-label={actionIsBusy(`browse-instruction:${provider.id}`) ? `Opening instruction file for ${provider.label}` : "Browse"}
                             >
-                              選択
-                            </button>
+                              <ButtonContent
+                                busy={actionIsBusy(`browse-instruction:${provider.id}`)}
+                                busyLabel={`Opening instruction file for ${provider.label}.`}
+                              >
+                                Browse
+                              </ButtonContent>
+                            </SettingsActionButton>
                           </div>
-                          <p className="settings-help">{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_HELP}</p>
                         </label>
                       </div>
                     </section>
                   ))}
                 </div>
-              ) : (
-                <p className="settings-note">
-                  {providerCatalogLoaded
-                    ? "model catalog に coding provider がありません。Import Models で provider を含む catalog を読み込んでね。"
-                    : "model catalog を読み込めないため、coding provider の設定を表示できません。"}
-                </p>
-              )}
+              ) : null}
             </div>
           </section>
+          </> : null}
+          </fieldset>
 
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
               {memoryV6Diagnostics ? (
+                <>
                 <div className="settings-diagnostics-grid">
                   <div className="settings-diagnostics-item">
                     <span>Memory API</span>
                     <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "discovery published" : "discovery unavailable"}</small>
+                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "Discovery Published" : "Discovery Unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
                     <span>CLI Shim</span>
@@ -333,59 +529,120 @@ export function HomeSettingsContent({
                     <strong>
                       {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
                         ?? memoryV6Diagnostics.lastErrors[0]?.kind
-                        ?? "none"}
+                        ?? "None"}
                     </strong>
-                    <small>{memoryV6Diagnostics.lastErrors.length > 0 ? "Review the application log for details." : "Memory V6 diagnostics has no recorded error."}</small>
+                    {memoryV6Diagnostics.lastErrors.length > 0 ? <small>Review the application log for details.</small> : null}
                   </div>
                 </div>
+                {memoryV6DiagnosticsLoadStatus === "loading" ? (
+                  <LoadingIndicator label="Refreshing Memory V6 diagnostics" inline />
+                ) : null}
+                {memoryV6DiagnosticsLoadStatus === "error" ? (
+                  <LoadError
+                    message={memoryV6DiagnosticsLoadError || "Could not refresh Memory V6 diagnostics."}
+                    onRetry={onRetryMemoryV6Diagnostics}
+                  />
+                ) : null}
+                </>
+              ) : memoryV6DiagnosticsLoadStatus === "loading" ? (
+                <LoadingIndicator label="Loading Memory V6 diagnostics" inline />
+              ) : memoryV6DiagnosticsLoadStatus === "error" ? (
+                <LoadError
+                  message={memoryV6DiagnosticsLoadError || "Could not load Memory V6 diagnostics."}
+                  onRetry={onRetryMemoryV6Diagnostics}
+                />
               ) : (
-                <p className="settings-note">Memory V6 diagnostics を読み込んでいます。</p>
+                <p className="settings-empty-state">Diagnostics are unavailable.</p>
               )}
               <div className="settings-actions">
-                <button className="launch-toggle" type="button" onClick={onOpenMemoryV6Review}>
-                  Review Memory
-                </button>
                 <button
                   className="launch-toggle"
                   type="button"
-                  onClick={onInstallMemoryV6CliShim}
-                  disabled={!memoryV6Diagnostics?.cliShim.supported}
+                  onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
+                  disabled={actionIsBlocked("review-memory")}
+                  aria-busy={actionIsBusy("review-memory")}
+                  aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "Review Memory"}
                 >
-                  Install CLI Shim
+                  <ButtonContent
+                    busy={actionIsBusy("review-memory")}
+                    busyLabel="Opening Memory review."
+                  >
+                    Review Memory
+                  </ButtonContent>
                 </button>
-                <button
+                <SettingsActionButton
+                  failure={settingsErrors.get("install-cli-shim")}
+                  actionLabel="Install CLI Shim"
                   className="launch-toggle"
                   type="button"
-                  onClick={onUninstallMemoryV6CliShim}
-                  disabled={!canUninstallCliShim(memoryV6Diagnostics)}
+                  onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
+                  disabled={actionIsBlocked("install-cli-shim") || !memoryV6Diagnostics?.cliShim.supported}
+                  aria-busy={actionIsBusy("install-cli-shim")}
+                  aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "Install CLI Shim"}
                 >
-                  Uninstall CLI Shim
-                </button>
-                <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
-                  {SETTINGS_OPEN_LOG_FOLDER_LABEL}
-                </button>
-                <button className="launch-toggle" type="button" onClick={onOpenCrashDumpFolder}>
-                  {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
-                </button>
+                  <ButtonContent
+                    busy={actionIsBusy("install-cli-shim")}
+                    busyLabel="Installing CLI shim."
+                  >
+                    Install CLI Shim
+                  </ButtonContent>
+                </SettingsActionButton>
+                <SettingsActionButton
+                  failure={settingsErrors.get("uninstall-cli-shim")}
+                  actionLabel="Uninstall CLI Shim"
+                  className="launch-toggle"
+                  type="button"
+                  onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
+                  disabled={actionIsBlocked("uninstall-cli-shim") || !canUninstallCliShim(memoryV6Diagnostics)}
+                  aria-busy={actionIsBusy("uninstall-cli-shim")}
+                  aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "Uninstall CLI Shim"}
+                >
+                  <ButtonContent
+                    busy={actionIsBusy("uninstall-cli-shim")}
+                    busyLabel="Uninstalling CLI shim."
+                  >
+                    Uninstall CLI Shim
+                  </ButtonContent>
+                </SettingsActionButton>
+                <SettingsActionButton
+                  failure={settingsErrors.get("open-logs")}
+                  actionLabel="Open Logs"
+                  className="launch-toggle"
+                  type="button"
+                  onClick={() => void runAction("open-logs", onOpenAppLogFolder)}
+                  disabled={actionIsBlocked("open-logs")}
+                  aria-busy={actionIsBusy("open-logs")}
+                  aria-label={actionIsBusy("open-logs") ? "Opening application logs" : SETTINGS_OPEN_LOG_FOLDER_LABEL}
+                >
+                  <ButtonContent
+                    busy={actionIsBusy("open-logs")}
+                    busyLabel="Opening application logs."
+                  >
+                    {SETTINGS_OPEN_LOG_FOLDER_LABEL}
+                  </ButtonContent>
+                </SettingsActionButton>
+                <SettingsActionButton
+                  failure={settingsErrors.get("open-crash-dumps")}
+                  actionLabel="Open Crash Dumps"
+                  className="launch-toggle"
+                  type="button"
+                  onClick={() => void runAction("open-crash-dumps", onOpenCrashDumpFolder)}
+                  disabled={actionIsBlocked("open-crash-dumps")}
+                  aria-busy={actionIsBusy("open-crash-dumps")}
+                  aria-label={actionIsBusy("open-crash-dumps") ? "Opening crash dumps" : SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
+                >
+                  <ButtonContent
+                    busy={actionIsBusy("open-crash-dumps")}
+                    busyLabel="Opening crash dumps."
+                  >
+                    {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
+                  </ButtonContent>
+                </SettingsActionButton>
               </div>
             </div>
           </section>
 
-          <section className="settings-section-card">
-            <div className="settings-field">
-              <strong>Model Catalog</strong>
-              <p className="settings-help">active revision: {modelCatalogRevisionLabel}</p>
-              <div className="settings-actions">
-                <button className="launch-toggle" type="button" onClick={onImportModelCatalog}>
-                  Import Models
-                </button>
-                <button className="launch-toggle" type="button" onClick={onExportModelCatalog}>
-                  Export Models
-                </button>
-              </div>
-            </div>
-          </section>
-
+          {settingsDraftLoaded ? <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>Repository Glossary</strong>
@@ -400,7 +657,7 @@ export function HomeSettingsContent({
                     value={settingsDraft.glossaryProactiveCreateLimit ?? ""}
                     onChange={(event) => onChangeGlossaryProactiveCreateLimit(event.target.value)}
                   />
-                  <span className="settings-inline-unit">terms</span>
+                  <span className="settings-inline-unit">Terms</span>
                 </div>
                 <p className="settings-help">{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP}</p>
               </label>
@@ -432,19 +689,29 @@ export function HomeSettingsContent({
                     type="date"
                     value={sessionCleanupCutoffDate}
                     onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
-                    disabled={deletingOldSessions}
+                    disabled={cleaningSessionFiles || deletingOldSessions || actionIsBusy("delete-sessions")}
                   />
-                  <button
+                  <SettingsActionButton
+                    failure={settingsErrors.get("delete-sessions")}
+                    actionLabel="Delete Old Sessions"
                     className="launch-toggle"
                     type="button"
-                    onClick={onDeleteSessionsLastActiveBefore}
-                    disabled={deletingOldSessions || !sessionCleanupCutoffDate}
+                    onClick={() => void runAction("delete-sessions", onDeleteSessionsLastActiveBefore)}
+                    disabled={cleaningSessionFiles || deletingOldSessions || actionIsBlocked("delete-sessions") || !sessionCleanupCutoffDate}
+                    aria-busy={actionIsBusy("delete-sessions")}
+                    aria-label={actionIsBusy("delete-sessions") ? "Deleting old sessions" : "Delete"}
                   >
-                    Delete
-                  </button>
+                    <ButtonContent
+                      busy={actionIsBusy("delete-sessions")}
+                      busyLabel="Deleting old sessions."
+                    >
+                      Delete
+                    </ButtonContent>
+                  </SettingsActionButton>
                 </div>
                 <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
               </label>
+              <SessionFolderCleanup disabled={deletingOldSessions || actionIsBusy("delete-sessions")} onBusyChange={setCleaningSessionFiles} />
             </div>
           </section>
 
@@ -452,15 +719,33 @@ export function HomeSettingsContent({
             settings={settingsDraft.keyboardShortcuts}
             onChange={onChangeKeyboardShortcuts}
           />
+          </fieldset> : null}
 
           </section>
         </div>
       </div>
       <div className="launch-dialog-foot settings-dialog-foot">
-        {settingsFeedback ? <p className="settings-feedback settings-feedback-inline">{settingsFeedback}</p> : <span aria-hidden="true" />}
-        <button className="launch-toggle" type="button" onClick={onSaveSettings} disabled={!settingsDirty}>
-          Save Settings
-        </button>
+        <div className="settings-footer-status" aria-live="polite">
+          {settingsDirty || previewWheelZoomStepInvalid ? <span className="settings-dirty-state">Unsaved Changes</span> : null}
+          {settingsFeedback ? <p className="settings-feedback settings-feedback-inline" role="status">{settingsFeedback}</p> : null}
+        </div>
+        <SettingsActionButton
+          failure={settingsErrors.get("save-settings")}
+          actionLabel="Save Settings"
+          className="launch-toggle"
+          type="button"
+          onClick={() => void runAction("save-settings", onSaveSettings)}
+          disabled={!settingsDirty || previewWheelZoomStepInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
+          aria-busy={actionIsBusy("save-settings")}
+          aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
+        >
+          <ButtonContent
+            busy={actionIsBusy("save-settings")}
+            busyLabel="Saving settings."
+          >
+            Save Settings
+          </ButtonContent>
+        </SettingsActionButton>
       </div>
     </>
   );
@@ -469,10 +754,10 @@ export function HomeSettingsContent({
 function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
   const shim = diagnostics.cliShim;
   if (!shim.supported) {
-    return shim.status === "managed-by-installer" ? "managed by installer" : "unsupported";
+    return shim.status === "managed-by-installer" ? "Managed By Installer" : "Unsupported";
   }
 
-  const pathStatus = shim.pathContainsShimDirectory ? "PATH ready" : "PATH missing";
+  const pathStatus = shim.pathContainsShimDirectory ? "PATH Ready" : "PATH Missing";
   return `${pathStatus}: ${shim.commandName}`;
 }
 

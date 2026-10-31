@@ -1,58 +1,76 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { isReadOnlySession, type HomeSessionSummary } from "../app-state.js";
-import type { CompanionSessionSummary } from "../companion-state.js";
-import { getHomeCompanionSessionState, type HomeSessionState } from "./home-session-projection.js";
-import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
+import { isReadOnlySession } from "../../src-shared/session/session-state.js";
+import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
+import { ButtonContent } from "../ui/button-content.js";
+import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
+import type { HomeSessionState } from "./home-session-projection.js";
+import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
 
 export type HomeRecentSessionsPanelProps = {
   filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
-  companionSessions: CompanionSessionSummary[];
-  normalizedSessionSearch: string;
-  searchText: string;
-  searchIcon: ReactNode;
-  onChangeSearchText: (value: string) => void;
-  onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
-  canUsePrimaryFeatures?: boolean;
+  sessionSummaryLoadStatus?: SessionSummariesLoadStatus;
+  feedback?: string;
+  onRetry?: () => void;
+  launchResults?: ReactNode;
 };
 
-function getAgentSessionModeBadge(session: HomeSessionSummary): { className: string; label: string } {
-  if (session.sessionKind === "character-authoring") {
-    return {
-      className: "session-mode-badge character",
-      label: "Character",
-    };
+const HOME_SESSION_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+export function formatHomeSessionUpdatedAt(value: string): string {
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
   }
 
-  return {
-    className: "session-mode-badge agent",
-    label: "Agent",
-  };
+  const year = String(timestamp.getFullYear()).padStart(4, "0");
+  const month = String(timestamp.getMonth() + 1).padStart(2, "0");
+  const day = String(timestamp.getDate()).padStart(2, "0");
+  const weekday = HOME_SESSION_WEEKDAYS[timestamp.getDay()];
+  const hours = String(timestamp.getHours()).padStart(2, "0");
+  const minutes = String(timestamp.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}(${weekday}) ${hours}:${minutes}`;
+}
+
+function PinIcon({ active }: { active: boolean }) {
+  return (
+    <svg
+      className={`home-session-pin-icon${active ? " active" : ""}`}
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path
+        d="m7.2 2.8 5.7 5.7 1.3-.3 1.2 1.2-3.6 1.9-1.9 3.6-1.2-1.2.3-1.3-5.7-5.7 1.3-1.3 1.3.3 1.3-1.3Zm-2.9 9.9 2.9 2.9-2.5 1.6-2-2 1.6-2.5Z"
+        fill={active ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 export function HomeRecentSessionsPanel({
   filteredSessionEntries,
-  companionSessions,
-  normalizedSessionSearch,
-  searchText,
-  searchIcon,
-  onChangeSearchText,
-  onOpenLaunchDialog,
   onOpenSession,
   onSetSessionPinned,
-  onOpenCompanionReview,
   hasMore = false,
   loadingMore = false,
   onLoadMore,
   pendingSessionPinIds = [],
-  canUsePrimaryFeatures = true,
+  sessionSummaryLoadStatus = "loaded",
+  feedback = "",
+  onRetry,
+  launchResults,
 }: HomeRecentSessionsPanelProps) {
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -75,53 +93,15 @@ export function HomeRecentSessionsPanel({
     return () => observer.disconnect();
   }, [hasMore, onLoadMore]);
 
-  const openLaunchDialog = () => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenLaunchDialog();
-  };
   const openSession = (sessionId: string) => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
     onOpenSession(sessionId);
   };
-  const openCompanionReview = (sessionId: string) => {
-    if (!canUsePrimaryFeatures) {
-      return;
-    }
-    onOpenCompanionReview(sessionId);
-  };
-  const visibleCompanionSessions = companionSessions.filter((session) => {
-    if (!normalizedSessionSearch) {
-      return true;
-    }
-    const haystack = [
-      "companion",
-      session.taskTitle,
-      session.character,
-      session.repoRoot,
-      session.focusPath,
-      session.targetBranch,
-      session.status,
-    ].join(" ").toLowerCase();
-    return haystack.includes(normalizedSessionSearch);
-  });
-  const visibleSessionEntries = [
-    ...filteredSessionEntries.map((entry) => ({
+  const visibleSessionEntries = filteredSessionEntries.map((entry) => ({
       kind: "agent" as const,
       updatedAt: entry.session.updatedAt,
       isPinned: entry.session.isPinned,
       entry,
-    })),
-    ...visibleCompanionSessions.map((session) => ({
-      kind: "companion" as const,
-      updatedAt: session.updatedAt,
-      isPinned: false,
-      session,
-    })),
-  ].sort((left, right) => {
+    })).sort((left, right) => {
     if (left.isPinned !== right.isPinned) {
       return left.isPinned ? -1 : 1;
     }
@@ -130,73 +110,25 @@ export function HomeRecentSessionsPanel({
     return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
   });
   const hasVisibleEntries = visibleSessionEntries.length > 0;
+  const isLoading = sessionSummaryLoadStatus === "loading";
+  const loadErrorMessage = feedback || (sessionSummaryLoadStatus === "error"
+    ? "Could not load sessions."
+    : "");
 
   return (
     <section className="panel session-list-panel home-session-list-panel rise-3">
-      <div className="toolbar-search-row">
-        <label className="toolbar-search-field" aria-label="セッション検索">
-          <span className="toolbar-search-icon" aria-hidden="true">
-            {searchIcon}
-          </span>
-          <input
-            className="toolbar-search-input"
-            type="text"
-            aria-label="セッション検索"
-            value={searchText}
-            onChange={(event) => onChangeSearchText(event.target.value)}
-          />
-        </label>
-        <button
-          className="start-session-button"
-          type="button"
-          onClick={openLaunchDialog}
-          aria-disabled={!canUsePrimaryFeatures}
-          disabled={!canUsePrimaryFeatures}
-        >
-          New Session
-        </button>
-      </div>
-
-      <div className="session-card-list home-session-card-list">
+      {loadErrorMessage ? (
+        <LoadError message={loadErrorMessage} onRetry={onRetry} retryDisabled={isLoading || loadingMore} className="home-session-list-feedback" />
+      ) : null}
+      <div
+        className="session-card-list home-session-card-list"
+        aria-busy={isLoading || loadingMore}
+      >
+        {launchResults}
         {visibleSessionEntries.map((item) => {
-          if (item.kind === "companion") {
-            const { session } = item;
-            const companionState = getHomeCompanionSessionState(session);
-            return (
-              <button
-                key={`companion-${session.id}`}
-                className="session-card home-session-card"
-                type="button"
-                style={buildCardThemeStyle(session.characterThemeColors)}
-                onClick={() => openCompanionReview(session.id)}
-                aria-disabled={!canUsePrimaryFeatures}
-                disabled={!canUsePrimaryFeatures}
-              >
-                <CharacterAvatar
-                  character={{ name: session.character, iconPath: session.characterIconPath }}
-                  size="tiny"
-                  className="home-session-card-avatar"
-                />
-                <div className="session-card-copy">
-                  <div className="session-card-topline home-session-card-topline">
-                    <strong>{session.taskTitle}</strong>
-                    <div className="home-session-card-badges">
-                      <span className="session-mode-badge companion">Companion</span>
-                      <span className={`session-status home-session-status ${companionState.kind}`.trim()}>{companionState.label}</span>
-                    </div>
-                  </div>
-                  <div className="session-card-subline home-session-card-meta">
-                    <span>{`Workspace : ${session.focusPath || session.repoRoot}`}</span>
-                    <span>{`updatedAt: ${session.updatedAt}`}</span>
-                  </div>
-                </div>
-              </button>
-            );
-          }
-
-          const { session, state } = item.entry;
+          const { session } = item.entry;
           const isReadOnly = isReadOnlySession(session);
-          const modeBadge = getAgentSessionModeBadge(session);
+          const isCharacterAuthoring = session.sessionKind === "character-authoring";
           const isPinPending = pendingSessionPinIds.includes(session.id);
           return (
             <div
@@ -208,8 +140,6 @@ export function HomeRecentSessionsPanel({
                 className="home-session-card-open"
                 type="button"
                 onClick={() => openSession(session.id)}
-                aria-disabled={!canUsePrimaryFeatures}
-                disabled={!canUsePrimaryFeatures}
               >
                 <CharacterAvatar
                   character={{ name: session.character, iconPath: session.characterIconPath }}
@@ -219,37 +149,46 @@ export function HomeRecentSessionsPanel({
                 <div className="session-card-copy">
                   <strong>{session.taskTitle}</strong>
                   <div className="session-card-subline home-session-card-meta">
-                    <span>{`Workspace : ${session.workspacePath || session.workspaceLabel}`}</span>
-                    <span>{`updatedAt: ${session.updatedAt}`}</span>
+                    <span>{`Workspace: ${session.workspacePath || session.workspaceLabel}`}</span>
+                    <span>{`Updated ${formatHomeSessionUpdatedAt(session.updatedAt)}`}</span>
                   </div>
                 </div>
               </button>
               <div className="home-session-card-actions">
-                <div className="home-session-card-badges">
-                  <span className={modeBadge.className}>{modeBadge.label}</span>
-                  {isReadOnly ? <span className="session-status home-session-status neutral">閲覧専用</span> : null}
-                  <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
-                </div>
+                {isCharacterAuthoring || isReadOnly ? (
+                  <div className="home-session-card-badges">
+                    {isCharacterAuthoring ? <span className="session-mode-badge character">Character</span> : null}
+                    {isReadOnly ? <span className="session-status home-session-status neutral">Read Only</span> : null}
+                  </div>
+                ) : null}
                 <button
-                  className={`home-session-pin-button${session.isPinned ? " is-active" : ""}${isPinPending ? " is-pending" : ""}`}
+                  className={`home-session-pin-button${session.isPinned ? " is-active" : ""}`}
                   type="button"
                   aria-pressed={session.isPinned}
-                  aria-label={`${session.taskTitle}を${session.isPinned ? "ピン解除" : "ピン止め"}`}
-                  disabled={!canUsePrimaryFeatures || isPinPending}
+                  aria-label={isPinPending
+                    ? `Updating pin for ${session.taskTitle}`
+                    : `${session.isPinned ? "Unpin" : "Pin"} ${session.taskTitle}`}
+                  title={isPinPending
+                    ? `Updating pin for ${session.taskTitle}`
+                    : `${session.isPinned ? "Unpin" : "Pin"} ${session.taskTitle}`}
+                  aria-busy={isPinPending}
+                  disabled={isPinPending}
                   onClick={() => onSetSessionPinned(session.id, !session.isPinned)}
                 >
-                  {isPinPending ? "変更中..." : session.isPinned ? "ピン解除" : "ピン止め"}
+                  <ButtonContent busy={isPinPending}>
+                    <PinIcon active={session.isPinned} />
+                  </ButtonContent>
                 </button>
               </div>
             </div>
           );
         })}
+        {!hasVisibleEntries && isLoading ? (
+          <LoadingIndicator label="Loading sessions" className="home-session-list-load-status" />
+        ) : null}
         {hasMore ? <div ref={loadMoreSentinelRef} className="home-session-list-load-sentinel" aria-hidden="true" /> : null}
         {loadingMore ? (
-          <div className="home-session-list-load-status" role="status" aria-live="polite">
-            <span className="home-session-list-load-spinner" aria-hidden="true" />
-            <span className="sr-only">Sessionを読み込み中...</span>
-          </div>
+          <LoadingIndicator label="Loading more sessions" className="home-session-list-load-status" />
         ) : null}
       </div>
     </section>

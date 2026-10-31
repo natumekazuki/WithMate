@@ -1,8 +1,5 @@
 # Electron Window Runtime
 
-- 作成日: 2026-03-12
-- 対象: BrowserWindow / preload / bootstrap の current runtime
-
 ## Goal
 
 WithMate の `Home Window`、`Session Window`、`Session Monitor Window`、`Settings Window`、`Diff Window` を Electron の current runtime でどう起動・再利用・接続しているかを説明する。
@@ -12,7 +9,7 @@ WithMate の `Home Window`、`Session Window`、`Session Monitor Window`、`Sett
 - この文書は `window-architecture.md` の supporting doc として扱う
 - window の上位責務と mode 切り替え判断は `docs/design/window-architecture.md` を正本とする
 - session 実行 lifecycle は `docs/design/session-run-lifecycle.md` を参照する
-- session / audit / memory persistence は `docs/design/electron-session-store.md` を参照する
+- session / turn / memory persistence は `docs/design/electron-session-store.md` を参照する
 
 ## Scope
 
@@ -55,7 +52,8 @@ flowchart LR
 - `Session Window` は `sessionId` ごとに 1 つまで生成する
 - `Session Monitor Window` と `Settings Window` は単一 window として再利用する
 - `Diff Window` は一時 token で preview payload を引く popout とする
-- 同じ対象を再度開く要求が来たら新規生成せず、既存 window を再表示・フォーカスする
+- `Session Graph Window`は閲覧ビューごとのtokenで同じ親Graphを読む独立Windowとし、`session-graph.html`をloadする。Windowとowner/incarnation/storage generationの読取認可は`SessionGraphWindowService`とGraph専用IPCが所有する
+- Session Graphの明示的な新窓操作を除き、同じ対象を再度開く要求が来たら、応答可能な既存 window を再表示・フォーカスする。Session WindowのRenderer終了・応答不能時の再生成は[Session Window Close](session-run-lifecycle.md#session-window-close)の契約に従う
 - renderer は `window.withmate` を前提に動作し、browser 単体起動はサポートしない
 
 ## Main Process Responsibilities
@@ -80,7 +78,33 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 
 - `Session Window` の生成後 wiring
 - running close policy
+- Rendererの応答可能・応答不能・終了状態と、操作に応じたclose・再open
 - `session-start`
+
+Window復元候補のsnapshotは任意保存とし、open完了・quit準備は保存完了を待たない。quit準備時は候補の保存を要求したうえでcloseによる候補更新を止める。Auxiliary draft等の必須flushは独立した終了条件として維持する。
+
+表示へのbroadcastはWindowごとに配送可否と送信例外を扱い、終了済みRendererには送信しない。配送失敗は固定分類で診断し、他Windowへの配送とMainのprovider応答保存を止めない。新しいRendererはMainのSession / live runを再取得する。draft flushの診断はclose / quit、結果分類、経過時間だけを記録し、本文・URL・タイトル・ID・生errorを含めない。
+
+`SessionWindowRestoreService`は起動時に読み込んだ復元候補と現在開いているWindowの保存集合を分離する。復元操作は起動時候補の読込みだけを待ち、その後の現在集合の保存には待機しない。
+
+### MainWindowComposition / MainWindowRuntime
+
+- `MainWindowComposition` は BrowserWindow の共通生成設定、cursor placement、Homeと同じWindowでの起動状態表示を所有する。bootstrap完了時にAuxWindowServiceがそのWindowをHomeとして引き継ぐ
+- `MainWindowRuntime` は WindowEntryLoader、WindowBroadcastService、WindowDialogService、AuxWindowService、SessionWindowBridge、SessionWindowRestoreService を一つの window runtime として所有する
+- runtime は session lookup、run-in-flight、draft flush、restore persistence などの narrow port だけを受け取り、Memory、Character、Provider、Storage の service bag を保持しない
+- window service の生成・状態は MainInfrastructureRegistry から分離し、Main Process の app/service registry と二重管理しない
+
+### Live Run Delivery
+
+`WindowBroadcastService`はlive詳細snapshotをMainが解決した実行ownerの登録済みSession Windowだけへ配信する。Mainは自身のWindow、Auxiliaryは保存済み親SessionのWindowを宛先とし、payloadの`sessionId`は元の会話IDを維持する。宛先不明・破棄済み・配送失敗時に他Sessionや全Windowへ代替配信しない。非表示のownerにも配信し、再open後はWindow registryから新しい宛先を引き直す。
+
+Home／Session Monitorには別の`withmate:live-session-run-status` eventで`runState`・`cancellationState`を明示投影し、承認待ちのときだけ`approvalPending: true`を付加する。非待機時は`approvalPending`を省略する。本文、reasoning、step、operation、承認・質問詳細を生成・転送・保持せず、本文サイズと独立したpayloadにする。Settings／MemoryReview等はこの通知の宛先に含めない。Home／Monitorは通知をsummary再取得の契機とし、表示の正本は既存のsummary応答とする。
+
+Auxiliaryの配送用親関連は実行受付とruntimeの保存済みactive会話読込みから得る。admissionの予約とは分け、run呼出しが収束した後も取消実終了待ち・retained live・background通知・終端`null`へ適用する。admission・実行（取消実終了待ちを含む）・保持liveがすべてなくなった時に、終端通知の配送後に解除する。
+
+Auxiliaryのclose・親Session削除でも解除し、遅い会話読込みで不要な関連を再登録しない。persistent storeのclose・交換時に破棄し、古いstorage ownerの登録・通知・解除を新しいownerへ適用しない。
+
+Session Window内のdetail consumer、controls projection、初回取得・detail再open・古い取得の破棄は既存の単一live ingressが所有する。
 
 ### AuxWindowService
 
@@ -99,6 +123,8 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 ### MainIpcRegistration
 
 - `window.withmate` に対応する IPC を domain ごとに登録する
+- Directory検証は用途ごとにsender境界を分ける。`validateWorkspaceDirectory` はHome専用、`validateSessionWorkspace` は所有Session Windowから保存済みworkspaceだけを検証する。`validateSessionAdditionalDirectory` は指定した親Sessionの所有Windowから入力pathを検証し、Main／Auxiliaryの `Add Directory By Path` が共用する。filesystemの絶対path・存在・directory・アクセス可能性の判定は同じvalidation serviceを使う
+- `src-electron/ipc/register-main-ipc.ts` は共通の error logging、renderer log、draft flush ACK と feature assembly の登録接続だけを担当する。各 IPC feature (`window`、`catalog`、`settings`、`session-query`、`session-runtime`、`auxiliary`、`mate`、`character`、`prompt-template`) が必要な sender identity、認可 resolver、サービス port を組み合わせた handler dependency を所有し、`src-electron/app/main-ipc-deps.ts` は Main service をその assembly へ接続する
 
 ## Preload Boundary
 
@@ -111,8 +137,44 @@ current 実装の API surface は次の domain に分かれる。
 - `settings`
 - `picker`
 - `subscription`
+- `terminal`
 
-型定義の正本は `src/withmate-window-api.ts` と `src/withmate-window-types.ts` に置く。
+型定義の正本は `src-shared/ipc/withmate-window-api.ts` と `src-shared/window/withmate-window-types.ts` に置く。Bridgeの実装は`src-electron/preload/preload-api.ts`が担当し、rendererのURL queryからsession・auxiliary・diff tokenを読む処理は`src/app/session-location.ts`が担当する。
+
+## Embedded Terminal
+
+`src-electron/terminal/`がWindowと親Sessionに属するPTYの作成・入出力・終了を管理し、`src/terminal/`がタブとxtermを所有する。専用のtyped preload APIを使い、Mainは送信元が登録済みSession Windowのmain frameであることを確認する。rendererの指定したSession IDやcwdで起動せず、保存済み親Sessionのworkspaceを使う。他Windowの端末へ入力・resize・終了・出力購読を許可しない。
+
+node-ptyはタブごとのElectron utility process内で起動要求時にloadし、WindowsはSystemRoot内のWindows PowerShell、macOSは`/bin/zsh`を実行する。native moduleや非同期socketの異常をMain・他の端末から隔離し、hostの予期しない終了は当該タブの`Failed`として通知する。
+
+Mainとhostの接続にはElectronのメッセージAPIを使う。workspace内や相対PATHの同名プログラムをshellに選ばず、cwdの文字列をtrimしない。load・shell・cwd・spawnの失敗は端末単位の失敗として返し、外部Terminalへのfallbackや自動respawnは行わない。
+
+出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、Memory、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
+
+タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。
+
+Window close時も個別タブと同じ判定で、実行中・起動中・判別不能な端末があれば終了を非同期で一括確認する。入力待ち・終了済み端末だけなら端末理由の確認は省略し、AI実行中ならWindowを閉じても実行を継続する確認へまとめる。
+
+確認待ちの重複closeを抑止し、承認後も既存のdraft flushを待つ。確認結果は元のWindow identityへ限定する。
+
+## HTML Preview Isolation
+
+中央・独立File PreviewとCodexのチャット内visualizeは`HtmlPreview`と`HtmlPreviewService`を共用する。信頼済みrendererのmain frameだけが、自分のWindowで認可されたresourceまたはlocal linkを出自として登録・破棄できる。HTMLへアプリのpreload、Node.js、WithMate IPCは公開しない。
+
+- HTMLはDOM内の`webview`で実行し、mountごとに一意な非永続partitionと文書hostを発行する。main processがowner、partition、初回URLを照合してguestを受け入れ、`sandbox: true`、`contextIsolation: true`、`webSecurity: true`、Node integration無効、preloadなしを強制する。アプリ本体のpreloadや権限とは別のWeb環境である。
+- Web CSS／JavaScript、外部CDN、fetch／WebSocket等の通信、worker、iframe、Web storageは通常のブラウザー規則に従って利用する。CORS、mixed content、secure context、OS権限、Electronが対応するdevice API等の制約は緩めない。任意のWeb APIや機器の動作を保証せず、通信遮断やoffline実行の保証もしない。HTML内の情報や入力内容が通信で送られる可能性がある。
+- 元HTMLを書き換えず、復号した本文を`withmate-html-preview:`から配信する。local資源はHTMLのdirectory構造を保って配信し、CSSの入れ子の参照やmodule importも同じURL解決を使う。root付きresourceでは同じconfigured root内、absolute resourceではcanonicalな親directory内に限定し、open時にroot identityとrealpath containmentを確認する。任意の`file:`への直接読込は許可しない。Git resourceの資源は同じrepository／root／commitのregular blobだけを読み、symlinkや存在しない資源を現在の作業treeで補わない。外部CDNはブラウザーが取得し、local資源resolverで代理取得しない。
+- プレビュー内の権限要求は要求元と対象・選択肢を信頼済みhost UIへ表示し、明示回答を得る。子Windowと外部protocolは明示確認し、downloadはElectronの保存dialogで保存先を選択する。子WindowにもNode／preloadを公開せず、同じ隔離と寿命の管理を適用する。OS側の権限やdevice制限は、アプリ内で許可しても別に適用される。
+- 画面共有は画面／Windowを明示選択し、システム音声はElectronのloopback対応範囲であるWindowsで別途確認する。USB／HIDは要求frameを表示する。Serial／Bluetoothの選択eventはElectronが要求frameを渡さないため、pageと埋込みoriginを併記し、特定frameからの要求と断定しない。USB／HIDのorigin単位のchooser可否確認は、mount内の有効なframeに存在するoriginだけを受け入れ、機器への実アクセスはElectronが保持する利用者選択済み機器の許可に従う。
+- 選択済み機器の許可は同一origin・同一mount内で維持する。Electronの機器許可には文書単位で取り消す公開APIがなく、通常の遷移やフォーム・子Windowの状態を維持するため、文書遷移で機器許可を失効させない。Reload、Source切替、画面外破棄、unmount、owner終了ではpartitionを非再利用とし、以前の機器許可へ到達できなくする。その他のアプリ内許可と回答待ちの要求は文書遷移・終了で失効し、子Window由来の確認もhost queueから取り消す。外部protocolは承認後の起動直前にも要求元の有効性を照合する。
+- File System Access APIの選択済みhandleによる読書きは、現在のpermission checkで拒否される。Electron 44.1.1はこのcheckに要求元webContentsを渡さず、通常pickerのnative許可もアプリのpermission request handlerを通らないため、非同期host確認へ選択済みpathを引き継げない。Electron自体のAPI未対応とは区別する。通常の`input[type=file]`による明示選択ファイルの読込みは利用できる。
+- UTF-8換算50 MiBのHTML上限は、復号・IPC転送・メモリー使用を安定させるために維持する。security境界やJavaScriptの総実行時間・DOM容量の上限ではない。初回load時間の固定打切りやJavaScript実行による応答pollingは行わず、guest webContentsのload失敗、unresponsive、renderer crashを失敗として通知する。Sourceの文字コード切替と原文を保持し、描画失敗からSource／Reloadで回復できる。
+- webviewはscroll clipとDOMの重なり順へ参加し、アプリの浮動操作・通知・tooltip・modal・dimを覆わない。別の操作領域を確保せず、一時surfaceのためにHTML全体を隠したり再実行したりしない。権限等のhost確認は本文を背後に残すdim overlayで示し、guestをinertにしてkeyboard focusを確認内に保つ。
+- 画面外、Source切替、unmount、ownerのdocument navigation／終了ではguest、子Window、保留中の確認、権限、partition storageと接続を破棄する。再表示／Reloadは新partitionを発行し、以前の許可や内部状態を引き継がない。公式visualizeのhost CSS、`window.openai`、Tweak、会話送信やhost状態保存の互換bridgeは提供しない。
+
+[Electron公式のwebview注意事項](https://www.electronjs.org/docs/latest/api/webview-tag#warning)は、Chromiumの変更が描画・navigation・event routingの安定性に影響するため代替方式の検討を勧めている。本機能では独立したguest sessionとブラウザー動作を管理しながら、既存のscroll clipとoverlayの重なりをDOMで維持する必要があるためwebviewを使用する。native `WebContentsView`はDOMのclip・重なりに直接参加せず、位置・clip・一時surfaceとの調整を別に持つ必要がある。webviewの配置・重なり・入力とguest lifecycleは、Electron更新時も実描画と操作で確認する。
+
+チャットのHTML読込は`readSessionHtmlPreview`専用IPCで既存local link resolverを利用する。所有Session／preview baseと送信main frameを読込前後で確認し、`.html`／`.htm`のtextとrevision固定chunkだけを読む。mountと資源取得でも出自の認可を確認し、汎用file readのroot認可を緩めず、Additional Directoryやprovider権限を追加しない。
 
 ## URL Resolution
 
@@ -140,17 +202,20 @@ current 実装の API surface は次の domain に分かれる。
 - entry HTML には meta CSP を入れ、renderer script / style / connect を `self` と Vite dev server (`http://localhost:4173`, `ws://localhost:4173`) に限定する
 - preload 経由で必要最小限の API だけ渡す
 
-current 実装では preload が `contextBridge` と `ipcRenderer.invoke/on` の薄い橋渡しだけを担当し、Codex SDK / GitHub Copilot SDK は main process 側で動かしている。  
+current実装ではpreloadが`contextBridge`と`ipcRenderer.invoke/on`の薄い橋渡しだけを担当する。Codex App Serverのstdio transportとGitHub Copilot / Claude Agent SDKはMain Process側で動かしている。
+
+Codexの承認・質問・追加入力もtyped preload経由でMainの現在turnへ中継し、Rendererへprocess起動権限を渡さない。
 ただし `npm run electron:start` の Home Window では `sandbox: true` が入ると `window.withmate` 注入が回帰し、renderer が `Home は Electron から起動してね。` の fallback へ落ちる事象を確認した。  
-archive 済み decision `docs/plans/archive/2026/03/20260329-review-findings-remediation/decisions.md` の issue 3 に従い、preload API / IPC の成立を優先して current 実装は `sandbox: false` を維持する。
+preload API / IPC の成立を優先し、現行実装は `sandbox: false` を維持する。
 
 ## Local Path Operation Boundary
 
 - `openPath` は current UX を優先し、任意 target を受け取れる仕様を維持する
 - main process 側では target を external URL / local path へ正規化するが、path allowlist の強制ガードは入れない
 - `AddDirectory` は prompt / workspace 操作で許可対象ディレクトリを広げる既存機能であり、`openPath` 自体の強制ガードではない
-- `openSessionTerminal` は session の `workspacePath` を terminal で開く用途に限定する
-- detached file preview は `openPath` へ local file link を直接渡さず、Main process が root-scoped resource または user-activated absolute-file resourceへ解決する。absolute-file preview は Additional Directory や provider 権限を変更しない。詳細は ADR 020 を参照する
+- `openSessionTerminal` はsessionの`workspacePath`を外部Terminalで開く用途に限定し、組み込みTerminalのAPIとは分離する
+- detached file preview は `openPath` へ local file link を直接渡さず、Main process が root-scoped resource または user-activated absolute-file resourceへ解決する。absolute-file preview は Additional Directory や provider 権限を変更しない。詳細は ADR 034 を参照する
+- `src-electron/files/session-file-explorer-runtime.ts` は Explorer と Git の認可境界を共有し、`SessionFilePreviewService` が resource / link / history-diff の操作、owner解決、title・payload・公開結果を所有する。IPCはsender認可を、Explorer / Git serviceはroot・resource検証を、既存Window serviceはidentity・再利用を所有する。`main.ts` はFiles操作への接続とfilesystem / Electron / Windowの公開操作を渡す
 - したがって local path operation の制約は一律 block ではなく、renderer 導線と main process 正規化の責務分離で扱う
 
 ## Relation To Existing Docs
@@ -160,12 +225,6 @@ archive 済み decision `docs/plans/archive/2026/03/20260329-review-findings-rem
 - `desktop-ui.md`
   - 現行 desktop UI の構成
 - `electron-session-store.md`
-  - session / audit / memory persistence orchestration
+  - session / turn / memory persistence orchestration
 - `session-run-lifecycle.md`
   - running session の保護制御
-
-## Open Questions
-
-- Home Window を閉じたあと Session だけを残す運用をどこまで許容するか
-- app メニューやショートカットをどの window に割り当てるか
-- sandbox / hardened runtime を `window.withmate` 注入回帰を解消できる条件がそろった段階でどう再評価するか

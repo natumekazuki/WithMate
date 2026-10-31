@@ -1,0 +1,348 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { projectHomeSessionSummary } from "../../src-shared/session/session-state.js";
+import type { Session, SessionSummary } from "../../src-shared/session/session-state.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { MainQueryService } from "../../src-electron/app/main-query-service.js";
+
+function createSession(overrides?: Partial<Session>): Session {
+  return {
+    id: "session-1",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5.4",
+    reasoningEffort: "high",
+    taskTitle: "task",
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    sessionKind: "default",
+    accessMode: "active",
+    sourceSchemaVersion: 5,
+    isPinned: false,
+    characterId: "char-1",
+    character: "A",
+    characterIconPath: "",
+    characterThemeColors: { main: "#111", sub: "#222" },
+    characterRuntimeSnapshot: null,
+    approvalMode: "on-request",
+    codexSandboxMode: "workspace-write",
+    codexSpeed: "standard",
+    codexReviewer: "user",
+    customAgentName: "",
+    status: "idle",
+    runState: "idle",
+    threadId: "",
+    updatedAt: "2026-03-28T00:00:00.000Z",
+    messages: [],
+    stream: [],
+    allowedAdditionalDirectories: [],
+    ...overrides,
+  };
+}
+
+function createSessionSummary(overrides?: Partial<SessionSummary>): SessionSummary {
+  const session = createSession(overrides);
+  const { messages: _messages, stream: _stream, ...summary } = session;
+  return summary;
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "Sessionごとのworkspaceをskills/custom agent/preview/terminalへ渡し、利用者が別workspaceを操作しない"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "対象Session以外のworkspaceをdiscoveryまたはterminalへ渡す"
+// observable = "discovery/preview/terminalへの引数とhydration対象ID"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainQueryService は session skills/custom agents と preview/terminal を解決する", async () => {
+  const calls: string[] = [];
+  const sourceSessions = [
+    createSession(),
+    createSession({ id: "session-2", provider: "copilot", workspacePath: "C:/copilot" }),
+  ];
+  const fullSessionRequests: string[] = [];
+  const service = new MainQueryService({
+    getSessionSummaries: () => sourceSessions.map((session) => createSessionSummary(session)),
+    getSessionSummaryPage: () => ({ entries: sourceSessions.map((session) => createSessionSummary(session)), nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [{ characterId: "char-1", sessionKind: "default" }],
+    getSession: (sessionId) => {
+      fullSessionRequests.push(sessionId);
+      return sourceSessions.find((session) => session.id === sessionId) ?? null;
+    },
+    getSessionMessageArtifact: () => null,
+    getLatestSessionTurn: () => null,
+    getAppSettings: () =>
+      ({
+        providers: {},
+        codingProviderSettings: {},
+        memoryExtractionProviderSettings: {},
+        characterReflectionProviderSettings: {},
+      }) as never,
+    async discoverSessionSkills(workspacePath) {
+      calls.push(`skills:${workspacePath}`);
+      return [];
+    },
+    async discoverSessionCustomAgents(workspacePath) {
+      calls.push(`agents:${workspacePath}`);
+      return [];
+    },
+    async resolveComposerPreview(session, userMessage) {
+      calls.push(`preview:${session.id}:${userMessage}`);
+      return { attachments: [], errors: [] };
+    },
+    async launchTerminalAtPath(workspacePath) {
+      calls.push(`terminal:${workspacePath}`);
+    },
+  });
+
+  assert.equal((await service.listSessionSummaries()).length, 2);
+  const session = await service.getSession("session-1");
+  assert.notEqual(session, sourceSessions[0]);
+  assert.equal(session?.workspacePath, "C:/workspace");
+  await service.listSessionSkills("session-1");
+  await service.listSessionCustomAgents("session-2");
+  await service.previewComposerInput("session-1", "@src/main.ts");
+  await service.openSessionTerminal("session-1");
+
+  assert.deepEqual(calls, [
+    "skills:C:/workspace",
+    "agents:C:/copilot",
+    "preview:session-1:@src/main.ts",
+    "terminal:C:/workspace",
+  ]);
+  assert.deepEqual(fullSessionRequests, ["session-1"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Home summary pageとCharacter usageは取得結果を複製し内部stateを外部から変更させない"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "取得stateを参照共有したまま返すかHomeへprovider/thread情報を混入する"
+// observable = "pageとusageの値、オブジェクト同一性、Home field"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainQueryService は bounded summary page と Character usage を clone して返す", async () => {
+  const entry = createSessionSummary({ id: "page-session" });
+  const usage = { characterId: "char-page", sessionKind: "default" as const };
+  const service = new MainQueryService({
+    getSessionSummaries: () => [],
+    getSessionSummaryPage: () => ({ entries: [entry], nextCursor: "cursor-1", hasMore: true }),
+    getSessionCharacterUsage: () => [usage],
+    getSession: () => null,
+    getSessionMessageArtifact: () => null,
+    getLatestSessionTurn: () => null,
+    getAppSettings: () => ({
+      providers: {},
+      codingProviderSettings: {},
+      memoryExtractionProviderSettings: {},
+      characterReflectionProviderSettings: {},
+    }) as never,
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
+    resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+    launchTerminalAtPath: async () => undefined,
+  });
+
+  const page = await service.listSessionSummaryPage({ scope: "recent", limit: 1 });
+  const usages = await service.listSessionCharacterUsage();
+
+  assert.deepEqual(page, {
+    entries: [projectHomeSessionSummary(entry)],
+    nextCursor: "cursor-1",
+    hasMore: true,
+  });
+  assert.equal("provider" in page.entries[0], false);
+  assert.equal("threadId" in page.entries[0], false);
+  assert.notEqual(page.entries[0], entry);
+  assert.deepEqual(usages, [usage]);
+  assert.notEqual(usages[0], usage);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "添付参照のないdraftのpreviewは空の正常previewで追加discoveryを要求しない"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "添付参照のないdraftをdiscoveryへ流して不要な失敗を引き起こす"
+// observable = "空previewとSession summary取得回数"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainQueryService は path 参照なし draft の preview を早期 return する", async () => {
+  let getSessionSummariesCalls = 0;
+  const service = new MainQueryService({
+    getSessionSummaries: () => {
+      getSessionSummariesCalls += 1;
+      return [createSessionSummary()];
+    },
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
+    getSession: () => createSession(),
+    getSessionMessageArtifact: () => null,
+    getLatestSessionTurn: () => null,
+    getAppSettings: () =>
+      ({
+        providers: {},
+        codingProviderSettings: {},
+        memoryExtractionProviderSettings: {},
+        characterReflectionProviderSettings: {},
+      }) as never,
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
+    async resolveComposerPreview() {
+      throw new Error("path 参照なしでは preview 解決まで進まないはず");
+    },
+    async launchTerminalAtPath() {},
+  });
+
+  const preview = await service.previewComposerInput("session-1", "hello");
+  assert.deepEqual(preview, { attachments: [], errors: [] });
+  assert.equal(getSessionSummariesCalls, 0);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同じworkspaceでもproviderごとのSkill rootをdiscoveryへ渡す"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "CopilotとCodexのskill root設定を取り違える"
+// observable = "discoveryへ渡されたworkspacePath/skillRootPath"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainQueryService は session provider ごとの skill directory を discovery に渡す", async () => {
+  const providerSkillRoots: Array<{ workspacePath: string; skillRootPath: string | null }> = [];
+  const settings = createDefaultAppSettings();
+  settings.codingProviderSettings.codex = {
+    enabled: true,
+    apiKey: "",
+    skillRootPath: "C:/provider-files/codex",
+    skillRelativePath: ".codex/skills",
+    instructionRelativePath: "AGENTS.md",
+  };
+  settings.codingProviderSettings.copilot = {
+    enabled: true,
+    apiKey: "",
+    skillRootPath: "C:/provider-files/copilot",
+    skillRelativePath: "skills",
+    instructionRelativePath: "copilot-instructions.md",
+  };
+  const service = new MainQueryService({
+    getSessionSummaries: () => [
+      createSessionSummary({ id: "codex-session", provider: "codex", workspacePath: "C:/workspace" }),
+      createSessionSummary({ id: "copilot-session", provider: "copilot", workspacePath: "C:/workspace" }),
+    ],
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
+    getSession: () => null,
+    getSessionMessageArtifact: () => null,
+    getLatestSessionTurn: () => null,
+    getAppSettings: () => settings,
+    async discoverSessionSkills(workspacePath, skillRootPath) {
+      providerSkillRoots.push({ workspacePath, skillRootPath });
+      return [];
+    },
+    discoverSessionCustomAgents: async () => [],
+    async resolveComposerPreview() {
+      return { attachments: [], errors: [] };
+    },
+    async launchTerminalAtPath() {},
+  });
+
+  await service.listSessionSkills("codex-session");
+  await service.listSessionSkills("copilot-session");
+
+  assert.deepEqual(providerSkillRoots, [
+    { workspacePath: "C:/workspace", skillRootPath: "C:/provider-files/codex/.codex/skills" },
+    { workspacePath: "C:/workspace", skillRootPath: "C:/provider-files/copilot/skills" },
+  ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session一覧には会話詳細を持たないsummaryだけを返す"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "一覧結果へmessage/stream本文を混入し全履歴を常駐させる"
+// observable = "一覧結果のmessages/stream keyの有無"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainQueryService は一覧を summary に射影して detail payload を含めない", async () => {
+  const service = new MainQueryService({
+    getSessionSummaries: () => [createSessionSummary()],
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
+    getSession: () => createSession(),
+    getSessionMessageArtifact: () => null,
+    getLatestSessionTurn: () => null,
+    getAppSettings: () =>
+      ({
+        providers: {},
+        codingProviderSettings: {},
+        memoryExtractionProviderSettings: {},
+        characterReflectionProviderSettings: {},
+      }) as never,
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
+    async resolveComposerPreview() {
+      return { attachments: [], errors: [] };
+    },
+    async launchTerminalAtPath() {},
+  });
+
+  const summaries = await service.listSessionSummaries();
+  assert.deepEqual(Object.keys(summaries[0] ?? {}).includes("messages"), false);
+  assert.deepEqual(Object.keys(summaries[0] ?? {}).includes("stream"), false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session詳細は指定Sessionだけを取得してcloneで返す"
+// oracle = { type = "contract", ref = "src-electron/app/main-query-service.ts MainQueryService public query contracts" }
+// fault = "別Sessionを取得するか取得objectをそのまま渡し永続stateへの変更を許す"
+// observable = "取得要求ID、返却Session IDと同一性"
+// observation_boundary = "public-boundary"
+// scope = "main query service"
+// lifecycle = "permanent"
+// @end-test-value
+test("MainQueryService は対象 session detail だけを clone して返す", async () => {
+  const targetSession = createSession();
+  let requestedSessionId: string | null = null;
+  const service = new MainQueryService({
+    getSessionSummaries: () => [createSessionSummary(targetSession)],
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
+    getSession: (sessionId) => {
+      requestedSessionId = sessionId;
+      return sessionId === targetSession.id ? targetSession : null;
+    },
+    getSessionMessageArtifact: () => null,
+    getLatestSessionTurn: () => null,
+    getAppSettings: () =>
+      ({
+        providers: {},
+        codingProviderSettings: {},
+        memoryExtractionProviderSettings: {},
+        characterReflectionProviderSettings: {},
+      }) as never,
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
+    async resolveComposerPreview() {
+      return { attachments: [], errors: [] };
+    },
+    async launchTerminalAtPath() {},
+  });
+
+  const session = await service.getSession("session-1");
+  assert.notEqual(session, targetSession);
+  assert.equal(session?.id, "session-1");
+  assert.equal(requestedSessionId, "session-1");
+});
+

@@ -1,12 +1,16 @@
-import { useState } from "react";
-
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
-import { renderHomeSearchIcon } from "./home-icons.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import { buildCardThemeStyle, CharacterAvatar } from "../ui/ui-utils.js";
+import { renderHomePlusIcon } from "./home-icons.js";
+import type { HomeCharacterLoadStatus } from "./home-launch-state.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
+import { LoadError } from "../ui/load-error.js";
 
 export type HomeCharactersPanelProps = {
   characters: readonly CharacterCatalogEntry[];
+  searchText: string;
+  characterLoadStatus?: HomeCharacterLoadStatus;
   feedback?: string;
+  onRetry?: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
 };
@@ -23,69 +27,59 @@ export function filterCharactersByName(
 
 export function HomeCharactersPanel({
   characters,
+  searchText,
+  characterLoadStatus = "loaded",
   feedback = "",
+  onRetry,
   onCreateCharacter,
   onEditCharacter,
 }: HomeCharactersPanelProps) {
-  const [searchText, setSearchText] = useState("");
   const visibleCharacters = filterCharactersByName(characters, searchText);
 
   return (
-    <div className="home-monitor-body">
+    <div className="home-monitor-body" aria-busy={characterLoadStatus === "loading"}>
       <section className="home-monitor-section">
         <div className="home-monitor-section-head">
           <div className="home-character-toolbar">
-            <label className="toolbar-search-field" aria-label="Characterを名前で検索">
-              <span className="toolbar-search-icon" aria-hidden="true">
-                {renderHomeSearchIcon()}
-              </span>
-              <input
-                className="toolbar-search-input"
-                type="search"
-                aria-label="Characterを名前で検索"
-                placeholder="名前で検索"
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-              />
-            </label>
-            <button className="launch-toggle compact" type="button" onClick={onCreateCharacter}>
-              Create
+            <span className="home-character-load-status">
+              {characterLoadStatus === "loading" ? <LoadingIndicator label="Loading characters" inline /> : null}
+            </span>
+            <button
+              className="launch-toggle compact home-create-button"
+              type="button"
+              aria-label="Create character"
+              title="Create character"
+              onClick={onCreateCharacter}
+            >
+              <span className="home-create-icon">{renderHomePlusIcon()}</span>
+              <span className="sr-only">Create Character</span>
             </button>
           </div>
         </div>
-        {feedback ? <p className="settings-feedback">{feedback}</p> : null}
-        {characters.length === 0 ? (
-          <div className="home-monitor-empty">
-            <p>Character はまだありません。</p>
-            <button className="launch-toggle" type="button" onClick={onCreateCharacter}>
-              Create Character
-            </button>
-          </div>
-        ) : visibleCharacters.length === 0 ? (
-          <div className="home-monitor-empty">
-            <p>名前に一致するCharacterはありません。</p>
-          </div>
-        ) : (
-          <div className="home-character-list">
-            {visibleCharacters.map((character) => (
-              <button
-                key={character.id}
-                className="home-character-card"
-                type="button"
-                style={buildCardThemeStyle({ main: character.theme.main, sub: character.theme.sub })}
-                onClick={() => onEditCharacter(character.id)}
-              >
-                <CharacterAvatar character={{ name: character.name, iconPath: character.iconFilePath }} size="medium" />
-                <span className="home-character-card-copy">
-                  <span className="home-character-card-title">
-                    {character.name}
-                  </span>
-                  <span>{character.description || character.id}</span>
+        <div className="home-character-list">
+          {visibleCharacters.map((character) => (
+            <button
+              key={character.id}
+              className="home-character-card"
+              type="button"
+              style={buildCardThemeStyle({ main: character.theme.main, sub: character.theme.sub })}
+              onClick={() => onEditCharacter(character.id)}
+            >
+              <CharacterAvatar character={{ name: character.name, iconPath: character.iconFilePath }} size="medium" />
+              <span className="home-character-card-copy">
+                <span className="home-character-card-title">
+                  {character.name}
                 </span>
-              </button>
-            ))}
-          </div>
-        )}
+                <span>{character.description || character.id}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        {characterLoadStatus === "error" ? (
+          <LoadError message={feedback || "Could not load characters."} onRetry={onRetry} />
+        ) : feedback ? (
+          <p className="settings-feedback" role="status" aria-live="polite">{feedback}</p>
+        ) : null}
       </section>
     </div>
   );

@@ -1,27 +1,26 @@
 import {
   buildActionDockCollapseState,
   buildActionDockExpandState,
-} from "../action-dock-state.js";
+} from "./approval/action-dock-state.js";
 import {
   buildExclusiveComposerPickerToggleState,
   buildSkillPromptInsertionState,
   type SkillPromptInsertionState,
-} from "../session-composer-selection.js";
+} from "./composer/session-composer-selection.js";
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
   buildComposerReferenceInsertionState,
-  buildPathReferenceRemovalState,
   buildSelectedPathReferenceInsertionState,
   resolvePickedPathBaseDirectory,
   toDirectoryPath,
   type ComposerPathPickerKind,
   type ComposerReferenceInput,
   type PathReferenceInsertionState,
-} from "../session-composer-paths.js";
+} from "./composer/session-composer-paths.js";
 import {
   cycleContextPaneTab,
   type ContextPaneTabKey,
-} from "../session-ui-projection.js";
+} from "./runtime/session-ui-projection.js";
 
 export function toggleExpandedArtifactState(
   current: Record<string, boolean>,
@@ -341,7 +340,7 @@ export function applySkillPromptInsertionCommand(input: {
   input.restoreComposerTextareaFocusAndCaret(input.textarea, input.state.caret);
 }
 
-export function createSkillPromptInsertionHandler<TSkill extends { name: string }>(input: {
+export function createSkillPromptInsertionHandler<TSkill extends { name: string; sourcePath?: string }>(input: {
   getProvider: () => string | null | undefined;
   getDraft: () => string;
   getTextarea: () => HTMLTextAreaElement | null;
@@ -360,7 +359,7 @@ export function createSkillPromptInsertionHandler<TSkill extends { name: string 
       return;
     }
 
-    const nextState = buildSkillPromptInsertionState(provider, skill.name, input.getDraft());
+    const nextState = buildSkillPromptInsertionState(provider, skill.name, input.getDraft(), skill.sourcePath);
     applySkillPromptInsertionCommand({
       state: nextState,
       textarea: input.getTextarea(),
@@ -499,35 +498,6 @@ export function createQuoteMessageTextHandler(input: {
       ...composerState,
       applyInsertion: input.applyInsertion,
       restoreComposerTextareaFocusAndCaret: input.restoreComposerTextareaFocusAndCaret,
-    });
-  };
-}
-
-export function applyPathReferenceRemovalCommand(input: {
-  draft: string;
-  attachmentPathCandidates: string[];
-  applyRemoval: (state: PathReferenceInsertionState) => void;
-}): void {
-  input.applyRemoval(
-    buildPathReferenceRemovalState(
-      input.draft,
-      input.attachmentPathCandidates,
-    ),
-  );
-}
-
-export function createPathReferenceRemovalHandler(input: {
-  getDraft: () => string;
-  normalizeAttachmentPathCandidates?: (attachmentPathCandidates: string[]) => string[];
-  applyRemoval: (state: PathReferenceInsertionState, attachmentPathCandidates: string[]) => void;
-}): (attachmentPathCandidates: string[]) => void {
-  return (attachmentPathCandidates) => {
-    const removalCandidates = input.normalizeAttachmentPathCandidates?.(attachmentPathCandidates)
-      ?? attachmentPathCandidates;
-    applyPathReferenceRemovalCommand({
-      draft: input.getDraft(),
-      attachmentPathCandidates: removalCandidates,
-      applyRemoval: (state) => input.applyRemoval(state, removalCandidates),
     });
   };
 }

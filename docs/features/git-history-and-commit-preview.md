@@ -16,10 +16,29 @@ Session WindowのFile Explorerから、認可済みGit rootのcommit履歴とcom
 - 同じcanonical Git repositoryを複数rootから参照する場合は、History repositoryを一つにまとめます。
 - repository discoveryでは存在するGit repositoryだけを公開し、non-Gitまたはmissing rootはrepository一覧へ追加しません。履歴出力が上限を超えた場合は成功結果として表示しません。
 - branch selectorは`refs/heads`にあるlocal branchだけを対象とし、remote-tracking branchは表示しません。detached HEADまたはbranchがないrepositoryでは、branchを選択するまでcommit listを表示しません。
-- 同一rootのrefreshでは選択中branchを保持し、root変更では新しいrootのcurrent branchを初期選択します。選択branchが削除された場合は、利用できない状態を表示します。
+- 同一rootのrefreshでは選択中branchを保持し、root変更では新しいrootのcurrent branchを初期選択します。選択branchが削除された場合は、利用できない状態を表示します。現在選択中のbranchには表示label `Current`を付けます。
 - merge commitのdetailとdiffはfirst parentとの比較として表示します。
 
-履歴やfile一覧はpage単位で読み込み、commit listの追加pageは専用scroll rootの末尾sentinelが表示領域に入ったときに取得します。repositoryの選択を変更した場合は表示中のcommit listをクリアし、以前の非同期取得結果を新しい選択へ反映しません。
+履歴やfile一覧はpage単位で読み込み、commit listの追加pageは表示中の専用scroll rootの末尾sentinelが表示領域に入ったときに取得します。初回表示・tab／pane／Windowの復帰、関連Main／Auxiliaryのturn終端、`Refresh`でrepository・refs・一覧を更新します。非表示中は新しい取得を開始しません。
+
+同一repositoryの更新では取得済み内容、選択中branch、commit詳細、Compare、中央Diffと閲覧位置を保持し、失敗は内容を残したまま理由を表示します。詳細／Compareを閲覧中のcommit list更新は一覧へ戻るまで延期します。一覧更新は取得済み件数を目安に先頭からpageを取り直し、新しい先頭と古いoffset cursorを混在させません。repositoryや認可rootの選択を変更した場合は旧表示と非同期取得を失効させ、新しい選択へ旧応答を反映しません。
+
+commit詳細の取得失敗は、エラー詳細を開閉するiconと`Retry Commit Detail`の再試行iconを表示します。診断文は初期状態では表示せず、エラーiconを操作すると原文を非modal popoverへ表示します。周囲の配置やRetryの位置を変えずに重ねて表示し、画面端では位置と高さを補正し、長文はpopover内でscroll・選択できます。Escape・閉じるbutton・エラーiconの再操作・外側のclickで閉じられ、Escapeや閉じるbuttonではエラーiconへfocusを戻します。再試行中も詳細の開閉状態と操作の位置を保持し、成功後は取得した詳細へ戻ります。
+
+`Open All Changes`などのDiff操作の失敗も同じエラーiconから原文を確認できます。詳細取得とDiff操作が両方失敗している場合は、popover内で診断を対象別に区別し、一方の失敗で他方の理由を隠しません。詳細取得のRetryとDiff操作の再実行は独立して扱い、それぞれの操作で他方の失敗状態を消しません。`Retry Commit Detail`は詳細取得の失敗が残っている場合だけ表示します。
+
+## Compare
+
+`Compare`はHistoryの同じpane内で起動し、4つ目のtabや別のdiff実装は追加しません。toolbarまたはcommit entryから開け、commit entryからはそのcommitをbaseの初期値にします。通常のtargetは表示中branchです。
+
+比較対象にはlocal branch、remote-tracking branch、tag、`HEAD`、short/full commit object IDを指定できます。annotated tagはtag refとして解決し、入力されたref名をそのままGitの引数へ渡しません。
+
+- `Direct comparison`は解決したbase commitからtarget commitまでを比較します。
+- `Branch changes`はbaseとtargetのmerge-baseからtargetまでを比較します。merge-baseがない場合や複数ある場合は、空の差分と混同しないエラーとして表示します。
+- 比較開始時に解決したcommit object IDをsnapshotとして保持します。refが移動しても表示中のpatchを別のcommitへ差し替えず、`Compare`の再実行で明示的に更新します。File Explorerの`Refresh`は比較結果や開いているDiffを再取得しません。
+- changed file listは既存のChangesと同じtree shell、filter、`Open All Changes`を使います。patchは選択したfileまたは全fileを必要時に取得し、rename、add、deleteでは利用可能なbefore / after previewをそれぞれ表示します。
+- nested rootではrepository全体ではなく、そのrootに認可されたrelative pathだけを比較対象にします。working tree、index、checkout、fetch、worktreeの作成は行いません。
+- 変更なし、invalid selector、commit not found、merge-base unavailable / ambiguous、Gitの上限超過・実行失敗は別の結果として扱います。
 
 ## commit時点のFile Preview
 
@@ -39,4 +58,4 @@ commitに含まれるfileは、中央surfaceまたは独立したFile Preview Wi
 ## 関連文書
 
 - [Desktop UI](../design/desktop-ui.md)
-- [ADR 020: File Preview Window Navigation](../adr/020-file-preview-window-navigation.md)
+- [ADR 034: File Preview Window Navigation](../adr/034-file-preview-window-navigation.md)

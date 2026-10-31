@@ -1,205 +1,47 @@
 # V6 Database Foundation
 
-## Auxiliary Session Projection (Issue #710)
+## 継続データの境界
 
-V6 runtimeのAuxiliaryは親Sessionに従属する複数の会話として保存する。会話payloadと一覧用`summary_json`を同時更新し、summaryにはtranscript、draft、Character定義本文を含めない。既存行のsummaryは初回migrationで補完し、以後の一覧取得でpayload全文を読み直さない。
+V6 runtimeの正本は`<userData>/withmate-v6.db`である。旧DBをin-placeでV6へ書き換えない。起動時の選択・migrationは`src-electron/storage/app-database-path.ts`、V6 schemaのSQLと検証は`src-electron/storage/database-schema-v6.ts`を正本とする。[Database Schema](database-schema.md)は現在の保存領域と参照先を示す。
 
-- 作成日: 2026-06-22
-- 対象: V6で採用する保存構造、destructive reset、legacy data境界
-- Status: Foundation schema implemented
+旧DBからV6へ自動継続するのは、Character catalogと定義file・icon・theme・metadata、app／provider settingsなどV6の利用に必要な情報である。Model候補はSDKからcontext別に取得してcacheし、手管理catalogは継続対象にしない。Character file rootは`<userData>/characters/<character-id>/`を継続する。
 
-## Goal
+V5以前のSession履歴、旧Memory、Growth、provider instruction projectionはV6の正本へ取り込まない。旧DBはmigration sourceまたはbackupとして扱い、通常のV6保存先にしない。
 
-V6では、MemoryだけでなくSQLite DB定義全体を再設計する。
-V5以前のsession / legacy Memory / Growth互換を引き継がず、Character-first資産とapp基本設定を残しながら、V6 runtimeに必要なtableを新規に定義する。
+`app_settings.v4_to_v6_release_data_migrated_at`はV4からの継続データcopy完了markerである。validな空V6 bootstrap DBが先に存在しても、未移行のvalid V4があれば継続データを取り込む。marker済みなら再copyとmigration progress表示を行わない。既存invalid V6 DBを黙って上書きせず、source DBと共有file・blobをmigrationの副作用で破壊しない。
 
-## Position
+## Runtime ownerとschema
 
-- 本書をV6 database foundationのsource of truthとする。
-- current DB構造の棚卸しは`docs/design/database-schema.md`を参照する。
-- V6 Memoryのdomain contractは`docs/design/v6-memory-foundation.md`を参照する。
-- V6 Session turn の final / interim / provider output / run context 分離は`docs/design/session-turn-storage-v6.md`を参照する。
-- Character affectの追加tableと投影判断は`src-electron/database-schema-v6.ts`、`src-electron/character-affect-storage.ts`、`docs/adr/018-character-affect-event-persistence.md`を参照する。
-- V5 Character catalog / definition / snapshotの意味はV5 source of truthを優先する。
+V6 SQLiteのschema/bootstrap、通常保存、WAL maintenance、診断はstorage Workerが所有する。Mainはtyped commandを非同期に送り、任意SQLや同期SQLite接続をWorker境界へ追加しない。close／reset／reopenではgenerationを交換し、旧generationの遅延応答を新DBの書込みへ使わない。resetはユーザーデータの暗黙削除や、結果不明のcommitの自動再送を許可しない。
 
-## Migration Boundary
+Workerの応答はrequest IDとgenerationで照合し、不正な応答ではそのgenerationを失効させる。送信済みmutationのWorker喪失は結果不明として扱い、未送信のstructured clone失敗と読み取りcommandの失敗は結果不明にしない。
 
-V6はV5以前DBをin-place更新しない。
-V6 runtimeに必要な継続データだけを新規V6 DBへ自動移行し、V5以前のsession履歴、legacy Memory、Growth、provider instruction projectionは保持要件にしない。
-旧DBは移行元またはbackup sourceとして残してよいが、V6 runtimeの正本にはしない。
+許可されたdomain errorは型と詳細を復元し、診断eventはrequest単位でqueued／started／completedを対応付ける。CharacterとMateのfile処理はresourceごとに直列化し、無関係なDB commandを待たせない。shutdownは進行中のresource処理を待ち、新規requestを拒否する。
 
-引き継ぐ:
+会話query全体のPromiseは通常DB commandのtailを所有しない。1回のcursor読取だけをtailへ入れ、最大32行／256KiBを目安にstatementを同期で解放してからCPU Workerへ渡す。単独で上限を超える本文は切り捨てず一行として読む。JSON decode、Markdown投影、match列挙はgeneration内の単一CPU Workerで行い、投影cacheの予算は8MiBとする。別SQLite readerや長寿命read transactionは追加せず、schema／WAL／writerの所有はstorage Workerに残す。
 
-- Character catalog
-- `character.md`
-- `character-notes.md`
-- Character icon / theme / metadata
-- app settings
-- provider settings
-- model catalog
-- V6 runtimeに必要な最小diagnostics / feature flag
+queryは最大16producerで、各producerの最新logical requestだけを受け付ける。同じrequestのcurrentと前後pageは最大3job・同offset最大3waiterへまとめ、待機producerはpage job単位でround-robinに選ぶ。
 
-上記はV6 release migrationで自動移行する。
-Character filesは現行の`<userData>/characters/<character-id>/` rootを継続し、V6用に別rootへ分けない。
-app settingsの継続対象には、provider / UI基本設定に加えてOS連携の`launch_at_login_enabled`を含める。
+CPU実行は全体で一つとする。新query、明示取消、Window破棄で旧仕事を止め、CPU処理が返らない場合は250ms後にCPU Workerだけを終了し、exit後に再作成する。Mainは送信元Window単位でも16producerに制限し、非同期owner解決の前後と応答時にWindow／storage ownerを照合する。
 
-引き継がない:
+Mainのincarnation、Auxiliaryのdraft incarnationと親Main incarnation、storage generationを会話queryのowner fenceに用いる。対象会話の本文・role・accent・Bookmark変更、履歴切詰め、削除は結果を失効させる。別会話やtitleなどquery結果に影響しないmetadata変更では失効させない。
 
-- V5以前のsession履歴
-- `session_memories`
-- `project_scopes`
-- `project_memory_entries`
-- `character_scopes`
-- `character_memory_entries`
-- MemoryGeneration履歴
-- Mate Profile / Growth
-- provider instruction sync projection
-- legacy Memory UI state
-- legacy Project Memory import / viewer
+close／reset／reopenは新規queryを止めて旧queryを失効させ、CPU終了と短いDB読取を解放してから既存writer／WALをcloseする。旧generationのpageや投影を新ownerへ使わない。
 
-V6 runtime DBがactiveな間、Mate Profile / Growthは未対応domainとして扱う。
-HomeはMate未作成として作成・編集UIへ誘導せず、Mate ProfileがV6 foundationでは利用できない状態を表示する。
-Mate作成・更新・avatar操作IPCはV6 DBでは保存先を持たないため、操作可能なUIから直接到達させない。
+V6 schemaは設定・catalog、Project scope、Main／Auxiliary Session、message、turn、Memory、Character Affectを分ける。Memoryの保存と権限は[V6 Memory Foundation](v6-memory-foundation.md)、Auxiliaryの会話・draft・summaryは[Auxiliary Session](auxiliary-session.md)に記す。
 
-## Destructive Reset Policy
+通常のCharacter ContextはWorkerの`affect.getContextState`で軽量effective projectionと既存state versionを同じread transactionから取得する。layer別projection、寄与event ID、reasonは詳細取得だけで組み立て、通常Contextへ転送しない。
 
-V6 migrationでは既存DBをin-placeで意味変更せず、V6用DBを新規作成する。
-V5以前DBをbackup renameするか、そのまま残して無視するかはrelease packagingの運用判断とし、V6 schema / storage実装のblockerにしない。
-どちらの場合も、旧DBをV6 runtimeの正本として開かない。
+version結果だけを最大32 owner scopeまでWorker内で保持し、SQLiteの`data_version`と同接続の`total_changes()`の変化で無効化する。履歴payloadと時間依存effectiveは保持せず、decayと別Sessionのafterglowは読取りごとに評価する。正本event、詳細inspection、version形式と楽観的競合検出は変更しない。
 
-V6 first releaseでは次を提供しない。
+`sessions_v6.incarnation_id`は同じSession IDの削除・再作成を区別する。既存V6行の列補完はschema更新で扱う。Affect専用queueは同じschema更新で削除し、候補を再適用しない。保存済みevent／episode／Memoryとversion・idempotency情報は保持する。通常の保存と取消は[Session Run Lifecycle](session-run-lifecycle.md)に従う。
 
-- V5以前sessionの再実行互換
-- legacy Memoryの自動migration
-- legacy Memoryのimport preview
-- legacy Memory viewer
-- legacy Project Memoryの復元
+turn contextはMain SessionかAuxiliaryの一方をownerとし、`session_turns_v6`に最小実行情報とterminal markerを置く。保存済み本文と操作結果は通常履歴・artifactを正本とし、artifact detailを対象ごとに遅延取得する。live本文やstdout chunkごとの累積snapshotはDBへ保存しない。
 
-release前に必要なら、destructive resetのwarningまたはmanual backup導線だけを追加する。
+既存V6のschema更新では最小turnを継続し、Audit専用のinterim、provider output、legacy event tableを物理削除する。通常会話・artifact、Timing、Affect、Memoryの記録は保持し、過去詳細のバックフィルや既存artifactの全件書換えは行わない。
 
-## Database Shape
+既存artifactの操作結果の欠損は未記録として読み、成功やexitCode 0を補完しない。
 
-V6 DBは次のdomainに分ける。
+## 検証
 
-| Domain | 方針 |
-| --- | --- |
-| App settings | 必要なkeyだけ自動移行。ただしlegacy Memory / Growth設定は移行しない |
-| Provider settings | 自動移行 |
-| Model catalog | 自動移行 |
-| Character catalog | 自動移行 |
-| Character files | 現行`characters/<character-id>/` rootを継続 |
-| Sessions | V6用に再設計。V5以前session履歴は移行しない |
-| Messages | V6用に再設計 |
-| Audit | V6用に再設計。legacy background auditは移行しない |
-| Memory | V6専用tableで新設 |
-| Project scope | V6専用tableで新設 |
-
-## Schema Source
-
-V6 DBの最小SQL正本は`src-electron/database-schema-v6.ts`に置く。
-first foundationでは、active runtime DB path selectionには接続せず、`withmate-v6.db`用のfresh DB作成path helper、schema検証、Memory V6 runtime API用のbest-effort bootstrapだけを実装する。
-
-- DB file name: `withmate-v6.db`
-- schema version: `PRAGMA user_version = 6`
-- fresh DB path: `<userData>/withmate-v6.db`
-- fresh DB bootstrap: `src-electron/app-database-v6-bootstrap.ts`
-- required table list: `REQUIRED_V6_TABLES`
-- schema verification: `isValidV6Database()`
-- boot diagnostics schema check: `isValidV6DatabaseShallow()`
-- targeted tests: `scripts/tests/database-schema-v6.test.ts`、`scripts/tests/app-database-v6-bootstrap.test.ts`
-
-V6 schemaは`app_settings`、`model_catalog_*`、`characters`を継続する。
-継続tableのDDLも`database-schema-v6.ts`が所有し、V1などlegacy schema fileからimportしない。
-V6 runtime固有のproject / session / message / audit / Memoryは、legacy tableと混同しないようにV6専用tableで定義する。
-`isValidV6Database()`はfilename / `user_version` / required tableに加え、forbidden legacy table、主要column、主要index、主要foreign key、主要CHECK、`PRAGMA foreign_key_check`を確認する。
-`isValidV6DatabaseShallow()`はboot diagnostics用にfilename / `user_version` / required table / forbidden legacy tableだけを確認し、inactive V6 DBへ毎回 `PRAGMA foreign_key_check` を実行しない。
-`createOrVerifyV6FreshDatabase()`はfresh V6 DB作成と既存valid V6 DB検証を行う。fresh作成は一時directory内の`withmate-v6.db`へtransactionでschemaを作り、deep validation後にfinal pathへ既存file非上書きでpublishする。失敗時はtemporary DBとsidecarを削除し、既存invalid V6 DBは破壊的に上書きしない。
-V6 release migrationでは、active runtime DB path selectionを`withmate-v6.db`へ接続する。既存V4 DBがある場合は`app_settings`の継続対象key、`model_catalog_*`、`characters` metadataだけをV6 DBへ移行し、V5以前session、legacy Memory、Growth、provider instruction projectionはV6正本へ持ち込まない。既存の空V6 bootstrap DBがある場合も、valid V6 DBであれば同じrelease migrationで継続データを投入する。release data copy後は`app_settings.v4_to_v6_release_data_migrated_at`をmarkerとして残し、valid V6 DBとV4 DBが併存する起動ではmarker済みなら再copyとmigration progress表示を行わない。
-diagnosticsは`withmate-v6.db`をruntime fileとして表示し、schema-validなら`runtimeEligible: true`として扱う。V4 DBと並存する場合は複数runtime generation warningの対象にする。
-
-## V6 Project Scope
-
-V6 Memoryはlegacy `project_scopes`を再利用しない。
-V6専用の`project_scopes_v6` identity tableを新設する。
-
-project scope解決の入力には、current sessionのworkspace metadataとGit metadataを使ってよい。
-ただし、保存先とIDはV6 DBが所有する。
-
-保存する最小情報:
-
-- `id`
-- `project_type`
-- `project_key`
-- `workspace_path`
-- `git_root`
-- `git_remote_url`
-- `display_name`
-- `created_at`
-- `updated_at`
-
-`display_name`はrepo名またはdirectory名など人間向け表示名として扱う。
-Memory entryのowner / scopeには表示名ではなくV6 project scope IDを保存する。
-
-## V6 Memory Tables
-
-Memory entry、tag、relation、mutation event、idempotency keyはV6専用tableで持つ。
-legacy Memory tableは読まない、書かない、意味変更しない。
-
-V6 Memory schema detailは`docs/design/v6-memory-foundation.md`を正本にする。
-
-Foundation schemaでは次を作る。
-
-- `memory_entries_v6`
-- `memory_entry_tags_v6`
-- `memory_entry_relations_v6`
-- `memory_tag_catalog_v6`
-- `memory_mutation_events_v6`
-- `memory_idempotency_keys_v6`
-- `memory_idempotency_forget_results_v6`
-
-Memory idempotencyは`binding_id_hash / key / operation / owner / scope`をidentityに含める。
-`binding_id_hash`はbinding本体ではなく短命referenceのhashだけを保存する。
-同じidentityで`request_fingerprint`が一致しない場合はretryではなくconflictとして扱う。
-batch forgetのentry別結果は`memory_idempotency_forget_results_v6`へ保存する。
-Memory mutation ledgerは`result_status`をfirst-class columnとして持つ。
-
-## Session And Audit
-
-V6ではsession履歴も再設計対象にする。
-V5以前sessionは移行しない。
-V6 session tableは`sessions_v6`とし、V6 runtimeで必要なmetadata、provider thread identity、Character snapshot reference、workspace/project contextを明示的に保持する。
-resume時に実行policyがdefaultへ戻らないよう、`catalog_revision`、`approval_mode`、`codex_sandbox_mode`、`allowed_additional_directories_json`、`session_kind`、`custom_agent_name`、`runtime_policy_json`を保存する。
-Character付きsessionでは`character_snapshot_json`をvalid JSONとして必須にし、neutral sessionでは`NULL`を許可する。
-message tableは`session_messages_v6`とし、V5以前message履歴は移行しない。
-message bodyはSession表示に必要な軽量projectionを保持し、assistant artifactのfull detailは`artifact_body`へ分離する。
-`getSession()`はartifact summaryだけを返し、operation detailsやdiff rowsなどの重いdetailはmessage artifact detail APIで遅延取得する。
-Memory provenanceはapp messageを指す`source_app_message_id`とprovider外部IDを指す`source_provider_message_id`を分ける。
-
-auditは従来の`audit_events_v6`集中保存から、Session turn単位の構造化tableへ移行する。
-通常Sessionのturn contextは`sessions_v6.id`を`session_id`で参照し、Auxiliary Sessionのturn contextはV6 schemaの`auxiliary_sessions.id`を`auxiliary_session_id`で参照する。
-legacy MemoryGeneration / Character Reflection / Monologue auditは移行しない。
-Session turn の detail payload は、final message / interim message / provider output / turn context へ再分類し、通常表示で不要な raw/detail を `audit_events_v6.metadata_json` へ集約し続けない。
-詳細は`docs/design/session-turn-storage-v6.md`を正本にする。
-`audit_events_v6` は移行ソースとして扱い、新read / write pathが新tableへ切り替わった後は削除対象とする。
-V6 DB内に残ったlegacy Memory tableは、V6正本には持ち込まずcleanup対象にする。
-`companion_*` tableは現行Companion runtimeが参照するため、このmigrationでは削除対象にしない。
-
-## Implementation Order
-
-1. V6 DB source of truthを固定する。
-2. V6 DB file naming / migration boundaryを決める。
-3. Character / app settings / provider settings / model catalogの自動移行範囲を固定する。
-4. V6 sessions / messages / audit / project scope / Memory schemaを定義する。
-5. V6 fresh DB作成pathを実装する。完了: `createOrVerifyV6FreshDatabase()`でtemp作成 / transaction / deep validation / final rename / existing valid検証 / invalid拒否を行う。
-6. Memory V6 runtime API用のapp起動時bootstrapを実装する。完了: V6 DBをbest-effortで作成 / 検証する。
-7. V6 release migrationで必要な継続データだけをV6 DBへ自動移行する。完了: V4到達後にV6へ移行し、既存の空V6 bootstrap DBにも継続データを投入する。
-8. V6 Memory contract / storageを新DB上に実装する。
-
-## Fixed Decisions
-
-Storage実装へ進む前の前提:
-
-1. V5以前DBはV6 runtimeの正本にしない。backup renameするか、そのまま残して無視するかはrelease packagingで決めてよく、V6 storage実装のblockerにしない。
-2. Character catalog、Character definition files、app settings、provider settings、model catalogは必要なデータだけ自動移行する。
-3. Character file storage rootは現行`<userData>/characters/<character-id>/`を継続する。
-4. V6 storage実装で、`src-electron/database-schema-v6.ts`のtableへだけwriteすることを確認する。
+`isValidV6Database()`はDB名、version、必須／禁止table、主要column・index・foreign key・CHECK、foreign key integrityを検証する。boot diagnostics向けのshallow検証はその代用ではない。fresh DB作成は一時領域でschema作成とdeep validationを終えてから、既存fileを上書きせずpublishする。関連する検証は`tests/main/database-schema-v6.test.ts`、`tests/main/app-database-v6-bootstrap.test.ts`、`tests/main/app-database-path.test.ts`にある。

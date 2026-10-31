@@ -1,0 +1,672 @@
+import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+import assert from "node:assert/strict";
+import { ChildProcess } from "node:child_process";
+import { it } from "node:test";
+import { CopilotClient, RuntimeConnection, type CopilotSession, type SessionEvent } from "@github/copilot-sdk";
+
+import { CopilotAdapter } from "../../src-electron/providers/copilot/copilot-adapter.js";
+import { SessionRuntimeFixture as SessionRuntimeService } from "./session-runtime-fixture.js";
+import { ProviderTurnError } from "../../src-electron/providers/provider-runtime.js";
+import { buildNewSession } from "../../src-shared/session/session-state.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+async function until(check: () => boolean) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (check()) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  assert.fail("lifecycle boundary was not reached");
+}
+
+class FakeSession {
+  readonly inputAck = deferred<{ success: boolean }>();
+  readonly inputAckStarted = deferred<void>();
+  readonly rpc = { eventLog: {
+    registerInterest: async ({ eventType }: { eventType: string }) => ({ handle: eventType }),
+    releaseInterest: async () => ({}),
+  }, ui: {
+    handlePendingUserInput: async () => { this.inputAckStarted.resolve(); return this.inputAck.promise; },
+    handlePendingElicitation: async () => { this.inputAckStarted.resolve(); return this.inputAck.promise; },
+  } };
+  readonly sessionId = "preserved-thread";
+  readonly listeners = new Set<(event: SessionEvent) => void>();
+  readonly retainedListeners = new Set<(event: SessionEvent) => void>();
+  readonly sends: ReturnType<typeof deferred<string>>[] = [];
+  readonly abortReply = deferred<void>();
+  readonly abortStarted = deferred<void>();
+  readonly disconnectStarted = deferred<void>();
+  readonly disconnectReply = deferred<void>();
+  abortCalls = 0;
+  disconnectCalls = 0;
+  delayDisconnect = false;
+  on(listener: (event: SessionEvent) => void) {
+    this.listeners.add(listener);
+    this.retainedListeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+  send() {
+    const reply = deferred<string>();
+    this.sends.push(reply);
+    return reply.promise;
+  }
+  abort() {
+    this.abortCalls += 1;
+    this.abortStarted.resolve();
+    return this.abortReply.promise;
+  }
+  disconnect() {
+    this.disconnectCalls += 1;
+    this.disconnectStarted.resolve();
+    if (this.delayDisconnect) return this.disconnectReply.promise;
+    this.listeners.clear();
+    return Promise.resolve();
+  }
+  emit(type: string, data: Record<string, unknown> = {}, late = false) {
+    for (const listener of late ? this.retainedListeners : this.listeners) {
+      listener({ type, data } as SessionEvent);
+    }
+  }
+  closeTransport() {
+    this.listeners.clear();
+    for (const reply of this.sends) reply.reject(new Error("Connection is closed."));
+    this.abortReply.reject(new Error("Connection is closed."));
+    this.disconnectReply.reject(new Error("Connection is closed."));
+    this.inputAck.reject(new Error("Connection is closed."));
+    // Unused RPC gates are fixture controls, not dispatched requests.
+    void this.abortReply.promise.catch(() => undefined);
+    void this.disconnectReply.promise.catch(() => undefined);
+    void this.inputAck.promise.catch(() => undefined);
+  }
+}
+
+class FakeProcess extends ChildProcess {
+  readonly exited = deferred<void>();
+  autoExit = true;
+  killAccepted = true;
+  killCalls = 0;
+  override kill() {
+    this.killCalls += 1;
+    if (!this.killAccepted) return false;
+    if (this.autoExit) this.exit();
+    return true;
+  }
+  exit() {
+    Reflect.set(this, "exitCode", 0);
+    this.emit("exit", 0, null);
+    this.exited.resolve();
+  }
+}
+
+class FakeClient {
+  readonly child = new FakeProcess();
+  cliProcess: FakeProcess | null = this.child;
+  readonly sessions: FakeSession[] = [];
+  readonly resumeIds: string[] = [];
+  readonly stopStarted = deferred<void>();
+  readonly stopReply = deferred<Error[]>();
+  readonly forceStarted = deferred<void>();
+  readonly forceReply = deferred<void>();
+  stopMode: "normal" | "pending" | "reject" | "failed-kill" = "normal";
+  forceMode: "normal" | "pending" | "reject" = "normal";
+  stopCalls = 0;
+  forceCalls = 0;
+  deferRpcClosure = false;
+  createSession() {
+    const session = new FakeSession();
+    this.sessions.push(session);
+    return Promise.resolve(session);
+  }
+  resumeSession(id: string) {
+    this.resumeIds.push(id);
+    return this.createSession();
+  }
+  closeTransport() {
+    if (this.deferRpcClosure) return;
+    for (const session of this.sessions) session.closeTransport();
+    this.stopReply.resolve([]);
+  }
+  async stop() {
+    this.stopCalls += 1;
+    this.stopStarted.resolve();
+    if (this.stopMode === "pending") return this.stopReply.promise;
+    if (this.stopMode === "reject") throw new Error("stop unavailable");
+    this.closeTransport();
+    this.cliProcess = null;
+    if (this.stopMode === "failed-kill") {
+      this.child.kill();
+      return [new Error("kill was not accepted")];
+    }
+    this.child.kill();
+    await this.child.exited.promise;
+    return [];
+  }
+  async forceStop() {
+    this.forceCalls += 1;
+    this.forceStarted.resolve();
+    if (this.forceMode === "pending") await this.forceReply.promise;
+    if (this.forceMode === "reject") throw new Error("force stop unavailable");
+    this.closeTransport();
+    // Exercise transport disposal without process-exit confirmation, including
+    // failed termination. The adapter must retain its captured child lifetime.
+    const child = this.cliProcess;
+    this.cliProcess = null;
+    try { child?.kill(); } catch { /* SDK suppresses kill failures. */ }
+  }
+}
+
+function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; realForceStop?: boolean; elicitationResponse?: LiveElicitationResponse } = {}) {
+  let stored = buildNewSession({
+    provider: "copilot", taskTitle: "cancel lifecycle", workspaceLabel: "fixture", workspacePath: process.cwd(),
+    branch: "fixture", characterId: "fixture", character: "Fixture", characterIconPath: "",
+    characterThemeColors: { main: "#000000", sub: "#ffffff" }, approvalMode: "on-request",
+    model: "gpt-4.1", reasoningEffort: "high",
+  });
+  let live: LiveSessionRunState | null = null;
+  const turns: SessionTurnRecord[] = [];
+  const clients: FakeClient[] = [];
+  const logs: string[] = [];
+  const catalog: ModelCatalogProvider = { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high",
+    models: [{ id: "gpt-4.1", label: "GPT-4.1", reasoningEfforts: ["high"] }] };
+  const adapter = new CopilotAdapter({ turnCancelGraceMs: options.cancelGraceMs ?? 0,
+    sessionDisconnectTimeoutMs: 0, clientStopTimeoutMs: 0, log: (entry) => { logs.push(entry.message); } });
+  adapter.composePrompt = () => ({ systemBodyText: "", inputBodyText: "input", logicalPrompt: {
+    systemText: "", inputText: "input", composedText: "input" }, imagePaths: [], additionalDirectories: [] });
+  const ports = adapter as unknown as {
+    clients: Map<string, CopilotClient>;
+    getClient(): { client: CopilotClient; clientKey: string };
+  };
+  ports.getClient = () => {
+    const clientKey = "owned-client";
+    let client = ports.clients.get(clientKey);
+    if (!client) {
+      const fake = new FakeClient();
+      clients.push(fake);
+      if (options.realForceStop) {
+        // Instantiate the SDK without starting a process or contacting Copilot.
+        const sdk = new CopilotClient({ connection: RuntimeConnection.forStdio({ path: "unused-cancel-fixture" }) });
+        sdk.createSession = async () => await fake.createSession() as unknown as CopilotSession;
+        sdk.resumeSession = async (id) => await fake.resumeSession(id) as unknown as CopilotSession;
+        sdk.stop = async () => {
+          const result = await fake.stop();
+          Reflect.set(sdk, "cliProcess", fake.cliProcess);
+          return result;
+        };
+        Reflect.set(sdk, "cliProcess", fake.child);
+        Reflect.set(sdk, "connection", { dispose: () => fake.closeTransport() });
+        const forceStop = sdk.forceStop.bind(sdk);
+        sdk.forceStop = async () => { fake.forceCalls += 1; fake.forceStarted.resolve(); await forceStop(); };
+        client = sdk;
+      } else {
+        client = fake as unknown as CopilotClient;
+      }
+      ports.clients.set(clientKey, client);
+    }
+    return { client, clientKey };
+  };
+  const service = new SessionRuntimeService({
+    providerCancelGraceMs: options.runtimeGraceMs ?? 1000,
+    getSession: () => stored,
+    upsertSession: (next) => { stored = next; return next; },
+    upsertTerminalSession: (next, commit) => {
+      stored = next;
+      const index = turns.findIndex((turn) => turn.id === commit.turnId);
+      turns[index] = { ...turns[index], phase: commit.phase, errorMessage: commit.errorMessage };
+      return next;
+    },
+    resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+    getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } }),
+    resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [catalog] }, provider: catalog }),
+    getProviderCodingAdapter: () => adapter,
+    getSessionMemory: (session) => createDefaultSessionMemory(session),
+    resolveProjectMemoryEntriesForPrompt: () => [],
+    createSessionTurn: (entry) => { const turn = { id: turns.length + 1, ...entry }; turns.push(turn); return turn; },
+    updateSessionTurn: (id, entry) => { const index = turns.findIndex((turn) => turn.id === id); turns[index] = { id, ...entry }; },
+    setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
+    waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => options.elicitationResponse ?? { action: "cancel" },
+    setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {},
+    invalidateProviderSessionThread: (_provider, id) => adapter.invalidateSessionThread(id),
+    broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+  });
+  return {
+    adapter, ports, service, clients, turns, logs,
+    stored: () => stored, live: () => live,
+    start: (message = "first") => service.runSessionTurn(stored.id, { userMessage: message, executionOptions: captureSessionExecutionOptions(stored) }),
+    cancel: () => service.cancelRun(stored.id),
+    current: async () => { await until(() => Boolean(clients.at(-1)?.sessions.at(-1)?.sends.length)); return clients.at(-1)!.sessions.at(-1)!; },
+  };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotの集中progressは全量を配送し、native完了後もconsumerの実完了を待ち実失敗はpartial付きfailedへ変換する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy; docs/adr/002-provider-turn-terminal-and-cancellation.md" }
+// fault = "callback件数で正常burstを拒否するか、consumer未完了/失敗を成功にして所有接続cleanupを省く"
+// observable = "全callback件数、gate前後のprovider完了、成功/partial本文、失敗時の旧client stopとchild exit"
+// observation_boundary = "public-boundary"
+// scope = "CopilotAdapter burst progress and owned SDK cleanup"
+// lifecycle = "permanent"
+// impact = "正常burstで必要本文を失うことと、実失敗後に旧接続と次Sendを競合させることを防ぐ"
+// distinction = "delivery helper単体ではSDK emitter・native terminal・所有接続cleanupとの結線を通らない;小さい固定burstとgateで確認する"
+// @end-test-value
+it("Copilotのprogress burstは全量処理しconsumer完了と実失敗を区別する", { timeout: 5000 }, async () => {
+  for (const fail of [false, true]) {
+    const f = fixture();
+    const session = f.stored();
+    const gate = deferred<void>();
+    let delivered = 0;
+    let settled = false;
+    const run = f.adapter.runSessionTurn({
+      session, executionOptions: captureSessionExecutionOptions(session), sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [], providerCatalog: { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high", models: [{ id: "gpt-4.1", label: "GPT", reasoningEfforts: ["high"] }] },
+      userMessage: "pressure", appSettings: normalizeAppSettings({}), attachments: [],
+    }, (state) => { if (state.assistantText) { delivered += 1; return gate.promise; } });
+    const outcome = run.then(result => { settled = true; return result; }, (error: unknown) => { settled = true; return error; });
+    const owned = await f.current();
+    try {
+      for (let index = 0; index < 100; index++) owned.emit("assistant.message_delta", { messageId: "one", deltaContent: "x" });
+      assert.equal(delivered, 100);
+      owned.emit("session.idle");
+      owned.sends[0].resolve("sent");
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.equal(settled, false);
+      if (fail) gate.reject(new Error("consumer failed")); else gate.resolve();
+      const result = await outcome;
+      if (fail) {
+        assert.ok(result instanceof ProviderTurnError);
+        assert.equal(result.canceled, false);
+        assert.match(result.message, /consumer failed/);
+        assert.equal(result.partialResult.assistantText, "x".repeat(100));
+        assert.equal(f.clients[0].stopCalls, 1);
+        assert.equal(f.clients[0].child.exitCode, 0);
+      } else {
+        assert.ok(result && typeof result === "object" && "assistantText" in result);
+        assert.equal(result.assistantText, "x".repeat(100));
+        assert.equal(f.clients[0].stopCalls, 0);
+      }
+    } finally { gate.resolve(); }
+  }
+});
+
+
+// @test-value v2
+// kind = "contract"
+// claim = "Copilotの回答ACK待ち中のCancelは取消として保存し、Cancelより先の回答失敗は後続Cancelでも失敗のまま保存する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md; docs/adr/002-provider-turn-terminal-and-cancellation.md" }
+// fault = "取消cleanupの切断を回答失敗へ昇格するか、先行した回答失敗をCancelで隠す"
+// observable = "共通runtimeが保存するturn phase・runState・エラーと、所有client停止・child exit・listener解放"
+// observation_boundary = "consumer"
+// scope = "Copilot user input / MCP elicitation ACKとCancelの交差から共通runtime終端保存まで"
+// lifecycle = "permanent"
+// impact = "利用者の取消を障害履歴にすることと、実際の回答障害を取消で消すことを防ぐ"
+// distinction = "既存のACK拒否testと実行中取消testは両者の交差順序と保存phaseを確認せず、deferred ACKを使う6経路で直接確認する"
+// @end-test-value
+it("Copilotの回答ACK待ちCancelと先行回答エラーを区別して保存する", { timeout: 5000 }, async () => {
+  for (const eventType of ["user_input.requested", "elicitation.requested"]) {
+    for (const order of ["cancel-first", "failure-only", "failure-before-cancel"]) {
+      const f = fixture({ elicitationResponse: { action: "accept", content: { answer: "Example" } } });
+      const run = f.start();
+      const session = await f.current();
+      session.sends[0].resolve("sent");
+      session.emit("assistant.message", { messageId: "before", content: "Question follows." });
+      session.emit(eventType, eventType === "user_input.requested"
+        ? { requestId: "question", question: "Name?" }
+        : { requestId: "question", mode: "form", message: "Name?", elicitationSource: "fixture",
+            requestedSchema: { type: "object", properties: { answer: { type: "string" } }, required: ["answer"] } });
+      await session.inputAckStarted.promise;
+      if (order === "cancel-first") f.cancel();
+      else {
+        session.inputAck.reject(new Error("input RPC unavailable"));
+        if (order === "failure-before-cancel") {
+          await session.abortStarted.promise;
+          f.cancel();
+        }
+      }
+      await run;
+      const canceled = order === "cancel-first";
+      assert.equal(f.turns[0].phase, canceled ? "canceled" : "failed");
+      assert.equal(f.stored().runState, canceled ? "idle" : "error");
+      if (canceled) assert.equal(f.stored().messages.at(-1)?.runFailure, undefined);
+      else assert.match(f.turns[0].errorMessage ?? "", /input RPC unavailable/);
+      assert.equal(f.clients[0].stopCalls, 1);
+      assert.equal(f.clients[0].child.exitCode, 0);
+      assert.equal(session.listeners.size, 0);
+      assert.equal(f.service.isRunInFlight(f.stored().id), false);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "send/abort応答未完了の取消はSDK停止応答・旧child実exit・RPC終了を個別に待ち、guard解放後に同じ会話をresumeする"
+// oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md; Issue #782 A/B" }
+// fault = "send応答待ちに滞留するか、停止中の旧接続と次Sendを重ねる"
+// observable = "SDK停止応答/旧child exit/RPC終了を順に解放した時の実runtime Send拒否、live取消状態、送信件数、保存phaseとresume ID"
+// observation_boundary = "public-boundary"
+// scope = "SessionRuntimeService through CopilotAdapter to SDK transport boundary"
+// lifecycle = "permanent"
+// impact = "取消後の再送不能と同一workspaceへの二重副作用を防ぐ"
+// distinction = "provider stub単体ではsend/abort待ちとcache cleanup寿命が観測できず、deferred統合testでのみ検出できる"
+// @end-test-value
+it("無応答send/abortを強制停止で収束し、停止完了まで次Sendを拒否する", { timeout: 5000 }, async () => {
+  for (const pendingSend of [true, false]) {
+    const f = fixture({ runtimeGraceMs: 0 });
+    const first = f.start();
+    const old = await f.current();
+    const owner = f.clients[0];
+    if (!pendingSend) old.sends[0].resolve("first");
+    owner.stopMode = "pending";
+    owner.forceMode = "pending";
+    owner.child.autoExit = false;
+    owner.deferRpcClosure = true;
+    f.cancel(); f.cancel();
+    if (!pendingSend) old.emit("session.error", { message: "Connection is closed." });
+    await owner.forceStarted.promise;
+    await first;
+    assert.equal(old.abortCalls, 1);
+    assert.equal(f.service.isRunInFlight(f.stored().id), true);
+    assert.equal(f.live()?.cancellationState, "terminating");
+    await assert.rejects(f.start("blocked"), /already running/);
+    owner.forceReply.resolve();
+    await until(() => owner.cliProcess === null);
+    await assert.rejects(f.start("SDK replied but child alive"), /already running/);
+    owner.child.exit();
+    await assert.rejects(f.start("child exited but RPC pending"), /already running/);
+    owner.deferRpcClosure = false;
+    owner.closeTransport();
+    await until(() => !f.service.isRunInFlight(f.stored().id));
+    assert.equal(old.listeners.size, 0);
+    assert.equal(f.turns[0].phase, "canceled");
+    const next = f.start("next");
+    await until(() => f.clients.length === 2);
+    const fresh = await f.current();
+    assert.notEqual(fresh, old);
+    assert.deepEqual(f.clients[1].resumeIds, [old.sessionId]);
+    old.emit("assistant.message", { content: "old late response", messageId: "old" }, true);
+    old.emit("session.idle", {}, true);
+    old.sends[0].resolve("late send"); old.abortReply.resolve();
+    assert.equal(f.service.isRunInFlight(f.stored().id), true);
+    fresh.sends[0].resolve("next");
+    fresh.emit("assistant.message", { content: "next answer", messageId: "new" }); fresh.emit("session.idle");
+    await next;
+    assert.match(f.stored().messages.at(-1)!.text, /next answer/);
+    assert.doesNotMatch(JSON.stringify(f.stored().messages), /old late response/);
+    assert.equal(owner.stopCalls, 1); assert.equal(owner.forceCalls, 1);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "取消中のidle単独またはabort応答単独では次Sendを許可せず、両方とsend応答および所有接続停止後に解放する"
+// oracle = { type = "contract", ref = "Issue #782 B; docs/design/session-run-lifecycle.md#Session-Run-Cancel" }
+// fault = "idle先行やabort先行で未完了RPCを次turnへ持ち越す"
+// observable = "runtime Send拒否、abort/stop件数、guard解除、SDK listener数"
+// observation_boundary = "public-boundary"
+// scope = "Copilot graceful cancellation order through Main runtime"
+// lifecycle = "permanent"
+// impact = "遅い旧abortによる次turn停止を防ぐ"
+// distinction = "強制停止caseでは確認できない正常な応答順序の両向きをdeferredで固定する"
+// @end-test-value
+it("idleとabortの順序が逆でも全RPCと接続停止までguardを保持する", { timeout: 5000 }, async () => {
+  for (const idleFirst of [true, false]) {
+    const f = fixture({ cancelGraceMs: 1000 });
+    const run = f.start(); const session = await f.current();
+    f.cancel(); await session.abortStarted.promise;
+    if (idleFirst) session.emit("session.idle"); else session.abortReply.resolve();
+    await assert.rejects(f.start("blocked"), /already running/);
+    if (idleFirst) session.abortReply.resolve(); else session.emit("session.idle");
+    await assert.rejects(f.start("still blocked"), /already running/);
+    session.sends[0].resolve("first");
+    await run;
+    assert.equal(f.service.isRunInFlight(f.stored().id), false);
+    assert.equal(f.clients[0].forceCalls, 0);
+    assert.equal(f.clients[0].stopCalls, 1);
+    assert.equal(session.listeners.size, 0);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "取消の停止失敗は診断ログを維持し、取得済みpartial本文と操作を通常履歴へ保存する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error-Handling; Issue #782" }
+// fault = "停止errorをcatchで消すか取得済みpartialを取消通知だけへ置換する"
+// observable = "保存messagesとartifact、canceled最小turn、adapter log"
+// observation_boundary = "public-boundary"
+// scope = "Copilot cancellation partial result and runtime terminal persistence"
+// lifecycle = "permanent"
+// impact = "途中成果を保護し停止失敗の診断を可能にする"
+// distinction = "汎用runtime partial testはCopilot event変換と停止失敗のcatchを通らない"
+// @end-test-value
+it("停止失敗の診断とpartial結果を取消後に保持する", { timeout: 5000 }, async () => {
+  const f = fixture(); const run = f.start(); const session = await f.current();
+  session.sends[0].resolve("first");
+  session.emit("assistant.message", { content: "partial answer", messageId: "partial" });
+  session.emit("tool.execution_start", { toolCallId: "tool", toolName: "bash", arguments: { command: "echo partial" } });
+  session.emit("tool.execution_complete", { toolCallId: "tool", success: true, result: { content: "partial" } });
+  session.delayDisconnect = true;
+  f.clients[0].stopMode = "reject";
+  f.cancel(); await session.abortStarted.promise;
+  session.abortReply.reject(new Error("abort unavailable"));
+  await run;
+  assert.match(f.stored().messages.at(-1)!.text, /partial answer/);
+  assert.equal(f.turns[0].phase, "canceled");
+  assert.ok(f.stored().messages.at(-1)?.artifact?.operationTimeline?.some((operation) => operation.summary.includes("echo partial")));
+  assert.match(f.logs.join("\n"), /session disconnect timed out/);
+  assert.match(f.logs.join("\n"), /stop unavailable/);
+  assert.equal(f.clients[0].forceCalls, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "旧取消cleanupは捕捉ownerだけを停止し同一keyの新接続と無関係接続を停止しない"
+// oracle = { type = "contract", ref = "Issue #782 cache ownership boundary; docs/design/session-run-lifecycle.md" }
+// fault = "遅いcleanupがcacheを再取得して新clientまたは別Sessionを停止する"
+// observable = "旧owner/新owner/無関係clientのstop件数とcache identity"
+// observation_boundary = "component-behavior"
+// scope = "Copilot captured cancellation owner across cache replacement"
+// lifecycle = "permanent"
+// impact = "別会話と再接続の実行を取消の巻き添えから保護する"
+// distinction = "既存invalidation testと異なり実turnのCancelから遅延cleanupへ進める"
+// @end-test-value
+it("取消の遅いcleanupは同一keyの新clientと無関係clientに触れない", { timeout: 5000 }, async () => {
+  const f = fixture(); const run = f.start(); const session = await f.current();
+  const old = f.clients[0]; old.stopMode = "pending"; old.forceMode = "pending";
+  f.cancel(); await old.forceStarted.promise;
+  const fresh = new FakeClient(); const unrelated = new FakeClient();
+  f.ports.clients.set("owned-client", fresh as unknown as CopilotClient);
+  f.ports.clients.set("unrelated", unrelated as unknown as CopilotClient);
+  old.forceReply.resolve(); await run;
+  assert.equal(f.ports.clients.get("owned-client"), fresh);
+  assert.equal(f.ports.clients.get("unrelated"), unrelated);
+  assert.equal(fresh.stopCalls + fresh.forceCalls, 0);
+  assert.equal(unrelated.stopCalls + unrelated.forceCalls, 0);
+  assert.equal(session.listeners.size, 0);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実SDKのforceStopがchild終了を待つ場合とstop後にhandleを失う場合の両方で旧child実exitまでguardを保持する"
+// oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md; Issue #782" }
+// fault = "SDKの接続切断を停止証明にするかstopで失ったchild handleを追跡せず再送する"
+// observable = "kill false後のruntime in-flightとSend拒否、handle欠落時のkill失敗log、実exit後のguard解除"
+// observation_boundary = "public-boundary"
+// scope = "Real Copilot SDK forceStop without process startup through runtime terminating guard"
+// lifecycle = "permanent"
+// impact = "停止不能な旧処理と新処理の二重実行を防ぐ"
+// distinction = "mockのみの停止成功testでは実SDKのexit待機とstop後のhandle欠落の両経路を検証できない"
+// @end-test-value
+it("実SDKの停止待機とchild handle欠落でも実exitまでguardを維持する", { timeout: 5000 }, async () => {
+  for (const stopMode of ["reject", "failed-kill"] as const) {
+    const f = fixture({ runtimeGraceMs: 0, realForceStop: true }); const run = f.start(); const session = await f.current();
+    const owner = f.clients[0]; owner.stopMode = stopMode; owner.child.killAccepted = false;
+    f.cancel(); await run; await owner.forceStarted.promise;
+    if (stopMode === "failed-kill") {
+      await until(() => f.logs.some((message) => message.includes("kill request was not accepted")));
+      assert.equal(owner.child.killCalls, 2, "adapter still signals the captured old child after the SDK loses its handle");
+    } else {
+      await until(() => owner.child.killCalls === 1);
+    }
+    assert.equal(owner.forceCalls, 1);
+    assert.equal(f.service.isRunInFlight(f.stored().id), true);
+    await assert.rejects(f.start("blocked"), /already running/);
+    assert.equal(session.listeners.size, 0, "recovery does not require idle from a disconnected session");
+    owner.child.exit();
+    await until(() => !f.service.isRunInFlight(f.stored().id));
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "取消していない長時間turnは応答を期限で打ち切らず正常完了後に同じSDK Sessionを再利用する"
+// oracle = { type = "contract", ref = "docs/adr/002-provider-turn-terminal-and-cancellation.md; docs/design/provider-adapter.md#Thread-Management" }
+// fault = "取消用deadlineを正常turnへ適用するか正常完了で接続を破棄する"
+// observable = "SDK send/stop件数、runtime in-flight、再送時Session identityと保存本文"
+// observation_boundary = "public-boundary"
+// scope = "Copilot normal completion and connection reuse through runtime"
+// lifecycle = "permanent"
+// impact = "正常な長時間応答と会話継続を保護する"
+// distinction = "helperのcache key検査では実turnに対するtimerの誤適用を検出できない"
+// @end-test-value
+it("正常turnには取消期限を適用せず、完了後はSessionを再利用する", { timeout: 5000 }, async () => {
+  const f = fixture(); const first = f.start(); const session = await f.current();
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  assert.equal(f.service.isRunInFlight(f.stored().id), true);
+  assert.equal(f.clients[0].stopCalls, 0);
+  session.emit("assistant.message", { content: "first answer", messageId: "first" });
+  session.emit("session.idle"); session.sends[0].resolve("first"); await first;
+  const next = f.start("next"); await until(() => session.sends.length === 2);
+  assert.equal(f.clients.length, 1); assert.equal(f.clients[0].sessions.length, 1);
+  session.emit("assistant.message", { content: "second answer", messageId: "second" });
+  session.sends[1].resolve("next"); session.emit("session.idle"); await next;
+  assert.match(f.stored().messages.at(-1)!.text, /second answer/);
+  assert.equal(f.clients[0].stopCalls, 0);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "cached Copilot turnの表示/非表示toolの開始・空partial・承認待ちだけのstale失敗は同じthreadをresumeして一度だけ再送できる"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+// fault = "設定runChecks・未確定操作summary・承認warning/detailsを取得結果と誤認し回復を拒む、または再失敗後も再送する"
+// observable = "SessionRuntimeService.runSessionTurn経由の保存本文/runState、SDK send件数、client数、旧client stop/disconnect件数、新client resumeIds"
+// observation_boundary = "public-boundary"
+// scope = "Copilot cached sessionのproduction retryから同一logical turn終端保存まで"
+// lifecycle = "permanent"
+// impact = "未実行の操作で会話を回復不能にすることとstale失敗の無限再実行を防ぐ"
+// distinction = "shouldRetry単体testは設定・activity summary付きproduction artifactやcache再生成/resume/一回制限を通らない。既存ローカルfixtureを使い外部接続なしで検証する"
+// @end-test-value
+it("開始・承認待ちだけのstale turnは同一threadで一度だけ回復する", { timeout: 5000 }, async () => {
+  for (const failure of ["Connection is closed.", "SessionNotFound: session not found"]) {
+    for (const mode of ["start", "hidden-start", "empty-partial", "pending", "permission-start", "approved-start"] as const) {
+      for (const recovered of [true, false]) {
+        const f = fixture();
+        const prime = f.start(); const cached = await f.current();
+        cached.emit("assistant.message", { content: "prime answer", messageId: "prime" });
+        cached.emit("session.idle"); cached.sends[0].resolve("prime"); await prime;
+        const run = f.start("recover input");
+        await until(() => cached.sends.length === 2);
+        if (mode === "start" || mode === "hidden-start" || mode === "empty-partial") {
+          cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: mode === "start" ? "shell" : "custom_fixture", arguments: { command: "synthetic command" } });
+          if (mode === "empty-partial") {
+            cached.emit("tool.execution_partial_result", { toolCallId: "not-completed", partialOutput: " \n " });
+          }
+        } else {
+          cached.emit("permission.requested", { requestId: "permission-only", permissionRequest: {
+            kind: "shell", toolCallId: "not-completed", fullCommandText: "synthetic command", warning: "synthetic permission warning",
+          } });
+          if (mode === "approved-start") {
+            cached.emit("permission.completed", { requestId: "permission-only", result: { kind: "approved" } });
+          }
+          if (mode !== "pending") {
+            cached.emit("tool.execution_start", { toolCallId: "not-completed", toolName: "shell", arguments: { command: "synthetic command" } });
+          }
+        }
+        cached.sends[1].reject(new Error(failure));
+        await until(() => f.clients.length === 2 && Boolean(f.clients[1].sessions[0]?.sends.length));
+        const fresh = f.clients[1].sessions[0];
+        assert.deepEqual(f.clients[1].resumeIds, ["preserved-thread"]);
+        assert.equal(f.clients[0].stopCalls, 1);
+        assert.equal(cached.disconnectCalls, 1);
+        if (recovered) {
+          fresh.emit("assistant.message", { content: "recovered answer", messageId: "recovered" });
+          fresh.emit("session.idle"); fresh.sends[0].resolve("recovered");
+        } else {
+          fresh.sends[0].reject(new Error(failure));
+        }
+        await run;
+        assert.equal(f.clients.length, 2, "second stale failure must not trigger another retry");
+        assert.equal(cached.sends.length + fresh.sends.length, 3, "one prime send and two attempts");
+        assert.equal(f.turns.length, 2, "retry stays in the same logical turn");
+        assert.equal(f.turns.at(-1)?.phase, recovered ? "completed" : "failed");
+        if (recovered) assert.match(f.stored().messages.at(-1)!.text, /recovered answer/);
+      }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "cached Copilotは取得済み本文・表示/非表示toolのterminal結果・非空partialを持つstale失敗を自動再送せず通常artifactへ保存する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#Error Handling" }
+// fault = "terminalまたは途中結果を持つ操作を未確定と扱って重複実行する、またはretry抑止時のpartialを捨てる"
+// observable = "prime後のruntime経由SDK send/client件数、live step ID、保存assistant本文・artifact操作ID/type/status/details/error/exitCode"
+// observation_boundary = "public-boundary"
+// scope = "Copilot production eventからpartial artifact・retry admission・通常履歴保存まで"
+// lifecycle = "permanent"
+// impact = "実行済み副作用の重複と失敗前に取得した応答の消失を防ぐ"
+// distinction = "helperへpartialを手渡すtestと取消testではstale失敗によるproduction retryを観測しない。既存fixtureの有限event列だけで検証する"
+// @end-test-value
+it("取得済み結果付きstale turnは再送せずpartialを保存する", { timeout: 5000 }, async () => {
+  for (const toolName of ["shell", "withmate-memory.append_episode", "custom_fixture"]) {
+    for (const mode of ["assistant", "completed", "completed-empty", "failed", "partial"] as const) {
+      const f = fixture(); const prime = f.start(); const session = await f.current();
+      session.emit("assistant.message", { content: "prime answer", messageId: "prime" });
+      session.emit("session.idle"); session.sends[0].resolve("prime"); await prime;
+      const run = f.start("input after prime");
+      await until(() => session.sends.length === 2);
+      if (mode === "assistant") {
+        session.emit("assistant.message", { content: "acquired answer", messageId: "acquired" });
+      } else {
+        session.emit("tool.execution_start", { toolCallId: "acquired", toolName, arguments: { command: "synthetic side effect" } });
+        if (mode === "partial") {
+          session.emit("tool.execution_partial_result", { toolCallId: "acquired", partialOutput: "acquired output" });
+        } else {
+          session.emit("tool.execution_complete", { toolCallId: "acquired", success: mode !== "failed",
+            ...(mode === "completed-empty" ? {} : { result: { contents: [{ type: "terminal", text: "acquired output", exitCode: mode === "failed" ? 1 : 0 }] } }),
+            ...(mode === "failed" ? { error: { message: "acquired error", code: "synthetic-error" } } : {}) });
+        }
+      }
+      await until(() => mode === "assistant" ? Boolean(f.live()?.assistantText.includes("acquired answer"))
+        : toolName === "shell" ? Boolean(f.live()?.steps.some((step) => step.id === "acquired")) : true);
+      if (mode !== "assistant" && toolName !== "shell") {
+        assert.equal(f.live()?.steps.some((step) => step.id === "acquired"), false);
+      }
+      session.sends[1].reject(new Error("Connection is closed.")); await run;
+      assert.equal(f.clients.length, 1, "acquired results prohibit retry and client replacement");
+      assert.equal(session.sends.length, 2, "only the prime and cached turn are sent");
+      assert.equal(f.clients[0].stopCalls, 0);
+      assert.equal(f.turns.at(-1)?.phase, "failed");
+      if (mode === "assistant") {
+        assert.match(f.stored().messages.at(-1)!.text, /acquired answer/);
+      } else {
+        const operation = f.stored().messages.at(-1)!.artifact!.operationTimeline![0];
+        assert.equal(operation.id, "acquired");
+        assert.equal(operation.type, toolName === "shell" ? "command_execution" : "tool_call");
+        assert.equal(operation.status, mode === "partial" ? "in_progress" : mode === "completed-empty" ? "completed" : mode);
+        if (mode === "completed-empty") assert.equal(operation.details, undefined);
+        else assert.match(operation.details!, /acquired output/);
+        if (mode === "completed" || mode === "failed") assert.equal(operation.exitCode, mode === "failed" ? 1 : 0);
+        if (mode === "failed") assert.deepEqual(operation.error, { message: "acquired error", code: "synthetic-error" });
+      }
+    }
+  }
+});

@@ -1,5 +1,5 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useEffect, useId, useMemo, useRef, type CSSProperties } from "react";
+import { defaultRangeExtractor, measureElement, useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import {
   buildChangedFileTree,
@@ -10,11 +10,16 @@ import type {
   FileRootGitChangeEntry,
   FileRootGitChangeScope,
   SessionFileRoot,
-} from "./file-explorer-contract.js";
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { LoadingIndicator } from "../ui/loading-indicator.js";
 
 const ROOT_HEADER_ESTIMATED_HEIGHT = 48;
 const ROOT_GROUP_MIN_HEIGHT = 168;
 const ROOT_GROUP_MAX_HEIGHT = 408;
+const DEFAULT_SCOPES = [
+  ["working-tree", "Working Tree"],
+  ["staged", "Staged"],
+] as const satisfies readonly (readonly [FileRootGitChangeScope, string])[];
 
 export type GitRootChanges = {
   root: SessionFileRoot;
@@ -25,8 +30,6 @@ export type GitRootChanges = {
 
 type FileRootChangeRow =
   | { key: string; type: "header"; label: string; count: number }
-  | { key: string; type: "empty"; label: string }
-  | { key: string; type: "status"; label: string }
   | { key: string; type: "error"; label: string }
   | {
       key: string;
@@ -76,10 +79,12 @@ type FileRootChangesGroupProps = {
   rootChange: GitRootChanges;
   groupCount: number;
   sizing?: "bounded" | "content";
+  scrollContainer?: HTMLDivElement | null;
   collapsedDirectories: Record<string, boolean>;
   loadingKey: string;
   scopes?: readonly (readonly [FileRootGitChangeScope, string])[];
   selectedEntryKey?: string | null;
+  preserveScrollAnchor?: boolean;
   onToggleDirectory: (rootId: string, scope: FileRootGitChangeScope, relativePath: string) => void;
   onOpenEntry: (
     rootId: string,
@@ -93,14 +98,17 @@ export function FileRootChangesGroup({
   rootChange,
   groupCount,
   sizing = "bounded",
+  scrollContainer,
   collapsedDirectories,
   loadingKey,
   onToggleDirectory,
   onOpenEntry,
-  scopes = [["working-tree", "Working Tree"], ["staged", "Staged"]],
+  scopes = DEFAULT_SCOPES,
   selectedEntryKey = null,
+  preserveScrollAnchor = false,
 }: FileRootChangesGroupProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
   const headingId = useId();
   const rows = useMemo(() => {
     const nextRows: FileRootChangeRow[] = [];
@@ -143,7 +151,6 @@ export function FileRootChangesGroup({
       return nextRows;
     }
     if (rootChange.status === "pending" && rootChange.entries.length === 0) {
-      nextRows.push({ key: `status:${rootChange.root.id}`, type: "status", label: "Refreshing…" });
       return nextRows;
     }
     if (rootChange.message) {
@@ -154,22 +161,23 @@ export function FileRootChangesGroup({
     }
     for (const [scope, label] of scopes) {
       const scopedEntries = rootChange.entries.filter((entry) => entry.scopes.includes(scope));
+      if (scopedEntries.length === 0) {
+        continue;
+      }
       nextRows.push({
         key: `header:${rootChange.root.id}:${scope}`,
         type: "header",
         label,
         count: scopedEntries.length,
       });
-      if (scopedEntries.length === 0) {
-        nextRows.push({ key: `empty:${rootChange.root.id}:${scope}`, type: "empty", label: "No changes." });
-      } else {
+      if (scopedEntries.length > 0) {
         appendTreeNodes(buildChangedFileTree(scopedEntries, scope), scope, 0);
       }
     }
     return nextRows;
   }, [collapsedDirectories, rootChange, scopes]);
-  const naturalHeight = ROOT_HEADER_ESTIMATED_HEIGHT
-    + rows.reduce((total, row) => total + estimatedRowHeight(row), 0);
+  const naturalHeight = useMemo(() => ROOT_HEADER_ESTIMATED_HEIGHT
+    + rows.reduce((total, row) => total + estimatedRowHeight(row), 0), [rows]);
   const minimumHeight = Math.min(naturalHeight, ROOT_GROUP_MIN_HEIGHT);
   const maximumHeight = naturalHeight <= ROOT_GROUP_MAX_HEIGHT
     ? naturalHeight
@@ -183,29 +191,112 @@ export function FileRootChangesGroup({
         minHeight: `${minimumHeight}px`,
         ...(maximumHeight === undefined ? {} : { maxHeight: `${maximumHeight}px` }),
       };
+  const getScrollElement = () => scrollContainer === undefined ? scrollRef.current : scrollContainer;
+  useLayoutEffect(() => {
+    const container = scrollContainer;
+    const list = scrollRef.current;
+    if (!container?.clientHeight || !list) {
+      return;
+    }
+    setScrollMargin(list.getBoundingClientRect().top - container.getBoundingClientRect().top
+      + container.scrollTop - container.clientTop);
+  });
+  const previousLayoutRef = useRef<{
+    rootId: string;
+    displayPath: string;
+    entries: FileRootGitChangeEntry[];
+    message: string;
+    collapsedDirectories: Record<string, boolean>;
+    scopes: typeof scopes;
+    scrollElement: HTMLDivElement | null;
+    items: Array<{ key: string | number | bigint; start: number; end: number }>;
+  } | null>(null);
+  const readingContextRef = useRef<{ anchor: string; offset: number } | null>(null);
+  const restoredScrollTopRef = useRef<number | null>(null);
+  const focusedKey = preserveScrollAnchor && scrollRef.current?.contains(document.activeElement)
+    ? document.activeElement?.closest<HTMLElement>("[data-change-row-key]")?.dataset.changeRowKey ?? null : null;
+  const scrollElement = getScrollElement();
+  const previous = previousLayoutRef.current;
+  const sameReadingContext = preserveScrollAnchor && scrollElement && previous?.scrollElement === scrollElement
+    && previous.rootId === rootChange.root.id && previous.displayPath === rootChange.root.displayPath
+    && previous.collapsedDirectories === collapsedDirectories && previous.scopes === scopes;
+  if (!sameReadingContext) {
+    readingContextRef.current = null;
+  } else if (!readingContextRef.current
+    && (previous.entries !== rootChange.entries || previous.message !== rootChange.message)) {
+    const anchor = previous.items.find((item) => item.end > scrollElement.scrollTop);
+    if (anchor && rows.some((row) => row.key === anchor.key)) {
+      readingContextRef.current = {
+        anchor: String(anchor.key),
+        offset: scrollElement.scrollTop - anchor.start,
+      };
+      restoredScrollTopRef.current = scrollElement.scrollTop;
+    }
+  }
+  const cancelReadingRestore = () => { readingContextRef.current = null; };
   const virtualizer = useVirtualizer({
     count: rows.length,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement,
+    scrollMargin,
     getItemKey: (index) => rows[index]?.key ?? index,
     estimateSize: (index) => estimatedRowHeight(rows[index]!),
+    rangeExtractor: (range) => {
+      const indexes = defaultRangeExtractor(range);
+      const context = readingContextRef.current;
+      // 更新中のanchorと現在の操作対象だけは仮想範囲外でもmountを維持する。
+      for (const key of [context?.anchor, focusedKey]) {
+        const index = rows.findIndex((row) => row.key === key);
+        if (index >= 0 && !indexes.includes(index)) indexes.push(index);
+      }
+      return indexes.sort((left, right) => left - right);
+    },
+    measureElement: (element, entry, instance) => {
+      if (!getScrollElement()?.clientHeight) {
+        const index = instance.indexFromElement(element);
+        return instance.measurementsCache[index]?.size ?? estimatedRowHeight(rows[index]!);
+      }
+      return measureElement(element, entry, instance);
+    },
     overscan: 16,
     initialRect: { width: 280, height: Math.min(360, Math.max(90, naturalHeight - ROOT_HEADER_ESTIMATED_HEIGHT)) },
     useFlushSync: false,
   });
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = readingContextRef.current ? () => false : undefined;
   const totalSize = virtualizer.getTotalSize();
   const virtualItems = virtualizer.getVirtualItems();
-  const renderedVirtualItems = virtualItems.length > 0
-    ? virtualItems
-    : rows.map((row, index) => ({
-        index,
-        key: row.key,
-        start: rows.slice(0, index).reduce((total, previousRow) => total + estimatedRowHeight(previousRow), 0),
-        size: estimatedRowHeight(row),
-      }));
+
+  useLayoutEffect(() => {
+    const scrollElement = getScrollElement();
+    const context = readingContextRef.current;
+    if (context && scrollElement) {
+      const anchor = virtualizer.getVirtualItems().find((item) => item.key === context.anchor);
+      const renderedAnchor = virtualItems.find((item) => item.key === context.anchor);
+      if (anchor) {
+        scrollElement.scrollTop = Math.max(0, anchor.start + context.offset);
+        restoredScrollTopRef.current = scrollElement.scrollTop;
+        // refでの計測とscroll eventを反映したrenderまで同じanchorを保持する。
+        if (renderedAnchor?.start === anchor.start && Math.abs((virtualizer.scrollOffset ?? 0) - scrollElement.scrollTop) < 1) {
+          readingContextRef.current = null;
+        }
+      } else {
+        readingContextRef.current = null;
+      }
+    }
+    previousLayoutRef.current = {
+      rootId: rootChange.root.id,
+      displayPath: rootChange.root.displayPath,
+      entries: rootChange.entries,
+      message: rootChange.message,
+      collapsedDirectories,
+      scopes,
+      scrollElement,
+      items: virtualItems.map(({ key, start, end }) => ({ key, start, end })),
+    };
+  });
 
   useEffect(() => {
-    const scrollElement = scrollRef.current;
-    if (!scrollElement) {
+    const scrollElement = getScrollElement();
+    if (!scrollElement || scrollElement.clientHeight === 0) {
       return;
     }
     const maximumScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
@@ -220,7 +311,7 @@ export function FileRootChangesGroup({
       style={groupStyle}
       role="listitem"
       aria-labelledby={headingId}
-      aria-busy={rootChange.status === "pending"}
+      aria-busy={rootChange.status === "pending" || loadingKey.startsWith(`${rootChange.root.id}:`)}
       data-root-id={rootChange.root.id}
     >
       <div className="workspace-changes-root-header" title={rootChange.root.displayPath}>
@@ -229,11 +320,8 @@ export function FileRootChangesGroup({
           {rootChange.status === "pending" ? (
             <span
               className="workspace-changes-root-pending"
-              role="status"
-              aria-live="polite"
-              aria-label={`Refreshing changes for ${rootChange.root.label}`}
             >
-              <span className="workspace-changes-root-spinner" aria-hidden="true" />
+              <LoadingIndicator inline label={`Refreshing changes for ${rootChange.root.label}`} />
             </span>
           ) : rootChange.status === "idle" || (rootChange.status === "failed" && rootChange.entries.length === 0) ? null : (
             <span className="workspace-changes-root-count" aria-label={`${rootChange.entries.length} changed files`}>
@@ -249,9 +337,17 @@ export function FileRootChangesGroup({
         role="list"
         aria-label={`${rootChange.root.label} changes`}
         tabIndex={0}
+        onWheelCapture={cancelReadingRestore}
+        onPointerDownCapture={cancelReadingRestore}
+        onKeyDownCapture={cancelReadingRestore}
+        onScroll={(event) => {
+          if (readingContextRef.current && event.currentTarget.scrollTop !== restoredScrollTopRef.current) {
+            cancelReadingRestore();
+          }
+        }}
       >
         <div className="workspace-changes-list-inner" style={{ height: totalSize || naturalHeight }}>
-          {renderedVirtualItems.map((virtualRow) => {
+          {virtualItems.map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (!row) {
               return null;
@@ -261,17 +357,14 @@ export function FileRootChangesGroup({
                 key={row.key}
                 className={`workspace-change-virtual-row ${row.type}`}
                 data-index={virtualRow.index}
+                data-change-row-key={row.key}
                 ref={virtualizer.measureElement}
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
+                style={{ transform: `translateY(${virtualRow.start - scrollMargin}px)` }}
               >
                 {row.type === "header" ? (
                   <div className="workspace-changes-group-header"><strong>{row.label}</strong><span>{row.count}</span></div>
-                ) : row.type === "empty" ? (
-                  <p>{row.label}</p>
-                ) : row.type === "status" ? (
-                  <p role="status">{row.label}</p>
                 ) : row.type === "error" ? (
-                  <p className="workspace-changes-root-error">{row.label}</p>
+                  <p className="workspace-changes-root-error" role="alert">{row.label}</p>
                 ) : row.type === "directory" ? (
                   <button
                     className="workspace-change-directory-row"
@@ -281,7 +374,7 @@ export function FileRootChangesGroup({
                     title={row.relativePath}
                     onClick={() => onToggleDirectory(row.rootId, row.scope, row.relativePath)}
                   >
-                    <span className={`workspace-change-directory-icon${row.expanded ? " is-expanded" : ""}`}>▸</span>
+                    <span className={`workspace-change-directory-icon${row.expanded ? " is-expanded" : ""}`} aria-hidden="true">▸</span>
                     <span className="workspace-change-directory-name">{row.name}</span>
                   </button>
                 ) : (() => {
@@ -305,7 +398,15 @@ export function FileRootChangesGroup({
                     >
                       <span className={`workspace-change-kind ${kind}`}>{changeKindLabel(kind)}</span>
                       <span className="workspace-change-path">{changedFileDisplayName(row.entry)}</span>
-                      {loadingKey === key ? <span className="workspace-change-loading">…</span> : null}
+                      {loadingKey === key ? (
+                        <span
+                          className="workspace-change-loading"
+                          role="status"
+                          aria-label={kind === "untracked" ? "Opening file" : "Opening diff"}
+                        >
+                          <span className="workspace-changes-root-spinner" aria-hidden="true" />
+                        </span>
+                      ) : null}
                     </button>
                   );
                 })()}

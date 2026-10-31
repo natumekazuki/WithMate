@@ -1,4 +1,4 @@
-import type { WithMateWindowApi } from "./withmate-window-api.js";
+import type { WithMateWindowApi } from "../src-shared/ipc/withmate-window-api.js";
 
 declare global {
   interface Window {

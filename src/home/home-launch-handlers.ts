@@ -1,12 +1,10 @@
-import type { CompanionSessionSummary } from "../companion-state.js";
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../session-state.js";
-import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
-import type { ModelCatalogProvider } from "../model-catalog.js";
-import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
-import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
-import type { HomeLaunchDraft } from "./home-launch-state.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../../src-shared/session/session-state.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
+import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
+import type { OpenSessionWindowIdsLoadStatus } from "../app/open-session-window-subscription.js";
+import type { HomeLaunchCharacterCatalog, HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
   openLaunchDraft,
@@ -15,12 +13,16 @@ import {
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
 } from "./home-launch-state.js";
-import { isSessionFolderLaunchWorkspace } from "./home-launch-workspace.js";
-import { startHomeLaunch } from "./home-launch-actions.js";
+import { startHomeLaunch, type HomeLaunchFeedbackSource, type HomeLaunchResult } from "./home-launch-actions.js";
+
+export type HomeLaunchLifetime = { starting: boolean };
 
 type HomeLaunchHandlersContext = {
   launchDraft: HomeLaunchDraft;
+  launchDialogAttemptRef: { current: object | null };
   launchStarting: boolean;
+  launchLifetimeRef: { current: HomeLaunchLifetime };
+  onDetachedResult: (result: HomeLaunchResult) => void;
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
   enabledLaunchProviders: readonly ModelCatalogProvider[];
@@ -32,19 +34,16 @@ type HomeLaunchHandlersContext = {
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
   sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
-  setCharactersLoaded: (loaded: boolean) => void;
-  setLaunchFeedback: (message: string) => void;
+  setLaunchCharacterCatalog: (catalog: HomeLaunchCharacterCatalog) => void;
+  setLaunchFeedback: (message: string, source?: HomeLaunchFeedbackSource) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
   setLaunchDraft: (updater: HomeLaunchDraft | ((draft: HomeLaunchDraft) => HomeLaunchDraft)) => void;
   pickWorkspaceDirectory: () => Promise<string | null> | string | null;
   scheduleWorkspaceValidation: (targetPath: string) => void;
   cancelWorkspaceValidation: () => void;
   openSessionWindow: (sessionId: string) => Promise<void>;
-  openCompanionReviewWindow: (sessionId: string) => Promise<void>;
   createSession: (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
-  createCompanionSession: (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
   upsertSessionSummary: (summary: HomeSessionSummary) => void;
-  upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
 };
 
 export type HomeLaunchHandlers = {
@@ -55,15 +54,17 @@ export type HomeLaunchHandlers = {
   onSelectLaunchProvider: (providerId: string) => void;
   onSelectLaunchCharacter: (characterId: string) => void;
   onSelectRandomLaunchCharacter: () => void;
-  onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
   onChangeWorkspacePath: (value: string) => void;
-  onStartSession: (mode?: HomeLaunchDraft["mode"]) => void;
+  onStartSession: () => void;
 };
 
 export function buildHomeLaunchHandlers({
   launchDraft,
+  launchDialogAttemptRef,
   launchStarting,
+  launchLifetimeRef,
+  onDetachedResult,
   mateState,
   mateProfile,
   enabledLaunchProviders,
@@ -75,7 +76,7 @@ export function buildHomeLaunchHandlers({
   openSessionWindowIdsLoadStatus,
   sessionCharacterUsageLoadStatus,
   refreshCharacterEntries,
-  setCharactersLoaded,
+  setLaunchCharacterCatalog,
   setLaunchFeedback,
   setLaunchStarting,
   setLaunchDraft,
@@ -83,11 +84,8 @@ export function buildHomeLaunchHandlers({
   scheduleWorkspaceValidation,
   cancelWorkspaceValidation,
   openSessionWindow,
-  openCompanionReviewWindow,
   createSession,
-  createCompanionSession,
   upsertSessionSummary,
-  upsertCompanionSessionSummary,
 }: HomeLaunchHandlersContext): HomeLaunchHandlers {
   const onBrowseWorkspace = async () => {
     const selectedPath = await pickWorkspaceDirectory();
@@ -100,25 +98,45 @@ export function buildHomeLaunchHandlers({
   };
 
   const onOpenLaunchDialog = async () => {
+    if (launchDialogAttemptRef.current !== null) {
+      return;
+    }
+    const attempt = {};
+    launchDialogAttemptRef.current = attempt;
+    const lifetime: HomeLaunchLifetime = { starting: false };
+    launchLifetimeRef.current = lifetime;
     cancelWorkspaceValidation();
+    setLaunchStarting(false);
     setLaunchFeedback("");
-    await refreshCharacterEntries().catch((error) => {
-      setCharactersLoaded(false);
-      setLaunchFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
-    });
+    setLaunchCharacterCatalog({ entries: [], status: "loading" });
     setLaunchDraft((current) =>
       openLaunchDraft(
         current,
         enabledLaunchProviders[0]?.id ?? "",
-        "session",
       ),
     );
+    try {
+      const entries = await refreshCharacterEntries();
+      if (launchDialogAttemptRef.current !== attempt) {
+        return;
+      }
+      setLaunchCharacterCatalog({ entries, status: "loaded" });
+    } catch (error) {
+      if (launchDialogAttemptRef.current !== attempt) {
+        return;
+      }
+      setLaunchCharacterCatalog({ entries: [], status: "error" });
+      setLaunchFeedback(error instanceof Error ? error.message : "Could not refresh characters.");
+    }
   };
 
   const onCloseLaunchDialog = () => {
+    launchDialogAttemptRef.current = null;
+    launchLifetimeRef.current = { starting: false };
     cancelWorkspaceValidation();
     setLaunchFeedback("");
     setLaunchStarting(false);
+    setLaunchCharacterCatalog({ entries: [], status: "loading" });
     setLaunchDraft((current) => closeLaunchDraft(current));
   };
 
@@ -127,30 +145,37 @@ export function buildHomeLaunchHandlers({
     setLaunchDraft((current) => updateLaunchDraftForProviderSelection(current, providerId));
   };
 
-  const onStartSession = async (requestedMode: HomeLaunchDraft["mode"] = launchDraft.mode) => {
-    await startHomeLaunch({
-      draft: launchDraft,
-      requestedMode,
-      launchStarting,
-      mateState,
-      mateProfile,
-      selectedProviderId: selectedLaunchProviderId,
-      characterEntries,
-      sessions,
-      sessionCharacterUsage,
-      openSessionWindowIds,
-      openSessionWindowIdsLoadStatus,
-      sessionCharacterUsageLoadStatus,
-      createSession,
-      createCompanionSession,
-      openSessionWindow,
-      openCompanionReviewWindow,
-      closeLaunchDialog: onCloseLaunchDialog,
-      setLaunchFeedback,
-      setLaunchStarting,
-      upsertSessionSummary,
-      upsertCompanionSessionSummary,
-    });
+  const onStartSession = async () => {
+    const lifetime = launchLifetimeRef.current;
+    if (!launchDraft.open || launchStarting || lifetime.starting) {
+      return;
+    }
+    lifetime.starting = true;
+    try {
+      await startHomeLaunch({
+        draft: launchDraft,
+        launchStarting,
+        mateState,
+        mateProfile,
+        selectedProviderId: selectedLaunchProviderId,
+        characterEntries,
+        sessions,
+        sessionCharacterUsage,
+        openSessionWindowIds,
+        openSessionWindowIdsLoadStatus,
+        sessionCharacterUsageLoadStatus,
+        createSession,
+        openSessionWindow,
+        closeLaunchDialog: onCloseLaunchDialog,
+        setLaunchFeedback,
+        setLaunchStarting,
+        upsertSessionSummary,
+        isCurrentAttempt: () => launchLifetimeRef.current === lifetime,
+        onDetachedResult,
+      });
+    } finally {
+      lifetime.starting = false;
+    }
   };
 
   return {
@@ -171,16 +196,6 @@ export function buildHomeLaunchHandlers({
       setLaunchFeedback("");
       setLaunchDraft((current) => updateLaunchDraftForRandomCharacterSelection(current));
     },
-    onChangeMode: (mode) => {
-      setLaunchFeedback("");
-      setLaunchDraft((current) => ({
-        ...current,
-        mode,
-        workspace: mode === "companion" && isSessionFolderLaunchWorkspace(current.workspace)
-          ? null
-          : current.workspace,
-      }));
-    },
     onChangeTitle: (value) => {
       setLaunchFeedback("");
       setLaunchDraft((current) => ({ ...current, title: value }));
@@ -189,6 +204,6 @@ export function buildHomeLaunchHandlers({
       setLaunchFeedback("");
       scheduleWorkspaceValidation(value);
     },
-    onStartSession: (mode) => void onStartSession(mode),
+    onStartSession: () => void onStartSession(),
   };
 }

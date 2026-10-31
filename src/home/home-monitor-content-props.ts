@@ -1,16 +1,24 @@
+import type { ReactNode } from "react";
 import type { HomeMonitorContentProps } from "./HomeMonitorContent.js";
-import type { HomeMonitorEntry } from "./home-session-projection.js";
+import type { HomeMonitorAuxiliaryDataState, HomeMonitorEntry } from "./home-session-projection.js";
 import type {
   SessionMonitorContextMenuPoint,
   SessionMonitorEntryKind,
-} from "../withmate-window-types.js";
+} from "../../src-shared/window/withmate-window-types.js";
 
 export type HomeMonitorContentInput = {
+  approvalEntries: HomeMonitorEntry[];
+  providerQuota?: ReactNode;
   runningEntries: HomeMonitorEntry[];
   nonRunningEntries: HomeMonitorEntry[];
+  auxiliaryDataState: HomeMonitorAuxiliaryDataState;
+  auxiliaryRefreshing?: boolean;
+  sessionWindowsDataState?: "loading" | "loaded" | "error";
+  runningEmptyMessage?: string;
+  nonRunningEmptyMessage?: string;
   feedback?: string;
-  onOpenSession: (sessionId: string) => void;
-  onOpenCompanionReview: (sessionId: string) => void;
+  onRetry?: () => void;
+  onOpenSession: (sessionId: string, auxiliarySessionId?: string) => void;
   onShowContextMenu: (
     kind: SessionMonitorEntryKind,
     sessionId: string,
@@ -19,19 +27,33 @@ export type HomeMonitorContentInput = {
 };
 
 export function buildHomeMonitorContentProps({
+  approvalEntries,
+  providerQuota,
   runningEntries,
   nonRunningEntries,
+  auxiliaryDataState,
+  auxiliaryRefreshing,
+  sessionWindowsDataState,
+  runningEmptyMessage,
+  nonRunningEmptyMessage,
   feedback,
+  onRetry,
   onOpenSession,
-  onOpenCompanionReview,
   onShowContextMenu,
 }: HomeMonitorContentInput): HomeMonitorContentProps {
   return {
+    approvalEntries,
+    providerQuota,
     runningEntries,
     nonRunningEntries,
+    auxiliaryDataState,
+    auxiliaryRefreshing,
+    sessionWindowsDataState,
+    runningEmptyMessage,
+    nonRunningEmptyMessage,
     feedback,
+    onRetry,
     onOpenSession,
-    onOpenCompanionReview,
     onShowContextMenu,
   };
 }

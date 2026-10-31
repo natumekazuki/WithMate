@@ -1,5 +1,5 @@
-import type { WithMateWindowApi } from "../withmate-window-api.js";
-import type { MateProfile, MateStorageState } from "./mate-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
 
 export type MateStatusLoadApi = Pick<WithMateWindowApi, "getMateState" | "getMateProfile">;
 

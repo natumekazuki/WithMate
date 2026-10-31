@@ -1,12 +1,12 @@
-import type { MateProfile, MateStorageState } from "./mate-state.js";
-import type { HomeMateSetupPanelProps } from "./MateSetupPanel.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
+import type { HomeMateSetupPanelProps, MateAvatarAction } from "./MateSetupPanel.js";
 
 export type HomeMateSetupContentInput = {
   mateState: MateStorageState | null;
   mateProfile: MateProfile | null;
   mateDisplayName: string;
   mateCreating: boolean;
-  mateAvatarUpdating: boolean;
+  mateAvatarAction: MateAvatarAction;
   mateCreationFeedback: string;
   onChangeDisplayName: (value: string) => void;
   onSubmit: () => void;
@@ -21,7 +21,7 @@ export function buildHomeMateSetupContentProps({
   mateProfile,
   mateDisplayName,
   mateCreating,
-  mateAvatarUpdating,
+  mateAvatarAction,
   mateCreationFeedback,
   onChangeDisplayName,
   onSubmit,
@@ -44,7 +44,7 @@ export function buildHomeMateSetupContentProps({
     onCancel: isMateNotCreated || isMateProfileUnavailable ? undefined : onCancelEdit,
     mateDisplayName: mateProfile?.displayName ?? null,
     mateAvatarFilePath: mateProfile?.avatarFilePath ?? "",
-    avatarUpdating: mateAvatarUpdating,
+    avatarAction: mateAvatarAction,
     onSelectAvatar: isMateNotCreated || isMateProfileUnavailable ? undefined : onSelectAvatar,
     onClearAvatar: isMateNotCreated || isMateProfileUnavailable ? undefined : onClearAvatar,
   };

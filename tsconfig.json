@@ -13,9 +13,13 @@
     ]
   },
   "include": [
-    "scripts/*.ts",
+    "scripts/**/*.ts",
+    "src-cli/**/*.ts",
+    "src-shared/**/*.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
-    "vite.config.ts"
-  ]
+    "vite.config.ts",
+    "vite.pdf-reader.config.ts"
+  ],
+  "exclude": ["tests"]
 }

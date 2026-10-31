@@ -14,6 +14,7 @@ export type SessionSwitcherOption = {
   icon?: ReactNode;
   preview?: string;
   searchText?: string;
+  isProcessing?: boolean;
 };
 
 export type SessionSwitcherProps = {
@@ -24,6 +25,8 @@ export type SessionSwitcherProps = {
   onMove: (direction: -1 | 1) => void;
   searchable?: boolean;
   className?: string;
+  currentAction?: ReactNode;
+  emptyLabel?: string;
 };
 
 function focusOption(list: HTMLElement | null, index: number) {
@@ -39,6 +42,8 @@ export function SessionSwitcher({
   onMove,
   searchable = false,
   className = "",
+  currentAction,
+  emptyLabel,
 }: SessionSwitcherProps) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -52,6 +57,7 @@ export function SessionSwitcher({
       .toLocaleLowerCase().includes(normalizedQuery))
     : options;
   const canMove = options.length > 1;
+  const canOpen = options.length > 0;
 
   const close = useCallback((restoreFocus = true) => {
     setIsOpen(false);
@@ -60,6 +66,13 @@ export function SessionSwitcher({
       requestAnimationFrame(() => triggerRef.current?.focus());
     }
   }, []);
+
+  useEffect(() => {
+    if (!canOpen && isOpen) {
+      setIsOpen(false);
+      setSearchQuery("");
+    }
+  }, [canOpen, isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -109,7 +122,40 @@ export function SessionSwitcher({
     }
   };
 
-  const currentLabel = selectedOption?.label ?? "選択なし";
+  const currentLabel = selectedOption?.label ?? emptyLabel ?? "";
+  const currentLabelText = currentLabel.trim();
+  const currentPreviewText = selectedOption?.preview?.trim() ?? "";
+  const currentAccessibleLabel = currentLabelText || currentPreviewText || ariaLabel;
+  const currentButton = (
+    <button
+      ref={triggerRef}
+      type="button"
+      className="session-switcher-current"
+      disabled={!canOpen}
+      aria-haspopup="listbox"
+      aria-expanded={canOpen && isOpen}
+      aria-controls={canOpen ? listId : undefined}
+      aria-label={currentLabelText || currentPreviewText ? undefined : currentAccessibleLabel}
+      onClick={() => {
+        if (canOpen) {
+          setIsOpen((current) => !current);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing) {
+          return;
+        }
+        if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+          event.preventDefault();
+          onMove(event.key === "ArrowLeft" ? -1 : 1);
+        }
+      }}
+    >
+      {selectedOption?.icon ? <span className="session-switcher-icon" aria-hidden="true">{selectedOption.icon}</span> : null}
+      <span className="session-switcher-label">{currentLabel}</span>
+      {selectedOption?.preview ? <span className="session-switcher-preview">{selectedOption.preview}</span> : null}
+    </button>
+  );
   return (
     <div className={`session-switcher${className ? ` ${className}` : ""}`} aria-label={ariaLabel}>
       <button
@@ -117,39 +163,23 @@ export function SessionSwitcher({
         className="session-switcher-button"
         onClick={() => onMove(-1)}
         disabled={!canMove}
-        aria-label="前へ"
+        aria-label="Previous"
       >‹</button>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="session-switcher-current"
-        aria-haspopup="listbox"
-        aria-expanded={isOpen}
-        aria-controls={listId}
-        onClick={() => setIsOpen((current) => !current)}
-        onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing) {
-            return;
-          }
-          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-            event.preventDefault();
-            onMove(event.key === "ArrowLeft" ? -1 : 1);
-          }
-        }}
-      >
-        {selectedOption?.icon ? <span className="session-switcher-icon" aria-hidden="true">{selectedOption.icon}</span> : null}
-        <span className="session-switcher-label">{currentLabel}</span>
-        {selectedOption?.preview ? <span className="session-switcher-preview">{selectedOption.preview}</span> : null}
-      </button>
+      {currentAction ? (
+        <div className="session-switcher-current-group">
+          {currentButton}
+          <div className="session-switcher-current-action">{currentAction}</div>
+        </div>
+      ) : currentButton}
       <button
         type="button"
         className="session-switcher-button"
         onClick={() => onMove(1)}
         disabled={!canMove}
-        aria-label="次へ"
+        aria-label="Next"
       >›</button>
-      {isOpen ? (
-        <div ref={listRef} id={listId} className="session-switcher-popover" role="listbox" aria-label={`${ariaLabel}一覧`} onKeyDown={handleListKeyDown}>
+      {canOpen && isOpen ? (
+        <div ref={listRef} id={listId} className="session-switcher-popover" role="listbox" aria-label={`${ariaLabel} list`} onKeyDown={handleListKeyDown}>
           {searchable ? (
             <input
               autoFocus
@@ -167,7 +197,7 @@ export function SessionSwitcher({
                   focusOption(listRef.current, 0);
                 }
               }}
-              aria-label="一覧を検索"
+              aria-label="Search list"
             />
           ) : null}
           <div className="session-switcher-options">
@@ -178,18 +208,29 @@ export function SessionSwitcher({
                 role="option"
                 aria-selected={option.id === selectedId}
                 className="session-switcher-option"
+                aria-label={option.label.trim() || option.preview?.trim() ? undefined : ariaLabel}
+                title={option.isProcessing ? "Processing" : undefined}
                 onClick={() => {
                   onSelect(option.id);
                   close();
                 }}
               >
-                {option.icon ? <span className="session-switcher-icon" aria-hidden="true">{option.icon}</span> : null}
+                {option.icon ? (
+                  <span
+                    className={`session-switcher-icon${option.isProcessing ? " session-switcher-option-icon-processing" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {option.icon}
+                    {option.isProcessing ? <span className="session-switcher-processing-indicator" /> : null}
+                  </span>
+                ) : null}
                 <span className="session-switcher-option-copy">
                   <span className="session-switcher-option-label">{option.label}</span>
                   {option.preview ? <span className="session-switcher-option-preview">{option.preview}</span> : null}
+                  {option.isProcessing ? <span className="visually-hidden">Processing</span> : null}
                 </span>
               </button>
-            )) : <span className="session-switcher-empty">一致する候補はありません。</span>}
+            )) : null}
           </div>
         </div>
       ) : null}

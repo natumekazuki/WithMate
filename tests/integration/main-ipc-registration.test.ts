@@ -1,0 +1,3765 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { WorkspaceDirectoryValidationService } from "../../src-electron/files/workspace-directory-validation-service.js";
+import { createWithMateWindowApi } from "../../src-electron/preload/preload-api.js";
+import { selectAdditionalDirectoryPath } from "../../src/chat/composer/session-composer-paths.js";
+import { SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
+
+// @test-value v2
+// kind = "security"
+// claim = "Graph IPCはowning parent Windowだけへreadを返し、mutationと偽装scopeをdispatch前に拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md" }
+// fault = "非ownerへGraphを開示するかrendererからapplyやscope上書きを通す"
+// observable = "IPC応答、拒否、read依存呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "session-graph-ipc"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "applicationやpreloadのtestはElectron senderのownerを検証できない"
+// @end-test-value
+test("Session Graph IPC authorizes the parent window and read-only requests", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=main");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  let calls = 0;
+  let afterRead = () => {};
+  const result = { status: "ok", revision: 0, items: [], total: 0, offset: 0, hasMore: false, incomplete: false };
+  const { deps } = createDeps({ resolveEventWindow: () => sender, resolveSessionWindow: (id: string) => id === "main" ? owner : null,
+    readSessionGraph: async () => { calls++; afterRead(); return result; } });
+  registerMainIpcHandlers(ipcMain, deps);
+  const invoke = (operation = "list_topics", request: unknown = {}) => Promise.resolve(handlers.get("withmate:read-session-graph")!({}, "main", operation, request));
+  assert.deepEqual(await invoke(), result);
+  await assert.rejects(invoke("apply", { expectedRevision: 0 }), /read operation/);
+  await assert.rejects(invoke("recent", { ownerSessionId: "other" }), /Unrecognized key/);
+  sender = other;
+  await assert.rejects(invoke(), /target Session window/);
+  assert.equal(calls, 1);
+  sender = owner;
+  afterRead = () => { sender = other; };
+  await assert.rejects(invoke(), /target Session window/);
+  assert.equal(calls, 2);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "enqueue IPCは専用preflight rejectだけをstructured未受付replyにしgeneric保存errorを伝播する"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts enqueue known reject handling" }
+// fault = "generic storage errorをrejectedへ変換し受付結果不明を未受付として返す"
+// observable = "専用型の返却state/reasonとgeneric errorのreject同一性"
+// observation_boundary = "public-boundary"
+// scope = "Main queue IPC known preflight rejection"
+// lifecycle = "permanent"
+// impact = "Rendererが受付済み要求を未受付と誤認し再送や下書き復元を行う"
+// distinction = "facade分類testはIPCを跨ぐstructured replyへの変換を確認しない"
+// @end-test-value
+test("enqueue IPCはtyped preflight rejectだけを未受付replyへ変換する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  let failure: Error = new SessionTurnQueuePreflightRejectedError("workspace unavailable");
+  const { deps } = createDeps({ resolveEventWindow: () => owner,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    queue: { enqueueSessionTurn: async () => { throw failure; } } });
+  registerMainIpcHandlers(ipcMain, deps);
+  const invoke = () => handlers.get("withmate:enqueue-session-turn")?.({}, "session-1", { incarnationId: "owner-1" }) as Promise<unknown>;
+  assert.deepEqual(await invoke(), { state: "rejected", reason: "workspace unavailable" });
+  failure = new Error("storage commit reply unknown");
+  await assert.rejects(invoke(), (error) => error === failure);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "7 queue APIはMainとAuxの実IDを保持しowning parent Session Window以外を依存呼出し前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts queue handlers" }
+// fault = "Auxの親と異なるWindowへqueue本文/receiptアクセスを許可するかtargetを親IDに置換する"
+// observable = "Main/Aux ownerの返却payloadと実target引数、非owner要求の拒否と依存件数"
+// observation_boundary = "public-boundary"
+// scope = "Main durable queue IPC owner authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "facade/service testはElectron senderとMain Session Windowの対応を認可しない"
+// @end-test-value
+test("queue IPCはowning Main Windowに限定し引数を保持する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let eventWindow = owner;
+  const calls: Array<{ method: string; args: unknown[] }> = [];
+  const methods = ["enqueueSessionTurn", "getSessionTurnQueueReceipt", "listSessionTurnQueue", "listSessionTurnQueueReceipts", "cancelQueuedSessionTurn", "releaseInterruptedSessionTurn", "sendQueuedSessionInput"];
+  const queue = Object.fromEntries(methods.map((method) => [method, async (...args: unknown[]) => {
+    const payload = { method, args };
+    calls.push(payload);
+    return payload;
+  }]));
+  const { deps } = createDeps({ queue, resolveEventWindow: () => eventWindow,
+    getAuxiliarySessionStatus: async (id: string) => id === "aux-1" ? { id, parentSessionId: "session-1" } : null,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { incarnationId: "owner-1", clientRequestId: "request-1", userMessage: "Inspect" };
+  const cases = [
+    ["withmate:enqueue-session-turn", "enqueueSessionTurn", [request]],
+    ["withmate:get-session-turn-queue-receipt", "getSessionTurnQueueReceipt", ["request-1"]],
+    ["withmate:list-session-turn-queue", "listSessionTurnQueue", []],
+    ["withmate:list-session-turn-queue-receipts", "listSessionTurnQueueReceipts", [{ cursor: 4, limit: 20 }]],
+    ["withmate:cancel-queued-session-turn", "cancelQueuedSessionTurn", ["item-1"]],
+    ["withmate:release-interrupted-session-turn", "releaseInterruptedSessionTurn", ["item-1"]],
+    ["withmate:send-queued-session-input", "sendQueuedSessionInput", ["item-1", "turn-1"]],
+  ] as const;
+  for (const [channel, method, args] of cases) {
+    assert.deepEqual(await handlers.get(channel)?.({}, "session-1", ...args), { method, args: ["session-1", ...args] });
+    assert.deepEqual(await handlers.get(channel)?.({}, "aux-1", ...args), { method, args: ["aux-1", ...args] });
+  }
+  for (const window of [other, createWindowStub("file:///home.html"), createWindowStub("file:///settings.html")]) {
+    eventWindow = window;
+    for (const [channel, , args] of cases) {
+      await assert.rejects(async () => handlers.get(channel)?.({}, "session-1", ...args), /target Session window/);
+      await assert.rejects(async () => handlers.get(channel)?.({}, "aux-1", ...args), /target Session window/);
+    }
+  }
+  eventWindow = owner;
+  for (const [channel, , args] of cases) {
+    await assert.rejects(async () => handlers.get(channel)?.({}, "unknown-aux", ...args), /target Session window/);
+  }
+  assert.equal(calls.length, 14);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "3 queue readは非同期取得中にWindow ownerが失効した場合receiptと履歴を返さない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-runtime.ts queue query after-await authorization" }
+// fault = "取得開始時の認可だけで失効Windowへ遅延receipt/queue履歴を返す"
+// observable = "依存取得済みの各readがowner交換後にrejectすること"
+// observation_boundary = "public-boundary"
+// scope = "Main durable queue IPC delayed read authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "即時非owner拒否testではawaitを跨ぐWindow owner変更を検知できない"
+// @end-test-value
+test("queue readは遅い結果の返却前にWindow ownerを再認可する", async () => {
+  for (const [channel, method, args] of [
+    ["withmate:get-session-turn-queue-receipt", "getSessionTurnQueueReceipt", ["request-1"]],
+    ["withmate:list-session-turn-queue", "listSessionTurnQueue", []],
+    ["withmate:list-session-turn-queue-receipts", "listSessionTurnQueueReceipts", [{ cursor: 4, limit: 20 }]],
+  ] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const owner = createWindowStub("file:///session.html?sessionId=session-1");
+    let currentOwner = owner;
+    let complete!: (value: unknown) => void;
+    let reads = 0;
+    const result = new Promise<unknown>((resolve) => { complete = resolve; });
+    const queue = { [method]: async () => { reads += 1; return result; } };
+    const { deps } = createDeps({ queue, resolveEventWindow: () => owner,
+      resolveSessionWindow: (id: string) => id === "session-1" ? currentOwner : null });
+    registerMainIpcHandlers(ipcMain, deps);
+    const pending = handlers.get(channel)?.({}, "session-1", ...args) as Promise<unknown>;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(reads, 1);
+    currentOwner = createWindowStub("file:///session.html?sessionId=session-1");
+    complete({ privateReceipt: "must not leak" });
+    await assert.rejects(pending, /target Session window/);
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "最新turnはMainまたはAuxiliaryの親owner Windowだけへ返し、対象外Windowからはstorageを読まない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts getLatestSessionTurn authorization" }
+// fault = "Auxiliaryの親ownerを認可しないか、対象外Windowへturn実行情報を公開する"
+// observable = "Main/Auxiliary読取結果、storageへ渡るID、非owner要求の拒否とread回数"
+// observation_boundary = "public-boundary"
+// scope = "latest session turn IPC authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("最新turn IPCはMainとAuxiliaryの親owner Windowだけへ返す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=parent");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  const reads: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "parent" ? owner : null,
+    getConversationOwnerSessionId: async (id: string) => id === "aux" ? "parent" : id,
+    getLatestSessionTurn: async (id: string) => {
+      reads.push(id);
+      return { id: id === "parent" ? 1 : 2, sessionId: id, phase: "canceled", errorMessage: "canceled" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const read = handlers.get(WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL)!;
+  for (const [id, turnId] of [["parent", 1], ["aux", 2]] as const) {
+    assert.deepEqual(await read({}, id), { id: turnId, sessionId: id, phase: "canceled", errorMessage: "canceled" });
+  }
+  sender = other;
+  await assert.rejects(async () => read({}, "parent"), /target Session window/);
+  await assert.rejects(async () => read({}, "aux"), /target Session window/);
+  assert.deepEqual(reads, ["parent", "aux"]);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "最新turnの遅い読取中にMain WindowまたはAuxiliaryの親ownerが変われば取得結果を公開しない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts getLatestSessionTurn before/after authorization" }
+// fault = "read前だけ認可し、owner変更後も旧Windowへturnを返す"
+// observable = "実際に開始・完了したstorage readの後にIPCが拒否されること"
+// observation_boundary = "public-boundary"
+// scope = "latest session turn asynchronous owner authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("最新turn IPCは遅いreadの完了後にownerを再認可する", async () => {
+  for (const target of ["parent", "aux"] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const owner = createWindowStub("file:///session.html?sessionId=parent");
+    const replacement = createWindowStub("file:///session.html?sessionId=replacement");
+    let currentWindow = owner;
+    let auxiliaryParent = "parent";
+    let signalStarted!: () => void;
+    let releaseRead!: () => void;
+    const started = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const paused = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let readFinished = false;
+    const { deps } = createDeps({
+      resolveEventWindow: () => owner,
+      resolveSessionWindow: (id: string) => id === "parent" ? currentWindow : replacement,
+      getConversationOwnerSessionId: async (id: string) => id === "aux" ? auxiliaryParent : id,
+      getLatestSessionTurn: async (id: string) => {
+        assert.equal(id, target);
+        signalStarted();
+        await paused;
+        readFinished = true;
+        return { id: 3, sessionId: id, phase: "completed" };
+      },
+    });
+    registerMainIpcHandlers(ipcMain, deps);
+    const pending = handlers.get(WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL)!({}, target) as Promise<unknown>;
+    await started;
+    if (target === "parent") currentWindow = replacement;
+    else auxiliaryParent = "replacement";
+    releaseRead();
+    await assert.rejects(pending, /target Session window/);
+    assert.equal(readFinished, true);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "会話page・全履歴検索・navigatorはMainまたはAuxiliaryの親Session Windowだけが要求できる"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts: registerSessionQueryHandlers / authorizeConversation" }
+// fault = "Auxiliaryを親へ解決せず認可するか、対象外Windowの要求を会話readへ渡す"
+// observable = "owner Windowのpage/search/navigator結果とread呼出回数、対象外Windowのrejection"
+// observation_boundary = "public-boundary"
+// scope = "conversation-read-ipc-authorization"
+// lifecycle = "permanent"
+// impact = "対象外Windowへの会話履歴公開を防ぐ"
+// distinction = "既存のdetail read認可testは独立したpage/search/navigator commandを通らない。小さいIPC stubで3commandの権限を保持する"
+// @end-test-value
+test("会話page/search/navigatorは親owner Windowだけが取得できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=parent");
+  const otherWindow = createWindowStub("http://localhost:5173/");
+  let eventWindow = ownerWindow;
+  const reads: string[] = [];
+  const page = { sessionId: "aux", incarnationId: "created", messages: [], startIndex: 0, totalCount: 0 };
+  const queryPage = { status: "complete", stamp: { generationId: "generation", ownerIdentity: "aux", contentRevision: 1, requestId: "find-1" }, incarnationId: "created", messageCount: 4, totalCount: 1, offset: 0, items: [{ messageIndex: 3, occurrenceIndex: 0 }] };
+  const navPage = { ...queryPage, stamp: { ...queryPage.stamp, requestId: "nav-1" }, totalCount: 0, items: [] };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (id: string) => id === "parent" ? ownerWindow : null,
+    getConversationOwnerSessionId: async (id: string) => id === "aux" ? "parent" : id,
+    getConversationPage: async (id: string) => { reads.push(`page:${id}`); return page; },
+    resolveConversationQueryOwner: async (id: string) => ({
+      ownerSessionId: "parent", isCurrent: () => true, cancel: () => undefined,
+      search: async () => { reads.push(`search:${id}`); return queryPage; },
+      navigate: async () => { reads.push(`navigator:${id}`); return navPage; },
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  assert.deepEqual(await handlers.get(WITHMATE_GET_CONVERSATION_PAGE_CHANNEL)?.({}, "aux", { startIndex: 0 }), page);
+  assert.deepEqual(await handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)?.({}, "aux", { requestId: "find-1", producerId: "find", query: "x", mode: "source" }), queryPage);
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL)?.({}, "aux", { requestId: "nav-1", producerId: "nav", filter: "all" }), navPage);
+  eventWindow = otherWindow;
+  for (const channel of [WITHMATE_GET_CONVERSATION_PAGE_CHANNEL, WITHMATE_SEARCH_CONVERSATION_CHANNEL, WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL]) {
+    await assert.rejects(() => handlers.get(channel)?.({}, "aux", { requestId: "other", producerId: "other", query: "x", mode: "source", filter: "all" }) as Promise<unknown>, /target Session window/);
+  }
+  assert.deepEqual(reads, ["page:aux", "search:aux", "navigator:aux"]);
+});
+
+import type { IpcMain } from "electron";
+
+// @test-value v2
+// kind = "security"
+// claim = "検索実行中にstorage ownerまたは送信元Session Windowが変わると旧結果を公開しない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts query response current and authorization fence" }
+// fault = "検索開始時だけownerを確認して失効したownerの結果を返す"
+// observable = "read完了後のinvalidated応答またはowner Window認可拒否"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC asynchronous response fence"
+// lifecycle = "permanent"
+// impact = "reset/reopenやWindow置換後に旧会話結果を公開しない"
+// distinction = "storage stampと型検査だけではMain Window authorityの非同期変更を検出できない"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("会話queryは検索完了時にもownerとWindowを照合する", async () => {
+  for (const change of ["storage", "window"] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const sender = createWindowStub("file:///session.html?sessionId=parent");
+    const replacement = createWindowStub("file:///session.html?sessionId=parent");
+    let currentWindow = sender;
+    let ownerCurrent = true;
+    let started!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => { started = resolve; });
+    const pause = new Promise<void>((resolve) => { release = resolve; });
+    const { deps } = createDeps({
+      resolveEventWindow: () => sender, resolveSessionWindow: () => currentWindow,
+      resolveConversationQueryOwner: async () => ({
+        ownerSessionId: "parent", isCurrent: () => ownerCurrent, cancel: () => undefined,
+        search: async () => { started(); await pause; return { status: "cancelled" }; },
+      }),
+    });
+    registerMainIpcHandlers(ipcMain, deps);
+    const pending = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!({}, "parent", { requestId: "q", producerId: "find", query: "x", mode: "source" });
+    await ready;
+    if (change === "storage") ownerCurrent = false;
+    else currentWindow = replacement;
+    release();
+    if (change === "storage") assert.deepEqual(await pending, { status: "invalidated" });
+    else await assert.rejects(async () => pending, /target Session window/);
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Window破棄と明示取消はqueryのproducer枠を解放し、無制限producer admissionは拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts sender lifecycle and producer budget" }
+// fault = "Window破棄または明示取消でproducer枠が残るかproducer上限を適用せずMain状態が増える"
+// observable = "17番目producerの拒否、取消後のadmission、破棄時取消件数、再admission時のbackend producer identity"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC window lifecycle budget"
+// lifecycle = "permanent"
+// impact = "閉じたWindowのCPU仕事と無制限Main producer状態を保持しない"
+// distinction = "storage側のqueue制限ではMainの認可lookup中slotやwebContents lifecycleを制御できない"
+// @end-test-value
+test("会話queryはWindow破棄と明示取消でproducer予算を解放する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const window = createWindowStub("file:///session.html?sessionId=parent");
+  let destroyed!: () => void;
+  const event = { sender: { once: (name: string, listener: () => void) => { assert.equal(name, "destroyed"); destroyed = listener; } } };
+  const producers: string[] = [];
+  const cancelled: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => window, resolveSessionWindow: () => window,
+    resolveConversationQueryOwner: async () => ({
+      ownerSessionId: "parent", isCurrent: () => true,
+      search: async (request: { producerId: string }) => { producers.push(request.producerId); return { status: "cancelled" }; },
+      cancel: (request: { producerId: string }) => { cancelled.push(request.producerId); },
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+  const request = { requestId: "one", producerId: "producer-0", query: "x", mode: "source" };
+  await assert.rejects(async () => search(event, "parent", { ...request, producerId: "x".repeat(129) }), /identity is invalid/);
+  for (let index = 0; index < 16; index++) await search(event, "parent", { ...request, producerId: `producer-${index}` });
+  await assert.rejects(async () => search(event, "parent", { ...request, producerId: "overflow" }), /producer limit/);
+  await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!(event, request);
+  await search(event, "parent", { ...request, producerId: "overflow" });
+  destroyed();
+  assert.deepEqual(cancelled, producers);
+  await search(event, "parent", request);
+  assert.notEqual(producers[17], producers[0]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "検索IPCはraw-source anchorのsafe integerと非空区間を検証し、正常anchorとanchor省略の継続pageを同じproducerへ渡す"
+// oracle = { type = "contract", ref = "src-shared/session/conversation-page.ts: ConversationSearchAnchor" }
+// fault = "不正anchorをownerへ渡すかanchorを欠落させるか継続pageでproducerを取消する"
+// observable = "IPC rejection、owner searchへ渡されたanchorとproducer、cancel呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "conversation-search-ipc-anchor"
+// lifecycle = "permanent"
+// impact = "外部入力の数値境界を守り、mode切替後もページ取得を継続できる"
+// distinction = "storage testではIPCのvalidationとsignatureによるproducer継続を通らず、型検査は不正runtime入力を拒否できない"
+// @end-test-value
+test("会話検索IPCはanchorを検証して継続pageのproducerを保つ", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const window = createWindowStub("file:///session.html?sessionId=parent");
+  const calls: Array<{ producerId: string; anchor?: unknown }> = [];
+  let cancellations = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => window, resolveSessionWindow: () => window,
+    resolveConversationQueryOwner: async () => ({ ownerSessionId: "parent", isCurrent: () => true,
+      search: async (request: { producerId: string; anchor?: unknown }) => { calls.push(request); return { status: "cancelled" }; },
+      cancel: () => { cancellations++; },
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+  const request = { requestId: "anchor", producerId: "find", query: "needle", mode: "source" };
+  for (const anchor of [null, {}, { messageIndex: -1, startOffset: 0, endOffset: 1 },
+    { messageIndex: 0, startOffset: 0.5, endOffset: 1 },
+    { messageIndex: 0, startOffset: 0, endOffset: Number.MAX_SAFE_INTEGER + 1 },
+    { messageIndex: 0, startOffset: 1, endOffset: 1 }]) {
+    await assert.rejects(async () => search({}, "parent", { ...request, anchor }), /anchor is invalid/);
+  }
+  assert.equal(calls.length, 0);
+  const anchor = { messageIndex: 10, startOffset: 0, endOffset: 6 };
+  await search({}, "parent", { ...request, anchor });
+  await search({}, "parent", { ...request, offset: 64, stamp: { generationId: "generation", ownerIdentity: "owner", contentRevision: 0, requestId: request.requestId } });
+  assert.deepEqual(calls[0].anchor, anchor);
+  assert.equal(calls[1].anchor, undefined);
+  assert.equal(calls[0].producerId, calls[1].producerId);
+  assert.equal(cancellations, 0);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "owner lookup中に新queryまたは取消が到着した場合、旧queryはstorageへdispatchしない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts query admission latest/cancel" }
+// fault = "lookup後にlatestを検査せず古い検索をstorageへ流す"
+// observable = "旧queryのcancelled応答とstorage dispatch requestId"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC admission race"
+// lifecycle = "permanent"
+// impact = "入力更新や検索close後に不要な全履歴検索がDBとCPUを占有することを防ぐ"
+// distinction = "storage testではMainの非同期認可lookup前に到着する取消を観測できない"
+// @end-test-value
+test("会話queryはlookup中のlatest更新と取消をdispatch前に反映する", async () => {
+  for (const action of ["replace", "cancel"] as const) {
+    const { ipcMain, handlers } = createIpcMainStub();
+    const ownerWindow = createWindowStub("file:///session.html?sessionId=parent");
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    const dispatched: string[] = [];
+    let lookups = 0;
+    const { deps } = createDeps({
+      resolveEventWindow: () => ownerWindow,
+      resolveSessionWindow: () => ownerWindow,
+      resolveConversationQueryOwner: async () => {
+        if (++lookups === 1) await paused;
+        return {
+          ownerSessionId: "parent", isCurrent: () => true, cancel: () => undefined,
+          search: async (request: { requestId: string }) => { dispatched.push(request.requestId); return { status: "cancelled" }; },
+        };
+      },
+    });
+    registerMainIpcHandlers(ipcMain, deps);
+    const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+    const request = { requestId: "old", producerId: "find", query: "x", mode: "source" };
+    const old = search({}, "parent", request);
+    if (action === "replace") await search({}, "parent", { ...request, requestId: "new" });
+    else await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!({}, request);
+    release();
+    assert.deepEqual(await old, { status: "cancelled" });
+    assert.deepEqual(dispatched, action === "replace" ? ["new"] : []);
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "query取消はsender所有producerだけに作用し、owner失効後のlookup結果はdispatchしない"
+// oracle = { type = "contract", ref = "src-electron/ipc/session-query.ts sender isolation and owner snapshot fence" }
+// fault = "別Windowのproducerを取消するか旧storage ownerを検索に使う"
+// observable = "backend producerIdの分離、取消件数、失効応答とdispatch件数"
+// observation_boundary = "public-boundary"
+// scope = "conversation IPC sender and owner isolation"
+// lifecycle = "permanent"
+// impact = "別Windowの検索妨害とDB reset/reopen後の旧ownerへの読取を防ぐ"
+// distinction = "store generation testではWindow sender認可と非同期Main snapshotを扱わない"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("会話queryはsenderごとにproducerを隔離しowner失効を拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const first = createWindowStub("file:///session.html?sessionId=first");
+  const second = createWindowStub("file:///session.html?sessionId=second");
+  let sender = first;
+  let current = true;
+  const producers: string[] = [];
+  const cancellations: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "first" ? first : second,
+    resolveConversationQueryOwner: async (id: string) => ({
+      ownerSessionId: id, isCurrent: () => current,
+      search: async (request: { producerId: string }) => { producers.push(request.producerId); return { status: "cancelled" }; },
+      cancel: (request: { producerId: string }) => { cancellations.push(request.producerId); },
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { requestId: "same", producerId: "find", query: "x", mode: "source" };
+  const search = handlers.get(WITHMATE_SEARCH_CONVERSATION_CHANNEL)!;
+  await search({}, "first", request);
+  sender = second;
+  await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!({}, request);
+  assert.deepEqual(cancellations, []);
+  await search({}, "second", request);
+  assert.notEqual(producers[0], producers[1]);
+  await handlers.get(WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL)!({}, request);
+  assert.deepEqual(cancellations, [producers[1]]);
+  current = false;
+  assert.deepEqual(await search({}, "second", { ...request, requestId: "reopened" }), { status: "invalidated" });
+  assert.equal(producers.length, 2);
+});
+
+import {
+  registerMainIpcHandlers,
+} from "../../src-electron/ipc/register-main-ipc.js";
+import {
+  WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
+  WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
+  WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
+  WITHMATE_GET_AUXILIARY_CREATION_CHANNEL,
+  WITHMATE_CREATE_CHARACTER_CHANNEL,
+  WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
+  WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
+  WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
+  WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
+  WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
+  WITHMATE_SEARCH_CONVERSATION_CHANNEL,
+  WITHMATE_LIST_CONVERSATION_NAVIGATOR_CHANNEL,
+  WITHMATE_CANCEL_CONVERSATION_QUERY_CHANNEL,
+  WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL,
+  WITHMATE_GET_CHARACTER_CHANNEL,
+  WITHMATE_GET_APP_SETTINGS_CHANNEL,
+  WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
+  WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL,
+  WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
+  WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL,
+  WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
+  WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
+  WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
+  WITHMATE_GET_MATE_STATE_CHANNEL,
+  WITHMATE_LIST_CHARACTERS_CHANNEL,
+  WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
+  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
+  WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
+  WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
+  WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
+  WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
+  WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL,
+  WITHMATE_PIN_SESSION_FILE_CHANNEL,
+  WITHMATE_UNPIN_SESSION_FILE_CHANNEL,
+  WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
+  WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
+  WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL,
+  WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL,
+  WITHMATE_INSPECT_SESSION_PDF_CHANNEL,
+  WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL,
+  WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
+  WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
+  WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
+  WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
+  WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
+  WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
+  WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
+  WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
+  WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
+  WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
+  WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
+  WITHMATE_RUN_SESSION_TURN_CHANNEL,
+  WITHMATE_STEER_SESSION_TURN_CHANNEL,
+  WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
+  WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL,
+  WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
+  WITHMATE_SET_AUXILIARY_TITLE_CHANNEL,
+  WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL,
+  WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
+  WITHMATE_SET_SESSION_TITLE_CHANNEL,
+  WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
+  WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
+  WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
+  WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
+} from "../../src-shared/ipc/withmate-ipc-channels.js";
+
+type Handler = (...args: unknown[]) => unknown;
+
+// @test-value v2
+// kind = "security"
+// claim = "画像専用IPCはowning Sessionまたはcurrent preview baseのみ許可し、読込中のbase変更を結果返却前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/shared.ts: assertSessionFileLinkSender" }
+// fault = "別windowや別session・stale preview baseへ自動画像読込を認可する、または画像権限をgeneric absolute readへ広げる"
+// observable = "画像IPCの返却値・拒否Error、service呼出数、generic read IPCの拒否Error"
+// observation_boundary = "public-boundary"
+// scope = "registered inspect/read image IPC and existing generic file IPC"
+// lifecycle = "permanent"
+// impact = "任意windowから画像や一般fileを読み取れてwindow/session権限を逸脱する"
+// distinction = "service testや型検査ではsenderとpreview lifecycleのIPC認可を実行確認できない;既存stubで低コストに確認する"
+// @end-test-value
+test("image IPC authorizes owner and current preview base without broadening generic reads", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  let currentBase = { sessionId: "aux-1", absolutePath: "/outside/source.md" };
+  let changeBaseDuringRead = false;
+  let calls = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentBase : null
+    ),
+    inspectSessionImage: async () => {
+      calls += 1;
+      return { mimeType: "image/png" };
+    },
+    readSessionImageChunk: async () => {
+      calls += 1;
+      if (changeBaseDuringRead) currentBase = { ...currentBase, absolutePath: "/outside/other.md" };
+      return { data: new ArrayBuffer(1) };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", target: "/outside/image.png" };
+  assert.deepEqual(await handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, request), { mimeType: "image/png" });
+  await assert.rejects(() => handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, {
+    sessionId: "aux-1", absolutePath: "/outside/image.png", offset: 0, length: 1, expectedRevision: "revision",
+  }) as Promise<unknown>, /current Preview resource/);
+  currentWindow = otherWindow;
+  await assert.rejects(() => handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>, /current Preview resource as its base/);
+  currentWindow = ownerWindow;
+  await assert.rejects(() => handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, { ...request, sessionId: "other" }) as Promise<unknown>);
+  assert.equal(calls, 1);
+  currentWindow = previewWindow;
+  await assert.rejects(() => handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>, /current Preview resource as its base/);
+  const basedRequest = { ...request, baseResource: currentBase };
+  assert.deepEqual(await handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, basedRequest), { mimeType: "image/png" });
+  const chunkRequest = { ...basedRequest, offset: 0, length: 1, expectedRevision: "revision" };
+  assert.equal((await handlers.get(WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL)?.({}, chunkRequest) as { data: ArrayBuffer }).data.byteLength, 1);
+  changeBaseDuringRead = true;
+  await assert.rejects(() => handlers.get(WITHMATE_READ_SESSION_IMAGE_CHUNK_CHANNEL)?.({}, chunkRequest) as Promise<unknown>, /current Preview resource as its base/);
+  assert.equal(calls, 4);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "PDF IPCはownerとcurrent preview baseのみ許可し、読込中のowner・base変更を返却前に拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/shared.ts: assertSessionFileLinkSender" }
+// fault = "別windowやstale previewへのPDF読込を許可する、または非同期読込後にownerを再確認しない"
+// observable = "PDF IPCの返却値・拒否Errorとservice呼出数"
+// observation_boundary = "public-boundary"
+// scope = "registered inspect/read PDF IPC sender lifecycle"
+// lifecycle = "permanent"
+// impact = "PDF自動読込がwindow/session権限を逸脱する"
+// distinction = "service testと型検査はIPC sender lifecycleを検証できず、既存stubで低コストに確認する"
+// @end-test-value
+test("PDF IPC rechecks owner and preview base before returning bytes", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  let ownerSessionId: string | null = "session-1";
+  let currentBase = { sessionId: "aux-1", absolutePath: "/outside/source.md" };
+  let changeDuringRead: "base" | "owner" | "window" | null = null;
+  let calls = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async () => ownerSessionId,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => window === previewWindow && sessionId === "aux-1" ? currentBase : null,
+    inspectSessionPdf: async () => { calls++; return { mimeType: "application/pdf" }; },
+    readSessionPdfChunk: async () => {
+      calls++;
+      if (changeDuringRead === "base") currentBase = { ...currentBase, absolutePath: "/outside/other.md" };
+      if (changeDuringRead === "owner") ownerSessionId = null;
+      if (changeDuringRead === "window") currentWindow = otherWindow;
+      return { data: new ArrayBuffer(1) };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", target: "/outside/result.pdf" };
+  const inspect = (input: unknown = request) => handlers.get(WITHMATE_INSPECT_SESSION_PDF_CHANNEL)?.({}, input) as Promise<unknown>;
+  const read = (input: unknown) => handlers.get(WITHMATE_READ_SESSION_PDF_CHUNK_CHANNEL)?.({}, input) as Promise<unknown>;
+  assert.deepEqual(await inspect(), { mimeType: "application/pdf" });
+  currentWindow = otherWindow;
+  await assert.rejects(inspect, /current Preview resource as its base/);
+  currentWindow = previewWindow;
+  await assert.rejects(inspect, /current Preview resource as its base/);
+  assert.equal(calls, 1);
+  const based = { ...request, baseResource: currentBase };
+  assert.deepEqual(await inspect(based), { mimeType: "application/pdf" });
+  const chunk = { ...based, offset: 0, length: 1, expectedRevision: "revision" };
+  assert.equal((await read(chunk) as { data: ArrayBuffer }).data.byteLength, 1);
+  changeDuringRead = "base";
+  await assert.rejects(() => read(chunk), /current Preview resource as its base/);
+  currentWindow = ownerWindow;
+  changeDuringRead = "owner";
+  await assert.rejects(() => read({ ...request, offset: 0, length: 1, expectedRevision: "revision" }));
+  ownerSessionId = "session-1";
+  changeDuringRead = "window";
+  await assert.rejects(() => read({ ...request, offset: 0, length: 1, expectedRevision: "revision" }));
+  assert.equal(calls, 6);
+});
+
+function createIpcMainStub() {
+  const handlers = new Map<string, Handler>();
+  const ipcMain = {
+    handle(channel: string, handler: Handler) {
+      handlers.set(channel, (event, ...args) => handler({
+        sender: { session: {} },
+        ...(event as object),
+      }, ...args));
+    },
+    on() {},
+  };
+
+  return { ipcMain: ipcMain as unknown as IpcMain, handlers };
+}
+
+function createDeps(overrides: Record<string, unknown> = {}) {
+  const calls: string[] = [];
+  const featureDeps = new Proxy({
+    resolveEventWindow: () => null,
+    resolveHomeWindow: () => null,
+    isSettingsWindow: () => false,
+    isMemoryV6ReviewWindow: () => false,
+    isFilePreviewWindow: () => false,
+    getFilePreviewWindowResource: () => null,
+    isFilePreviewTokenWindow: () => false,
+    getMateState: async () => "active",
+    logIpcError: (input: { channel: string }) => calls.push(`log:${input.channel}`),
+    ...overrides,
+  }, {
+    get(target, prop: string) {
+      if (prop in target) {
+        return target[prop as keyof typeof target];
+      }
+      return async (...args: unknown[]) => {
+        calls.push(`${prop}:${args.join(",")}`);
+        return null;
+      };
+    },
+  });
+
+  const deps = {
+    common: featureDeps,
+    window: featureDeps,
+    catalog: featureDeps,
+    settings: featureDeps,
+    promptTemplates: featureDeps,
+    sessionQuery: featureDeps,
+    auxiliary: featureDeps,
+    sessionRuntime: featureDeps,
+    mate: featureDeps,
+    character: featureDeps,
+  };
+
+  return { deps: deps as never, calls };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryのsteer IPCは対象の親Session Windowだけから同turn入力を受け付ける"
+// oracle = { type = "contract", ref = "Issue #780 explicit steer ownership" }
+// fault = "別Windowから同turn入力を送信できるか、turn IDがIPCで失われる"
+// observable = "steer dependencyに渡るID/payloadと別Window要求のreject"
+// observation_boundary = "public-boundary"
+// scope = "steer IPC sender ownership"
+// lifecycle = "permanent"
+// impact = "他会話やpreviewから実行中の作業を変更できる"
+// distinction = "runtimeとadapter単体testはElectron senderを認可しない"
+// @end-test-value
+test("steer IPCはMainとAuxiliaryのowner Windowを検証する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  const sent: unknown[] = [];
+  const request = { expectedTurnId: "turn-one", userMessage: "additional" };
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    getAuxiliarySession: async () => ({ id: "aux-1", parentSessionId: "session-1", status: "active" }),
+    steerSessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
+    steerAuxiliarySessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const main = handlers.get(WITHMATE_STEER_SESSION_TURN_CHANNEL)!;
+  const auxiliary = handlers.get(WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL)!;
+  assert.deepEqual(await main({}, "session-1", request), { turnId: "turn-one" });
+  assert.deepEqual(await auxiliary({}, "aux-1", request), { turnId: "turn-one" });
+  assert.deepEqual(sent, [["session-1", request], ["aux-1", request]]);
+  sender = other;
+  await assert.rejects(async () => main({}, "session-1", request), /Session window/);
+  await assert.rejects(async () => auxiliary({}, "aux-1", request), /Session window/);
+  assert.equal(sent.length, 2);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "質問回答IPCはMainまたはAuxiliaryのowner Windowだけを許し、回答配送の成否をrendererへ返す"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md GUI Turn Queue" }
+// fault = "別Windowから回答できるか、非同期配送の受付前にIPCが成功して送信失敗を隠す"
+// observable = "許可されたresolver呼出、配送保留中のIPC未完了、失敗時のrejectと別Window拒否"
+// observation_boundary = "public-boundary"
+// scope = "question answer IPC ownership and acknowledgment"
+// lifecycle = "permanent"
+// impact = "別会話への入力混入または未送信回答の喪失"
+// distinction = "serviceの単体testはElectronのsender認可とinvoke応答伝播を通らない"
+// @end-test-value
+test("質問回答IPCはownerを検証し配送の受付結果を待つ", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=other");
+  let sender = owner;
+  let rejectDelivery!: (error: Error) => void;
+  let calls = 0;
+  let settled = false;
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    getAuxiliarySessionStatus: async (id: string) => id === "aux-1" ? { parentSessionId: "session-1" } : null,
+    resolveLiveElicitation: async () => {
+      calls += 1;
+      await new Promise<void>((_resolve, reject) => { rejectDelivery = reject; });
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL)!;
+  for (const sessionId of ["session-1", "aux-1"]) {
+    settled = false;
+    const pending = Promise.resolve(handler({}, sessionId, "question", { action: "accept", content: { q: "yes" } }));
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    const rejection = assert.rejects(pending, /delivery failed/);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(settled, false);
+    rejectDelivery(new Error("delivery failed"));
+    await rejection;
+  }
+  assert.equal(calls, 2);
+  sender = other;
+  await assert.rejects(async () => handler({}, "aux-1", "question", { action: "accept" }), /Session window/);
+  assert.equal(calls, 2);
+});
+
+function createWindowStub(url: string) {
+  return {
+    webContents: {
+      isDestroyed: () => false,
+      getURL: () => url,
+    },
+  };
+}
+
+function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "aux-1",
+    parentSessionId: "session-1",
+    status: "active",
+    runState: "idle",
+    title: "Auxiliary",
+    provider: "codex",
+    catalogRevision: 1,
+    model: "gpt-5",
+    reasoningEffort: "medium",
+    approvalMode: "never",
+    codexSandboxMode: "workspace-write",
+    customAgentName: "",
+    threadId: "thread-1",
+    composerDraft: "",
+    messages: [],
+    displayAfterMessageIndex: null,
+    createdAt: "2026-07-04T00:00:00.000Z",
+    updatedAt: "2026-07-04T00:00:00.000Z",
+    closedAt: "",
+    ...overrides,
+  };
+}
+
+// @test-value v2
+// kind = "security"
+// claim = "Files Pinの列挙・追加・解除はMain/Auxの親Session Windowだけを認可し他Windowや無効Sessionにはserviceを呼ばない"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md: Files Pin" }
+// fault = "他SessionやHome・Preview WindowからPinを変更できるかAuxの親Session Windowが拒否される"
+// observable = "各IPCの戻り値・拒否Errorとserviceへ届いたrequest集合"
+// observation_boundary = "public-boundary"
+// scope = "File Pin IPC sender authority"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "別Sessionから保存目印を変更する権限逸脱とAuxの主要機能不成立を防ぐ"
+// distinction = "serviceのfilesystem認可testでは保証しないElectron sender Window境界を直接検証する"
+// @end-test-value
+test("Files Pin IPC はMain/Auxの親Windowだけから利用できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const others = [createWindowStub("file:///session.html?sessionId=other"), createWindowStub("file:///home.html"), createWindowStub("file:///file-preview.html")];
+  let sender = owner;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    getSessionFileExplorerOwnerSessionId: async (id: string) => ["session-1", "aux-1"].includes(id) ? "session-1" : null,
+    listSessionFilePins: async (id: string) => { requests.push(id); return []; },
+    pinSessionFile: async (request: unknown) => { requests.push(request); return "pinned"; },
+    unpinSessionFile: async (request: unknown) => { requests.push(request); },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const list = handlers.get(WITHMATE_LIST_SESSION_FILE_PINS_CHANNEL)!;
+  const pin = handlers.get(WITHMATE_PIN_SESSION_FILE_CHANNEL)!;
+  const unpin = handlers.get(WITHMATE_UNPIN_SESSION_FILE_CHANNEL)!;
+  const event = {};
+  for (const id of ["session-1", "aux-1"]) {
+    const pinRequest = { sessionId: id, rootId: "workspace", relativePath: "file.txt" };
+    const unpinRequest = { sessionId: id, rootKind: "additional", rootPath: "C:/removed", relativePath: "file.txt" };
+    assert.deepEqual(await list(event, id), []);
+    assert.equal(await pin(event, pinRequest), "pinned");
+    await unpin(event, unpinRequest);
+    assert.deepEqual(requests.splice(0), [id, pinRequest, unpinRequest]);
+    for (const other of others) {
+      sender = other;
+      await assert.rejects(async () => list(event, id), /owning Session window/);
+      await assert.rejects(async () => pin(event, pinRequest), /owning Session window/);
+      await assert.rejects(async () => unpin(event, unpinRequest), /owning Session window/);
+      assert.deepEqual(requests, []);
+    }
+    sender = owner;
+  }
+  await assert.rejects(async () => list(event, "missing"), /owning Session window/);
+  await assert.rejects(async () => pin(event, { sessionId: "missing" }), /owning Session window/);
+  await assert.rejects(async () => unpin(event, { sessionId: "missing" }), /owning Session window/);
+  assert.deepEqual(requests, []);
+});
+
+function createSessionRequest(workspace: Record<string, unknown>) {
+  return {
+    taskTitle: "Task",
+    characterId: "character-1",
+    character: "Character",
+    characterIconPath: "",
+    characterThemeColors: { main: "#111111", sub: "#222222" },
+    workspace,
+  };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main IPC registrationは代表的な現行公開channel（History Compareを含む）を登録し、列挙した廃止channelを登録しない"
+// oracle = { type = "contract", ref = "withmate-ipc-channels public surface" }
+// fault = "列挙した現行channelにMain handlerがないか、廃止済みchannelが再び呼び出し可能になる"
+// observable = "registerMainIpcHandlers後のhandler mapにある代表channelとremoved channelの不在"
+// observation_boundary = "public-boundary"
+// scope = "Main IPC public channel registration"
+// lifecycle = "permanent"
+// impact = "rendererからHistory Compareを含む現行機能へ到達でき、廃止済み操作をIPC経由で再実行できない"
+// distinction = "file tree context menuとHistory Compareを含む代表的な公開channel、およびremoved channel不在を検証する"
+// @end-test-value
+test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const { deps } = createDeps();
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.ok(handlers.has(WITHMATE_OPEN_SESSION_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_MATE_STATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_MATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_CHARACTERS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_CHARACTER_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_CHARACTER_CHANNEL));
+  assert.equal(handlers.has("withmate:set-default-character"), false);
+  assert.ok(handlers.has(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_SESSION_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_DELETE_SESSION_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RUN_SESSION_TURN_CHANNEL));
+
+  const removedChannels = [
+    "withmate:open-memory-management-window",
+    "withmate:open-mate-talk-window",
+    "withmate:get-memory-management-snapshot",
+    "withmate:get-memory-management-page",
+    "withmate:get-mate-growth-settings",
+    "withmate:update-mate-growth-settings",
+    "withmate:get-mate-embedding-settings",
+    "withmate:list-provider-instruction-targets",
+    "withmate:upsert-provider-instruction-target",
+    "withmate:apply-mate-growth",
+    "withmate:list-mate-growth-events",
+    "withmate:correct-mate-growth-event",
+    "withmate:disable-mate-growth-event",
+    "withmate:forget-mate-growth-event",
+    "withmate:start-mate-embedding-download",
+    "withmate:delete-session-memory",
+    "withmate:delete-project-memory-entry",
+    "withmate:forget-mate-profile-item",
+    "withmate:run-mate-talk-turn",
+  ];
+
+  for (const channel of removedChannels) {
+    assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
+  }
+});
+
+test("Session Window restore IPC はHomeだけからsnapshot取得と一括復元を実行できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  let eventWindow = homeWindow;
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    getSessionWindowRestoreSet: async () => {
+      calls.push("get");
+      return ["session-1"];
+    },
+    restoreSessionWindows: async () => {
+      calls.push("restore");
+      return {
+        requestedSessionIds: ["session-1"],
+        openedSessionIds: ["session-1"],
+        failures: [],
+      };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL)?.({}),
+    ["session-1"],
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL)?.({}),
+    {
+      requestedSessionIds: ["session-1"],
+      openedSessionIds: ["session-1"],
+      failures: [],
+    },
+  );
+
+  eventWindow = sessionWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL)?.({}) as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.deepEqual(calls, ["get", "restore"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session MonitorのAuxiliary選択は存在確認と親ID一致を経て、対象IDをWindow navigationへ保持する"
+// oracle = { type = "contract", ref = "issue-722 exact Auxiliary navigation" }
+// fault = "存在しないAuxiliaryや別親のAuxiliaryを黙ってMainへfallbackし、誤った会話を開く"
+// observable = "openSessionWindowへ渡されたparentとAuxiliary ID、および不正選択時の拒否"
+// observation_boundary = "public-boundary"
+// scope = "Main IPC Session Monitor Auxiliary navigation"
+// lifecycle = "permanent"
+// impact = "展開一覧から選択した会話だけを再開し、対象消失や親不一致を利用者へ返す"
+// distinction = "renderer callbackの引数変換ではなく、Mainの永続化照会と親子認可を検証する"
+// @end-test-value
+test("Session MonitorのAuxiliary navigationは対象と親を検証してWindowへ渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const calls: unknown[] = [];
+  const { deps } = createDeps({
+    getAuxiliarySession: async (auxiliarySessionId: string) => {
+      if (auxiliarySessionId === "aux-main") {
+        return createAuxiliarySessionStub({ id: "aux-main", parentSessionId: "session-1" });
+      }
+      if (auxiliarySessionId === "aux-other") {
+        return createAuxiliarySessionStub({ id: "aux-other", parentSessionId: "session-2" });
+      }
+      return null;
+    },
+    openSessionWindow: async (sessionId: string, auxiliarySessionId?: string) => {
+      calls.push({ kind: "session", sessionId, auxiliarySessionId });
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "aux-main");
+  assert.deepEqual(calls, [
+    { kind: "session", sessionId: "session-1", auxiliarySessionId: "aux-main" },
+  ]);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "missing") as Promise<unknown>,
+    /The target Auxiliary Session could not be found/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_CHANNEL)?.({}, "session-1", "aux-other") as Promise<unknown>,
+    /The Auxiliary Session parent does not match/,
+  );
+  assert.equal(calls.length, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Monitor page IPCは既定100親とcursor/limitを正規化し、範囲外の要求をqueryへ渡さない"
+// oracle = { type = "contract", ref = "GitHub Issue #876 Monitor専用queryの100親上限" }
+// fault = "上限超過や不正cursorを許可するか、正規化前のrequestをMain queryへ渡す"
+// observable = "query依存へ渡ったrequest、IPC結果、無効要求のrejectと依存呼出数"
+// observation_boundary = "public-boundary"
+// scope = "Session Monitor page IPC validation"
+// lifecycle = "permanent"
+// impact = "rendererからの無制限readとMonitor pagingの取り違えを防ぐ"
+// distinction = "型checkやMain query単体testでは登録済みIPCのparse結線を保証できない"
+// @end-test-value
+test("Monitor page IPCは100親上限で検証し正規化requestを渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const requests: unknown[] = [];
+  const result = { entries: [], auxiliarySessions: [], nextCursor: null, hasMore: false };
+  const { deps } = createDeps({
+    listSessionMonitorPage: (request: unknown) => { requests.push(request); return result; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get("withmate:list-session-monitor-page");
+  assert.ok(handler);
+  assert.deepEqual(await handler({}), result);
+  assert.deepEqual(await handler({}, { cursor: " parent-1 ", limit: 25 }), result);
+  assert.deepEqual(requests, [{ cursor: null, limit: 100 }, { cursor: "parent-1", limit: 25 }]);
+  for (const request of [{ limit: 101 }, { limit: 0 }, { cursor: 1 }, []]) {
+    await assert.rejects(async () => handler({}, request), /Invalid open Session Window ID page request/);
+  }
+  assert.equal(requests.length, 2);
+});
+
+test("Session summary IPC は bounded requestをparseしてpage / Character usageへ委譲する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const pageRequests: unknown[] = [];
+  const { deps } = createDeps({
+    listSessionSummaryPage: (request: unknown) => {
+      pageRequests.push(request);
+      return { entries: [], nextCursor: null, hasMore: false };
+    },
+    listSessionCharacterUsage: () => [{ characterId: "char-1", sessionKind: "default" }],
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL)?.({}, {
+      scope: "recent",
+      limit: 50,
+      searchText: "  Task ",
+    }),
+    { entries: [], nextCursor: null, hasMore: false },
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL)?.({}), [
+    { characterId: "char-1", sessionKind: "default" },
+  ]);
+  assert.deepEqual(pageRequests, [{
+    scope: "recent",
+    cursor: null,
+    limit: 50,
+    searchText: "task",
+    sessionIds: undefined,
+  }]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliary共用のパス入力は所有Session Windowからpreloadと登録済みIPCを通じて実在directoryを選択し、fileとWindowsのdrive未指定rooted pathは拒否する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path; docs/design/electron-window-runtime.md: MainIpcRegistration" }
+// fault = "Sessionのパス入力をHome専用IPCへ接続する、親Session IDを失う、filesystem検証を迂回する、またはdrive未指定入力を許可する"
+// observable = "選択Promiseのdirectory pathとfile・Windows rooted入力のreject message"
+// observation_boundary = "consumer"
+// scope = "共用path adapterから本番preload・登録handler・filesystem validatorまで"
+// lifecycle = "permanent"
+// impact = "パス入力追加の主要機能不成立、fileの登録、検証時とconsumer利用時で許可driveが変わる登録を防ぐ"
+// distinction = "単体API mockと型検査では検出できないsender認可とIPC配線を、既存fileのread-only検証で低コストに確認する"
+// @end-test-value
+test("Additional Directoryのパス入力はSessionから実preloadと登録IPCで検証できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const service = new WorkspaceDirectoryValidationService();
+  const { deps } = createDeps({
+    resolveEventWindow: () => owner,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    validateWorkspaceDirectory: (targetPath: unknown) => service.validate(targetPath),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({
+    async invoke(channel: string, ...args: unknown[]) {
+      const handler = handlers.get(channel);
+      assert.ok(handler, `Unregistered IPC: ${channel}`);
+      return handler({}, ...args);
+    },
+    on() {},
+    removeListener() {},
+    send() {},
+  } as never);
+  const directoryPath = fileURLToPath(new URL("./", import.meta.url));
+  assert.equal(await selectAdditionalDirectoryPath({
+    sessionId: "session-1", directoryPath: `  ${directoryPath}  `, initialPath: null, api,
+  }), directoryPath);
+  await assert.rejects(selectAdditionalDirectoryPath({
+    sessionId: "session-1", directoryPath: fileURLToPath(import.meta.url), initialPath: null, api,
+  }), { message: "Not a directory." });
+  if (process.platform === "win32") {
+    const rootedPath = directoryPath.slice(2);
+    assert.deepEqual(await service.validate(rootedPath), { valid: true });
+    for (const input of [rootedPath, rootedPath.replaceAll("\\", "/")]) {
+      await assert.rejects(selectAdditionalDirectoryPath({
+        sessionId: "session-1", directoryPath: input, initialPath: null, api,
+      }), { message: "Enter an absolute path." });
+    }
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "追加directoryの検証は対象Sessionの所有Windowだけを許可し、非所有Window・不正Session IDはfilesystem検証前に拒否する"
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md: MainIpcRegistration" }
+// fault = "Home・Settings・別Session・不明senderを許可する、他Session IDで検証できる、またはHome専用APIの権限を広げる"
+// observable = "APIの返却値と拒否Error、validation serviceへ届いたpath集合"
+// observation_boundary = "public-boundary"
+// scope = "追加directory検証のpreloadから登録IPCのsender認可まで"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// impact = "他Windowから任意filesystem pathの存在・利用可能性を検証する権限逸脱を防ぐ"
+// distinction = "filesystem判定の単体testや型検査では表せない実行時sender境界を既存IPC fixtureで確認する"
+// @end-test-value
+test("Additional Directory検証IPCは所有Sessionだけを認可しHome専用APIを緩和しない", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const other = createWindowStub("file:///session.html?sessionId=session-2");
+  const home = createWindowStub("file:///home.html");
+  let sender: ReturnType<typeof createWindowStub> | null = owner;
+  const validated: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : id === "session-2" ? other : null,
+    resolveHomeWindow: () => home,
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validated.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const ipcRenderer = {
+    async invoke(channel: string, ...args: unknown[]) {
+      const handler = handlers.get(channel);
+      assert.ok(handler, `Unregistered IPC: ${channel}`);
+      return handler({}, ...args);
+    },
+    on() {},
+    removeListener() {},
+    send() {},
+  };
+  const api = createWithMateWindowApi(ipcRenderer as never);
+  const directoryPath = fileURLToPath(new URL("./", import.meta.url));
+  assert.deepEqual(await api.validateSessionAdditionalDirectory("session-1", directoryPath), { valid: true });
+  await assert.rejects(api.validateWorkspaceDirectory("/outside/private"), /only available from the Home window/);
+  for (const sessionId of ["session-2", "unknown"]) {
+    await assert.rejects(api.validateSessionAdditionalDirectory(sessionId, "/outside/private"), /only available from the target Session window/);
+  }
+  for (const sessionId of [null, undefined, 1, ""]) {
+    await assert.rejects(ipcRenderer.invoke(WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL, sessionId, "/outside/private"), /Session ID is invalid/);
+  }
+  for (const unauthorized of [home, other, createWindowStub("file:///settings.html"), null]) {
+    sender = unauthorized;
+    await assert.rejects(api.validateSessionAdditionalDirectory("session-1", "/outside/private"), /only available from the target Session window/);
+  }
+  assert.deepEqual(validated, [directoryPath]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "WindowsのAdditional Directory入力はdrive未指定rooted pathをfilesystem検証前に拒否し、drive付き・UNC入力は既存validatorへ渡す"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Add Directory By Path" }
+// fault = "rooted pathを許可directoryとして登録する、またはdrive付き・UNCの完全修飾pathまで拒否する"
+// observable = "登録IPCのvalidation結果とfilesystem validatorが受け取ったpath集合"
+// observation_boundary = "public-boundary"
+// scope = "WindowsのAdditional Directory検証IPCのpath形式境界。実在性判定は既存validatorに委譲する"
+// lifecycle = "permanent"
+// impact = "検証時とconsumer利用時で許可driveが変わる登録と、通常の完全修飾入力の利用不能を防ぐ"
+// distinction = "型やbuildでは検出できないWindows pathの形式とvalidator委譲を、network share接続なしの軽量fixtureで継続確認する"
+// @end-test-value
+test("WindowsのAdditional Directory入力はdrive付きとUNCだけをfilesystem検証へ渡す", { skip: process.platform !== "win32" }, async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const validated: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => owner,
+    resolveSessionWindow: () => owner,
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validated.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_VALIDATE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL);
+  assert.ok(handler);
+  for (const targetPath of ["\\Windows", "/Windows", "\\", "/", "\\\\server"]) {
+    assert.deepEqual(await handler({}, "session-1", targetPath), { valid: false, reason: "not-absolute" });
+  }
+  assert.deepEqual(validated, []);
+  const qualifiedPaths = ["C:\\作業\\shared folder", "D:/shared", "\\\\server\\share", "//server/share/folder"];
+  for (const targetPath of qualifiedPaths) {
+    assert.deepEqual(await handler({}, "session-1", targetPath), { valid: true });
+  }
+  assert.deepEqual(validated, qualifiedPaths);
+});
+
+test("workspace validation IPC は Home window だけから validation service を呼べる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  let eventWindow = homeWindow;
+  const validatedPaths: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validatedPaths.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL);
+
+  assert.deepEqual(await handler?.({}, "C:\\workspace"), { valid: true });
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handler?.({}, "C:\\private") as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.deepEqual(validatedPaths, ["C:\\workspace"]);
+});
+
+test("Session workspace validation IPC は対象 Session window の保存済み path だけを検証する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-2");
+  let eventWindow = sessionWindow;
+  const resolvedSessionIds: string[] = [];
+  const validatedPaths: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : otherWindow,
+    getSession: async (sessionId: string) => {
+      resolvedSessionIds.push(sessionId);
+      return sessionId === "session-1" ? { workspacePath: "C:\\session-workspace" } : null;
+    },
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validatedPaths.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL);
+
+  assert.deepEqual(await handler?.({}, "session-1"), { valid: true });
+  assert.deepEqual(resolvedSessionIds, ["session-1"]);
+  assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handler?.({}, "session-1") as Promise<unknown>,
+    /only available from the target Session window/,
+  );
+  assert.deepEqual(resolvedSessionIds, ["session-1"]);
+  assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "SessionFolder作成IPCはfilesystem validationを要求せずHomeから作成できる"
+// oracle = { type = "contract", ref = "src-electron/ipc/register-main-ipc.ts#create-session" }
+// fault = "SessionFolder作成で不要なworkspace validationを行うか、Homeからの作成を拒否する"
+// observable = "validation dependency未到達とcreateSession成功"
+// observation_boundary = "public-boundary"
+// scope = "Main IPC SessionFolder creation"
+// lifecycle = "permanent"
+// @end-test-value
+test("SessionFolder 作成 IPC は filesystem validation を行わず Home から作成できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  let validationCount = 0;
+  let creationCount = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    resolveHomeWindow: () => homeWindow,
+    validateWorkspaceDirectory: async () => {
+      validationCount += 1;
+      return { valid: true };
+    },
+    createSession: async () => {
+      creationCount += 1;
+      return {};
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_CREATE_SESSION_CHANNEL)?.(
+    {},
+    createSessionRequest({ kind: "session-folder" }),
+  );
+  assert.equal(validationCount, 0);
+  assert.equal(creationCount, 1);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常Session作成IPCはHomeからworkspace検証後に作成し、不正workspaceまたはHome以外からの要求を拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/register-main-ipc.ts#create-session" }
+// fault = "通常Session作成の成功経路・workspace拒否・Home以外の認可境界が検出されず、拒否前に作成dependencyへ到達する"
+// observable = "workspace validationの入力、createSession payload、validation失敗とHome以外の拒否、および拒否時のdependency未到達"
+// observation_boundary = "public-boundary"
+// scope = "Main IPC create session authorization and workspace validation"
+// lifecycle = "permanent"
+// @end-test-value
+test("通常Session作成 IPC は workspace を検証し Home からだけ作成する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  let eventWindow: unknown = homeWindow;
+  const validatedPaths: unknown[] = [];
+  const createdInputs: unknown[] = [];
+  let validationResult: { valid: boolean; reason?: string } = { valid: true };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    validateWorkspaceDirectory: async (workspacePath: string) => {
+      validatedPaths.push(workspacePath);
+      return validationResult;
+    },
+    createSession: async (input: unknown) => {
+      createdInputs.push(input);
+      return {};
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const handler = handlers.get(WITHMATE_CREATE_SESSION_CHANNEL);
+  const directoryRequest = createSessionRequest({
+    kind: "directory",
+    label: "Workspace",
+    path: "C:\\workspace",
+    branch: "main",
+  });
+  await handler?.({}, directoryRequest);
+  assert.deepEqual(validatedPaths, ["C:\\workspace"]);
+  assert.deepEqual(createdInputs, [directoryRequest]);
+
+  validationResult = { valid: false, reason: "not-a-workspace" };
+  await assert.rejects(() => handler?.({}, directoryRequest) as Promise<unknown>);
+  assert.equal(createdInputs.length, 1);
+
+  eventWindow = otherWindow;
+  validationResult = { valid: true };
+  await assert.rejects(
+    () => handler?.({}, directoryRequest) as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.equal(createdInputs.length, 1);
+  assert.equal(validatedPaths.length, 2);
+});
+
+test("prompt template IPC は CRUD payload を専用 dependency へ渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const received: unknown[] = [];
+  const templates = [{ id: "template-1", name: "Review", prompt: "review it" }];
+  const { deps } = createDeps({
+    listPromptTemplates: () => templates,
+    createPromptTemplate: (input: unknown) => {
+      received.push({ kind: "create", input });
+      return templates;
+    },
+    updatePromptTemplate: (input: unknown) => {
+      received.push({ kind: "update", input });
+      return templates;
+    },
+    deletePromptTemplate: (id: string) => {
+      received.push({ kind: "delete", id });
+      return [];
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL)?.({}), templates);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL)?.({}, { name: "Review", prompt: "review it" }),
+    templates,
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL)?.({}, { id: "template-1", name: "Review", prompt: "review it" }),
+    templates,
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL)?.({}, "template-1"), []);
+  assert.deepEqual(received, [
+    { kind: "create", input: { name: "Review", prompt: "review it" } },
+    { kind: "update", input: { id: "template-1", name: "Review", prompt: "review it" } },
+    { kind: "delete", id: "template-1" },
+  ]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "pick-image-file IPCはCharacter icon purposeをMain側へ伝播し、不正なpurposeを拒否する"
+// oracle = { type = "contract", ref = "src-electron/ipc/window.ts#pick-image-file" }
+// fault = "不正なimage picker purposeを受け入れるか、valid purposeをdialog serviceへ渡さない"
+// observable = "pickImageFile dependency input and invalid-purpose rejection"
+// observation_boundary = "public-boundary"
+// scope = "main-ipc-image-picker-purpose"
+// lifecycle = "permanent"
+// impact = "Character icon選択の対象を誤るか、不正なIPC入力がnative dialogへ到達する"
+// distinction = "valid purposeの伝播とinvalid purposeの拒否を同じIPC handlerで確認する"
+// @end-test-value
+test("pick-image-file IPC は Character icon purpose を伝播し、不正な purpose を拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const calls: Array<{ initialPath: string | null; purpose: string }> = [];
+  const { deps } = createDeps({
+    pickImageFile: async (_targetWindow: unknown, initialPath: string | null, purpose: string) => {
+      calls.push({ initialPath, purpose });
+      return "C:/icons/a.png";
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_PICK_IMAGE_FILE_CHANNEL);
+  assert.ok(handler);
+
+  assert.equal(
+    await handler({}, "C:/icons/current.webp", "character-icon"),
+    "C:/icons/a.png",
+  );
+  assert.deepEqual(calls, [{
+    initialPath: "C:/icons/current.webp",
+    purpose: "character-icon",
+  }]);
+  assert.equal(await handler({}, null), "C:/icons/a.png");
+  assert.deepEqual(calls[1], {
+    initialPath: null,
+    purpose: "general",
+  });
+  await assert.rejects(
+    async () => handler({}, null, "unsupported-purpose"),
+    /Invalid image picker purpose/,
+  );
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "chat layout IPC は現行targetの列挙値だけを専用のvoid更新処理へ渡す"
+// oracle = { type = "contract", ref = "Chat layout preference IPC boundary" }
+// fault = "不正な target/value または余分な payload が storage update へ到達する"
+// observable = "専用更新処理へ渡されたupdatesとIPCのvoid応答"
+// observation_boundary = "public-boundary"
+// scope = "chat-layout-ipc"
+// lifecycle = "permanent"
+// impact = "廃止設定や不正値が main persistence に混入する"
+// distinction = "IPC input validation と dependency forwarding を同時に確認する"
+// @end-test-value
+test("chat layout preference IPC は単一 target の列挙値だけを専用更新処理へ渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const updates: unknown[] = [];
+  const { deps } = createDeps({
+    updateChatLayoutPreference: (update: unknown) => {
+      updates.push(update);
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+      target: "sidePane",
+      value: "files",
+    }),
+    undefined,
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+      target: "header",
+      value: "visible",
+    }),
+    undefined,
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+      target: "actionDock",
+      value: "expanded",
+    }),
+    undefined,
+  );
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+        target: "unknown",
+        value: "visible",
+      }) as Promise<unknown>,
+    /Invalid chat layout preference update/,
+  );
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+        target: "header",
+        value: "shown",
+      }) as Promise<unknown>,
+    /Invalid chat layout preference update/,
+  );
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+        target: "actionDock",
+        value: "expanded",
+        sidePane: "context",
+      }) as Promise<unknown>,
+    /Invalid chat layout preference update/,
+  );
+  assert.deepEqual(updates, [
+    { target: "sidePane", value: "files" },
+    { target: "header", value: "visible" },
+    { target: "actionDock", value: "expanded" },
+  ]);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "File Explorer IPCはowning Session senderを確認し、検証済みfile-root/history requestとhistory comparison requestだけをserviceへ渡す"
+// oracle = { type = "contract", ref = "Session File Explorer IPC authority boundary" }
+// fault = "無効なhistory branch/ref、または別Session senderのfile explorer/history requestがchanges・history serviceへ到達する"
+// observable = "非owner・無効branch/ref requestのrejectionとserviceへ渡されたdirectory・history request"
+// observation_boundary = "public-boundary"
+// scope = "File Explorer IPC authority and request validation"
+// lifecycle = "permanent"
+// distinction = "Auxiliary IDをowning Sessionへ解決する成功経路と、別window・無効request・current preview resource外の拒否を同じIPC boundaryで確認する"
+// @end-test-value
+test("File Explorer IPC は owning Session window からだけ利用でき、Auxiliary ID を parent へ解決する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview-1");
+  const currentPreviewResource = {
+    sessionId: "aux-1",
+    absolutePath: "C:/outside/current.md",
+  };
+  let currentWindow = ownerWindow;
+  const directoryRequests: unknown[] = [];
+  const inspectRequests: unknown[] = [];
+  const readRequests: unknown[] = [];
+  const openRequests: unknown[] = [];
+  const historyRepositoryRequests: unknown[] = [];
+  const historyCommitRequests: unknown[] = [];
+  const historyDetailRequests: unknown[] = [];
+  const historyComparisonRequests: unknown[] = [];
+  const historyDiffRequests: unknown[] = [];
+  const changesRequests: unknown[] = [];
+  const changesRepositoryRequests: unknown[] = [];
+  const diffRequests: unknown[] = [];
+  const previewNavigationRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    isFilePreviewWindow: (window: unknown, sessionId: string) => window === previewWindow && sessionId === "aux-1",
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentPreviewResource : null
+    ),
+    isFilePreviewTokenWindow: (window: unknown, token: string) => window === previewWindow && token === "preview-1",
+    openSessionFilePreviewWindow: async (request: unknown) => {
+      previewNavigationRequests.push(request);
+      return {
+        status: "opened",
+        targetType: "preview-window",
+        disposition: "created",
+        resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx" },
+      };
+    },
+    getSessionFilePreviewWindowPayload: () => ({
+      resource: currentPreviewResource,
+      ownerSessionId: "session-1",
+      displayPath: "C:/workspace/file", windowTitle: "current.md",
+    }),
+    listSessionFileRoots: async () => [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+    listSessionDirectory: async (request: unknown) => {
+      directoryRequests.push(request);
+      return [];
+    },
+    inspectSessionFile: async (request: unknown) => {
+      inspectRequests.push(request);
+      return null;
+    },
+    readSessionFileChunk: async (request: unknown) => {
+      readRequests.push(request);
+      return null;
+    },
+    openSessionFile: async (request: unknown) => {
+      openRequests.push(request);
+      return { status: "opened", targetType: "local-path", target: "C:/repo/src/App.tsx" };
+    },
+    listFileRootChanges: async (request: unknown) => {
+      changesRequests.push(request);
+      return { status: "ok", entries: [] };
+    },
+    listFileRootChangesRepositories: async (request: unknown) => {
+      changesRepositoryRequests.push(request);
+      return { status: "ok", repositories: [{ rootId: "workspace" }], failures: [] };
+    },
+    getFileRootDiff: async (request: unknown) => {
+      diffRequests.push(request);
+      return { status: "not-changed", message: "none" };
+    },
+    listFileRootGitHistoryRepositories: async (request: unknown) => {
+      historyRepositoryRequests.push(request);
+      return { status: "ok", repositories: [] };
+    },
+    listFileRootGitHistoryCommits: async (request: unknown) => {
+      historyCommitRequests.push(request);
+      return { status: "ok", page: { entries: [], nextCursor: null, hasMore: false } };
+    },
+    getFileRootGitHistoryCommitDetail: async (request: unknown) => {
+      historyDetailRequests.push(request);
+      return { status: "commit-not-found", message: "none" };
+    },
+    getFileRootGitHistoryComparison: async (request: unknown) => {
+      historyComparisonRequests.push(request);
+      return { status: "ok", comparison: request, entries: [] };
+    },
+    getFileRootGitHistoryDiff: async (request: unknown) => {
+      historyDiffRequests.push(request);
+      return { status: "not-changed", message: "none" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL)?.({}, "aux-1"),
+    [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+  );
+  const request = { sessionId: "aux-1", rootId: "workspace", relativePath: "src" };
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL)?.({}, request), []);
+  assert.deepEqual(directoryRequests, [request]);
+  const openRequest = { sessionId: "aux-1", rootId: "workspace", relativePath: "src/app/SessionWindowApp.tsx" };
+  assert.deepEqual(await handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest), {
+    status: "opened",
+    targetType: "local-path",
+    target: "C:/repo/src/App.tsx",
+  });
+  assert.deepEqual(openRequests, [openRequest]);
+  const outsideResource = { sessionId: "aux-1", absolutePath: "C:/outside/current.md" };
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, outsideResource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, {
+      ...outsideResource,
+      offset: 0,
+      length: 1024,
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, outsideResource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "resource",
+      resource: outsideResource,
+    }) as Promise<unknown>,
+    /must be root-scoped/,
+  );
+  assert.deepEqual(inspectRequests, []);
+  assert.deepEqual(readRequests, []);
+  assert.deepEqual(openRequests, [openRequest]);
+  const previewRequest = {
+    kind: "resource",
+    resource: openRequest,
+    view: { kind: "diff", scope: "working-tree" },
+  };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as { status: string }).status,
+    "opened",
+  );
+  assert.deepEqual(previewNavigationRequests, [previewRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      ...previewRequest,
+      view: { kind: "diff", scope: "invalid" },
+    }) as Promise<unknown>,
+    /view is invalid/,
+  );
+  const changesRequest = { sessionId: "aux-1", rootId: "workspace" };
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest), {
+    status: "ok",
+    entries: [],
+  });
+  assert.deepEqual(changesRequests, [changesRequest]);
+  const changesRepositoriesRequest = { sessionId: "aux-1", rootIds: ["workspace"] };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, changesRepositoriesRequest),
+    { status: "ok", repositories: [{ rootId: "workspace" }], failures: [] },
+  );
+  assert.deepEqual(changesRepositoryRequests, [changesRepositoriesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      rootIds: ["workspace", "workspace"],
+    }) as Promise<unknown>,
+    /request is invalid/,
+  );
+  const diffRequest = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "src/app/SessionWindowApp.tsx",
+    scope: "working-tree",
+  };
+  assert.deepEqual(await handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, diffRequest), {
+    status: "not-changed",
+    message: "none",
+  });
+  assert.deepEqual(diffRequests, [diffRequest]);
+  const historyRepositoriesRequest = { sessionId: "aux-1" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL)?.({}, historyRepositoriesRequest),
+    { status: "ok", repositories: [] },
+  );
+  const historyRequest = {
+    sessionId: "aux-1",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    rootId: "workspace",
+  };
+  const historyCommitsRequest = {
+    ...historyRequest,
+    branch: "main",
+  };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, { ...historyCommitsRequest, cursor: null }),
+    { status: "ok", page: { entries: [], nextCursor: null, hasMore: false } },
+  );
+  const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, historyDetailRequest),
+    { status: "commit-not-found", message: "none" },
+  );
+  const historyComparisonRequest = {
+    ...historyRequest,
+    base: { kind: "branch", name: "main" },
+    target: { kind: "remote", name: "origin/main" },
+    mode: "branch",
+  };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL)?.({}, historyComparisonRequest),
+    { status: "ok", comparison: historyComparisonRequest, entries: [] },
+  );
+  const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/app/SessionWindowApp.tsx" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, historyDiffRequest),
+    { status: "not-changed", message: "none" },
+  );
+  const historyPreviewRequest = { kind: "history-diff", request: historyDiffRequest };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, historyPreviewRequest) as { status: string }).status,
+    "opened",
+  );
+  assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
+  assert.deepEqual(historyCommitRequests, [{ ...historyCommitsRequest, cursor: null }]);
+  assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
+  assert.deepEqual(historyComparisonRequests, [historyComparisonRequest]);
+  assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
+  assert.deepEqual(previewNavigationRequests, [previewRequest, historyPreviewRequest]);
+  for (const branch of [undefined, "", " main", "main ", "main\n"] as unknown[]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, {
+        ...historyRequest,
+        branch,
+        cursor: null,
+      }) as Promise<unknown>,
+      /Git history branch is invalid/,
+    );
+  }
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, {
+      ...historyCommitsRequest,
+      repositoryId: "not-a-repository",
+    }) as Promise<unknown>,
+    /Git history request/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, {
+      ...historyRequest,
+      commitId: "not-a-commit",
+    }) as Promise<unknown>,
+    /commit id is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL)?.({}, {
+      ...historyComparisonRequest,
+      base: { kind: "branch", name: "../outside" },
+    }) as Promise<unknown>,
+    /comparison ref is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, {
+      ...historyDiffRequest,
+      relativePath: "../outside.ts",
+    }) as Promise<unknown>,
+    /file path is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, { sessionId: "aux-1", rootId: "" }) as Promise<unknown>,
+    /File root changes request/,
+  );
+  assert.deepEqual(changesRequests, [changesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, { ...diffRequest, scope: "unknown" }) as Promise<unknown>,
+    /Git Diff request/,
+  );
+  assert.deepEqual(diffRequests, [diffRequest]);
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, historyPreviewRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(changesRequests, [changesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_REPOSITORIES_CHANNEL)?.({}, changesRepositoriesRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(changesRepositoryRequests, [changesRepositoriesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL)?.({}, historyRepositoriesRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, { ...historyCommitsRequest, cursor: null }) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, historyDetailRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMPARISON_CHANNEL)?.({}, historyComparisonRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, historyDiffRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
+  assert.deepEqual(historyCommitRequests, [{ ...historyCommitsRequest, cursor: null }]);
+  assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
+  assert.deepEqual(historyComparisonRequests, [historyComparisonRequest]);
+  assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  currentWindow = previewWindow;
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL)?.({}, "aux-1"),
+    [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL)?.({}, request) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(directoryRequests, [request]);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL)?.({}, "preview-1"),
+    {
+      resource: currentPreviewResource,
+      ownerSessionId: "session-1",
+      displayPath: "C:/workspace/file", windowTitle: "current.md",
+    },
+  );
+  assert.equal(
+    await handlers.get(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL)?.({}, "wrong-token"),
+    null,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, diffRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "link",
+      sessionId: "aux-1",
+      target: "../outside.txt",
+      baseResource: currentPreviewResource,
+    }) as { status: string }).status,
+    "opened",
+  );
+  await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, currentPreviewResource);
+  assert.deepEqual(inspectRequests, [currentPreviewResource]);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, currentPreviewResource),
+    { status: "opened", targetType: "local-path", target: "C:/repo/src/App.tsx" },
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      absolutePath: "C:/outside/other.md",
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "link",
+      sessionId: "aux-1",
+      target: "../outside.txt",
+      baseResource: {
+        sessionId: "aux-1",
+        absolutePath: "C:/outside/other.md",
+      },
+    }) as Promise<unknown>,
+    /current Preview resource as its base/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "link",
+      sessionId: "aux-1",
+      target: "../outside.txt",
+      baseResource: {
+        sessionId: "aux-1",
+        absolutePath: "C:/outside/current.md",
+        rootId: "workspace",
+        relativePath: "current.md",
+      },
+    }) as Promise<unknown>,
+    /File preview resource is invalid/,
+  );
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "リンク解決中にSession所有者・Preview resource・送信元windowが変わると、遅延したOS open前の再認可が失敗する"
+// oracle = { type = "contract", ref = "ADR 034 File preview window navigation: current Preview resource and owning Session authority" }
+// fault = "初回認可だけでリンク解決後の古いrequestからOS openへ進む"
+// observable = "非同期解決後の再認可拒否とOS open相当の呼び出し回数"
+// observation_boundary = "public-boundary"
+// scope = "File preview link IPC sender reauthorization"
+// lifecycle = "permanent"
+// impact = "閉じた・切り替わったPreviewや所有者変更後のSessionから外部directoryをOSで開けてしまう"
+// distinction = "既存testの初回sender/base拒否では検出できない、service待機後のauthority変化を検証する"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("File preview link IPC は非同期解決後も同じsender authorityを要求する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///session.html?sessionId=session-2");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview-1");
+  let currentWindow = ownerWindow;
+  let ownerSessionId = "session-1";
+  const baseResource = { sessionId: "aux-1", absolutePath: "C:/outside/current.md" };
+  let currentPreviewResource = baseResource;
+  let afterResolution = () => {};
+  let openedCount = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => (
+      sessionId === "session-1" ? ownerWindow : sessionId === "session-2" ? otherWindow : null
+    ),
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => (
+      sessionId === "aux-1" ? ownerSessionId : null
+    ),
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentPreviewResource : null
+    ),
+    openSessionFilePreviewWindow: async (
+      _request: unknown,
+      assertLinkSender: () => Promise<void>,
+    ) => {
+      await Promise.resolve();
+      afterResolution();
+      await assertLinkSender();
+      openedCount += 1;
+      return { status: "opened", targetType: "local-directory", target: "C:/outside/docs" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    kind: "link",
+    sessionId: "aux-1",
+    target: "C:/outside/docs",
+    baseResource,
+  };
+  const open = () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, request) as Promise<unknown>;
+
+  assert.deepEqual(await open(), {
+    status: "opened", targetType: "local-directory", target: "C:/outside/docs",
+  });
+  assert.equal(openedCount, 1);
+
+  afterResolution = () => { ownerSessionId = "session-2"; };
+  await assert.rejects(open, /current Preview resource as its base/);
+  assert.equal(openedCount, 1);
+
+  ownerSessionId = "session-1";
+  currentWindow = previewWindow;
+  afterResolution = () => { currentPreviewResource = { ...baseResource, absolutePath: "C:/outside/other.md" }; };
+  await assert.rejects(open, /current Preview resource as its base/);
+  assert.equal(openedCount, 1);
+
+  currentPreviewResource = baseResource;
+  afterResolution = () => { currentWindow = otherWindow; };
+  await assert.rejects(open, /sender changed/);
+  assert.equal(openedCount, 1);
+});
+
+test("Glossary IPCはtarget Session windowだけをauthorityとし、renderer pathを受け取らない", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("http://localhost/?sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost/?sessionId=session-2");
+  let eventWindow = ownerWindow;
+  let subscriptionCount = 0;
+  const projection = {
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 1,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : otherWindow,
+    ensureSessionGlossarySubscription: async () => {
+      subscriptionCount += 1;
+    },
+    getSessionGlossaryProjection: async () => projection,
+    searchSessionGlossary: async (_sessionId: string, request: { query: string }) => ({
+      ok: true,
+      revision: null,
+      entries: [],
+      total: 0,
+      offset: 0,
+      pageSize: 50,
+      query: request.query,
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const getProjection = handlers.get(WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL)!;
+  assert.deepEqual(await getProjection({ sender: {} }, "session-1"), projection);
+  assert.equal(subscriptionCount, 1);
+  const search = handlers.get(WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL)!;
+  const searchResult = await search({ sender: {} }, "session-1", { query: "runtime" });
+  assert.equal((searchResult as { ok: boolean }).ok, true);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => Promise.resolve(getProjection({ sender: {} }, "session-1")),
+    /target Session window/,
+  );
+  await assert.rejects(
+    () => Promise.resolve(search({ sender: {} }, "session-1", { query: "runtime", path: "C:\\other" })),
+    /target Session window/,
+  );
+});
+
+test("File Preview の Git IPC は current root file だけを投影する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview-1");
+  const currentResource = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "src/current.ts",
+  };
+  const diffRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => previewWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentResource : null
+    ),
+    listFileRootChanges: async () => ({
+      status: "ok",
+      entries: [
+        { relativePath: "src/current.ts", previousRelativePath: null, kinds: { "working-tree": "modified" }, scopes: ["working-tree"] },
+        { relativePath: "src/secret.ts", previousRelativePath: null, kinds: { "working-tree": "modified" }, scopes: ["working-tree"] },
+      ],
+    }),
+    getFileRootDiff: async (request: unknown) => {
+      diffRequests.push(request);
+      return { status: "not-changed", message: "none" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      rootId: "workspace",
+    }),
+    {
+      status: "ok",
+      entries: [{
+        relativePath: "src/current.ts",
+        previousRelativePath: null,
+        kinds: { "working-tree": "modified" },
+        scopes: ["working-tree"],
+      }],
+    },
+  );
+  const currentDiff = { ...currentResource, scope: "working-tree" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, currentDiff),
+    { status: "not-changed", message: "none" },
+  );
+  assert.deepEqual(diffRequests, [currentDiff]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      rootId: "other-root",
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, {
+      ...currentDiff,
+      relativePath: "src/secret.ts",
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  assert.deepEqual(diffRequests, [currentDiff]);
+});
+
+test("commit file preview IPC はseparator表記が変わるinspect / chunk遷移もcurrent resourceとして認可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=commit-preview-1");
+  let currentWindow = ownerWindow;
+  const resource = {
+    resourceKind: "git-commit-file" as const,
+    sessionId: "aux-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src\\current.ts",
+  };
+  const descriptor = {
+    ...resource,
+    relativePath: "src/current.ts",
+    name: "current.ts",
+    kind: "text" as const,
+    byteLength: 32,
+    modifiedAt: "2026-08-29T00:00:00.000Z",
+    mimeType: "text/plain",
+    suggestedEncoding: "utf-8" as const,
+    revision: "b".repeat(40),
+  };
+  const inspectRequests: unknown[] = [];
+  const readRequests: unknown[] = [];
+  const navigationRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? resource : null
+    ),
+    openSessionFilePreviewWindow: async (request: unknown) => {
+      navigationRequests.push(request);
+      return { status: "opened", targetType: "preview-window", disposition: "created", resource };
+    },
+    inspectSessionFile: async (request: unknown) => {
+      inspectRequests.push(request);
+      return descriptor;
+    },
+    readSessionFileChunk: async (request: unknown) => {
+      readRequests.push(request);
+      return null;
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "resource",
+      resource,
+      view: { kind: "diff", scope: "working-tree" },
+    }) as Promise<unknown>,
+    /do not support working tree diff views/,
+  );
+  assert.deepEqual(navigationRequests, []);
+  const openRequest = { kind: "resource", resource };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, openRequest) as { status: string }).status,
+    "opened",
+  );
+  assert.deepEqual(navigationRequests, [openRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, { resource }) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+
+  currentWindow = previewWindow;
+  const inspected = await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as typeof descriptor;
+  assert.equal(inspected.relativePath, "src/current.ts");
+  const chunkRequest = {
+    resourceKind: inspected.resourceKind,
+    sessionId: inspected.sessionId,
+    rootId: inspected.rootId,
+    repositoryId: inspected.repositoryId,
+    commitId: inspected.commitId,
+    relativePath: inspected.relativePath,
+    offset: 0,
+    length: inspected.byteLength,
+    expectedRevision: inspected.revision,
+  };
+  await handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, chunkRequest);
+  assert.deepEqual(inspectRequests, [resource]);
+  assert.deepEqual(readRequests, [chunkRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, {
+      ...resource,
+      commitId: "c".repeat(40),
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "画像path menu IPCは元sourceと同一Sessionのbaseを保持しowner/current previewを認可して選択時の再確認も失効させる"
+// oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
+// fault = "不正sourceや別Sessionのbaseをmenuへ渡す、任意windowへ認可する、またはmenu表示後のowner/base変更を無視する"
+// observable = "menu依存へ渡るrequestと再確認callbackの拒否、拒否時のmenu呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "画像native path menuのIPC入力とsender認可"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "service testはElectron senderとSession/previewの所有関係を知らず、画像read IPC testはmenu選択時の再認可callbackを通らない"
+// @end-test-value
+test("画像path menu IPCはsource/baseを保持し表示後のowner/base変更を再認可で拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  let currentBase = { sessionId: "aux-1", absolutePath: "/outside/message.md" };
+  let ownerId: string | null = "session-1";
+  let assertSender!: () => Promise<void>;
+  const menuRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (id: string) => id === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (id: string) => id === "aux-1" ? ownerId : null,
+    getFilePreviewWindowResource: (window: unknown, id: string) => window === previewWindow && id === "aux-1" ? currentBase : null,
+    showSessionFilePreviewImageContextMenu: async (_event: unknown, request: unknown, reauthorize: () => Promise<void>) => {
+      menuRequests.push(request);
+      assertSender = reauthorize;
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", point: { x: 10, y: 20 }, image: { target: "../image.png", baseResource: currentBase } };
+  const invoke = (input: unknown = request) => handlers.get(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL)?.({}, input) as Promise<unknown>;
+  assert.deepEqual(await invoke(), { status: "dismissed" });
+  assert.deepEqual(menuRequests, [request]);
+  await assertSender();
+  ownerId = null;
+  await assert.rejects(() => assertSender(), /current Preview resource as its base/);
+  ownerId = "session-1";
+  currentWindow = otherWindow;
+  await assert.rejects(() => invoke(), /current Preview resource as its base/);
+  currentWindow = previewWindow;
+  await invoke();
+  await assertSender();
+  currentBase = { ...currentBase, absolutePath: "/outside/other.md" };
+  await assert.rejects(() => assertSender(), /current Preview resource as its base/);
+  currentWindow = ownerWindow;
+  for (const image of [null, { target: "" }, { target: 42 }, {
+    target: "image.png", baseResource: { ...currentBase, sessionId: "other" },
+  }]) {
+    await assert.rejects(() => invoke({ ...request, image }), /invalid/);
+  }
+  assert.equal(menuRequests.length, 2);
+});
+
+test("画像copy IPCはowning Session windowと非負の整数座標だけを受け付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const copyRequests: unknown[] = [];
+  const menuRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    copySessionFilePreviewImage: async (_event: unknown, request: unknown) => {
+      copyRequests.push(request);
+      return { status: "copied" };
+    },
+    showSessionFilePreviewImageContextMenu: async (_event: unknown, request: unknown) => {
+      menuRequests.push(request);
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", point: { x: 24, y: 48 } };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, request),
+    { status: "copied" },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "dismissed" },
+  );
+  assert.deepEqual(copyRequests, [request]);
+  assert.deepEqual(menuRequests, [request]);
+
+  for (const invalidRequest of [
+    null,
+    { sessionId: "aux-1", point: { x: -1, y: 2 } },
+    { sessionId: "aux-1", point: { x: 1.5, y: 2 } },
+    { sessionId: "aux-1", point: { x: 1, y: Number.NaN } },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /Image copy request is invalid/,
+    );
+  }
+  assert.deepEqual(copyRequests, [request]);
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>,
+    /owning Session window/,
+  );
+});
+
+test("file object copy IPCは認可対象resourceとowning senderだけを受け付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const copyRequests: unknown[] = [];
+  const menuRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    copySessionFileObject: async (_event: unknown, request: unknown) => {
+      copyRequests.push(request);
+      return { status: "copied", message: "File copied." };
+    },
+    showSessionFileObjectCopyContextMenu: async (_event: unknown, request: unknown) => {
+      menuRequests.push(request);
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const resource = { sessionId: "aux-1", rootId: "workspace", relativePath: "docs/report.txt" };
+  const copyRequest = { resource };
+  const menuRequest = { resource, point: { x: 24, y: 48 } };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, copyRequest),
+    { status: "copied", message: "File copied." },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL)?.({}, menuRequest),
+    { status: "dismissed" },
+  );
+  assert.deepEqual(copyRequests, [copyRequest]);
+  assert.deepEqual(menuRequests, [menuRequest]);
+
+  for (const invalidRequest of [
+    { resource: { ...resource, absolutePath: "C:/outside.txt" } },
+    { resource, point: { x: -1, y: 2 } },
+    { resource, point: { x: 1.5, y: 2 } },
+  ]) {
+    const channel = "point" in invalidRequest
+      ? WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL
+      : WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL;
+    await assert.rejects(
+      () => handlers.get(channel)?.({}, invalidRequest) as Promise<unknown>,
+      /File (?:preview resource|copy(?: context menu)? request) is invalid/,
+    );
+  }
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, copyRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  assert.deepEqual(copyRequests, [copyRequest]);
+});
+
+// @test-value v1
+// kind = "security"
+// claim = "file tree context menu IPCは限定fieldとnode kindを検証し、対象Sessionを所有するwindowだけへrequestを渡す"
+// oracle = { type = "contract", ref = "accepted behavior invariant 1: renderer request boundary" }
+// failure_mode = "absolute pathや余分なfieldを含むrequest、または非owner windowからのpath操作がMain serviceへ到達する"
+// scope = "main IPC file tree context menu boundary"
+// lifecycle = "permanent"
+// distinction = "file preview resourceではなくroot・directoryを含むtree node専用requestとowning Session windowを検証する"
+// @end-test-value
+test("file tree context menu IPCはstrict requestとowning Session windowだけを受け付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    showSessionFileTreeContextMenu: async (_event: unknown, request: unknown) => {
+      requests.push(request);
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "docs",
+    nodeKind: "directory",
+    point: { x: 24, y: 48 },
+    canInsert: false,
+  };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "dismissed" },
+  );
+  assert.deepEqual(requests, [request]);
+
+  for (const invalidRequest of [
+    { ...request, absolutePath: "C:/outside" },
+    { ...request, nodeKind: "symbolic-link" },
+    { ...request, point: { x: -1, y: 2 } },
+    { ...request, canInsert: "yes" },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /File tree context menu request is invalid/,
+    );
+  }
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_SESSION_FILE_TREE_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.deepEqual(requests, [request]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Markdown link context menu IPCはtargetとfile contextを変換せずowner認可して渡す"
+// oracle = { type = "contract", ref = "src-electron/ipc/register-main-ipc.ts" }
+// fault = "link targetやfile owner contextを書き換えるか、不正requestやWindowなしの呼出しを通す"
+// observable = "委譲requestの完全一致、link-copied結果、不正requestとWindowなしでのrejection"
+// observation_boundary = "public-boundary"
+// scope = "main IPC markdown link context menu"
+// lifecycle = "permanent"
+// @end-test-value
+test("Markdown link context menu IPCはtargetと認可用file contextを変換せず渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sourceWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherOwnerWindow = createWindowStub("file:///session.html?sessionId=session-2");
+  let currentWindow: ReturnType<typeof createWindowStub> | null = sourceWindow;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sourceWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => (
+      sessionId === "session-1" ? "session-1" : null
+    ),
+    showMarkdownLinkContextMenu: async (_event: unknown, request: unknown) => {
+      requests.push(request);
+      return { status: "link-copied" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    target: "file:///C:/tmp/candidate-source%20final.json",
+    point: { x: 24, y: 48 },
+    fileContext: {
+      sessionId: "session-1",
+      baseResource: { sessionId: "session-1", rootId: "workspace", relativePath: "docs/readme.md" },
+    },
+  };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "link-copied" },
+  );
+  assert.deepEqual(requests, [request]);
+
+  for (const invalidRequest of [
+    null,
+    { target: "", point: { x: 1, y: 2 } },
+    { target: "docs/review-brief.md", point: { x: -1, y: 2 } },
+    { target: "docs/review-brief.md", point: { x: 1.5, y: 2 } },
+    {
+      target: "docs/review-brief.md",
+      point: { x: 1, y: 2 },
+      fileContext: {
+        sessionId: "session-1",
+        baseResource: { sessionId: "other-session", rootId: "workspace", relativePath: "readme.md" },
+      },
+    },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /Markdown link (?:context menu request|file context) is invalid/,
+    );
+  }
+  assert.deepEqual(requests, [request]);
+
+  currentWindow = otherOwnerWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /File Preview navigation must use the current Preview resource as its base/,
+  );
+  assert.deepEqual(requests, [request]);
+
+  currentWindow = null;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /only available from a WithMate window/,
+  );
+  assert.deepEqual(requests, [request]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Mate未作成でもowning Session WindowのTurn送信を許可し、別Windowからの送信を拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Main GUI turn ownership" }
+// fault = "Mate状態でMain送信をblockするか、別WindowのSessionへ送信できる"
+// observable = "ownerの送信呼出しと非ownerの拒否、依存呼出し数"
+// observation_boundary = "public-boundary"
+// scope = "Main turn IPC sender ownership"
+// lifecycle = "permanent"
+// @end-test-value
+test("registerMainIpcHandlers は Mate 未作成でもowning Session Windowの送信を許可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  let currentWindow = owner;
+  const { deps, calls } = createDeps({
+    getMateState: async () => "not_created",
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" });
+
+  assert.deepEqual(calls, ["runSessionTurn:session-1,[object Object]"]);
+  currentWindow = createWindowStub("file:///home.html");
+  await assert.rejects(() => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" }) as Promise<unknown>, /target Session window/);
+  assert.deepEqual(calls.filter((call) => call.startsWith("runSessionTurn:")), ["runSessionTurn:session-1,[object Object]"]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "narrow session mutation IPC は対象Session windowのsenderだけを許可し、Auxiliary identityをstatus queryで照合し、titleのcommit結果を保持する"
+// oracle = { type = "contract", ref = "Session mutation IPC sender ownership" }
+// fault = "別Session windowからnarrow mutationを実行できる、Auxiliary requestのcreatedAt不一致がserviceへ到達する、またはtitle結果を捨てる"
+// observable = "mutation service呼出し、Auxiliary Session full hydrationなしの拒否、title commit結果"
+// observation_boundary = "public-boundary"
+// scope = "session-mutation-ipc"
+// lifecycle = "permanent"
+// impact = "誤ったwindowからの変更がsession間で混線する"
+// distinction = "既存generic update IPCではなく専用mutation channelのowner identityとlightweight Auxiliary status guardを検証する"
+// @end-test-value
+test("narrow session mutation IPC はowner windowとmutation identityを確認する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("http://localhost:5173/?sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost:5173/?sessionId=session-2");
+  let currentWindow: ReturnType<typeof createWindowStub> = ownerWindow;
+  const mutationCalls: string[] = [];
+  const titleResult = { status: "committed", projectionUpdated: false } as const;
+  let fullAuxiliaryReads = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : otherWindow,
+    setSessionExecutionOptions: (request: { sessionId: string }) => mutationCalls.push(`session-options:${request.sessionId}`),
+    setSessionTitle: (request: { sessionId: string }) => {
+      mutationCalls.push(`session-title:${request.sessionId}`);
+      return titleResult;
+    },
+    setSessionMessageBookmark: (request: { sessionId: string }) => mutationCalls.push(`session-bookmark:${request.sessionId}`),
+    getAuxiliarySessionStatus: async () => ({
+      id: "aux-1",
+      parentSessionId: "session-1",
+      status: "active",
+      createdAt: "2026-07-04T00:00:00.000Z",
+      incarnation: "aux-incarnation-1",
+      runState: "idle",
+    }),
+    getAuxiliarySession: async () => {
+      fullAuxiliaryReads += 1;
+      return createAuxiliarySessionStub();
+    },
+    setAuxiliaryExecutionOptions: (request: { auxiliarySessionId: string }) => mutationCalls.push(`aux-options:${request.auxiliarySessionId}`),
+    setAuxiliaryTitle: (request: { auxiliarySessionId: string }) => mutationCalls.push(`aux-title:${request.auxiliarySessionId}`),
+    setAuxiliaryMessageBookmark: (request: { auxiliarySessionId: string }) => mutationCalls.push(`aux-bookmark:${request.auxiliarySessionId}`),
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+  const sessionIdentity = { sessionId: "session-1", incarnationId: "incarnation-1" };
+  await handlers.get(WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL)?.({}, {
+    ...sessionIdentity,
+    executionOptions: {},
+  });
+  assert.strictEqual(await handlers.get(WITHMATE_SET_SESSION_TITLE_CHANNEL)?.({}, { ...sessionIdentity, title: "Updated" }), titleResult);
+  await handlers.get(WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL)?.({}, {
+    ...sessionIdentity,
+    messageIndex: 2,
+    isBookmarked: true,
+  });
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SET_SESSION_TITLE_CHANNEL)?.({}, { ...sessionIdentity, title: "Rejected" }) as Promise<unknown>,
+    /target Session window/,
+  );
+  currentWindow = ownerWindow;
+
+  const auxiliaryIdentity = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    createdAt: "2026-07-04T00:00:00.000Z",
+  };
+  await handlers.get(WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL)?.({}, {
+    ...auxiliaryIdentity,
+    executionOptions: {},
+  });
+  await handlers.get(WITHMATE_SET_AUXILIARY_TITLE_CHANNEL)?.({}, { ...auxiliaryIdentity, title: "Updated" });
+  await handlers.get(WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL)?.({}, {
+    ...auxiliaryIdentity,
+    messageIndex: 3,
+    isBookmarked: true,
+  });
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SET_AUXILIARY_TITLE_CHANNEL)?.({}, {
+      ...auxiliaryIdentity,
+      createdAt: "stale-created-at",
+      title: "Rejected",
+    }) as Promise<unknown>,
+    /identity is stale or invalid/,
+  );
+
+  assert.deepEqual(mutationCalls, [
+    "session-options:session-1",
+    "session-title:session-1",
+    "session-bookmark:session-1",
+    "aux-options:aux-1",
+    "aux-title:aux-1",
+    "aux-bookmark:aux-1",
+  ]);
+  assert.equal(fullAuxiliaryReads, 0);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "owning Session WindowのTurn拒否ログは本文を除外し正規request IDだけを相関情報として残す"
+// oracle = { type = "contract", ref = "src-electron/ipc/register-main-ipc.ts IPC failure correlation" }
+// fault = "拒否ログへ本文または不正request identity文字列を記録する"
+// observable = "IPC rejectとlog payloadのchannel/request ID、本文不在"
+// observation_boundary = "public-boundary"
+// scope = "Main turn IPC diagnostic privacy"
+// lifecycle = "permanent"
+// impact = "利用者の入力本文が不要な診断ログへ流出する"
+// distinction = "型検査は実際のlogger payloadとruntime正規化を検証しない"
+// @end-test-value
+test("run-session-turn IPC拒否ログは本文を含めずclient request IDを相関情報として渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const owner = createWindowStub("file:///session.html?sessionId=session-1");
+  const errors: Array<{ channel: string; clientRequestId?: string }> = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => owner,
+    resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
+    runSessionTurn: async () => {
+      throw new Error("このセッションはまだ実行中だよ。");
+    },
+    logIpcError: (input: { channel: string; clientRequestId?: string }) => {
+      errors.push(input);
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", {
+      userMessage: "ログへ出してはいけない本文",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+    }) as Promise<unknown>,
+    /まだ実行中/,
+  );
+
+  assert.deepEqual(errors.map(({ channel, clientRequestId }) => ({ channel, clientRequestId })), [{
+    channel: WITHMATE_RUN_SESSION_TURN_CHANNEL,
+    clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+  }]);
+  assert.doesNotMatch(JSON.stringify(errors), /ログへ出してはいけない本文/);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", {
+      userMessage: "please use secretprompt",
+      clientRequestId: "secretprompt",
+      submitSource: "secretprompt",
+    }) as Promise<unknown>,
+    /まだ実行中/,
+  );
+  assert.equal(errors.at(-1)?.clientRequestId, undefined);
+  assert.doesNotMatch(JSON.stringify(errors.at(-1)), /secretprompt/);
+});
+
+test("Memory V6 Review IPC は memory-review window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const reviewWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => reviewWindow,
+    isMemoryV6ReviewWindow: (window: unknown) => window === reviewWindow,
+    getMemoryV6FileUsage: async () => ({ usedBytes: 0 }) as never,
+    exportMemoryV6EntryFiles: async (entryId: string) => ({ entryId, exportedCount: 1 }) as never,
+    runMemoryV6ProtectedObjectGc: async (request: { dryRun: boolean }) => ({ dryRun: request.dryRun }) as never,
+    searchMemoryV6Entries: async () => ({ items: [] }),
+    getMemoryV6Entry: async () => null,
+    forgetMemoryV6Entry: async () => ({ entryId: "mem-1", status: "not_found", reason: "user_request" }),
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL)?.({}), { usedBytes: 0 });
+  assert.deepEqual(await handlers.get(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL)?.({}, "mem-1"), {
+    entryId: "mem-1",
+    exportedCount: 1,
+  });
+  assert.deepEqual(await handlers.get(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL)?.({}, { dryRun: true }), {
+    dryRun: true,
+  });
+  assert.deepEqual(await handlers.get(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL)?.({}, { query: "x" }), { items: [] });
+  assert.equal(await handlers.get(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1"), null);
+  assert.deepEqual(await handlers.get(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1", "user_request"), {
+    entryId: "mem-1",
+    status: "not_found",
+    reason: "user_request",
+  });
+  assert.deepEqual(calls, []);
+});
+
+test("Memory V6 CLI shim IPC は Settings window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => settingsWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    installMemoryV6CliShim: async () => {
+      calls.push("install");
+      return { cliShim: { status: "installed" } };
+    },
+    uninstallMemoryV6CliShim: async () => {
+      calls.push("uninstall");
+      return { cliShim: { status: "not-installed" } };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}), {
+    cliShim: { status: "installed" },
+  });
+  assert.deepEqual(await handlers.get(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}), {
+    cliShim: { status: "not-installed" },
+  });
+  assert.deepEqual(calls, ["install", "uninstall"]);
+});
+
+test("Memory V6 CLI shim IPC は Settings window 以外からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isSettingsWindow: () => false,
+    installMemoryV6CliShim: async () => {
+      calls.push("install");
+      return null;
+    },
+    uninstallMemoryV6CliShim: async () => {
+      calls.push("uninstall");
+      return null;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL)?.({}) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  assert.equal(calls.includes("install"), false);
+  assert.equal(calls.includes("uninstall"), false);
+});
+
+test("Memory V6 Review protected object IPC は通常 window からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isMemoryV6ReviewWindow: () => false,
+    getMemoryV6FileUsage: async () => {
+      calls.push("usage");
+      return {};
+    },
+    exportMemoryV6EntryFiles: async () => {
+      calls.push("export");
+      return null;
+    },
+    runMemoryV6ProtectedObjectGc: async () => {
+      calls.push("gc");
+      return {};
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL)?.({}) as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL)?.({}, "mem-1") as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL)?.({}, { dryRun: true }) as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  assert.equal(calls.includes("usage"), false);
+  assert.equal(calls.includes("export"), false);
+  assert.equal(calls.includes("gc"), false);
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "Session Folder cleanupのscan/runはSettings以外と不正入力をservice前に拒否し、正常なrenderer要求と結果を保持する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md" }
+// fault = "非Settings senderや不正条件でcleanup serviceを呼ぶか、preloadからscan条件とscan IDを欠落・取り違えする"
+// observable = "renderer APIの返却値、serviceに渡ったrequest、拒否Errorとservice呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "registered Session Folder cleanup IPC and preload authorization/validation"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "irreversible-data-loss"]
+// impact = "許可されていないWindowや不正入力によるfile完全削除を防ぐ"
+// distinction = "serviceのfilesystem testや型checkではrendererから登録済みIPCまでのsender認可、runtime parseとpayload伝達を検証できない"
+// @end-test-value
+test("Session Folder cleanup IPCはSettings認可とparseを通してrenderer要求を保持する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settings = createWindowStub("file:///settings.html");
+  let sender: unknown = settings;
+  const requests: Array<{ method: string; request: unknown }> = [];
+  const scanResult = { scanId: "confirmed-scan", matchedFileCount: 2, matchedBytes: 2048 };
+  const runResult = { deletedFileCount: 2, deletedBytes: 2048, skippedFileCount: 0, failedFileCount: 0, issues: [] };
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    isSettingsWindow: (window: unknown) => window === settings,
+    scanSessionFolderCleanup: async (request: unknown) => {
+      requests.push({ method: "scan", request });
+      return scanResult;
+    },
+    runSessionFolderCleanup: async (request: unknown) => {
+      requests.push({ method: "run", request });
+      return runResult;
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({
+    async invoke(channel: string, ...args: unknown[]) {
+      const handler = handlers.get(channel);
+      assert.ok(handler, `Unregistered IPC: ${channel}`);
+      return handler({}, ...args);
+    },
+    on() {}, removeListener() {}, send() {},
+  } as never);
+  const request = { fromDate: "2026-05-01", toDate: "2026-05-31", minimumFileSizeMiB: 0.1 };
+  assert.deepEqual(await api.scanSessionFolderCleanup(request), scanResult);
+  assert.deepEqual(await api.runSessionFolderCleanup({ scanId: scanResult.scanId }), runResult);
+  assert.deepEqual(requests, [{ method: "scan", request }, { method: "run", request: { scanId: scanResult.scanId } }]);
+  for (const input of [null, { ...request, fromDate: "2026-02-30" }, { ...request, minimumFileSizeMiB: -1 }]) {
+    await assert.rejects(api.scanSessionFolderCleanup(input as never), TypeError);
+  }
+  for (const input of [null, {}, { scanId: "" }]) {
+    await assert.rejects(api.runSessionFolderCleanup(input as never), TypeError);
+  }
+  for (const window of [createWindowStub("file:///home.html"), createWindowStub("file:///session.html?sessionId=main"), null]) {
+    sender = window;
+    await assert.rejects(api.scanSessionFolderCleanup(request), /Settings IPC is only available/);
+    await assert.rejects(api.runSessionFolderCleanup({ scanId: scanResult.scanId }), /Settings IPC is only available/);
+  }
+  assert.equal(requests.length, 2);
+});
+
+test("Storage Maintenance の bulk session delete IPC は Settings window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => settingsWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    deleteSessionsLastActiveBefore: async () => {
+      calls.push("deleteSessionsLastActiveBefore");
+      return { deletedSessionIds: ["session-1"], skippedRunningSessionIds: [] };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL)?.(
+      {},
+      { cutoffDate: "2026-07-01" },
+    ),
+    { deletedSessionIds: ["session-1"], skippedRunningSessionIds: [] },
+  );
+  assert.deepEqual(calls, ["deleteSessionsLastActiveBefore"]);
+});
+
+test("single session delete IPC は Home / Settings / 対象 Session window から呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  let eventWindow: unknown = homeWindow;
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    deleteSession: async (sessionId: string) => {
+      calls.push(`deleteSession:${sessionId}`);
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1");
+  eventWindow = settingsWindow;
+  await handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1");
+  eventWindow = sessionWindow;
+  await handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1");
+
+  assert.deepEqual(calls, [
+    "deleteSession:session-1",
+    "deleteSession:session-1",
+    "deleteSession:session-1",
+  ]);
+});
+
+test("single session delete IPC は許可されていない window からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => otherWindow,
+    resolveHomeWindow: () => homeWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    isSettingsWindow: () => false,
+    deleteSession: async (sessionId: string) => {
+      calls.push(`deleteSession:${sessionId}`);
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_DELETE_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    /Session delete IPC is only available/,
+  );
+  assert.equal(calls.includes("deleteSession:session-1"), false);
+});
+
+test("Storage Maintenance の bulk session delete IPC は Settings window 以外からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isSettingsWindow: () => false,
+    deleteSessionsLastActiveBefore: async () => {
+      calls.push("deleteSessionsLastActiveBefore");
+      return { deletedSessionIds: ["session-1"], skippedRunningSessionIds: [] };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL)?.(
+      {},
+      { cutoffDate: "2026-07-01" },
+    ) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  assert.equal(calls.includes("deleteSessionsLastActiveBefore"), false);
+});
+
+test("DB reset IPC は Settings window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => settingsWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    resetAppDatabase: async () => {
+      calls.push("resetAppDatabase");
+      return { ok: true };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_RESET_APP_DATABASE_CHANNEL)?.(
+      {},
+      { targets: ["sessions"] },
+    ),
+    { ok: true },
+  );
+  assert.deepEqual(calls, ["resetAppDatabase"]);
+});
+
+test("DB reset IPC は Settings window 以外からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isSettingsWindow: () => false,
+    resetAppDatabase: async () => {
+      calls.push("resetAppDatabase");
+      return { ok: true };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RESET_APP_DATABASE_CHANNEL)?.(
+      {},
+      { targets: ["sessions"] },
+    ) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  assert.equal(calls.includes("resetAppDatabase"), false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary owner windowの作成とruntime selectionを対象Sessionへ限定する"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#context-boundary" }
+// fault = "別windowがAuxiliaryを作成し、親Sessionのruntime selectionを越えて処理する"
+// observable = "owner windowからの作成委譲と不正selectionの拒否"
+// observation_boundary = "public-boundary"
+// scope = "main-ipc-auxiliary-owner-boundary"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary create IPC は送信元 window と runtime selection mode を結び付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const otherSessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-2");
+  const auxiliarySession = createAuxiliarySessionStub();
+  let eventWindow: unknown = sessionWindow;
+  const forwardedInputs: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : otherSessionWindow,
+    createAuxiliarySession: async (input: unknown) => {
+      forwardedInputs.push(input);
+      return auxiliarySession;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+  const createHandler = handlers.get(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL);
+
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "explicit",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+    }) as Promise<unknown>,
+    /requires latest-session runtime selection/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      approvalMode: undefined,
+    }) as Promise<unknown>,
+    /cannot specify runtime options directly/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    }) as Promise<unknown>,
+    /clientRequestId.*creationContext/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-missing-context",
+    }) as Promise<unknown>,
+    /clientRequestId.*creationContext/,
+  );
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      codexReviewer: undefined,
+    }) as Promise<unknown>,
+    /cannot specify runtime options directly/,
+  );
+  await createHandler?.({}, {
+    parentSessionId: "session-1",
+    provider: "codex",
+    runtimeSelection: "latest-session",
+    clientRequestId: "ipc-create-2",
+    creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+  });
+
+
+  assert.deepEqual(forwardedInputs, [
+    {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-2",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    },
+  ]);
+
+  eventWindow = otherSessionWindow;
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-other-owner",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    }) as Promise<unknown>,
+    /only available from the target Session window/,
+  );
+  assert.deepEqual(forwardedInputs, [
+    {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "latest-session",
+      clientRequestId: "ipc-create-2",
+      creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+    },
+  ]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Auxiliary creationのcontext取得・cancel・query IPCはSession owner windowへ限定される"
+// oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#context-boundary" }
+// fault = "別windowが作成取消または結果照会を実行し、親scopeを越えてMain dependencyへ到達する"
+// observable = "ownerからの委譲と非ownerからの拒否"
+// observation_boundary = "public-boundary"
+// scope = "auxiliary-creation-ipc-ownership"
+// lifecycle = "permanent"
+// impact = "遅延した作成要求の取消・結果照会を親Sessionの権限内に限定する"
+// distinction = "既存Auxiliary mutation IPC testはcreation専用context/cancel/query channelを確認しない"
+// @end-test-value
+test("Auxiliary creation IPC はSession ownerだけがcontext/cancel/queryを実行できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const unauthorizedWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  let eventWindow: unknown = sessionWindow;
+  const calls: string[] = [];
+  const request = {
+    parentSessionId: "session-1",
+    clientRequestId: "creation-1",
+    creationContext: { generationId: "generation-1", parentIncarnationId: "incarnation-1" },
+  };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    getAuxiliaryCreationContext: async (parentSessionId: string) => {
+      calls.push(`context:${parentSessionId}`);
+      return request.creationContext;
+    },
+    cancelAuxiliaryCreation: async () => {
+      calls.push("cancel");
+      return { status: "cancelled" as const };
+    },
+    getAuxiliaryCreation: async () => {
+      calls.push("query");
+      return { status: "committed" as const, auxiliarySessionId: "aux-1" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL)?.({}, "session-1"),
+    request.creationContext,
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL)?.({}, request), { status: "cancelled" });
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CHANNEL)?.({}, request), {
+    status: "committed",
+    auxiliarySessionId: "aux-1",
+  });
+  eventWindow = unauthorizedWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL)?.({}, request) as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_AUXILIARY_CREATION_CHANNEL)?.({}, request) as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  assert.deepEqual(calls, ["context:session-1", "cancel", "query"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary draft IPCはreadをownerへ、mutationをSession ownerへ限定する"
+// oracle = { type = "contract", ref = "src-electron/ipc/register-main-ipc.ts" }
+// fault = "Homeや別Session Windowへdraftを公開するか、parent不一致のdraft保存を許可する"
+// observable = "ownerのdraft/statusと保存結果、対象外Windowのrejection、parent不一致のnot-found、storage呼出し一覧"
+// observation_boundary = "public-boundary"
+// scope = "main IPC auxiliary draft ownership"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const otherSessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-2");
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const auxiliarySession = createAuxiliarySessionStub();
+  const draft = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    incarnation: "incarnation-1",
+    durableRevision: 3,
+    text: "draft",
+    updatedAt: "2026-07-30T00:00:00.000Z",
+  };
+  const status = {
+    id: "aux-1",
+    parentSessionId: "session-1",
+    status: "active" as const,
+    createdAt: auxiliarySession.createdAt,
+    incarnation: draft.incarnation,
+    runState: "idle" as const,
+  };
+  let eventWindow: unknown = sessionWindow;
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) =>
+      sessionId === "session-1" ? sessionWindow : sessionId === "session-2" ? otherSessionWindow : null,
+    getAuxiliarySessionStatus: async (auxiliarySessionId: string) => {
+      assert.equal(auxiliarySessionId, "aux-1");
+      return status;
+    },
+    getAuxiliaryDraft: async () => {
+      calls.push("getAuxiliaryDraft");
+      return draft;
+    },
+    saveAuxiliaryDraft: async () => {
+      calls.push("saveAuxiliaryDraft");
+      return { outcome: "saved", ack: { auxiliarySessionId: "aux-1", incarnation: draft.incarnation, durableRevision: 4, updatedAt: draft.updatedAt } };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL)?.({}, "aux-1"), draft);
+  assert.deepEqual(await handlers.get(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL)?.({}, "aux-1"), status);
+  const input = {
+    auxiliarySessionId: "aux-1",
+    parentSessionId: "session-1",
+    incarnation: draft.incarnation,
+    expectedDurableRevision: draft.durableRevision,
+    text: "next",
+    updatedAt: draft.updatedAt,
+  };
+  const savedDraftResult = await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input);
+  assert.equal((savedDraftResult as { outcome: string } | undefined)?.outcome, "saved");
+
+
+  for (const unauthorizedWindow of [homeWindow, otherSessionWindow]) {
+    eventWindow = unauthorizedWindow;
+    await assert.rejects(
+      () => handlers.get(WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, input) as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+  }
+  eventWindow = sessionWindow;
+  const mismatchedParentInput = { ...input, parentSessionId: "other-parent" };
+  assert.deepEqual(await handlers.get(WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL)?.({}, mismatchedParentInput), { outcome: "not-found" });
+  assert.deepEqual(calls, ["getAuxiliaryDraft", "saveAuxiliaryDraft"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary mutation/run IPCは対象外windowからdepsへ到達させない"
+// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts" }
+// fault = "Home、Settings、Diff、MonitorからAuxiliaryの作成・更新・終了・実行・取消を許可する"
+// observable = "各対象外Windowからの5操作のrejectionとmutationCallsが空であること"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/main-ipc-registration.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run に到達しない", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const auxiliarySession = createAuxiliarySessionStub();
+  let eventWindow: unknown = createWindowStub("http://localhost:5173/");
+  const mutationCalls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    getAuxiliarySession: async () => auxiliarySession,
+    createAuxiliarySession: async () => {
+      mutationCalls.push("createAuxiliarySession");
+      return auxiliarySession;
+    },
+    updateAuxiliarySession: async () => {
+      mutationCalls.push("updateAuxiliarySession");
+      return auxiliarySession;
+    },
+    closeAuxiliarySession: async () => {
+      mutationCalls.push("closeAuxiliarySession");
+      return auxiliarySession;
+    },
+    runAuxiliarySessionTurn: async () => {
+      mutationCalls.push("runAuxiliarySessionTurn");
+      return auxiliarySession;
+    },
+    cancelAuxiliarySessionRun: async () => {
+      mutationCalls.push("cancelAuxiliarySessionRun");
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const unauthorizedWindows = [
+    createWindowStub("http://localhost:5173/"),
+    createWindowStub("http://localhost:5173/?mode=settings"),
+    createWindowStub("http://localhost:5173/?mode=diff&token=diff-1"),
+    createWindowStub("http://localhost:5173/?mode=monitor"),
+  ];
+
+  for (const window of unauthorizedWindows) {
+    eventWindow = window;
+    await assert.rejects(
+      () => handlers.get(WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL)?.({}, {
+        parentSessionId: "session-1",
+        provider: "codex",
+      }) as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession) as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL)?.(
+        {},
+        "aux-1",
+        { userMessage: "hello" },
+      ) as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+    await assert.rejects(
+      () => handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+      /Auxiliary session IPC is only available/,
+    );
+  }
+
+  assert.deepEqual(mutationCalls, []);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary detail IPCは対象外windowからの要求を本文取得前に拒否しsummary listだけを許可する"
+// oracle = { type = "contract", ref = "src-electron/ipc/auxiliary.ts: registerAuxiliaryHandlers" }
+// fault = "Homeへのsummary取得を拒否するか、owner外の要求でAuxiliary本文を取得する"
+// observable = "summary件数1、active/detail取得のrejection、両方の本文取得呼出がないこと"
+// observation_boundary = "public-boundary"
+// scope = "tests/integration/main-ipc-registration.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒否し、summary list は許可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const auxiliarySession = createAuxiliarySessionStub();
+  const detailReadCalls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    listAuxiliarySessions: async () => [createAuxiliarySessionStub({ messages: undefined, composerDraft: undefined })],
+    getActiveAuxiliarySession: async () => {
+      detailReadCalls.push("getActiveAuxiliarySession");
+      return auxiliarySession;
+    },
+    getAuxiliarySession: async () => {
+      detailReadCalls.push("getAuxiliarySession");
+      return auxiliarySession;
+    },
+    getAuxiliarySessionStatus: async () => ({ id: auxiliarySession.id, parentSessionId: auxiliarySession.parentSessionId, status: auxiliarySession.status, createdAt: auxiliarySession.createdAt, incarnation: "test", runState: auxiliarySession.runState }),
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.equal(
+    (await handlers.get(WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL)?.({}, "session-1") as unknown[]).length,
+    1,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+    /Auxiliary session IPC is only available/,
+  );
+  assert.deepEqual(detailReadCalls, []);
+});
+
+test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の active summary だけを返す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const {
+    messages: _messages,
+    composerDraft: _composerDraft,
+    ...summary
+  } = createAuxiliarySessionStub();
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    listOpenActiveAuxiliarySessionSummaries: async () => {
+      calls.push("listOpenActiveAuxiliarySessionSummaries");
+      return [summary];
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
+    [summary],
+  );
+  assert.deepEqual(calls, ["listOpenActiveAuxiliarySessionSummaries"]);
+  assert.equal("messages" in summary, false);
+  assert.equal("composerDraft" in summary, false);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary update IPCはpayload parentと既存parentの不一致を拒否する"
+// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts" }
+// fault = "保存済みAuxiliaryのparentを別Sessionへ付け替えるpayloadをstorageへ渡す"
+// observable = "parent mismatchのrejectionとupdateAuxiliarySessionが呼ばれないこと"
+// observation_boundary = "public-boundary"
+// scope = "scripts/tests/main-ipc-registration.test.ts"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary update IPC は payload parent と既存 parent の不一致を拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
+  const auxiliarySession = createAuxiliarySessionStub();
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => sessionWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
+    getAuxiliarySession: async () => auxiliarySession,
+    updateAuxiliarySession: async () => {
+      calls.push("updateAuxiliarySession");
+      return auxiliarySession;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.(
+      {},
+      createAuxiliarySessionStub({ parentSessionId: "session-2" }),
+    ) as Promise<unknown>,
+    /Auxiliary Session parent mismatch/,
+  );
+  assert.equal(calls.includes("updateAuxiliarySession"), false);
+});
+
+test("Memory V6 Review IPC は通常 window からの呼び出しを拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    isMemoryV6ReviewWindow: () => false,
+    searchMemoryV6Entries: async () => {
+      calls.push("search");
+      return { items: [] };
+    },
+    getMemoryV6Entry: async () => {
+      calls.push("get");
+      return null;
+    },
+    forgetMemoryV6Entry: async () => {
+      calls.push("forget");
+      return { entryId: "mem-1", status: "not_found", reason: "user_request" };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL)?.({}, { query: "x" }) as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1") as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL)?.({}, "mem-1", "privacy") as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  assert.equal(calls.includes("search"), false);
+  assert.equal(calls.includes("get"), false);
+  assert.equal(calls.includes("forget"), false);
+});
+
+test("Memory V6 Review IPC は通常 window のURLがmemory-reviewでも拒否する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const spoofedHomeWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => spoofedHomeWindow,
+    isMemoryV6ReviewWindow: () => false,
+    searchMemoryV6Entries: async () => {
+      calls.push("search");
+      return { items: [] };
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL)?.({}, { query: "x" }) as Promise<unknown>,
+    /Memory V6 Review IPC is only available/,
+  );
+  assert.equal(calls.includes("search"), false);
+});

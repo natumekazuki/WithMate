@@ -1,0 +1,937 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { JSDOM } from "jsdom";
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+
+import {
+  buildSessionFileExplorerRootsRevision,
+  type SessionDirectoryEntry,
+  type SessionFileRoot,
+  type SessionFilePin,
+} from "../../src-shared/file-explorer/file-explorer-contract.js";
+
+const emptyPinsApi = {
+  async listSessionFilePins(): Promise<SessionFilePin[]> { return []; },
+  async pinSessionFile(): Promise<SessionFilePin> { throw new Error("Unexpected pin mutation."); },
+  async unpinSessionFile(): Promise<void> { throw new Error("Unexpected pin mutation."); },
+};
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve(value: T): void;
+};
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return;
+    }
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+  assert.fail("Timed out waiting for file explorer state.");
+}
+
+function fileEntry(name: string): SessionDirectoryEntry {
+  return {
+    name,
+    relativePath: name,
+    kind: "file",
+    byteLength: 1,
+    modifiedAt: "2026-08-02T00:00:00.000Z",
+  };
+}
+
+function directoryEntry(name: string): SessionDirectoryEntry {
+  return {
+    name,
+    relativePath: name,
+    kind: "directory",
+    byteLength: 0,
+    modifiedAt: "2026-08-02T00:00:00.000Z",
+  };
+}
+
+// @test-value v2
+// kind = "invariant"
+// claim = "File Explorer root revisionはactive Session、workspace path、Additional Directory集合の組を一意に表す"
+// oracle = { type = "contract", ref = "accepted behavior invariant 2: root change invalidates pending insertion" }
+// fault = "同じSession IDのworkspace pathだけが変わったときに旧rootのmenu結果を新rootへ挿入する"
+// observable = "session ID、workspace path、Additional Directory変更ごとのroot revision値"
+// observation_boundary = "public-boundary"
+// scope = "buildSessionFileExplorerRootsRevision"
+// lifecycle = "permanent"
+// distinction = "Additional Directory変更だけでなくMain rootの対応先であるworkspace path変更もrevisionへ反映する"
+// @end-test-value
+test("File Explorer root revisionはworkspace path変更を検出する", () => {
+  const initial = buildSessionFileExplorerRootsRevision({
+    sessionId: "session-1",
+    workspacePath: "C:\\workspace-a",
+    additionalDirectories: ["C:\\additional"],
+  });
+  const workspaceChanged = buildSessionFileExplorerRootsRevision({
+    sessionId: "session-1",
+    workspacePath: "C:\\workspace-b",
+    additionalDirectories: ["C:\\additional"],
+  });
+  const sessionChanged = buildSessionFileExplorerRootsRevision({
+    sessionId: "session-2",
+    workspacePath: "C:\\workspace-a",
+    additionalDirectories: ["C:\\additional"],
+  });
+  const additionalDirectoryChanged = buildSessionFileExplorerRootsRevision({
+    sessionId: "session-1",
+    workspacePath: "C:\\workspace-a",
+    additionalDirectories: ["C:\\additional-b"],
+  });
+  assert.notEqual(initial, workspaceChanged);
+  assert.notEqual(initial, sessionChanged);
+  assert.notEqual(initial, additionalDirectoryChanged);
+  assert.equal(new Set([initial, workspaceChanged, sessionChanged, additionalDirectoryChanged]).size, 4);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Files treeはpath操作と展開状態を伝え、更新中は既存treeとbusyを保ち、Files/Pin失敗では診断詳細の開閉・focus回復とRetryを提供する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md AgentのFile Explorer; docs/design/ui-design-guidelines.md 操作とアクセシビリティ・ボタン・読込・空・失敗" }
+// fault = "path操作・展開状態が壊れる、更新中のtreeが消える、busyが誤る、失敗の診断原文に到達できない、詳細を閉じてfocusが失われる、またはRetryで回復できない"
+// observable = "path menu/open callback、aria-expanded、tree identity、Refreshのdisabled/aria-busy/spinner、loading/alert、詳細dialogの原文・focus・開閉状態とRetry後の表示"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane Files tree interaction and roots state"
+// lifecycle = "permanent"
+// impact = "展開階層と取得待ちを伝え、重複実行を防ぎ、失敗後も診断と回復操作へkeyboardで到達できる"
+// distinction = "型検査では検出できない遅延取得・詳細開閉・focus・再試行のDOM状態を既存のcomponent testで観測する。位置とclipは実描画で確認する"
+// @end-test-value
+test("SessionFileExplorerPane は path menu対象と既存tree操作をowner単位に保つ", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  Object.defineProperty(dom.window, "ResizeObserver", { value: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } });
+  const previousGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const previousClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
+  const previousClientWidth = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientWidth");
+  const previousOffsetHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetHeight");
+  const previousOffsetWidth = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetWidth");
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    const height = this.classList.contains("session-file-explorer-body") ? 480 : 31;
+    return {
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 320,
+      bottom: height,
+      width: 320,
+      height,
+      toJSON: () => ({}),
+    };
+  };
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get() {
+      return this.classList.contains("session-file-explorer-body") ? 480 : 31;
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get() {
+      return 320;
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get() {
+      return this.classList.contains("session-file-explorer-body") ? 480 : 31;
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", {
+    configurable: true,
+    get() {
+      return 320;
+    },
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
+
+  const directoryRequests: Array<Deferred<SessionDirectoryEntry[]>> = [];
+  const pathMenuRequests: unknown[] = [];
+  let listedRoots: SessionFileRoot[] = [{
+    id: "workspace",
+    kind: "workspace",
+    label: "Workspace",
+    displayPath: "C:\\workspace",
+  }];
+  let rejectRoots = false;
+  let rejectPins = false;
+  let directoryCalls = 0;
+  let pinListCalls = 0;
+  const pinRefresh = deferred<SessionFilePin[]>();
+  const api = {
+    ...emptyPinsApi,
+    async listSessionFilePins() {
+      pinListCalls += 1;
+      if (rejectPins) throw new Error("Pins failed.");
+      return pinListCalls === 2 ? pinRefresh.promise : [];
+    },
+    async showSessionFileTreeContextMenu(request: unknown) {
+      pathMenuRequests.push(request);
+      return (request as { nodeKind?: string }).nodeKind === "file"
+        ? { status: "failed" as const, message: "Path action failed." }
+        : { status: "dismissed" as const };
+    },
+    async listSessionFileRoots() {
+      if (rejectRoots) {
+        throw new Error("File roots failed.");
+      }
+      return listedRoots;
+    },
+    listSessionDirectory() {
+      directoryCalls += 1;
+      const request = deferred<SessionDirectoryEntry[]>();
+      directoryRequests.push(request);
+      return request.promise;
+    },
+  };
+  let changesRefreshCalls = 0;
+  const openedFiles: Array<{ relativePath: string; openInWindow: boolean }> = [];
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {
+          changesRefreshCalls += 1;
+        },
+        onOpenFile(request, openInWindow) {
+          openedFiles.push({ relativePath: request.relativePath, openInWindow });
+        },
+        canInsertPathReference: true,
+        onInsertPathReference() {},
+      }));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      dom.window.dispatchEvent(new dom.window.Event("resize"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() => dom.window.document.querySelector(".session-file-root-row") !== null);
+    assert.equal(directoryCalls, 0);
+
+    const initialRoot = dom.window.document.querySelector<HTMLButtonElement>(".session-file-root-row");
+    assert.ok(initialRoot);
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "false");
+    initialRoot.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 6,
+      clientY: 9,
+    }));
+    await act(async () => {
+      initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "true");
+    await act(async () => {
+      initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "false");
+    await act(async () => {
+      initialRoot.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    assert.equal(directoryCalls, 1);
+
+    await act(async () => {
+      directoryRequests[0]?.resolve([fileEntry("old.txt")]);
+      await directoryRequests[0]?.promise;
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("old.txt") ?? false);
+
+    const refresh = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-refresh");
+    assert.ok(refresh);
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "true");
+    assert.equal(refresh.getAttribute("aria-busy"), "false");
+    assert.equal(refresh.querySelector(".button-content-spinner"), null);
+    await act(async () => {
+      refresh.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await waitFor(() => dom.window.document.querySelector(".session-file-root-row") !== null);
+    assert.equal(dom.window.document.querySelector(".session-file-root-row"), initialRoot);
+    assert.match(dom.window.document.body.textContent ?? "", /old\.txt/);
+    assert.equal(directoryCalls, 2);
+    assert.equal(initialRoot.getAttribute("aria-expanded"), "true");
+    assert.equal(refresh.disabled, true);
+    assert.equal(refresh.getAttribute("aria-busy"), "true");
+    assert.ok(refresh.querySelector(".button-content[data-busy='true'] > .button-content-spinner"));
+
+    await act(async () => {
+      directoryRequests[1]?.resolve([
+        fileEntry("new.txt"),
+        directoryEntry("folder"),
+        { ...fileEntry("linked.txt"), kind: "symbolic-link" },
+      ]);
+      await directoryRequests[1]?.promise;
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("new.txt") ?? false);
+    const rows = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".session-file-tree-row"));
+    const fileRow = rows.find((row) => row.textContent?.includes("new.txt"));
+    const directoryRow = rows.find((row) => row.textContent?.includes("folder"));
+    const symbolicLinkRow = rows.find((row) => row.textContent?.includes("linked.txt"));
+    assert.ok(fileRow);
+    assert.ok(directoryRow);
+    assert.ok(symbolicLinkRow);
+    assert.equal(directoryRow.getAttribute("aria-expanded"), "false");
+    assert.equal(fileRow.hasAttribute("aria-expanded"), false);
+    assert.equal(symbolicLinkRow.hasAttribute("aria-expanded"), false);
+    assert.equal(refresh.disabled, true);
+    assert.equal(refresh.getAttribute("aria-busy"), "true");
+    assert.ok(refresh.querySelector(".button-content-spinner"));
+    await act(async () => {
+      pinRefresh.resolve([]);
+      await pinRefresh.promise;
+    });
+    assert.equal(refresh.disabled, false);
+    assert.equal(refresh.getAttribute("aria-busy"), "false");
+    assert.equal(refresh.querySelector(".button-content-spinner"), null);
+    await act(async () => {
+      fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      directoryRow.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 12,
+        clientY: 18,
+      }));
+      fileRow.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 24,
+        clientY: 48,
+      }));
+      symbolicLinkRow.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 30,
+        clientY: 60,
+      }));
+      await Promise.resolve();
+    });
+    assert.deepEqual(openedFiles, [
+      { relativePath: "new.txt", openInWindow: false },
+      { relativePath: "new.txt", openInWindow: true },
+    ]);
+    assert.deepEqual(pathMenuRequests, [
+      {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "",
+        nodeKind: "root",
+        canInsert: true,
+        point: { x: 6, y: 9 },
+      },
+      {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "folder",
+        nodeKind: "directory",
+        canInsert: true,
+        point: { x: 12, y: 18 },
+      },
+      {
+        sessionId: "session-1",
+        rootId: "workspace",
+        relativePath: "new.txt",
+        nodeKind: "file",
+        canInsert: true,
+        point: { x: 24, y: 48 },
+      },
+    ]);
+    assert.equal(
+      dom.window.document.querySelector(".session-file-tree-feedback")?.textContent,
+      "Path action failed.",
+    );
+
+    assert.match(dom.window.document.body.textContent ?? "", /new\.txt/);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old\.txt/);
+    await act(async () => directoryRow.click());
+    assert.equal(directoryRow.getAttribute("aria-expanded"), "true");
+    await act(async () => {
+      directoryRequests[2]?.resolve([]);
+      await directoryRequests[2]?.promise;
+      directoryRow.click();
+    });
+    assert.equal(directoryRow.getAttribute("aria-expanded"), "false");
+
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        selectedFile: null,
+        activeTab: "changes",
+        onActiveTabChange() {},
+        onRefreshChanges() {
+          changesRefreshCalls += 1;
+        },
+        onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
+        renderChangesContent: () => React.createElement("div", null, "Changes content"),
+      }));
+    });
+    const changesRefresh = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-refresh");
+    assert.ok(changesRefresh);
+    assert.equal(changesRefresh.ariaLabel, "Refresh changes");
+    await act(async () => changesRefresh.click());
+    assert.equal(changesRefreshCalls, 1);
+
+    listedRoots = [];
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-empty",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
+      }));
+    });
+    const filesPanel = dom.window.document.querySelector<HTMLElement>(".session-file-explorer-body");
+    await waitFor(() => filesPanel?.getAttribute("aria-busy") === "false");
+    assert.equal(filesPanel?.querySelector(".session-file-tree-status"), null);
+
+    rejectRoots = true;
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-error",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
+      }));
+      await Promise.resolve();
+    });
+    await waitFor(() => !!filesPanel?.querySelector('[aria-label="Files Error Details"]'));
+    assert.equal(filesPanel?.querySelector(".session-file-tree-error")?.getAttribute("role"), "alert");
+    assert.equal(refresh.disabled, false);
+    assert.equal(refresh.getAttribute("aria-busy"), "false");
+    assert.equal(refresh.querySelector(".button-content-spinner"), null);
+    assert.ok(Array.from(filesPanel?.querySelectorAll("button") ?? []).some((button) => button.textContent === "Retry Files"));
+
+    const details = filesPanel!.querySelector<HTMLButtonElement>('[aria-label="Files Error Details"]')!;
+    const dialog = () => dom.window.document.querySelector<HTMLElement>('[role="dialog"]');
+    assert.equal(details.getAttribute("aria-expanded"), "false");
+    await act(async () => details.click());
+    assert.equal(details.getAttribute("aria-expanded"), "true");
+    assert.equal(dialog()?.querySelector("p")?.textContent, "File roots failed.");
+    assert.equal(dom.window.document.activeElement, dialog());
+    await act(async () => dialog()?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.equal(dialog(), null);
+    assert.equal(dom.window.document.activeElement, details);
+    assert.equal(details.getAttribute("aria-expanded"), "false");
+    await act(async () => details.click());
+    await act(async () => dialog()?.querySelector<HTMLButtonElement>('[aria-label="Close Error Details"]')?.click());
+    assert.equal(dom.window.document.activeElement, details);
+    assert.equal(dialog(), null);
+    await act(async () => details.click());
+    await act(async () => details.click());
+    assert.equal(dialog(), null);
+    await act(async () => details.click());
+    await act(async () => {
+      refresh.focus();
+      refresh.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+    });
+    assert.equal(dialog(), null);
+    assert.equal(dom.window.document.activeElement, refresh);
+
+    rejectRoots = false;
+    await act(async () => {
+      Array.from(filesPanel!.querySelectorAll("button")).find((button) => button.textContent === "Retry Files")!.click();
+    });
+    await waitFor(() => !filesPanel?.querySelector(".session-file-tree-error"));
+    assert.equal(filesPanel?.getAttribute("aria-busy"), "false");
+
+    rejectPins = true;
+    await act(async () => refresh.click());
+    await waitFor(() => !!filesPanel?.querySelector('[aria-label="Pins Error Details"]'));
+    const pinsDetails = filesPanel!.querySelector<HTMLButtonElement>('[aria-label="Pins Error Details"]')!;
+    await act(async () => pinsDetails.click());
+    assert.equal(dialog()?.querySelector("p")?.textContent, "Pins failed.");
+    rejectPins = false;
+    await act(async () => {
+      Array.from(filesPanel!.querySelectorAll("button")).find((button) => button.textContent === "Retry Pins")!.click();
+    });
+    await waitFor(() => !filesPanel?.querySelector(".session-file-tree-error"));
+    assert.equal(dialog(), null);
+    assert.equal(filesPanel?.getAttribute("aria-busy"), "false");
+
+    rejectRoots = true;
+    await act(async () => refresh.click());
+    await waitFor(() => !!filesPanel?.querySelector('[aria-label="Files Error Details"]'));
+    await act(async () => filesPanel!.querySelector<HTMLButtonElement>('[aria-label="Files Error Details"]')!.click());
+    assert.ok(dialog());
+
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: false,
+        rootsRevision: "roots-unavailable",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+        canInsertPathReference: false,
+        onInsertPathReference() {},
+      }));
+    });
+    await waitFor(() => filesPanel?.getAttribute("aria-busy") === "false");
+    assert.equal(filesPanel?.querySelector(".session-file-tree-status"), null);
+    assert.equal(dialog(), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.HTMLElement.prototype.getBoundingClientRect = previousGetBoundingClientRect;
+    if (previousClientHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", previousClientHeight);
+    }
+    if (previousClientWidth) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", previousClientWidth);
+    }
+    if (previousOffsetHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", previousOffsetHeight);
+    }
+    if (previousOffsetWidth) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", previousOffsetWidth);
+    }
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "path insertion resultはaction確定時にも同じactive owner・root revisionかつ書き込み可能なcomposerだけへ渡る"
+// oracle = { type = "contract", ref = "accepted behavior: File Explorer path insertion owner revalidation" }
+// failure_mode = "menu表示後のowner・root切替またはcomposer無効化後にstale pathを別ownerや書き込み不可draftへ挿入する"
+// scope = "SessionFileExplorerPane path insertion result boundary"
+// lifecycle = "permanent"
+// distinction = "menu request時の状態ではなくresult適用時の最新owner、root revision、capabilityを観測する"
+// @end-test-value
+test("SessionFileExplorerPane は path insertion result適用時にowner・root・capabilityを再確認する", async () => {
+  const { applySessionFileTreePathInsertionResult } = await import(
+    "../../src/file-explorer/SessionFileExplorerPane.js"
+  );
+  const inserted: string[] = [];
+  const result = {
+    status: "insert-path",
+    ownerSessionId: "session-1",
+    absolutePath: "C:\\workspace\\docs\\report.md",
+  };
+  const insertPathReference = (_ownerSessionId: string, absolutePath: string) => inserted.push(absolutePath);
+
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-2",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-1",
+    canInsert: true,
+    insertPathReference,
+  }), false);
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-1",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-1",
+    canInsert: false,
+    insertPathReference,
+  }), false);
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-1",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-2",
+    canInsert: true,
+    insertPathReference,
+  }), false);
+  assert.equal(applySessionFileTreePathInsertionResult({
+    result,
+    currentOwnerSessionId: "session-1",
+    requestedRootsRevision: "roots-1",
+    currentRootsRevision: "roots-1",
+    canInsert: true,
+    insertPathReference,
+  }), true);
+  assert.deepEqual(inserted, ["C:\\workspace\\docs\\report.md"]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "非同期menu結果はReactへcommit済みのowner snapshotだけを参照してpathを挿入する"
+// oracle = { type = "contract", ref = "accepted behavior invariant 2: insertion targets the current active writable composer" }
+// fault = "concurrent renderが中断されたとき、未commit renderのcallbackをcurrent ownerとしてpath挿入へ使う"
+// observable = "確定renderと未確定renderそれぞれの挿入callbackに届いたpath集合"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane committed insertion owner snapshot"
+// lifecycle = "permanent"
+// distinction = "通常のowner切替ではなく、同じowner identityの中断renderがrefだけを先行更新する競合を観測する"
+// @end-test-value
+test("SessionFileExplorerPane は中断renderのowner callbackへpathを挿入しない", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  const previousGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const previousClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
+  const previousClientWidth = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientWidth");
+  const previousOffsetHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetHeight");
+  const previousOffsetWidth = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetWidth");
+  dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    return {
+      x: 0,
+      y: 0,
+      top: 0,
+      left: 0,
+      right: 320,
+      bottom: 480,
+      width: 320,
+      height: 480,
+      toJSON: () => ({}),
+    };
+  };
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", {
+    configurable: true,
+    get: () => 480,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get: () => 320,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", {
+    configurable: true,
+    get: () => 480,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", {
+    configurable: true,
+    get: () => 320,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
+  const menuResult = deferred<{ status: "insert-path"; ownerSessionId: string; absolutePath: string }>();
+  const suspendedRender = deferred<void>();
+  const committedInsertions: string[] = [];
+  const uncommittedInsertions: string[] = [];
+  const api = {
+    ...emptyPinsApi,
+    async listSessionFileRoots() {
+      return [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\workspace" }];
+    },
+    async listSessionDirectory() {
+      return [];
+    },
+    showSessionFileTreeContextMenu() {
+      return menuResult.promise;
+    },
+  };
+  function SuspendedSibling({ suspend }: { suspend: boolean }) {
+    if (suspend) {
+      throw suspendedRender.promise;
+    }
+    return null;
+  }
+  const renderPane = (
+    onInsertPathReference: (ownerSessionId: string, absolutePath: string) => void,
+    suspend: boolean,
+  ) => React.createElement(
+    React.Suspense,
+    { fallback: null },
+    React.createElement(SessionFileExplorerPane, {
+      api,
+      sessionId: "session-1",
+      enabled: true,
+      rootsRevision: "roots-1",
+      selectedFile: null,
+      activeTab: "files",
+      onActiveTabChange() {},
+      onRefreshChanges() {},
+      onOpenFile() {},
+      canInsertPathReference: true,
+      onInsertPathReference,
+    }),
+    React.createElement(SuspendedSibling, { suspend }),
+  );
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(renderPane((_ownerSessionId, absolutePath) => committedInsertions.push(absolutePath), false));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("resize"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    await waitFor(() => dom.window.document.querySelector(".session-file-root-row") !== null);
+    dom.window.document.querySelector<HTMLButtonElement>(".session-file-root-row")?.dispatchEvent(
+      new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+
+    await act(async () => {
+      React.startTransition(() => {
+        root?.render(renderPane((_ownerSessionId, absolutePath) => uncommittedInsertions.push(absolutePath), true));
+      });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      menuResult.resolve({
+        status: "insert-path",
+        ownerSessionId: "session-1",
+        absolutePath: "C:\\workspace\\report.md",
+      });
+      await menuResult.promise;
+    });
+    assert.deepEqual(committedInsertions, ["C:\\workspace\\report.md"]);
+    assert.deepEqual(uncommittedInsertions, []);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.HTMLElement.prototype.getBoundingClientRect = previousGetBoundingClientRect;
+    if (previousClientHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "clientHeight", previousClientHeight);
+    }
+    if (previousClientWidth) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", previousClientWidth);
+    }
+    if (previousOffsetHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", previousOffsetHeight);
+    }
+    if (previousOffsetWidth) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "offsetWidth", previousOffsetWidth);
+    }
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "SessionFileExplorerPaneはowner単位でtabをlazy mountし、tab切替では保持してowner変更時に破棄する"
+// oracle = { type = "contract", ref = "accepted behavior: in-window File Explorer tab state retention" }
+// fault = "tab切替で取得結果が失われるか、Sessionまたはroot集合の変更後も旧panel stateが残る"
+// observable = "各tab panelのmount有無、buttonのlocal counter、Sessionとroot変更後のcounter初期化"
+// observation_boundary = "component-behavior"
+// scope = "SessionFileExplorerPane tab panel lifecycle"
+// lifecycle = "permanent"
+// distinction = "同一owner内のtab切替と、Session・root集合によるowner変更を一つのlifecycleとして扱う"
+// @end-test-value
+test("SessionFileExplorerPane は訪問済みtab panelを保持する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
+
+  function StatefulPanel({ name }: { name: string }) {
+    const [count, setCount] = React.useState(0);
+    return React.createElement(
+      "button",
+      { type: "button", "data-panel": name, onClick: () => setCount((current) => current + 1) },
+      `${name}:${count}`,
+    );
+  }
+
+  const api = {
+    ...emptyPinsApi,
+    async listSessionFileRoots() {
+      return [];
+    },
+    async listSessionDirectory() {
+      return [];
+    },
+    async showSessionFileTreeContextMenu() {
+      return { status: "dismissed" as const };
+    },
+  };
+  function Harness({ sessionId, rootsRevision }: { sessionId: string; rootsRevision: string }) {
+    const [activeTab, setActiveTab] = React.useState<"files" | "changes" | "history">("files");
+    return React.createElement(SessionFileExplorerPane, {
+      api,
+      sessionId,
+      enabled: true,
+      rootsRevision,
+      selectedFile: null,
+      activeTab,
+      onActiveTabChange: setActiveTab,
+      onRefreshChanges() {},
+      onOpenFile() {},
+      canInsertPathReference: false,
+      onInsertPathReference() {},
+      renderChangesContent: () => React.createElement(StatefulPanel, { name: "changes" }),
+      historyContent: React.createElement(StatefulPanel, { name: "history" }),
+    });
+  }
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness, { sessionId: "session-1", rootsRevision: "roots-1" }));
+      await Promise.resolve();
+    });
+    assert.equal(dom.window.document.querySelector("[data-panel='changes']"), null);
+    assert.equal(dom.window.document.querySelector("[data-panel='history']"), null);
+
+    const tabs = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("[role='tab']"));
+    const filesTab = tabs.find((tab) => tab.textContent === "Files");
+    const changesTab = tabs.find((tab) => tab.textContent === "Changes");
+    const historyTab = tabs.find((tab) => tab.textContent === "History");
+    assert.ok(filesTab);
+    assert.ok(changesTab);
+    assert.ok(historyTab);
+
+    await act(async () => changesTab.click());
+    const changesPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='changes']");
+    assert.ok(changesPanel);
+    await act(async () => changesPanel.click());
+    assert.equal(changesPanel.textContent, "changes:1");
+
+    await act(async () => historyTab.click());
+    assert.equal(changesPanel.closest("[role='tabpanel']")?.hasAttribute("hidden"), true);
+    const historyPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='history']");
+    assert.ok(historyPanel);
+    await act(async () => historyPanel.click());
+    assert.equal(historyPanel.textContent, "history:1");
+
+    await act(async () => filesTab.click());
+    assert.equal(historyPanel.closest("[role='tabpanel']")?.hasAttribute("hidden"), true);
+    await act(async () => changesTab.click());
+    assert.equal(changesPanel.textContent, "changes:1");
+    await act(async () => historyTab.click());
+    assert.equal(historyPanel.textContent, "history:1");
+    await act(async () => {
+      root?.render(React.createElement(Harness, { sessionId: "session-1", rootsRevision: "roots-2" }));
+      await Promise.resolve();
+    });
+    const nextHistoryPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='history']");
+    assert.ok(nextHistoryPanel);
+    assert.notEqual(nextHistoryPanel, historyPanel);
+    assert.equal(nextHistoryPanel.textContent, "history:0");
+    await act(async () => changesTab.click());
+    const nextChangesPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='changes']");
+    assert.ok(nextChangesPanel);
+    assert.notEqual(nextChangesPanel, changesPanel);
+    await act(async () => nextChangesPanel.click());
+    assert.equal(nextChangesPanel.textContent, "changes:1");
+    await act(async () => {
+      root?.render(React.createElement(Harness, { sessionId: "session-2", rootsRevision: "roots-2" }));
+      await Promise.resolve();
+    });
+    const nextSessionChangesPanel = dom.window.document.querySelector<HTMLButtonElement>("[data-panel='changes']");
+    assert.ok(nextSessionChangesPanel);
+    assert.notEqual(nextSessionChangesPanel, nextChangesPanel);
+    assert.equal(nextSessionChangesPanel.textContent, "changes:0");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});

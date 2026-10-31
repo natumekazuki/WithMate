@@ -3,6 +3,10 @@
 - 状態: Accepted
 - 日付: 2026-07-26
 
+## 適用状態
+
+Agent / 通常 Session の SessionFolder と workspace 境界は現行のまま適用する。本文中の Companion Mode に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。通常 Session の作成前後の workspace 保護は変更しない。
+
 ## Context
 
 New Session は既存 directory の選択を必須としていた。一方、作業対象がまだ存在しない Session では、WithMate が管理する `session-files/{sessionId}` をそのまま workspace として開始したい。

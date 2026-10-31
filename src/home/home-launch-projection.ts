@@ -1,10 +1,14 @@
-import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../model-catalog.js";
-import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
+import type { CharacterCatalogEntry } from "../../src-shared/character/character-catalog.js";
+import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import type { OpenSessionWindowIdsLoadStatus } from "../app/open-session-window-subscription.js";
+import type { SessionSummariesLoadStatus } from "../chat/runtime/session-summary-subscription.js";
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
+import type { ProviderLaunchLoadStatus } from "../launch/provider-launch-picker.js";
+import type { DirectoryPathValidationState } from "../launch/directory-path-validation.js";
 import {
   resolveLaunchCharacterId,
-  type HomeLaunchWorkspaceValidationState,
+  type HomeCharacterLoadStatus,
   type LaunchCharacterSelectionMode,
 } from "./home-launch-state.js";
 import {
@@ -17,14 +21,17 @@ export type { LaunchWorkspace, LaunchWorkspaceSelection } from "./home-launch-wo
 
 export type HomeLaunchProjection = {
   enabledLaunchProviders: ModelCatalogProvider[];
+  providerLoadStatus: ProviderLaunchLoadStatus;
+  providerLoadError: string;
   selectedLaunchProvider: ModelCatalogProvider | null;
   characterOptions: CharacterCatalogEntry[];
   selectedCharacter: CharacterCatalogEntry | null;
   randomCharacterSelected: boolean;
   charactersLoaded: boolean;
+  characterLoadStatus: HomeCharacterLoadStatus;
   launchWorkspacePathLabel: string;
   workspacePathInput: string;
-  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidation: DirectoryPathValidationState;
   workspaceValidationMessage: string;
   sessionFolderSelected: boolean;
   workspaceSelected: boolean;
@@ -33,7 +40,6 @@ export type HomeLaunchProjection = {
 
 export function buildHomeLaunchProjection({
   launchProviderId,
-  launchMode,
   launchTitle,
   launchWorkspace,
   workspacePathInput = "",
@@ -43,22 +49,31 @@ export function buildHomeLaunchProjection({
   launchCharacterSelectionMode = "random",
   characterEntries = [],
   charactersLoaded = true,
+  characterLoadStatus,
+  sessionCharacterUsageLoadStatus,
+  openSessionWindowIdsLoadStatus,
   appSettings,
   modelCatalog,
+  providerLoadStatus,
+  providerLoadError,
 }: {
   launchProviderId: string;
-  launchMode?: "session" | "companion";
   launchTitle: string;
   launchWorkspace: LaunchWorkspaceSelection | null;
   workspacePathInput?: string;
-  workspaceValidation?: HomeLaunchWorkspaceValidationState;
+  workspaceValidation?: DirectoryPathValidationState;
   workspaceValidationMessage?: string;
   launchCharacterId?: string;
   launchCharacterSelectionMode?: LaunchCharacterSelectionMode;
   characterEntries?: readonly CharacterCatalogEntry[];
   charactersLoaded?: boolean;
+  characterLoadStatus?: HomeCharacterLoadStatus;
+  sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
+  openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
   appSettings: AppSettings;
   modelCatalog: ModelCatalogSnapshot | null;
+  providerLoadStatus?: ProviderLaunchLoadStatus;
+  providerLoadError?: string;
 }): HomeLaunchProjection {
   const enabledLaunchProviders = (modelCatalog?.providers ?? []).filter(
     (provider) => getProviderAppSettings(appSettings, provider.id).enabled,
@@ -72,17 +87,25 @@ export function buildHomeLaunchProjection({
     ? null
     : activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
   const validCharacterSelection = launchCharacterSelectionMode === "random" || selectedCharacter !== null;
+  const randomSelectionReady = launchCharacterSelectionMode !== "random" || (
+    sessionCharacterUsageLoadStatus === "loaded" && openSessionWindowIdsLoadStatus === "loaded"
+  );
   const sessionFolderSelected = isSessionFolderLaunchWorkspace(launchWorkspace);
+  const resolvedCharacterLoadStatus = characterLoadStatus ?? (charactersLoaded ? "loaded" : "loading");
+  const resolvedProviderLoadStatus = providerLoadStatus ?? "loaded";
 
   return {
     enabledLaunchProviders,
+    providerLoadStatus: resolvedProviderLoadStatus,
+    providerLoadError: providerLoadError ?? "",
     selectedLaunchProvider,
     characterOptions: [...activeCharacterEntries],
     selectedCharacter,
     randomCharacterSelected: launchCharacterSelectionMode === "random",
     charactersLoaded,
+    characterLoadStatus: resolvedCharacterLoadStatus,
     launchWorkspacePathLabel: sessionFolderSelected
-      ? "SessionFolder"
+      ? "Session Folder"
       : launchWorkspace?.path ?? "workspace",
     workspacePathInput,
     workspaceValidation,
@@ -90,11 +113,13 @@ export function buildHomeLaunchProjection({
     sessionFolderSelected,
     workspaceSelected: !!launchWorkspace,
     canStartSession:
+      resolvedProviderLoadStatus === "loaded" &&
       charactersLoaded &&
+      resolvedCharacterLoadStatus === "loaded" &&
       !!launchTitle.trim() &&
       !!launchWorkspace &&
       !!selectedLaunchProvider &&
       validCharacterSelection &&
-      (launchMode !== "companion" || !sessionFolderSelected),
+      randomSelectionReady,
   };
 }

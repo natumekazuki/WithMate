@@ -1,4 +1,4 @@
-import type { HomeSessionSummary } from "../session-state.js";
+import type { HomeSessionSummary } from "../../src-shared/session/session-state.js";
 
 export function mergePinnedSessionSummary(
   summaries: readonly HomeSessionSummary[],

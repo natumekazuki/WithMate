@@ -1,0 +1,603 @@
+import type { SessionSummary } from "../session/session-state.js";
+
+export type SessionFilePreviewContextMenuRequest = {
+  scope: "preview" | "session";
+  point: { x: number; y: number };
+};
+
+export type SessionFilePreviewContextMenuResult = "close" | "dismissed";
+
+export function parseSessionFilePreviewContextMenuRequest(value: unknown): SessionFilePreviewContextMenuRequest {
+  const invalid = () => new TypeError("File Preview context menu request is invalid.");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
+  const candidate = value as Record<string, unknown>;
+  if (
+    !Object.keys(candidate).every((key) => ["scope", "point"].includes(key))
+    || (candidate.scope !== "preview" && candidate.scope !== "session")
+    || !candidate.point || typeof candidate.point !== "object" || Array.isArray(candidate.point)
+  ) throw invalid();
+  const point = candidate.point as Record<string, unknown>;
+  if (
+    !Object.keys(point).every((key) => ["x", "y"].includes(key))
+    || !Number.isSafeInteger(point.x) || (point.x as number) < 0
+    || !Number.isSafeInteger(point.y) || (point.y as number) < 0
+  ) throw invalid();
+  return { scope: candidate.scope, point: { x: point.x as number, y: point.y as number } };
+}
+
+export type SessionFilePreviewWindowSummary = {
+  token: string;
+  title: string;
+  path: string;
+  kind?: "file";
+} | {
+  token: string;
+  title: string;
+  kind: "session-graph";
+  path?: never;
+  state?: import("../session-graph/session-graph-window-contract.js").SessionGraphViewState;
+};
+
+export type SessionFilePreviewWindowGroup = {
+  ownerSessionId: string;
+  session: SessionSummary | null;
+  previews: SessionFilePreviewWindowSummary[];
+};
+
+export type SessionFileRootKind = "workspace" | "session-folder" | "additional";
+
+export type SessionFilePin = {
+  rootKind: SessionFileRootKind;
+  rootPath: string;
+  relativePath: string;
+  kind: "file" | "directory";
+  rootId: string | null;
+  rootLabel: string;
+  unavailableReason: string | null;
+};
+
+export type SessionFilePinReference = Pick<SessionFilePin, "rootKind" | "rootPath" | "relativePath">;
+export type StoredSessionFilePin = Pick<SessionFilePin, "rootKind" | "rootPath" | "relativePath" | "kind" | "rootLabel">;
+export type SessionFilePinOwner = { sessionId: string; incarnationId: string };
+
+export type SessionFileRoot = {
+  id: string;
+  kind: SessionFileRootKind;
+  label: string;
+  displayPath: string;
+};
+
+export type SessionDirectoryEntryKind = "directory" | "file" | "symbolic-link" | "other";
+
+export type SessionFileTreePathActionNodeKind = "root" | "directory" | "file";
+
+export type SessionFileTreePathActionPoint = {
+  x: number;
+  y: number;
+};
+
+export type SessionFileTreePathActionRequest = {
+  sessionId: string;
+  rootId: string;
+  relativePath: string;
+  nodeKind: SessionFileTreePathActionNodeKind;
+  point: SessionFileTreePathActionPoint;
+  canInsert: boolean;
+};
+
+export type SessionFileTreePathActionTargetRequest = Omit<
+  SessionFileTreePathActionRequest,
+  "point" | "canInsert"
+>;
+
+export type SessionFileTreePathActionContextMenuResult =
+  | { status: "copied-path" | "copied-file" }
+  | { status: "insert-path"; ownerSessionId: string; absolutePath: string }
+  | { status: "failed"; message: string }
+  | { status: "dismissed" };
+
+export function buildSessionFileExplorerRootsRevision(input: {
+  sessionId: string | null;
+  workspacePath: string | null;
+  additionalDirectories: readonly string[];
+}): string {
+  return JSON.stringify([
+    input.sessionId ?? "",
+    input.workspacePath ?? "",
+    ...input.additionalDirectories,
+  ]);
+}
+
+export type SessionDirectoryEntry = {
+  name: string;
+  relativePath: string;
+  kind: SessionDirectoryEntryKind;
+  byteLength: number | null;
+  modifiedAt: string | null;
+};
+
+export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "pdf" | "binary";
+export type SessionFileEncoding = "utf-8" | "shift_jis" | "utf-16le" | "utf-16be";
+
+export type SessionFileRootResourceRequest = {
+  sessionId: string;
+  rootId: string;
+  relativePath: string;
+};
+
+export type SessionFileAbsoluteResourceRequest = {
+  sessionId: string;
+  absolutePath: string;
+};
+
+export type SessionFileGitCommitResourceRequest = {
+  resourceKind: "git-commit-file";
+  sessionId: string;
+  rootId: string;
+  repositoryId: string;
+  commitId: string;
+  relativePath: string;
+};
+
+export type SessionFileResourceRequest =
+  | SessionFileRootResourceRequest
+  | SessionFileAbsoluteResourceRequest;
+
+export type SessionFilePreviewResourceRequest =
+  | SessionFileResourceRequest
+  | SessionFileGitCommitResourceRequest;
+
+export function isSessionFileAbsoluteResource(
+  resource: SessionFilePreviewResourceRequest,
+): resource is SessionFileAbsoluteResourceRequest {
+  return "absolutePath" in resource;
+}
+
+export function isSessionFileGitCommitResource(
+  resource: SessionFilePreviewResourceRequest,
+): resource is SessionFileGitCommitResourceRequest {
+  return "resourceKind" in resource && resource.resourceKind === "git-commit-file";
+}
+
+export function isSessionFileRootResource(
+  resource: SessionFilePreviewResourceRequest,
+): resource is SessionFileRootResourceRequest {
+  return "rootId" in resource && !isSessionFileGitCommitResource(resource);
+}
+
+export function getSessionFileResourceDisplayPath(resource: SessionFilePreviewResourceRequest): string {
+  return isSessionFileAbsoluteResource(resource) ? resource.absolutePath : resource.relativePath;
+}
+
+export function areSessionFileResourcesEqual(
+  left: SessionFilePreviewResourceRequest,
+  right: SessionFilePreviewResourceRequest,
+): boolean {
+  if (left.sessionId !== right.sessionId) {
+    return false;
+  }
+  if (isSessionFileAbsoluteResource(left) && isSessionFileAbsoluteResource(right)) {
+    return left.absolutePath === right.absolutePath;
+  }
+  if (isSessionFileGitCommitResource(left) && isSessionFileGitCommitResource(right)) {
+    return left.rootId === right.rootId
+      && left.repositoryId === right.repositoryId
+      && left.commitId === right.commitId
+      && left.relativePath.replaceAll("\\", "/") === right.relativePath.replaceAll("\\", "/");
+  }
+  return isSessionFileRootResource(left)
+    && isSessionFileRootResource(right)
+    && left.rootId === right.rootId
+    && left.relativePath === right.relativePath;
+}
+
+export type SessionFilePreviewWindowOpenRequest =
+  | {
+      kind: "resource";
+      resource: SessionFileResourceRequest;
+      view?: SessionFilePreviewWindowView;
+    }
+  | {
+      kind: "resource";
+      resource: SessionFileGitCommitResourceRequest;
+      view?: { kind: "preview" };
+    }
+  | {
+      kind: "history-diff";
+      request: FileRootGitHistoryDiffRequest;
+    }
+  | {
+      kind: "link";
+      sessionId: string;
+      target: string;
+      baseResource?: SessionFilePreviewResourceRequest;
+    };
+
+export type SessionFilePreviewWindowView =
+  | { kind: "preview" }
+  | { kind: "diff"; scope: FileRootGitDiffScope };
+
+type SessionFilePreviewWindowPayloadBase = {
+  ownerSessionId: string;
+  windowTitle: string;
+  displayPath: string;
+};
+
+export type SessionFilePreviewWindowPayload = SessionFilePreviewWindowPayloadBase & (
+  | {
+      resource: SessionFileResourceRequest;
+      view?: SessionFilePreviewWindowView;
+    }
+  | {
+      resource: SessionFileGitCommitResourceRequest;
+      view?: { kind: "preview" };
+    }
+  | {
+      historyDiff: SessionFileHistoryDiffWindowPayload;
+    }
+);
+
+export type SessionFileHistoryDiffWindowPayload = {
+  request: FileRootGitHistoryDiffRequest;
+  patch: string;
+  previewResource: SessionFileGitCommitResourceRequest | null;
+  previewBeforeResource: SessionFileGitCommitResourceRequest | null;
+  previewAfterResource: SessionFileGitCommitResourceRequest | null;
+};
+
+export const FILE_PREVIEW_WINDOW_TITLE_FALLBACK = "File Preview";
+
+export function resolveSessionFilePreviewWindowTitle(fileName: string | null | undefined): string {
+  const normalizedPath = fileName?.trim().replaceAll("\\", "/") ?? "";
+  const candidate = normalizedPath.split("/").at(-1)?.trim() ?? "";
+  return candidate && candidate !== "." && candidate !== ".." && !/[\u0000-\u001f\u007f]/u.test(candidate)
+    ? candidate
+    : FILE_PREVIEW_WINDOW_TITLE_FALLBACK;
+}
+
+export function resolveSessionFileGitCommitPreviewWindowTitle(
+  fileName: string | null | undefined,
+  commitId: string,
+): string {
+  return `${resolveSessionFilePreviewWindowTitle(fileName)} · ${commitId.slice(0, 7)}`;
+}
+
+export type SessionFilePreviewWindowOpenResult =
+  | {
+      status: "opened";
+      targetType: "preview-window";
+      disposition: "created" | "focused";
+      resource: SessionFilePreviewResourceRequest;
+    }
+  | {
+      status: "opened";
+      targetType: "preview-window";
+      disposition: "created" | "focused";
+      historyDiff: FileRootGitHistoryDiffRequest;
+    }
+  | {
+      status: "opened";
+      targetType: "external-url" | "local-directory";
+      target: string;
+    }
+  | {
+      status: "not-found" | "not-previewable" | "failed";
+      targetType: "local-file" | "local-path" | "unknown";
+      target: string;
+      message: string;
+    };
+
+export type SessionFilePreviewTargetResolution =
+  | { type: "external-url"; target: string }
+  | { type: "directory"; targetPath: string }
+  | { type: "file"; resource: SessionFileResourceRequest }
+  | {
+      type: "not-found" | "not-previewable" | "failed";
+      targetPath: string;
+      message: string;
+    };
+
+export type SessionFilePreviewImagePoint = {
+  x: number;
+  y: number;
+};
+
+export type SessionFilePreviewImageActionRequest = {
+  sessionId: string;
+  point: SessionFilePreviewImagePoint;
+  image?: Omit<SessionImageResourceRequest, "sessionId">;
+};
+
+export type SessionFilePreviewImageCopyResult =
+  | { status: "copied" }
+  | { status: "failed"; message: string };
+
+export type SessionFilePreviewImageContextMenuResult =
+  | SessionFilePreviewImageCopyResult
+  | { status: "copied-path" }
+  | { status: "dismissed" };
+
+export type SessionDirectoryRequest = SessionFileRootResourceRequest;
+
+export type SessionFileOpenRequest = SessionFileResourceRequest & {
+  reveal?: boolean;
+};
+
+export type SessionFileDescriptor = SessionFilePreviewResourceRequest & {
+  absoluteFilePath: string;
+  name: string;
+  kind: SessionFileResourceKind;
+  byteLength: number;
+  modifiedAt: string;
+  mimeType: string;
+  suggestedEncoding: SessionFileEncoding;
+  revision: string;
+};
+
+export type SessionFileChunkRequest = SessionFilePreviewResourceRequest & {
+  offset: number;
+  length: number;
+  expectedRevision: string;
+};
+
+export type SessionFileChunkResult = {
+  data: ArrayBuffer;
+  offset: number;
+  nextOffset: number;
+  totalBytes: number;
+  done: boolean;
+  revision: string;
+};
+
+export type SessionImageResourceRequest = {
+  sessionId: string;
+  target: string;
+  baseResource?: SessionFilePreviewResourceRequest;
+};
+
+export type SessionImageChunkRequest = SessionImageResourceRequest & {
+  offset: number;
+  length: number;
+  expectedRevision: string;
+};
+
+export type SessionPdfResourceRequest = {
+  sessionId: string;
+  target: string;
+  baseResource?: SessionFilePreviewResourceRequest;
+};
+
+export type SessionPdfChunkRequest = SessionPdfResourceRequest & {
+  offset: number;
+  length: number;
+  expectedRevision: string;
+};
+
+export type FileRootGitDiffScope = "working-tree" | "staged";
+export type FileRootGitChangeScope = FileRootGitDiffScope | "commit";
+export type FileRootGitChangeKind =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked";
+
+export type FileRootGitChangeEntry = {
+  relativePath: string;
+  previousRelativePath: string | null;
+  kinds: Partial<Record<FileRootGitChangeScope, FileRootGitChangeKind>>;
+  scopes: FileRootGitChangeScope[];
+};
+
+export type FileRootChangesRequest = {
+  sessionId: string;
+  rootId: string;
+};
+
+export type FileRootChangesRepositoriesRequest = {
+  sessionId: string;
+  rootIds: string[];
+};
+
+export type FileRootChangesRepositoriesResult =
+  | {
+      status: "ok";
+      repositories: Array<{ rootId: string }>;
+      failures: Array<{ rootId: string; message: string }>;
+    }
+  | { status: "failed"; message: string };
+
+export type FileRootChangesResult =
+  | { status: "ok"; entries: FileRootGitChangeEntry[] }
+  | { status: "not-git" | "root-not-found" | "failed"; message: string };
+
+export type FileRootFileDiffRequest = FileRootChangesRequest & {
+  relativePath: string;
+  scope: FileRootGitDiffScope;
+};
+
+export function buildFileRootDiffPreviewWindowRequest(
+  request: FileRootFileDiffRequest,
+): SessionFilePreviewWindowOpenRequest {
+  return {
+    kind: "resource",
+    resource: {
+      sessionId: request.sessionId,
+      rootId: request.rootId,
+      relativePath: request.relativePath,
+    },
+    view: { kind: "diff", scope: request.scope },
+  };
+}
+
+export type FileRootFileDiffResult =
+  | { status: "ok"; relativePath: string; scope: FileRootGitDiffScope; patch: string }
+  | { status: "untracked" | "not-changed" | "not-git" | "root-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryRepository = {
+  repositoryId: string;
+  rootId: string;
+  label: string;
+  displayPath: string;
+  branches: string[];
+  currentBranch: string | null;
+  refs: FileRootGitHistoryAvailableRef[];
+};
+
+export type FileRootGitHistoryRepositoriesRequest = {
+  sessionId: string;
+};
+
+export type FileRootGitHistoryRepositoriesResult =
+  | { status: "ok"; repositories: FileRootGitHistoryRepository[] }
+  | { status: "failed"; message: string };
+
+export type FileRootGitHistoryRequest = {
+  sessionId: string;
+  repositoryId: string;
+  rootId: string;
+};
+
+export type FileRootGitHistoryRefKind = "head" | "branch" | "tag";
+
+export type FileRootGitHistoryRef = {
+  kind: FileRootGitHistoryRefKind;
+  name: string;
+};
+
+export type FileRootGitHistoryAvailableRefKind = "branch" | "remote" | "tag";
+
+export type FileRootGitHistoryAvailableRef = {
+  kind: FileRootGitHistoryAvailableRefKind;
+  name: string;
+};
+
+export type FileRootGitHistoryCommit = {
+  id: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  refs: FileRootGitHistoryRef[];
+  parentIds: string[];
+};
+
+export type FileRootGitHistoryCommitsRequest = FileRootGitHistoryRequest & {
+  branch: string | null;
+  cursor?: string | null;
+};
+
+export type FileRootGitHistoryPage = {
+  entries: FileRootGitHistoryCommit[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+export type FileRootGitHistoryCommitsResult =
+  | { status: "ok"; page: FileRootGitHistoryPage }
+  | {
+      status: "repository-not-found" | "branch-not-found" | "detached-head" | "empty-repository" | "failed";
+      message: string;
+    };
+
+export type FileRootGitHistoryCommitDetailRequest = FileRootGitHistoryRequest & {
+  commitId: string;
+};
+
+export type FileRootGitHistoryCommitDetailResult =
+  | {
+      status: "ok";
+      commit: FileRootGitHistoryCommit;
+      entries: FileRootGitChangeEntry[];
+    }
+  | { status: "commit-not-found" | "repository-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryComparisonMode = "direct" | "branch";
+
+export type FileRootGitHistoryComparisonSelector =
+  | { kind: "head" }
+  | { kind: "branch" | "remote" | "tag"; name: string }
+  | { kind: "commit"; objectId: string };
+
+export type FileRootGitHistoryComparison = {
+  mode: FileRootGitHistoryComparisonMode;
+  base: FileRootGitHistoryComparisonSelector;
+  target: FileRootGitHistoryComparisonSelector;
+  baseCommitId: string;
+  targetCommitId: string;
+  mergeBaseCommitId: string | null;
+};
+
+export type FileRootGitHistoryComparisonRequest = FileRootGitHistoryRequest & {
+  base: FileRootGitHistoryComparisonSelector;
+  target: FileRootGitHistoryComparisonSelector;
+  mode: FileRootGitHistoryComparisonMode;
+};
+
+export type FileRootGitHistoryComparisonResult =
+  | {
+      status: "ok";
+      comparison: FileRootGitHistoryComparison;
+      entries: FileRootGitChangeEntry[];
+    }
+  | {
+      status:
+        | "repository-not-found"
+        | "invalid-selector"
+        | "commit-not-found"
+        | "merge-base-unavailable"
+        | "ambiguous-merge-base"
+        | "failed";
+      message: string;
+    };
+
+export type FileRootGitHistoryCommitDiffRequest = FileRootGitHistoryCommitDetailRequest & {
+  relativePath?: string | null;
+};
+
+export type FileRootGitHistoryComparisonDiffRequest = FileRootGitHistoryRequest & {
+  comparison: FileRootGitHistoryComparison;
+  relativePath?: string | null;
+};
+
+export type FileRootGitHistoryDiffRequest =
+  | FileRootGitHistoryCommitDiffRequest
+  | FileRootGitHistoryComparisonDiffRequest;
+
+export function isFileRootGitHistoryComparisonDiffRequest(
+  request: FileRootGitHistoryDiffRequest,
+): request is FileRootGitHistoryComparisonDiffRequest {
+  return "comparison" in request;
+}
+
+export type FileRootGitHistoryDiffResult =
+  | {
+      status: "ok";
+      commitId: string;
+      displayPath: string;
+      relativePath: string | null;
+      patch: string;
+      previewResource: SessionFileGitCommitResourceRequest | null;
+    }
+  | {
+      status: "ok";
+      comparison: FileRootGitHistoryComparison;
+      displayPath: string;
+      relativePath: string | null;
+      patch: string;
+      previewBeforeResource: SessionFileGitCommitResourceRequest | null;
+      previewAfterResource: SessionFileGitCommitResourceRequest | null;
+    }
+  | {
+      status:
+        | "commit-not-found"
+        | "not-changed"
+        | "repository-not-found"
+        | "invalid-selector"
+        | "merge-base-unavailable"
+        | "ambiguous-merge-base"
+        | "failed";
+      message: string;
+    };

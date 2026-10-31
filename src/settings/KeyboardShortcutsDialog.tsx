@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { useDialogA11y } from "../a11y.js";
+import { useDialogA11y } from "../ui/a11y.js";
 import {
   captureShortcutAccelerator,
   DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
@@ -12,7 +12,7 @@ import {
   updateShortcutBinding,
   type KeyboardShortcutSettings,
   type ShortcutPlatform,
-} from "../shortcut-registry.js";
+} from "./shortcut-registry.js";
 import { LaunchDialogShell } from "../launch/launch-dialog-shell.js";
 
 export type KeyboardShortcutsDialogProps = {
@@ -35,9 +35,8 @@ export function KeyboardShortcutsHelpSection({
     <section className="settings-section-card settings-help-section">
       <div className="settings-field">
         <strong>Help</strong>
-        <p className="settings-help">ショートカットと発火する画面を確認できます。</p>
         <button className="launch-toggle" type="button" onClick={() => setOpen(true)}>
-          Keyboard shortcuts
+          Keyboard Shortcuts
         </button>
       </div>
       <KeyboardShortcutsDialog
@@ -57,13 +56,13 @@ export function KeyboardShortcutsDialog({
   settings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   onChange,
 }: KeyboardShortcutsDialogProps) {
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const firstActionButtonRef = useRef<HTMLButtonElement | null>(null);
   const [capturingCommandId, setCapturingCommandId] = useState<string | null>(null);
   const [captureError, setCaptureError] = useState("");
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open,
     onClose,
-    initialFocusRef: closeButtonRef,
+    initialFocusRef: firstActionButtonRef,
   });
 
   useEffect(() => {
@@ -108,6 +107,11 @@ export function KeyboardShortcutsDialog({
   const effectiveSettings = normalizeKeyboardShortcutSettings(settings);
   const groups = getShortcutHelpProjection(platform, effectiveSettings);
   const isEditable = onChange !== undefined;
+  const firstActionId = isEditable
+    ? groups
+      .flatMap((group) => group.items)
+      .find((item) => getShortcutEntry(item.id).customizable)?.id
+    : undefined;
   return (
     <LaunchDialogShell
       onClose={onClose}
@@ -116,19 +120,11 @@ export function KeyboardShortcutsDialog({
       ariaLabel="Keyboard shortcuts"
       showDismissControl={false}
       dialogClassName="settings-keyboard-shortcuts-dialog"
-      footer={
-        <button ref={closeButtonRef} className="launch-toggle" type="button" onClick={onClose}>
-          Close
-        </button>
-      }
     >
       <div className="settings-keyboard-shortcuts-content">
         <div className="settings-keyboard-shortcuts-head">
-          <h2>Keyboard shortcuts</h2>
-          <p>
-            Shortcuts are active while this WithMate window is focused.
-            {isEditable ? " Change を押して、登録したいキーを入力できます。" : ""}
-          </p>
+          <h2>Keyboard Shortcuts</h2>
+          <p>Shortcuts are active while this WithMate window is focused.</p>
           {captureError ? <p className="settings-feedback settings-keyboard-shortcuts-error" role="alert">{captureError}</p> : null}
         </div>
         <div className="settings-keyboard-shortcuts-groups">
@@ -144,6 +140,7 @@ export function KeyboardShortcutsDialog({
                       {isEditable && getShortcutEntry(item.id).customizable ? (
                         <span className="settings-keyboard-shortcut-actions">
                           <button
+                            ref={item.id === firstActionId ? firstActionButtonRef : undefined}
                             className="launch-toggle compact"
                             type="button"
                             aria-pressed={capturingCommandId === item.id}
@@ -152,7 +149,7 @@ export function KeyboardShortcutsDialog({
                               setCaptureError("");
                             }}
                           >
-                            {capturingCommandId === item.id ? "Press keys..." : "Change"}
+                            {capturingCommandId === item.id ? "PressKeys..." : "Change"}
                           </button>
                           {effectiveSettings.overrides[item.id]?.[platform] ? (
                             <button
@@ -187,9 +184,9 @@ export function KeyboardShortcutsDialog({
 
 function resolveShortcutUpdateError(error: unknown): string {
   if (error instanceof ShortcutRegistryError) {
-    return "そのキーの組み合わせは、別のショートカットと重なるため登録できません。";
+    return "That key combination conflicts with another shortcut.";
   }
-  return "このキーの組み合わせは登録できません。";
+  return "That key combination cannot be registered.";
 }
 
 function resolveCaptureErrorMessage(
@@ -197,20 +194,20 @@ function resolveCaptureErrorMessage(
 ): string {
   switch (reason) {
     case "modifier-only":
-      return "Ctrl、Shift、Alt、Meta などの修飾キーだけでは登録できません。キーを続けて押してね。";
+      return "Modifier keys alone cannot be registered. Press a key after the modifier.";
     case "alt-graph":
-      return "AltGraph として扱われる組み合わせは登録できません。";
+      return "AltGraph combinations cannot be registered.";
     case "composing":
-      return "日本語入力中のキーは登録できません。";
+      return "Keys pressed while composing text cannot be registered.";
     case "repeat":
-      return "キーを長押しせず、一度だけ押してね。";
+      return "Press the key once instead of holding it down.";
     case "dead-key":
-      return "Dead key は登録できません。";
+      return "Dead keys cannot be registered.";
     case "process-key":
-      return "IME の Process key は登録できません。";
+      return "The IME Process key cannot be registered.";
     case "empty-key":
-      return "キーを取得できませんでした。もう一度試してね。";
+      return "Could not read the key. Try again.";
     default:
-      return "このキーは登録できません。";
+      return "This key cannot be registered.";
   }
 }

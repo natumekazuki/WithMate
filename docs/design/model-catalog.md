@@ -1,156 +1,62 @@
-# Model Catalog
+# Provider Model Discovery
 
-- 作成日: 2026-03-14
-- 更新日: 2026-07-14
-- 対象: WithMate の provider-aware model / reasoning depth catalog
+## 正本と責務
 
-## Goal
+Model候補とDepthはCodex、Claude、GitHub Copilot、OpenCodeのSDK／native model一覧から取得する。WithMateは選択肢をSQLiteへcacheするが、手管理のmodel定義、同梱JSON、import／export、catalog revisionによる実行許可は持たない。
 
-WithMate の model catalog を SQLite で管理し、Session Window と provider adapter が同じ catalog revision を参照できるようにする。
+`ProviderCodingAdapter.listModels()`がprovider固有の取得・正規化を担い、`ProviderModelDiscoveryService`が取得の開始、cacheの選択、状態通知を所有する。Sessionのproviderは作成時に固定し、Model UIはそのproviderの候補だけを表示する。OpenCodeのnative配信元はmodel IDに含まれ、WithMateのprovider切替ではない。
 
-外部との入出力は versionless JSON で行い、アプリ内部だけ revision を持つ。
+## Cacheと更新
 
-## Decision
+- storage Workerが`provider_model_cache`を所有する。主キーは`provider_id / context_key`、payloadは`provider_json`、取得時刻は`fetched_at`に保存する。
+- contextはprovider、絶対workspace path、provider設定、関連する認証環境変数で分離する。credentialを含む入力はMain内でdigest化し、rendererのsnapshotへcontext keyやcredentialを渡さない。
+- UIは該当contextのcacheを先に表示する。10分以上古いcacheまたは未取得の一覧は、Modelを開いたときにbackgroundで取得する。同contextの実行中取得はまとめ、通常の再試行は30秒間隔とする。取得には20秒のabort timeoutを設ける。
+- 起動時とprovider設定変更時は有効なproviderをbackgroundで取得する。設定変更前の応答を新contextへ保存せず、storage lifecycle終了時は取得をabortして完了を待つ。
+- `idle / loading / ready / error`と取得時刻を通知する。失敗時は同contextの既存cacheを保持し、失敗を正常emptyや別contextの候補へ置換しない。専用のrefresh操作は設けない。
 
-- model catalog の正本は SQLite に置く
-- catalog の import / export 形式は versionless JSON にする
-- 初回起動で active catalog が無ければ、アプリ同梱の `public/model-catalog.json` を import して seed する
-- import のたびに内部 revision を新規採番し、active revision を切り替える
-- Agent / Auxiliary / Companion の runtime session は `provider / model / reasoningEffort / catalogRevision` を保持する
-- Session Window の model 設定は catalog 選択のみとし、自由入力は許可しない
-- catalog import 時は既存 Agent / Auxiliary / Companion session も新 active revision へ自動 migrate する
+## 選択と実行
 
-## JSON Format
+候補の更新は選択肢の更新であり、Session migrationではない。保存済み・現在選択のmodel／Depth、入力draft、thread、実行中turn、受付済みqueueの捕捉値は変更しない。cacheから消えた現在のmodelも表示を維持する。
 
-```json
-{
-  "providers": [
-    {
-      "id": "codex",
-      "label": "Codex",
-      "defaultModelId": "gpt-5.4",
-      "defaultReasoningEffort": "high",
-      "models": [
-        {
-          "id": "gpt-5.4",
-          "label": "GPT-5.4",
-          "reasoningEfforts": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
-        }
-      ]
-    }
-  ]
-}
-```
+新規会話はproviderごとの現在選択、なければ保存済みの直近値を引き継ぐ。どちらにもmodelがない場合、同contextのcacheに既定modelがあれば背景更新の失敗後も利用する。cacheがなければ初回一覧を待ち、取得したprovider defaultを使う。一覧取得に失敗した場合は固定modelや別contextへfallbackしない。
 
-### Rules
+Sendはその時点のmodel、Depth、権限等を`executionOptions`へ捕捉し、Main／Auxiliaryの実行と最小turn記録へ同じ値を渡す。非空modelと入力形式・権限はMainの境界で検証し、SDK一覧への掲載やrevisionを実行の条件にしない。providerが拒否したmodel／Depthは実行エラーとして扱い、別model、Depth、providerへ自動切替しない。
 
-- top-level に `version` は持たない
-- `providers` は 1 件以上必須
-- provider ごとに
-  - `id`
-  - `label`
-  - `defaultModelId`
-  - `defaultReasoningEffort`
-  - `models`
-  が必須
-- `defaultModelId` はその provider の `models` に存在しなければならない
-- `defaultReasoningEffort` は `defaultModelId` の `reasoningEfforts` に含まれていなければならない
-- reasoning effort は model が対応する値だけを列挙する。Codex の `max` / `ultra` も model が advertise する場合だけ指定する
+Depthはmodelがadvertiseする任意文字列の配列であり、固定enumに限定しない。空配列はDepthなしを表し、UIを隠す。候補がある場合は空文字の`Default`も表示し、nativeへのDepth未指定と表示を一致させる。明示的なmodel変更では、新modelで現在のDepthを使える場合は維持し、使えなければそのmodelのdefaultまたは未指定へ変更する。候補のbackground更新だけではDepthを変更しない。
 
-## Internal Storage
+## Model UI
 
-SQLite では次の 4 テーブルで保持する。
+- 共通ComposerのModelは検索付きpopoverとし、Depthは独立した選択のままにする。providerやsortの追加UIは置かない。
+- 通常順は表示名の自然順昇順（数値を数値として比較）とし、同名は配信元、IDの順で安定化する。選択中modelにはcheckを表示する。
+- 検索は表示名／IDの完全一致、前方一致、部分一致、配信元だけの一致の順で並べ、同順位では通常順を使う。候補の主行はモデル名、補助行はnative配信元のprovider IDだけを表示し、配信元がなければ補助行を省く。完全なモデルIDは検索と候補のtitleで参照できる。portalのスクロールバーも呼出元の共通theme tokenを使う。
+- 大量候補はvirtualizeする。開いている一覧はModel／Depth定義を含むsnapshotとして安定させ、background更新で候補が動かないようにする。選択確定はその候補の定義と確定時の現在Depthから解決し、更新後の一覧への掲載を条件にしない。cacheなしで開いた場合だけ最初の取得成功を反映し、検索文字列とfocusを維持したまま候補を表示する。取得中、取得失敗、正常empty、検索0件は区別する。再openで開始した取得の状態は候補の固定と独立して反映し、先着した新しい通知やworkspace切替後の状態を遅い応答で巻き戻さない。
+- keyboardの矢印／Page移動、Enterで選択、Escapeで取消、focus復帰を提供し、IME変換中のEnterを選択として扱わない。
 
-### `model_catalog_revisions`
+## OpenCodeのmodelと認証
 
-- `revision INTEGER PRIMARY KEY AUTOINCREMENT`
-- `source TEXT NOT NULL`
-- `imported_at TEXT NOT NULL`
-- `is_active INTEGER NOT NULL`
+model IDは`<native provider>/<model>`とし、最初の`/`で分ける。残りの`/`はmodel IDに保持する。`opencode-go/...`、`opencode/...`、`openai/...`等を同じWithMate provider `opencode`内で扱い、Depthをnative variantへ渡す。`#variant`をmodel IDへ保存しない。native一覧で選択modelのenabled状態、variant、添付modalityを確認する。
 
-### `model_catalog_providers`
+一覧取得とturn実行は、PATH上の公式CLI `2.2.5`と同梱`@opencode/client` `2.2.5`を使い、既存native DB・global／project設定・API key／OAuth・起動元環境変数を同じstandalone経路で解決する。
 
-- `revision INTEGER NOT NULL`
-- `provider_id TEXT NOT NULL`
-- `label TEXT NOT NULL`
-- `default_model_id TEXT NOT NULL`
-- `default_reasoning_effort TEXT NOT NULL`
-- `sort_order INTEGER NOT NULL`
+CLIの`--version`をDBを開く前に照合し、異なる版では一覧取得・実行を止める。新しい版で使用済みのDBのdowngradeは行わない。
 
-### `model_catalog_models`
+WithMate所有の`serve --stdio` processを使い、既存の共有serviceへ接続したり、それを変更・停止したりしない。service専用のmanaged環境変数はstandaloneには適用されないため、必要な設定はWithMateの起動元環境またはOpenCodeのstandalone認証へ利用者が設定する。
 
-- `revision INTEGER NOT NULL`
-- `provider_id TEXT NOT NULL`
-- `model_id TEXT NOT NULL`
-- `label TEXT NOT NULL`
-- `reasoning_efforts_json TEXT NOT NULL`
-- `sort_order INTEGER NOT NULL`
+一覧の取得は認証成功の確認ではない。WithMateはGo用keyを編集・注入せず、OAuth接続・credential import・アカウント切替UIも提供しない。WithMateにだけGo keyを登録していた利用者は、OpenCode側へ自分で登録する必要がある。保存済みkeyはOpenCodeへ自動移送せず、対象fieldだけを起動時に除去する。他providerのkey、有効化・Skill設定、会話とthreadは保持する。
 
-## Revision Policy
+利用時の設定手順は次のとおり。
 
-- active catalog は常に 1 revision
-- import 時は既存 revision を破壊更新しない
-- 新 revision を作って `is_active = 1` に切り替える
-- Agent / Auxiliary / Companion session には `catalogRevision` を保存する
+1. WithMateの起動元から`opencode --version`を実行でき、対応版`opencode v2.2.5`であることを確認する。別versionのDBをこの版へdowngradeしない。
+2. `opencode auth login --standalone`でGo・OpenAI等のAPI keyまたは対応するOAuth認証をOpenCodeへ登録する。登録済みの場合は再登録不要。環境変数で認証する場合はWithMateの起動元へ設定する。
+3. WithMateのSettingsでOpenCodeを有効化し、Sessionで対象のnative modelを選ぶ。認証の更新・期限切れへの対応もOpenCode側で行い、次の接続・通常の一覧再取得へ反映する。
 
-### current 実装
+保存済み会話の継続では、WithMate専用DBを使う公開済みSessionのraw thread IDを保持し、旧DBからrootと全childを公式export／importで既存native DBへ取り込む。旧DBを読む場合だけ同梱CLI `2.2.5`を使い、credentialは移さない。成功後は`native:<ID>`参照を保存する。native DBの取り違え、owner不一致、未解消pending、active thread、移行・再開の失敗では送信せず明示エラーにし、新規threadへfallbackしない。旧DBは保持する。詳細は[Thread Management](provider-adapter.md#thread-management)を参照する。
 
-- Session Window の選択肢は常に current active revision を正本にして表示する
-- Session 内で model / depth を変更した場合は current active revision に乗り換える
-- import 成功時は、active revision の切り替えと同じタイミングで既存 Agent / Auxiliary / Companion session も自動 migrate 対象にする
-- `catalogRevision` は `旧 revision を保持し続ける pin` の説明よりも、`その session に現在反映されている revision` を示す値として扱う
-- import 後に旧 revision を長く抱えたまま UI と実行が分岐する状態は current milestone の目標にしない
-- migration では provider / model / reasoningEffort を新 active revision に合わせて正規化し、選択が変わった runtime session は thread をリセットしてよい
+## 保存境界
 
-## Seed Policy
+公開済みSessionの`catalog_revision`列の値は保存互換性のため保持するが、renderer、現在選択、送信要求、adapterの実行条件には使わない。V6 schema更新では手管理catalogの3 tableを削除し、Session・会話・draft・最小turnは保持する。詳細は[Database Schema](database-schema.md)を参照する。
 
-- app 起動時に active catalog が無ければ、`public/model-catalog.json` を import する
-- seed で作られた revision は `source = bundled`
-- ユーザー import で作られた revision は `source = imported`
+## 関連
 
-## UI Policy
-
-### Session Window
-
-- textarea 下に `Model` select を出す
-- 候補は current active catalog の provider catalog から出す
-- `Depth` は selected model の `reasoningEfforts` だけを chip で出す
-- current session の model が catalog から消えている場合は、互換用の 1 項目だけ一時表示する
-
-### Home / New Session
-
-- `Settings Window` から `Import Models` / `Export Models` を実行できる
-- file picker / save dialog は Main Process が開く
-- import 成功時は active revision を切り替え、既存 Agent / Auxiliary / Companion session も同じタイミングで migrate する
-- current milestone では model / depth を出さない
-- new session は active catalog の provider default で作る
-
-## Resolution Policy
-
-adapter 実行時は session が持つ `catalogRevision` と `provider` を使って provider catalog を読む。
-
-- `requestedModel` が exact match すればその model を使う
-- model が見つからなければそのままエラーにする
-- depth が model catalog の定義に無ければそのままエラーにする
-- 実 provider 側でさらに拒否された場合も、そのまま実行エラーとして扱う
-
-## Import / Export Policy
-
-- export は active revision を versionless JSON に戻す
-- import は JSON を validate して新 revision として保存する
-- import 成功時は既存 session の `catalogRevision` と必要な provider / model / depth 解決も自動 migrate する
-- partial merge はしない
-- import 前に session migration の前提を先に確認し、import 後の session 反映に失敗した場合は active catalog / sessions を直前の整合状態へ rollback する
-- provider / model の追加・削除も revision 単位で扱う
-
-## Non Goals
-
-- SDK / CLI から model catalog を自動取得すること
-- remote catalog 配信を前提にすること
-- provider ごとの capability probe を runtime で行うこと
-
-## References
-
-- `docs/design/provider-adapter.md`
-- `docs/design/electron-session-store.md`
-- `docs/plans/20260314-model-catalog-db.md`
+- [Provider Adapter](provider-adapter.md)
+- [Electron Session Store](electron-session-store.md#実行設定と-send)

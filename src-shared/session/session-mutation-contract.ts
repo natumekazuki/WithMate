@@ -1,0 +1,53 @@
+import type { SessionExecutionOptions } from "./session-execution-options.js";
+import type { ApprovalMode } from "../settings/approval-mode.js";
+
+export type ConfirmedReviewerChange = { previousApprovalMode: ApprovalMode };
+
+export type SetSessionExecutionOptionsRequest = {
+  sessionId: string;
+  incarnationId: string;
+  executionOptions: SessionExecutionOptions;
+  confirmedReviewerChange?: ConfirmedReviewerChange;
+};
+
+export type SetExecutionOptionsResult =
+  | { status: "accepted"; checkpointSaved: boolean }
+  | { status: "superseded" };
+
+export type SetSessionTitleRequest = {
+  sessionId: string;
+  incarnationId: string;
+  title: string;
+};
+
+export type SetSessionTitleResult = {
+  status: "committed";
+  projectionUpdated: boolean;
+};
+
+export type SetSessionMessageBookmarkRequest = {
+  sessionId: string;
+  incarnationId: string;
+  messageIndex: number;
+  isBookmarked: boolean;
+};
+
+export type AuxiliarySessionMutationIdentity = {
+  auxiliarySessionId: string;
+  parentSessionId: string;
+  createdAt: string;
+};
+
+export type SetAuxiliaryExecutionOptionsRequest = AuxiliarySessionMutationIdentity & {
+  executionOptions: SessionExecutionOptions;
+  confirmedReviewerChange?: ConfirmedReviewerChange;
+};
+
+export type SetAuxiliaryTitleRequest = AuxiliarySessionMutationIdentity & {
+  title: string;
+};
+
+export type SetAuxiliaryMessageBookmarkRequest = AuxiliarySessionMutationIdentity & {
+  messageIndex: number;
+  isBookmarked: boolean;
+};

@@ -1,22 +1,19 @@
-import { DEFAULT_APPROVAL_MODE } from "../approval-mode.js";
-import { DEFAULT_CODEX_SANDBOX_MODE } from "../codex-sandbox-mode.js";
-import { DEFAULT_CODEX_SPEED } from "../codex-speed.js";
-import { DEFAULT_CODEX_REVIEWER } from "../codex-reviewer.js";
-import {
-  DEFAULT_CHARACTER_SESSION_COPY,
-  DEFAULT_CHARACTER_THEME_COLORS,
-  type CharacterProfile,
-  type Message,
-  type MessageArtifact,
-} from "../app-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "../../src-shared/settings/codex-speed.js";
+import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../../src-shared/character/character-state.js";
+import type { CharacterProfile } from "../../src-shared/character/character-state.js";
+import type { Message, MessageArtifact } from "../../src-shared/session/session-state.js";
 import {
   type MouseEventHandler,
   type PointerEventHandler,
   type RefObject,
   type UIEventHandler,
 } from "react";
-import type { SessionContextPaneProps } from "../session-components.js";
+import type { SessionContextPaneProps } from "./shell/session-context-pane.js";
 import type { ChatWindowProps } from "./chat-window.js";
+import { approvalModeLabel } from "../ui/ui-utils.js";
 
 export const chatWindowNoop = () => {};
 
@@ -33,6 +30,7 @@ type StaticChatCharacterInput = {
 type ChatRoleMessage = {
   role: string;
   text: string;
+  elicitationRecords?: Message["elicitationRecords"];
 };
 
 type StaticChatHeaderProps = {
@@ -154,8 +152,6 @@ type HiddenControlsTextChatComposerProps = Pick<
 >;
 
 type StaticTextChatCompactActionDockProps = {
-  pendingRunIndicatorAnnouncement?: ChatCompactActionDockProps["pendingRunIndicatorAnnouncement"];
-  pendingRunIndicatorText?: ChatCompactActionDockProps["pendingRunIndicatorText"];
   onExpand?: ChatCompactActionDockProps["onExpand"];
 };
 
@@ -171,17 +167,24 @@ export type LiveSessionMessageColumnProps = {
   isContentActive?: ChatMessageColumnProps["isContentActive"];
   onToggleMessageCollapse?: ChatMessageColumnProps["onToggleMessageCollapse"];
   onToggleAllMessageCollapse?: ChatMessageColumnProps["onToggleAllMessageCollapse"];
+  onToggleMessageBookmark?: ChatMessageColumnProps["onToggleMessageBookmark"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
+  pendingRunIndicatorAnnouncement?: ChatMessageColumnProps["pendingRunIndicatorAnnouncement"];
+  pendingCancelSessionIds?: ReadonlySet<string>;
   liveApprovalRequest: ChatMessageColumnProps["liveApprovalRequest"];
   approvalActionRequestId: ChatMessageColumnProps["approvalActionRequestId"];
   liveElicitationRequest: ChatMessageColumnProps["liveElicitationRequest"];
+  liveElicitationRequests?: ChatMessageColumnProps["liveElicitationRequests"];
+  liveElicitationRecords?: ChatMessageColumnProps["liveElicitationRecords"];
+  elicitationInputAvailable?: boolean;
   elicitationActionRequestId: ChatMessageColumnProps["elicitationActionRequestId"];
   liveRunAssistantText: string;
   hasLiveRunAssistantText?: boolean;
   liveRunErrorMessage: string;
   pendingMessageText?: string;
+  pendingMessageTextVisible?: boolean;
   pendingMessageGroupId?: ChatMessageColumnProps["pendingMessageGroupId"];
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
@@ -191,7 +194,6 @@ export type LiveSessionMessageColumnProps = {
   onResolveLiveApproval: ChatMessageColumnProps["onResolveLiveApproval"];
   onResolveLiveElicitation: ChatMessageColumnProps["onResolveLiveElicitation"];
   onOpenPath: (target: string) => void;
-  getChangedFilesEmptyText: ChatMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText?: ChatMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
   glossaryAnnotationMatcher?: ChatMessageColumnProps["glossaryAnnotationMatcher"];
@@ -262,7 +264,6 @@ export type LiveSessionComposerDockPropsInput = Omit<
   LiveSessionComposerProps,
   "showJumpToBottom"
 > & {
-  attachmentCount: number;
   isMessageListFollowing: boolean;
   onExpandActionDock: () => void;
 };
@@ -305,7 +306,6 @@ export function buildLiveSessionComposerDockProps(
   compactActionDock: LiveSessionCompactActionDockProps;
 } {
   const {
-    attachmentCount,
     isMessageListFollowing,
     onExpandActionDock,
     ...composerInput
@@ -318,13 +318,10 @@ export function buildLiveSessionComposerDockProps(
       showJumpToBottom,
     },
     compactActionDock: {
-      attachmentCount,
       isRunning: input.isRunning,
-      pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
-      pendingRunIndicatorText: input.pendingRunIndicatorText,
-      chatNotice: input.chatNotice,
+      ...(input.isCanceling !== undefined ? { isCanceling: input.isCanceling } : {}),
       showJumpToBottom,
-      cancelButtonTitle: input.sendButtonTitle,
+      cancelButtonTitle: input.canSendInput ? "Cancel run" : input.sendButtonTitle,
       onExpand: onExpandActionDock,
       onJumpToBottom: input.onJumpToBottom,
       onCancel: input.onSendOrCancel,
@@ -351,17 +348,24 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     isContentActive: input.isContentActive,
     onToggleMessageCollapse: input.onToggleMessageCollapse,
     onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
+    onToggleMessageBookmark: input.onToggleMessageBookmark,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
+    pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
+    pendingCancelSessionIds: input.pendingCancelSessionIds,
     liveApprovalRequest: input.liveApprovalRequest,
     approvalActionRequestId: input.approvalActionRequestId,
     liveElicitationRequest: input.liveElicitationRequest,
+    liveElicitationRequests: input.liveElicitationRequests,
+    liveElicitationRecords: input.liveElicitationRecords,
+    elicitationInputAvailable: input.elicitationInputAvailable,
     elicitationActionRequestId: input.elicitationActionRequestId,
     liveRunAssistantText: input.liveRunAssistantText,
     hasLiveRunAssistantText: input.hasLiveRunAssistantText ?? input.liveRunAssistantText.length > 0,
     liveRunErrorMessage: input.liveRunErrorMessage,
     pendingMessageText: input.pendingMessageText,
+    pendingMessageTextVisible: input.pendingMessageTextVisible,
     pendingMessageGroupId: input.pendingMessageGroupId,
     isMessageListFollowing: input.isMessageListFollowing,
     onMessageListScroll: input.onMessageListScroll,
@@ -371,7 +375,6 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     onResolveLiveApproval: input.onResolveLiveApproval,
     onResolveLiveElicitation: input.onResolveLiveElicitation,
     onOpenPath: input.onOpenPath,
-    getChangedFilesEmptyText: input.getChangedFilesEmptyText,
     onCopyMessageText: input.onCopyMessageText,
     onQuoteMessageText: input.onQuoteMessageText,
     glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
@@ -421,8 +424,8 @@ export function buildLiveSessionSplitterProps(
     isPanelExpanded: input.isContextRailVisible,
     onPointerDown: input.onStartContextRailResize,
     onKeyDown: input.onKeyDownContextRailResize,
-    title: "クリックで右ペインを開閉し、展開中はドラッグまたは矢印キーでサイズを調整",
-    ariaLabel: input.isContextRailVisible ? "右ペインを折りたたむ" : "右ペインを開く",
+    title: "Click to toggle the right pane. Drag or use arrow keys to resize when expanded.",
+    ariaLabel: input.isContextRailVisible ? "Collapse right pane" : "Open right pane",
     onTogglePanel: input.onToggleContextRailVisibility,
   };
 }
@@ -439,10 +442,8 @@ export function createStaticChatHeaderProps({
     titleDraft,
     isRunning,
     showRenameButton: false,
-    showAuditLogButton: false,
     showTerminalButton: false,
     showDeleteButton: false,
-    onOpenAuditLog: chatWindowNoop,
     onOpenTerminal: chatWindowNoop,
     onTitleDraftChange: chatWindowNoop,
     onTitleInputKeyDown: chatWindowNoop,
@@ -463,7 +464,6 @@ export function createStaticChatCharacterProfile({
   notesMarkdown = "",
   updatedAt = "",
   themeColors = { ...DEFAULT_CHARACTER_THEME_COLORS },
-  sessionCopy = DEFAULT_CHARACTER_SESSION_COPY,
 }: StaticChatCharacterInput): CharacterProfile {
   return {
     id,
@@ -474,7 +474,6 @@ export function createStaticChatCharacterProfile({
     notesMarkdown,
     updatedAt,
     themeColors,
-    sessionCopy,
   };
 }
 
@@ -482,6 +481,7 @@ export function toConversationMessages(messages: ChatRoleMessage[]): Message[] {
   return messages.map((message) => ({
     role: message.role === "user" ? "user" : "assistant",
     text: message.text,
+    ...(message.elicitationRecords ? { elicitationRecords: message.elicitationRecords } : {}),
   }));
 }
 
@@ -501,7 +501,6 @@ export function createIdleChatMessageColumnProps(props: IdleChatMessageColumnPro
     onOpenDiff: chatWindowNoop,
     onResolveLiveApproval: chatWindowNoop,
     onResolveLiveElicitation: chatWindowNoop,
-    getChangedFilesEmptyText: () => "",
     ...props,
   };
 }
@@ -545,10 +544,9 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     showJumpToBottom: false,
     isCustomAgentListLoading: false,
     customAgentItems: [],
-    attachmentItems: [],
     placeholder: undefined,
     isComposerBlockedFeedbackActive: false,
-    approvalOptions: [{ value: DEFAULT_APPROVAL_MODE, label: DEFAULT_APPROVAL_MODE }],
+    approvalOptions: [{ value: DEFAULT_APPROVAL_MODE, label: approvalModeLabel(DEFAULT_APPROVAL_MODE) }],
     selectedApprovalMode: DEFAULT_APPROVAL_MODE,
     reviewerOptions: [],
     selectedCodexReviewer: DEFAULT_CODEX_REVIEWER,
@@ -562,10 +560,10 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onToggleAgentPicker: chatWindowNoop,
     onToggleSkillPicker: chatWindowNoop,
     onAddAdditionalDirectory: chatWindowNoop,
+    onValidateAdditionalDirectory: async () => ({ valid: false, reason: "unavailable" }),
     onToggleAdditionalDirectoryList: chatWindowNoop,
     onJumpToBottom: chatWindowNoop,
     onSelectCustomAgent: chatWindowNoop,
-    onRemoveAttachment: chatWindowNoop,
     onDraftFocus: chatWindowNoop,
     onDraftSelect: chatWindowNoop,
     onDraftCompositionStart: chatWindowNoop,
@@ -617,7 +615,6 @@ export function createStaticChatCompactActionDockProps(
   props: StaticChatCompactActionDockProps,
 ): ChatCompactActionDockProps {
   return {
-    attachmentCount: 0,
     showJumpToBottom: false,
     onExpand: chatWindowNoop,
     onJumpToBottom: chatWindowNoop,
@@ -626,14 +623,10 @@ export function createStaticChatCompactActionDockProps(
 }
 
 export function createStaticTextChatCompactActionDockProps({
-  pendingRunIndicatorAnnouncement,
-  pendingRunIndicatorText,
   onExpand,
 }: StaticTextChatCompactActionDockProps): ChatCompactActionDockProps {
   return createStaticChatCompactActionDockProps({
     isRunning: false,
-    pendingRunIndicatorAnnouncement,
-    pendingRunIndicatorText,
     onExpand,
     onCancel: chatWindowNoop,
   });

@@ -2,10 +2,10 @@
 
 ## Auxiliary Session (Issue #710)
 
-AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、設定変更では親配下の全Auxiliary runを列挙して扱う。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
+AuxiliaryのrunはMainや兄弟Auxiliaryと独立し、非表示でも継続・terminal保存する。新規追加・表示切り替え・折りたたみはProvider turnを開始せず、同一会話内の二重実行だけを拒否する。Window close、親削除、共有credential変更では親配下の全Auxiliary runを列挙して扱う。
 
-- 作成日: 2026-03-14
-- 対象: 実行中 session の run / cancel / close / relaunch 制御
+会話ごとの実行設定選択はMain / Auxiliaryの実行中も変更でき、対象会話の次送信へ反映する。実行中turnの捕捉済み設定は変えない。正常terminalで確定した最終assistant本文は、必要な場合に一覧preview projectionを更新する。
+
 
 ## Goal
 
@@ -18,6 +18,11 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - persistence orchestration は `docs/design/electron-session-store.md` を参照する
 - BrowserWindow / preload detail は `docs/design/electron-window-runtime.md` を参照する
 - window 構成全体は `docs/design/window-architecture.md` を参照する
+- Rendererの承認・質問への応答、処理中request ID、取消操作は `src/chat/runtime/session-run-actions.ts` が所有し、Session Windowは対象会話とlive run投影を接続する。実行の正本はMainに置く。
+- Main Sessionの新Turn送信（preview、preflight、永続受付、Composer revisionに対応するclear、受付結果の照合、submit leaseの解放）は `src/chat/runtime/run-main-session-turn-operation.ts` と `session-turn-acceptance.ts` が所有する。未受付のMain下書きは永続保存・自動復元・自動再送しない。Auxiliaryの下書き保存契約は独立して維持する。
+- Mainの受付応答が不明なら、元のrequest IDと捕捉値を保持して正本receiptを照会する。取得失敗やreceiptの一時的不在を未受付と推定して新しいIDで再送しない。明示再試行も同じIDを使う。mutation前の明確な受付拒否では入力を保持する。durable ACK後は送信時のComposer revisionが一致する場合だけ入力を消し、ACK待ちの編集を消さない。Sessionの楽観的なrunning更新・失敗rollbackは行わない。
+- 送信直後の表示はWindow内の`session-turn-submissions.ts`で会話ID・incarnation・request IDに所属させ、準備・受付ACKを待たず正常な送信文と応答待機枠を描画する。表示のDOM反映、dock折りたたみ、末尾追従の順を守り、実runの開始・成功は推定しない。処理エラー・timeoutが明確になった場合だけ対象のerrorを表示する。receiptは同じrequest IDで接続し、確定本文に到達するまで小さい表示bridgeを保つ。取得失敗とprovider実行失敗は別のUIとして扱う。
+- Sessionのsnapshot/subscription、authoritative/projection mutation revision、submit pending/blocked state、submit coordinatorのlifetimeは `src/chat/runtime/use-main-session-runtime.ts` が所有する。Session Windowはselected ID、layout、feature hookの接続と、既存Composer Registryのshell lifetimeを保持する。
 
 ## Decision
 
@@ -25,20 +30,19 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` は session 実行の viewer / input surface として扱う
 - 実行中 session の `Session Window` を閉じても、実行自体は継続する
 - `Session Window` から実行中 session を明示キャンセルできる
-- V5 preview では turn 完了後の Session Memory extraction / Character Reflection を current background task として起動しない
-- `SessionStart` で monologue only の character reflection path を起動しない
-- `Session Window` close では Session Memory extraction を自動実行しない
-- Memory / Growth history は V5 Character runtime prompt に常設注入しない
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
-- 実行中 session の metadata 更新は制限し、少なくとも approval / model / depth / title / delete は UI と Main Process の両方でブロックする
+- ActionDockは次の依頼の編集面として、Main / Auxiliaryの実行中も対応するapproval / sandbox / Reviewer / Speed / custom agent / model / depthとAdditional Directoryを変更できる。実行中 turn の捕捉済み設定やprovider権限は変更せず、現在選択は次の送信へ適用する。title / deleteの変更は引き続きUIとMain Processでブロックする。現在選択と保存 checkpoint の境界は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する。
+- Turn の admission は対象 session の開始登録と provider の利用中判定だけを短い ownership 境界で行う。provider 入力の準備、workspace / SessionFolder 操作、Character 読込、外部 provider 呼出し、長い SQLite command の完了待ちはその境界の外で行い、別 session の開始・削除を不要に待たせない。
+- admission は provider → ownership の順で開始予約を登録し、Worker の Session / 親読込みを排他外で待つ。その間は starting 判定が削除・provider変更・Auxiliary 終了から対象を保護する。次送信用の実行設定選択は捕捉済みturnとは独立して変更できる。読込み後は短い同順序の排他内で owner、maintenance、cancel、provider cleanup 状態を再確認する。予約より先に所有権を得た削除は読込み発行前に完了し、拒否時は予約を解放して provider を開始しない。
+- V6 の保存 command は current storage Worker generation に送る。close / reset / reopen 後の旧 generation からの応答は current DB へ書き換えず、commit 結果不明を自動 retry しない。
 
 ## Lifecycle Model
 
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
-    Idle --> Running: runSessionTurn
+    Idle --> Running: accepted Turn dispatch
     Running --> Idle: success
     Running --> Idle: cancel
     Running --> Error: failure
@@ -48,6 +52,24 @@ stateDiagram-v2
 
 window は上の状態機械とは分離する。  
 `Running` 中に `Session Window` が閉じても、session state は Main Process 内で継続する。
+
+## GUI Turn Queue
+
+Main／Auxiliaryの`Send`と通常送信shortcutは同じ永続受付を通り、実行中は次Turnを予約する。予約項目の`Steer`は現在Codex Turnへの追加入力である。独立した追加入力shortcutは現在のComposer下書きを直接送る。承認・質問への回答は予約に変換しない。受付・照会・取消・並べ替え・追加入力・解放のIPCはowning Session Windowだけに許可し、Auxiliaryは親Windowをownerとする。
+
+`MainSessionTurnQueueFacade`がSession ID／incarnation、本文、実行設定、provider／workspace、解決済み添付descriptorを捕捉する。添付はpath参照でありbytesをコピーしない。dispatchでは現在のowner・設定の利用可否・path認可と対象種類を再検証し、本文から添付を再解決しない。本文・設定は捕捉値、thread継続状態は最新Sessionを使う。
+
+`SessionTurnQueueService`はSessionごとに保存済み実行順で一件だけclaimする。初期は受付順で、queuedだけを個別取消・並べ替えできる。状態は`queued → starting → running → completed/failed/canceled/interrupted`で、starting以降や確定履歴の順序は変更しない。開始時のuser message・最小turn・receiptの対応付けとrunning状態は同じstorage transactionで確定し、終端本文・最小turn・receiptの終端も同じtransactionで確定する。
+
+並べ替えは受付・取消・通常claim・Steerのclaimと同じSession lockを使う。表示時のqueued ID列が保存列と一致した場合だけ、その同一集合の新順序をtransactionで保存する。追加・取消・開始・別の並べ替えが先に確定していれば変更せず、最新列を再取得する。保存失敗や応答不明でmutationを自動再送せず、再取得した現在順序を過去の操作成功の証明にしない。再起動時も保存順と既存のinterrupted保留・明示解放を維持する。
+
+確定した失敗・取消では、admission／setup／provider cleanup／追加入力／terminal保存の実guard解放後に後続を開始する。Promiseの返却やCancel受付だけでは解放としない。同providerのSettings cleanup中、quit、DB maintenance中もclaimしない。結果不明の実行は自動再実行せず、同Sessionの後続を保留する。`Release Later Turns`は不明な要求そのものの再実行ではなく後続の明示解放であり、実guardを迂回しない。
+
+atomic開始後に結果不明となった要求の明示解放では、実guard解放後にだけSessionの実行metadataをidle／interruptedへ収束させる。収束の対象は、同incarnation・receiptのturn ID／user seq・最新running最小turnに一致するSessionに限る。早期解放はreceiptの解放だけを保存し、後続claim前に収束する。本文・thread・設定や最小turnの未確定結果を上書きせず、過去receiptを新しいTurnへ適用しない。
+
+予約項目の現在Turnへの入力は通常claim／取消と同じSession lockで`starting`へclaimし、捕捉済み添付を検証してからproviderへ送る。受理したuser messageとreceiptの`completed`を同じtransactionで保存する。provider未呼出を証明できる失敗だけ予約へ戻し、送信結果不明では`interrupted`として後続を保留する。追加入力の解放は現在Turnのruntime状態を書き換えず、元要求を再送しない。
+
+通常購読はactive receiptだけを取得する。running行は保存user seq／incarnationで通常messageへ対応付け、terminal通知が保存本文より先に届いても小さい表示bridgeを保持する。live応答は待機列より前に表示し、保存本文とqueue本文を本文一致で結合しない。予約・中断の状態と必要な操作は対象user bubbleに添え、確定した失敗は応答側の共通エラー欄へ集約する。通常履歴と別のreceipt一覧は表示しない。取得失敗で既存表示を空へ置換せずRetryを提供する。
 
 ## Ownership
 
@@ -63,22 +85,25 @@ window は上の状態機械とは分離する。
 - in-flight 管理
 - provider coding adapter 実行
 - stale thread / session、または meaningful partial を持たない Codex bootstrap failure に対する 1 回だけの internal reset + retry
-- audit log の running / completed / failed / canceled 更新
+- 最小turnの running / completed / failed / canceled 保存
 - live run state の更新
 - turn 完了後の background task 起動
+- queued Turnの捕捉値dispatchと全実guard解放後のqueue wake
 
 ### SessionWindowBridge
 
 - `Session Window` の registry
+- Windowと独立したSession単位のMonitor保持。実行開始はMainのlive状態から捕捉する
 - 既存 window の再利用
 - running 中 close の確認ダイアログ制御
 - `session-start` の character reflection 起動
 
 ### SessionApprovalService
 
-- pending approval の待機
-- resolve / deny
-- abort cleanup
+- Main／各Auxiliaryの会話ごとに承認要求をFIFOで保持し、先頭1件だけをlive stateへ公開・通知する。表示前の要求もdecision Promiseを保持し、先頭以外へのユーザー判断は受け付けない
+- 同一request identityの重複callbackは待機Promiseと判断を共有する。異なる要求を内容・summary一致で集約しない。Copilotの公開PermissionHandlerにはpermission request IDが渡らないため、同一要求オブジェクトだけを重複とし、別オブジェクトは同じtoolCallIdや表示内容でも個別に扱う
+- approve／denyで先頭を解決し、次の要求を公開する。個別signalのabortは該当要求だけをdenyで解決する。同一要求の重複callbackに属するsignalのabortは共有要求を失効させ、既にabort済みのsignalで届いた重複も同じdeny判断を共有する
+- turn取消・終端cleanup・resetは対象会話の全要求をdenyで解決し、途中の後続要求を公開・通知しない。全体resetは全会話へ適用する。承認待機は永続化しない
 
 ### SessionObservabilityService
 
@@ -86,10 +111,6 @@ window は上の状態機械とは分離する。
 - provider quota telemetry
 - session context telemetry
 - background activity
-
-### Legacy Memory Orchestration
-
-V5 preview では Session Memory extraction / Character Reflection trigger を current runtime path として起動しない。既存 data や background audit record は legacy compatibility として保持してよいが、新規 Character prompt の正本にはしない。
 
 ### Session Window
 
@@ -105,23 +126,32 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 
 ### Session Window Close
 
-- 対象 session が `running` でなければ、そのまま閉じる
+- 対象 session が `running` でなければ、実行継続の確認なしで下記のdraft flushへ進む
 - 対象 session が `running` の場合:
   - 確認ダイアログを出す
   - `閉じない`: close をキャンセル
-  - `閉じて続行`: window は閉じるが session 実行は継続する
-- close 時に Session Memory extraction は自動実行しない
+  - `閉じて続行`: 下記のdraft flushを試みてwindowを閉じる。session実行は継続する
+- 通常closeは入力を凍結し、未保存Auxiliary draftのflush完了ACKを待つ。保存失敗・送信例外・ACKのtimeoutでも、入力中promptの未保存範囲を破棄してWindowを閉じる。終了済みRendererにはACKを要求せず、保存できなかった結果を保持してWindowを破棄する。close成立とdraft保存成功は別の結果として扱う。詳細は[Auxiliary Sessionの保存・終了契約](auxiliary-session.md#composer-の更新保存境界)を参照する
+- Windowの破棄はMain Processが所有するprovider実行・取得済み応答・terminal保存を中止しない。表示への通知失敗で保存処理を中断しない。Windowを開き直すと同じSessionと既存runへ接続し、runを再実行しない
+- 一度実行したSessionはMain／全Auxiliaryの実行中、承認・入力待ち、取消終了待ちのcloseではMonitorに保持する。Windowを閉じたまま完了してもStoppedへ移すだけで、同じSessionを再openしてStopped状態で通常closeするまで残す。close開始時の状態を捕捉し、確認・draft flush中の完了では解除へ読み替えず、その間に始まった実行も保持する。監視終了は本文の既読証明ではない
+- Monitor保持はMainの生存期間内の一時状態とし、アプリ再起動へ永続化しない。未実行Windowは開いている間だけ対象とする。Session削除と明示DBリセットでは対応する保持も除去する。閉じた監視対象のcontext menuではWindowを閉じる操作を無効にし、IDコピーは維持する
+- 同じSessionを開く操作では、応答可能な既存Windowを再利用する。Renderer終了後は実際のclosedで旧Windowの登録・ownerを解放してから再生成する。応答不能の場合は通常closeの確認・flushを経て再生成し、確認取消では旧Windowを維持する。黒画面だけを根拠に自動破棄しない
+- 通常closeとapp quitが重なる場合、保存だけを待つclose ACKをquitに流用しない。quitは送信結果と復元保存まで待つ専用requestを送り、全体の終了判定まで通常closeによるWindow破棄と解凍を保留する。失敗時は生存Windowを解凍し、保留中の通常closeも中止して再試行を可能にする。ACK前のWindow消滅は保存成功として扱わない
+- Sessionを対象に含む明示的DBリセットでは、通常closeの保存待ちを使わずWindowを破棄する。管理登録とownerの解放は実際のclosed通知に合わせ、Windowが残ったまま登録だけを消さない
 
 ### Session Run Cancel
 
 - `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
 - キャンセル後の session は `runState = idle` に戻る
-- setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
+- admission の開始予約後の Worker 読込み・最終排他取得、setup または provider が cancel grace 後も生存する場合、turn 呼出しは収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
+- 取消受付直後は live run の `cancellationState = requested` を通知し、grace 後も元処理が未終了なら `terminating` を通知する。admission / setup 中に live run が未作成でも同じ状態を投影する。Renderer は保存済み `runState = idle` よりこの取消待ちを優先し、重複 Cancel と現在Turnへの追加入力を無効化する。Sendによる次Turnの永続予約は受け付けるが、実guard解放まで開始しない
+- 終端保存中と全ての未終了処理が settle するまで取消待ちを保持する。最後の admission guard 解放時に live 取消状態を解除して通知し、予約済みの次Turnを開始可能にする。繰り返しの Cancel は同じ turn の要求として冪等に扱い、旧 turn の遅延 progress / 応答を次 turn へ反映しない
 - chat にはキャンセル結果を 1 件追加する
-- 監査ログは同じ turn record を先に最小 `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す。詳細は bounded enrichment として後段で更新する
-- 実行中は approval を含む session 設定変更を受け付けない
+- 最小turnは同じ record を `phase = canceled` へ更新し、`errorMessage` にユーザーキャンセルを残す。取得済みpartial本文・artifactは通常履歴へ保存する
+- ActionDockのmodel / depthは次送信用の選択として、取消終了待ちでも既存のblocked / freeze条件がなければ変更できる。実行中Turnと受付済み予約の捕捉値は変えない
 - stale thread / session 起因エラー、または meaningful partial を持たない Codex bootstrap failure を Main Process が検知した場合だけ、同一 turn の内部で `threadId clear + provider cache invalidate` を行って 1 回だけ再試行する
-- internal retry は same turn の処理として扱い、user message / assistant message / audit log record を二重化しない
+- internal retry は same turn の処理として扱い、user message / assistant message / 最小turn record を二重化しない
+- Main Session の保存が確定した後に初期 Auxiliary の準備または commit が失敗した場合、Main Session や他の既存会話を削除・巻き戻ししない。呼出し元には Main 保存済み、Auxiliary の結果未確定または失敗という部分結果を返し、Auxiliary の commit 結果は request identity の再照会でのみ確定する。
 
 ### Session Delete
 
@@ -129,6 +159,22 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 - 対象 session が `running` の場合:
   - UI では削除ボタンを無効化する
   - Main Process 側でも削除を拒否する
+
+V6 の通常更新と terminal 保存は、作成とは別の既存行限定 API を使う。存在確認を要求受付時だけで済ませず、保存 transaction 内で再確認する。削除が先に確定した場合は `SessionNotFoundError` で更新を拒否し、古い Session 本文、terminal marker、cache、provider binding を再作成しない。単体削除と期間指定削除で同じ契約を適用する。
+
+単体・期間指定削除は、実行中判定、DB 削除、cache 除去、親子の agent binding 失効とローカル投影までを ownership 境界内で確定する。provider thread の外部後処理はその境界を解放してから待つ。後処理が遅れても無関係な Session の削除・Affect 適用を待たせない。後処理に失敗した場合も残りの削除対象の後処理を試み、削除済みデータを復元せず、失敗を集約して呼出元へ返す。
+
+Session の owner は ID だけでなく行の `incarnationId` で識別する。同じ ID を削除後に再作成しても新しい incarnation を発行し、古い通常更新・terminal・running 開始の保存を拒否する。既存行の更新では incarnation を保持する。
+
+provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同期的に切り離してから、外部切断の完了だけを解放後に待つ。古い切断の完了が、同じ ID で作成された新 runtime を無効化してはならない。
+
+削除 commit 後に window close や broadcast 等の同期投影が失敗しても、残りの親子投影と全対象の provider 後処理を試みる。投影失敗は成功扱いせず、ownership 外で provider 後処理の完了を待ってから、その失敗と合わせて AggregateError で返す。削除済み DB 行を復元しない。
+
+### Character Affect の通常turn内更新
+
+Affect更新は通常turn中のAgentによる`character_affect.appraise`を使い、具体的な感情変化がないturnでは呼出しを必須としない。turnのterminal保存・成功判定はAffect専用enqueueやsettlementに依存しない。失敗・取消後や起動・再接続・timerから専用LLM評価を開始せず、未記録分を補完turnや合成eventで埋めない。
+
+pre-turn context取得とprompt注入、取得時のafterglowを維持する。通常MCPのactor、provider、captured turn、token、version、idempotency、effect certaintyは既存application boundaryに従う。turn中に保存済みのevent／episodeは、その後の応答失敗・取消で巻き戻さない。旧queueの整理と保存済み正本の保護は[Database Schema](database-schema.md#起動時の移行とデータ保護)に従う。
 
 ### Home Window Close
 
@@ -140,11 +186,13 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 ### App Quit
 
 - 実行中 session が無い場合:
-  - そのまま終了する
+  - 実行中断の確認なしで下記のdraft flushへ進む
 - 実行中 session がある場合:
   - 確認ダイアログを出す
   - `戻る`: quit をキャンセル
-  - `終了する`: 実行中 session を中断してアプリを終了する
+  - `終了する`: 新規実行を止めて実行中 session にキャンセルを要求し、draft flushと復元保存の成功後にアプリを終了する
+- 通常quitはDBを開いたまま実行をキャンセルし、全Session Windowの送信結果確定・失敗復元を含むdraft flush完了を確認する。既に閉じたWindowからの未確定Auxiliary送信とMain側に残る復元失敗も再保存まで待ってからsnapshot保存、provider等のcleanup、DB closeへ進む。quitの待機期限はキャンセル猶予後の保存時間も確保する。1つでも保存失敗・例外・待機timeoutがあれば終了を中止し、各Windowの凍結を解除する。開始済みキャンセルは取り消さず、未保存draftのあるWindowでは編集・再試行導線を保持し、再度quitできる
+- quitのflush開始でMain／Auxiliary queueの受付と新規claimを止め、受付済みmutation・claim済み実行・追加入力・terminal保存・取消終了待ちをMain側でも待つ。未開始queued項目は永続保存したまま終了する。quit中止時はqueueを再開する。DB close／再生成もqueueとruntimeの待機完了後に旧storage ownerを失効させる。
 
 キャンセルは `Session Window` から明示操作で行い、アプリ終了時の accidental quit 保護とは別責務で扱う。
 
@@ -158,10 +206,11 @@ current 実装では tray 常駐までは行わない。
 
 - `runState = running` は SQLite に保存される
 - アプリが強制 kill された場合、次回起動時に `running` のまま残る可能性がある
-- 次回起動時は `interrupted` へ補正し、assistant message を 1 件だけ追加する
-- `interrupted` session は `Session Window` から直前 user message を同じ内容で再送できる
+- Main Session は次回起動時に `runState = interrupted` へ補正し、アプリ終了による中断を示す assistant message を 1 件だけ追加する。Auxiliary は別の回収経路で `runState = error` とする
+- `interrupted` Main Session は `Session Window` から直前 user message を同じ内容で明示再送できる
+- queueのstarting／runningは起動時にinterruptedへ回収し、元要求は再実行しない。同Sessionのqueued後続も明示解放まで保留する。受付済み要求・終端receiptはWindow再open／app restart後も正本から取得し、同じrequest IDを二重受付しない。
 
-現時点では graceful resume までは入れず、`interrupted` からの明示再送を最小導線として扱う。
+`interrupted` からの再開は明示再送で行う。
 
 ## Relation To Existing Docs
 
@@ -170,8 +219,6 @@ current 実装では tray 常駐までは行わない。
 - `electron-window-runtime.md`
   - Electron Main Process の lifecycle
 - `electron-session-store.md`
-  - session / audit / memory persistence orchestration
+  - session / turn / memory persistence orchestration
 - `database-schema.md`
-  - session metadata と audit / memory の保存構造
-- `refactor-roadmap.md`
-  - runtime orchestration の段階的分離方針
+  - session metadata と turn / memory の保存構造

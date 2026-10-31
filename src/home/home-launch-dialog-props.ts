@@ -7,6 +7,7 @@ type HomeLaunchDialogPropsInput = {
   projection: HomeLaunchProjection;
   canUsePrimaryFeatures: boolean;
   launchFeedback: string;
+  launchCreationError?: string;
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
@@ -24,6 +25,7 @@ export function buildHomeLaunchDialogProps({
   projection,
   canUsePrimaryFeatures,
   launchFeedback,
+  launchCreationError,
   launchStarting,
   onClose,
   onChangeTitle,
@@ -43,13 +45,17 @@ export function buildHomeLaunchDialogProps({
     workspaceValidation: projection.workspaceValidation,
     workspaceValidationMessage: projection.workspaceValidationMessage,
     enabledLaunchProviders: projection.enabledLaunchProviders,
+    providerLoadStatus: projection.providerLoadStatus,
+    providerLoadError: projection.providerLoadError,
     selectedLaunchProviderId: projection.selectedLaunchProvider?.id ?? null,
     characterOptions: projection.characterOptions,
     selectedCharacterId: projection.selectedCharacter?.id ?? null,
     randomCharacterSelected: projection.randomCharacterSelected,
     charactersLoaded: projection.charactersLoaded,
+    characterLoadStatus: projection.characterLoadStatus,
     canStartSession: projection.canStartSession && canUsePrimaryFeatures,
     launchFeedback,
+    launchCreationError,
     launchStarting,
     onClose,
     onChangeTitle,

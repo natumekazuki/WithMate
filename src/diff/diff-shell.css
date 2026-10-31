@@ -1,0 +1,8 @@
+.diff-page {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.diff-window-shell {
+  width: 100%;
+  height: 100%;
+}

@@ -1,21 +1,21 @@
-import { getProviderAppSettings, type AppSettings } from "../provider-settings-state.js";
+import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { HomeSettingsContentBaseProps } from "./home-settings-content-props.js";
 import {
   deleteOldSessions,
-  exportHomeModelCatalog,
-  importHomeModelCatalog,
   saveHomeSettings,
 } from "./settings-actions.js";
 import { resolveProviderRelativePathFromSelection } from "./settings-view-model.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
-import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
+import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
+import type { SettingsFeedbackSource } from "./use-settings-feedback.js";
 
 type SettingsCommandHandlersContext = {
   getApi: () => WithMateWindowApi | null;
   persistedSettingsDraft: AppSettings;
   setAppSettings: (settings: AppSettings) => void;
   setSettingsDraft: (settings: AppSettings) => void;
-  setSettingsFeedback: (feedback: string) => void;
+  getPersistedSettingsDraft?: () => AppSettings;
+  setSettingsFeedback: (feedback: string, source: SettingsFeedbackSource) => void;
   setMemoryV6Diagnostics: (diagnostics: MemoryV6Diagnostics) => void;
   getSessionCleanupCutoffDate?: () => string;
   setDeletingOldSessions?: (deleting: boolean) => void;
@@ -25,8 +25,6 @@ type SettingsCommandHandlersContext = {
 
 export type SettingsCommandHandlers = Pick<
   HomeSettingsContentBaseProps,
-  | "onImportModelCatalog"
-  | "onExportModelCatalog"
   | "onOpenAppLogFolder"
   | "onOpenCrashDumpFolder"
   | "onInstallMemoryV6CliShim"
@@ -43,30 +41,37 @@ export function buildSettingsCommandHandlers({
   persistedSettingsDraft,
   setAppSettings,
   setSettingsDraft,
-  setSettingsFeedback,
+  getPersistedSettingsDraft,
+  setSettingsFeedback: reportSettingsFeedback,
   setMemoryV6Diagnostics,
   getSessionCleanupCutoffDate = () => "",
   setDeletingOldSessions = () => undefined,
   refreshSessionSummaries,
   onSettingsSaved,
 }: SettingsCommandHandlersContext): SettingsCommandHandlers {
-  const withApi = async (callback: (api: WithMateWindowApi) => Promise<void>) => {
+  const withApi = async (
+    action: string,
+    callback: (api: WithMateWindowApi, setFeedback: (message: string, error?: boolean, requiresInput?: boolean) => void) => Promise<void>,
+  ): Promise<void> => {
     const api = getApi();
     if (!api) {
       return;
     }
 
-    await callback(api);
+    await callback(api, (message, error = false, requiresInput = false) =>
+      reportSettingsFeedback(message, { action, error, requiresInput }));
   };
+  const getCurrentPersistedSettingsDraft = () => getPersistedSettingsDraft?.() ?? persistedSettingsDraft;
   const updateProviderSettings = (
     providerId: string,
     patch: Partial<ReturnType<typeof getProviderAppSettings>>,
   ) => {
-    const currentProviderSettings = getProviderAppSettings(persistedSettingsDraft, providerId);
+    const currentPersistedSettingsDraft = getCurrentPersistedSettingsDraft();
+    const currentProviderSettings = getProviderAppSettings(currentPersistedSettingsDraft, providerId);
     setSettingsDraft({
-      ...persistedSettingsDraft,
+      ...currentPersistedSettingsDraft,
       codingProviderSettings: {
-        ...persistedSettingsDraft.codingProviderSettings,
+        ...currentPersistedSettingsDraft.codingProviderSettings,
         [providerId]: {
           ...currentProviderSettings,
           ...patch,
@@ -79,12 +84,13 @@ export function buildSettingsCommandHandlers({
     providerId: string,
     selectedPath: string,
     fieldLabel: string,
+    setFeedback: (message: string, error?: boolean, requiresInput?: boolean) => void,
   ): string | null => {
-    const currentProviderSettings = getProviderAppSettings(persistedSettingsDraft, providerId);
+    const currentProviderSettings = getProviderAppSettings(getCurrentPersistedSettingsDraft(), providerId);
     const rootDirectory = currentProviderSettings.skillRootPath.trim();
     const relativePath = resolveProviderRelativePathFromSelection(rootDirectory, selectedPath);
     if (relativePath === null) {
-      setSettingsFeedback(`Root Directory 配下の ${fieldLabel} を選んでね。`);
+      setFeedback(`Choose a ${fieldLabel.toLowerCase()} inside the root directory.`, true, true);
       return null;
     }
 
@@ -92,174 +98,147 @@ export function buildSettingsCommandHandlers({
   };
 
   return {
-    onImportModelCatalog: () => {
-      void withApi(async (api) => {
-        try {
-          setSettingsFeedback(await importHomeModelCatalog(api));
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "model catalog の読み込みに失敗したよ。");
+    onOpenAppLogFolder: () => withApi("open-logs", async (api, setSettingsFeedback) => {
+      try {
+        await api.openAppLogFolder();
+        setSettingsFeedback("Opened the application log folder.");
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not open the application log folder.", true);
+      }
+    }),
+    onOpenCrashDumpFolder: () => withApi("open-crash-dumps", async (api, setSettingsFeedback) => {
+      try {
+        await api.openCrashDumpFolder();
+        setSettingsFeedback("Opened the crash dump folder.");
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not open the crash dump folder.", true);
+      }
+    }),
+    onInstallMemoryV6CliShim: () => withApi("install-cli-shim", async (api, setSettingsFeedback) => {
+      try {
+        const diagnostics = await api.installMemoryV6CliShim();
+        setMemoryV6Diagnostics(diagnostics);
+        setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "install"));
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not install the CLI shim.", true);
+      }
+    }),
+    onUninstallMemoryV6CliShim: () => withApi("uninstall-cli-shim", async (api, setSettingsFeedback) => {
+      try {
+        const diagnostics = await api.uninstallMemoryV6CliShim();
+        setMemoryV6Diagnostics(diagnostics);
+        setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "uninstall"));
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not uninstall the CLI shim.", true);
+      }
+    }),
+    onBrowseProviderSkillRootPath: (providerId) => withApi(`browse-root:${providerId}`, async (api, setSettingsFeedback) => {
+      try {
+        const currentProviderSettings = getProviderAppSettings(getCurrentPersistedSettingsDraft(), providerId);
+        const selectedPath = await api.pickDirectory(currentProviderSettings.skillRootPath || null);
+        if (!selectedPath) {
+          setSettingsFeedback("Root directory selection canceled.");
+          return;
         }
-      });
-    },
-    onExportModelCatalog: () => {
-      void withApi(async (api) => {
-        try {
-          setSettingsFeedback(await exportHomeModelCatalog(api));
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "model catalog の保存に失敗したよ。");
-        }
-      });
-    },
-    onOpenAppLogFolder: () => {
-      void withApi(async (api) => {
-        try {
-          await api.openAppLogFolder();
-          setSettingsFeedback("ログフォルダを開いたよ。");
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "ログフォルダを開けなかったよ。");
-        }
-      });
-    },
-    onOpenCrashDumpFolder: () => {
-      void withApi(async (api) => {
-        try {
-          await api.openCrashDumpFolder();
-          setSettingsFeedback("クラッシュダンプフォルダを開いたよ。");
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "クラッシュダンプフォルダを開けなかったよ。");
-        }
-      });
-    },
-    onInstallMemoryV6CliShim: () => {
-      void withApi(async (api) => {
-        try {
-          const diagnostics = await api.installMemoryV6CliShim();
-          setMemoryV6Diagnostics(diagnostics);
-          setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "install"));
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "CLI shim のインストールに失敗したよ。");
-        }
-      });
-    },
-    onUninstallMemoryV6CliShim: () => {
-      void withApi(async (api) => {
-        try {
-          const diagnostics = await api.uninstallMemoryV6CliShim();
-          setMemoryV6Diagnostics(diagnostics);
-          setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "uninstall"));
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "CLI shim のアンインストールに失敗したよ。");
-        }
-      });
-    },
-    onBrowseProviderSkillRootPath: (providerId) => {
-      void withApi(async (api) => {
-        try {
-          const currentProviderSettings = getProviderAppSettings(persistedSettingsDraft, providerId);
-          const selectedPath = await api.pickDirectory(currentProviderSettings.skillRootPath || null);
-          if (!selectedPath) {
-            setSettingsFeedback("Root Directory の選択をキャンセルしたよ。");
-            return;
-          }
 
-          updateProviderSettings(providerId, { skillRootPath: selectedPath });
-          setSettingsFeedback("Root Directory を反映したよ。保存すると有効になるよ。");
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "Root Directory を選択できなかったよ。");
+        updateProviderSettings(providerId, { skillRootPath: selectedPath });
+        setSettingsFeedback("Root directory updated. Save settings to apply it.");
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not select the root directory.", true);
+      }
+    }),
+    onBrowseProviderSkillRelativePath: (providerId) => withApi(`browse-skill:${providerId}`, async (api, setSettingsFeedback) => {
+      try {
+        const currentProviderSettings = getProviderAppSettings(getCurrentPersistedSettingsDraft(), providerId);
+        const rootDirectory = currentProviderSettings.skillRootPath.trim();
+        if (!rootDirectory) {
+          setSettingsFeedback("Set a root directory before choosing a skill folder.", true, true);
+          return;
         }
-      });
-    },
-    onBrowseProviderSkillRelativePath: (providerId) => {
-      void withApi(async (api) => {
-        try {
-          const currentProviderSettings = getProviderAppSettings(persistedSettingsDraft, providerId);
-          const rootDirectory = currentProviderSettings.skillRootPath.trim();
-          if (!rootDirectory) {
-            setSettingsFeedback("Skill folder を選ぶ前に Root Directory を指定してね。");
-            return;
-          }
 
-          const selectedPath = await api.pickDirectory(rootDirectory);
-          if (!selectedPath) {
-            setSettingsFeedback("Skill Relative Path の選択をキャンセルしたよ。");
-            return;
-          }
-
-          const relativePath = resolveRelativePathSelection(providerId, selectedPath, "Skill folder");
-          if (relativePath === null) {
-            return;
-          }
-
-          updateProviderSettings(providerId, { skillRelativePath: relativePath });
-          setSettingsFeedback("Skill Relative Path を反映したよ。保存すると有効になるよ。");
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "Skill Relative Path を選択できなかったよ。");
+        const selectedPath = await api.pickDirectory(rootDirectory);
+        if (!selectedPath) {
+          setSettingsFeedback("Skill relative path selection canceled.");
+          return;
         }
-      });
-    },
-    onBrowseProviderInstructionRelativePath: (providerId) => {
-      void withApi(async (api) => {
-        try {
-          const currentProviderSettings = getProviderAppSettings(persistedSettingsDraft, providerId);
-          const rootDirectory = currentProviderSettings.skillRootPath.trim();
-          if (!rootDirectory) {
-            setSettingsFeedback("Instruction file を選ぶ前に Root Directory を指定してね。");
-            return;
-          }
 
-          const selectedPath = await api.pickFile(rootDirectory);
-          if (!selectedPath) {
-            setSettingsFeedback("Instruction Relative Path の選択をキャンセルしたよ。");
-            return;
-          }
-
-          const relativePath = resolveRelativePathSelection(providerId, selectedPath, "Instruction file");
-          if (relativePath === null) {
-            return;
-          }
-
-          updateProviderSettings(providerId, { instructionRelativePath: relativePath });
-          setSettingsFeedback("Instruction Relative Path を反映したよ。保存すると有効になるよ。");
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "Instruction Relative Path を選択できなかったよ。");
+        const relativePath = resolveRelativePathSelection(providerId, selectedPath, "Skill folder", setSettingsFeedback);
+        if (relativePath === null) {
+          return;
         }
-      });
-    },
-    onSaveSettings: () => {
-      void withApi(async (api) => {
-        try {
-          const result = await saveHomeSettings(api, persistedSettingsDraft);
-          setAppSettings(result.nextSettings);
+
+        updateProviderSettings(providerId, { skillRelativePath: relativePath });
+        setSettingsFeedback("Skill relative path updated. Save settings to apply it.");
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not select the skill relative path.", true);
+      }
+    }),
+    onBrowseProviderInstructionRelativePath: (providerId) => withApi(`browse-instruction:${providerId}`, async (api, setSettingsFeedback) => {
+      try {
+        const currentProviderSettings = getProviderAppSettings(getCurrentPersistedSettingsDraft(), providerId);
+        const rootDirectory = currentProviderSettings.skillRootPath.trim();
+        if (!rootDirectory) {
+          setSettingsFeedback("Set a root directory before choosing an instruction file.", true, true);
+          return;
+        }
+
+        const selectedPath = await api.pickFile(rootDirectory);
+        if (!selectedPath) {
+          setSettingsFeedback("Instruction relative path selection canceled.");
+          return;
+        }
+
+        const relativePath = resolveRelativePathSelection(providerId, selectedPath, "Instruction file", setSettingsFeedback);
+        if (relativePath === null) {
+          return;
+        }
+
+        updateProviderSettings(providerId, { instructionRelativePath: relativePath });
+        setSettingsFeedback("Instruction relative path updated. Save settings to apply it.");
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not select the instruction relative path.", true);
+      }
+    }),
+    onSaveSettings: () => withApi("save-settings", async (api, setSettingsFeedback) => {
+      const settingsAtSaveStart = persistedSettingsDraft;
+      try {
+        const result = await saveHomeSettings(api, persistedSettingsDraft);
+        setAppSettings(result.nextSettings);
+        const currentDraft = getPersistedSettingsDraft?.();
+        const hasNewChanges = currentDraft
+          ? JSON.stringify(currentDraft) !== JSON.stringify(settingsAtSaveStart)
+          : false;
+        if (!hasNewChanges) {
           setSettingsDraft(result.nextSettings);
+        }
+        setSettingsFeedback(hasNewChanges
+          ? "Settings saved. New changes remain unsaved."
+          : result.feedback);
+        onSettingsSaved?.();
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not save settings.", true);
+      }
+    }),
+    onDeleteSessionsLastActiveBefore: () => withApi("delete-sessions", async (api, setSettingsFeedback) => {
+      setDeletingOldSessions(true);
+      try {
+        const result = await deleteOldSessions({
+          api,
+          cutoffDate: getSessionCleanupCutoffDate(),
+          confirm: (message) => window.confirm(message),
+        });
+        if (result.kind === "success") {
+          await refreshSessionSummaries?.();
           setSettingsFeedback(result.feedback);
-          onSettingsSaved?.();
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "設定の保存に失敗したよ。");
+        } else if (result.kind === "noop") {
+          setSettingsFeedback(result.feedback, true, true);
         }
-      });
-    },
-    onDeleteSessionsLastActiveBefore: () => {
-      void withApi(async (api) => {
-        setDeletingOldSessions(true);
-        try {
-          const result = await deleteOldSessions({
-            api,
-            cutoffDate: getSessionCleanupCutoffDate(),
-            confirm: (message) => window.confirm(message),
-          });
-          if (result.kind === "success") {
-            await refreshSessionSummaries?.();
-            setSettingsFeedback(result.feedback);
-          } else if (result.kind === "noop") {
-            setSettingsFeedback(result.feedback);
-          }
-        } catch (error) {
-          setSettingsFeedback(error instanceof Error ? error.message : "古い Session の削除に失敗したよ。");
-        } finally {
-          setDeletingOldSessions(false);
-        }
-      });
-    },
+      } catch (error) {
+        setSettingsFeedback(error instanceof Error ? error.message : "Could not delete old sessions.", true);
+      } finally {
+        setDeletingOldSessions(false);
+      }
+    }),
   };
 }
 
@@ -268,12 +247,12 @@ function formatCliShimActionFeedback(
   action: "install" | "uninstall",
 ): string {
   if (diagnostics.cliShim.status === "installed-path-missing") {
-    return "CLI shim を作成したよ。~/.local/bin が PATH に無いので、PATH 反映後に有効になるよ。";
+    return "CLI shim created. Add ~/.local/bin to PATH to enable it.";
   }
 
   if (action === "install") {
-    return "withmate-memory CLI shim をインストールしたよ。";
+    return "Installed the withmate-memory CLI shim.";
   }
 
-  return "withmate-memory CLI shim をアンインストールしたよ。";
+  return "Uninstalled the withmate-memory CLI shim.";
 }

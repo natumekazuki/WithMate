@@ -1,0 +1,428 @@
+import type { ComposerPreview, DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry, RunSessionTurnRequest } from "../session/runtime-state.js";
+import type { SessionTurnRecord } from "../session/session-turn-state.js";
+import type { SessionFolderCleanupRequest, SessionFolderCleanupScan, SessionFolderCleanupResult } from "../session/session-folder-cleanup.js";
+import type { AppSettings } from "../settings/provider-settings-state.js";
+import type { LiveSessionRunStatus } from "../session/live-session-run-status.js";
+import type { ConversationPage, ConversationPageRequest, ConversationSearchRequest, ConversationSearchMatch, ConversationNavigatorEntry, ConversationNavigatorRequest, ConversationQueryOutcome, ConversationQueryCancelRequest } from "../session/conversation-page.js";
+import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from "../terminal/terminal-contract.js";
+import type { CharacterProfile } from "../character/character-state.js";
+import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
+import type {
+  SetExecutionOptionsResult,
+  SetAuxiliaryExecutionOptionsRequest,
+  SetAuxiliaryMessageBookmarkRequest,
+  SetAuxiliaryTitleRequest,
+  SetSessionExecutionOptionsRequest,
+  SetSessionMessageBookmarkRequest,
+  SetSessionTitleRequest,
+  SetSessionTitleResult,
+} from "../session/session-mutation-contract.js";
+import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../memory/session-memory-state.js";
+import type { ChatLayoutPreferenceUpdate } from "../settings/chat-layout-preference.js";
+import type { AuxiliaryDraftRecord, AuxiliaryDraftSaveInput, AuxiliaryDraftSaveResult, AuxiliarySessionStatus } from "../auxiliary/auxiliary-draft-contract.js";
+import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "../prompt-template.js";
+import type { ModelCatalogRequest, ModelCatalogSnapshot } from "../settings/model-catalog.js";
+import type { RendererLogInput } from "../window/app-log-types.js";
+import type {
+  MarkdownLinkContextMenuRequest,
+  MarkdownLinkContextMenuResult,
+} from "../window/markdown-link-context-menu.js";
+import type { AppBootStatus } from "../window/app-boot-state.js";
+import type { WorkspaceDirectoryValidationResult } from "../window/workspace-directory-validation.js";
+import type { AppDatabaseDiagnostics } from "../window/app-database-diagnostics-state.js";
+import type { MemoryV6Diagnostics } from "../memory/memory-diagnostics-state.js";
+import type { MemoryV6ReviewApi } from "../memory/memory-review-state.js";
+import type {
+  AuxiliarySession,
+  AuxiliarySessionSummary,
+  CreateAuxiliarySessionInput,
+} from "../auxiliary/auxiliary-session-state.js";
+import type {
+  ImageFilePickerPurpose,
+  OpenPathOptions,
+  OpenPathResult,
+  DeleteSessionsLastActiveBeforeRequest,
+  DeleteSessionsResult,
+  ResetAppDatabaseRequest,
+  ResetAppDatabaseResult,
+  SavePastedSessionFileRequest,
+  SavePastedSessionFileResult,
+  SessionMonitorContextMenuRequest,
+  SessionMonitorContextMenuResult,
+  SessionMonitorPageRequest,
+  SessionMonitorPageResult,
+  AuxiliarySessionSelectionPayload,
+  AuxiliarySessionNavigationPayload,
+} from "../window/withmate-window-types.js";
+import type {
+  CreateMateInput,
+  MateProfile,
+  MateStorageState,
+  SetMateAvatarInput,
+  UpdateMateInput,
+} from "../mate/mate-state.js";
+import type {
+  CharacterCatalogEntry,
+  CharacterDetail,
+  CreateCharacterInput,
+  ResolveLaunchCharacterInput,
+  UpdateCharacterDefinitionInput,
+  UpdateCharacterMetadataInput,
+} from "../character/character-catalog.js";
+import type {
+  CharacterAuthoringSessionStartResult,
+  StartCharacterAuthoringSessionInput,
+} from "../character/character-authoring.js";
+import type {
+  SessionDirectoryEntry,
+  SessionDirectoryRequest,
+  SessionFileChunkRequest,
+  SessionImageResourceRequest,
+  SessionImageChunkRequest,
+  SessionPdfResourceRequest,
+  SessionPdfChunkRequest,
+  SessionFileChunkResult,
+  SessionFileDescriptor,
+  SessionFilePreviewImageActionRequest,
+  SessionFilePreviewImageContextMenuResult,
+  SessionFilePreviewImageCopyResult,
+  SessionFileOpenRequest,
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+  SessionFilePreviewWindowPayload,
+  SessionFilePreviewWindowGroup,
+  SessionFilePreviewContextMenuRequest,
+  SessionFilePreviewContextMenuResult,
+  SessionFilePreviewResourceRequest,
+  SessionFileResourceRequest,
+  SessionFileRoot,
+  SessionFilePin,
+  SessionFilePinReference,
+  SessionFileRootResourceRequest,
+  SessionFileTreePathActionContextMenuResult,
+  SessionFileTreePathActionRequest,
+  FileRootChangesRequest,
+  FileRootChangesRepositoriesRequest,
+  FileRootChangesRepositoriesResult,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
+  FileRootGitHistoryCommitDetailRequest,
+  FileRootGitHistoryCommitDetailResult,
+  FileRootGitHistoryCommitsRequest,
+  FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryComparisonRequest,
+  FileRootGitHistoryComparisonResult,
+  FileRootGitHistoryDiffRequest,
+  FileRootGitHistoryDiffResult,
+  FileRootGitHistoryRepositoriesRequest,
+  FileRootGitHistoryRepositoriesResult,
+} from "../file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileObjectCopyContextMenuRequest,
+  SessionFileObjectCopyContextMenuResult,
+  SessionFileObjectCopyRequest,
+  SessionFileObjectCopyResult,
+} from "../file-explorer/session-file-object-copy-contract.js";
+import type {
+  GlossaryListResult,
+  GlossaryOperationResult,
+  GlossarySearchRequest,
+  SessionGlossaryProjection,
+} from "../glossary/glossary-contract.js";
+import type { SessionWindowRestoreResult } from "../window/session-window-restore.js";
+import type { WithMateHtmlPreviewApi } from "../window/html-preview.js";
+import type { SessionHtmlPreviewRequest, SessionHtmlPreviewResult } from "../file-explorer/session-html-preview-contract.js";
+
+export type WithMateWindowNavigationApi = {
+  showSessionFilePreviewContextMenu(request: SessionFilePreviewContextMenuRequest): Promise<SessionFilePreviewContextMenuResult>;
+  listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
+  focusSessionFilePreviewWindow(token: string): Promise<void>;
+  closeSessionFilePreviewWindow(token: string): Promise<void>;
+  closeSessionFilePreviewWindows(ownerSessionId: string): Promise<void>;
+  openSession(sessionId: string, auxiliarySessionId?: string): Promise<void>;
+  showSessionMonitorContextMenu(
+    request: SessionMonitorContextMenuRequest,
+  ): Promise<SessionMonitorContextMenuResult>;
+  getSessionWindowRestoreSet(): Promise<string[]>;
+  restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
+  openHomeWindow(): Promise<void>;
+  openSessionMonitorWindow(): Promise<void>;
+  openSettingsWindow(): Promise<void>;
+  openMemoryV6ReviewWindow(): Promise<void>;
+  openCharacterEditorWindow(characterId?: string | null): Promise<void>;
+  openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  openSessionFilePreviewWindow(
+    request: SessionFilePreviewWindowOpenRequest,
+  ): Promise<SessionFilePreviewWindowOpenResult>;
+  openPath(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
+  showMarkdownLinkContextMenu(
+    request: MarkdownLinkContextMenuRequest,
+  ): Promise<MarkdownLinkContextMenuResult>;
+  openAppLogFolder(): Promise<void>;
+  openCrashDumpFolder(): Promise<void>;
+  openSessionTerminal(sessionId: string): Promise<void>;
+  openTerminalAtPath(target: string): Promise<void>;
+};
+
+export type WithMateWindowCatalogApi = {
+  getModelCatalog(request?: ModelCatalogRequest): Promise<ModelCatalogSnapshot | null>;
+  getDiffPreview(token: string): Promise<DiffPreviewPayload | null>;
+};
+
+export type WithMateWindowSessionApi = {
+  readSessionHtmlPreview(request: SessionHtmlPreviewRequest): Promise<SessionHtmlPreviewResult>;
+  readSessionGraph<K extends import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadOperation>(sessionId: string, operation: K, request: import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadRequest<K>): Promise<import("../session-graph/session-graph-ui-read-contract.js").SessionGraphUiReadResult<K>>;
+  isSessionFileObjectCopyAvailable(): boolean;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
+  listSessionMonitorPage(request?: SessionMonitorPageRequest | null): Promise<SessionMonitorPageResult>;
+  listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
+  getSession(sessionId: string): Promise<Session | null>;
+  getConversationPage(sessionId: string, request?: ConversationPageRequest): Promise<ConversationPage | null>;
+  searchConversation(sessionId: string, request: ConversationSearchRequest): Promise<ConversationQueryOutcome<ConversationSearchMatch>>;
+  listConversationNavigator(sessionId: string, request: ConversationNavigatorRequest): Promise<ConversationQueryOutcome<ConversationNavigatorEntry>>;
+  cancelConversationQuery(request: ConversationQueryCancelRequest): Promise<void>;
+  getSessionSummary(sessionId: string): Promise<SessionSummary | null>;
+  getSessionGlossaryProjection(sessionId: string): Promise<SessionGlossaryProjection>;
+  searchSessionGlossary(
+    sessionId: string,
+    request: GlossarySearchRequest,
+  ): Promise<GlossaryOperationResult<GlossaryListResult>>;
+  validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
+  validateSessionAdditionalDirectory(sessionId: string, targetPath: string): Promise<WorkspaceDirectoryValidationResult>;
+  listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
+  listSessionFilePins(sessionId: string): Promise<SessionFilePin[]>;
+  pinSessionFile(request: SessionFileRootResourceRequest): Promise<SessionFilePin>;
+  unpinSessionFile(request: SessionFilePinReference & { sessionId: string }): Promise<void>;
+  listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
+  inspectSessionFile(request: SessionFilePreviewResourceRequest): Promise<SessionFileDescriptor>;
+  inspectSessionImage(request: SessionImageResourceRequest): Promise<SessionFileDescriptor>;
+  readSessionImageChunk(request: SessionImageChunkRequest): Promise<SessionFileChunkResult>;
+  inspectSessionPdf(request: SessionPdfResourceRequest): Promise<SessionFileDescriptor>;
+  readSessionPdfChunk(request: SessionPdfChunkRequest): Promise<SessionFileChunkResult>;
+  readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
+  openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
+  getSessionFilePreviewWindowPayload(token: string): Promise<SessionFilePreviewWindowPayload | null>;
+  copySessionFilePreviewImage(
+    request: SessionFilePreviewImageActionRequest,
+  ): Promise<SessionFilePreviewImageCopyResult>;
+  showSessionFilePreviewImageContextMenu(
+    request: SessionFilePreviewImageActionRequest,
+  ): Promise<SessionFilePreviewImageContextMenuResult>;
+  copySessionFileObject(request: SessionFileObjectCopyRequest): Promise<SessionFileObjectCopyResult>;
+  showSessionFileObjectCopyContextMenu(
+    request: SessionFileObjectCopyContextMenuRequest,
+  ): Promise<SessionFileObjectCopyContextMenuResult>;
+  showSessionFileTreeContextMenu(
+    request: SessionFileTreePathActionRequest,
+  ): Promise<SessionFileTreePathActionContextMenuResult>;
+  listFileRootChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult>;
+  listFileRootChangesRepositories(
+    request: FileRootChangesRepositoriesRequest,
+  ): Promise<FileRootChangesRepositoriesResult>;
+  getFileRootDiff(request: FileRootFileDiffRequest): Promise<FileRootFileDiffResult>;
+  listFileRootGitHistoryRepositories(
+    request: FileRootGitHistoryRepositoriesRequest,
+  ): Promise<FileRootGitHistoryRepositoriesResult>;
+  listFileRootGitHistoryCommits(
+    request: FileRootGitHistoryCommitsRequest,
+  ): Promise<FileRootGitHistoryCommitsResult>;
+  getFileRootGitHistoryCommitDetail(
+    request: FileRootGitHistoryCommitDetailRequest,
+  ): Promise<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryComparison(
+    request: FileRootGitHistoryComparisonRequest,
+  ): Promise<FileRootGitHistoryComparisonResult>;
+  getFileRootGitHistoryDiff(
+    request: FileRootGitHistoryDiffRequest,
+  ): Promise<FileRootGitHistoryDiffResult>;
+  getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
+  createSession(input: CreateSessionRequest): Promise<Session>;
+  updateSession(session: Session): Promise<Session>;
+  setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
+  setSessionTitle(request: SetSessionTitleRequest): Promise<SetSessionTitleResult>;
+  setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;
+  setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
+  deleteSession(sessionId: string): Promise<void>;
+  previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
+  listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
+  listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
+  listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
+  listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
+  runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }): Promise<import("../session/session-turn-queue.js").SessionTurnQueueAcceptanceResult>;
+  sendQueuedSessionInput(sessionId: string, id: string, expectedTurnId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
+  getSessionTurnQueueReceipt(sessionId: string, requestId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt | null>;
+  listSessionTurnQueue(sessionId: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt[]>;
+  listSessionTurnQueueReceipts(sessionId: string, options?: { cursor?: number; limit?: number }): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceiptPage>;
+  cancelQueuedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
+  reorderQueuedSessionTurns(sessionId: string, request: import("../session/session-turn-queue.js").ReorderQueuedSessionTurnsRequest): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReorderResult>;
+  releaseInterruptedSessionTurn(sessionId: string, id: string): Promise<import("../session/session-turn-queue.js").SessionTurnQueueReceipt>;
+  steerSessionTurn(sessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
+  cancelSessionRun(sessionId: string): Promise<void>;
+  getLatestSessionTurn(sessionId: string): Promise<SessionTurnRecord | null>;
+  getUnreadSessionResult(sessionId: string): Promise<import("../session/session-turn-state.js").UnreadSessionResult | null>;
+  markSessionResultRead(sessionId: string, turnId: number): Promise<boolean>;
+  getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
+  resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
+  resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
+};
+
+export type WithMateWindowAuxiliaryApi = {
+  listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
+  listOpenActiveAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
+  getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
+  getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
+  getAuxiliaryDraft(auxiliarySessionId: string): Promise<AuxiliaryDraftRecord | null>;
+  saveAuxiliaryDraft(input: AuxiliaryDraftSaveInput): Promise<AuxiliaryDraftSaveResult>;
+  getAuxiliarySessionStatus(auxiliarySessionId: string): Promise<AuxiliarySessionStatus | null>;
+  createAuxiliarySession(input: CreateAuxiliarySessionInput): Promise<AuxiliarySession>;
+  getAuxiliaryCreationContext(parentSessionId: string): Promise<import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationContext>;
+  cancelAuxiliaryCreation(request: import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
+  getAuxiliaryCreation(request: import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationRequest): Promise<import("../auxiliary/auxiliary-session-state.js").AuxiliaryCreationResult>;
+  updateAuxiliarySession(session: AuxiliarySession): Promise<AuxiliarySession>;
+  setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
+  setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Promise<void>;
+  setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
+  closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;
+  runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
+  steerAuxiliarySessionTurn(auxiliarySessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
+  cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
+};
+
+export type WithMateWindowObservabilityApi = {
+  reportRendererLog(input: RendererLogInput): void;
+  getProviderQuotaTelemetry(providerId: string, options?: { cacheOnly?: boolean }): Promise<ProviderQuotaTelemetry | null>;
+  getSessionContextTelemetry(sessionId: string): Promise<SessionContextTelemetry | null>;
+  getSessionBackgroundActivity(
+    sessionId: string,
+    kind: SessionBackgroundActivityKind,
+  ): Promise<SessionBackgroundActivityState | null>;
+  listOpenSessionWindowIds(): Promise<string[]>;
+};
+
+export type WithMateWindowSettingsApi = {
+  getAppSettings(): Promise<AppSettings>;
+  updateAppSettings(settings: AppSettings): Promise<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<void>;
+  getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
+  scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
+  runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
+  getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
+  installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
+  uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
+  resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;
+  deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
+};
+
+export type WithMateWindowPromptTemplateApi = {
+  listPromptTemplates(): Promise<PromptTemplate[]>;
+  createPromptTemplate(input: CreatePromptTemplateInput): Promise<PromptTemplate[]>;
+  updatePromptTemplate(input: UpdatePromptTemplateInput): Promise<PromptTemplate[]>;
+  deletePromptTemplate(id: string): Promise<PromptTemplate[]>;
+  subscribePromptTemplates(listener: (templates: PromptTemplate[]) => void): () => void;
+};
+
+export type WithMateWindowPickerApi = {
+  validateWorkspaceDirectory(targetPath: string): Promise<WorkspaceDirectoryValidationResult>;
+  pickDirectory(initialPath?: string | null): Promise<string | null>;
+  pickFile(initialPath?: string | null): Promise<string | null>;
+  pickFiles(initialPath?: string | null): Promise<string[]>;
+  pickSessionFiles(sessionId: string): Promise<string[]>;
+  pickSessionFolder(sessionId: string): Promise<string | null>;
+  pickSessionImageFile(sessionId: string): Promise<string | null>;
+  pickImageFile(
+    initialPath?: string | null,
+    purpose?: ImageFilePickerPurpose,
+  ): Promise<string | null>;
+  copyFilesToSessionFiles(sessionId: string, sourcePaths: string[]): Promise<string[]>;
+  savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<SavePastedSessionFileResult>;
+  openSessionFilesDirectory(sessionId: string): Promise<void>;
+  openSessionFilesTerminal(sessionId: string): Promise<void>;
+};
+
+export type WithMateWindowSubscriptionApi = {
+  onSessionTurnUpdated(listener: (sessionId: string) => void): () => void;
+  onSessionTurnQueueChanged(listener: (sessionId: string) => void): () => void;
+  subscribeSessionDraftFlushRequest(listener: (request: { requestId: string; sessionId: string; reason: "close" | "quit" }) => void): () => void;
+  subscribeSessionDraftFlushRelease(listener: (payload: { success: boolean }) => void): () => void;
+  acknowledgeSessionDraftFlush(requestId: string, success: boolean): void;
+  getAppBootStatus(): Promise<AppBootStatus>;
+  subscribeAppBootStatus(listener: (status: AppBootStatus) => void): () => void;
+  subscribeSessionFilePreviewNavigation(
+    listener: (payload: SessionFilePreviewWindowPayload) => void,
+  ): () => void;
+  subscribeSessionFilePreviewWindowsChanged(listener: () => void): () => void;
+  subscribeSessionInvalidation(listener: (payload: SessionSummaryInvalidation) => void): () => void;
+  subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
+  subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
+  subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
+  subscribeLiveSessionRunStatus(listener: (sessionId: string, status: LiveSessionRunStatus | null) => void): () => void;
+  subscribeAuxiliarySessionSelection(listener: (payload: AuxiliarySessionSelectionPayload) => void): () => void;
+  subscribeProviderQuotaTelemetry(listener: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void): () => void;
+  subscribeSessionContextTelemetry(listener: (sessionId: string, telemetry: SessionContextTelemetry | null) => void): () => void;
+  subscribeSessionBackgroundActivity(
+    listener: (
+      sessionId: string,
+      kind: SessionBackgroundActivityKind,
+      state: SessionBackgroundActivityState | null,
+    ) => void,
+  ): () => void;
+  subscribeSessionGraph(listener: (sessionId: string) => void): () => void;
+  subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
+  subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
+  subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
+  subscribeAuxiliarySessionNavigation(listener: (payload: AuxiliarySessionNavigationPayload) => void): () => void;
+};
+
+export type WithMateWindowMateApi = {
+  getMateState(): Promise<MateStorageState>;
+  getMateProfile(): Promise<MateProfile | null>;
+  createMate(input: CreateMateInput): Promise<MateProfile>;
+  updateMate(input: UpdateMateInput): Promise<MateProfile>;
+  setMateAvatar(input: SetMateAvatarInput): Promise<MateProfile>;
+  resetMate(): Promise<void>;
+};
+
+export type WithMateWindowCharacterApi = {
+  listCharacters(options?: { includeArchived?: boolean }): Promise<CharacterCatalogEntry[]>;
+  getCharacter(characterId: string): Promise<CharacterDetail | null>;
+  createCharacter(input: CreateCharacterInput): Promise<CharacterDetail>;
+  updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail>;
+  updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail>;
+  archiveCharacter(characterId: string): Promise<CharacterCatalogEntry>;
+  resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Promise<CharacterDetail | null>;
+  startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Promise<CharacterAuthoringSessionStartResult>;
+};
+
+export type WithMateWindowApi =
+  & { isClipboardFileBacked(file: unknown): boolean }
+  & WithMateHtmlPreviewApi
+  & import("../session-graph/session-graph-window-contract.js").SessionGraphWindowApi
+  & WithMateWindowNavigationApi
+  & MemoryV6ReviewApi
+  & WithMateWindowCatalogApi
+  & WithMateWindowAuxiliaryApi
+  & WithMateWindowSessionApi
+  & WithMateWindowObservabilityApi
+  & WithMateWindowSettingsApi
+  & WithMateWindowPromptTemplateApi
+  & WithMateWindowPickerApi
+  & WithMateWindowSubscriptionApi
+  & WithMateWindowMateApi
+  & WithMateWindowCharacterApi
+  & WithMateWindowTerminalApi;
+
+export type WithMateWindowTerminalApi = {
+  createTerminal(request: CreateTerminalRequest): Promise<CreateTerminalResult>;
+  writeTerminalInput(terminalId: string, data: string): void;
+  resizeTerminal(terminalId: string, cols: number, rows: number): void;
+  acknowledgeTerminalOutput(terminalId: string, characters: number): void;
+  closeTerminal(terminalId: string): Promise<boolean>;
+  releaseTerminal(terminalId: string): Promise<void>;
+  subscribeTerminalEvents(listener: (event: TerminalEvent) => void): () => void;
+};

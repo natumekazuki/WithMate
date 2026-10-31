@@ -1,0 +1,2150 @@
+import { existsSync } from "node:fs";
+import { ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { CopilotClient, RuntimeConnection, type CopilotSession, type JsonValue, type PermissionHandler, type MessageOptions, type PermissionRequest, type PermissionRequestResult, type SessionConfig, type SessionEvent } from "@github/copilot-sdk";
+
+import type { MessageOperation, ProviderDiagnosticMetadata, ProviderUsage, LiveApprovalRequest, LiveBackgroundTask, LiveElicitationResponse, LiveRunStep, ProviderQuotaTelemetry } from "../../../src-shared/session/runtime-state.js";
+import type { MessageArtifact, Session } from "../../../src-shared/session/session-state.js";
+import type { SessionExecutionOptions } from "../../../src-shared/session/session-execution-options.js";
+import { getProviderAppSettings } from "../../../src-shared/settings/provider-settings-state.js";
+import { normalizeApprovalMode } from "../../../src-shared/settings/approval-mode.js";
+import {
+  resolveModelSelection,
+  type ModelReasoningEffort,
+  type ResolvedModelSelection,
+} from "../../../src-shared/settings/model-catalog.js";
+import { buildArtifactFromOperations } from "../provider-artifact.js";
+import {
+  createDisabledWorkspaceSnapshotCapture,
+  WORKSPACE_DIFF_CAPTURE_ENABLED,
+} from "../../files/workspace-diff-policy.js";
+import { composeProviderPrompt, isCanceledProviderMessage } from "../provider-prompt.js";
+import { ProviderTurnError, resolveRunWorkspacePath, type ProviderPromptComposition, type ProviderTurnAdapter, type RunSessionTurnInput, type RunSessionTurnProgressHandler, type RunSessionTurnResult } from "../provider-runtime.js";
+import {
+  captureWorkspaceSnapshot,
+  type SnapshotCaptureStats,
+  type WorkspaceSnapshot,
+} from "../../platform/snapshot-ignore.js";
+import { normalizeAllowedAdditionalDirectories } from "../../files/additional-directories.js";
+import { resolveSessionCustomAgentConfigs } from "../../skills/custom-agent-discovery.js";
+import { normalizeCopilotTokenUsage } from "../provider-token-usage.js";
+import {
+  resolveDevelopmentProviderBinaryPath,
+  resolvePackagedProviderBinaryPath,
+  resolveProviderBinarySpec,
+} from "../provider-binary-paths.js";
+import {
+  boundProviderRawItem,
+  toProviderTextPreview,
+  type BoundedProviderRawItem,
+} from "../../session/provider-payload-limits.js";
+import { toProviderMetadataLogData } from "../provider-metadata-log.js";
+import {
+  buildProviderAgentRuntimeBindingCacheKey,
+  buildProviderAgentRuntimeBindingEnv,
+  createProviderAgentRuntimeBindingRedactor,
+  mergeDefinedProviderEnv,
+  type ProviderAgentRuntimeBindingRedactor,
+} from "../provider-agent-runtime-binding.js";
+import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-binding.js";
+import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
+import { buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection, buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection, readCopilotQuotaSnapshots } from "./copilot-quota-telemetry.js";
+import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection, buildLiveElicitationRequestFromCopilotUserInput } from "./copilot-elicitation.js";
+import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
+import type { ListProviderModelsInput } from "../provider-runtime.js";
+import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
+import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
+
+type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
+
+export function toCopilotReasoningEffort(reasoningEffort: ModelReasoningEffort): CopilotReasoningEffort | undefined {
+  if (!reasoningEffort) return undefined;
+  if (reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high" || reasoningEffort === "xhigh" || reasoningEffort === "max") return reasoningEffort;
+  throw new Error(`GitHub Copilot SDK does not support reasoning effort ${reasoningEffort}.`);
+}
+
+type CachedCopilotSession = {
+  session: CopilotSession;
+  settingsKey: string;
+  backgroundTasks: Map<string, LiveBackgroundTask>;
+  unsubscribeBackgroundObserver?: () => void;
+};
+
+type CopilotCommandStepState = {
+  stepId: string;
+  summary: string;
+  details?: string;
+  status: LiveRunStep["status"];
+  exitCode?: number;
+  error?: MessageOperation["error"];
+  type?: string;
+  visible?: boolean;
+};
+
+type CopilotStableRawItem = BoundedProviderRawItem;
+
+type CopilotAdapterLogInput = {
+  level: "debug" | "info" | "warn" | "error";
+  kind: string;
+  message: string;
+  data?: unknown;
+  error?: { name?: string; message: string; stack?: string };
+};
+
+type CopilotTurnStreamState = {
+  liveSteps: ProviderProgressMap<LiveRunStep>;
+  operationSteps: Map<string, LiveRunStep>;
+  backgroundTasks: ProviderProgressMap<LiveBackgroundTask>;
+  permissionToStepId: Map<string, string>;
+  toolNamesByCallId: Map<string, string>;
+  reasoningDraftsById: Map<string, string>;
+  reasoningText: string;
+  providerMetadata: ProviderDiagnosticMetadata[];
+  redactor: ProviderAgentRuntimeBindingRedactor;
+  assistantText: string;
+  lastNonEmptyAssistantMessageText: string;
+  assistantMessages: string[];
+  assistantDraft: string;
+  usage: ProviderUsage | null;
+  streamErrorMessage: string;
+};
+
+export type CopilotSessionSettings = {
+  config: SessionConfig;
+  selection: ResolvedModelSelection;
+  settingsKey: string;
+};
+
+type CopilotSessionConnector = Pick<CopilotClient, "createSession" | "resumeSession">;
+
+const COPILOT_SHELL_TOOL_NAMES = new Set(["shell", "powershell", "bash", "terminal"]);
+const COPILOT_MUTATING_TOOL_NAMES = new Set(["create", "write", "edit", "replace", "insert", "move", "rename", "delete", "remove"]);
+const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
+  "pending_messages.modified",
+  "function",
+  "hook.start",
+  "hook.end",
+  "session.tools_updated",
+  "session.usage_info",
+  "assistant.intent",
+  "assistant.reasoning",
+  "assistant.turn_start",
+  "assistant.turn_end",
+  "session.info",
+]);
+
+const require = createRequire(import.meta.url);
+
+export function buildCopilotClientEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
+): NodeJS.ProcessEnv {
+  // Copilot SDK は child CLI の stderr を bootstrap failure 扱いするため、
+  // Node.js の ExperimentalWarning だけで false error にならないように抑止する。
+  return {
+    ...mergeDefinedProviderEnv(
+      baseEnv,
+      buildProviderAgentRuntimeBindingEnv(agentRuntimeBinding),
+    ),
+    NODE_NO_WARNINGS: "1",
+  };
+}
+
+export function resolveNativeCopilotPackageName(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string | null {
+  return resolveProviderBinarySpec("copilot", platform, arch)?.packageSpecifier ?? null;
+}
+
+export function resolveCopilotCliPath(
+  resolvePackagePath: (specifier: string) => string = require.resolve,
+  fileExists: (candidate: string) => boolean = existsSync,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+  resourcesPath: string | undefined = process.resourcesPath,
+): string {
+  const packagedBinary = resolvePackagedProviderBinaryPath("copilot", resourcesPath, fileExists, platform, arch);
+  if (packagedBinary) {
+    return packagedBinary;
+  }
+
+  const nativeBinary = resolveDevelopmentProviderBinaryPath("copilot", resolvePackagePath, fileExists, platform, arch);
+  if (nativeBinary) {
+    return nativeBinary;
+  }
+
+  const commandFileName = platform === "win32" ? "copilot.cmd" : "copilot";
+  const localNodeModulesCommand = path.resolve(process.cwd(), "node_modules", ".bin", commandFileName);
+  if (fileExists(localNodeModulesCommand)) {
+    return localNodeModulesCommand;
+  }
+
+  return commandFileName;
+}
+
+function buildCopilotClientKeyFromAppSettings(
+  providerId: string,
+  appSettings: RunSessionTurnInput["appSettings"],
+  agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
+): string {
+  const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
+  return JSON.stringify([
+    providerId,
+    codingApiKey || null,
+    buildProviderAgentRuntimeBindingCacheKey(agentRuntimeBinding),
+  ]);
+}
+
+function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): string {
+  return buildCopilotClientKeyFromAppSettings(
+    providerId,
+    input.appSettings,
+    input.agentRuntimeBinding,
+  );
+}
+
+export function isRecoverableCopilotConnectionErrorMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("connection is closed.")
+    || normalized.includes("cli server exited unexpectedly with code 0")
+    || normalized.includes("cli server exited with code 0");
+}
+
+function isRecoverableCopilotMissingSessionErrorMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("sessionnotfound")
+    || normalized.includes("session_not_found")
+    || normalized.includes("thread_not_found")
+    || normalized.includes("session not found")
+    || normalized.includes("thread not found");
+}
+
+function hasMeaningfulArtifact(artifact: MessageArtifact | undefined): boolean {
+  if (!artifact) {
+    return false;
+  }
+
+  return artifact.changedFiles.length > 0
+    || (artifact.operationTimeline?.some((operation) =>
+      operation.status === "completed"
+      || operation.status === "failed"
+      || operation.status === "canceled"
+      || operation.exitCode !== undefined
+      || operation.error !== undefined
+    ) ?? false);
+}
+
+function hasMeaningfulRetryBlockingPartialResult(partialResult: RunSessionTurnResult): boolean {
+  return partialResult.assistantText.trim().length > 0
+    || hasMeaningfulArtifact(partialResult.artifact);
+}
+
+export function shouldRetryCopilotTurn(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    !isRecoverableCopilotConnectionErrorMessage(message)
+    && !isRecoverableCopilotMissingSessionErrorMessage(message)
+  ) {
+    return false;
+  }
+
+  if (!(error instanceof ProviderTurnError)) {
+    return true;
+  }
+
+  return !error.canceled && !hasMeaningfulRetryBlockingPartialResult(error.partialResult);
+}
+
+function stringifyUnknown(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindingRedactor(null)): CopilotTurnStreamState {
+  return {
+    liveSteps: new ProviderProgressMap<LiveRunStep>(),
+    operationSteps: new Map<string, LiveRunStep>(),
+    backgroundTasks: new ProviderProgressMap<LiveBackgroundTask>(),
+    permissionToStepId: new Map<string, string>(),
+    toolNamesByCallId: new Map<string, string>(),
+    reasoningDraftsById: new Map<string, string>(),
+    reasoningText: "",
+    providerMetadata: [],
+    redactor,
+    assistantText: "",
+    lastNonEmptyAssistantMessageText: "",
+    assistantMessages: [],
+    assistantDraft: "",
+    usage: null,
+    streamErrorMessage: "",
+  };
+}
+
+function updateCopilotCommandStep(state: CopilotTurnStreamState, nextState: CopilotCommandStepState): void {
+  const details = toProviderTextPreview(nextState.details);
+  const step: LiveRunStep = {
+    id: nextState.stepId,
+    type: nextState.type ?? "command_execution",
+    summary: nextState.summary,
+    details,
+    ...(nextState.exitCode !== undefined ? { exitCode: nextState.exitCode } : {}),
+    ...(nextState.error ? { error: nextState.error } : {}),
+    ...(nextState.details !== undefined ? { truncated: state.operationSteps.get(nextState.stepId)?.truncated === true || details !== nextState.details } : {}),
+    status: nextState.status,
+  };
+  state.operationSteps.set(nextState.stepId, step);
+  if (nextState.visible !== false) state.liveSteps.set(nextState.stepId, step);
+}
+
+function refreshCopilotReasoningText(state: CopilotTurnStreamState): void {
+  state.reasoningText = Array.from(state.reasoningDraftsById.values())
+    .map((content) => content.trim())
+    .filter((content) => content.length > 0)
+    .join("\n\n");
+}
+
+const COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS = new Set([
+  "approved",
+  "approve-once",
+  "approve-for-session",
+  "approve-for-location",
+  "approved-for-session",
+  "approved-for-location",
+]);
+
+export function getCopilotPermissionCompletedLiveStatus(resultKind: string): LiveRunStep["status"] {
+  return COPILOT_APPROVED_PERMISSION_COMPLETED_KINDS.has(resultKind)
+    ? "in_progress"
+    : "failed";
+}
+
+function applyCopilotTurnEvent(args: {
+  event: SessionEvent;
+  state: CopilotTurnStreamState;
+  providerId: string;
+  sessionId: string;
+  workspacePath: string;
+  onProviderQuotaTelemetry?: RunSessionTurnInput["onProviderQuotaTelemetry"];
+  onSessionContextTelemetry?: RunSessionTurnInput["onSessionContextTelemetry"];
+}): void {
+  const { event, state, providerId, sessionId, workspacePath } = args;
+
+  switch (event.type) {
+    case "assistant.message_delta":
+    case "assistant.message": {
+      const nextAssistantState = applyCopilotAssistantEvent(state.assistantMessages, state.assistantDraft, event);
+      state.assistantMessages = nextAssistantState.messages;
+      state.assistantDraft = nextAssistantState.draft;
+      state.assistantText = nextAssistantState.assistantText;
+      state.lastNonEmptyAssistantMessageText = nextAssistantState.lastNonEmptyAssistantMessageText;
+      break;
+    }
+    case "assistant.usage":
+      state.usage = normalizeCopilotTokenUsage(event.data);
+      if (args.onProviderQuotaTelemetry) {
+        const quotaSnapshots = readCopilotQuotaSnapshots(event.data);
+        const telemetry = buildProviderQuotaTelemetryProjection(
+          providerId,
+          quotaSnapshots,
+          event.timestamp,
+        );
+        if (telemetry) {
+          void args.onProviderQuotaTelemetry(telemetry);
+        }
+      }
+      break;
+    case "assistant.reasoning_delta": {
+      const currentDraft = state.reasoningDraftsById.get(event.data.reasoningId) ?? "";
+      const nextDraft = currentDraft + event.data.deltaContent;
+      state.reasoningDraftsById.set(event.data.reasoningId, nextDraft);
+      refreshCopilotReasoningText(state);
+      break;
+    }
+    case "assistant.reasoning":
+      state.reasoningDraftsById.set(event.data.reasoningId, event.data.content);
+      refreshCopilotReasoningText(state);
+      break;
+    case "session.usage_info":
+      if (args.onSessionContextTelemetry) {
+        void args.onSessionContextTelemetry(
+          buildSessionContextTelemetryProjection(
+            providerId,
+            sessionId,
+            event.data,
+            event.timestamp,
+          ),
+        );
+      }
+      break;
+    case "session.error":
+      state.streamErrorMessage = event.data.message;
+      break;
+    case "permission.requested": {
+      const request = event.data.permissionRequest;
+      const summary = buildCopilotPermissionSummary(request, workspacePath);
+      if (summary) {
+        const stepId = request.toolCallId ?? event.data.requestId;
+        state.permissionToStepId.set(event.data.requestId, stepId);
+        if (request.kind === "shell") {
+          state.toolNamesByCallId.set(stepId, "shell");
+        }
+        updateCopilotCommandStep(state, {
+          stepId,
+          summary,
+          details: request.kind === "shell" ? request.warning : undefined,
+          status: "pending",
+        });
+      }
+      break;
+    }
+    case "permission.completed": {
+      const stepId = state.permissionToStepId.get(event.data.requestId);
+      if (!stepId) {
+        break;
+      }
+
+      const current = state.liveSteps.get(stepId);
+      if (!current) {
+        break;
+      }
+
+      updateCopilotCommandStep(state, {
+        stepId,
+        summary: current.summary,
+        details: appendDetail(current.details, `permission: ${event.data.result.kind}`),
+        status: getCopilotPermissionCompletedLiveStatus(event.data.result.kind),
+      });
+      break;
+    }
+    case "tool.execution_start":
+      state.toolNamesByCallId.set(event.data.toolCallId, event.data.toolName);
+      {
+        const visible = isCopilotVisibleToolName(event.data.toolName);
+        const current = state.operationSteps.get(event.data.toolCallId);
+        updateCopilotCommandStep(state, {
+          stepId: event.data.toolCallId,
+          summary:
+            current?.summary ?? (visible ? buildCopilotToolSummary(event.data.toolName, event.data.arguments, workspacePath) : event.data.toolName),
+          details: current?.details,
+          status: "in_progress",
+          type: visible ? "command_execution" : "tool_call",
+          visible,
+        });
+      }
+      break;
+    case "tool.execution_partial_result": {
+      const current = state.operationSteps.get(event.data.toolCallId);
+      if (!event.data.partialOutput.trim()) {
+        break;
+      }
+
+      updateCopilotCommandStep(state, {
+        stepId: event.data.toolCallId,
+        summary: current?.summary ?? state.toolNamesByCallId.get(event.data.toolCallId) ?? "tool",
+        details: appendDetail(current?.details, state.redactor.sanitizeText(event.data.partialOutput)),
+        status: "in_progress",
+        type: current?.type ?? "tool_call",
+        visible: state.liveSteps.has(event.data.toolCallId),
+      });
+      break;
+    }
+    case "tool.execution_complete":
+      {
+        const current = state.operationSteps.get(event.data.toolCallId);
+        const toolName = state.toolNamesByCallId.get(event.data.toolCallId) ?? "tool";
+        const visible = state.liveSteps.has(event.data.toolCallId) || isCopilotVisibleToolName(toolName);
+        updateCopilotCommandStep(state, {
+          stepId: event.data.toolCallId,
+          summary: current?.summary ?? (visible ? buildCopilotToolSummary(toolName, undefined, workspacePath) : toolName),
+          details: appendDetail(current?.details, state.redactor.sanitize(extractToolExecutionDetails(event))),
+          status: event.data.success ? "completed" : "failed",
+          type: visible ? "command_execution" : "tool_call",
+          visible,
+          exitCode: event.data.result?.contents?.find((content) => content.type === "terminal")?.exitCode,
+          error: event.data.error ? { message: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.message)) ?? "",
+            ...(typeof event.data.error.code === "string" ? { code: toProviderTextPreview(state.redactor.sanitizeText(event.data.error.code)) } : {}) } : undefined,
+        });
+      }
+      break;
+    case "session.idle":
+    case "system.notification":
+      applyCopilotBackgroundTaskEvent(state.backgroundTasks, event);
+      break;
+    default:
+      break;
+  }
+
+  if (!shouldDropCopilotRawEvent(event) && !SUPPORTED_COPILOT_EVENT_TYPES.has(event.type)) {
+    const sanitized = boundProviderRawItem(state.redactor.sanitize({ type: event.type, timestamp: event.timestamp }));
+    state.providerMetadata.push(...buildCopilotProviderMetadata([sanitized]));
+  }
+}
+
+export function collectCopilotLiveStepsFromEventsForTesting(
+  events: SessionEvent[],
+  workspacePath = "C:/workspace",
+): LiveRunStep[] {
+  const state = createCopilotTurnStreamState();
+  for (const event of events) {
+    applyCopilotTurnEvent({
+      event,
+      state,
+      providerId: "copilot",
+      sessionId: "session-1",
+      workspacePath,
+    });
+  }
+
+  return Array.from(state.liveSteps.values());
+}
+
+export function collectCopilotMessageOperationsFromEventsForTesting(
+  events: SessionEvent[],
+  workspacePath = "C:/workspace",
+): MessageOperation[] {
+  const state = createCopilotTurnStreamState();
+  for (const event of events) {
+    applyCopilotTurnEvent({ event, state, providerId: "copilot", sessionId: "session-1", workspacePath });
+  }
+  return toMessageOperations(state.operationSteps);
+}
+
+export function collectCopilotReasoningTextFromEventsForTesting(
+  events: SessionEvent[],
+  workspacePath = "C:/workspace",
+): string {
+  const state = createCopilotTurnStreamState();
+  for (const event of events) {
+    applyCopilotTurnEvent({
+      event,
+      state,
+      providerId: "copilot",
+      sessionId: "session-1",
+      workspacePath,
+    });
+  }
+
+  return state.reasoningText;
+}
+
+function appendDetail(current: string | undefined, next: string | undefined): string | undefined {
+  if (!next?.trim()) {
+    return current;
+  }
+
+  if (!current?.trim()) {
+    return next;
+  }
+
+  if (current.includes(next)) {
+    return current;
+  }
+
+  return `${current}\n${next}`;
+}
+
+
+
+function normalizeCopilotToolName(toolName: string): string {
+  return toolName.trim().toLowerCase();
+}
+
+function getStringArgument(argumentsValue: Record<string, unknown> | undefined, keys: string[]): string | null {
+  if (!argumentsValue) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const candidate = argumentsValue[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+function compactCopilotTargetPath(targetPath: string, workspacePath: string): string {
+  const normalizedTarget = targetPath.replace(/\\/g, "/");
+  const normalizedWorkspace = workspacePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const relativePath = path.posix.relative(normalizedWorkspace, normalizedTarget);
+
+  if (relativePath && !relativePath.startsWith("../") && !path.posix.isAbsolute(relativePath)) {
+    return relativePath;
+  }
+
+  return normalizedTarget;
+}
+
+function inferCopilotWriteAction(intention: string | undefined): string {
+  const normalized = intention?.trim().toLowerCase() ?? "";
+  if (normalized.includes("create")) {
+    return "create";
+  }
+
+  if (normalized.includes("delete") || normalized.includes("remove")) {
+    return "delete";
+  }
+
+  if (normalized.includes("rename") || normalized.includes("move")) {
+    return "move";
+  }
+
+  if (normalized.includes("replace") || normalized.includes("edit") || normalized.includes("modify") || normalized.includes("update")) {
+    return "edit";
+  }
+
+  return "write";
+}
+
+export function isCopilotVisibleToolName(toolName: string): boolean {
+  const normalized = normalizeCopilotToolName(toolName);
+  return COPILOT_SHELL_TOOL_NAMES.has(normalized) || COPILOT_MUTATING_TOOL_NAMES.has(normalized);
+}
+
+export function buildCopilotToolSummary(
+  toolName: string,
+  argumentsValue: JsonValue | undefined,
+  workspacePath: string,
+): string {
+  const normalizedToolName = normalizeCopilotToolName(toolName);
+  const argumentRecord = isRecord(argumentsValue) ? argumentsValue : undefined;
+  if (COPILOT_SHELL_TOOL_NAMES.has(normalizedToolName)) {
+    return extractShellCommandFromArguments(argumentRecord) ?? normalizedToolName;
+  }
+
+  const targetPath = getStringArgument(argumentRecord, ["path", "filePath", "fileName", "target", "targetPath", "destination", "destinationPath"]);
+  if (normalizedToolName === "move" || normalizedToolName === "rename") {
+    const sourcePath = getStringArgument(argumentRecord, ["source", "sourcePath", "from", "oldPath"]);
+    const destinationPath = getStringArgument(argumentRecord, ["destination", "destinationPath", "to", "newPath", "path"]);
+    const formattedSource = sourcePath ? compactCopilotTargetPath(sourcePath, workspacePath) : null;
+    const formattedDestination = destinationPath ? compactCopilotTargetPath(destinationPath, workspacePath) : null;
+    if (formattedSource && formattedDestination) {
+      return `${normalizedToolName} ${formattedSource} -> ${formattedDestination}`;
+    }
+
+    if (formattedDestination) {
+      return `${normalizedToolName} ${formattedDestination}`;
+    }
+  }
+
+  if (targetPath) {
+    return `${normalizedToolName} ${compactCopilotTargetPath(targetPath, workspacePath)}`;
+  }
+
+  return normalizedToolName;
+}
+
+function shouldDropCopilotRawEvent(event: SessionEvent): boolean {
+  if ("ephemeral" in event && event.ephemeral === true) {
+    return true;
+  }
+
+  const eventType = String(event.type);
+  return eventType.endsWith("_delta") || COPILOT_DROPPED_RAW_EVENT_TYPES.has(eventType);
+}
+
+type CopilotPermissionRequestLike = {
+  kind: string;
+  toolCallId?: string;
+  warning?: string;
+  fullCommandText?: unknown;
+  fileName?: unknown;
+  intention?: unknown;
+};
+
+function buildCopilotPermissionSummary(request: CopilotPermissionRequestLike, workspacePath: string): string | null {
+  if (request.kind === "shell" && typeof request.fullCommandText === "string" && request.fullCommandText.trim()) {
+    return request.fullCommandText.trim();
+  }
+
+  if (request.kind === "write" && typeof request.fileName === "string" && request.fileName.trim()) {
+    const action = inferCopilotWriteAction(typeof request.intention === "string" ? request.intention : undefined);
+    return `${action} ${compactCopilotTargetPath(request.fileName, workspacePath)}`;
+  }
+
+  return null;
+}
+
+function buildCopilotApprovalTitle(kind: string): string {
+  switch (kind) {
+    case "shell":
+      return "Approval required for shell commands";
+    case "write":
+      return "Approval required for file changes";
+    case "mcp":
+      return "Approval required for MCP tools";
+    case "custom-tool":
+      return "Approval required for custom tools";
+    case "url":
+      return "Approval required for URL fetches";
+    case "read":
+      return "Approval required for file access";
+    default:
+      return "Approval required for this action";
+  }
+}
+
+function buildCopilotApprovalDetails(request: CopilotPermissionRequestLike, workspacePath: string): string | undefined {
+  const detailParts: string[] = [];
+
+  if (request.kind === "write" && typeof request.intention === "string" && request.intention.trim()) {
+    detailParts.push(`intent: ${request.intention.trim()}`);
+  }
+
+  if (request.kind === "write" && typeof request.fileName === "string" && request.fileName.trim()) {
+    detailParts.push(`target: ${compactCopilotTargetPath(request.fileName, workspacePath)}`);
+  }
+
+  if (request.kind !== "shell" && typeof request.fullCommandText === "string" && request.fullCommandText.trim()) {
+    detailParts.push(request.fullCommandText.trim());
+  }
+
+  return detailParts.length > 0 ? detailParts.join("\n") : undefined;
+}
+
+function buildCopilotApprovalRequest(
+  request: PermissionRequest,
+  requestId: string,
+  providerId: string,
+  workspacePath: string,
+): LiveApprovalRequest {
+  const requestLike = request as PermissionRequest & CopilotPermissionRequestLike;
+  const summary = buildCopilotPermissionSummary(requestLike, workspacePath) ?? request.kind;
+  const warning = typeof requestLike.warning === "string" && requestLike.warning.trim()
+    ? requestLike.warning.trim()
+    : undefined;
+
+  return {
+    requestId,
+    provider: providerId,
+    kind: request.kind,
+    title: buildCopilotApprovalTitle(request.kind),
+    summary,
+    details: buildCopilotApprovalDetails(requestLike, workspacePath),
+    warning,
+    decisionMode: "direct-decision",
+  };
+}
+
+export function buildCopilotMessageAttachments(
+  attachments: RunSessionTurnInput["attachments"],
+): NonNullable<MessageOptions["attachments"]> {
+  return attachments.map((attachment) => ({
+    type: attachment.kind === "folder" ? "directory" : "file",
+    path: attachment.absolutePath,
+    displayName: attachment.displayPath,
+  }));
+}
+
+export function buildCopilotSystemMessage(
+  prompt: ProviderPromptComposition,
+): SessionConfig["systemMessage"] | undefined {
+  if (!prompt.systemBodyText.trim()) {
+    return undefined;
+  }
+
+  return {
+    mode: "append",
+    content: prompt.systemBodyText,
+  };
+}
+
+
+
+
+const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
+  "user.message",
+  "assistant.message",
+  "assistant.usage",
+  "session.error",
+  "session.idle",
+  "permission.requested",
+  "permission.completed",
+  "user_input.requested",
+  "elicitation.requested",
+  "tool.execution_start",
+  "tool.execution_complete",
+]);
+
+export function buildCopilotProviderMetadata(rawItems: readonly CopilotStableRawItem[]): ProviderDiagnosticMetadata[] {
+  return rawItems
+    .filter((item) => item.type !== "withmate.raw_items_truncated" && !SUPPORTED_COPILOT_EVENT_TYPES.has(item.type))
+    .map((item) => ({
+      provider: "copilot",
+      kind: "unsupported_event",
+      source: "copilot.session_event",
+      eventType: item.type,
+      summary: `Unsupported Copilot event: ${item.type}`,
+      payload: item,
+    }));
+}
+
+function extractShellCommandFromArguments(argumentsValue: Record<string, unknown> | undefined): string | null {
+  if (!argumentsValue) {
+    return null;
+  }
+
+  const directCommand =
+    (typeof argumentsValue.command === "string" ? argumentsValue.command : null) ??
+    (typeof argumentsValue.commandText === "string" ? argumentsValue.commandText : null) ??
+    (typeof argumentsValue.fullCommandText === "string" ? argumentsValue.fullCommandText : null) ??
+    (typeof argumentsValue.input === "string" ? argumentsValue.input : null);
+
+  if (directCommand?.trim()) {
+    return directCommand.trim();
+  }
+
+  return stringifyUnknown(argumentsValue) ?? null;
+}
+
+function extractToolExecutionDetails(event: Extract<SessionEvent, { type: "tool.execution_complete" }>): string | undefined {
+  const detailParts: string[] = [];
+  const result = event.data.result;
+
+  if (typeof result?.detailedContent === "string" && result.detailedContent.trim()) {
+    detailParts.push(result.detailedContent);
+  } else if (typeof result?.content === "string" && result.content.trim()) {
+    detailParts.push(result.content);
+  }
+
+  for (const content of result?.contents ?? []) {
+    if (content.type === "text" && content.text.trim()) {
+      detailParts.push(content.text);
+      continue;
+    }
+
+    if (content.type === "terminal" && content.text.trim()) {
+      const header = typeof content.cwd === "string" && content.cwd.trim() ? `cwd: ${content.cwd}` : null;
+      const exitCode = typeof content.exitCode === "number" ? `exit code: ${content.exitCode}` : null;
+      detailParts.push([header, content.text, exitCode].filter((part) => part && part.trim()).join("\n"));
+    }
+  }
+
+  if (event.data.error?.message?.trim()) {
+    detailParts.push(event.data.error.message);
+  }
+
+  const normalized = detailParts.map((part) => part.trim()).filter((part) => part.length > 0);
+  return normalized.length > 0 ? normalized.join("\n\n") : undefined;
+}
+
+function toMessageOperations(steps: Map<string, LiveRunStep>): MessageOperation[] {
+  return Array.from(steps.values())
+    .map((step) => ({ ...step }));
+}
+
+type PermissionDecisionKind =
+  | "approved"
+  | "denied-by-rules"
+  | "denied-no-approval-rule-and-could-not-request-from-user"
+  | "denied-interactively-by-user"
+  | "denied-by-content-exclusion-policy";
+
+type CopilotRuntimePermissionResult =
+  | { kind: "approve-once" }
+  | { kind: "reject"; feedback?: string }
+  | { kind: "user-not-available" };
+
+function toPermissionDecision(kind: PermissionDecisionKind): PermissionRequestResult {
+  let result: CopilotRuntimePermissionResult;
+  switch (kind) {
+    case "approved":
+      result = { kind: "approve-once" };
+      break;
+    case "denied-interactively-by-user":
+    case "denied-by-rules":
+    case "denied-by-content-exclusion-policy":
+      result = { kind: "reject" };
+      break;
+    case "denied-no-approval-rule-and-could-not-request-from-user":
+    default:
+      result = { kind: "user-not-available" };
+      break;
+  }
+
+  // `@github/copilot-sdk` public types advertise v2 `PermissionRequestResult`,
+  // but the bundled `@github/copilot` runtime still validates legacy user
+  // permission response kinds (`approve-once`, `reject`, `user-not-available`).
+  // Returning v2 kinds like `approved` trips the runtime validator with
+  // `unexpected user permission response`, so we intentionally bridge to the
+  // legacy wire contract here.
+  return result as unknown as PermissionRequestResult;
+}
+
+function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
+  switch (request.kind) {
+    case "read":
+      return true;
+    case "mcp":
+      return isRecord(request) && request.readOnly === true;
+    default:
+      return false;
+  }
+}
+
+function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
+  const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+  const requestIds = new WeakMap<PermissionRequest, string>();
+  switch (normalizeApprovalMode(input.executionOptions.approvalMode)) {
+    case "never":
+      return () => toPermissionDecision("approved");
+    case "untrusted":
+      return (request) => (
+        isReadOnlyPermissionRequest(request)
+          ? toPermissionDecision("approved")
+          : toPermissionDecision("denied-by-rules")
+      );
+    case "on-request":
+    default:
+      return async (request) => {
+        if (isReadOnlyPermissionRequest(request)) {
+          return toPermissionDecision("approved");
+        }
+
+        if (!input.onApprovalRequest) {
+          return toPermissionDecision("denied-no-approval-rule-and-could-not-request-from-user");
+        }
+
+        let requestId = requestIds.get(request);
+        if (!requestId) {
+          requestId = randomUUID();
+          requestIds.set(request, requestId);
+        }
+        const decision = await input.onApprovalRequest(
+          redactor.sanitize(buildCopilotApprovalRequest(request, requestId, input.providerCatalog.id, resolveRunWorkspacePath(input))),
+        );
+        return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
+      };
+  }
+}
+
+
+function buildCopilotBootstrapDebugItems(
+  input: RunSessionTurnInput,
+  cliPath: string,
+  phase: string,
+  message: string,
+): string {
+  return JSON.stringify([
+    {
+      type: "copilot_bootstrap_debug",
+      phase,
+      message,
+      cliPath,
+      provider: input.providerCatalog.id,
+      model: input.executionOptions.model,
+      reasoningEffort: input.executionOptions.reasoningEffort,
+      approvalMode: input.executionOptions.approvalMode,
+      workspacePath: resolveRunWorkspacePath(input),
+      threadId: input.session.threadId,
+      hasApiKey: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length > 0,
+      useLoggedInUser: getProviderAppSettings(input.appSettings, input.providerCatalog.id).apiKey.trim().length === 0,
+    },
+  ], null, 2);
+}
+
+function logCopilotRuntime(message: string, details: Record<string, unknown>): void {
+  console.warn(`[copilot] ${message} ${JSON.stringify(details)}`);
+}
+
+async function emitLiveState(
+  handler: RunSessionTurnProgressHandler | undefined,
+  sessionId: string,
+  threadId: string | null,
+  steps: ProviderProgressMap<LiveRunStep>,
+  backgroundTasks: ProviderProgressMap<LiveBackgroundTask>,
+  assistantText: string,
+  reasoningText: string,
+  usage: ProviderUsage | null,
+  errorMessage: string,
+  redactor = createProviderAgentRuntimeBindingRedactor(null),
+): Promise<void> {
+  if (!handler) {
+    return;
+  }
+  const stepProgress = steps.takeProgress(redactor);
+  const taskProgress = backgroundTasks.takeProgress(redactor);
+  await handler({
+    sessionId,
+    threadId: threadId ?? "",
+    assistantText: redactor.sanitizeText(toProviderTextPreview(assistantText) ?? ""),
+    reasoningText: redactor.sanitizeText(toProviderTextPreview(reasoningText) ?? ""),
+    steps: stepProgress.snapshot,
+    backgroundTasks: sortLiveBackgroundTasks(taskProgress.snapshot),
+    usage,
+    errorMessage: redactor.sanitizeText(errorMessage),
+    approvalRequest: null,
+    elicitationRequest: null,
+  }, { steps: stepProgress.changes, backgroundTasks: taskProgress.changes });
+}
+
+function waitForCopilotSessionCompletion(
+  session: CopilotSession,
+): { wait: Promise<void>; idle: Promise<void>; dispose: () => void } {
+  let settled = false;
+  let resolveWait!: () => void;
+  let rejectWait!: (error: Error) => void;
+
+  const wait = new Promise<void>((resolve, reject) => {
+    resolveWait = resolve;
+    rejectWait = reject;
+  });
+  let resolveIdle!: () => void;
+  const idle = new Promise<void>((resolve) => { resolveIdle = resolve; });
+
+  const settle = (handler: () => void) => {
+    if (settled) {
+      return;
+    }
+
+    settled = true;
+    handler();
+  };
+
+  const unsubscribe = session.on((event) => {
+    if (event.type === "session.idle") {
+      resolveIdle();
+      settle(() => resolveWait());
+      return;
+    }
+
+    if (event.type === "session.error") {
+      const error = new Error(event.data.message);
+      error.stack = event.data.stack;
+      settle(() => rejectWait(error));
+    }
+  });
+
+  return {
+    wait,
+    idle,
+    dispose: () => {
+      unsubscribe();
+    },
+  };
+}
+
+export function buildCopilotSessionSettings(
+  input: RunSessionTurnInput,
+  prompt: ProviderPromptComposition,
+  clientKey: string,
+  resolveCustomAgents: typeof resolveSessionCustomAgentConfigs = resolveSessionCustomAgentConfigs,
+): CopilotSessionSettings {
+  const selection = resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort);
+  const workspacePath = resolveRunWorkspacePath(input);
+  const resolvedCustomAgents = resolveCustomAgents(
+    workspacePath,
+    input.executionOptions.customAgentName,
+  );
+  const systemMessage = buildCopilotSystemMessage(prompt);
+  const config: SessionConfig = {
+    model: selection.resolvedModel,
+    ...(selection.resolvedReasoningEffort ? { reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort) } : {}),
+    workingDirectory: workspacePath,
+    streaming: true,
+    onPermissionRequest: buildPermissionHandler(input),
+    ...(input.agentRuntimeBinding?.managedMcp
+      ? { mcpServers: buildManagedHttpMcpServers(input.agentRuntimeBinding) }
+      : {}),
+    ...(systemMessage ? { systemMessage } : {}),
+    ...(resolvedCustomAgents.customAgents.length > 0 ? { customAgents: resolvedCustomAgents.customAgents } : {}),
+    ...(resolvedCustomAgents.selectedAgentName ? { agent: resolvedCustomAgents.selectedAgentName } : {}),
+  };
+
+  return {
+    config,
+    selection,
+    settingsKey: JSON.stringify([
+      clientKey,
+      config.model,
+      config.reasoningEffort,
+      config.workingDirectory,
+      input.executionOptions.approvalMode,
+      systemMessage?.mode ?? "",
+      systemMessage?.content ?? "",
+      input.executionOptions.customAgentName,
+      resolvedCustomAgents.customAgents.map((agent) => JSON.stringify({
+        name: agent.name,
+        displayName: agent.displayName ?? "",
+        description: agent.description ?? "",
+        prompt: agent.prompt,
+        tools: agent.tools ?? null,
+      })).join("\u001f"),
+    ]),
+  };
+}
+
+async function createOrResumeCopilotSession(
+  client: CopilotSessionConnector,
+  threadId: string | null,
+  config: SessionConfig,
+): Promise<CopilotSession> {
+  if (!threadId?.trim()) {
+    return client.createSession(config);
+  }
+
+  try {
+    return await client.resumeSession(threadId, config);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isRecoverableCopilotMissingSessionErrorMessage(message)) {
+      throw error;
+    }
+
+    return client.createSession(config);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function buildCopilotBackgroundTaskKey(kind: "agent" | "shell", id: string): string {
+  return `${kind}:${id}`;
+}
+
+function buildCopilotBackgroundTaskTitle(description: string | undefined, fallback: string): string {
+  const trimmed = description?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : fallback;
+}
+
+export function sortLiveBackgroundTasks(tasks: Iterable<LiveBackgroundTask>): LiveBackgroundTask[] {
+  return Array.from(tasks).sort((left, right) => {
+    const statusOrder = (status: LiveBackgroundTask["status"]): number => {
+      switch (status) {
+        case "running":
+          return 0;
+        case "failed":
+          return 1;
+        case "completed":
+        default:
+          return 2;
+      }
+    };
+
+    const byStatus = statusOrder(left.status) - statusOrder(right.status);
+    if (byStatus !== 0) {
+      return byStatus;
+    }
+
+    return right.updatedAt.localeCompare(left.updatedAt);
+  });
+}
+
+function trimTerminalBackgroundTasks(tasks: Map<string, LiveBackgroundTask>, maxTerminal = 6): void {
+  const terminalTasks = sortLiveBackgroundTasks(tasks.values()).filter((task) => task.status !== "running");
+  if (terminalTasks.length <= maxTerminal) {
+    return;
+  }
+
+  for (const task of terminalTasks.slice(maxTerminal)) {
+    tasks.delete(task.id);
+  }
+}
+
+export function applyCopilotBackgroundTaskEvent(
+  tasks: Map<string, LiveBackgroundTask>,
+  event: SessionEvent,
+): boolean {
+  switch (event.type) {
+    case "session.idle": {
+      let changed = false;
+      for (const [key, task] of tasks.entries()) {
+        if (task.status !== "running") {
+          continue;
+        }
+
+        tasks.delete(key);
+        changed = true;
+      }
+
+      return changed;
+    }
+    case "system.notification": {
+      const kind = event.data.kind;
+      switch (kind.type) {
+        case "agent_idle": {
+          const key = buildCopilotBackgroundTaskKey("agent", kind.agentId);
+          tasks.set(key, {
+            id: key,
+            kind: "agent",
+            status: "running",
+            title: buildCopilotBackgroundTaskTitle(kind.description, `${kind.agentType} agent`),
+            details: kind.agentType,
+            updatedAt: event.timestamp,
+          });
+          return true;
+        }
+        case "agent_completed": {
+          const key = buildCopilotBackgroundTaskKey("agent", kind.agentId);
+          tasks.set(key, {
+            id: key,
+            kind: "agent",
+            status: kind.status === "failed" ? "failed" : "completed",
+            title: buildCopilotBackgroundTaskTitle(kind.description, `${kind.agentType} agent`),
+            details: kind.prompt?.trim() ? kind.prompt : kind.agentType,
+            updatedAt: event.timestamp,
+          });
+          trimTerminalBackgroundTasks(tasks);
+          return true;
+        }
+        case "shell_completed":
+        case "shell_detached_completed": {
+          const key = buildCopilotBackgroundTaskKey("shell", kind.shellId);
+          const detailParts: string[] = [];
+          const exitCode = "exitCode" in kind && typeof kind.exitCode === "number" ? kind.exitCode : null;
+          if (exitCode !== null) {
+            detailParts.push(`exitCode: ${exitCode}`);
+          }
+          tasks.set(key, {
+            id: key,
+            kind: "shell",
+            status: exitCode !== null && exitCode !== 0 ? "failed" : "completed",
+            title: buildCopilotBackgroundTaskTitle(kind.description, "background shell"),
+            details: detailParts.length > 0 ? detailParts.join("\n") : undefined,
+            updatedAt: event.timestamp,
+          });
+          trimTerminalBackgroundTasks(tasks);
+          return true;
+        }
+        default:
+          return false;
+      }
+    }
+    default:
+      return false;
+  }
+}
+
+export async function resolveCopilotSessionForSettings(args: {
+  cached: { session: CopilotSession; settingsKey: string } | undefined;
+  nextSettingsKey: string;
+  threadId: string | null;
+  config: SessionConfig;
+  client: CopilotSessionConnector;
+}): Promise<{ session: CopilotSession; reusedCached: boolean }> {
+  const {
+    cached,
+    nextSettingsKey,
+    threadId,
+    config,
+    client,
+  } = args;
+
+  if (cached && cached.settingsKey === nextSettingsKey) {
+    return {
+      session: cached.session,
+      reusedCached: true,
+    };
+  }
+
+  if (cached) {
+    void cached.session.disconnect().catch(() => undefined);
+  }
+
+  return {
+    session: await createOrResumeCopilotSession(client, threadId, config),
+    reusedCached: false,
+  };
+}
+
+type CopilotAdapterOptions = {
+  createClient?: (options: ConstructorParameters<typeof CopilotClient>[0]) => CopilotClient;
+  onBackgroundTasksChanged?: (sessionId: string, tasks: LiveBackgroundTask[]) => void;
+  log?: (input: CopilotAdapterLogInput) => void;
+  clientStopTimeoutMs?: number;
+  sessionDisconnectTimeoutMs?: number;
+  turnCancelGraceMs?: number;
+};
+
+const COPILOT_CLIENT_STOP_TIMEOUT_MS = 5_000;
+const COPILOT_SESSION_DISCONNECT_TIMEOUT_MS = 5_000;
+const COPILOT_TURN_CANCEL_GRACE_MS = 5_000;
+
+type CopilotProcessLifetime = { child: ChildProcess; exited: Promise<void> };
+
+function captureCopilotProcessLifetime(client: CopilotClient): CopilotProcessLifetime | null {
+  // The stdio SDK has no public exit hook. Read its owned child before stop()
+  // clears the handle; forceStop() alone does not confirm process termination.
+  const child: unknown = Reflect.get(client, "cliProcess");
+  if (!(child instanceof ChildProcess)) {
+    return null;
+  }
+  const exited = new Promise<void>((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+    } else {
+      child.once("exit", () => resolve());
+    }
+  });
+  return { child, exited };
+}
+
+async function disconnectCopilotSession(
+  session: Pick<CopilotSession, "disconnect">,
+  timeoutMs: number = COPILOT_SESSION_DISCONNECT_TIMEOUT_MS,
+): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const disconnect = session.disconnect().catch(() => undefined);
+  const timeout = new Promise<void>((resolve) => {
+    timeoutId = setTimeout(resolve, timeoutMs);
+  });
+  await Promise.race([disconnect, timeout]);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function stopCopilotClient(
+  client: CopilotClient,
+  timeoutMs: number = COPILOT_CLIENT_STOP_TIMEOUT_MS,
+): Promise<void> {
+  const gracefulStop = await settleCopilotCleanupWithin(() => client.stop(), timeoutMs);
+  if (gracefulStop.status !== "settled" || gracefulStop.value.length > 0) {
+    await settleCopilotCleanupWithin(() => client.forceStop(), timeoutMs);
+  }
+}
+
+type CopilotCleanupSettlement<T> =
+  | { status: "settled"; value: T }
+  | { status: "rejected"; error: unknown }
+  | { status: "timed_out" };
+
+async function settleCopilotCleanupWithin<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+): Promise<CopilotCleanupSettlement<T>> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const operationSettlement: Promise<CopilotCleanupSettlement<T>> = Promise.resolve()
+    .then(operation)
+    .then(
+      (value) => ({ status: "settled", value }),
+      (error: unknown) => ({ status: "rejected", error }),
+    );
+  const timeoutSettlement = new Promise<CopilotCleanupSettlement<T>>((resolve) => {
+    timeoutId = setTimeout(() => resolve({ status: "timed_out" }), Math.max(0, timeoutMs));
+  });
+  const settlement = await Promise.race([operationSettlement, timeoutSettlement]);
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+  }
+  return settlement;
+}
+
+export class CopilotAdapter implements ProviderTurnAdapter {
+  private readonly clients = new Map<string, CopilotClient>();
+  private readonly sessions = new Map<string, CachedCopilotSession>();
+  private readonly clientKeysBySession = new Map<string, string>();
+
+  constructor(private options: CopilotAdapterOptions = {}) {}
+
+  private async stopClient(client: CopilotClient): Promise<void> {
+    await stopCopilotClient(client, this.options.clientStopTimeoutMs);
+  }
+
+  private async disconnectSession(session: Pick<CopilotSession, "disconnect">): Promise<void> {
+    await disconnectCopilotSession(session, this.options.sessionDisconnectTimeoutMs);
+  }
+
+  private writeLog(input: CopilotAdapterLogInput): void {
+    try {
+      this.options.log?.(input);
+    } catch {
+      // Logging must not affect provider execution.
+    }
+  }
+
+  composePrompt(input: RunSessionTurnInput): ProviderPromptComposition {
+    return composeProviderPrompt(input);
+  }
+
+  async listModels(input: ListProviderModelsInput): Promise<ModelCatalogProvider> {
+    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
+    signal.throwIfAborted();
+    let client: CopilotClient | undefined;
+    let abort: (() => void) | undefined;
+    try {
+      const apiKey = getProviderAppSettings(input.appSettings, "copilot").apiKey.trim();
+      const options = { connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
+        workingDirectory: input.workspacePath, env: buildCopilotClientEnv(process.env),
+        ...(apiKey ? { gitHubToken: apiKey, useLoggedInUser: false } : {}) };
+      client = this.options.createClient?.(options) ?? new CopilotClient(options);
+      const ownedClient = client;
+      const metadata = await Promise.race([
+        (async () => { await ownedClient.start(); signal.throwIfAborted(); return ownedClient.listModels(); })(),
+        new Promise<never>((_, reject) => {
+          abort = () => reject(new Error("Canceled"));
+          signal.addEventListener("abort", abort, { once: true });
+          if (signal.aborted) abort();
+        }),
+      ]);
+      const models = metadata.filter((model) => !model.policy || model.policy.state === "enabled").map((model) => ({
+        id: model.id, label: model.name,
+        reasoningEfforts: model.capabilities.supports.reasoningEffort ? model.supportedReasoningEfforts ?? [] : [],
+        defaultReasoningEffort: model.capabilities.supports.reasoningEffort ? model.defaultReasoningEffort ?? "" : "",
+      }));
+      return { id: "copilot", label: "GitHub Copilot", models, defaultModelId: models[0]?.id ?? "", defaultReasoningEffort: models[0]?.defaultReasoningEffort ?? "" };
+    } catch {
+      throw new Error(signal.aborted ? "Copilot model discovery canceled" : "Copilot models could not be retrieved");
+    } finally {
+      if (abort) signal.removeEventListener("abort", abort);
+      if (client) {
+        const lifetime = captureCopilotProcessLifetime(client);
+        const timeout = this.options.clientStopTimeoutMs ?? COPILOT_CLIENT_STOP_TIMEOUT_MS;
+        const stopped = await settleCopilotCleanupWithin(() => client!.stop(), timeout);
+        if (stopped.status !== "settled" || stopped.value.length > 0) {
+          const forced = await settleCopilotCleanupWithin(() => client!.forceStop(), timeout);
+          if (forced.status !== "settled") throw new Error("Copilot model discovery process cleanup failed");
+        }
+        if (lifetime) {
+          const exited = await settleCopilotCleanupWithin(() => lifetime.exited, timeout);
+          if (exited.status !== "settled") throw new Error("Copilot model discovery process cleanup failed");
+        }
+      }
+    }
+  }
+
+
+  async invalidateSessionThread(sessionId: string): Promise<void> {
+    await this.disposeSessionAndClientCache(sessionId);
+  }
+
+  async invalidateAllSessionThreads(): Promise<void> {
+    const sessions = [...this.sessions.entries()];
+    const clients = [...this.clients.values()];
+    this.sessions.clear();
+    this.clients.clear();
+    this.clientKeysBySession.clear();
+    const disconnects = sessions.map(async ([sessionId, cached]) => {
+      cached.unsubscribeBackgroundObserver?.();
+      this.options.onBackgroundTasksChanged?.(sessionId, []);
+      await this.disconnectSession(cached.session);
+    });
+    await Promise.all([
+      ...disconnects,
+      ...clients.map((client) => this.stopClient(client)),
+    ]);
+  }
+
+  async getProviderQuotaTelemetry({
+    providerId,
+    appSettings,
+  }: {
+    providerId: string;
+    appSettings: RunSessionTurnInput["appSettings"];
+  }): Promise<ProviderQuotaTelemetry | null> {
+    return this.fetchProviderQuotaTelemetry(providerId, appSettings);
+  }
+
+
+
+  private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
+    const binding = input.agentRuntimeBinding;
+    if (binding?.transport !== "env" || !binding.bindingReference.trim()) {
+      throw new Error("Copilot Session provider execution requires an Agent runtime binding.");
+    }
+    const codingApiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
+    const clientKey = buildCopilotClientKey(providerId, input);
+    const cached = this.clients.get(clientKey);
+    if (cached) {
+      return { client: cached, clientKey };
+    }
+
+    const cliPath = resolveCopilotCliPath();
+    const client = new CopilotClient({
+      connection: RuntimeConnection.forStdio({ path: cliPath }),
+      env: buildCopilotClientEnv(process.env, input.agentRuntimeBinding),
+      ...(codingApiKey ? { gitHubToken: codingApiKey, useLoggedInUser: false } : {}),
+    });
+    this.clients.set(clientKey, client);
+    return { client, clientKey };
+  }
+
+  private getOrCreateClientByAppSettings(providerId: string, appSettings: RunSessionTurnInput["appSettings"]): CopilotClient {
+    const clientKey = buildCopilotClientKeyFromAppSettings(providerId, appSettings);
+    const cached = this.clients.get(clientKey);
+    if (cached) {
+      return cached;
+    }
+
+    const apiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
+    const client = new CopilotClient({
+      connection: RuntimeConnection.forStdio({ path: resolveCopilotCliPath() }),
+      env: buildCopilotClientEnv(process.env),
+      ...(apiKey ? { gitHubToken: apiKey, useLoggedInUser: false } : {}),
+    });
+    this.clients.set(clientKey, client);
+    return client;
+  }
+
+
+
+  private async disposeSessionCache(sessionId: string): Promise<void> {
+    const cached = this.sessions.get(sessionId);
+    this.sessions.delete(sessionId);
+    if (cached) {
+      cached.unsubscribeBackgroundObserver?.();
+      this.options.onBackgroundTasksChanged?.(sessionId, []);
+      await this.disconnectSession(cached.session);
+    }
+  }
+
+  private async disposeClientCache(clientKey: string): Promise<void> {
+    const client = this.clients.get(clientKey);
+    this.clients.delete(clientKey);
+    if (client) {
+      await this.stopClient(client);
+    }
+  }
+
+  private async disposeSessionAndClientCache(sessionId: string): Promise<void> {
+    const clientKey = this.clientKeysBySession.get(sessionId);
+    const cached = this.sessions.get(sessionId);
+    const client = clientKey ? this.clients.get(clientKey) : undefined;
+    this.clientKeysBySession.delete(sessionId);
+    this.sessions.delete(sessionId);
+    if (clientKey) {
+      this.clients.delete(clientKey);
+    }
+    if (cached) {
+      try {
+        cached.unsubscribeBackgroundObserver?.();
+      } catch {
+        // Cache ownership is already detached; observer cleanup is best effort.
+      }
+      try {
+        this.options.onBackgroundTasksChanged?.(sessionId, []);
+      } catch {
+        // UI projection failure must not retain the old provider ownership.
+      }
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (cached) {
+      await this.disconnectSession(cached.session);
+    }
+    if (client) {
+      await this.stopClient(client);
+    }
+  }
+
+  setBackgroundTasksObserver(observer: CopilotAdapterOptions["onBackgroundTasksChanged"]): void {
+    this.options.onBackgroundTasksChanged = observer;
+    for (const [sessionId, cached] of this.sessions.entries()) {
+      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+    }
+  }
+
+  private attachBackgroundTaskObserver(
+    sessionId: string,
+    cached: CachedCopilotSession,
+    redactor: ProviderAgentRuntimeBindingRedactor,
+  ): void {
+    cached.unsubscribeBackgroundObserver?.();
+    cached.unsubscribeBackgroundObserver = cached.session.on((event) => {
+      if (this.sessions.get(sessionId) !== cached) {
+        return;
+      }
+      if (!applyCopilotBackgroundTaskEvent(cached.backgroundTasks, event)) {
+        return;
+      }
+
+      for (const [taskId, task] of cached.backgroundTasks.entries()) {
+        cached.backgroundTasks.set(taskId, {
+          ...task,
+          title: redactor.sanitizeText(task.title),
+          details: task.details === undefined ? undefined : redactor.sanitizeText(task.details),
+        });
+      }
+
+      this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
+    });
+  }
+
+  private async resetRecoverableConnection(input: RunSessionTurnInput): Promise<void> {
+    const mappedClientKey = this.clientKeysBySession.get(input.session.id);
+    const currentClientKey = buildCopilotClientKey(input.providerCatalog.id, input);
+    this.clientKeysBySession.delete(input.session.id);
+    await this.disposeSessionCache(input.session.id);
+    await Promise.all(
+      [...new Set([mappedClientKey, currentClientKey].filter((key): key is string => Boolean(key)))]
+        .map((clientKey) => this.disposeClientCache(clientKey)),
+    );
+  }
+
+  private async getSession(
+    input: RunSessionTurnInput,
+    prompt: ProviderPromptComposition,
+  ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection; client: CopilotClient; clientKey: string }> {
+    const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
+    const previousClientKey = this.clientKeysBySession.get(input.session.id);
+    this.clientKeysBySession.set(input.session.id, clientKey);
+    const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
+    const resolved = await resolveCopilotSessionForSettings({
+      cached: this.sessions.get(input.session.id),
+      nextSettingsKey: nextSettings.settingsKey,
+      threadId: input.session.threadId,
+      config: nextSettings.config,
+      client,
+    });
+    if (resolved.reusedCached) {
+      this.clientKeysBySession.set(input.session.id, clientKey);
+      return {
+        session: resolved.session,
+        selection: nextSettings.selection,
+        client,
+        clientKey,
+      };
+    }
+
+    if (previousClientKey && previousClientKey !== clientKey) {
+      await this.disposeClientCache(previousClientKey);
+    }
+
+    this.sessions.set(input.session.id, {
+      session: resolved.session,
+      settingsKey: nextSettings.settingsKey,
+      backgroundTasks: new Map<string, LiveBackgroundTask>(),
+    });
+    this.clientKeysBySession.set(input.session.id, clientKey);
+    const nextCached = this.sessions.get(input.session.id);
+    if (nextCached) {
+      this.attachBackgroundTaskObserver(
+        input.session.id,
+        nextCached,
+        createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding),
+      );
+    }
+
+    return {
+      session: resolved.session,
+      selection: nextSettings.selection,
+      client,
+      clientKey,
+    };
+  }
+
+  private detachCanceledTurn(sessionId: string, session: CopilotSession, client: CopilotClient, clientKey: string): void {
+    const cached = this.sessions.get(sessionId);
+    if (cached?.session === session) {
+      this.sessions.delete(sessionId);
+      try {
+        cached.unsubscribeBackgroundObserver?.();
+        this.options.onBackgroundTasksChanged?.(sessionId, []);
+      } catch {
+        // Projection cleanup must not prevent stopping the captured owner.
+      }
+      if (this.clientKeysBySession.get(sessionId) === clientKey) {
+        this.clientKeysBySession.delete(sessionId);
+      }
+    }
+    if (this.clients.get(clientKey) === client) {
+      this.clients.delete(clientKey);
+    }
+  }
+
+  private async stopCanceledTurn(
+    session: CopilotSession,
+    client: CopilotClient,
+    requestsSettled: Promise<PromiseSettledResult<unknown>[]>,
+    idle: Promise<void>,
+    redactor: ProviderAgentRuntimeBindingRedactor,
+    processLifetime: CopilotProcessLifetime | null,
+  ): Promise<string[]> {
+    const failures: string[] = [];
+    const describe = (name: string, result: CopilotCleanupSettlement<unknown>) => {
+      if (result.status === "rejected") {
+        failures.push(redactor.sanitizeText(`${name} failed: ${result.error instanceof Error ? result.error.message : String(result.error)}`));
+      } else if (result.status === "timed_out") {
+        failures.push(`${name} timed out`);
+      }
+    };
+    const graceful = await settleCopilotCleanupWithin(
+      () => Promise.all([requestsSettled, idle]),
+      this.options.turnCancelGraceMs ?? COPILOT_TURN_CANCEL_GRACE_MS,
+    );
+    describe("abort/idle confirmation", graceful);
+    const disconnected = await settleCopilotCleanupWithin(
+      () => session.disconnect(),
+      this.options.sessionDisconnectTimeoutMs ?? COPILOT_SESSION_DISCONNECT_TIMEOUT_MS,
+    );
+    describe("session disconnect", disconnected);
+    const stopped = await settleCopilotCleanupWithin(
+      () => client.stop(),
+      this.options.clientStopTimeoutMs ?? COPILOT_CLIENT_STOP_TIMEOUT_MS,
+    );
+    describe("client stop", stopped);
+    if (stopped.status !== "settled" || stopped.value.length > 0) {
+      if (stopped.status === "settled") {
+        failures.push(redactor.sanitizeText(`client stop failed: ${stopped.value.map((error) => error.message).join("; ")}`));
+      }
+      try {
+        // A deadline is not proof that the owned transport has stopped.
+        await client.forceStop();
+      } catch (error) {
+        const message = redactor.sanitizeText(error instanceof Error ? error.message : String(error));
+        failures.push(`client force stop failed: ${message}`);
+        this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+      }
+      const child = processLifetime?.child;
+      if (child && child.exitCode === null && child.signalCode === null) {
+        try {
+          if (!child.kill("SIGKILL")) {
+            throw new Error("Copilot CLI kill request was not accepted");
+          }
+        } catch (error) {
+          const message = redactor.sanitizeText(error instanceof Error ? error.message : String(error));
+          failures.push(`CLI process stop failed: ${message}`);
+          this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+        }
+      }
+    }
+    if (processLifetime) {
+      await processLifetime.exited;
+    } else {
+      // If SDK ownership cannot be observed, transport disposal is insufficient
+      // evidence. Only the original turn's idle can establish a safe boundary.
+      const message = "Copilot CLI process handle unavailable; waiting for original turn idle";
+      failures.push(message);
+      this.writeLog({ level: "error", kind: "provider.cancel-stop-failed", message, data: null });
+      await idle;
+    }
+    // Closing the SDK connection rejects pending send/abort RPCs. Observe both
+    // settlements before allowing another turn to use the conversation.
+    const results = await requestsSettled;
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        const error = result.reason as unknown;
+        failures.push(redactor.sanitizeText(`${index === 0 ? "send" : "abort"} failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    }
+    return failures;
+  }
+
+  private async buildTurnResult(
+    agentRuntimeBinding: ProviderAgentRuntimeBindingProjection | null | undefined,
+    threadId: string | null,
+    assistantText: string,
+    lastNonEmptyAssistantMessageText: string,
+    steps: Map<string, LiveRunStep>,
+    usage: ProviderUsage | null,
+    providerMetadata: ProviderDiagnosticMetadata[],
+    workspacePath: string,
+    session: Session,
+    executionOptions: SessionExecutionOptions,
+    providerCatalog: RunSessionTurnInput["providerCatalog"],
+    selection: ResolvedModelSelection,
+    beforeSnapshot: WorkspaceSnapshot,
+    beforeSnapshotStats: SnapshotCaptureStats,
+    providerQuotaTelemetry: ProviderQuotaTelemetry | null,
+  ): Promise<RunSessionTurnResult> {
+    const redactor = createProviderAgentRuntimeBindingRedactor(agentRuntimeBinding);
+    const { snapshot: afterSnapshot, stats: afterSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
+      ? await captureWorkspaceSnapshot([
+          workspacePath,
+          ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
+        ])
+      : createDisabledWorkspaceSnapshotCapture();
+    const operations = redactor.sanitize(toMessageOperations(steps));
+    for (const metadata of providerMetadata) {
+      this.writeLog({
+        level: "warn",
+        kind: "provider.unsupported-event",
+        message: redactor.sanitizeText(metadata.summary),
+        data: redactor.sanitize(toProviderMetadataLogData(metadata)),
+      });
+    }
+    const artifact = buildArtifactFromOperations({
+      session,
+      executionOptions,
+      operations,
+      usage,
+      threadId,
+      beforeSnapshot,
+      afterSnapshot,
+      beforeSnapshotStats,
+      afterSnapshotStats,
+      providerCatalog,
+      selection,
+    });
+
+    return {
+      threadId,
+      assistantText: redactor.sanitizeText(assistantText),
+      lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
+      artifact: redactor.sanitize(artifact),
+      providerMetadata,
+      usage,
+      providerQuotaTelemetry,
+    };
+  }
+
+  private async runSessionTurnOnce(
+    input: RunSessionTurnInput,
+    prompt: ProviderPromptComposition,
+    onProgress?: RunSessionTurnProgressHandler,
+    onAcquiredToolResult?: () => void,
+  ): Promise<RunSessionTurnResult> {
+    const messageAttachments = buildCopilotMessageAttachments(input.attachments);
+    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    const workspacePath = resolveRunWorkspacePath(input);
+
+    const cliPath = resolveCopilotCliPath();
+    const { snapshot: beforeSnapshot, stats: beforeSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
+      ? await captureWorkspaceSnapshot([
+          workspacePath,
+          ...normalizeAllowedAdditionalDirectories(workspacePath, input.session.allowedAdditionalDirectories),
+        ])
+      : createDisabledWorkspaceSnapshotCapture();
+    let session: CopilotSession;
+    let selection: ResolvedModelSelection;
+    let client: CopilotClient;
+    let clientKey: string;
+    try {
+      ({ session, selection, client, clientKey } = await this.getSession(input, prompt));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logCopilotRuntime("session bootstrap failed", {
+        cliPath,
+        provider: input.providerCatalog.id,
+        model: input.executionOptions.model,
+        workspacePath,
+        threadId: input.session.threadId,
+        message: redactor.sanitizeText(message),
+      });
+      throw new ProviderTurnError(
+        redactor.sanitizeText(message),
+        {
+          threadId: input.session.threadId || null,
+          assistantText: "",
+          providerMetadata: [{ provider: "copilot", kind: "bootstrap_failure", summary: redactor.sanitizeText(message),
+            payload: redactor.sanitizeText(buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message)) }],
+          usage: null,
+          providerQuotaTelemetry: null,
+        },
+        Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
+      );
+    }
+    const streamState = createCopilotTurnStreamState(redactor);
+    let observingTurn = true;
+    let progressFailure: unknown;
+    let interactionFailure: unknown;
+    const interestHandles: string[] = [];
+    const interactionTasks: Promise<void>[] = [];
+    let stopForProgressFailure = () => {};
+    const progressDelivery = new ProviderProgressDelivery(onProgress, (error) => {
+      progressFailure ??= error;
+      stopForProgressFailure();
+    });
+    const scheduleLiveState = () => {
+      if (!onProgress || progressFailure) return Promise.resolve();
+      return emitLiveState(
+          (state, changes) => progressDelivery.deliver(state, changes),
+          input.session.id,
+          session.sessionId,
+          streamState.liveSteps,
+          streamState.backgroundTasks,
+          streamState.assistantText,
+          streamState.reasoningText,
+          streamState.usage,
+          streamState.streamErrorMessage,
+          redactor,
+        );
+    };
+
+    await emitLiveState(
+      onProgress,
+      input.session.id,
+      session.sessionId,
+      streamState.liveSteps,
+      streamState.backgroundTasks,
+      streamState.assistantText,
+      streamState.reasoningText,
+      streamState.usage,
+      streamState.streamErrorMessage,
+      redactor,
+    );
+
+    const unsubscribe = session.on((event) => {
+      if (!observingTurn || progressFailure) {
+        return;
+      }
+      applyCopilotTurnEvent({
+        event,
+        state: streamState,
+        providerId: input.providerCatalog.id,
+        sessionId: input.session.id,
+        workspacePath,
+        onProviderQuotaTelemetry: input.onProviderQuotaTelemetry,
+        onSessionContextTelemetry: input.onSessionContextTelemetry,
+      });
+      if (event.type === "tool.execution_complete"
+        || (event.type === "tool.execution_partial_result" && event.data.partialOutput.trim())) {
+        onAcquiredToolResult?.();
+      }
+      if (event.type === "elicitation.requested" || event.type === "user_input.requested") {
+        const request = event.type === "user_input.requested"
+          ? buildLiveElicitationRequestFromCopilotUserInput(input.providerCatalog.id, event)
+          : buildElicitationRequestProjection(input.providerCatalog.id, event);
+        if (!request) {
+          this.writeLog({ level: "warn", kind: "provider.unsupported-interaction", message: "Unsupported Copilot elicitation schema; declining the entire request." });
+        }
+        const redactedRequest = request ? {
+          ...redactor.sanitize(request), requestId: request.requestId,
+          textPosition: redactor.sanitizeText(streamState.assistantText).length,
+        } : null;
+        interactionTasks.push(scheduleLiveState()
+          .then(() => observingTurn && redactedRequest && input.onElicitationRequest
+            ? input.onElicitationRequest(redactedRequest, input.signal)
+            : { action: request ? "cancel" : "decline" } as LiveElicitationResponse)
+          .then(async (response) => {
+            if (!observingTurn || cancellationCleanup) return;
+            const answer = response.action === "accept" ? response.content?.answer : "";
+            const result = event.type === "user_input.requested"
+              ? await session.rpc.ui.handlePendingUserInput({ requestId: event.data.requestId, response: {
+                  answer: typeof answer === "string" ? answer : "",
+                  wasFreeform: !event.data.choices?.includes(typeof answer === "string" ? answer : ""),
+                } })
+              : await session.rpc.ui.handlePendingElicitation({ requestId: event.data.requestId, result: response });
+            if (!result.success) throw new Error("Copilot input request is no longer pending.");
+          })
+          .catch((error: unknown) => {
+            logCopilotRuntime("elicitation handling failed", {
+              provider: input.providerCatalog.id,
+              model: input.executionOptions.model,
+              workspacePath,
+              threadId: session.sessionId,
+              requestId: event.data.requestId,
+              message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
+            });
+            if (observingTurn && !cancellationCleanup) {
+              interactionFailure ??= error;
+              handleAbort();
+            }
+          }));
+      }
+      void scheduleLiveState().catch(() => undefined);
+    });
+
+    const completion = waitForCopilotSessionCompletion(session);
+    const send = Promise.resolve().then(async () => {
+      for (const eventType of ["user_input.requested", "elicitation.requested"]) {
+        const { handle } = await session.rpc.eventLog.registerInterest({ eventType });
+        interestHandles.push(handle);
+      }
+      if (!observingTurn || input.signal?.aborted) return;
+      return session.send({
+        prompt: prompt.inputBodyText,
+        ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
+      });
+    });
+    const execution = Promise.all([send, completion.wait]).then(async () => {
+      await Promise.all(interactionTasks);
+      await progressDelivery.drain();
+    });
+    let cancellationCleanup: Promise<never> | undefined;
+    let cancellationFailures: string[] = [];
+    let rejectCancellation!: (error: unknown) => void;
+    const cancellation = new Promise<never>((_resolve, reject) => { rejectCancellation = reject; });
+    const handleAbort = () => {
+      if (cancellationCleanup || !observingTurn) {
+        return;
+      }
+      // Detach synchronously, before runtime's canceled terminal invalidation.
+      const processLifetime = captureCopilotProcessLifetime(client);
+      this.detachCanceledTurn(input.session.id, session, client, clientKey);
+      const abort = Promise.resolve().then(() => session.abort());
+      const requestsSettled = Promise.allSettled([send, abort]);
+      cancellationCleanup = (async () => {
+        const failures = await this.stopCanceledTurn(
+          session,
+          client,
+          requestsSettled,
+          completion.idle,
+          redactor,
+          processLifetime,
+        );
+        cancellationFailures = failures;
+        if (failures.length > 0) {
+          this.writeLog({ level: "warn", kind: "provider.cancel-cleanup", message: failures.join("; "), data: null });
+        }
+        throw new Error(["Abort requested", ...failures].join("; "));
+      })();
+      void cancellationCleanup.catch(rejectCancellation);
+    };
+    stopForProgressFailure = handleAbort;
+    if (progressFailure) handleAbort();
+    input.signal?.addEventListener("abort", handleAbort, { once: true });
+    if (input.signal?.aborted) handleAbort();
+
+    try {
+      try {
+        await Promise.race([execution, cancellation]);
+      } finally {
+        if (cancellationCleanup) {
+          await cancellationCleanup;
+        }
+      }
+      observingTurn = false;
+      completion.dispose();
+      if (progressFailure) throw progressFailure;
+      if (interactionFailure) throw interactionFailure;
+
+      if (streamState.streamErrorMessage) {
+        const partialResult = await this.buildTurnResult(
+          input.agentRuntimeBinding,
+          session.sessionId,
+          streamState.assistantText,
+          streamState.lastNonEmptyAssistantMessageText,
+          streamState.operationSteps,
+          streamState.usage,
+          streamState.providerMetadata,
+          workspacePath,
+          input.session,
+          input.executionOptions,
+          input.providerCatalog,
+          selection,
+          beforeSnapshot,
+          beforeSnapshotStats,
+          null,
+        );
+        throw new ProviderTurnError(
+          redactor.sanitizeText(streamState.streamErrorMessage),
+          partialResult,
+          Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage),
+        );
+      }
+
+      return this.buildTurnResult(
+        input.agentRuntimeBinding,
+        session.sessionId,
+        streamState.assistantText,
+        streamState.lastNonEmptyAssistantMessageText,
+        streamState.operationSteps,
+        streamState.usage,
+        streamState.providerMetadata,
+        workspacePath,
+        input.session,
+        input.executionOptions,
+        input.providerCatalog,
+        selection,
+        beforeSnapshot,
+        beforeSnapshotStats,
+        null,
+      );
+    } catch (error) {
+      observingTurn = false;
+      completion.dispose();
+      if (error instanceof ProviderTurnError) {
+        throw error;
+      }
+
+      const failure = progressFailure ?? interactionFailure ?? error;
+      const message = failure instanceof Error ? failure.message : String(failure);
+      const partialResult = await this.buildTurnResult(
+        input.agentRuntimeBinding,
+        session.sessionId,
+        streamState.assistantText,
+        streamState.lastNonEmptyAssistantMessageText,
+        streamState.operationSteps,
+        streamState.usage,
+        streamState.providerMetadata,
+        workspacePath,
+        input.session,
+        input.executionOptions,
+        input.providerCatalog,
+        selection,
+        beforeSnapshot,
+        beforeSnapshotStats,
+        null,
+      );
+      if (cancellationFailures.length > 0) {
+        partialResult.providerMetadata = [
+          ...(partialResult.providerMetadata ?? []),
+          {
+            provider: input.providerCatalog.id,
+            kind: "cancellation_cleanup",
+            source: "CopilotAdapter",
+            summary: "Copilot cancellation cleanup encountered incomplete or failed stop requests",
+            payload: { failures: cancellationFailures },
+          },
+        ];
+      }
+      logCopilotRuntime("turn execution failed", {
+        cliPath,
+        provider: input.providerCatalog.id,
+        model: input.executionOptions.model,
+        workspacePath,
+        threadId: session.sessionId,
+        message: redactor.sanitizeText(message),
+      });
+      throw new ProviderTurnError(
+        redactor.sanitizeText(message),
+        partialResult,
+        !progressFailure && !interactionFailure && (Boolean(input.signal?.aborted) || isCanceledProviderMessage(message)),
+      );
+    } finally {
+      observingTurn = false;
+      completion.dispose();
+      unsubscribe();
+      input.signal?.removeEventListener("abort", handleAbort);
+      if (!cancellationCleanup) {
+        for (const handle of interestHandles) {
+          await session.rpc.eventLog.releaseInterest({ handle }).catch((error: unknown) => {
+            this.writeLog({ level: "warn", kind: "provider.interaction-interest-release-failed",
+              message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)) });
+          });
+        }
+      }
+    }
+  }
+
+  async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
+    const prompt = this.composePrompt(input);
+    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
+    let acquiredToolResult = false;
+
+    try {
+      return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolResult = true; });
+    } catch (error) {
+      if (acquiredToolResult || !shouldRetryCopilotTurn(error)) {
+        throw error;
+      }
+
+      logCopilotRuntime("retrying stale connection", {
+        provider: input.providerCatalog.id,
+        model: input.executionOptions.model,
+        workspacePath: resolveRunWorkspacePath(input),
+        threadId: input.session.threadId,
+        message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
+      });
+      await this.resetRecoverableConnection(input);
+      return this.runSessionTurnOnce(input, prompt, onProgress);
+    }
+  }
+
+  private async fetchProviderQuotaTelemetry(
+    providerId: string,
+    appSettings: RunSessionTurnInput["appSettings"],
+  ): Promise<ProviderQuotaTelemetry | null> {
+    const client = this.getOrCreateClientByAppSettings(providerId, appSettings);
+    await client.start();
+    const quota = await client.rpc.account.getQuota({});
+    return buildProviderQuotaTelemetryProjection(providerId, quota.quotaSnapshots, new Date().toISOString());
+  }
+}

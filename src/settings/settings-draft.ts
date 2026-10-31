@@ -10,10 +10,9 @@ import {
   type MemoryExtractionProviderSettings,
   type MateMemoryGenerationProviderSettings,
   type ProviderAppSettings,
-} from "../provider-settings-state.js";
-import { coerceModelSelection, type ModelCatalogProvider } from "../model-catalog.js";
-import type { MicrocopySlot } from "../microcopy-state.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
+import { resolveModelChangeSelection, type ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
 
 export function updateMemoryGenerationEnabled(
   draft: AppSettings,
@@ -32,6 +31,46 @@ export function updateAutoCollapseActionDockOnSend(
   return {
     ...draft,
     autoCollapseActionDockOnSend: enabled,
+  };
+}
+
+export function updateCharacterDefinitionEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    characterDefinitionEnabled: enabled,
+  };
+}
+
+export function updateCharacterAffectContextEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    characterAffectContextEnabled: enabled,
+  };
+}
+
+export function updateConversationTimingEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    conversationTimingEnabled: enabled,
+  };
+}
+
+export function updateToolCallPresenceEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    toolCallPresenceEnabled: enabled,
   };
 }
 
@@ -55,6 +94,10 @@ export function updateKeyboardShortcuts(
   };
 }
 
+export function updatePreviewWheelZoomStep(draft: AppSettings, value: number): AppSettings {
+  return { ...draft, previewWheelZoomStep: value };
+}
+
 export function updateSessionTurnNotificationEnabled(
   draft: AppSettings,
   enabled: boolean,
@@ -63,6 +106,13 @@ export function updateSessionTurnNotificationEnabled(
     ...draft,
     sessionTurnNotificationEnabled: enabled,
   };
+}
+
+export function updateSessionApprovalNotificationEnabled(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return { ...draft, sessionApprovalNotificationEnabled: enabled };
 }
 
 export function updateSessionTurnNotificationResponsePreviewEnabled(
@@ -117,20 +167,6 @@ export function updateGlossaryProactiveCreateLimitDraft(
   return { ...draft, glossaryProactiveCreateLimit: limit };
 }
 
-export function updateUserMicrocopySlotDraft(
-  draft: AppSettings,
-  slot: MicrocopySlot,
-  rawValue: string,
-): AppSettings {
-  return {
-    ...draft,
-    userMicrocopyCatalog: {
-      ...draft.userMicrocopyCatalog,
-      [slot]: rawValue,
-    },
-  };
-}
-
 export function updateCodingProviderEnabledDraft(
   draft: AppSettings,
   providerId: string,
@@ -139,17 +175,6 @@ export function updateCodingProviderEnabledDraft(
   return {
     ...draft,
     codingProviderSettings: updateCodingProviderEnabled(draft, providerId, enabled),
-  };
-}
-
-export function updateCodingProviderApiKeyDraft(
-  draft: AppSettings,
-  providerId: string,
-  apiKey: string,
-): AppSettings {
-  return {
-    ...draft,
-    codingProviderSettings: updateCodingProviderApiKey(draft, providerId, apiKey),
   };
 }
 
@@ -196,20 +221,6 @@ export function updateCodingProviderEnabled(
     [providerId]: {
       ...getProviderAppSettings(draft, providerId),
       enabled,
-    },
-  };
-}
-
-export function updateCodingProviderApiKey(
-  draft: AppSettings,
-  providerId: string,
-  apiKey: string,
-): Record<string, ProviderAppSettings> {
-  return {
-    ...draft.codingProviderSettings,
-    [providerId]: {
-      ...getProviderAppSettings(draft, providerId),
-      apiKey,
     },
   };
 }
@@ -263,7 +274,7 @@ export function updateMemoryExtractionModel(
   model: string,
 ): Record<string, MemoryExtractionProviderSettings> {
   const currentSettings = getMemoryExtractionProviderSettings(draft, providerId);
-  const selection = coerceModelSelection(providerCatalog, model, currentSettings.reasoningEffort);
+  const selection = resolveModelChangeSelection(providerCatalog, model, currentSettings.reasoningEffort);
   return {
     ...draft.memoryExtractionProviderSettings,
     [providerId]: {
@@ -434,7 +445,7 @@ export function updateMateMemoryGenerationPriorityModelDraft(
   model: string,
 ): AppSettings {
   const currentPriority = getResolvedMateMemoryGenerationPriority(draft, index);
-  const selection = coerceModelSelection(providerCatalog, model, currentPriority.reasoningEffort);
+  const selection = resolveModelChangeSelection(providerCatalog, model, currentPriority.reasoningEffort);
   return updateMateMemoryGenerationPriorityAt(draft, index, {
     ...currentPriority,
     provider: providerId,

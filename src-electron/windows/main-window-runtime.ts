@@ -1,0 +1,154 @@
+import { BrowserWindow, dialog } from "electron";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
+import type { DraftFlushResult } from "../platform/draft-flush-coordinator.js";
+import type { SessionFilePreviewWindowPayload } from "../../src-shared/file-explorer/file-explorer-contract.js";
+import { WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import { WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import type { MainWindowComposition } from "./main-window-composition.js";
+import { WindowBroadcastService } from "./window-broadcast-service.js";
+import { WindowDialogService } from "./window-dialog-service.js";
+import { WindowEntryLoader } from "./window-entry-loader.js";
+import { SessionWindowBridge } from "./session-window-bridge.js";
+import { SessionWindowRestoreService } from "./session-window-restore-service.js";
+import { SessionWindowRestoreStorage } from "./session-window-restore-storage.js";
+import { AuxWindowService } from "../auxiliary/aux-window-service.js";
+import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
+
+export type MainWindowRuntimeDeps = {
+  composition: MainWindowComposition;
+  devServerUrl?: string;
+  rendererDistPath: string;
+  userDataPath: string;
+  getSession(sessionId: string): Session | null;
+  readSession(sessionId: string): Awaitable<Session | null>;
+  getLiveSessionRunOwnerSessionId(sessionId: string): string | null;
+  isSessionRunInFlight(sessionId: string): boolean;
+  getTerminalCloseConfirmationCount?(window: BrowserWindow): number;
+  cancelInFlightSessionRuns(): void;
+  waitForPendingDraftSends(): Promise<boolean>;
+  onSessionWindowClosed?(sessionId: string): void;
+  confirmCloseWhileRunning(window: BrowserWindow, sessionId: string, signal: AbortSignal): boolean | Promise<boolean>;
+  persistSnapshotError(error: unknown): void;
+  onDraftFlushSettled?(result: DraftFlushResult): void;
+  onWindowBroadcastFailed?(): void;
+};
+
+/** Owns the BrowserWindow-backed runtime and keeps window state out of the app registry. */
+export class MainWindowRuntime {
+  private readonly windowEntryLoader: WindowEntryLoader;
+  private readonly windowBroadcastService: WindowBroadcastService<BrowserWindow>;
+  private readonly windowDialogService: WindowDialogService;
+  private readonly auxWindowService: AuxWindowService<BrowserWindow>;
+  private readonly sessionWindowBridge: SessionWindowBridge<BrowserWindow>;
+  private readonly sessionWindowRestoreService: SessionWindowRestoreService;
+
+  public constructor(deps: MainWindowRuntimeDeps) {
+    this.windowEntryLoader = new WindowEntryLoader({
+      devServerUrl: deps.devServerUrl,
+      rendererDistPath: deps.rendererDistPath,
+    });
+    this.windowBroadcastService = new WindowBroadcastService({
+      getAllWindows: () => BrowserWindow.getAllWindows(),
+      getHomeWindows: () => this.auxWindowService.listHomeWindows(),
+      getPrimaryHomeWindow: () => this.auxWindowService.getHomeWindow(),
+      getSessionWindows: () => this.sessionWindowBridge.listWindows(),
+      getLiveSessionRunStatusWindows: () => this.auxWindowService.listLiveSessionRunStatusWindows(),
+      getLiveSessionRunWindow: (sessionId) => {
+        const ownerSessionId = deps.getLiveSessionRunOwnerSessionId(sessionId);
+        return ownerSessionId ? this.sessionWindowBridge.getWindow(ownerSessionId) : null;
+      },
+      canSendToWindow: (window) => !window.webContents.isDestroyed() && !window.webContents.isCrashed(),
+      onSendFailed: deps.onWindowBroadcastFailed,
+    });
+    this.windowDialogService = new WindowDialogService({
+      showOpenDialog: (targetWindow, options) => targetWindow
+        ? dialog.showOpenDialog(targetWindow, options)
+        : dialog.showOpenDialog(options),
+    });
+    this.auxWindowService = new AuxWindowService({
+      createWindow: (options) => options.homeBounds
+        ? deps.composition.createBaseWindow({
+            ...HOME_WINDOW_DEFAULT_BOUNDS,
+            minWidth: options.minWidth,
+            minHeight: options.minHeight,
+            maxWidth: options.maxWidth,
+            title: options.title,
+            alwaysOnTop: options.alwaysOnTop,
+          })
+        : deps.composition.createCursorPlacedWindow({
+            width: options.width,
+            height: options.height,
+            minWidth: options.minWidth,
+            minHeight: options.minHeight,
+            maxWidth: options.maxWidth,
+            title: options.title,
+            alwaysOnTop: options.alwaysOnTop,
+          }),
+      loadHomeEntry: (window, mode) => this.windowEntryLoader.loadHomeEntry(window, mode),
+      loadDiffEntry: (window, token) => this.windowEntryLoader.loadDiffEntry(window, token),
+      loadFilePreviewEntry: (window, token) => this.windowEntryLoader.loadFilePreviewEntry(window, token),
+      navigateFilePreviewWindow: (window, payload: SessionFilePreviewWindowPayload) => {
+        window.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, payload);
+      },
+      loadChatEntry: (window, mode) => this.windowEntryLoader.loadChatEntry(window, mode),
+      loadCharacterEditorEntry: (window, characterId) =>
+        this.windowEntryLoader.loadCharacterEditorEntry(window, characterId),
+      generateDiffToken: () => crypto.randomUUID(),
+      onFilePreviewWindowsChanged: () => {
+        const home = this.auxWindowService.getHomeWindow();
+        if (home && !home.webContents.isDestroyed() && !home.webContents.isCrashed()) {
+          home.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT);
+        }
+      },
+    });
+    this.sessionWindowBridge = new SessionWindowBridge({
+      createWindow: (sessionId) => deps.composition.createCursorPlacedWindow({
+        ...SESSION_WINDOW_DEFAULT_BOUNDS,
+        title: deps.getSession(sessionId)?.taskTitle?.trim() || "Session",
+      }),
+      observeRendererState: (window, changed) => {
+        window.webContents.on("render-process-gone", () => changed("gone"));
+        window.webContents.on("unresponsive", () => changed("unresponsive"));
+        window.webContents.on("responsive", () => changed("responsive"));
+        window.webContents.on("did-finish-load", () => changed("responsive"));
+      },
+      onDraftFlushSettled: deps.onDraftFlushSettled,
+      loadChatEntry: (window, mode) => this.windowEntryLoader.loadChatEntry(window, mode),
+      sendAuxiliarySessionNavigation: (window, payload) => {
+        window.webContents.send(WITHMATE_OPEN_AUXILIARY_SESSION_EVENT, payload);
+      },
+      sendDraftFlushRequest: (window, request) => {
+        window.webContents.send(WITHMATE_SESSION_DRAFT_FLUSH_REQUEST_EVENT, request);
+      },
+      sendDraftFlushRelease: (window, payload) => {
+        window.webContents.send(WITHMATE_SESSION_DRAFT_FLUSH_RELEASE_EVENT, payload);
+      },
+      getWindowSender: (window) => window.webContents,
+      cancelInFlightSessionRuns: deps.cancelInFlightSessionRuns,
+      waitForPendingDraftSends: deps.waitForPendingDraftSends,
+      getSession: deps.getSession,
+      isRunInFlight: deps.isSessionRunInFlight,
+      getTerminalCloseConfirmationCount: deps.getTerminalCloseConfirmationCount,
+      onSessionWindowClosed: deps.onSessionWindowClosed,
+      confirmCloseWhileRunning: deps.confirmCloseWhileRunning,
+      broadcastOpenSessionWindowIds: (sessionIds) => this.windowBroadcastService.broadcastOpenSessionWindowIds(sessionIds),
+      persistOpenSessionWindowIds: (sessionIds) => this.sessionWindowRestoreService.saveSnapshot(sessionIds),
+      onSnapshotPersistenceError: deps.persistSnapshotError,
+    });
+    this.sessionWindowRestoreService = new SessionWindowRestoreService({
+      storage: new SessionWindowRestoreStorage(deps.userDataPath),
+      getSession: deps.readSession,
+      getSessionWindowRestoreStates: () => this.sessionWindowBridge.getSessionWindowRestoreStates(),
+      openSessionWindow: (sessionId) => this.sessionWindowBridge.openSessionWindow(sessionId),
+      onRestoreSetChanged: (sessionIds) => this.windowBroadcastService.broadcastSessionWindowRestoreSet(sessionIds),
+    });
+  }
+
+  getWindowBroadcastService(): WindowBroadcastService<BrowserWindow> { return this.windowBroadcastService; }
+  getWindowDialogService(): WindowDialogService { return this.windowDialogService; }
+  getWindowEntryLoader(): WindowEntryLoader { return this.windowEntryLoader; }
+  getAuxWindowService(): AuxWindowService<BrowserWindow> { return this.auxWindowService; }
+  getSessionWindowBridge(): SessionWindowBridge<BrowserWindow> { return this.sessionWindowBridge; }
+  getSessionWindowRestoreService(): SessionWindowRestoreService { return this.sessionWindowRestoreService; }
+}

@@ -19,6 +19,7 @@ import type { Plugin } from "unified";
 import type {
   GlossaryAnnotationMatcher,
   GlossaryAnnotationRange,
+  GlossaryMessageProjection,
 } from "./glossary-annotation-projection.js";
 
 type HastNode = {
@@ -62,12 +63,12 @@ function hasExcludedGlossaryProjectionClass(node: HastNode): boolean {
 }
 
 function createGlossaryAnnotationPlugin(
-  matcher: GlossaryAnnotationMatcher,
+  projection: GlossaryMessageProjection,
   renderScope: GlossaryAnnotationRenderScope,
 ): Plugin {
   return () => (tree) => {
     renderScope.annotations.length = 0;
-    const budget = matcher.createMessageBudget();
+    const budget = projection.begin();
 
     const visit = (node: HastNode) => {
       if (
@@ -87,7 +88,7 @@ function createGlossaryAnnotationPlugin(
           continue;
         }
 
-        const matches = matcher.matchText(child.value, budget);
+        const matches = projection.matchText(child.value, budget);
         if (matches.length === 0) {
           continue;
         }
@@ -116,6 +117,7 @@ function createGlossaryAnnotationPlugin(
     };
 
     visit(tree as HastNode);
+    projection.finish();
   };
 }
 
@@ -295,13 +297,18 @@ export function useMessageGlossaryAnnotations(input: {
 }): MessageGlossaryAnnotationProjection {
   const [activeIndex, setActiveIndex] = useState(0);
   const elementsRef = useRef<Array<HTMLSpanElement | null>>([]);
+  const messageProjection = useMemo(
+    () => input.matcher?.createMessageProjection(),
+    [input.matcher, input.scopeKey],
+  );
   const renderScope = useMemo<GlossaryAnnotationRenderScope>(
     () => ({ annotations: [] }),
     [input.matcher, input.scopeKey, input.text],
   );
+  const enabled = Boolean(input.onActivate);
   const rehypePlugin = useMemo(
-    () => input.matcher && input.onActivate ? createGlossaryAnnotationPlugin(input.matcher, renderScope) : null,
-    [input.matcher, input.onActivate, renderScope],
+    () => messageProjection && enabled ? createGlossaryAnnotationPlugin(messageProjection, renderScope) : null,
+    [messageProjection, enabled, renderScope],
   );
 
   useEffect(() => {

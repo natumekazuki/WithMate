@@ -1,0 +1,34 @@
+export const HOME_WINDOW_DEFAULT_BOUNDS = {
+  width: 1440,
+  height: 960,
+  minWidth: 900,
+  minHeight: 680,
+} as const;
+
+export const SESSION_WINDOW_DEFAULT_BOUNDS = {
+  width: 1520,
+  height: 940,
+  minWidth: 1100,
+  minHeight: 720,
+} as const;
+
+export const DIFF_WINDOW_DEFAULT_BOUNDS = {
+  width: 1680,
+  height: 980,
+  minWidth: 900,
+  minHeight: 640,
+} as const;
+
+export const FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS = {
+  width: 1360,
+  height: 900,
+  minWidth: 760,
+  minHeight: 560,
+} as const;
+
+export const CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS = {
+  width: 1280,
+  height: 920,
+  minWidth: 820,
+  minHeight: 680,
+} as const;

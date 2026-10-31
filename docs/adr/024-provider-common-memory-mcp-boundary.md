@@ -4,13 +4,32 @@
 
 Accepted
 
+## 適用状態
+
+[ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI専用operator mode、一般Memoryの一律binding必須、通常CLIをMCP障害時に限定する判断は現行運用の適用対象外とする。actor-relative schemaをCLIにも共通化し、Characterを必要としない明示targetはbindingなしで扱う。runtime認証、binding指定時のscope、current turnと保存契約は維持する。以下の本文は当時の判断として保持する。
+
+[ADR 028](028-in-turn-affect-mcp-only.md)により、post-turn lifecycle evaluatorとMCP event-time appraisalを別event producerとして維持する判断は現行運用の適用対象外とする。Affect更新は通常turn内MCPへ統一する。
+
+actor-relative schema、runtime binding、認証・authority、application boundary、effect certaintyは維持する。idempotency、identity-free context、linked episodeのmutation ownerも維持する。以下の本文は当時の判断として保持する。
+
+[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの接続認証とfallback reporterの所有者を部分的に置換する実装へ適用した判断である。手動stdio MCPは引き続き適用する。actor-relative schema、CLI authority分離、tools/list正常送出後のfallback admission、内側のruntime exchange、effect certaintyは維持する。
+
 ## Context
 
-Memoryの通常操作は、providerごとに配布する`withmate-memory` Skillと、同じbundle内のCLI/MCP artifactに依存している。upgrade時にはWithMateがproviderのSkill directoryを検査・更新し、SettingsとdiagnosticsもSkill同期状態を表示する。一方、通常Sessionにはopaqueなruntime bindingがあり、actor Session、Character、local user、許可Projectをserver側で解決できる。agent-facing requestへ`userId`、`characterId`、`sessionId`を持たせ続けると、値をauthorityとして扱わない場合でも、caller-asserted identityとcanonical actorの二つの表現が残る。
+Memoryの通常操作は、providerごとに配布する`withmate-memory` Skillと、同じbundle内のCLI/MCP artifactに依存している。upgrade時にはWithMateがproviderのSkill directoryを検査・更新し、SettingsとdiagnosticsもSkill同期状態を表示する。
 
-CLIはoperator作業とMCP transport障害時のagent fallbackを兼ねる。両者が同じCLI adapter credentialを使うと、bound Agentがfallbackによってoperator routeへ昇格できる。Character contextも現在はactor identityと内部Memory targetを返すが、turn promptが必要とするのはAffect version、effective context、baseline参照、関連Memoryのpreviewであり、生のactor identityではない。
+一方、通常Sessionにはopaqueなruntime bindingがあり、actor Session、Character、local user、許可Projectをserver側で解決できる。agent-facing requestへ`userId`、`characterId`、`sessionId`を持たせ続けると、値をauthorityとして扱わない場合でも、caller-asserted identityとcanonical actorの二つの表現が残る。
 
-ADR 020の共通application boundary、ADR 021のruntime binding registry、ADR 018のAffect event/episode収束、ADR 023のruntime discoveryを基礎にしながら、agent-facing target、binding policy、CLI credential、fallback開始条件を置換し、MCP `tools/list`をagent-facing Memory contractの正本にする必要がある。
+CLIはoperator作業とMCP transport障害時のagent fallbackを兼ねる。両者が同じCLI adapter credentialを使うと、bound Agentがfallbackによってoperator routeへ昇格できる。Character contextも現在はactor identityと内部Memory targetを返す。しかし、turn promptが必要とするのはAffect version、effective context、baseline参照、関連Memoryのpreviewであり、生のactor identityではない。
+
+次の既存判断を基礎にする。
+
+- ADR 020の共通application boundary
+- ADR 021のruntime binding registry
+- ADR 018のAffect event/episode収束
+- ADR 023のruntime discovery
+
+その上で、agent-facing target、binding policy、CLI credential、fallback開始条件を置換し、MCP `tools/list`をagent-facing Memory contractの正本にする必要がある。
 
 ## 既存ADRとの関係
 
@@ -20,7 +39,7 @@ ADR 020の共通application boundary、ADR 021のruntime binding registry、ADR 
 | ADR 021 | Memory CRUDと`memory.file_usage`の`optional` policy、bindingなしのlocal-user/operator経路、explicit Character selector | binding registry、generation、operation grant、turn capability、runtime owner selection |
 | ADR 023 | 置換なし | application instanceとadapter generationのexact selection、別instanceへfallbackしないruntime discovery |
 
-競合する範囲ではADR 024を優先する。operator CLIはADR 020/021のexplicit target/identityとoperator credentialを維持する別authority modeであり、provider executionから使うMCPまたはagent-bound CLI fallbackの非binding経路にはしない。
+競合する範囲ではADR 024を優先する。operator CLIはADR 020/021のexplicit target/identityとoperator credentialを維持する別authority modeである。provider executionから使うMCPまたはagent-bound CLI fallbackの非binding経路にはしない。
 
 ## Decision
 

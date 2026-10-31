@@ -6,9 +6,9 @@ Accepted
 
 ## Context
 
-Character自身の現在感情をsession間で扱うには、Character Definition由来の基調、継続的なrelationship affect、session固有の一時状態、Character Memory episodeを分離する必要がある。状態全体を保存すると、同時sessionの後勝ち上書き、対象の異なる感情の混合、訂正根拠の消失が起きる。
+Character自身の現在感情をsession間で扱うには、次の要素を分離する必要がある。Character Definition由来の基調、継続的なrelationship affect、session固有の一時状態、Character Memory episodeである。状態全体を保存すると、同時sessionの後勝ち上書き、対象の異なる感情の混合、訂正根拠の消失が起きる。
 
-V6 DBは起動時のidempotentなschema ensureとSQLite WALを既存境界とし、Memory V6はrequest fingerprint付きidempotencyとappend/supersede/forget監査を採用している。
+V6 DBは起動時のidempotentなschema ensureとSQLite WALを既存境界とする。Memory V6はrequest fingerprint付きidempotencyとappend/supersede/forget監査を採用している。
 
 ## Decision
 
@@ -53,7 +53,7 @@ bugやtaskへの一時感情までrelationshipへ転写し得るため採用し�
 
 ### afterglowを永続化する
 
-session終了時にafterglowを新規eventやrelationshipへコピーすると、短いread-timeの余韻が永続stateへ昇格し、task系targetの漏れ、retry/restart時の重複、owner境界の複雑化を招くため採用しない。afterglowは既存eventをread-timeにbounded projectionする。
+session終了時にafterglowを新規eventやrelationshipへコピーすると、短いread-timeの余韻が永続stateへ昇格する。task系targetの漏れ、retry/restart時の重複、owner境界の複雑化を招くため採用しない。afterglowは既存eventをread-timeにbounded projectionする。
 
 ## Migration and rollback
 

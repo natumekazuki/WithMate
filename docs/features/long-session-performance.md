@@ -2,11 +2,21 @@
 
 ## 概要
 
-Session数やmessage数が増えた場合の操作遅延を抑えるため、Home一覧、message縮小preview、running turn開始時の保存を差分化しました。
+Session数やmessage数が増えた場合の操作遅延と本文保持量を抑えるため、一覧・会話の分割取得、message縮小previewの再利用、running turn開始時の差分保存を行います。
+
+## 会話の読込み
+
+Main／Auxiliaryは最初に最新60件を表示します。上端付近へスクロールすると古い本文を追加取得し、読んでいるmessageの画面内位置を保ちます。過去の閲覧範囲から下方向へ戻る場合も必要な本文を取得し、最新の末尾へ戻ると追従を再開します。Findの検索結果やMessages navigatorから過去のmessageへ移動すると、対象範囲の本文を取得します。表示済みページを無制限に積み上げず、最新tailに加えて閲覧範囲は最大180件を保持し、離れた本文は必要時に再取得します。取得失敗時は表示中の本文を保ち、`Retry`で続きの取得を再試行できます。
+
+Findの検索対象とMessages navigatorのBookmarkは保存済み全履歴です。Source／Previewの検索の意味は変えず、検索結果やBookmarkへ移動すると対象範囲の本文を取得します。履歴の保存位置を使うため、ページを変えても別messageへBookmarkやDetailsの操作が移りません。
+
+非表示Auxiliaryの再取得可能な詳細cacheは8件を上限とします。実行中・未保存変更・処理中などの保護対象は別に保持し、draft／caretと保存処理は表示cacheの解放と独立して継続します。
+
+保存済み履歴を削除・要約する変更ではなく、Providerへ渡す文脈も変えません。単一messageの大きさ、全文検索の走査、検索・navigatorの結果metadata、実行中のruntime保持量は引き続き履歴や内容に依存します。
 
 ## Home Session一覧
 
-Recent Sessionsはsummary page単位で取得します。Home起動や一覧更新のたびに、全Sessionのmessage本文とJSON columnを展開しません。
+`RecentSessions`はsummary page単位で取得します。Home起動や一覧更新のたびに、全Sessionのmessage本文とJSON columnを展開しません。
 
 詳細は[Home Session一覧のpagination](home-session-pagination.md)を参照してください。
 
@@ -15,6 +25,12 @@ Recent Sessionsはsummary page単位で取得します。Home起動や一覧更�
 縮小previewはmessage identityと本文に対応付けて再利用します。composerへの入力、別messageのstreaming、paneの開閉だけでは、保存済み履歴全体のpreviewを再計算しません。
 
 検索による一時展開は表示状態だけを変更し、preview cacheのownerを変更しません。
+
+## 会話内の検索本文
+
+Preview検索の本文投影は、会話columnごとにmessage keyと本文へ対応付けて再利用します。live末尾だけの更新やquery変更では、変化のない確定履歴をMarkdown再解析しません。Source検索では元のMarkdown本文を使います。
+
+再利用対象は現在の会話投影に含まれる本文だけです。履歴から外れたkeyと変更前の本文は保持せず、会話ownerの切り替え、queryの空欄化、columnのunmountで解放します。
 
 ## running turn開始時の保存
 
@@ -32,7 +48,22 @@ turn開始時は対象Sessionのuser message、running状態、必要なsnapshot
 - turn開始後に再起動してもuser messageとrunning状態を復元できること
 - 保存失敗時に送信成功として扱わないこと
 
+## 会話読込みの計測
+
+`scripts/benchmarks/benchmark-conversation-storage.mjs`は一時DBへMainと20個のAuxiliaryを各6,000件・本文1KiBで作成し、productionのstorage Worker経由で取得件数・本文bytes・JSON応答bytes・所要時間・メモリを記録します。保存先は検証用の空ディレクトリーを明示します。
+
+```powershell
+node --import tsx scripts/benchmarks/benchmark-conversation-storage.mjs --mode view --label current --output-dir <検証用ディレクトリー>
+```
+
+`scripts/benchmarks/benchmark-conversation-loading.cjs`は合成API fixtureと実Electron IPC・rendererを使い、非表示Windowで初回読込み、Auxiliary反復切替、processメモリ、描画・操作を記録します。通常アプリのuserDataは使いません。`npm run build:renderer`後に実行します。
+
+```powershell
+npx --no-install electron scripts/benchmarks/benchmark-conversation-loading.cjs --page-size 60 --label current --output-dir <検証用ディレクトリー> --verify-ui
+```
+
+JSON応答bytesはIPC framingを含まない見積りです。メモリは強制GCを行わない観測値で、Workerは別processではなくthreadです。単回の時間・メモリ値を実利用環境の改善保証として扱いません。保存境界の計測とrenderer fixtureの操作確認を分けて評価します。
+
 ## 関連文書
 
-- [Data Loading Performance Audit](../design/data-loading-performance-audit.md)
 - [Electron Session Store](../design/electron-session-store.md)

@@ -1,0 +1,727 @@
+import type { DatabaseSync } from "node:sqlite";
+
+import {
+  isChatActionDockMode,
+  isChatHeaderVisibility,
+  type ChatLayoutPreferenceUpdate,
+} from "../../src-shared/settings/chat-layout-preference.js";
+import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { normalizeSessionSidePane, type SessionSidePane } from "../../src-shared/settings/session-side-pane.js";
+import { CREATE_APP_SETTINGS_TABLE_SQL } from "../storage/database-schema-v1.js";
+import { SESSION_GRAPH_CONTRACT_INITIALIZED_KEY } from "../storage/database-schema-v6.js";
+import { openAppDatabase } from "../storage/sqlite-connection.js";
+
+const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
+const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
+const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
+const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled";
+const SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY = "session_approval_notification_enabled";
+const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
+  "session_turn_notification_response_preview_enabled";
+const CHARACTER_DEFINITION_ENABLED_KEY = "character_definition_enabled";
+const CHARACTER_AFFECT_CONTEXT_ENABLED_KEY = "character_affect_context_enabled";
+const CONVERSATION_TIMING_ENABLED_KEY = "conversation_timing_enabled";
+const TOOL_CALL_PRESENCE_ENABLED_KEY = "tool_call_presence_enabled";
+const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
+const SCROLL_TO_LATEST_ON_SEND_KEY = "scroll_to_latest_on_send";
+const PREVIEW_WHEEL_ZOOM_STEP_KEY = "preview_wheel_zoom_step";
+const SESSION_HEADER_VISIBILITY_KEY = "session_header_visibility";
+const SESSION_ACTION_DOCK_PRESENTATION_KEY = "session_action_dock_presentation";
+const SESSION_SIDE_PANE_KEY = "session_side_pane";
+const LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
+const KEYBOARD_SHORTCUTS_KEY = "keyboard_shortcuts_json";
+const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
+const GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY = "glossary_proactive_create_limit";
+const GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY = "glossary_proactive_create_limit_initialized";
+const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
+const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
+const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
+const OBSOLETE_MICROCOPY_SETTING_KEYS = [
+  "user_microcopy_catalog_json",
+  "user_microcopy_catalog_english_migrated",
+] as const;
+
+type AppSettingRow = {
+  setting_key: string;
+  setting_value: string;
+};
+
+export class AppSettingsStorage {
+  private readonly db: DatabaseSync;
+
+  constructor(dbPath: string) {
+    this.db = openAppDatabase(dbPath);
+    this.db.exec(CREATE_APP_SETTINGS_TABLE_SQL);
+    this.removeObsoleteMicrocopySettings();
+    this.removeOpenCodeApiKey();
+    this.ensureSessionSidePaneDefault();
+    this.ensureDefaults();
+  }
+
+  private removeObsoleteMicrocopySettings(): void {
+    this.db
+      .prepare(`DELETE FROM app_settings WHERE setting_key IN (${OBSOLETE_MICROCOPY_SETTING_KEYS.map(() => "?").join(", ")})`)
+      .run(...OBSOLETE_MICROCOPY_SETTING_KEYS);
+  }
+
+  private removeOpenCodeApiKey(): void {
+    this.db.prepare(`
+      UPDATE app_settings
+      SET setting_value = json_remove(setting_value, '$.opencode.apiKey'), updated_at = ?
+      WHERE setting_key = ?
+        AND CASE WHEN json_valid(setting_value) THEN json_type(setting_value, '$.opencode.apiKey') END IS NOT NULL
+    `).run(new Date().toISOString(), CODING_PROVIDER_SETTINGS_KEY);
+  }
+
+  private ensureSessionSidePaneDefault(): void {
+    const canonicalRow = this.db
+      .prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+      .get(SESSION_SIDE_PANE_KEY) as { setting_value: string } | undefined;
+    if (canonicalRow) {
+      return;
+    }
+
+    const legacyRow = this.db
+      .prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?")
+      .get(LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY) as { setting_value: string } | undefined;
+    const initialSidePane: SessionSidePane = legacyRow?.setting_value === "true" ? "context" : "none";
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+      `)
+      .run(SESSION_SIDE_PANE_KEY, initialSidePane, new Date().toISOString());
+  }
+
+  private ensureDefaults(): void {
+    const updatedAt = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(MEMORY_GENERATION_ENABLED_KEY, String(DEFAULT_APP_SETTINGS.memoryGenerationEnabled), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(LAUNCH_AT_LOGIN_ENABLED_KEY, String(DEFAULT_APP_SETTINGS.launchAtLoginEnabled), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        SESSION_TURN_NOTIFICATION_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.sessionTurnNotificationEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.sessionApprovalNotificationEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.sessionTurnNotificationResponsePreviewEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        CHARACTER_DEFINITION_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.characterDefinitionEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        CHARACTER_AFFECT_CONTEXT_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.characterAffectContextEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        CONVERSATION_TIMING_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.conversationTimingEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        TOOL_CALL_PRESENCE_ENABLED_KEY,
+        String(DEFAULT_APP_SETTINGS.toolCallPresenceEnabled),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY,
+        String(DEFAULT_APP_SETTINGS.autoCollapseActionDockOnSend),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(SCROLL_TO_LATEST_ON_SEND_KEY, String(DEFAULT_APP_SETTINGS.scrollToLatestOnSend), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(PREVIEW_WHEEL_ZOOM_STEP_KEY, String(DEFAULT_APP_SETTINGS.previewWheelZoomStep), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(SESSION_HEADER_VISIBILITY_KEY, DEFAULT_APP_SETTINGS.chatLayoutPreference.header, updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        SESSION_ACTION_DOCK_PRESENTATION_KEY,
+        DEFAULT_APP_SETTINGS.chatLayoutPreference.actionDock,
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(KEYBOARD_SHORTCUTS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.keyboardShortcuts), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(DEFAULT_APP_SETTINGS.memoryFileQuotaBytes), updatedAt);
+    const glossaryLimitInitialized = this.db
+      .prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
+      .get(GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY);
+    if (!glossaryLimitInitialized) {
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO NOTHING
+        `)
+        .run(
+          GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY,
+          String(DEFAULT_APP_SETTINGS.glossaryProactiveCreateLimit),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO NOTHING
+        `)
+        .run(GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY, "true", updatedAt);
+    }
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.codingProviderSettings), updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.memoryExtractionProviderSettings),
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        MATE_MEMORY_GENERATION_SETTINGS_KEY,
+        JSON.stringify(DEFAULT_APP_SETTINGS.mateMemoryGenerationSettings),
+        updatedAt,
+      );
+  }
+
+  getSettings(): AppSettings {
+    const rows = this.db
+      .prepare(`
+        SELECT setting_key, setting_value
+        FROM app_settings
+      `)
+      .all() as AppSettingRow[];
+
+    const settings = createDefaultAppSettings();
+    let glossaryProactiveCreateLimitFound = false;
+    for (const row of rows) {
+      if (row.setting_key === MEMORY_GENERATION_ENABLED_KEY) {
+        settings.memoryGenerationEnabled = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === LAUNCH_AT_LOGIN_ENABLED_KEY) {
+        settings.launchAtLoginEnabled = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === SESSION_TURN_NOTIFICATION_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.sessionTurnNotificationEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.sessionTurnNotificationResponsePreviewEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.sessionApprovalNotificationEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === CHARACTER_DEFINITION_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.characterDefinitionEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === CHARACTER_AFFECT_CONTEXT_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.characterAffectContextEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === CONVERSATION_TIMING_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.conversationTimingEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === TOOL_CALL_PRESENCE_ENABLED_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.toolCallPresenceEnabled = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY) {
+        settings.autoCollapseActionDockOnSend = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === SCROLL_TO_LATEST_ON_SEND_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.scrollToLatestOnSend = row.setting_value === "true";
+        }
+        continue;
+      }
+      if (row.setting_key === SESSION_HEADER_VISIBILITY_KEY) {
+        settings.chatLayoutPreference.header = isChatHeaderVisibility(row.setting_value)
+          ? row.setting_value
+          : "hidden";
+        continue;
+      }
+      if (row.setting_key === SESSION_ACTION_DOCK_PRESENTATION_KEY) {
+        settings.chatLayoutPreference.actionDock = isChatActionDockMode(row.setting_value)
+          ? row.setting_value
+          : "compact";
+        continue;
+      }
+      if (row.setting_key === SESSION_SIDE_PANE_KEY) {
+        settings.chatLayoutPreference.sidePane = normalizeSessionSidePane(row.setting_value);
+        continue;
+      }
+      if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
+        settings.memoryFileQuotaBytes = Number(row.setting_value);
+        continue;
+      }
+      if (row.setting_key === PREVIEW_WHEEL_ZOOM_STEP_KEY) {
+        settings.previewWheelZoomStep = Number(row.setting_value);
+        continue;
+      }
+      if (row.setting_key === GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY) {
+        glossaryProactiveCreateLimitFound = true;
+        settings.glossaryProactiveCreateLimit = /^\d+$/.test(row.setting_value)
+          ? Number(row.setting_value)
+          : null;
+        continue;
+      }
+    }
+    if (!glossaryProactiveCreateLimitFound) {
+      settings.glossaryProactiveCreateLimit = null;
+    }
+
+    const providerSettingsJson = rows.find((row) => row.setting_key === CODING_PROVIDER_SETTINGS_KEY)?.setting_value;
+    if (providerSettingsJson) {
+      try {
+        settings.codingProviderSettings = normalizeAppSettings({
+          ...settings,
+          codingProviderSettings: JSON.parse(providerSettingsJson),
+        }).codingProviderSettings;
+      } catch {
+        settings.codingProviderSettings = createDefaultAppSettings().codingProviderSettings;
+      }
+    }
+
+    const memoryExtractionProviderSettingsJson = rows.find(
+      (row) => row.setting_key === MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
+    )?.setting_value;
+    if (memoryExtractionProviderSettingsJson) {
+      try {
+        settings.memoryExtractionProviderSettings = normalizeAppSettings({
+          ...settings,
+          memoryExtractionProviderSettings: JSON.parse(memoryExtractionProviderSettingsJson),
+        }).memoryExtractionProviderSettings;
+      } catch {
+        settings.memoryExtractionProviderSettings = createDefaultAppSettings().memoryExtractionProviderSettings;
+      }
+    }
+
+    const mateMemoryGenerationSettingsJson = rows.find(
+      (row) => row.setting_key === MATE_MEMORY_GENERATION_SETTINGS_KEY,
+    )?.setting_value;
+    if (mateMemoryGenerationSettingsJson) {
+      try {
+        settings.mateMemoryGenerationSettings = normalizeAppSettings({
+          ...settings,
+          mateMemoryGenerationSettings: JSON.parse(mateMemoryGenerationSettingsJson),
+        }).mateMemoryGenerationSettings;
+      } catch {
+        settings.mateMemoryGenerationSettings = createDefaultAppSettings().mateMemoryGenerationSettings;
+      }
+    }
+
+    const keyboardShortcutsJson = rows.find((row) => row.setting_key === KEYBOARD_SHORTCUTS_KEY)?.setting_value;
+    if (keyboardShortcutsJson) {
+      try {
+        settings.keyboardShortcuts = normalizeAppSettings({
+          ...settings,
+          keyboardShortcuts: JSON.parse(keyboardShortcutsJson),
+        }).keyboardShortcuts;
+      } catch {
+        settings.keyboardShortcuts = createDefaultAppSettings().keyboardShortcuts;
+      }
+    }
+
+    return normalizeAppSettings(settings);
+  }
+
+  updateSettings(nextSettings: AppSettings): AppSettings {
+    const normalized = normalizeAppSettings(nextSettings);
+    const updatedAt = new Date().toISOString();
+
+    // Chat layout preferences have their own write path so stale full-settings snapshots cannot overwrite them.
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(MEMORY_GENERATION_ENABLED_KEY, String(normalized.memoryGenerationEnabled), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(LAUNCH_AT_LOGIN_ENABLED_KEY, String(normalized.launchAtLoginEnabled), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          SESSION_TURN_NOTIFICATION_ENABLED_KEY,
+          String(normalized.sessionTurnNotificationEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY,
+          String(normalized.sessionApprovalNotificationEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY,
+          String(normalized.sessionTurnNotificationResponsePreviewEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CHARACTER_DEFINITION_ENABLED_KEY,
+          String(normalized.characterDefinitionEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CHARACTER_AFFECT_CONTEXT_ENABLED_KEY,
+          String(normalized.characterAffectContextEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          CONVERSATION_TIMING_ENABLED_KEY,
+          String(normalized.conversationTimingEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          TOOL_CALL_PRESENCE_ENABLED_KEY,
+          String(normalized.toolCallPresenceEnabled),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY,
+          String(normalized.autoCollapseActionDockOnSend),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(SCROLL_TO_LATEST_ON_SEND_KEY, String(normalized.scrollToLatestOnSend), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(PREVIEW_WHEEL_ZOOM_STEP_KEY, String(normalized.previewWheelZoomStep), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(KEYBOARD_SHORTCUTS_KEY, JSON.stringify(normalized.keyboardShortcuts), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(normalized.memoryFileQuotaBytes), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY,
+          normalized.glossaryProactiveCreateLimit === null
+            ? ""
+            : String(normalized.glossaryProactiveCreateLimit),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(normalized.codingProviderSettings), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
+          JSON.stringify(normalized.memoryExtractionProviderSettings),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          MATE_MEMORY_GENERATION_SETTINGS_KEY,
+          JSON.stringify(normalized.mateMemoryGenerationSettings),
+          updatedAt,
+        );
+      this.db.exec("COMMIT");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+
+    return this.getSettings();
+  }
+
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): void {
+    const [settingKey, settingValue] = (() => {
+      if (update.target === "header") {
+        return [SESSION_HEADER_VISIBILITY_KEY, update.value] as const;
+      }
+      if (update.target === "actionDock") {
+        return [SESSION_ACTION_DOCK_PRESENTATION_KEY, update.value] as const;
+      }
+      if (update.target === "sidePane") {
+        return [SESSION_SIDE_PANE_KEY, update.value] as const;
+      }
+      throw new Error("Unsupported chat layout preference target");
+    })();
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET
+          setting_value = excluded.setting_value,
+          updated_at = excluded.updated_at
+      `)
+      .run(settingKey, settingValue, new Date().toISOString());
+  }
+
+  resetSettings(): AppSettings {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.db.prepare("DELETE FROM app_settings WHERE setting_key <> ?").run(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY);
+      this.ensureSessionSidePaneDefault();
+      this.ensureDefaults();
+      this.db.exec("COMMIT");
+      return this.getSettings();
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}

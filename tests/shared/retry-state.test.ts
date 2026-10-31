@@ -1,0 +1,436 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  applyCancelRetryDraftReplace,
+  applyRetryDraftRestoreCommand,
+  applyRetryDraftReplaceConfirmation,
+  applyRetryEditCommand,
+  buildRetryDraftRestoreState,
+  createCancelRetryDraftReplaceHandler,
+  createRetryDraftReplaceConfirmationHandler,
+  createRetryEditHandler,
+  isRetryActionDisabled,
+  resolveRetrySource,
+  resolveRetryKind,
+  runRetryResendCommand,
+  shouldProtectRetryEditDraft,
+  shouldShowRetryActions,
+} from "../../src/chat/retry-state.js";
+
+test("buildRetryDraftRestoreState は retry 編集復元時の composer state を作る", () => {
+  const restoreState = buildRetryDraftRestoreState("前回の依頼");
+
+  assert.deepEqual(restoreState, {
+    draft: "前回の依頼",
+    caret: 5,
+    isRetryDraftReplacePending: false,
+    isActionDockPinnedExpanded: true,
+  });
+});
+
+test("runRetryResendCommand は有効な last user message だけ再送する", async () => {
+  const sends: string[] = [];
+
+  await runRetryResendCommand({
+    isDisabled: true,
+    messageText: "前回の依頼",
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+  await runRetryResendCommand({
+    isDisabled: false,
+    messageText: null,
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+  await runRetryResendCommand({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+  await runRetryResendCommand({
+    isDisabled: false,
+    messageText: "",
+    resendMessage: async (messageText) => {
+      sends.push(messageText);
+    },
+  });
+
+  assert.deepEqual(sends, ["前回の依頼", ""]);
+});
+
+test("applyRetryDraftRestoreCommand は retry draft restore state を UI setter に適用する", () => {
+  const events: string[] = [];
+
+  applyRetryDraftRestoreCommand({
+    messageText: "前回の依頼",
+    setActionDockPinnedExpanded: (expanded) => events.push(`expanded:${expanded}`),
+    setDraft: (draft) => events.push(`draft:${draft}`),
+    setCaret: (caret) => events.push(`caret:${caret}`),
+    syncCaret: (caret) => events.push(`sync:${caret}`),
+    setRetryDraftReplacePending: (pending) => events.push(`pending:${pending}`),
+    focusComposer: (caret) => events.push(`focus:${caret}`),
+  });
+
+  assert.deepEqual(events, [
+    "expanded:true",
+    "draft:前回の依頼",
+    "caret:5",
+    "sync:5",
+    "pending:false",
+    "focus:5",
+  ]);
+});
+
+test("applyRetryEditCommand は保護確認または draft 復元を選ぶ", () => {
+  const events: string[] = [];
+
+  applyRetryEditCommand({
+    isDisabled: true,
+    messageText: "前回の依頼",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: null,
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    shouldProtectDraft: true,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+  applyRetryEditCommand({
+    isDisabled: false,
+    messageText: "",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+
+  assert.deepEqual(events, ["confirm", "restore:前回の依頼", "restore:"]);
+});
+
+test("createRetryEditHandler は retry edit handler を作る", () => {
+  const events: string[] = [];
+  const editLastMessage = createRetryEditHandler({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    shouldProtectDraft: false,
+    requestDraftReplaceConfirmation: () => events.push("confirm"),
+    restoreDraft: (messageText) => events.push(`restore:${messageText}`),
+  });
+
+  editLastMessage();
+
+  assert.deepEqual(events, ["restore:前回の依頼"]);
+});
+
+test("applyRetryDraftReplaceConfirmation は有効な retry edit だけ draft を復元する", () => {
+  const events: string[] = [];
+
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: true,
+    messageText: "前回の依頼",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: false,
+    messageText: undefined,
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+  applyRetryDraftReplaceConfirmation({
+    isDisabled: false,
+    messageText: "",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+
+  assert.deepEqual(events, ["前回の依頼", ""]);
+});
+
+test("createRetryDraftReplaceConfirmationHandler は retry draft replace confirmation handler を作る", () => {
+  const events: string[] = [];
+  const confirmRetryDraftReplace = createRetryDraftReplaceConfirmationHandler({
+    isDisabled: false,
+    messageText: "前回の依頼",
+    restoreDraft: (messageText) => events.push(messageText),
+  });
+
+  confirmRetryDraftReplace();
+
+  assert.deepEqual(events, ["前回の依頼"]);
+});
+
+test("applyCancelRetryDraftReplace は retry draft replace pending を解除する", () => {
+  const values: boolean[] = [];
+
+  applyCancelRetryDraftReplace({
+    setRetryDraftReplacePending: (pending) => values.push(pending),
+  });
+
+  assert.deepEqual(values, [false]);
+});
+
+test("createCancelRetryDraftReplaceHandler は retry draft replace cancel handler を作る", () => {
+  const values: boolean[] = [];
+  const cancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
+    setRetryDraftReplacePending: (pending) => values.push(pending),
+  });
+
+  cancelRetryDraftReplace();
+
+  assert.deepEqual(values, [false]);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "retry種別は実行状態と最新の最小turn phaseからinterrupted/failed/canceledを区別する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state後の再送導線" }
+// fault = "正常完了をcanceledとして扱うか取消後の再送導線を落とす"
+// observable = "resolveRetryKindのkind"
+// observation_boundary = "consumer"
+// scope = "retry-terminal-kind"
+// lifecycle = "permanent"
+// @end-test-value
+test("resolveRetryKind は session state と 最小turn から retry 種別を解決する", () => {
+  assert.equal(resolveRetryKind({ runState: "interrupted" }), "interrupted");
+  assert.equal(resolveRetryKind({ runState: "error" }), "failed");
+  assert.equal(resolveRetryKind({ runState: "idle", latestTurnPhase: "canceled" }), "canceled");
+  assert.equal(resolveRetryKind({ runState: "idle", latestTurnPhase: "completed" }), null);
+  assert.equal(resolveRetryKind({ runState: "running", latestTurnPhase: "failed" }), null);
+  assert.equal(resolveRetryKind({ runState: "running", latestTurnPhase: "canceled" }), null);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "再送元は最新userと同じSession/message位置の最小turnだけに関連付ける"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state後の再送導線" }
+// fault = "別会話や古いuser位置の取消turnを再送元へ誤関連付けする"
+// observable = "retry sourceのkind/lastRequestText/terminalTurnとnull結果"
+// observation_boundary = "consumer"
+// scope = "retry-owner-sequence"
+// lifecycle = "permanent"
+// @end-test-value
+test("resolveRetrySource は最後の未完了依頼と同じ session / message seq の terminal event だけを使う", () => {
+  const canceled = {
+    id: 10,
+    sessionId: "session-1",
+    createdAt: "2026-08-12T10:00:00.000Z",
+    phase: "canceled" as const,
+    provider: "codex",
+    model: "gpt-5.6",
+    reasoningEffort: "medium" as const,
+    approvalMode: "never" as const,
+    userMessageSeq: 0,
+    assistantMessageSeq: 1,
+    threadId: "thread-1",
+    errorMessage: "canceled",
+  };
+  const completed = {
+    ...canceled,
+    id: 11,
+    phase: "completed" as const,
+    userMessageSeq: 2,
+    assistantMessageSeq: 3,
+    errorMessage: "",
+  };
+  const nextMessages = [
+    { role: "user" as const, text: "古い依頼" },
+    { role: "assistant" as const, text: "キャンセルしたよ" },
+    { role: "user" as const, text: "新しい依頼" },
+  ];
+
+  assert.deepEqual(resolveRetrySource({
+    sessionId: "session-1",
+    messages: nextMessages.slice(0, 2),
+    latestTurn: canceled,
+    runState: "idle",
+  }), {
+    kind: "canceled",
+    lastRequestText: "古い依頼",
+    userMessageSeq: 0,
+    terminalTurn: canceled,
+  });
+
+  assert.equal(resolveRetrySource({
+    sessionId: "session-1",
+    messages: nextMessages,
+    latestTurn: canceled,
+    runState: "running",
+  }), null);
+
+  assert.equal(resolveRetrySource({
+    sessionId: "session-1",
+    messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
+    latestTurn: completed,
+    runState: "idle",
+  }), null);
+
+  assert.equal(resolveRetrySource({
+    sessionId: "session-1",
+    messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
+    latestTurn: completed,
+    runState: "idle",
+  }), null);
+
+  assert.equal(resolveRetrySource({
+    sessionId: "session-1",
+    messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
+    latestTurn: canceled,
+    runState: "idle",
+  }), null);
+
+  assert.equal(resolveRetrySource({
+    sessionId: "session-1",
+    messages: nextMessages,
+    latestTurn: { ...canceled, sessionId: "auxiliary-1", userMessageSeq: 2 },
+    runState: "idle",
+  }), null);
+
+  assert.deepEqual(resolveRetrySource({
+    sessionId: "session-1",
+    messages: nextMessages,
+    latestTurn: null,
+    runState: "error",
+  }), {
+    kind: "failed",
+    lastRequestText: "新しい依頼",
+    userMessageSeq: 2,
+    terminalTurn: null,
+  });
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Editは前回依頼とは異なる非空draftだけを置換確認の対象にする"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "異なるdraftを無確認で上書きするか空draftの復元を阻む"
+// observable = "shouldProtectRetryEditDraftのboolean"
+// observation_boundary = "consumer"
+// scope = "retry-edit-draft-protection"
+// lifecycle = "permanent"
+// @end-test-value
+test("shouldProtectRetryEditDraft は既存 draft の暗黙上書きを避ける", () => {
+  const retryState = { lastRequestText: "前回の依頼" };
+
+  assert.equal(shouldProtectRetryEditDraft({ retryState, draft: "" }), false);
+  assert.equal(shouldProtectRetryEditDraft({ retryState, draft: "前回の依頼" }), false);
+  assert.equal(shouldProtectRetryEditDraft({ retryState, draft: "今の下書き" }), true);
+  assert.equal(shouldProtectRetryEditDraft({ retryState: null, draft: "今の下書き" }), false);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "回復操作の表示可否は会話種別によらず前回依頼・編集権限・実行状態で決まる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "依頼なしやread-onlyや実行中に回復操作を許可する"
+// observable = "shouldShowRetryActionsのboolean"
+// observation_boundary = "consumer"
+// scope = "retry-action-visibility-guard"
+// lifecycle = "permanent"
+// @end-test-value
+test("shouldShowRetryActions は mode-neutral な表示 precondition を評価する", () => {
+  assert.equal(shouldShowRetryActions({
+    hasLastUserMessage: true,
+    isReadOnly: false,
+    runState: "error",
+  }), true);
+  assert.equal(shouldShowRetryActions({
+    hasLastUserMessage: false,
+    isReadOnly: false,
+    runState: "error",
+  }), false);
+  assert.equal(shouldShowRetryActions({
+    hasLastUserMessage: true,
+    isReadOnly: true,
+    runState: "error",
+  }), false);
+  assert.equal(shouldShowRetryActions({
+    hasLastUserMessage: true,
+    isReadOnly: false,
+    runState: "running",
+  }), false);
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "回復状態と前回依頼がある編集可能な非実行中会話だけが再送操作できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: terminal state 後の再送導線" }
+// fault = "blockedまたはread-only会話で再送できるか回復対象なしで再送できる"
+// observable = "isRetryActionDisabledのboolean"
+// observation_boundary = "consumer"
+// scope = "retry-action-disabled-guard"
+// lifecycle = "permanent"
+// @end-test-value
+test("isRetryActionDisabled は shared precondition を評価する", () => {
+  const retryState = {
+    kind: "failed" as const,
+    lastRequestText: "直して",
+  };
+
+  assert.equal(isRetryActionDisabled({
+    retryState,
+    hasLastUserMessage: true,
+    composerBlocked: false,
+    isReadOnly: false,
+    runState: "idle",
+  }), false);
+  assert.equal(isRetryActionDisabled({
+    retryState,
+    hasLastUserMessage: true,
+    composerBlocked: true,
+    isReadOnly: false,
+    runState: "idle",
+  }), true);
+  assert.equal(isRetryActionDisabled({
+    retryState,
+    hasLastUserMessage: true,
+    composerBlocked: false,
+    isReadOnly: true,
+    runState: "idle",
+  }), true);
+  assert.equal(isRetryActionDisabled({
+    retryState: null,
+    hasLastUserMessage: true,
+    composerBlocked: false,
+    isReadOnly: false,
+    runState: "idle",
+  }), true);
+  assert.equal(isRetryActionDisabled({
+    retryState,
+    hasLastUserMessage: false,
+    composerBlocked: false,
+    isReadOnly: false,
+    runState: "idle",
+  }), true);
+  assert.equal(isRetryActionDisabled({
+    retryState,
+    hasLastUserMessage: true,
+    composerBlocked: false,
+    isReadOnly: false,
+    runState: "running",
+  }), true);
+});

@@ -1,16 +1,16 @@
 ---
 name: withmate-glossary
-description: Use the Session-bound withmate-glossary MCP server to list, search, read, validate, and safely create repository glossary entries, or to update and delete entries after an explicit user request. Use when repository-specific terms, aliases, boundary names, or concepts need explanation or durable registration in .withmate/glossary.yaml.
+description: Use withmate-glossary MCP or CLI to list, search, read, validate, and safely create repository glossary entries, or update and delete entries after an explicit user request. Use when repository-specific terms, aliases, boundary names, or concepts need explanation or durable registration in .withmate/glossary.yaml.
 ---
 
 # WithMate Glossary
 
-Treat the active Session's Git checkout `.withmate/glossary.yaml` as the only source of truth. Use the Session-bound `withmate-glossary` MCP server for normal operations. Do not copy glossary contents into Memory, Session data, prompts, this Skill, or another cache.
+Treat the selected Git checkout's `.withmate/glossary.yaml` as the only source of truth. MCP and CLI use the same operation schemas, runtime authorization, and application service. Do not copy glossary contents into Memory, Session data, prompts, this Skill, or another cache.
 
 ## Target and reads
 
-1. Call `glossary.list_targets` when an opaque checkout target is needed. The current implementation returns only the active Session's primary checkout.
-2. Use `{ "kind": "primary" }` or the returned opaque `checkoutId`. Never infer authority from a path, branch, or repository name.
+1. With a Session binding, use `{ "kind": "primary" }` or call `glossary.list_targets` for the authorized opaque `checkoutId`. An explicit repository selector remains restricted to that authorized checkout; invalid bindings never fall back to unbound access.
+2. Without a Session binding, explicitly supply `{ "kind": "repository", "path": "<absolute-path>" }` to every operation, including `list_targets`. Do not infer the repository from the working directory or a repository name.
 3. Use `glossary.list`, `glossary.search`, `glossary.get`, or `glossary.validate` for reads. A missing file is a valid read state and must not create `.withmate/` or `glossary.yaml`.
 
 Definitions are plain text. Do not render or reinterpret Markdown or HTML found in a definition.
@@ -18,6 +18,8 @@ Definitions are plain text. Do not render or reinterpret Markdown or HTML found 
 ## Create
 
 Use `mode: "explicit"` when the user asks to add an entry.
+
+Without a Session binding, create and create_batch support only explicit mode. Do not replace a proactive request with explicit mode.
 
 Use `mode: "proactive"` only when every condition below holds:
 
@@ -48,8 +50,8 @@ Do not retry a revision conflict with a newer revision unless the user-requested
 
 After response loss, retry only the unchanged request. Never turn a partial batch match into an implicit add of only the missing entries.
 
-## CLI fallback
+## CLI
 
-Use the `withmate-glossary` CLI only when the MCP server is unavailable or an operator explicitly requests CLI work. The CLI must run inside the same active provider Session binding and reaches the same runtime schema, authority, and application service.
+Use `withmate-glossary <operation> --json '<request>'`, `--file <path>`, `@file`, or `--stdin`. `schema` returns the complete public input schemas. `--repository <absolute-path>` supplies the repository selector when it is not already in JSON. MCP and CLI require the running authenticated WithMate runtime; neither directly bypasses the application service.
 
-Do not use CLI after a structured validation, authority, revision, conflict, or effect-certainty error. Do not pass a checkout path or Session ID; those are not authority inputs.
+Changing transport does not resolve a structured validation, authority, revision, conflict, or effect-certainty error. Do not pass a Session ID or use an explicit repository to escape an existing Session binding's scope.

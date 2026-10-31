@@ -1,34 +1,28 @@
 import { useEffect } from "react";
 
-import { startOpenCompanionReviewWindowIdsSubscription } from "../open-companion-review-window-subscription.js";
 import {
   startOpenSessionWindowIdsSubscription,
   type OpenSessionWindowIdsState,
-} from "../open-session-window-subscription.js";
-import type { WithMateWindowApi } from "../withmate-window-api.js";
+} from "../app/open-session-window-subscription.js";
+import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
 type UseHomeOpenWindowSubscriptionsInput = {
+  enabled?: boolean;
   getApi: () => WithMateWindowApi | null;
   setOpenSessionWindowIdsState: (state: OpenSessionWindowIdsState) => void;
-  setOpenCompanionReviewWindowIds: (sessionIds: string[]) => void;
 };
 
 export function useHomeOpenWindowSubscriptions({
+  enabled = true,
   getApi,
   setOpenSessionWindowIdsState,
-  setOpenCompanionReviewWindowIds,
 }: UseHomeOpenWindowSubscriptionsInput): void {
   useEffect(() => {
+    if (!enabled) return;
     return startOpenSessionWindowIdsSubscription({
       api: getApi(),
       applyState: setOpenSessionWindowIdsState,
     });
-  }, [getApi, setOpenSessionWindowIdsState]);
+  }, [enabled, getApi, setOpenSessionWindowIdsState]);
 
-  useEffect(() => {
-    return startOpenCompanionReviewWindowIdsSubscription({
-      api: getApi(),
-      applyOpenWindowIds: setOpenCompanionReviewWindowIds,
-    });
-  }, [getApi, setOpenCompanionReviewWindowIds]);
 }

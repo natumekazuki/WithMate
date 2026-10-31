@@ -1,0 +1,45 @@
+import type { AppLifecycleService } from "./app-lifecycle-service.js";
+
+type CreateAppLifecycleDepsArgs = {
+  hasInFlightSessionRuns(): boolean;
+  getAllowQuitWithInFlightRuns(): boolean;
+  setAllowQuitWithInFlightRuns(value: boolean): void;
+  createHomeWindow(): Promise<void>;
+  quitApp(): void;
+  shouldQuitWhenAllWindowsClosed(): boolean;
+  confirmQuitWhileRunning(): boolean;
+  prepareSessionWindowSnapshotForQuit?(): Promise<void>;
+  flushSessionWindowDrafts?(): Promise<boolean>;
+  stopMemoryRuntime?(): Promise<void>;
+  closePersistentStores(): void | Promise<void>;
+  invalidateAllProviderSessionThreads?(): Promise<void>;
+  revokeAllAgentRuntimeBindings?(): void;
+};
+
+export function createAppLifecycleDeps(
+  args: CreateAppLifecycleDepsArgs,
+): ConstructorParameters<typeof AppLifecycleService>[0] {
+  return {
+    hasInFlightSessionRuns: args.hasInFlightSessionRuns,
+    getAllowQuitWithInFlightRuns: args.getAllowQuitWithInFlightRuns,
+    setAllowQuitWithInFlightRuns: args.setAllowQuitWithInFlightRuns,
+    createHomeWindow: args.createHomeWindow,
+    quitApp: args.quitApp,
+    shouldQuitWhenAllWindowsClosed: args.shouldQuitWhenAllWindowsClosed,
+    confirmQuitWhileRunning: args.confirmQuitWhileRunning,
+    ...(args.prepareSessionWindowSnapshotForQuit
+      ? { prepareSessionWindowSnapshotForQuit: args.prepareSessionWindowSnapshotForQuit }
+      : {}),
+    ...(args.flushSessionWindowDrafts
+      ? { flushSessionWindowDrafts: args.flushSessionWindowDrafts }
+      : {}),
+    ...(args.stopMemoryRuntime ? { stopMemoryRuntime: args.stopMemoryRuntime } : {}),
+    closePersistentStores: args.closePersistentStores,
+    ...(args.invalidateAllProviderSessionThreads
+      ? { invalidateAllProviderSessionThreads: args.invalidateAllProviderSessionThreads }
+      : {}),
+    ...(args.revokeAllAgentRuntimeBindings
+      ? { revokeAllAgentRuntimeBindings: args.revokeAllAgentRuntimeBindings }
+      : {}),
+  };
+}

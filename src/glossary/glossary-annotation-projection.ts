@@ -1,7 +1,7 @@
 import {
   normalizeGlossaryLookup,
   type GlossaryEntry,
-} from "../glossary-contract.js";
+} from "../../src-shared/glossary/glossary-contract.js";
 
 export const GLOSSARY_ANNOTATION_LIMITS = {
   maxLookupValues: 10_000,
@@ -39,12 +39,24 @@ export type GlossaryAnnotationMatcher = {
   disabledByLimit: boolean;
   createMessageBudget: () => GlossaryAnnotationBudget;
   matchText: (text: string, budget: GlossaryAnnotationBudget) => GlossaryAnnotationRange[];
+  createMessageProjection: () => GlossaryMessageProjection;
+};
+
+export type GlossaryMessageProjection = {
+  begin: () => GlossaryAnnotationBudget;
+  matchText: GlossaryAnnotationMatcher["matchText"];
+  finish: () => void;
 };
 
 type NormalizedTextProjection = {
+  text: string;
   value: string;
+  untrimmedValue: string;
+  trimStart: number;
   originalStarts: number[];
   originalEnds: number[];
+  resumeOriginalIndex: number;
+  resumeNormalizedIndex: number;
 };
 
 const URL_PATTERN = /(?:\b[a-z][a-z0-9+.-]+:|\bwww\.|\/\/)[^\s<]+|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/giu;
@@ -62,13 +74,25 @@ type IdentifierClass =
   | "hangul"
   | "other-letter";
 
-function createGraphemeSegments(value: string): Array<{ segment: string; index: number }> {
+let graphemeSegmenter: Intl.Segmenter | undefined;
+
+function* createGraphemeSegments(value: string): Iterable<{ segment: string; index: number }> {
+  // ASCII graphemes are single units except CRLF. No marks, Prepend, Hangul
+  // or emoji context can occur in an entirely ASCII node/suffix.
+  if (/^[\x00-\x7F]*$/u.test(value)) {
+    for (let index = 0; index < value.length;) {
+      const length = value[index] === "\r" && value[index + 1] === "\n" ? 2 : 1;
+      yield { segment: value.slice(index, index + length), index };
+      index += length;
+    }
+    return;
+  }
   if (typeof Intl.Segmenter === "function") {
-    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-    return Array.from(segmenter.segment(value), ({ segment, index }) => ({ segment, index }));
+    graphemeSegmenter ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    yield* graphemeSegmenter.segment(value);
+    return;
   }
 
-  const segments: Array<{ segment: string; index: number }> = [];
   let current = "";
   let currentIndex = 0;
   for (let index = 0; index < value.length;) {
@@ -80,79 +104,83 @@ function createGraphemeSegments(value: string): Array<{ segment: string; index: 
       }
       current += codePoint;
     } else {
-      segments.push({ segment: current, index: currentIndex });
+      yield { segment: current, index: currentIndex };
       current = codePoint;
       currentIndex = index;
     }
     index += codePoint.length;
   }
   if (current) {
-    segments.push({ segment: current, index: currentIndex });
+    yield { segment: current, index: currentIndex };
   }
-  return segments;
 }
 
-function normalizeTextWithOffsets(value: string): NormalizedTextProjection {
+function normalizeTextWithOffsets(value: string, previous?: NormalizedTextProjection): NormalizedTextProjection {
+  // Reuse only append-only prefixes ending before an observed grapheme that
+  // starts with ASCII whitespace. The retained whitespace blocks NFKC/casing
+  // context; the entire last grapheme and casing-sensitive tail are rebuilt.
+  const resume = previous && typeof Intl.Segmenter === "function" && value.startsWith(previous.text)
+    ? previous.resumeOriginalIndex : 0;
+  const normalizedPrefixLength = resume ? previous!.resumeNormalizedIndex : 0;
+  const suffix = value.slice(resume);
   let compatibilityNormalized = "";
   const compatibilityStarts: number[] = [];
   const compatibilityEnds: number[] = [];
 
-  for (const { segment, index } of createGraphemeSegments(value)) {
+  for (const { segment, index } of createGraphemeSegments(suffix)) {
     const normalizedSegment = segment.normalize("NFKC");
-    const originalEnd = index + segment.length;
+    const originalStart = resume + index;
+    const originalEnd = originalStart + segment.length;
     for (const character of normalizedSegment) {
       compatibilityNormalized += character;
       for (let unit = 0; unit < character.length; unit += 1) {
-        compatibilityStarts.push(index);
+        compatibilityStarts.push(originalStart);
         compatibilityEnds.push(originalEnd);
       }
     }
   }
 
-  if (compatibilityNormalized !== value.normalize("NFKC")) {
-    return { value: "", originalStarts: [], originalEnds: [] };
-  }
-
   const lowered = compatibilityNormalized.toLowerCase();
-  const loweredStarts: number[] = [];
-  const loweredEnds: number[] = [];
+  let normalized = resume ? previous!.untrimmedValue.slice(0, normalizedPrefixLength) : "";
+  const originalStarts = resume ? previous!.originalStarts : [];
+  const originalEnds = resume ? previous!.originalEnds : [];
+  originalStarts.length = normalizedPrefixLength;
+  originalEnds.length = normalizedPrefixLength;
+  let resumeOriginalIndex = resume;
+  let resumeNormalizedIndex = normalizedPrefixLength;
+  let loweredIndex = 0;
   for (let index = 0; index < compatibilityNormalized.length;) {
     const character = String.fromCodePoint(compatibilityNormalized.codePointAt(index) ?? 0);
     const loweredLength = character.toLowerCase().length;
     const originalStart = compatibilityStarts[index];
     const originalEnd = compatibilityEnds[index + character.length - 1];
-    for (let unit = 0; unit < loweredLength; unit += 1) {
-      loweredStarts.push(originalStart);
-      loweredEnds.push(originalEnd);
+    const loweredCharacter = lowered.slice(loweredIndex, loweredIndex + loweredLength);
+    if (
+      (index === 0 || compatibilityStarts[index] !== compatibilityStarts[index - 1])
+      && /^[ \t\r\n]/u.test(value[originalStart])
+      && !normalized.endsWith(" ")
+    ) {
+      resumeOriginalIndex = originalStart;
+      resumeNormalizedIndex = normalized.length;
     }
-    index += character.length;
-  }
-  if (loweredStarts.length !== lowered.length) {
-    return { value: "", originalStarts: [], originalEnds: [] };
-  }
-
-  let normalized = "";
-  const originalStarts: number[] = [];
-  const originalEnds: number[] = [];
-  for (let index = 0; index < lowered.length;) {
-    const character = String.fromCodePoint(lowered.codePointAt(index) ?? 0);
-    const originalStart = loweredStarts[index];
-    const originalEnd = loweredEnds[index + character.length - 1];
-    if (/^\s$/u.test(character)) {
-      if (normalized.endsWith(" ")) {
-        originalEnds[originalEnds.length - 1] = originalEnd;
-      } else {
-        normalized += " ";
-        originalStarts.push(originalStart);
-        originalEnds.push(originalEnd);
+    for (const unitCharacter of loweredCharacter) {
+      if (/^\s$/u.test(unitCharacter)) {
+        if (normalized.endsWith(" ")) {
+          originalEnds[originalEnds.length - 1] = originalEnd;
+        } else {
+          normalized += " ";
+          originalStarts.push(originalStart);
+          originalEnds.push(originalEnd);
+        }
+        continue;
       }
-    } else {
-      normalized += character;
-      for (let unit = 0; unit < character.length; unit += 1) {
+      normalized += unitCharacter;
+      for (let unit = 0; unit < unitCharacter.length; unit += 1) {
         originalStarts.push(originalStart);
         originalEnds.push(originalEnd);
       }
     }
+    loweredIndex += loweredLength;
     index += character.length;
   }
 
@@ -161,13 +189,24 @@ function normalizeTextWithOffsets(value: string): NormalizedTextProjection {
   while (start < end && normalized[start] === " ") start += 1;
   while (end > start && normalized[end - 1] === " ") end -= 1;
   const projection = {
+    text: value,
     value: normalized.slice(start, end),
-    originalStarts: originalStarts.slice(start, end),
-    originalEnds: originalEnds.slice(start, end),
+    untrimmedValue: normalized,
+    trimStart: start,
+    originalStarts,
+    originalEnds,
+    resumeOriginalIndex,
+    resumeNormalizedIndex,
   };
-  return projection.value === normalizeGlossaryLookup(value)
-    ? projection
-    : { value: "", originalStarts: [], originalEnds: [] };
+  if (compatibilityNormalized !== suffix.normalize("NFKC") || loweredIndex !== lowered.length) {
+    projection.value = "";
+    projection.untrimmedValue = "";
+    projection.originalStarts.length = 0;
+    projection.originalEnds.length = 0;
+    projection.resumeOriginalIndex = 0;
+    projection.resumeNormalizedIndex = 0;
+  }
+  return projection;
 }
 
 function codePointBefore(value: string, index: number): string {
@@ -233,8 +272,9 @@ function alignsWithOriginalBoundaries(
   end: number,
 ): boolean {
   const starts = projection.originalStarts;
-  return (start === 0 || starts[start] !== starts[start - 1])
-    && (end === projection.value.length || starts[end] !== starts[end - 1]);
+  const offset = projection.trimStart;
+  return (start === 0 || starts[start + offset] !== starts[start + offset - 1])
+    && (end === projection.value.length || starts[end + offset] !== starts[end + offset - 1]);
 }
 
 function buildCandidates(entries: readonly GlossaryEntry[]): GlossaryAnnotationCandidate[] | null {
@@ -285,22 +325,51 @@ export function createGlossaryAnnotationMatcher(
     limitReached: candidates === null,
   });
 
-  const matchText = (text: string, budget: GlossaryAnnotationBudget): GlossaryAnnotationRange[] => {
-    if (candidates === null || budget.limitReached || !text) return [];
+  type CachedText = {
+    text: string;
+    projection: NormalizedTextProjection;
+    before: GlossaryAnnotationBudget;
+    after: GlossaryAnnotationBudget;
+    matches: GlossaryAnnotationRange[];
+  };
+  const sameBudget = (left: GlossaryAnnotationBudget, right: GlossaryAnnotationBudget) =>
+    left.remainingCodeUnits === right.remainingCodeUnits
+    && left.remainingNormalizedCodeUnits === right.remainingNormalizedCodeUnits
+    && left.remainingComparisons === right.remainingComparisons
+    && left.remainingAnnotations === right.remainingAnnotations
+    && left.limitReached === right.limitReached;
+
+  const matchProjectedText = (
+    text: string,
+    budget: GlossaryAnnotationBudget,
+    previous?: CachedText,
+    remember?: (cached: CachedText) => void,
+  ): GlossaryAnnotationRange[] => {
+    if (!candidates?.length || budget.limitReached || !text) return [];
+    if (previous?.text === text && sameBudget(budget, previous.before)) {
+      Object.assign(budget, previous.after);
+      remember?.(previous);
+      return previous.matches;
+    }
     if (text.length > budget.remainingCodeUnits) {
       budget.limitReached = true;
       return [];
     }
+    const before = { ...budget };
     budget.remainingCodeUnits -= text.length;
 
-    const projection = normalizeTextWithOffsets(text);
+    const projection = previous?.text === text ? previous.projection : normalizeTextWithOffsets(text, previous?.projection);
+    const matches: GlossaryAnnotationRange[] = [];
+    const complete = () => {
+      remember?.({ text, projection, before, after: { ...budget }, matches });
+      return matches;
+    };
     if (projection.value.length > budget.remainingNormalizedCodeUnits) {
       budget.limitReached = true;
-      return [];
+      return matches;
     }
     budget.remainingNormalizedCodeUnits -= projection.value.length;
     const urlRanges = collectUrlRanges(text);
-    const matches: GlossaryAnnotationRange[] = [];
     let previousOriginalEnd = 0;
     for (let normalizedIndex = 0; normalizedIndex < projection.value.length;) {
       const bucket = candidatesByFirstUnit.get(projection.value[normalizedIndex]) ?? [];
@@ -309,7 +378,7 @@ export function createGlossaryAnnotationMatcher(
         budget.remainingComparisons -= 1;
         if (budget.remainingComparisons < 0) {
           budget.limitReached = true;
-          return matches;
+          return complete();
         }
         if (
           projection.value.startsWith(candidate.normalized, normalizedIndex)
@@ -326,8 +395,8 @@ export function createGlossaryAnnotationMatcher(
       }
 
       const normalizedEnd = normalizedIndex + accepted.normalized.length;
-      const originalStart = projection.originalStarts[normalizedIndex];
-      const originalEnd = projection.originalEnds[normalizedEnd - 1];
+      const originalStart = projection.originalStarts[normalizedIndex + projection.trimStart];
+      const originalEnd = projection.originalEnds[normalizedEnd + projection.trimStart - 1];
       if (
         originalStart === undefined
         || originalEnd === undefined
@@ -341,7 +410,7 @@ export function createGlossaryAnnotationMatcher(
       }
       if (budget.remainingAnnotations <= 0) {
         budget.limitReached = true;
-        return matches;
+        return complete();
       }
 
       matches.push({
@@ -355,13 +424,33 @@ export function createGlossaryAnnotationMatcher(
       budget.remainingAnnotations -= 1;
       normalizedIndex = normalizedEnd;
     }
-    return matches;
+    return complete();
   };
 
   return {
     revision,
     disabledByLimit: candidates === null,
     createMessageBudget,
-    matchText,
+    matchText: (text, budget) => matchProjectedText(text, budget),
+    createMessageProjection: () => {
+      // Only the current message's eligible text nodes survive a pass. This
+      // owner is replaced on matcher/scope change and released on unmount.
+      const nodes: Array<CachedText | undefined> = [];
+      let cursor = 0;
+      return {
+        begin: () => {
+          cursor = 0;
+          return createMessageBudget();
+        },
+        matchText: (text, budget) => {
+          if (!candidates?.length || budget.limitReached || !text) return [];
+          const index = cursor++;
+          const previous = nodes[index];
+          nodes[index] = undefined;
+          return matchProjectedText(text, budget, previous, (cached) => { nodes[index] = cached; });
+        },
+        finish: () => { nodes.length = cursor; },
+      };
+    },
   };
 }

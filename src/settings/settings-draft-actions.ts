@@ -1,11 +1,13 @@
-import type { ModelCatalogSnapshot } from "../model-catalog.js";
-import type { MicrocopySlot } from "../microcopy-state.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
-import type { AppSettings } from "../provider-settings-state.js";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
   updateAutoCollapseActionDockOnSend,
+  updateCharacterAffectContextEnabled,
+  updateCharacterDefinitionEnabled,
+  updateConversationTimingEnabled,
   updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderInstructionRelativePathDraft,
@@ -25,9 +27,11 @@ import {
   updateMemoryGenerationEnabled,
   updateKeyboardShortcuts,
   updateScrollToLatestOnSend,
+  updatePreviewWheelZoomStep,
   updateSessionTurnNotificationEnabled,
+  updateSessionApprovalNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
-  updateUserMicrocopySlotDraft,
+  updateToolCallPresenceEnabled,
 } from "./settings-draft.js";
 
 type SetSettingsDraft = (updater: (current: AppSettings) => AppSettings) => void;
@@ -86,6 +90,30 @@ export function handleChangeAutoCollapseActionDockOnSend(input: SettingsDraftAct
   input.setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, input.enabled));
 }
 
+export function handleChangeCharacterDefinitionEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateCharacterDefinitionEnabled(current, input.enabled));
+}
+
+export function handleChangeCharacterAffectContextEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateCharacterAffectContextEnabled(current, input.enabled));
+}
+
+export function handleChangeConversationTimingEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateConversationTimingEnabled(current, input.enabled));
+}
+
+export function handleChangeToolCallPresenceEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateToolCallPresenceEnabled(current, input.enabled));
+}
+
 export function handleChangeScrollToLatestOnSend(input: SettingsDraftActionInput & {
   enabled: boolean;
 }): void {
@@ -98,6 +126,10 @@ export function handleChangeKeyboardShortcuts(input: SettingsDraftActionInput & 
   input.setSettingsDraft((current) => updateKeyboardShortcuts(current, input.keyboardShortcuts));
 }
 
+export function handleChangePreviewWheelZoomStep(input: SettingsDraftActionInput & { value: number }): void {
+  input.setSettingsDraft((current) => updatePreviewWheelZoomStep(current, input.value));
+}
+
 export function handleChangeLaunchAtLoginEnabled(input: SettingsDraftActionInput & {
   enabled: boolean;
 }): void {
@@ -108,6 +140,12 @@ export function handleChangeSessionTurnNotificationEnabled(input: SettingsDraftA
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateSessionTurnNotificationEnabled(current, input.enabled));
+}
+
+export function handleChangeSessionApprovalNotificationEnabled(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateSessionApprovalNotificationEnabled(current, input.enabled));
 }
 
 export function handleChangeSessionTurnNotificationResponsePreviewEnabled(input: SettingsDraftActionInput & {
@@ -127,13 +165,6 @@ export function handleChangeGlossaryProactiveCreateLimit(input: SettingsDraftAct
   value: string;
 }): void {
   input.setSettingsDraft((current) => updateGlossaryProactiveCreateLimitDraft(current, input.value));
-}
-
-export function handleChangeUserMicrocopySlot(input: SettingsDraftActionInput & {
-  slot: MicrocopySlot;
-  value: string;
-}): void {
-  input.setSettingsDraft((current) => updateUserMicrocopySlotDraft(current, input.slot, input.value));
 }
 
 export function handleChangeMemoryExtractionModel(input: ModelCatalogActionInput & {
@@ -217,8 +248,8 @@ export function handleAddMateMemoryGenerationPriority(input: ModelCatalogActionI
   const provider = input.modelCatalog?.providers[0];
   input.setSettingsDraft((current) => addMateMemoryGenerationPriorityDraft(current, {
     provider: provider?.id ?? "codex",
-    model: provider?.defaultModelId ?? "gpt-5.4",
-    reasoningEffort: provider?.defaultReasoningEffort ?? "low",
+    model: provider?.defaultModelId ?? "",
+    reasoningEffort: provider?.defaultReasoningEffort ?? "",
     timeoutSeconds: 180,
   }));
 }

@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import {
   projectAuxiliarySessionSummary,
   type AuxiliarySession,
   type AuxiliarySessionSummary,
-} from "../auxiliary-session-state.js";
-import type { LiveSessionRunState } from "../app-state.js";
+} from "../../src-shared/auxiliary/auxiliary-session-state.js";
+import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import type { ConcurrentChatWindowProps } from "./chat-window.js";
+import type { ConversationColumnSession, ConversationMessageColumnApi } from "./conversation-message-column.js";
+import type { SessionMessageColumnProps } from "./conversation/session-message-column.js";
+import { setMessageBookmarked, type MessageArtifact } from "../../src-shared/session/session-state.js";
+import { mergeMessageBookmarkProjection } from "./runtime/session-submit-coordinator.js";
+import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
+import { subscribeSessionLiveEvents } from "./runtime/session-window-live-ingress.js";
+import { startConversationDetailSubscription, type SessionSummaryInvalidationSubscriptionApi } from "./runtime/session-summary-subscription.js";
 
 export type AuxiliaryWorkspaceApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
+  getAuxiliarySessionStatus(auxiliarySessionId: string): Promise<Pick<AuxiliarySession, "id" | "parentSessionId" | "createdAt" | "runState"> | null>;
+  subscribeSessionInvalidation?: SessionSummaryInvalidationSubscriptionApi["subscribeSessionInvalidation"];
   subscribeLiveSessionRun?: (
     listener: (sessionId: string, state: LiveSessionRunState | null) => void,
   ) => () => void;
@@ -21,12 +32,16 @@ export type AuxiliarySessionBinding = {
   draftSaveQueue: { current: Promise<void> };
   sessionSaveQueue: { current: Promise<void> };
   setSession(update: SetStateAction<AuxiliarySession | null>): void;
+  setMessageBookmark(messageIndex: number, isBookmarked: boolean): void;
   getSession(): AuxiliarySession | null;
+  setExecutionSelection(session: AuxiliarySession): void;
+  retainDetail(): () => void;
 };
 
 export type AuxiliaryWorkspace = {
   summaries: AuxiliarySessionSummary[];
   selectedId: string | null;
+  getCurrentSelectedId(): string | null;
   selectedSession: AuxiliarySession | null;
   loading: boolean;
   error: Error | null;
@@ -35,14 +50,36 @@ export type AuxiliaryWorkspace = {
   target: AuxiliaryWorkspaceTarget;
   widthRatio: number;
   setWidthRatio(ratio: number): void;
+  commitWidthRatio(): void;
   selectSession(id: string | null): void;
+  requestSessionSelection(id: string): void;
   setTarget(target: AuxiliaryWorkspaceTarget): void;
   addSession(saved: AuxiliarySession): void;
   refreshSummaries(): Promise<void>;
+  touchRecency(id: string, updatedAt: string): void;
   getBinding(id: string | null): AuxiliarySessionBinding;
+  buildConcurrentChats(input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps;
+};
+
+export type AuxiliaryConcurrentChatSurfaceInput = {
+  mainSession: ConversationColumnSession | null;
+  auxiliarySession: ConversationColumnSession | null;
+  api?: ConversationMessageColumnApi;
+  mainLiveRun?: LiveSessionRunState | null;
+  auxiliaryLiveRun?: LiveSessionRunState | null;
+  messageColumn: SessionMessageColumnProps;
+  onToggleMessageBookmark?: SessionMessageColumnProps["onToggleMessageBookmark"];
+  mainOnLoadArtifactDetail?: (index: number) => Promise<MessageArtifact | null>;
+  mainOnOpenPath?: (target: string) => void;
+  auxiliaryOnLoadArtifactDetail?: (index: number) => Promise<MessageArtifact | null>;
+  auxiliaryOnOpenPath?: (target: string) => void;
+  onAddAuxiliary?: () => void;
+  isAddAuxiliaryDisabled?: boolean;
+  scrollToLatestOnSend?: boolean;
 };
 
 const DEFAULT_WIDTH_RATIO = 0;
+const HIDDEN_DETAIL_CACHE_LIMIT = 8;
 const PREFS_KEY_PREFIX = "withmate:auxiliary-workspace:";
 
 type WorkspacePrefs = { selectedId: string | null; widthRatio: number };
@@ -71,11 +108,40 @@ function writePrefs(parentSessionId: string, prefs: WorkspacePrefs): void {
   }
 }
 
-function sortByCreation(summaries: AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {
+function samePrefs(left: WorkspacePrefs, right: WorkspacePrefs): boolean {
+  return left.selectedId === right.selectedId && left.widthRatio === right.widthRatio;
+}
+
+function sortByLastUsed(summaries: AuxiliarySessionSummary[], recency?: ReadonlyMap<string, string>): AuxiliarySessionSummary[] {
   return [...summaries].sort((left, right) => {
-    const created = left.createdAt.localeCompare(right.createdAt);
-    return created || left.id.localeCompare(right.id);
+    const leftTime = recency?.get(left.id);
+    const rightTime = recency?.get(right.id);
+    const updated = (rightTime && rightTime > right.updatedAt ? rightTime : right.updatedAt)
+      .localeCompare(leftTime && leftTime > left.updatedAt ? leftTime : left.updatedAt);
+    return updated || right.id.localeCompare(left.id);
   });
+}
+
+function sameSummary(left: AuxiliarySessionSummary, right: AuxiliarySessionSummary): boolean {
+  const keys = Object.keys(right) as Array<keyof AuxiliarySessionSummary>;
+  return Object.keys(left).length === keys.length && keys.every((key) => {
+    return left[key] === right[key];
+  });
+}
+
+function replaceSummary(
+  current: AuxiliarySessionSummary[],
+  id: string,
+  next: AuxiliarySessionSummary | null,
+  recency?: ReadonlyMap<string, string>,
+): AuxiliarySessionSummary[] {
+  const index = current.findIndex((summary) => summary.id === id);
+  if (index < 0) return next ? sortByLastUsed([...current, next], recency) : current;
+  if (next && sameSummary(current[index], next)) return current;
+  const updated = current.slice();
+  if (!next) updated.splice(index, 1);
+  else updated[index] = next;
+  return next && current[index].updatedAt !== next.updatedAt ? sortByLastUsed(updated, recency) : updated;
 }
 
 export function clampAuxiliaryWidthRatio(ratio: number): number {
@@ -86,8 +152,10 @@ export function clampAuxiliaryWidthRatio(ratio: number): number {
 export function useAuxiliaryWorkspace(input: {
   parentSessionId: string | null;
   api: AuxiliaryWorkspaceApi | null;
+  initialSelectedId?: string | null;
 }): AuxiliaryWorkspace {
-  const { parentSessionId, api } = input;
+  const { parentSessionId, api, initialSelectedId } = input;
+  const normalizedInitialSelectedId = initialSelectedId?.trim() || null;
   const parentSessionIdRef = useRef(parentSessionId);
   parentSessionIdRef.current = parentSessionId;
   const [summaries, setSummaries] = useState<AuxiliarySessionSummary[]>([]);
@@ -99,18 +167,65 @@ export function useAuxiliaryWorkspace(input: {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<Error | null>(null);
   const [target, setTargetState] = useState<AuxiliaryWorkspaceTarget>("main");
-  const prefsRef = useRef<WorkspacePrefs>(parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO });
-  const widthRatioRef = useRef(prefsRef.current.widthRatio);
+  const prefsRef = useRef<WorkspacePrefs | null>(null);
+  if (prefsRef.current === null) {
+    prefsRef.current = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
+  }
+  const initialPrefs = prefsRef.current;
+  const persistedPrefsRef = useRef<WorkspacePrefs>(initialPrefs);
+  const prefsParentSessionIdRef = useRef(parentSessionId);
+  const widthRatioRef = useRef(initialPrefs.widthRatio);
   const [widthRatio, setWidthRatioState] = useState(widthRatioRef.current);
   const selectedIdRef = useRef<string | null>(null);
+  const requestedSelectionRef = useRef<string | null>(null);
+  const pendingSelectionIdRef = useRef<string | null>(normalizedInitialSelectedId);
   const detailsRef = useRef(new Map<string, AuxiliarySession>());
   const bindingsRef = useRef(new Map<string, AuxiliarySessionBinding>());
+  const dirtyDetailsRef = useRef(new Set<string>());
+  const detailOperationsRef = useRef(new Map<string, number>());
+  const operationWasDirtyRef = useRef(new Map<string, boolean>());
+  const detailQueuesRef = useRef(new Map<string, number>());
+  const detailLoadingIdsRef = useRef(new Set<string>());
+  const pruneDetails = useCallback(() => {
+    const reusable = [...detailsRef.current.keys()].filter((id) => id !== selectedIdRef.current
+      && detailsRef.current.get(id)?.runState !== "running"
+      && !dirtyDetailsRef.current.has(id)
+      && !detailOperationsRef.current.has(id)
+      && !detailQueuesRef.current.has(id)
+      && !detailLoadingIdsRef.current.has(id));
+    for (const id of reusable.slice(0, Math.max(0, reusable.length - HIDDEN_DETAIL_CACHE_LIMIT))) {
+      detailsRef.current.delete(id);
+      const binding = bindingsRef.current.get(id);
+      if (binding) binding.sessionRef.current = null;
+    }
+  }, []);
+  const cacheDetail = useCallback((id: string, session: AuxiliarySession) => {
+    detailsRef.current.delete(id);
+    detailsRef.current.set(id, session);
+    const binding = bindingsRef.current.get(id);
+    if (binding) binding.sessionRef.current = session;
+    pruneDetails();
+  }, [pruneDetails]);
+  const executionSelectionsRef = useRef(new Map<string, { createdAt: string; options: SessionExecutionOptions }>());
+  const mergeExecutionSelection = useCallback((session: AuxiliarySession): AuxiliarySession => {
+    const selection = executionSelectionsRef.current.get(session.id);
+    if (!selection) return session;
+    if (selection.createdAt !== session.createdAt) {
+      executionSelectionsRef.current.delete(session.id);
+      return session;
+    }
+    const selected = Object.entries(selection.options).every(([key, value]) => session[key as keyof SessionExecutionOptions] === value)
+      ? session : { ...session, ...selection.options };
+    return selected;
+  }, []);
   const loadRevisionRef = useRef(0);
   const listRevisionRef = useRef(0);
   const mutationRevisionRef = useRef(0);
   const workspaceGenerationRef = useRef(0);
   const detailMutationEpochRef = useRef(new Map<string, number>());
-  const terminalRevisionRef = useRef(new Map<string, number>());
+  const bookmarkRevisionRef = useRef(new Map<string, number>());
+  const detailReadRevisionRef = useRef(new Map<string, number>());
+  const recencyRef = useRef(new Map<string, string>());
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -118,8 +233,14 @@ export function useAuxiliaryWorkspace(input: {
   }, []);
 
   const persistPrefs = useCallback((next: Partial<WorkspacePrefs>) => {
-    prefsRef.current = { ...prefsRef.current, ...next };
-    if (parentSessionId) writePrefs(parentSessionId, prefsRef.current);
+    const current = prefsRef.current;
+    if (!current) return;
+    prefsRef.current = { ...current, ...next };
+    const persisted = persistedPrefsRef.current;
+    const updatedPersisted = { ...persisted, ...next };
+    if (samePrefs(persisted, updatedPersisted)) return;
+    persistedPrefsRef.current = updatedPersisted;
+    if (parentSessionId) writePrefs(parentSessionId, updatedPersisted);
   }, [parentSessionId]);
 
   const refreshSummaries = useCallback(async () => {
@@ -134,7 +255,7 @@ export function useAuxiliaryWorkspace(input: {
     setLoading(true);
     setError(null);
     try {
-      const next = sortByCreation(await api.listAuxiliarySessions(parentSessionId));
+      const next = sortByLastUsed(await api.listAuxiliarySessions(parentSessionId), recencyRef.current);
       if (
         !mountedRef.current
         ||
@@ -142,12 +263,31 @@ export function useAuxiliaryWorkspace(input: {
         || requestParentId !== parentSessionIdRef.current
         || requestMutationRevision !== mutationRevisionRef.current
       ) return;
-      setSummaries(next);
-      summariesRef.current = next;
-      const preferred = prefsRef.current.selectedId;
-      const nextId = selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
-        ? selectedIdRef.current
-        : preferred && next.some((summary) => summary.id === preferred) ? preferred : next[0]?.id ?? null;
+      const previous = summariesRef.current;
+      const stable = next.length === previous.length && next.every((summary, index) =>
+        summary.id === previous[index].id && sameSummary(summary, previous[index]))
+        ? previous : next;
+      if (stable !== previous) setSummaries(stable);
+      summariesRef.current = stable;
+      const preferred = prefsRef.current?.selectedId ?? null;
+      const requested = requestedSelectionRef.current;
+      const requestedId = pendingSelectionIdRef.current;
+      const hasRequestedId = requestedId !== null && next.some((summary) => summary.id === requestedId);
+      const hasLegacyRequestedId = requested !== null && next.some((summary) => summary.id === requested);
+      const nextId = requested !== null
+        ? requested
+        : hasRequestedId
+          ? requestedId
+          : selectedIdRef.current && next.some((summary) => summary.id === selectedIdRef.current)
+            ? selectedIdRef.current
+            : preferred && next.some((summary) => summary.id === preferred) ? preferred : next[0]?.id ?? null;
+      if (hasRequestedId) {
+        pendingSelectionIdRef.current = null;
+        persistPrefs({ selectedId: nextId });
+      }
+      if (hasLegacyRequestedId) {
+        requestedSelectionRef.current = null;
+      }
       if (nextId !== selectedIdRef.current) {
         selectedIdRef.current = nextId;
         setSelectedId(nextId);
@@ -161,22 +301,37 @@ export function useAuxiliaryWorkspace(input: {
         setLoading(false);
       }
     }
-  }, [api, parentSessionId]);
+  }, [api, parentSessionId, persistPrefs]);
 
   useEffect(() => {
-    prefsRef.current = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
-    widthRatioRef.current = prefsRef.current.widthRatio;
-    setWidthRatioState(widthRatioRef.current);
+    if (prefsParentSessionIdRef.current !== parentSessionId) {
+      prefsParentSessionIdRef.current = parentSessionId;
+      const nextPrefs = parentSessionId ? readPrefs(parentSessionId) : { selectedId: null, widthRatio: DEFAULT_WIDTH_RATIO };
+      prefsRef.current = nextPrefs;
+      persistedPrefsRef.current = nextPrefs;
+      widthRatioRef.current = nextPrefs.widthRatio;
+      setWidthRatioState(widthRatioRef.current);
+    }
     selectedIdRef.current = null;
+    requestedSelectionRef.current = null;
+    pendingSelectionIdRef.current = normalizedInitialSelectedId;
     setSelectedId(null);
     setSelectedSession(null);
     summariesRef.current = [];
     setSummaries([]);
     setTargetState("main");
     detailsRef.current.clear();
+    executionSelectionsRef.current.clear();
     bindingsRef.current.clear();
+    dirtyDetailsRef.current.clear();
+    detailOperationsRef.current.clear();
+    operationWasDirtyRef.current.clear();
+    detailQueuesRef.current.clear();
+    detailLoadingIdsRef.current.clear();
     detailMutationEpochRef.current.clear();
-    terminalRevisionRef.current.clear();
+    bookmarkRevisionRef.current.clear();
+    detailReadRevisionRef.current.clear();
+    recencyRef.current.clear();
     workspaceGenerationRef.current += 1;
     mutationRevisionRef.current += 1;
     listRevisionRef.current += 1;
@@ -184,19 +339,21 @@ export function useAuxiliaryWorkspace(input: {
     setDetailError(null);
     setError(null);
     void refreshSummaries();
-  }, [parentSessionId, refreshSummaries]);
+  }, [initialSelectedId, parentSessionId, refreshSummaries]);
 
   useEffect(() => {
     const id = selectedId;
     const revision = ++loadRevisionRef.current;
     if (!id) {
       setSelectedSession(null);
+      pruneDetails();
       setDetailLoading(false);
       setDetailError(null);
       return;
     }
     const cached = detailsRef.current.get(id) ?? bindingsRef.current.get(id)?.sessionRef.current ?? null;
     if (cached) {
+      cacheDetail(id, cached);
       setSelectedSession(cached);
       setDetailLoading(false);
       setDetailError(null);
@@ -212,92 +369,266 @@ export function useAuxiliaryWorkspace(input: {
     }
     void api.getAuxiliarySession(id).then((session) => {
       if (!mountedRef.current || revision !== loadRevisionRef.current || selectedIdRef.current !== id) return;
-      if (session && detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
-        detailsRef.current.set(id, session);
-        const binding = bindingsRef.current.get(id);
-        if (binding) binding.sessionRef.current = session;
+      const mergedSession = session ? mergeExecutionSelection(session) : null;
+      if (mergedSession && detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
+        cacheDetail(id, mergedSession);
       }
       if (detailEpoch === (detailMutationEpochRef.current.get(id) ?? 0)) {
-        if (session) setSelectedSession(session);
-        else setDetailError(new Error(`Auxiliary session ${id} was not found`));
+        if (mergedSession) {
+          setSelectedSession(mergedSession);
+          setDetailError(null);
+        } else {
+          setDetailError(new Error(`Auxiliary session ${id} was not found`));
+        }
       }
       setDetailLoading(false);
     }).catch((cause) => {
       if (!mountedRef.current || revision !== loadRevisionRef.current || selectedIdRef.current !== id) return;
+      if (detailEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
       const detailCause = cause instanceof Error ? cause : new Error(String(cause));
       setDetailError(detailCause);
       setDetailLoading(false);
     });
-  }, [api, selectedId]);
+  }, [api, cacheDetail, mergeExecutionSelection, pruneDetails, selectedId]);
 
   useEffect(() => {
-    if (!api?.subscribeLiveSessionRun) return;
+    if (!api || !parentSessionId) return;
+    let active = true;
     const subscriptionGeneration = workspaceGenerationRef.current;
-    const applySession = (id: string, session: AuxiliarySession, terminalRevision: number, terminalEpoch: number, fullSession: boolean) => {
-      if (!mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
-        || terminalRevision !== terminalRevisionRef.current.get(id)
-        || terminalEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
-      const nextSummaries = fullSession
-        ? sortByCreation([
-          ...summariesRef.current.filter((summary) => summary.id !== id),
-          projectAuxiliarySessionSummary(session),
-        ])
-        : summariesRef.current.map((summary) => summary.id === id
-          ? { ...summary, runState: session.runState }
-          : summary);
-      summariesRef.current = nextSummaries;
-      setSummaries(nextSummaries);
-      if (fullSession) {
-        detailsRef.current.set(id, session);
-        const binding = bindingsRef.current.get(id);
-        if (binding) binding.sessionRef.current = session;
-        if (selectedIdRef.current === id) setSelectedSession(session);
-      } else {
-        const currentDetail = detailsRef.current.get(id);
-        if (currentDetail && currentDetail.runState !== session.runState) {
-          const nextDetail = { ...currentDetail, runState: session.runState };
-          detailsRef.current.set(id, nextDetail);
-          const binding = bindingsRef.current.get(id);
-          if (binding) binding.sessionRef.current = nextDetail;
-          if (selectedIdRef.current === id) setSelectedSession(nextDetail);
+    const statusRequests = new Map<string, { pending: boolean }>();
+    const liveStatusKeys = new Map<string, { key: string }>();
+    const detailLoads = new Map<string, {
+      revision: number;
+      status?: NonNullable<Awaited<ReturnType<AuxiliaryWorkspaceApi["getAuxiliarySessionStatus"]>>>;
+      resolvedEpoch?: number;
+    }>();
+    const applySession = (id: string, session: AuxiliarySession, readRevision: number, readEpoch: number, bookmarkRevision: number) => {
+      if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+        || readRevision !== detailReadRevisionRef.current.get(id)
+        || readEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+      session = mergeExecutionSelection(session);
+      if (bookmarkRevision !== (bookmarkRevisionRef.current.get(id) ?? 0)) {
+        const projected = detailsRef.current.get(id);
+        if (projected?.createdAt === session.createdAt) {
+          session = { ...session, messages: mergeMessageBookmarkProjection(projected.messages, session.messages) };
         }
+      }
+      const nextSummaries = replaceSummary(summariesRef.current, id, projectAuxiliarySessionSummary(session), recencyRef.current);
+      if (nextSummaries !== summariesRef.current) {
+        summariesRef.current = nextSummaries;
+        setSummaries(nextSummaries);
+      }
+      cacheDetail(id, session);
+      if (selectedIdRef.current === id) {
+        setSelectedSession(session);
+        setDetailLoading(false);
+        setDetailError(null);
       }
     };
-    return api.subscribeLiveSessionRun((id, state) => {
-      if (subscriptionGeneration !== workspaceGenerationRef.current) return;
-      if (!summariesRef.current.some((summary) => summary.id === id)) return;
-      if (!api) return;
-      const terminalRevision = (terminalRevisionRef.current.get(id) ?? 0) + 1;
-      terminalRevisionRef.current.set(id, terminalRevision);
-      if (state === null && !detailsRef.current.has(id)) {
-        void refreshSummaries();
+    const refreshStatus = (id: string) => {
+      const existing = statusRequests.get(id);
+      if (existing) {
+        existing.pending = true;
         return;
       }
-      const terminalEpoch = detailMutationEpochRef.current.get(id) ?? 0;
-      void api.getAuxiliarySession(id).then((session) => {
-        if (session) applySession(id, session, terminalRevision, terminalEpoch, state === null);
+      const request = { pending: false };
+      statusRequests.set(id, request);
+      const liveStatusKey = liveStatusKeys.get(id);
+      const revision = detailReadRevisionRef.current.get(id);
+      const epoch = detailMutationEpochRef.current.get(id) ?? 0;
+      const pendingDetail = detailLoads.get(id);
+      void api.getAuxiliarySessionStatus(id).then((status) => {
+        const currentEpoch = detailMutationEpochRef.current.get(id) ?? 0;
+        if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+          || revision !== detailReadRevisionRef.current.get(id)
+          || (epoch !== currentEpoch && pendingDetail?.resolvedEpoch !== currentEpoch) || !status) return;
+        const summary = summariesRef.current.find((item) => item.id === id);
+        if (!summary || summary.parentSessionId !== status.parentSessionId || summary.createdAt !== status.createdAt) return;
+        // A newer run state must not discard the completed messages in an
+        // in-flight detail read. Merge that confirmed state when the body arrives.
+        const detailLoad = detailLoads.get(id);
+        if (detailLoad) detailLoad.status = status;
+        const nextSummaries = replaceSummary(summariesRef.current, id, { ...summary, runState: status.runState }, recencyRef.current);
+        if (nextSummaries !== summariesRef.current) {
+          summariesRef.current = nextSummaries;
+          setSummaries(nextSummaries);
+        }
+        const detail = detailsRef.current.get(id);
+        if (detail && detail.runState !== status.runState) {
+          const next = { ...detail, runState: status.runState };
+          detailsRef.current.set(id, next);
+          const binding = bindingsRef.current.get(id);
+          if (binding) binding.sessionRef.current = next;
+          if (selectedIdRef.current === id) setSelectedSession(next);
+        }
+        pruneDetails();
       }).catch((cause) => {
-        if (mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
-          && terminalRevision === terminalRevisionRef.current.get(id)) {
-          setError(cause instanceof Error ? cause : new Error(String(cause)));
+        // Clear only this observation: a newer A/B/A transition can have the
+        // same semantic key while still owning a queued status refresh.
+        if (liveStatusKeys.get(id) === liveStatusKey) liveStatusKeys.delete(id);
+        if (active && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
+          && revision === detailReadRevisionRef.current.get(id)) {
+          console.error("Failed to refresh Auxiliary session run state", cause);
+        }
+      }).finally(() => {
+        statusRequests.delete(id);
+        if (request.pending && active && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current) refreshStatus(id);
+      });
+    };
+    const refreshDetail = (id: string, terminal: boolean) => {
+      if (terminal) liveStatusKeys.delete(id);
+      const readRevision = (detailReadRevisionRef.current.get(id) ?? 0) + 1;
+      detailReadRevisionRef.current.set(id, readRevision);
+      detailLoads.set(id, { revision: readRevision });
+      detailLoadingIdsRef.current.add(id);
+      const pendingStatus = statusRequests.get(id);
+      if (terminal && pendingStatus) pendingStatus.pending = false;
+      const readStartEpoch = detailMutationEpochRef.current.get(id) ?? 0;
+      const readBookmarkRevision = bookmarkRevisionRef.current.get(id) ?? 0;
+      void api.getAuxiliarySession(id).then((session) => {
+        if (!active || !mountedRef.current || subscriptionGeneration !== workspaceGenerationRef.current
+          || readRevision !== detailReadRevisionRef.current.get(id)) return;
+        if (readStartEpoch !== (detailMutationEpochRef.current.get(id) ?? 0)) return;
+        mutationRevisionRef.current += 1;
+        setLoading(false);
+        const resolvedEpoch = readStartEpoch + 1;
+        detailMutationEpochRef.current.set(id, resolvedEpoch);
+        if (session) {
+          const detailLoad = detailLoads.get(id)!;
+          detailLoad.resolvedEpoch = resolvedEpoch;
+          const status = detailLoad.status;
+          if (status && status.createdAt === session.createdAt && status.parentSessionId === session.parentSessionId) {
+            session = { ...session, runState: status.runState };
+          }
+          applySession(id, session, readRevision, resolvedEpoch, readBookmarkRevision);
+          return;
+        }
+        detailsRef.current.delete(id);
+        const binding = bindingsRef.current.get(id);
+        if (binding) binding.sessionRef.current = null;
+        if (selectedIdRef.current === id) {
+          setSelectedSession(null);
+          setDetailLoading(false);
+          setDetailError(new Error(`Auxiliary session ${id} was not found`));
+        }
+        void refreshSummaries();
+      }).catch((cause) => {
+        if (active && mountedRef.current && subscriptionGeneration === workspaceGenerationRef.current
+          && readRevision === detailReadRevisionRef.current.get(id)) {
+          const detailCause = cause instanceof Error ? cause : new Error(String(cause));
+          if (selectedIdRef.current === id) {
+            setDetailLoading(false);
+            setDetailError(detailCause);
+          }
+        }
+      }).finally(() => {
+        if (detailLoads.get(id)?.revision === readRevision) {
+          detailLoads.delete(id);
+          if (active && subscriptionGeneration === workspaceGenerationRef.current) {
+            detailLoadingIdsRef.current.delete(id);
+            pruneDetails();
+          }
         }
       });
+    };
+    const unsubscribeLive = api.subscribeLiveSessionRun
+      ? subscribeSessionLiveEvents(api as AuxiliaryWorkspaceApi & Required<Pick<AuxiliaryWorkspaceApi, "subscribeLiveSessionRun">>, (id, state) => {
+        if (!active || subscriptionGeneration !== workspaceGenerationRef.current) return;
+        const summary = summariesRef.current.find((item) => item.id === id);
+        if (!summary) return;
+        if (state === null) {
+          refreshDetail(id, true);
+          return;
+        }
+        const key = JSON.stringify([summary.createdAt, state.runState, state.turnId, state.cancellationState, state.inputAvailable]);
+        if (liveStatusKeys.get(id)?.key === key) return;
+        liveStatusKeys.set(id, { key });
+        refreshStatus(id);
+      })
+      : () => undefined;
+    const unsubscribeSaved = startConversationDetailSubscription({
+      api,
+      ownerSessionId: parentSessionId,
+      onChange: () => {
+        const ids = new Set(detailsRef.current.keys());
+        if (selectedIdRef.current) ids.add(selectedIdRef.current);
+        for (const id of ids) refreshDetail(id, false);
+      },
     });
-  }, [api, parentSessionId]);
+    return () => {
+      active = false;
+      unsubscribeLive();
+      unsubscribeSaved();
+    };
+  }, [api, cacheDetail, mergeExecutionSelection, parentSessionId, pruneDetails, refreshSummaries]);
+
+  const touchRecency = useCallback((id: string, updatedAt: string) => {
+    const current = summariesRef.current;
+    const recordedTime = recencyRef.current.get(id);
+    if (recordedTime && updatedAt <= recordedTime) return;
+    if (current[0]?.id === id) {
+      if (updatedAt > current[0].updatedAt) recencyRef.current.set(id, updatedAt);
+      return;
+    }
+    const index = current.findIndex((summary) => summary.id === id);
+    if (index < 0) return;
+    const previousTime = recencyRef.current.get(id) ?? current[index].updatedAt;
+    if (updatedAt <= previousTime) return;
+    recencyRef.current.set(id, updatedAt);
+    const next = current.slice();
+    next.splice(index, 1);
+    const nextIndex = next.findIndex((summary) => {
+      const recorded = recencyRef.current.get(summary.id);
+      const time = recorded && recorded > summary.updatedAt ? recorded : summary.updatedAt;
+      return updatedAt > time || (updatedAt === time && id.localeCompare(summary.id) > 0);
+    });
+    const insertionIndex = nextIndex < 0 ? next.length : nextIndex;
+    if (insertionIndex === index) return;
+    next.splice(insertionIndex, 0, { ...current[index], updatedAt });
+    mutationRevisionRef.current += 1;
+    summariesRef.current = next;
+    setSummaries(next);
+  }, []);
 
   const selectSession = useCallback((id: string | null) => {
-    if (id !== null && !summaries.some((summary) => summary.id === id)) return;
+    if (id !== null && !summaries.some((summary) => summary.id === id)) {
+      pendingSelectionIdRef.current = id;
+      void refreshSummaries();
+      return;
+    }
+    pendingSelectionIdRef.current = null;
+    requestedSelectionRef.current = null;
     selectedIdRef.current = id;
     setSelectedId(id);
     setSelectedSession(id ? detailsRef.current.get(id) ?? null : null);
+    pruneDetails();
     persistPrefs({ selectedId: id });
-  }, [persistPrefs, summaries]);
+  }, [persistPrefs, pruneDetails, refreshSummaries, summaries]);
+
+  const requestSessionSelection = useCallback((id: string) => {
+    const normalizedId = id.trim();
+    if (!normalizedId) {
+      return;
+    }
+    requestedSelectionRef.current = normalizedId;
+    selectedIdRef.current = normalizedId;
+    setSelectedId(normalizedId);
+    setSelectedSession(detailsRef.current.get(normalizedId) ?? null);
+    pruneDetails();
+    setTargetState("auxiliary");
+    persistPrefs({ selectedId: normalizedId });
+  }, [persistPrefs, pruneDetails]);
 
   const setWidthRatio = useCallback((ratio: number) => {
     const next = clampAuxiliaryWidthRatio(ratio);
+    if (widthRatioRef.current === next) return;
     widthRatioRef.current = next;
     setWidthRatioState(next);
-    persistPrefs({ widthRatio: next });
+    if (prefsRef.current) prefsRef.current = { ...prefsRef.current, widthRatio: next };
+  }, []);
+
+  const commitWidthRatio = useCallback(() => {
+    persistPrefs({ widthRatio: widthRatioRef.current });
   }, [persistPrefs]);
 
   const setTarget = useCallback((next: AuxiliaryWorkspaceTarget) => {
@@ -309,17 +640,15 @@ export function useAuxiliaryWorkspace(input: {
     mutationRevisionRef.current += 1;
     setLoading(false);
     detailMutationEpochRef.current.set(saved.id, (detailMutationEpochRef.current.get(saved.id) ?? 0) + 1);
-    detailsRef.current.set(saved.id, saved);
-    const binding = bindingsRef.current.get(saved.id);
-    if (binding) binding.sessionRef.current = saved;
-    const nextSummaries = sortByCreation([...summariesRef.current.filter((summary) => summary.id !== saved.id), projectAuxiliarySessionSummary(saved)]);
+    const nextSummaries = sortByLastUsed([...summariesRef.current.filter((summary) => summary.id !== saved.id), projectAuxiliarySessionSummary(saved)], recencyRef.current);
     summariesRef.current = nextSummaries;
     setSummaries(nextSummaries);
     selectedIdRef.current = saved.id;
+    cacheDetail(saved.id, saved);
     setSelectedId(saved.id);
     setSelectedSession(saved);
     persistPrefs({ selectedId: saved.id });
-  }, [persistPrefs]);
+  }, [cacheDetail, persistPrefs]);
 
   const getBinding = useCallback((id: string | null): AuxiliarySessionBinding => {
     if (id === null) {
@@ -332,7 +661,10 @@ export function useAuxiliaryWorkspace(input: {
         draftSaveQueue: { current: Promise.resolve() },
         sessionSaveQueue: { current: Promise.resolve() },
         setSession() {},
+        setMessageBookmark() {},
         getSession() { return null; },
+        setExecutionSelection() {},
+        retainDetail() { return () => {}; },
       };
       bindingsRef.current.set(emptyId, emptyBinding);
       return emptyBinding;
@@ -340,37 +672,164 @@ export function useAuxiliaryWorkspace(input: {
     const existing = bindingsRef.current.get(id);
     if (existing) return existing;
     const bindingGeneration = workspaceGenerationRef.current;
+    const trackedQueue = () => {
+      let current = Promise.resolve();
+      return {
+        get current() { return current; },
+        set current(operation: Promise<void>) {
+          current = operation;
+          if (bindingGeneration !== workspaceGenerationRef.current) return;
+          detailQueuesRef.current.set(id, (detailQueuesRef.current.get(id) ?? 0) + 1);
+          const settled = () => {
+            if (bindingGeneration !== workspaceGenerationRef.current) return;
+            const remaining = (detailQueuesRef.current.get(id) ?? 1) - 1;
+            if (remaining > 0) detailQueuesRef.current.set(id, remaining);
+            else detailQueuesRef.current.delete(id);
+            pruneDetails();
+          };
+          void operation.then(settled, settled);
+        },
+      };
+    };
     const binding: AuxiliarySessionBinding = {
       sessionRef: { current: detailsRef.current.get(id) ?? null },
       mutationRevision: { current: 0 },
-      draftSaveQueue: { current: Promise.resolve() },
-      sessionSaveQueue: { current: Promise.resolve() },
+      draftSaveQueue: trackedQueue(),
+      sessionSaveQueue: trackedQueue(),
       setSession(update) {
         if (bindingGeneration !== workspaceGenerationRef.current) return;
         const current = binding.sessionRef.current;
-        const next = typeof update === "function" ? update(current) : update;
+        const candidate = typeof update === "function" ? update(current) : update;
+        const next = candidate ? mergeExecutionSelection(candidate) : candidate;
+        // Operation appliers may stage sessionRef before publishing the state.
+        if (next === (detailsRef.current.get(id) ?? null)) return;
         binding.sessionRef.current = next;
         detailMutationEpochRef.current.set(id, (detailMutationEpochRef.current.get(id) ?? 0) + 1);
-        if (next) detailsRef.current.set(id, next);
+        if (next) {
+          dirtyDetailsRef.current.add(id);
+          cacheDetail(id, next);
+        }
         else detailsRef.current.delete(id);
         setSelectedSession((selected) => selected?.id === id ? next : selected);
-        const nextSummaries = next
-          ? sortByCreation([...summariesRef.current.filter((summary) => summary.id !== id), projectAuxiliarySessionSummary(next)])
-          : summariesRef.current.filter((summary) => summary.id !== id);
-        summariesRef.current = nextSummaries;
-        setSummaries(nextSummaries);
+        const nextSummaries = replaceSummary(summariesRef.current, id, next ? projectAuxiliarySessionSummary(next) : null, recencyRef.current);
+        if (nextSummaries !== summariesRef.current) {
+          summariesRef.current = nextSummaries;
+          setSummaries(nextSummaries);
+        }
       },
       getSession() {
         return binding.sessionRef.current;
       },
+      setMessageBookmark(messageIndex, isBookmarked) {
+        if (bindingGeneration !== workspaceGenerationRef.current) return;
+        const current = binding.sessionRef.current;
+        if (!current || !Number.isInteger(messageIndex) || messageIndex < 0) return;
+        const localIndex = current.messages.findIndex((message, index) => (message.historyIndex ?? index) === messageIndex);
+        if (localIndex < 0) return;
+        const message = current.messages[localIndex];
+        if ((message.isBookmarked === true) === isBookmarked) return;
+        const messages = current.messages.slice();
+        messages[localIndex] = setMessageBookmarked(message, isBookmarked);
+        const next = { ...current, messages };
+        binding.sessionRef.current = next;
+        detailsRef.current.set(id, next);
+        bookmarkRevisionRef.current.set(id, (bookmarkRevisionRef.current.get(id) ?? 0) + 1);
+        setSelectedSession((selected) => selected?.id === id && selected.createdAt === current.createdAt ? next : selected);
+      },
+      setExecutionSelection(session) {
+        if (bindingGeneration !== workspaceGenerationRef.current) return;
+        const wasDirty = dirtyDetailsRef.current.has(id);
+        executionSelectionsRef.current.set(id, { createdAt: session.createdAt, options: captureSessionExecutionOptions(session) });
+        binding.setSession(session);
+        if (!wasDirty) dirtyDetailsRef.current.delete(id);
+        pruneDetails();
+      },
+      retainDetail() {
+        if (bindingGeneration !== workspaceGenerationRef.current) return () => {};
+        if (!detailOperationsRef.current.has(id)) operationWasDirtyRef.current.set(id, dirtyDetailsRef.current.has(id));
+        detailOperationsRef.current.set(id, (detailOperationsRef.current.get(id) ?? 0) + 1);
+        let released = false;
+        return () => {
+          if (released || bindingGeneration !== workspaceGenerationRef.current) return;
+          released = true;
+          const remaining = (detailOperationsRef.current.get(id) ?? 1) - 1;
+          if (remaining > 0) detailOperationsRef.current.set(id, remaining);
+          else {
+            detailOperationsRef.current.delete(id);
+            if (!operationWasDirtyRef.current.get(id)) dirtyDetailsRef.current.delete(id);
+            operationWasDirtyRef.current.delete(id);
+          }
+          pruneDetails();
+        };
+      },
     };
     bindingsRef.current.set(id, binding);
     return binding;
-  }, []);
+  }, [cacheDetail, mergeExecutionSelection, pruneDetails]);
+
+
+  const auxiliaryItems = useMemo(() => summaries.map((summary) => ({
+    id: summary.id,
+    label: summary.preview?.trim() ?? "",
+    searchText: summary.preview?.trim() ?? "",
+    icon: createElement(CharacterAvatar, {
+      character: { name: "", iconPath: summary.characterIconPath ?? "" },
+      size: "tiny",
+    }),
+    isProcessing: summary.runState === "running",
+  })), [summaries]);
+
+  const buildConcurrentChats = useCallback((input: AuxiliaryConcurrentChatSurfaceInput): ConcurrentChatWindowProps => {
+    const mainSessionId = input.mainSession?.id ?? input.messageColumn.sessionId;
+    const mainMessages = input.mainSession?.messages ?? input.messageColumn.messages;
+    const auxiliaryMessages = input.auxiliarySession?.messages ?? [];
+    const main = {
+      ...input.messageColumn,
+      sessionId: mainSessionId,
+      messages: mainMessages,
+      onToggleMessageBookmark: input.onToggleMessageBookmark,
+      onLoadArtifactDetail: input.mainOnLoadArtifactDetail,
+      onOpenPath: input.mainOnOpenPath,
+    };
+    const auxiliary = input.auxiliarySession
+      ? {
+          ...input.messageColumn,
+          sessionId: input.auxiliarySession.id,
+          messages: auxiliaryMessages,
+          onToggleMessageBookmark: input.onToggleMessageBookmark,
+          onLoadArtifactDetail: input.auxiliaryOnLoadArtifactDetail,
+          onOpenPath: input.auxiliaryOnOpenPath,
+        }
+      : null;
+
+    return {
+      main,
+      auxiliary,
+      mainSession: input.mainSession,
+      auxiliarySession: input.auxiliarySession,
+      api: input.api,
+      mainLiveRun: input.mainLiveRun,
+      auxiliaryLiveRun: input.auxiliaryLiveRun,
+      selectedAuxiliaryId: selectedId,
+      auxiliaryItems,
+      onAddAuxiliary: input.onAddAuxiliary,
+      isAddAuxiliaryDisabled: input.isAddAuxiliaryDisabled,
+      target,
+      widthRatio,
+      scrollToLatestOnSend: input.scrollToLatestOnSend,
+      onSelectAuxiliary: selectSession,
+      onTargetChange: setTarget,
+      onWidthRatioChange: setWidthRatio,
+      onWidthRatioCommit: commitWidthRatio,
+      loading: loading || detailLoading,
+      error: detailError?.message ?? error?.message ?? null,
+    };
+  }, [auxiliaryItems, commitWidthRatio, detailError, detailLoading, error, loading, selectSession, selectedId, setTarget, setWidthRatio, target, widthRatio]);
 
   return useMemo(() => ({
     summaries,
     selectedId,
+    getCurrentSelectedId: () => selectedIdRef.current,
     selectedSession: selectedSession?.id === selectedId ? selectedSession : null,
     loading,
     error,
@@ -379,10 +838,14 @@ export function useAuxiliaryWorkspace(input: {
     target,
     widthRatio,
     setWidthRatio,
+    commitWidthRatio,
     selectSession,
+    requestSessionSelection,
     setTarget,
     addSession,
     refreshSummaries,
+    touchRecency,
     getBinding,
-  }), [addSession, detailError, detailLoading, error, getBinding, loading, refreshSummaries, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, widthRatio]);
+    buildConcurrentChats,
+  }), [addSession, buildConcurrentChats, commitWidthRatio, detailError, detailLoading, error, getBinding, loading, refreshSummaries, requestSessionSelection, selectSession, selectedId, selectedSession, setTarget, setWidthRatio, summaries, target, touchRecency, widthRatio]);
 }

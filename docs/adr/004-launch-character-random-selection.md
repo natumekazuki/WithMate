@@ -4,6 +4,10 @@
 - 日付: 2026-07-20
 - 更新日: 2026-08-20
 
+## 適用状態
+
+このADRの通常 Session に関する抽選契約は現行のまま適用する。本文中の Companion launch に関する記述は当時の設計判断として保持するが、Companion の撤去を行った `38a99bf3cf4247421b5ca7c4dd9f7f2737f1443f` 以後は現行契約ではない。現行の Character catalog、Session owner、通常 Session の起動契約を失効させるものではない。
+
 ## Context
 
 New Session ダイアログでは Character を固定選択できる。Character の利用機会を分散するため、選択をアプリへ任せる導線も必要になった。当初は catalog 上の1件を default Character として初期選択していたが、この指定はランダム導線と初期選択の責務が競合し、Character作成・archive・public APIにも専用の状態遷移を広げていた。

@@ -1,6 +1,6 @@
 import { memo, useMemo, useRef } from "react";
 
-import { SessionMessageColumn, type SessionMessageColumnProps } from "../session-components.js";
+import { SessionMessageColumn, type SessionMessageColumnProps } from "./conversation/session-message-column.js";
 
 type Callback = (...args: any[]) => any;
 
@@ -21,37 +21,51 @@ const MemoizedSessionMessageColumn = memo(SessionMessageColumn);
 
 export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onMessageListScroll = useStableOptionalCallback(props.onMessageListScroll);
+  const onMessageListLayout = useStableOptionalCallback(props.onMessageListLayout);
   const onJumpToBottom = useStableOptionalCallback(props.onJumpToBottom);
+  const onBrowseMessages = useStableOptionalCallback(props.onBrowseMessages);
   const onToggleMessageCollapse = useStableOptionalCallback(props.onToggleMessageCollapse);
   const onToggleAllMessageCollapse = useStableOptionalCallback(props.onToggleAllMessageCollapse);
+  const onToggleMessageBookmark = useStableOptionalCallback(props.onToggleMessageBookmark);
   const onToggleArtifact = useStableOptionalCallback(props.onToggleArtifact);
   const onLoadArtifactDetail = useStableOptionalCallback(props.onLoadArtifactDetail);
   const onOpenDiff = useStableOptionalCallback(props.onOpenDiff);
   const onResolveLiveApproval = useStableOptionalCallback(props.onResolveLiveApproval);
   const onResolveLiveElicitation = useStableOptionalCallback(props.onResolveLiveElicitation);
   const onOpenPath = useStableOptionalCallback(props.onOpenPath);
-  const getChangedFilesEmptyText = useStableOptionalCallback(props.getChangedFilesEmptyText);
   const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
   const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
   const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
+  const searchConversation = useStableOptionalCallback(props.searchConversation);
+  const cancelConversationQuery = useStableOptionalCallback(props.cancelConversationQuery);
+  const onLoadMessagePage = useStableOptionalCallback(props.onLoadMessagePage);
+  const onCancelQueuedTurn = useStableOptionalCallback(props.onCancelQueuedTurn);
+  const onReleaseInterruptedTurn = useStableOptionalCallback(props.onReleaseInterruptedTurn);
 
   return (
     <MemoizedSessionMessageColumn
       {...props}
       onMessageListScroll={onMessageListScroll!}
+      onMessageListLayout={onMessageListLayout}
       onJumpToBottom={onJumpToBottom}
+      onBrowseMessages={onBrowseMessages}
       onToggleMessageCollapse={onToggleMessageCollapse}
       onToggleAllMessageCollapse={onToggleAllMessageCollapse}
+      onToggleMessageBookmark={onToggleMessageBookmark}
       onToggleArtifact={onToggleArtifact!}
       onLoadArtifactDetail={onLoadArtifactDetail}
       onOpenDiff={onOpenDiff!}
       onResolveLiveApproval={onResolveLiveApproval!}
       onResolveLiveElicitation={onResolveLiveElicitation!}
       onOpenPath={onOpenPath}
-      getChangedFilesEmptyText={getChangedFilesEmptyText!}
       onCopyMessageText={onCopyMessageText}
       onQuoteMessageText={onQuoteMessageText}
       onActivateGlossaryEntry={onActivateGlossaryEntry}
+      searchConversation={searchConversation}
+      cancelConversationQuery={cancelConversationQuery}
+      onLoadMessagePage={onLoadMessagePage}
+      onCancelQueuedTurn={onCancelQueuedTurn}
+      onReleaseInterruptedTurn={onReleaseInterruptedTurn}
     />
   );
 }

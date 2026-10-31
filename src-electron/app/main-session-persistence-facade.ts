@@ -1,0 +1,141 @@
+import { currentTimestampLabel } from "../../src-shared/time-state.js";
+import type { Session } from "../../src-shared/session/session-state.js";
+import type { SessionPersistenceService } from "../session/session-persistence-service.js";
+import type { SessionStorageRead } from "../storage/persistent-store-lifecycle-service.js";
+import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
+import type { SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
+import type { SessionRuntimeMetadataPatchInput, SessionThreadPatchInput } from "../session/session-storage-v6.js";
+import type { SessionRuntimeMetadataPatchResult, SessionThreadPatchResult } from "../session/session-storage-v6.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type { SetExecutionOptionsResult, SetSessionTitleResult } from "../../src-shared/session/session-mutation-contract.js";
+import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
+
+type ReplaceAllSessionsOptions = {
+  broadcast?: boolean;
+  invalidateSessionIds?: Iterable<string>;
+};
+
+type MainSessionPersistenceFacadeDeps = {
+  getSessions(): Session[];
+  setSessions(nextSessions: Session[]): void;
+  getSessionPersistenceService(): SessionPersistenceService;
+  getSessionStorage(): SessionStorageRead;
+};
+
+function isRunningSession(session: Session): boolean {
+  return session.status === "running" || session.runState === "running";
+}
+
+const LEGACY_INTERRUPTED_SESSION_MESSAGE = "前回の実行はアプリ終了で中断された可能性があるよ。必要ならもう一度送ってね。";
+const INTERRUPTED_SESSION_MESSAGE = "The previous run may have been interrupted when the app quit. Send again if needed.";
+
+function buildInterruptedSession(session: Session): Session {
+  const lastMessage = session.messages.at(-1);
+  const nextMessages =
+    lastMessage?.role === "assistant"
+      && (lastMessage.text === INTERRUPTED_SESSION_MESSAGE
+        || lastMessage.text === LEGACY_INTERRUPTED_SESSION_MESSAGE)
+      ? session.messages
+      : [
+          ...session.messages,
+          {
+            role: "assistant" as const,
+            text: INTERRUPTED_SESSION_MESSAGE,
+            accent: true,
+          },
+        ];
+
+  return {
+    ...session,
+    status: "idle",
+    runState: "interrupted",
+    updatedAt: currentTimestampLabel(),
+    messages: nextMessages,
+  };
+}
+
+export class MainSessionPersistenceFacade {
+  constructor(private readonly deps: MainSessionPersistenceFacadeDeps) {}
+
+  async upsertSession(session: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().upsertSession(session);
+  }
+
+  async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<SetSessionTitleResult> {
+    return this.deps.getSessionPersistenceService().setSessionTitle(sessionId, incarnationId, title);
+  }
+
+  async setSessionMessageBookmark(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Promise<void> {
+    await this.deps.getSessionPersistenceService().setSessionMessageBookmark(sessionId, incarnationId, messageIndex, isBookmarked);
+  }
+
+  async setSessionExecutionOptions(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Promise<SetExecutionOptionsResult> {
+    return this.deps.getSessionPersistenceService().setSessionExecutionOptions(sessionId, incarnationId, options);
+  }
+
+  async upsertTerminalSession(
+    session: Session,
+    terminalCommit: SessionTurnTerminalCommit,
+  ): Promise<Session> {
+    return this.deps.getSessionPersistenceService().upsertTerminalSession(session, terminalCommit);
+  }
+
+  async upsertSessionPreservingPin(session: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().upsertSessionPreservingPin(session);
+  }
+
+  async persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session> {
+    return this.deps.getSessionPersistenceService().persistRunningTurnStart(session, expectedMessageCount);
+  }
+
+  async persistQueuedTurnStart(session: Session, expectedMessageCount: number, queueId: string, turn: SessionTurnInput): Promise<{ session: Session; turn: SessionTurnRecord }> {
+    return this.deps.getSessionPersistenceService().persistQueuedTurnStart(session, expectedMessageCount, queueId, turn);
+  }
+
+  async appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Promise<Session> {
+    return this.deps.getSessionPersistenceService().appendRunningInput(session, text, turnId, queuedInput);
+  }
+
+  async appendTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Promise<Session> {
+    return this.deps.getSessionPersistenceService().appendTerminalSession(session, terminalCommit);
+  }
+
+  async checkpointRuntimeMetadata(session: Session, expected: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().checkpointRuntimeMetadata(session, expected);
+  }
+
+  async clearCharacterAuthoringRuntimeState(session: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().clearCharacterAuthoringRuntimeState(session);
+  }
+
+  async replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Promise<Session[]> {
+    return this.deps.getSessionPersistenceService().replaceAllSessions(nextSessions, options);
+  }
+
+  async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<SessionThreadPatchResult | null> {
+    return this.deps.getSessionPersistenceService().updateSessionThreadIfMatches(input);
+  }
+
+  async updateSessionRuntimeMetadataIfMatches(input: SessionRuntimeMetadataPatchInput): Promise<SessionRuntimeMetadataPatchResult | null> {
+    return this.deps.getSessionPersistenceService().updateSessionRuntimeMetadataIfMatches(input);
+  }
+
+  async recoverInterruptedSessions(): Promise<void> {
+    const runningSessions = this.deps.getSessions().filter(isRunningSession);
+    if (runningSessions.length === 0) {
+      return;
+    }
+
+    const storage = this.deps.getSessionStorage();
+    for (const session of runningSessions) {
+      const hydratedSession = await storage.getSession(session.id);
+      if (!hydratedSession) {
+        continue;
+      }
+
+      await this.upsertSession(buildInterruptedSession(hydratedSession));
+    }
+
+    this.deps.setSessions(sessionSummariesToSessions(await storage.listSessionSummaries()));
+  }
+}

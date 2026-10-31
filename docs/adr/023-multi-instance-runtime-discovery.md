@@ -4,6 +4,12 @@
 
 Accepted
 
+## 適用状態
+
+[ADR 028](028-in-turn-affect-mcp-only.md)により、Affect専用background／unbound clientへのselector除去に関する本文は、当該clientの廃止に伴い現行運用の適用対象外とする。通常turnのexact owner selection、runtime discovery、generationとcredentialの境界は維持する。
+
+[ADR 027](027-shared-localhost-http-mcp-turn-identity.md)は、新しいprovider → 共有localhost HTTP MCPの入口に限り、challenge前にcredentialと本文を送らない判断を部分的に置換する実装へ適用した判断である。現行runtime discovery、exact owner selection、別instanceへfallbackしない契約、および既存runtime exchangeとCLIのchallengeは維持する。
+
 ## Context
 
 Memory CLI/MCPが単一のcurrent pointerだけを解決すると、後から起動したinstanceや終了済みruntimeがpointerを書き換え、稼働中instanceへ接続できなくなる。終了時にpointerを以前の値へ戻すだけでは、crash、同時publish、stale owner、別instanceへの誤接続を閉じられない。
@@ -53,7 +59,7 @@ crash時に復元できず、同時publishのlast-writer競合、stale owner、�
 
 ### instanceごとにdiscovery namespaceを分ける
 
-bound経路の固定には有効だが、operatorの候補一覧、stale回収、legacy互換、Memory/Session共通のactive集合を別実装にしやすく、共有registry coreより責務が分散するため単独案としては採用しない。
+bound経路の固定には有効だが、operatorの候補一覧、stale回収、legacy互換、Memory/Session共通のactive集合を別実装にしやすい。共有registry coreより責務が分散するため、単独案としては採用しない。
 
 ### registryとactive leaseをadapterごとに別実装する
 

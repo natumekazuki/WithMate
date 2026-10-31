@@ -1,0 +1,342 @@
+export const PROVIDER_TEXT_PREVIEW_LIMIT = 64 * 1024;
+export const PROVIDER_RAW_ITEMS_JSON_LIMIT = 512 * 1024;
+export const PROVIDER_RAW_ITEM_CLONE_LIMIT = 128 * 1024;
+
+type TruncatedText = {
+  text: string;
+  truncated: true;
+  originalLength: number;
+};
+
+export type BoundedProviderRawItem = {
+  type: string;
+  timestamp?: string;
+  data?: Record<string, unknown>;
+};
+
+type RawItemBudgetState = {
+  remaining: number;
+  truncated: boolean;
+  seen: WeakSet<object>;
+  sanitizeText?: (value: string, previewLimit: number) => string;
+};
+
+const RAW_ITEM_TRUNCATION_MARKER = {
+  type: "withmate.value_truncated",
+  truncated: true,
+  reason: "provider raw item budget exceeded",
+};
+const RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE = 1024;
+
+function buildTruncationSuffix(originalLength: number, limit: number): string {
+  return `\n...[truncated ${originalLength - limit} chars; originalLength=${originalLength}]`;
+}
+
+export function toProviderTextPreview(
+  value: string | null | undefined,
+  limit = PROVIDER_TEXT_PREVIEW_LIMIT,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  if (value.length <= limit) {
+    return value;
+  }
+
+  return `${value.slice(0, limit)}${buildTruncationSuffix(value.length, limit)}`;
+}
+
+function toTruncatedText(
+  value: string,
+  limit: number,
+  sanitizeText?: RawItemBudgetState["sanitizeText"],
+): string | TruncatedText {
+  const projected = sanitizeText ? sanitizeText(value, limit) : value;
+  const originalLength = value.length > limit ? value.length : projected.length;
+  if (originalLength <= limit) {
+    return projected;
+  }
+
+  return {
+    text: `${projected.slice(0, limit)}${buildTruncationSuffix(originalLength, limit)}`,
+    truncated: true,
+    originalLength,
+  };
+}
+
+function measureBoundedJson(value: unknown): number {
+  return JSON.stringify(value)?.length ?? 4;
+}
+
+function consumeRawItemBudget(state: RawItemBudgetState, length: number): boolean {
+  if (length > state.remaining) {
+    state.remaining = 0;
+    state.truncated = true;
+    return false;
+  }
+
+  state.remaining -= length;
+  return true;
+}
+
+function cloneStringWithinRawItemBudget(value: string, state: RawItemBudgetState): unknown {
+  if (state.remaining <= 0) {
+    state.truncated = true;
+    return RAW_ITEM_TRUNCATION_MARKER;
+  }
+
+  const previewLimit = Math.max(0, Math.min(PROVIDER_TEXT_PREVIEW_LIMIT, state.remaining - 256));
+  const boundedValue = previewLimit > 0 ? toTruncatedText(value, previewLimit, state.sanitizeText) : RAW_ITEM_TRUNCATION_MARKER;
+  if (typeof boundedValue !== "string") {
+    state.truncated = true;
+  }
+
+  const length = measureBoundedJson(boundedValue);
+  if (consumeRawItemBudget(state, length)) {
+    return boundedValue;
+  }
+
+  return RAW_ITEM_TRUNCATION_MARKER;
+}
+
+function clonePrimitiveWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
+  const length = measureBoundedJson(value);
+  if (consumeRawItemBudget(state, length)) {
+    return value;
+  }
+
+  return RAW_ITEM_TRUNCATION_MARKER;
+}
+
+function cloneArrayWithinRawItemBudget(value: unknown[], state: RawItemBudgetState): unknown[] {
+  if (state.seen.has(value)) {
+    state.truncated = true;
+    return [RAW_ITEM_TRUNCATION_MARKER];
+  }
+
+  state.seen.add(value);
+  const entries: unknown[] = [];
+
+  for (let index = 0; index < value.length; index += 1) {
+    if (state.remaining <= 0) {
+      state.truncated = true;
+      break;
+    }
+
+    entries.push(cloneValueWithinRawItemBudget(value[index], state));
+    if (state.remaining <= 0) {
+      break;
+    }
+  }
+
+  state.seen.delete(value);
+  if (entries.length < value.length) {
+    state.truncated = true;
+    entries.push({
+      ...RAW_ITEM_TRUNCATION_MARKER,
+      omittedItems: value.length - entries.length,
+    });
+  }
+
+  return entries;
+}
+
+function cloneObjectWithinRawItemBudget(
+  value: Record<string, unknown>,
+  state: RawItemBudgetState,
+): Record<string, unknown> {
+  if (state.seen.has(value)) {
+    state.truncated = true;
+    return { ...RAW_ITEM_TRUNCATION_MARKER };
+  }
+
+  state.seen.add(value);
+  const output: Record<string, unknown> = {};
+  let omittedEntries = 0;
+
+  for (const key in value) {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+
+    if (key.length >= state.remaining) {
+      state.truncated = true;
+      omittedEntries += 1;
+      continue;
+    }
+    const projectedKey = state.sanitizeText ? state.sanitizeText(key, key.length) : key;
+    const keyLength = measureBoundedJson(projectedKey);
+    if (state.remaining <= keyLength) {
+      state.truncated = true;
+      omittedEntries += 1;
+      continue;
+    }
+
+    consumeRawItemBudget(state, keyLength);
+    output[projectedKey] = cloneValueWithinRawItemBudget(value[key], state);
+    if (state.remaining <= 0) {
+      state.truncated = true;
+      break;
+    }
+  }
+
+  state.seen.delete(value);
+  if (omittedEntries > 0) {
+    output.withmateTruncated = {
+      ...RAW_ITEM_TRUNCATION_MARKER,
+      omittedEntries,
+    };
+  }
+
+  return output;
+}
+
+function cloneValueWithinRawItemBudget(value: unknown, state: RawItemBudgetState): unknown {
+  if (typeof value === "string") {
+    return cloneStringWithinRawItemBudget(value, state);
+  }
+
+  if (
+    value === null
+    || typeof value === "number"
+    || typeof value === "boolean"
+  ) {
+    return clonePrimitiveWithinRawItemBudget(value, state);
+  }
+
+  if (Array.isArray(value)) {
+    return cloneArrayWithinRawItemBudget(value, state);
+  }
+
+  if (value && typeof value === "object") {
+    return cloneObjectWithinRawItemBudget(value as Record<string, unknown>, state);
+  }
+
+  return undefined;
+}
+
+function cloneRawItemWithinBudget(
+  item: BoundedProviderRawItem,
+  budget: number,
+  sanitizeText?: RawItemBudgetState["sanitizeText"],
+): BoundedProviderRawItem {
+  const state: RawItemBudgetState = {
+    remaining: Math.max(0, budget),
+    truncated: false,
+    seen: new WeakSet<object>(),
+    sanitizeText,
+  };
+  const boundedItem = cloneValueWithinRawItemBudget(item, state) as BoundedProviderRawItem;
+
+  if (state.truncated) {
+    return {
+      type: boundedItem.type ?? item.type,
+      timestamp: boundedItem.timestamp,
+      data: {
+        ...(boundedItem.data ?? {}),
+        withmateTruncated: {
+          ...RAW_ITEM_TRUNCATION_MARKER,
+          maxLength: budget,
+        },
+      },
+    };
+  }
+
+  return boundedItem;
+}
+
+export function boundProviderRawItem(
+  item: BoundedProviderRawItem,
+  limit = PROVIDER_RAW_ITEM_CLONE_LIMIT,
+  sanitizeText?: RawItemBudgetState["sanitizeText"],
+): BoundedProviderRawItem {
+  return cloneRawItemWithinBudget(
+    item,
+    Math.max(0, limit - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE),
+    sanitizeText,
+  );
+}
+
+export function stringifyBoundedProviderValue(
+  value: unknown,
+  limit = PROVIDER_TEXT_PREVIEW_LIMIT,
+): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    return toProviderTextPreview(value, limit);
+  }
+
+  const state: RawItemBudgetState = {
+    remaining: Math.max(0, limit - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE),
+    truncated: false,
+    seen: new WeakSet<object>(),
+  };
+  const boundedValue = cloneValueWithinRawItemBudget(value, state);
+  const serialized = JSON.stringify(boundedValue);
+  return toProviderTextPreview(serialized, limit);
+}
+
+export function stringifyBoundedProviderRawItems(
+  items: BoundedProviderRawItem[],
+  limit = PROVIDER_RAW_ITEMS_JSON_LIMIT,
+): string {
+  const collector = new BoundedProviderRawItems(limit);
+  for (const item of items) {
+    collector.append(item);
+  }
+  return collector.stringify();
+}
+
+export class BoundedProviderRawItems {
+  private readonly serializedItems: string[] = [];
+  private omittedItems = 0;
+  private currentLength = 2;
+
+  constructor(private readonly limit = PROVIDER_RAW_ITEMS_JSON_LIMIT) {}
+
+  append(item: BoundedProviderRawItem): void {
+    const commaLength = this.currentLength === 2 ? 0 : 1;
+    const remainingItemBudget = Math.max(
+      0,
+      this.limit - this.currentLength - commaLength - RAW_ITEM_SERIALIZATION_OVERHEAD_RESERVE,
+    );
+    const serializedItem = JSON.stringify(cloneRawItemWithinBudget(item, remainingItemBudget));
+    const nextLength = this.currentLength + commaLength + serializedItem.length;
+    if (nextLength <= this.limit) {
+      this.serializedItems.push(serializedItem);
+      this.currentLength = nextLength;
+    } else {
+      this.omittedItems += 1;
+    }
+  }
+
+  stringify(): string {
+    let retainedCount = this.serializedItems.length;
+    let currentLength = this.currentLength;
+    let omittedItems = this.omittedItems;
+    const truncationMarker = () => JSON.stringify({
+      type: "withmate.raw_items_truncated",
+      data: { omittedItems, maxLength: this.limit },
+    });
+
+    if (omittedItems === 0) {
+      return `[${this.serializedItems.join(",")}]`;
+    }
+
+    let marker = truncationMarker();
+    while (retainedCount > 0 && currentLength + 1 + marker.length > this.limit) {
+      retainedCount -= 1;
+      currentLength -= (retainedCount === 0 ? 0 : 1) + this.serializedItems[retainedCount].length;
+      omittedItems += 1;
+      marker = truncationMarker();
+    }
+
+    const retained = this.serializedItems.slice(0, retainedCount);
+    retained.push(marker);
+    return `[${retained.join(",")}]`;
+  }
+}

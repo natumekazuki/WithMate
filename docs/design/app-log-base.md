@@ -1,17 +1,15 @@
 # App Log Base
 
-- 作成日: 2026-04-25
-- 対象: Electron Main / Preload / Renderer のクラッシュ調査用ログ基盤
 
 ## Goal
 
-WithMate のクラッシュやフリーズを調査するため、アプリ起動から終了までの重要イベント、Main/Renderer の未捕捉例外、Renderer / child process の異常終了、IPC 失敗、ロード失敗を JSONL とクラッシュダンプ保存先で追跡できるようにする。
+WithMate のクラッシュやフリーズを調査するため、アプリ起動から終了までの重要イベントを追跡できるようにする。Main/Renderer の未捕捉例外、Renderer / child process の異常終了、IPC 失敗、ロード失敗も対象とし、JSONL とクラッシュダンプ保存先で確認する。
 
 ## Position
 
 - この文書はアプリ診断ログの current design とする。
 - Window / IPC の構成は `docs/design/electron-window-runtime.md` を参照する。
-- セッション内のユーザー操作履歴や provider 実行履歴は `docs/design/audit-log.md` の責務であり、このログ基盤とは分離する。
+- セッションの会話本文と操作結果は通常履歴・artifactの責務であり、このログ基盤とは分離する。
 
 ## Scope
 
@@ -46,7 +44,7 @@ flowchart LR
 
 ## Log Format
 
-ログは 1 行 1 イベントの JSONL とする。型定義は `src/app-log-types.ts` に置く。
+ログは 1 行 1 イベントの JSONL とする。型定義は `src-shared/window/app-log-types.ts` に置く。
 
 共通項目:
 
@@ -66,11 +64,11 @@ flowchart LR
 - Main Process から同期 append する。
 - `AppLogService` はログディレクトリを自動作成する。
 - 1 ファイルの既定上限は 5 MiB。
-- ローテーション時は timestamp suffix 付きのファイルへ退避し、既定で 5 ファイルまで保持する。
+- ローテーション時は衝突しないtimestamp suffix付きのファイルへ退避する。同一millisecondでは採番を増やし、mtimeが同じ場合もsuffixで新旧を判定する。active fileを含め既定で5ファイルまで保持する。
 
 ## Event Policy
 
-初期実装で記録する `kind` は次の通り。
+記録する主要な `kind` は次の通り。
 
 - `app.started`
 - `app.ready`
@@ -91,7 +89,20 @@ flowchart LR
 - `renderer.did-fail-load`
 - `ipc.error`
 
-通常の `ipc.request` / `ipc.response`、画面ロード成功、API request / response は初期実装では記録しない。量と機密情報漏えいリスクが高く、クラッシュ調査の初期価値に対してノイズが多いため。
+通常の `ipc.request` / `ipc.response`、画面ロード成功、API request / response は記録しない。量と機密情報漏えいリスクが高く、クラッシュ調査の価値に対してノイズが多いため。
+
+## Storage Diagnostic Log Policy
+
+storage Workerと排他coordinatorの診断は、Mainの`StorageOperationLogService`で集計する。通常履歴・最小turnの保存と失敗通知とは独立している。
+
+- 通常のqueued／started／completed成功は個別appendせず、イベントがある60秒区間ごとに`storage.operation.summary`を1行だけ同期appendする。空区間では出力しない。
+- 操作名ごとのqueued／started／成功／失敗／遅延完了件数と最大wait／hold時間を記録する。waitまたはholdが100ms以上の区間はwarnとし、最長waitとholdの相関ID・request ID・storage generationを各1件のsampleで保持する。
+- 集計は操作名16種とoverflow bucketに制限する。超過する操作の件数と時間はoverflowへ加算し、容量超過を理由に追加appendしない。操作名・sampleの文字列は160文字までで、イベント本文や未完了operationの一覧、無制限queueは保持しない。
+- outcomeがfailureの診断は容量に関係なく`storage.operation`をerrorとして即時同期appendする。相関ID・request ID・generation・stage・outcome・時間を保持する。原因の例外は既存のIPC／runtime失敗ログが記録する。error／fatalなどその他のapp logも従来どおり同期appendする。
+- 正常終了の`will-quit`でtimerを停止し、残る集計を同期flushする。終了後の失敗診断も即時記録する。異常終了時は最後の集計区間を失う可能性があるが、記録済みの失敗／fatalを通常集計のために待たせない。
+- 集計／即時診断のwrite失敗はMainの`console.warn`へ出し、storageの結果を変えない。失敗した集計は再queueせず、無制限retryやbuffer増加を行わない。
+
+集計と即時診断は同じ`AppLogService`の5MiBローテーションを使う。非同期append bufferは設けず、重要イベントの書込み時点と正常終了の同期flushを保つ。
 
 ## Provider Diagnostic Log Policy
 

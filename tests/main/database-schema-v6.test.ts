@@ -1,0 +1,1158 @@
+import assert from "node:assert/strict";
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { describe, it } from "node:test";
+import { conversationMessageColumns } from "../../src-electron/storage/conversation-query.js";
+
+import {
+  APP_DATABASE_V6_FILENAME,
+  APP_DATABASE_V6_SCHEMA_VERSION,
+  CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
+  CREATE_V6_CHARACTER_AFFECT_TABLES_SQL,
+  CREATE_V6_CHARACTERS_TABLE_SQL,
+  CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
+  CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
+  CREATE_V6_SCHEMA_SQL,
+  CREATE_V6_SESSIONS_TABLE_SQL,
+  CREATE_V6_SESSION_TURNS_TABLE_SQL,
+  REQUIRED_V6_TABLES,
+  V6_SCHEMA_STATUS,
+  cleanupForbiddenV6Tables,
+  ensureV6Schema,
+  isValidV6Database,
+  readV6DatabaseUserVersion,
+  resolveV6FreshDatabasePath,
+} from "../../src-electron/storage/database-schema-v6.js";
+
+type TableInfoRow = {
+  name: string;
+  notnull: number;
+};
+
+type TableSqlRow = {
+  sql: string | null;
+};
+
+type ForeignKeyRow = {
+  table: string;
+  from: string;
+  to: string;
+  on_delete: string;
+};
+
+type SchemaObjectRow = {
+  name: string;
+};
+
+const LEGACY_MEMORY_TABLES = [
+  "session_memories",
+  "project_scopes",
+  "project_memory_entries",
+  "character_scopes",
+  "character_memory_entries",
+] as const;
+
+function createV6Schema(dbPath = ":memory:"): DatabaseSync {
+  const db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA foreign_keys = ON;");
+  for (const statement of CREATE_V6_SCHEMA_SQL) {
+    db.exec(statement);
+  }
+  return db;
+}
+
+function tableNames(db: DatabaseSync): string[] {
+  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as TableInfoRow[])
+    .map((row) => row.name)
+    .filter((name) => !name.startsWith("sqlite_"));
+}
+
+function indexNames(db: DatabaseSync): string[] {
+  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' ORDER BY name").all() as SchemaObjectRow[])
+    .map((row) => row.name);
+}
+
+function columnInfo(db: DatabaseSync, tableName: string): TableInfoRow[] {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all() as TableInfoRow[];
+}
+
+function columnNames(db: DatabaseSync, tableName: string): string[] {
+  return columnInfo(db, tableName).map((row) => row.name);
+}
+
+function tableSql(db: DatabaseSync, tableName: string): string {
+  const row = db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?").get(tableName) as
+    | TableSqlRow
+    | undefined;
+  return row?.sql ?? "";
+}
+
+function findForeignKey(db: DatabaseSync, tableName: string, fromColumn: string): ForeignKeyRow | undefined {
+  const keys = db.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as ForeignKeyRow[];
+  return keys.find((row) => row.from === fromColumn);
+}
+
+function hasForeignKey(db: DatabaseSync, tableName: string, fromColumn: string, targetTable: string): boolean {
+  const keys = db.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as ForeignKeyRow[];
+  return keys.some((row) => row.from === fromColumn && row.table === targetTable);
+}
+
+function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    for (const tableName of REQUIRED_V6_TABLES) {
+      db.exec(`CREATE TABLE IF NOT EXISTS ${tableName} (id TEXT PRIMARY KEY);`);
+    }
+    db.exec(`PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`);
+  } finally {
+    db.close();
+  }
+}
+
+describe("database-schema-v6", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "新規DBと既存DBのschema ensure後は、履歴の失敗情報をownerとmessage seqで索引検索し、追加sortなしで最新failed turnを取得する"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/857: A 履歴取得の性能回帰と既存データ保持" }
+  // fault = "schema適用後も失敗情報をphaseやownerだけで走査する、sortを要する、または既存turnとmessageを変更する"
+  // observable = "productionの履歴列SQLのquery plan、取得した失敗理由、ensure前後のturnとmessage行"
+  // observation_boundary = "component-behavior"
+  // scope = "Main/Auxiliary failure lookup schema initialization"
+  // lifecycle = "permanent"
+  // impact = "履歴が長い場合に全turn群の反復検索で会話の読込・保存が長時間占有されることを防ぐ"
+  // distinction = "既存の本文・Bookmark・page testは同じ結果を返す低速なplanを検出できない。小さいSQLite fixtureで時間閾値や索引名を固定せず検索範囲を確認する"
+  // @end-test-value
+  it("履歴の失敗情報は新規DBと既存DBのensure後にownerとseqで索引検索する", () => {
+    const db = createV6Schema();
+    try {
+      for (const id of ["target", "other"]) {
+        db.prepare(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision,
+          model_id, approval_mode, created_at, updated_at, last_active_at)
+          VALUES (?, '', 'active', 'codex', 1, '', 'never', 'now', 'now', 'now')`).run(id);
+        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
+          VALUES (?, 'target', 'active', 'now', 'now')`).run(id);
+      }
+      const owners = [
+        ["session_messages_v6", "session_id"],
+        ["auxiliary_session_messages", "auxiliary_session_id"],
+      ] as const;
+      for (const [table, owner] of owners) {
+        for (const seq of [0, 1]) {
+          db.prepare(`INSERT INTO ${table} (${owner}, seq, role, body, created_at)
+            VALUES ('target', ?, 'assistant', ?, 'now')`).run(seq, JSON.stringify({ text: `message ${seq}`, isBookmarked: true }));
+        }
+        const turn = db.prepare(`INSERT INTO session_turns_v6 (${owner}, phase,
+          assistant_message_seq, error_summary, started_at, updated_at) VALUES (?, ?, ?, ?, 'now', 'now')`);
+        turn.run("target", "failed", 1, "old");
+        turn.run("target", "failed", 1, `latest ${owner}`);
+        turn.run("target", "completed", 1, "not failed");
+        turn.run("other", "failed", 1, "other owner");
+        turn.run("target", "failed", null, "no message");
+      }
+      const turnsBefore = db.prepare("SELECT * FROM session_turns_v6 ORDER BY id").all();
+      const messagesBefore = owners.map(([table]) => db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all());
+      for (const existing of [false, true]) {
+        if (existing) {
+          db.exec(`DROP INDEX idx_v6_session_turns_session_failed_message;
+            DROP INDEX idx_v6_session_turns_auxiliary_failed_message;`);
+          ensureV6Schema(db);
+          ensureV6Schema(db);
+        }
+        for (const [table, owner] of owners) {
+          const sql = `SELECT ${conversationMessageColumns(table, db)} FROM ${table}
+            WHERE ${owner} = ? ORDER BY seq ASC`;
+          const plan = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all("target") as Array<{ detail: string }>)
+            .map(({ detail }) => detail).join("\n");
+          assert.match(plan, new RegExp(`SEARCH t USING (?:COVERING )?INDEX .*\\(${owner}=\\? AND assistant_message_seq=\\?\\)`));
+          assert.doesNotMatch(plan, /TEMP B-TREE/);
+          const rows = db.prepare(sql).all("target");
+          assert.deepEqual(rows.map((row) => row.runFailure), [null, `latest ${owner}`]);
+        }
+        assert.deepEqual(db.prepare("SELECT * FROM session_turns_v6 ORDER BY id").all(), turnsBefore);
+        assert.deepEqual(owners.map(([table]) => db.prepare(`SELECT * FROM ${table} ORDER BY seq`).all()), messagesBefore);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schemaは既存sessionを保持してis_pinnedを既定falseで追加する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(CREATE_V6_CHARACTERS_TABLE_SQL);
+      db.exec(CREATE_V6_PROJECT_SCOPES_TABLE_SQL);
+      db.exec(CREATE_V6_SESSIONS_TABLE_SQL.replace(
+        "    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n",
+        "",
+      ));
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, session_kind, provider_id, catalog_revision, model_id,
+          reasoning_effort, custom_agent_name, approval_mode, codex_sandbox_mode,
+          allowed_additional_directories_json, runtime_policy_json, thread_id,
+          workspace_path, created_at, updated_at, last_active_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "existing-session", "Existing", "active", "default", "codex", 1, "gpt-test",
+        "high", "", "never", "danger-full-access", "[]", "{}", "", "C:/workspace",
+        "2026-08-01T00:00:00.000Z", "2026-08-09T04:38:00.000Z", "2026-08-09T04:38:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      const row = db.prepare("SELECT id, is_pinned FROM sessions_v6").get() as {
+        id: string;
+        is_pinned: number;
+      };
+      assert.equal(row.id, "existing-session");
+      assert.equal(row.is_pinned, 0);
+      assert.equal(tableNames(db).includes("character_affect_events_v6"), true);
+      assert.equal(indexNames(db).includes("idx_v6_character_affect_events_afterglow"), true);
+      assert.equal(hasForeignKey(db, "character_affect_events_v6", "memory_entry_id", "memory_entries_v6"), true);
+      assert.equal(
+        hasForeignKey(db, "character_affect_events_v6", "supersedes_memory_entry_id", "memory_entries_v6"),
+        true,
+      );
+      assert.equal(
+        hasForeignKey(db, "character_affect_mutations_v6", "source_session_id", "sessions_v6"),
+        true,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("withmate-v6.db 用の schema constants、fresh path、required tables を固定する", () => {
+    assert.equal(APP_DATABASE_V6_FILENAME, "withmate-v6.db");
+    assert.equal(APP_DATABASE_V6_SCHEMA_VERSION, 6);
+    assert.equal(V6_SCHEMA_STATUS, "foundation");
+    assert.equal(resolveV6FreshDatabasePath("user-data"), join("user-data", APP_DATABASE_V6_FILENAME));
+
+    const db = createV6Schema();
+    try {
+      const names = tableNames(db).sort();
+      assert.deepEqual(names, [...REQUIRED_V6_TABLES].sort());
+      const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
+      assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("isValidV6Database は filename、schema version、required tables を検証する", () => {
+    const dirPath = mkdtempSync(join(tmpdir(), "withmate-v6-schema-"));
+    try {
+      const validDbPath = join(dirPath, APP_DATABASE_V6_FILENAME);
+      const validDb = createV6Schema(validDbPath);
+      validDb.close();
+
+      const wrongNameDbPath = join(dirPath, "withmate-v4.db");
+      const wrongNameDb = createV6Schema(wrongNameDbPath);
+      wrongNameDb.close();
+
+      const emptyDirPath = join(dirPath, "empty");
+      const emptyV6DbPath = join(emptyDirPath, APP_DATABASE_V6_FILENAME);
+      rmSync(emptyDirPath, { recursive: true, force: true });
+      mkdirSync(emptyDirPath);
+      closeSync(openSync(emptyV6DbPath, "w"));
+
+      const partialV6DbPath = join(dirPath, "partial", APP_DATABASE_V6_FILENAME);
+      mkdirSync(join(dirPath, "partial"));
+      const partialV6Db = new DatabaseSync(partialV6DbPath);
+      partialV6Db.exec(`PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`);
+      partialV6Db.close();
+
+      const malformedV6DbPath = join(dirPath, "malformed", APP_DATABASE_V6_FILENAME);
+      mkdirSync(join(dirPath, "malformed"));
+      createV6DatabaseWithEmptyRequiredTables(malformedV6DbPath);
+
+      const legacyMixedV6DbPath = join(dirPath, "legacy-mixed", APP_DATABASE_V6_FILENAME);
+      mkdirSync(join(dirPath, "legacy-mixed"));
+      const legacyMixedDb = createV6Schema(legacyMixedV6DbPath);
+      legacyMixedDb.exec("CREATE TABLE IF NOT EXISTS project_memory_entries (id TEXT PRIMARY KEY);");
+      legacyMixedDb.close();
+
+      const missingAffectProvenanceDir = join(dirPath, "missing-affect-provenance");
+      mkdirSync(missingAffectProvenanceDir);
+      const missingAffectProvenancePath = join(missingAffectProvenanceDir, APP_DATABASE_V6_FILENAME);
+      const missingAffectProvenanceDb = createV6Schema(missingAffectProvenancePath);
+      const mutationSql = tableSql(missingAffectProvenanceDb, "character_affect_mutations_v6");
+      missingAffectProvenanceDb.exec("PRAGMA foreign_keys = OFF;");
+      missingAffectProvenanceDb.exec(mutationSql
+        .replace("CREATE TABLE character_affect_mutations_v6", "CREATE TABLE character_affect_mutations_v6_rebuilt")
+        .replace("    FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,\n", ""));
+      missingAffectProvenanceDb.exec("DROP TABLE character_affect_mutations_v6;");
+      missingAffectProvenanceDb.exec(
+        "ALTER TABLE character_affect_mutations_v6_rebuilt RENAME TO character_affect_mutations_v6;",
+      );
+      missingAffectProvenanceDb.exec(`
+        CREATE INDEX idx_v6_character_affect_mutations_scope
+        ON character_affect_mutations_v6(character_id, user_id, created_at DESC, id DESC)
+      `);
+      assert.equal(columnNames(missingAffectProvenanceDb, "character_affect_mutations_v6").includes("source_session_id"), true);
+      assert.equal(
+        hasForeignKey(missingAffectProvenanceDb, "character_affect_mutations_v6", "source_session_id", "sessions_v6"),
+        false,
+      );
+      missingAffectProvenanceDb.close();
+
+      const wrongAffectProvenanceDeleteDir = join(dirPath, "wrong-affect-provenance-delete");
+      mkdirSync(wrongAffectProvenanceDeleteDir);
+      const wrongAffectProvenanceDeletePath = join(
+        wrongAffectProvenanceDeleteDir,
+        APP_DATABASE_V6_FILENAME,
+      );
+      const wrongAffectProvenanceDeleteDb = createV6Schema(wrongAffectProvenanceDeletePath);
+      const wrongDeleteMutationSql = tableSql(wrongAffectProvenanceDeleteDb, "character_affect_mutations_v6");
+      wrongAffectProvenanceDeleteDb.exec("PRAGMA foreign_keys = OFF;");
+      wrongAffectProvenanceDeleteDb.exec(wrongDeleteMutationSql
+        .replace("CREATE TABLE character_affect_mutations_v6", "CREATE TABLE character_affect_mutations_v6_rebuilt")
+        .replace(
+          "FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL",
+          "FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE",
+        ));
+      wrongAffectProvenanceDeleteDb.exec("DROP TABLE character_affect_mutations_v6;");
+      wrongAffectProvenanceDeleteDb.exec(
+        "ALTER TABLE character_affect_mutations_v6_rebuilt RENAME TO character_affect_mutations_v6;",
+      );
+      wrongAffectProvenanceDeleteDb.exec(`
+        CREATE INDEX idx_v6_character_affect_mutations_scope
+        ON character_affect_mutations_v6(character_id, user_id, created_at DESC, id DESC)
+      `);
+      wrongAffectProvenanceDeleteDb.close();
+
+      const missingAffectStateCheckDir = join(dirPath, "missing-affect-state-check");
+      mkdirSync(missingAffectStateCheckDir);
+      const missingAffectStateCheckPath = join(missingAffectStateCheckDir, APP_DATABASE_V6_FILENAME);
+      const missingAffectStateCheckDb = createV6Schema(missingAffectStateCheckPath);
+      const affectEventsSql = tableSql(missingAffectStateCheckDb, "character_affect_events_v6");
+      missingAffectStateCheckDb.exec("PRAGMA foreign_keys = OFF;");
+      missingAffectStateCheckDb.exec(affectEventsSql
+        .replace("CREATE TABLE character_affect_events_v6", "CREATE TABLE character_affect_events_v6_rebuilt")
+        .replace("state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'corrected'))", "state TEXT NOT NULL DEFAULT 'active'"));
+      missingAffectStateCheckDb.exec("DROP TABLE character_affect_events_v6;");
+      missingAffectStateCheckDb.exec(
+        "ALTER TABLE character_affect_events_v6_rebuilt RENAME TO character_affect_events_v6;",
+      );
+      missingAffectStateCheckDb.exec(`
+        CREATE INDEX idx_v6_character_affect_events_effective
+        ON character_affect_events_v6(character_id, user_id, layer, session_id, state, occurred_at, id);
+
+        CREATE INDEX idx_v6_character_affect_events_target
+        ON character_affect_events_v6(character_id, user_id, target_type, target_id, occurred_at, id)
+      `);
+      missingAffectStateCheckDb.close();
+
+      assert.equal(isValidV6Database(validDbPath), true);
+      assert.equal(readV6DatabaseUserVersion(validDbPath), APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(isValidV6Database(wrongNameDbPath), false);
+      assert.equal(readV6DatabaseUserVersion(wrongNameDbPath), null);
+      assert.equal(isValidV6Database(emptyV6DbPath), false);
+      assert.equal(isValidV6Database(partialV6DbPath), false);
+      assert.equal(isValidV6Database(malformedV6DbPath), false);
+      assert.equal(isValidV6Database(legacyMixedV6DbPath), false);
+      assert.equal(isValidV6Database(missingAffectProvenancePath), false);
+      assert.equal(isValidV6Database(wrongAffectProvenanceDeletePath), false);
+      assert.equal(isValidV6Database(missingAffectStateCheckPath), false);
+    } finally {
+      rmSync(dirPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V6 schemaはlegacy Memory tableを再利用しない"
+  // oracle = { type = "contract", ref = "src-electron/database-schema-v6.ts" }
+  // fault = "V6 schemaが廃止済みMemory tableを再作成し、旧保存形式を現行schemaへ戻す"
+  // observable = "created V6 table names"
+  // observation_boundary = "declaration"
+  // scope = "V6 legacy Memory schema boundary"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("V6 schema は legacy Memory table を再利用しない", () => {
+    const db = createV6Schema();
+    try {
+      const names = tableNames(db);
+      for (const tableName of LEGACY_MEMORY_TABLES) {
+        assert.equal(names.includes(tableName), false, `${tableName} must not exist in V6 schema`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V6のProject・会話・最小turnにはownerと排他的所有のSQLite制約が存在する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md" }
+  // fault = "turn ownerのcascadeまたは排他的owner CHECKを失い、孤立turnや複数ownerを許す"
+  // observable = "実SQLite schemaのcolumns・foreign key・CHECK"
+  // observation_boundary = "declaration"
+  // scope = "V6 project/session/turn schema"
+  // lifecycle = "permanent"
+  // distinction = "TypeScript型はSQLite owner制約を保証しない"
+  // @end-test-value
+  it("V6 project scope と session/message/turn の最小 schema を固定する", () => {
+    const db = createV6Schema();
+    try {
+      assert.deepEqual(columnNames(db, "project_scopes_v6"), [
+        "id",
+        "project_type",
+        "project_key",
+        "workspace_path",
+        "git_root",
+        "git_remote_url",
+        "display_name",
+        "created_at",
+        "updated_at",
+      ]);
+      assert.equal(tableSql(db, "project_scopes_v6").includes("UNIQUE (project_type, project_key)"), true);
+
+      assert.deepEqual(columnNames(db, "sessions_v6"), [
+        "id",
+        "incarnation_id",
+        "title",
+        "state",
+        "session_kind",
+        "provider_id",
+        "catalog_revision",
+        "model_id",
+        "reasoning_effort",
+        "custom_agent_name",
+        "approval_mode",
+        "codex_sandbox_mode",
+        "allowed_additional_directories_json",
+        "runtime_policy_json",
+        "thread_id",
+        "character_id",
+        "character_snapshot_json",
+        "project_scope_id",
+        "workspace_path",
+        "is_pinned",
+        "created_at",
+        "updated_at",
+        "last_active_at",
+      ]);
+      assert.equal(findForeignKey(db, "sessions_v6", "character_id")?.table, "characters");
+      assert.equal(findForeignKey(db, "sessions_v6", "project_scope_id")?.table, "project_scopes_v6");
+      assert.equal(tableSql(db, "sessions_v6").includes("json_valid(character_snapshot_json)"), true);
+      assert.equal(tableSql(db, "sessions_v6").includes("allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]'"), true);
+      assert.equal(tableSql(db, "sessions_v6").includes("is_pinned INTEGER NOT NULL DEFAULT 0"), true);
+
+      assert.deepEqual(columnNames(db, "session_messages_v6"), [
+        "id",
+        "session_id",
+        "seq",
+        "role",
+        "body",
+        "artifact_body",
+        "created_at",
+      ]);
+      assert.equal(findForeignKey(db, "session_messages_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
+
+      assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
+        "id",
+        "parent_session_id",
+        "status",
+        "created_at",
+        "updated_at",
+        "title",
+        "run_state",
+        "preview",
+        "provider_id",
+        "catalog_revision",
+        "model_id",
+        "reasoning_effort",
+        "approval_mode",
+        "codex_sandbox_mode",
+        "codex_speed",
+        "codex_reviewer",
+        "custom_agent_name",
+        "thread_id",
+        "display_after_message_index",
+        "closed_at",
+        "character_id",
+        "character_snapshot_json",
+        "character_snapshot_invalid",
+        "character_icon_path",
+        "client_request_id",
+        "creation_context_json",
+        "creation_request_json",
+      ]);
+      assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
+      assert.equal(tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')"), true);
+      assert.deepEqual(columnNames(db, "auxiliary_session_messages"), [
+        "auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at",
+      ]);
+      assert.equal(findForeignKey(db, "auxiliary_session_messages", "auxiliary_session_id")?.on_delete.toUpperCase(), "CASCADE");
+
+      assert.deepEqual(columnNames(db, "session_turns_v6"), [
+        "id",
+        "session_id",
+        "auxiliary_session_id",
+        "phase",
+        "provider_id",
+        "model_id",
+        "reasoning_effort",
+        "approval_mode",
+        "sandbox_mode",
+        "user_message_seq",
+        "assistant_message_seq",
+        "thread_id",
+        "error_summary",
+        "started_at",
+        "completed_at",
+        "updated_at",
+      ]);
+      assert.equal(findForeignKey(db, "session_turns_v6", "session_id")?.table, "sessions_v6");
+      assert.equal(findForeignKey(db, "session_turns_v6", "session_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(findForeignKey(db, "session_turns_v6", "auxiliary_session_id")?.table, "auxiliary_sessions");
+      assert.equal(findForeignKey(db, "session_turns_v6", "auxiliary_session_id")?.on_delete.toUpperCase(), "CASCADE");
+      assert.equal(tableSql(db, "session_turns_v6").includes("phase IN ('running', 'completed', 'failed', 'canceled')"), true);
+      assert.equal(tableSql(db, "session_turns_v6").includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL"), true);
+      assert.equal(tableSql(db, "session_turns_v6").includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)"), true);
+
+    } finally {
+      db.close();
+    }
+  });
+
+  it("V6 Memory tables は contract の state/idempotency/tag 境界を保持する", () => {
+    const db = createV6Schema();
+    try {
+      assert.deepEqual(columnNames(db, "memory_entries_v6"), [
+        "id",
+        "owner_type",
+        "owner_id",
+        "scope_type",
+        "scope_id",
+        "kind",
+        "title",
+        "body",
+        "body_sha256",
+        "preview",
+        "state",
+        "source_type",
+        "source_session_id",
+        "source_app_message_id",
+        "source_provider_message_id",
+        "source_provider_id",
+        "superseded_by_id",
+        "created_at",
+        "updated_at",
+        "forgotten_at",
+      ]);
+      assert.equal(tableSql(db, "memory_entries_v6").includes("'active', 'superseded', 'forgotten'"), true);
+      assert.equal(tableSql(db, "memory_entries_v6").includes("superseded_by_id IS NOT NULL"), true);
+      assert.equal(tableSql(db, "memory_entries_v6").includes("forgotten_at IS NOT NULL"), true);
+      assert.equal(tableSql(db, "memory_entries_v6").includes("owner_type <> 'user' OR owner_id = 'local-user'"), true);
+      assert.equal(tableSql(db, "memory_entries_v6").includes("scope_type <> 'global' OR scope_id = 'global'"), true);
+      assert.throws(() => {
+        db.prepare(`
+          INSERT INTO memory_entries_v6 (
+            id,
+            owner_type,
+            owner_id,
+            scope_type,
+            scope_id,
+            kind,
+            title,
+            body,
+            body_sha256,
+            preview,
+            state,
+            source_type,
+            source_session_id,
+            source_app_message_id,
+            source_provider_message_id,
+            source_provider_id,
+            superseded_by_id,
+            created_at,
+            updated_at,
+            forgotten_at
+          ) VALUES (
+            'mem-malformed-user-global',
+            'user',
+            'other-user',
+            'global',
+            'global',
+            'note',
+            'bad',
+            'bad',
+            'sha',
+            'bad',
+            'active',
+            'agent',
+            NULL,
+            NULL,
+            NULL,
+            'codex',
+            NULL,
+            '2026-06-29T00:00:00.000Z',
+            '2026-06-29T00:00:00.000Z',
+            NULL
+          )
+        `).run();
+      });
+      assert.equal(hasForeignKey(db, "memory_entries_v6", "source_session_id", "sessions_v6"), true);
+      assert.equal(hasForeignKey(db, "memory_entries_v6", "source_session_id", "session_messages_v6"), true);
+      assert.equal(findForeignKey(db, "memory_entries_v6", "source_app_message_id")?.table, "session_messages_v6");
+      assert.equal(findForeignKey(db, "memory_entries_v6", "superseded_by_id")?.on_delete.toUpperCase(), "RESTRICT");
+
+      assert.deepEqual(columnNames(db, "memory_entry_tags_v6"), [
+        "entry_id",
+        "tag_type",
+        "tag_value",
+        "tag_type_canonical",
+        "tag_value_canonical",
+        "created_at",
+      ]);
+      assert.equal(tableSql(db, "memory_entry_tags_v6").includes("PRIMARY KEY (entry_id, tag_type_canonical, tag_value_canonical)"), true);
+
+      assert.deepEqual(columnNames(db, "memory_idempotency_keys_v6"), [
+        "key",
+        "operation",
+        "binding_id_hash",
+        "owner_type",
+        "owner_id",
+        "scope_type",
+        "scope_id",
+        "response_entry_id",
+        "operation_created",
+        "request_fingerprint",
+        "cleanup_pending_count",
+        "created_at",
+      ]);
+      assert.equal(
+        tableSql(db, "memory_idempotency_keys_v6").includes(
+          "PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id)",
+        ),
+        true,
+      );
+      assert.equal(tableSql(db, "memory_idempotency_keys_v6").includes("request_fingerprint TEXT NOT NULL"), true);
+      assert.equal(tableSql(db, "memory_idempotency_keys_v6").includes("cleanup_pending_count INTEGER NOT NULL DEFAULT 0"), true);
+      assert.deepEqual(columnNames(db, "memory_target_tag_stats_v6"), [
+        "owner_type",
+        "owner_id",
+        "scope_type",
+        "scope_id",
+        "tag_type",
+        "tag_value",
+        "tag_type_canonical",
+        "tag_value_canonical",
+        "usage_count",
+        "latest_entry_updated_at",
+      ]);
+
+      assert.deepEqual(columnNames(db, "memory_idempotency_forget_results_v6"), [
+        "key",
+        "operation",
+        "binding_id_hash",
+        "owner_type",
+        "owner_id",
+        "scope_type",
+        "scope_id",
+        "entry_id",
+        "result_status",
+        "created_at",
+      ]);
+
+      assert.equal(tableSql(db, "memory_tag_catalog_v6").includes("PRIMARY KEY (tag_type_canonical, tag_value_canonical)"), true);
+      assert.equal(tableSql(db, "memory_mutation_events_v6").includes("binding_id_hash"), true);
+      assert.equal(tableSql(db, "memory_mutation_events_v6").includes("source_message_id TEXT"), true);
+      assert.equal(tableSql(db, "memory_mutation_events_v6").includes("result_status TEXT NOT NULL"), true);
+      assert.equal(tableSql(db, "memory_mutation_events_v6").includes("'already_forgotten'"), true);
+      assert.equal(tableSql(db, "memory_move_events_v6").includes("reason TEXT NOT NULL"), true);
+
+      assert.deepEqual(columnNames(db, "memory_protected_objects_v6"), [
+        "object_id",
+        "entry_id",
+        "state",
+        "role",
+        "media_kind",
+        "content_type",
+        "display_name",
+        "summary",
+        "original_bytes",
+        "stored_bytes",
+        "sha256",
+        "key_id",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+      ]);
+      assert.equal(findForeignKey(db, "memory_protected_objects_v6", "entry_id")?.table, "memory_entries_v6");
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'active', 'delete_pending', 'deleted'"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("original_bytes >= 0"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("stored_bytes >= 0"), true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("Character付きsessionではvalid JSON snapshotを必須にする", () => {
+    const db = createV6Schema();
+    try {
+      db.prepare(`
+        INSERT INTO characters (
+          id,
+          name,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?)
+      `).run("char-a", "Character A", "2026-06-23T00:00:00.000Z", "2026-06-23T00:00:00.000Z");
+
+      const insertSession = db.prepare(`
+        INSERT INTO sessions_v6 (
+          id,
+          title,
+          state,
+          provider_id,
+          catalog_revision,
+          model_id,
+          approval_mode,
+          character_id,
+          character_snapshot_json,
+          created_at,
+          updated_at,
+          last_active_at
+        ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?, ?, ?)
+      `);
+
+      assert.throws(() => {
+        insertSession.run(
+          "session-invalid",
+          "Invalid",
+          "char-a",
+          "",
+          "2026-06-23T00:00:00.000Z",
+          "2026-06-23T00:00:00.000Z",
+          "2026-06-23T00:00:00.000Z",
+        );
+      });
+
+      insertSession.run(
+        "session-valid",
+        "Valid",
+        "char-a",
+        JSON.stringify({ characterId: "char-a", definitionSha256: "sha", snapshotAt: "2026-06-23T00:00:00.000Z" }),
+        "2026-06-23T00:00:00.000Z",
+        "2026-06-23T00:00:00.000Z",
+        "2026-06-23T00:00:00.000Z",
+      );
+
+      const count = db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number };
+      assert.equal(count.count, 1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は旧 auxiliary_sessions の created_at を updated_at で backfill する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+
+        CREATE TABLE auxiliary_sessions (
+          id TEXT PRIMARY KEY,
+          parent_session_id TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
+          updated_at TEXT NOT NULL,
+          payload_json TEXT NOT NULL
+        );
+
+        INSERT INTO auxiliary_sessions (
+          id,
+          parent_session_id,
+          status,
+          updated_at,
+          payload_json
+        ) VALUES (
+          'aux-1',
+          'session-1',
+          'active',
+          '2026-07-04T00:00:00.000Z',
+          '{}'
+        );
+      `);
+
+      ensureV6Schema(db);
+
+      assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
+        "id",
+        "parent_session_id",
+        "status",
+        "updated_at",
+        "payload_json",
+        "created_at",
+      ]);
+      const row = db.prepare("SELECT created_at, updated_at FROM auxiliary_sessions WHERE id = ?").get("aux-1") as
+        | { created_at: string; updated_at: string }
+        | undefined;
+      assert.equal(row?.created_at, "2026-07-04T00:00:00.000Z");
+      assert.equal(row?.updated_at, "2026-07-04T00:00:00.000Z");
+    } finally {
+      db.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "V6 schemaのensureは既存DBに残ったAuxiliary作成順indexを削除し、最終使用順indexを保持する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md:5" }
+  // fault = "schema ensure後も旧作成順indexが残って不要な維持コストを発生させるか、最終使用順indexを欠落させる"
+  // observable = "auxiliary_sessionsのindex names"
+  // observation_boundary = "public-boundary"
+  // scope = "v6-auxiliary-index-cleanup"
+  // impact = "既存DBの不要なindex領域と書き込み維持コストが残る"
+  // distinction = "isValidV6Databaseは余分なindexを許容するため、ensureV6Schemaの既存DB修復を直接確認する"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("ensureV6Schema は既存の旧Auxiliary indexを削除する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec(`
+        DROP INDEX idx_auxiliary_sessions_parent_updated;
+        CREATE INDEX idx_auxiliary_sessions_parent_created
+          ON auxiliary_sessions(parent_session_id, created_at ASC)
+      `);
+
+      ensureV6Schema(db);
+
+      assert.equal(indexNames(db).includes("idx_auxiliary_sessions_parent_updated"), true);
+      assert.equal(indexNames(db).includes("idx_auxiliary_sessions_parent_created"), false);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は既存Memory idempotencyとmutation/move eventへ列をadditive追加する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        CREATE TABLE memory_idempotency_keys_v6 (
+          key TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          binding_id_hash TEXT NOT NULL,
+          owner_type TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          response_entry_id TEXT,
+          operation_created INTEGER NOT NULL,
+          request_fingerprint TEXT NOT NULL,
+          cleanup_required INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id)
+        );
+        CREATE TABLE memory_mutation_events_v6 (
+          id TEXT PRIMARY KEY,
+          operation TEXT NOT NULL,
+          entry_id TEXT,
+          binding_id_hash TEXT,
+          session_id TEXT,
+          result_status TEXT NOT NULL,
+          reason TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE memory_move_events_v6 (
+          id TEXT PRIMARY KEY,
+          entry_id TEXT NOT NULL,
+          from_owner_type TEXT NOT NULL,
+          from_owner_id TEXT NOT NULL,
+          from_scope_type TEXT NOT NULL,
+          from_scope_id TEXT NOT NULL,
+          to_owner_type TEXT NOT NULL,
+          to_owner_id TEXT NOT NULL,
+          to_scope_type TEXT NOT NULL,
+          to_scope_id TEXT NOT NULL,
+          binding_id_hash TEXT NOT NULL,
+          idempotency_key TEXT,
+          request_fingerprint TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO memory_idempotency_keys_v6 (
+          key, operation, binding_id_hash, owner_type, owner_id, scope_type, scope_id,
+          response_entry_id, operation_created, request_fingerprint, cleanup_required, created_at
+        ) VALUES (
+          'cleanup-key', 'append', 'local-user', 'project', 'project-a', 'project', 'project-a',
+          NULL, 1, 'fingerprint', 1, '2026-08-13T00:00:00.000Z'
+        );
+      `);
+
+      ensureV6Schema(db);
+
+      assert.equal(columnNames(db, "memory_idempotency_keys_v6").includes("cleanup_pending_count"), true);
+      assert.equal(
+        (db.prepare("SELECT cleanup_pending_count FROM memory_idempotency_keys_v6 WHERE key = 'cleanup-key'").get() as { cleanup_pending_count: number }).cleanup_pending_count,
+        1,
+      );
+      assert.equal(columnNames(db, "memory_mutation_events_v6").includes("source_message_id"), true);
+      assert.equal(columnNames(db, "memory_move_events_v6").includes("reason"), true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schemaは既存Affect eventを再分類せずnullable familyとCHECKをadditive追加する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec("PRAGMA foreign_keys = ON;");
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (statement !== CREATE_V6_CHARACTER_AFFECT_TABLES_SQL) {
+          db.exec(statement);
+        }
+      }
+      db.exec(CREATE_V6_CHARACTER_AFFECT_TABLES_SQL.replace(
+        "    family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')),\n",
+        "",
+      ));
+      db.prepare("INSERT INTO characters (id, name, created_at, updated_at) VALUES ('character-a', 'A', ?, ?)")
+        .run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+          character_id, character_snapshot_json, created_at, updated_at, last_active_at
+        ) VALUES ('session-a', 'A', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
+      `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO character_affect_events_v6 (
+          id, character_id, user_id, session_id, source_session_id, layer, target_type, target_id,
+          value_json, intensity, reason, evidence, occurred_at, idempotency_key,
+          request_fingerprint, state, created_at
+        ) VALUES ('legacy-event', 'character-a', 'local-user', 'session-a', 'session-a', 'session',
+          'bug', 'bug-1', '{"label":"legacy","valence":-0.2}', 0.5, 'reason', 'evidence',
+          '2026-08-09T01:00:00.000Z', 'legacy-key', 'legacy-fingerprint', 'active', '2026-08-09T01:00:00.000Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO character_affect_resets_v6 (
+          id, character_id, user_id, session_id, layer, reason, reset_at,
+          idempotency_key, request_fingerprint, created_at
+        ) VALUES ('legacy-reset', 'character-a', 'local-user', 'session-a', 'session',
+          'legacy reset', '2026-08-09T02:00:00.000Z', 'legacy-reset-key', 'legacy-reset-fingerprint',
+          '2026-08-09T02:00:00.000Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO memory_entries_v6 (
+          id, owner_type, owner_id, scope_type, scope_id, kind, title, body, body_sha256,
+          preview, state, source_type, source_session_id, source_app_message_id,
+          source_provider_message_id, source_provider_id, superseded_by_id, created_at,
+          updated_at, forgotten_at
+        ) VALUES ('legacy-memory', 'user', 'local-user', 'global', 'global', 'note',
+          'Legacy memory', 'Legacy body', 'legacy-hash', 'Legacy preview', 'active', 'manual',
+          NULL, NULL, NULL, NULL, NULL, '2026-08-09T00:00:00.000Z',
+          '2026-08-09T00:00:00.000Z', NULL)
+      `).run();
+      db.exec("DROP INDEX idx_v6_character_affect_events_afterglow;");
+      const beforeCounts = db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM character_affect_events_v6) AS events,
+          (SELECT COUNT(*) FROM character_affect_resets_v6) AS resets,
+          (SELECT COUNT(*) FROM memory_entries_v6) AS memories
+      `).get() as { events: number; resets: number; memories: number };
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.equal(indexNames(db).includes("idx_v6_character_affect_events_afterglow"), true);
+      const afterCounts = db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM character_affect_events_v6) AS events,
+          (SELECT COUNT(*) FROM character_affect_resets_v6) AS resets,
+          (SELECT COUNT(*) FROM memory_entries_v6) AS memories
+      `).get() as { events: number; resets: number; memories: number };
+      assert.deepEqual(afterCounts, beforeCounts);
+      assert.equal(columnNames(db, "character_affect_events_v6").includes("family"), true);
+      assert.equal(
+        (db.prepare("SELECT family FROM character_affect_events_v6 WHERE id = 'legacy-event'").get() as { family: string | null }).family,
+        null,
+      );
+      assert.throws(
+        () => db.prepare("UPDATE character_affect_events_v6 SET family = 'unknown' WHERE id = 'legacy-event'").run(),
+        /CHECK constraint failed/,
+      );
+      db.prepare("UPDATE character_affect_events_v6 SET family = 'other' WHERE id = 'legacy-event'").run();
+      assert.equal(
+        (db.prepare("SELECT family FROM character_affect_events_v6 WHERE id = 'legacy-event'").get() as { family: string }).family,
+        "other",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は既存 protected object metadata に role を backfill する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+      `);
+
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (statement !== CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL) {
+          db.exec(statement);
+        }
+      }
+
+      db.exec(`
+        CREATE TABLE memory_protected_objects_v6 (
+          object_id TEXT PRIMARY KEY,
+          entry_id TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('active', 'delete_pending', 'deleted')),
+          media_kind TEXT NOT NULL DEFAULT 'other',
+          content_type TEXT NOT NULL DEFAULT '',
+          display_name TEXT NOT NULL DEFAULT '',
+          summary TEXT NOT NULL,
+          original_bytes INTEGER NOT NULL CHECK (original_bytes >= 0),
+          stored_bytes INTEGER NOT NULL CHECK (stored_bytes >= 0),
+          sha256 TEXT NOT NULL DEFAULT '',
+          key_id TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          deleted_at TEXT,
+          FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE,
+          CHECK ((state = 'deleted') = (deleted_at IS NOT NULL))
+        );
+      `);
+
+      ensureV6Schema(db);
+
+      assert.equal(columnNames(db, "memory_protected_objects_v6").includes("role"), true);
+      assert.equal(tableSql(db, "memory_protected_objects_v6").includes("'evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'"), true);
+    } finally {
+      db.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "V6 schema repair失敗時は部分適用をrollbackする"
+  // oracle = { type = "contract", ref = "V6 database schema repair transaction contract" }
+  // fault = "repair途中のtableだけが残り、再起動時に不完全schemaをvalid扱いする"
+  // observable = "failure後のtable namesとschema state"
+  // observation_boundary = "public-boundary"
+  // scope = "ensureV6Schema transactional repair rollback"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("ensureV6Schema は auxiliary_sessions repair 失敗時に部分適用を rollback する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        PRAGMA foreign_keys = ON;
+      `);
+
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (
+          statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
+          && statement !== CREATE_V6_CHARACTER_AFFECT_TABLES_SQL
+          && statement !== CREATE_V6_SESSION_TURNS_TABLE_SQL
+        ) {
+          db.exec(statement);
+        }
+      }
+
+      db.exec(`
+        CREATE TABLE auxiliary_sessions (
+          id TEXT PRIMARY KEY,
+          parent_session_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          updated_at TEXT,
+          payload_json TEXT NOT NULL,
+          FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE audit_events_v6 (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT,
+          event_type TEXT NOT NULL,
+          provider_id TEXT NOT NULL DEFAULT '',
+          summary TEXT NOT NULL DEFAULT '',
+          metadata_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL
+        );
+
+        INSERT INTO sessions_v6 (
+          id,
+          title,
+          state,
+          provider_id,
+          catalog_revision,
+          model_id,
+          approval_mode,
+          created_at,
+          updated_at,
+          last_active_at
+        ) VALUES (
+          'session-1',
+          'Session 1',
+          'active',
+          'codex',
+          1,
+          'gpt-5',
+          'on-request',
+          '2026-07-04T00:00:00.000Z',
+          '2026-07-04T00:00:00.000Z',
+          '2026-07-04T00:00:00.000Z'
+        );
+        INSERT INTO auxiliary_sessions (
+          id,
+          parent_session_id,
+          status,
+          updated_at,
+          payload_json
+        ) VALUES (
+          'aux-rollback',
+          'session-1',
+          'active',
+          NULL,
+          '{}'
+        );
+        INSERT INTO audit_events_v6 (
+          session_id,
+          event_type,
+          provider_id,
+          summary,
+          metadata_json,
+          created_at
+        ) VALUES (
+          'session-1',
+          'session_turn',
+          'codex',
+          'summary',
+          '{"prompt":"kept"}',
+          '2026-07-04T00:00:00.000Z'
+        );
+      `);
+
+      assert.throws(() => ensureV6Schema(db), /NOT NULL constraint failed/);
+
+      assert.equal(tableNames(db).includes("character_affect_events_v6"), false);
+      assert.equal(tableNames(db).includes("character_affect_idempotency_v6"), false);
+
+      assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
+        "id",
+        "parent_session_id",
+        "status",
+        "updated_at",
+        "payload_json",
+      ]);
+      assert.equal(tableNames(db).includes("auxiliary_sessions_v6_rebuild"), false);
+      const auxiliaryRow = db.prepare("SELECT id, updated_at FROM auxiliary_sessions WHERE id = ?").get("aux-rollback") as
+        | { id: string; updated_at: string | null }
+        | undefined;
+      assert.equal(auxiliaryRow?.id, "aux-rollback");
+      assert.equal(auxiliaryRow?.updated_at, null);
+      const auditRow = db.prepare("SELECT metadata_json FROM audit_events_v6 WHERE session_id = ?").get("session-1") as
+        | { metadata_json: string }
+        | undefined;
+      assert.equal(auditRow?.metadata_json, '{"prompt":"kept"}');
+    } finally {
+      db.close();
+    }
+  });
+});

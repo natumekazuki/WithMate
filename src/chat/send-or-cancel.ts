@@ -25,11 +25,14 @@ export function resolveSelectedSessionRunState<TRunState extends string>({
   runState,
   isTurnRunning = false,
   hasLiveRun = false,
+  isCancellationPending = false,
 }: {
   runState: TRunState | null | undefined;
   isTurnRunning?: boolean;
   hasLiveRun?: boolean;
+  isCancellationPending?: boolean;
 }): TRunState | "running" | null {
+  if (isCancellationPending) return "running";
   return runState ?? (isTurnRunning || hasLiveRun ? "running" : null);
 }
 

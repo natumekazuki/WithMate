@@ -1,17 +1,17 @@
-import type { WithMateWindowApi } from "../withmate-window-api.js";
-import { loadMateStatusSnapshot } from "./mate-status-load-operation.js";
-import type { MateProfile, MateStorageState } from "./mate-state.js";
+import { loadMateStatusSnapshot, type MateStatusLoadApi } from "./mate-status-load-operation.js";
+import type { MateProfile, MateStorageState } from "../../src-shared/mate/mate-state.js";
+import type { MateAvatarAction } from "./MateSetupPanel.js";
 
 type MateStatusRefreshersContext = {
   setMateState: (state: MateStorageState) => void;
   setMateProfile: (profile: MateProfile | null) => void;
   setMateDisplayName: (displayName: string) => void;
-  setMateAvatarUpdating: (updating: boolean) => void;
+  setMateAvatarAction: (action: MateAvatarAction) => void;
 };
 
 export type MateStatusRefreshers = {
   refreshMateStatus: (
-    api: WithMateWindowApi,
+    api: MateStatusLoadApi,
     options?: { isActive?: () => boolean },
   ) => Promise<MateStorageState>;
 };
@@ -20,7 +20,7 @@ export function buildMateStatusRefreshers({
   setMateState,
   setMateProfile,
   setMateDisplayName,
-  setMateAvatarUpdating,
+  setMateAvatarAction,
 }: MateStatusRefreshersContext): MateStatusRefreshers {
   const refreshMateStatus: MateStatusRefreshers["refreshMateStatus"] = async (api, options) => {
     const isActive = options?.isActive ?? (() => true);
@@ -33,7 +33,7 @@ export function buildMateStatusRefreshers({
       setMateState(result.mateState);
       setMateProfile(null);
       setMateDisplayName("");
-      setMateAvatarUpdating(false);
+      setMateAvatarAction(null);
       return result.mateState;
     }
 

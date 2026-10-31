@@ -1,19 +1,15 @@
 import type { KeyboardEventHandler, ReactNode } from "react";
 
-import type { SessionHeaderProps } from "../session-components.js";
-import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
-import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../shortcut-registry.js";
+import type { SessionHeaderProps } from "./shell/session-header.js";
+import { SessionHeaderIcon } from "./shell/session-header-icon.js";
+import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
+import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../settings/shortcut-registry.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
 
 export type WorkspaceExplorerActionOptions = {
   disabled?: boolean;
   onOpenExplorer: () => void;
-};
-
-export type AuxiliaryHeaderActionsOptions = {
-  startDisabled?: boolean;
-  onStart: () => void;
 };
 
 export type LiveSessionHeaderPropsInput = {
@@ -25,13 +21,11 @@ export type LiveSessionHeaderPropsInput = {
   isPinned?: boolean;
   isPinPending?: boolean;
   isAuxiliaryMode?: boolean;
-  canViewAuxiliaryAuditLog?: boolean;
   canDeleteSession: boolean;
-  canViewAuditLog: boolean;
   showTerminalButton?: boolean;
   isTerminalDisabled?: boolean;
-  onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
+  onOpenExternalTerminal?: () => void;
   onOpenSessionFilesExplorer: () => void;
   onOpenSessionFilesTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -52,12 +46,14 @@ export function createWorkspaceExplorerAction({
 }: WorkspaceExplorerActionOptions) {
   return (
     <button
-      className="drawer-toggle compact secondary"
+      className="drawer-toggle compact secondary session-header-icon-button"
       type="button"
       disabled={disabled}
       onClick={onOpenExplorer}
+      aria-label="Open Workspace In Explorer"
+      title="Open Workspace In Explorer"
     >
-      Explorer
+      <SessionHeaderIcon name="folder" />
     </button>
   );
 }
@@ -77,8 +73,8 @@ export function createMessageCollapseHeaderAction({
 }: MessageCollapseHeaderActionOptions) {
   const label = allMessagesCollapsed ? "Expand" : "Collapse";
   const accessibleLabel = allMessagesCollapsed
-    ? "完了済みmessageをすべて展開"
-    : "完了済みmessageをすべて縮小";
+    ? "Expand all completed messages"
+    : "Collapse all completed messages";
 
   return (
     <button
@@ -99,24 +95,6 @@ export function createMessageCollapseHeaderAction({
   );
 }
 
-export function createAuxiliaryHeaderActions({
-  startDisabled = false,
-  onStart,
-}: AuxiliaryHeaderActionsOptions) {
-  return (
-    <div className="session-window-control-group auxiliary-session-control-group" role="group" aria-label="Auxiliary session actions">
-      <button
-        className="drawer-toggle compact secondary"
-        type="button"
-        onClick={onStart}
-        disabled={startDisabled}
-      >
-        New Auxiliary
-      </button>
-    </div>
-  );
-}
-
 export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput): SessionHeaderProps {
   return {
     taskTitle: input.taskTitle,
@@ -128,14 +106,12 @@ export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput):
     isPinPending: input.isPinPending,
     ...resolveChatHeaderVisibility({
       isAuxiliaryMode: input.isAuxiliaryMode,
-      canViewAuxiliaryAuditLog: input.canViewAuxiliaryAuditLog,
       canDeleteSession: input.canDeleteSession,
-      canViewAuditLog: input.canViewAuditLog,
     }),
     showTerminalButton: input.showTerminalButton ?? true,
     isTerminalDisabled: input.isTerminalDisabled,
-    onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
+    onOpenExternalTerminal: input.onOpenExternalTerminal,
     sessionFilesActions: createSessionFilesActions({
       onOpenExplorer: input.onOpenSessionFilesExplorer,
       onOpenTerminal: input.onOpenSessionFilesTerminal,

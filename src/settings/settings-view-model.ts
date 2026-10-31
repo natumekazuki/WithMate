@@ -5,13 +5,12 @@ import {
   type AppSettings,
   type MemoryExtractionProviderSettings,
   type ProviderAppSettings,
-} from "../provider-settings-state.js";
+} from "../../src-shared/settings/provider-settings-state.js";
 import {
-  coerceModelSelection,
   getReasoningEffortOptionsForModel,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
-} from "../model-catalog.js";
+} from "../../src-shared/settings/model-catalog.js";
 
 function normalizeSelectablePath(filePath: string): string {
   return filePath.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
@@ -63,21 +62,16 @@ export function buildHomeProviderSettingRows(
     const resolvedSettings = getResolvedProviderSettingsBundle(appSettings, provider.id);
     const settings = resolvedSettings.coding;
     const memoryExtractionSettings = resolvedSettings.memoryExtraction;
-    const memoryExtractionSelection = coerceModelSelection(
-      provider,
-      memoryExtractionSettings.model,
-      memoryExtractionSettings.reasoningEffort,
-    );
 
     return {
       provider,
       settings,
       memoryExtractionSettings,
-      resolvedMemoryExtractionModel: memoryExtractionSelection.resolvedModel,
-      resolvedMemoryExtractionReasoningEffort: memoryExtractionSelection.resolvedReasoningEffort,
+      resolvedMemoryExtractionModel: memoryExtractionSettings.model,
+      resolvedMemoryExtractionReasoningEffort: memoryExtractionSettings.reasoningEffort,
       availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(
         provider,
-        memoryExtractionSelection.resolvedModel,
+        memoryExtractionSettings.model,
       ),
     };
   });

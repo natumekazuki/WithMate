@@ -2,7 +2,7 @@
 
 - 状態: Accepted
 - 日付: 2026-08-03
-- 更新: 2026-08-31
+- 更新: 2026-10-23
 
 ## Context
 
@@ -22,9 +22,15 @@ Git process、repository identity、config、index、resource limit の隔離方
 - root は独立した表示 scope とする。親子関係にある root が同じ file を含む場合も重複を除去せず、それぞれの root からの相対 path で表示する
 - status、diff、未追跡 file の preview、通常 file preview からの Open Diff、diff の Reload は、同じ `rootId` を維持する
 - 複数 root の取得は、一つの Changes pane につき同時 2 件までの bounded parallel とする。3 件目以降は renderer 内で待機させ、root 数に比例した Git operation を Main process の queue へ同時投入しない
-- 再 Refresh では未開始の旧世代を破棄し、実行中の要求が完了した後に最新世代だけを続行する
+- 当時の判断（2026-10-23の更新方針で置換、同一owner/rootの再Refreshには適用しない）: 再 Refresh では未開始の旧世代を破棄し、実行中の要求が完了した後に最新世代だけを続行する
 - 同時数 2 は、一つの遅い repository が別 repository の表示開始を止めず、かつ一つの pane が ADR 014 の process 全体の active 上限を超える要求を同時発行しない値として選ぶ
 - Main process における待機要求の置換単位は Session、root、operation kind の組とする
+
+### 2026-10-23: 閲覧状態を保持する更新
+
+Issue #875の表示・復帰・関連turn終端による更新では、同一owner/rootの更新中に追加要求を受けても現行cycleを中断せず、後続1回へ集約する。通知が続いても後方rootが未取得のまま残らないようにするため、旧世代の未開始要求を毎回破棄する判断を置換する。owner・認可rootが変わる場合の世代失効、並列上限2、Mainのadmission・認可境界は維持する。
+
+非表示中は新しいstatus取得を開始せず、再表示時にrepositoryを再確認する。同一rootの取得済み一覧・展開・focus・scroll位置は更新中と失敗時にも保持する。更新契機とFiles／Historyとの共通動作は[Desktop UI](../design/desktop-ui.md)を正本とする。
 
 ## Alternatives
 
