@@ -9,6 +9,7 @@ import type { MessageInlineContent } from "../../ui/markdown/MessageRichText.js"
 import type {
   LiveApprovalRequest,
   LiveElicitationField,
+  LiveElicitationMultiSelectField,
   LiveElicitationRequest,
   LiveElicitationResponse,
   ElicitationRecord,
@@ -62,10 +63,20 @@ function validateLiveElicitationField(
       return null;
     }
     case "select": {
-      const normalized = typeof value === "string" ? value.trim() : "";
-      if (field.required && !normalized) {
+      const text = typeof value === "string" ? value : "";
+      if (field.required && !text.trim()) {
         return field.allowFreeText ? `Enter ${field.title}.` : `Select ${field.title}.`;
       }
+      if (!field.required && !text.trim()) return null;
+      if (field.minLength !== undefined && text.length < field.minLength) return `${field.title} must be at least ${field.minLength} characters.`;
+      if (field.maxLength !== undefined && text.length > field.maxLength) return `${field.title} must be at most ${field.maxLength} characters.`;
+      if (field.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) return `Enter a valid email address for ${field.title}.`;
+      if (field.format === "uri" && !URL.canParse(text)) return `Enter a valid URI for ${field.title}.`;
+      if (field.format === "date") {
+        const date = new Date(`${text}T00:00:00.000Z`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text) return `Enter a valid date for ${field.title}.`;
+      }
+      if (field.format === "date-time" && Number.isNaN(new Date(text).getTime())) return `Enter a valid date and time for ${field.title}.`;
       return null;
     }
     case "multi-select": {
@@ -157,6 +168,16 @@ function liveElicitationMultiSelectValue(value: LiveElicitationFieldValue | unde
   return Array.isArray(value) ? value : [];
 }
 
+function liveElicitationMultiSelectOptions(field: LiveElicitationMultiSelectField) {
+  const options = [...field.options];
+  if (field.allowFreeText) {
+    for (const value of field.defaultValue ?? []) {
+      if (!options.some((option) => option.value === value)) options.push({ value, label: value });
+    }
+  }
+  return options;
+}
+
 function mergeFreeTextAnswers(
   request: LiveElicitationRequest,
   fieldValues: Record<string, LiveElicitationFieldValue>,
@@ -197,11 +218,15 @@ function LiveElicitationCard({
   inputAvailable = true,
   drafts,
 }: LiveElicitationCardProps) {
+  const customDefaults = Object.fromEntries(request.fields.flatMap((field) =>
+    field.type === "select" && field.allowFreeText && field.defaultValue !== undefined && !field.options.some((option) => option.value === field.defaultValue)
+      ? [[field.name, field.defaultValue]] : [],
+  ));
   const [fieldValues, setFieldValues] = useState<Record<string, LiveElicitationFieldValue>>(
     () => drafts?.get(request.requestId)?.fieldValues ?? createLiveElicitationFormState(request),
   );
-  const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>(() => drafts?.get(request.requestId)?.freeTextValues ?? {});
-  const [customFields, setCustomFields] = useState<string[]>(() => drafts?.get(request.requestId)?.customFields ?? []);
+  const [freeTextValues, setFreeTextValues] = useState<Record<string, string>>(() => drafts?.get(request.requestId)?.freeTextValues ?? customDefaults);
+  const [customFields, setCustomFields] = useState<string[]>(() => drafts?.get(request.requestId)?.customFields ?? Object.keys(customDefaults));
   const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const pendingAttachments = useRef(new Set<string>());
   const [attachingFields, setAttachingFields] = useState<ReadonlySet<string>>(() => new Set());
@@ -401,7 +426,7 @@ function LiveElicitationCard({
                   aria-label={field.title}
                   aria-describedby={field.description ? `${fieldIdPrefix}-description-${index}` : undefined}
                 >
-                  {field.options.map((option) => {
+                  {liveElicitationMultiSelectOptions(field).map((option) => {
                     const selectedValues = liveElicitationMultiSelectValue(fieldValues[field.name]);
                     const checked = selectedValues.includes(option.value);
                     return (

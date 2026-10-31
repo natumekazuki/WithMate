@@ -94,6 +94,7 @@ providerごとの差は次。
   - event接続を確認してからpromptを1回だけ送る。admissionを完了とせず、当該入力の配送、root execution終端とmessageのidle outcomeを照合する。text deltaは確定messageで補正し、tool・usageはnative IDで重複を除く。失敗・取消では取得済み本文・操作・threadをpartial resultとして返す
   - 選択済みの`providerID/modelID`をnative model Refへ分解し、Depthを同名variantへ渡す。native model一覧で有効性・variant・添付modalityを確認し、不一致は明示エラーにする。Depth未指定はvariantを渡さない。添付はfile URIへ変換し、Additional Directoryは`external_directory` grantへ変換する。workspace移動の`opencode_session_move`はdenyする
   - `on-request`は共通承認UIへ中継し、approveを`once`、denyを`reject`へ変換する。`never`はnative askへ`once`を返し、永続許可`always`は発行しない。formは共通質問UIへ変換し、選択肢の説明をlabelへ併記する。string／multiselectの`custom`は自由入力として扱い、単一回答は文字列、複数回答は選択値と自由入力を含む文字列配列で返す。`metadata.kind = question`で`required`が未指定のfieldは必須とし、その他はnativeの指定を維持する。`external`／`hidden`／`when`／`pattern`の未対応fieldや帰属不明requestはcancel／rejectして失敗にする。実行中steerとturnを越えるbackground taskは接続しない
+  - stringの選択肢と自由入力でも`minLength`／`maxLength`／`format`を共通fieldへ保持し、送信値をSubmit前に検証する。文字数はnativeと同じ未加工文字列のUTF-16長で判定する。optionalの未回答は送信しない。選択肢外の既定値の表示・変更は[Question Forms](desktop-ui.md#question-forms)に従い、nativeへ返す既定値と文字列配列を失わない
   - token／contextは実取得値を投影する。quotaは公式`experimental.usage.limits`のGo枠だけを取得し、Mainの非永続cacheへ保持する。Go枠なしの正常応答は`null`から`unsupported`へ投影し、取得失敗とは区別する。独自Go HTTP APIやcredential読出しは行わない。詳細は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う。artifactはtool操作を保持するが、変更fileのsnapshot差分は生成しない
 
 ## Provider実行とManaged MCP

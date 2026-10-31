@@ -20,7 +20,10 @@ export function buildOpenCodeElicitation(form: FormInfo1, requestId: string): Li
     }
     const result = buildLiveElicitationFieldFromMcpSchema(field.key, schema, field.required ?? (form.metadata?.kind === "question"));
     if (!result) throw new Error(`Unsupported OpenCode form field: ${field.key}`);
-    if ((result.type === "select" || result.type === "multi-select") && (field.type === "string" || field.type === "multiselect")) {
+    if (result.type === "select" && field.type === "string") {
+      return { ...result, allowFreeText: field.custom === true, minLength: field.minLength, maxLength: field.maxLength, format: field.format };
+    }
+    if (result.type === "multi-select" && field.type === "multiselect") {
       return { ...result, allowFreeText: field.custom === true };
     }
     return result;

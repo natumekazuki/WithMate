@@ -353,6 +353,35 @@ it("OpenCode preserves explicit form constraints outside question defaults", () 
 
 // @test-value v2
 // kind = "contract"
+// claim = "OpenCodeの選択肢付き文字列は自由入力の有無にかかわらず長さとformatの制約を共通fieldへ保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md: OpenCode string constraints; review F-1" }
+// fault = "enum変換でminLength、maxLength、formatを失いnativeが拒否する回答をUIへ許可する"
+// observable = "変換後select fieldのminLength、maxLength、format、optionsとallowFreeText"
+// observation_boundary = "component-behavior"
+// scope = "OpenCode constrained string selection projection"
+// lifecycle = "permanent"
+// distinction = "renderer testと型検査はnative formから制約値が引き継がれることを保証しない"
+// @end-test-value
+it("OpenCode retains native string constraints on selection fields", () => {
+  for (const format of ["email", "uri", "date", "date-time"] as const) {
+    for (const custom of [true, false]) {
+      const form: FormInfo1 = { id: "form", sessionID: "root", title: "Constrained", fields: [
+        { key: "answer", type: "string", options: [{ value: "preset", label: "Preset" }], custom, minLength: 3, maxLength: 50, format },
+      ] };
+      const field = buildOpenCodeElicitation(form, "request").fields[0];
+      assert.equal(field.type, "select");
+      assert.ok(field.type === "select");
+      assert.equal(field.allowFreeText, custom);
+      assert.equal(field.minLength, 3);
+      assert.equal(field.maxLength, 50);
+      assert.equal(field.format, format);
+      assert.deepEqual(field.options, [{ value: "preset", label: "Preset" }]);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "OpenCodeはroot終端イベント受信後に解決した承認・form回答をnativeへ送らず最終snapshotの正常結果を維持する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
 // fault = "最終snapshot取得完了まで回答受付を開いたままにして終了済みturnの承認・回答を送る、または受付停止で結果取得まで止める"
