@@ -50,7 +50,7 @@ async function withImageDom(run: (fixture: {
 // claim = "本文とlightboxの画像menuはmouse・keyboardで元sourceと表示座標を渡し、通知を本文外・拡大中はdialog内へ出し、lightboxのfocus移動・復帰とexternal画像のpath操作除外を保つ"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
 // fault = "blob URLを元pathとして渡す、lightboxやkeyboardからmenuに到達できない、外部画像をlocal pathと誤認する、通知を本文の重なり内へ置く・2.4秒後も残す、またはdialogへのfocus移動・復帰を失う"
-// observable = "native menu APIのrequest、contextmenuのdefaultPrevented、body直下・lightbox内の通知と2.4秒後の除去、dialog表示時とEscape後のactiveElement"
+// observable = "native menu APIのrequest、contextmenuのdefaultPrevented、本文外・lightbox内の通知と2.4秒後の除去、dialog表示時とEscape後のactiveElement"
 // observation_boundary = "component-behavior"
 // scope = "MarkdownImageの通常表示・拡大表示からnative menuへの操作境界"
 // lifecycle = "permanent"
@@ -88,7 +88,7 @@ test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを
     } });
     const inlineFeedback = dom.window.document.querySelector('[role="status"]')!;
     assert.equal(inlineFeedback.textContent, "Path copied.");
-    assert.equal(inlineFeedback.parentElement, dom.window.document.body);
+    assert.equal(container.contains(inlineFeedback), false);
     const [feedbackTimerId, { handler: feedbackHandler }] = [...timers].find(([, timer]) => timer.delay === 2_400)!;
     assert.ok(typeof feedbackHandler === "function");
     await act(async () => { timers.delete(feedbackTimerId); feedbackHandler(); });
@@ -142,7 +142,7 @@ test("画像menuは通常表示と拡大表示のmouse・keyboardで元sourceを
 // claim = "画像menuは失敗をalertへ返し、dismissと同一componentの旧resolver世代への遅延成功を通知しない"
 // oracle = { type = "contract", ref = "docs/design/message-rich-text.md: Image Handling" }
 // fault = "IPC失敗やdismissをcopy成功として表示する、または同一sourceのresolver変更後に旧menuの遅延結果を表示する"
-// observable = "body直下のstatus/alertの有無と通知text"
+// observable = "本文外のstatus/alertの有無と通知text"
 // observation_boundary = "component-behavior"
 // scope = "MarkdownImageのmenu結果とresource寿命"
 // lifecycle = "permanent"
@@ -173,7 +173,7 @@ test("画像menuは失敗を通知しdismissと旧resourceの遅延成功は通�
     await act(async () => openMenu());
     const failureFeedback = dom.window.document.querySelector('[role="alert"]')!;
     assert.equal(failureFeedback.textContent, "Clipboard write failed.");
-    assert.equal(failureFeedback.parentElement, dom.window.document.body);
+    assert.equal(container.contains(failureFeedback), false);
     response = async () => { throw new Error("IPC closed"); };
     await act(async () => openMenu());
     assert.equal(dom.window.document.querySelector('[role="alert"]')?.textContent, "Image context menu could not be opened.");

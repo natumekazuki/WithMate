@@ -43,7 +43,7 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは3分類の見出しと水平境界を表示し、分類内一覧をscrollし内容幅740pxで独立した縦積みを1列から2列へ切り替える"
+// claim = "Monitorは3分類の見出しと水平境界を表示し、分類内一覧のscrollと内容幅740pxでの列数切替をCSSへ宣言する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "分類境界や見出しを欠落させる、一覧が割当高さ内でscrollできない、またはviewport幅で列数を決める"
 // observable = "描画したsectionとseparatorの順序と件数、busy属性、一覧scrollとcontainer queryのCSS"
@@ -82,7 +82,7 @@ test("Monitorは3分類の境界と分類内scrollと内容幅に応じた列数
   assert.match(sectionsRule, /container:\s*monitor-content \/ inline-size;/);
   const columns = readCssAtRuleBlocks(stylesSource, "@container monitor-content (min-width: 740px)")[0];
   assert.ok(columns);
-  assert.match(columns, /--home-monitor-columns:\s*2;/);
+  assert.match(readCssRule(columns, ".home-page .home-monitor-list-items"), /--home-monitor-columns:\s*2;/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-list-items"), /--home-monitor-columns:\s*1;/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-body > .home-session-list-load-status"), /position:\s*absolute;/);
 });
