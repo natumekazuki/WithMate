@@ -205,6 +205,62 @@ test("Monitorは外側resizeで最小高と小領域一覧のfocusを保つ", as
 
 // @test-value v2
 // kind = "contract"
+// claim = "Monitorは縮小後の最初のkeyboardとdragを、現在の高さで補正した境界位置から動かす"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
+// fault = "縮小前の高さを入力の起点に使い、最初の操作で境界を表示位置から跳ばす"
+// observable = "2境界それぞれの操作後のgrid row配分とseparatorのaria-valuenow"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentの外側resize直後のkeyboard・pointer入力"
+// lifecycle = "permanent"
+// impact = "Windowを縮めた後も仕切りが操作に追従し、支援技術へ現在の配分を伝える"
+// distinction = "固定高での操作とresize通知だけのtestでは、通知前の最初の入力が旧寸法を使う欠陥を検出できない"
+// @end-test-value
+test("Monitorは縮小直後の最初の入力を現在の高さへ合わせる", async () => {
+  await withMonitor(async ({ dom, root }) => {
+    let containerHeight = 790;
+    dom.window.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect {
+      const height = this.classList.contains("home-monitor-sections") ? containerHeight : this.classList.contains("home-monitor-splitter") ? 20 : 0;
+      return { x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) };
+    };
+    for (const index of [0, 1]) for (const edge of ["Home", "End"]) for (const input of ["keyboard", "pointer"]) {
+      containerHeight = 790;
+      await act(async () => root.render(createElement(HomeMonitorContent, {
+        key: `${index}-${edge}-${input}`, approvalEntries: [], runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
+      })));
+      const sections = dom.window.document.querySelector<HTMLElement>(".home-monitor-sections")!;
+      const splitters = [...sections.querySelectorAll<HTMLButtonElement>(".home-monitor-splitter")];
+      const splitter = splitters[index]!;
+      const key = async (target: HTMLButtonElement, value: string) => {
+        await act(async () => target.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true })));
+      };
+      const pointer = async (type: string, y: number) => {
+        const event = new dom.window.MouseEvent(type, { bubbles: true, button: 0, clientY: y });
+        Object.defineProperty(event, "pointerId", { value: 1 });
+        await act(async () => splitter.dispatchEvent(event));
+      };
+      if (index === 0 && edge === "End") await key(splitters[1]!, "End");
+      if (index === 1 && edge === "Home") await key(splitters[0]!, "Home");
+      await key(splitter, edge);
+      containerHeight = 470;
+      const start = index === 0 ? edge === "Home" ? 48 : 334 : edge === "Home" ? 96 : 382;
+      const direction = edge === "Home" ? 1 : -1;
+      if (input === "keyboard") await key(splitter, direction === 1 ? "ArrowDown" : "ArrowUp");
+      else {
+        await pointer("pointerdown", 400);
+        await pointer("pointermove", 400 + direction * 30);
+      }
+      const heights = [...sections.style.gridTemplateRows.matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
+      const boundary = heights.slice(0, index + 1).reduce((sum, height) => sum + height, 0);
+      const expected = start + direction * (input === "keyboard" ? 24 : 30);
+      assert.ok(Math.abs(boundary - expected) < 0.001);
+      assert.equal(splitter.getAttribute("aria-valuenow"), String(Math.round(expected / 430 * 100)));
+      if (input === "pointer") await pointer("pointerup", 400 + direction * 30);
+    }
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Monitorの分類開閉とWindow resizeは保存した分類比率を変えず、閉じた分類を除いた高さ調整でも復帰後に各分類の配分を保つ"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "閉じた分類の比率が開閉ごとに減衰する、resizeによる最小高補正を保存比率へ混入する、または閉じた分類の比率をdragで変える"
@@ -274,6 +330,10 @@ test("Monitorは反復開閉と縮小拡大で分類比率を失わない", asyn
 // @end-test-value
 test("Monitorは他Sessionの更新で操作中の行を再mountしない", async () => {
   await withMonitor(async ({ dom, root }) => {
+    const doc = dom.window.document;
+    const style = doc.createElement("style");
+    style.textContent = ".home-monitor-list-items { --home-monitor-columns: 2; }";
+    doc.head.append(style);
     const a = entry("A"), b = entry("B"), d = entry("D"), e = entry("E");
     const c: HomeMonitorEntry = { ...entry("C"), auxiliarySessions: Array.from({ length: 12 }, (_, index) => ({
       id: `aux-C-${index}`, parentSessionId: "C", status: "active", runState: "idle", preview: `Child ${index}`,
@@ -289,9 +349,11 @@ test("Monitorは他Sessionの更新で操作中の行を再mountしない", asyn
     }));
     for (const focusTarget of ["disclosure", "auxiliary"]) {
       await act(async () => render([a, b, c, d], [], focusTarget));
-      const doc = dom.window.document;
       const parent = doc.querySelector<HTMLButtonElement>('[aria-label="Open session: C"]')!;
       const card = parent.closest<HTMLElement>(".home-monitor-card")!;
+      const rightColumn = "calc((100% + var(--home-monitor-column-gap)) / 2)";
+      assert.equal(dom.window.getComputedStyle(card.parentElement!).getPropertyValue("--home-monitor-columns").trim(), "2");
+      assert.equal(card.style.left, rightColumn);
       const disclosure = card.querySelector<HTMLButtonElement>(".home-monitor-disclosure")!;
       await act(async () => disclosure.click());
       const list = card.querySelector<HTMLElement>(".home-monitor-auxiliary-list")!;
@@ -299,8 +361,15 @@ test("Monitorは他Sessionの更新で操作中の行を再mountしない", asyn
       const focused = focusTarget === "disclosure" ? disclosure : child;
       list.scrollTop = 80;
       focused.focus();
-      for (const [running, stopped] of [ [[b, c, d], [a]], [[e, b, c, d], [a]], [[c, d], [a]], [[a, b, c, d], []] ]) {
-        await act(async () => render(running!, stopped!, focusTarget));
+      const updates = [
+        { running: [b, c, d], stopped: [a], left: "0px" },
+        { running: [e, b, c, d], stopped: [a], left: rightColumn },
+        { running: [c, d], stopped: [a], left: "0px" },
+        { running: [a, b, c, d], stopped: [], left: rightColumn },
+      ];
+      for (const { running, stopped, left } of updates) {
+        await act(async () => render(running, stopped, focusTarget));
+        assert.equal(card.style.left, left, "session crosses the column boundary");
         assert.ok(doc.querySelector('[aria-label="Open session: C"]')?.closest(".home-monitor-card") === card, "same session card DOM");
         assert.ok(card.querySelector(".home-monitor-auxiliary-list") === list, "same auxiliary list DOM");
         assert.ok(doc.activeElement === focused, "active control retains focus");

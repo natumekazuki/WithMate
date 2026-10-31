@@ -6,7 +6,7 @@ WithMateは、アプリ終了前に開いていたSession Windowの集合を保�
 
 ## 復元操作
 
-Home右ペインの`Restore Sessions`は、保存された集合のうち現在開いていないSessionがある場合に利用できます。操作すると対象を順に開き、復元できなかったSessionがある場合だけ対象と理由をHomeへ表示します。全対象の復元に成功した場合と、要求時点で対象がなくなっていた場合は、正常系のfeedbackを表示しません。
+Home共通headerの`Restore Sessions`は、保存された集合のうち現在開いていないSessionがある場合に利用できます。操作すると対象を順に開き、復元できなかったSessionがある場合だけ対象と理由をHomeへ表示します。全対象の復元に成功した場合と、要求時点で対象がなくなっていた場合は、正常系のfeedbackを表示しません。
 
 既にopenまたはopeningのSessionは重複して開きません。復元中に同じ操作を繰り返しても、同じSession Windowを複数作成しません。
 

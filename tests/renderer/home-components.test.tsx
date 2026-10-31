@@ -2766,7 +2766,7 @@ describe("HomeRightPane", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "HomeHeaderのRestore Sessions操作は復元対象の有無と処理中状態をdisabledおよびaria-busyへ投影する"
-  // oracle = { type = "contract", ref = "Issue #731 Home restore sessions action state" }
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#復元操作; docs/design/ui-design-guidelines.md#ボタン" }
   // fault = "対象がない状態または復元処理中に操作できて重複要求が発生するか、対象があるのにdisabledのままになる"
   // observable = "Restore Sessions buttonのdisabled属性とaria-busy属性"
   // observation_boundary = "component-behavior"
@@ -2796,7 +2796,7 @@ describe("HomeRightPane", () => {
   // @test-value v2
   // kind = "contract"
   // claim = "HomeHeaderのrestore feedbackは成功・対象なしではstatusを描画せず、失敗時だけ対象と理由をpolite live statusへ表示する"
-  // oracle = { type = "contract", ref = "Issue #731 Home restore feedback accessibility" }
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#復元操作; docs/design/ui-design-guidelines.md#操作とアクセシビリティ" }
   // fault = "正常終了後も空statusを残すか、復元失敗時に対象と理由を支援技術へ通知できない"
   // observable = "success/failure HTMLのfeedback要素、role=status、aria-live=polite、失敗対象と理由"
   // observation_boundary = "component-behavior"
