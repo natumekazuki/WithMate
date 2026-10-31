@@ -127,7 +127,7 @@ archived Characterではcanonical fileを読まず、保存済みsnapshotで継�
 
 汎用Session／Auxiliary updateは保存済み`characterId`とsnapshotの差し替えを永続化前に拒否する。通常の定義更新は内部の送信開始経路だけが所有し、同名Characterへのowner切り替えやcatalog metadataへの追従は行わない。既存の長期Sessionも保存済みsnapshotを前回値として扱い、DB migrationを必要としない。
 
-`character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影しない。古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
+`character-authoring` Session は例外である。stable owner は `Session.characterId` に保持したまま、各 turn の開始時に canonical `character.md` から runtime snapshot を再生成する。定義が hard contract を満たさない、または必須ファイルが欠落した場合は snapshot を投影しない。この場合に限り、古い snapshot と provider thread ID を composer / provider validation より前に破棄し、process-local thread cache も無効化する。
 
 V6 の既存 row で stable owner と snapshot owner が一致しない場合は、owner を維持する。snapshot と provider thread ID を read projection から同時に無効化する。
 
