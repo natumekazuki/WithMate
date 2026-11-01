@@ -881,7 +881,7 @@ export function SessionGraphTopicView({
                     <div className="session-graph-topic-heading" onDoubleClick={(event) => { if (!(event.target as Element).closest("button")) toggleTopic(group.topicId); }}>
                       <strong title={topic?.title}>{topic?.title ?? topics.find((item) => item.id === group.topicId)?.title}</strong>
                       <div className="session-graph-topic-actions"><small>{loaded} / {topic?.recordCount ?? "—"} Records</small><span>
-                        <button type="button" ref={(element) => { if (element) topicToggleRefs.current.set(group.topicId, element); else topicToggleRefs.current.delete(group.topicId); }} aria-expanded="true" aria-label={`Collapse Topic: ${topic?.title ?? "Topic"}`} onClick={() => toggleTopic(group.topicId)}>Collapse</button>
+                        <button type="button" className="session-graph-topic-toggle" ref={(element) => { if (element) topicToggleRefs.current.set(group.topicId, element); else topicToggleRefs.current.delete(group.topicId); }} aria-expanded="true" aria-label={`Collapse Topic: ${topic?.title ?? "Topic"}`} title="Collapse Topic" onClick={() => toggleTopic(group.topicId)}><span aria-hidden="true">▾</span></button>
                         <button type="button" title="Focus Topic" aria-label={`Focus Topic: ${topic?.title ?? "Topic"}`} onClick={() => onFocusTopic?.(group.topicId)}>↗</button>
                       </span></div>
                     </div>
@@ -897,7 +897,7 @@ export function SessionGraphTopicView({
                     onDoubleClick={(event) => { if (!(event.target as Element).closest("button")) toggleTopic(topic.id); }}>
                     <strong title={topic.title}>{topic.title}</strong><small>{topic.recordCount} Records{topic.issues.count ? ` · ${topic.issues.count} Unresolved` : ""}</small>
                     <div className="session-graph-topic-card-footer"><span className="session-graph-topic-actors">{topic.actors.map(({ identity }) => <Identity key={identity.sessionId} identity={identity} focusable={false} />)}</span>
-                      <button type="button" ref={(element) => { if (element) topicToggleRefs.current.set(topic.id, element); else topicToggleRefs.current.delete(topic.id); }} aria-label={`Expand Topic: ${topic.title}`} aria-expanded="false" title="Double-click the card or select Expand" onClick={() => toggleTopic(topic.id)}>Expand</button>
+                      <button type="button" className="session-graph-topic-toggle" ref={(element) => { if (element) topicToggleRefs.current.set(topic.id, element); else topicToggleRefs.current.delete(topic.id); }} aria-label={`Expand Topic: ${topic.title}`} aria-expanded="false" title="Expand Topic" onClick={() => toggleTopic(topic.id)}><span aria-hidden="true">▸</span></button>
                     </div>
                   </section>;
                 })}

@@ -134,6 +134,8 @@
 .session-graph-topic-actions small { font-size: 12px; color: var(--muted); }
 .session-graph-topic-actions button,
 .session-graph-topic-card button { border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; background: var(--surface); font-size: 12px; }
+.session-graph-topic-actions .session-graph-topic-toggle,
+.session-graph-topic-card .session-graph-topic-toggle { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; font-size: 16px; line-height: 1; }
 .session-graph-topic-card.session-graph-recency-surface {
   position: absolute;
   width: 240px;
