@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { SessionGraphUiReadOperation, SessionGraphUiReadRequest, SessionGraphUiReadResult } from "./session-graph-ui-read-contract.js";
 
 export const sessionGraphOverviewStateSchema = z.object({
-  selectedTopicId: z.string().nullable(), zoom: z.number().finite().positive(),
+  selectedId: z.string().nullable(), zoom: z.number().finite().positive(),
   scrollLeft: z.number().finite().nonnegative(), scrollTop: z.number().finite().nonnegative(),
 }).strict();
 

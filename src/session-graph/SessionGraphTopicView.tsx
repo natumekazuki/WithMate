@@ -21,7 +21,7 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { SessionGraphIdentityView as Identity } from "./SessionGraphIdentity.js";
 import { sessionGraphRecency } from "./graph-recency.js";
-import type { SessionGraphRecencyRange } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
+import type { SessionGraphRecencyRange, SessionGraphTopicOverview } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 import { IMAGE_ZOOM_MIN, IMAGE_ZOOM_MAX, IMAGE_ZOOM_STEP, useCtrlWheelZoom, type ImageZoom } from "../ui/image-viewport.js";
 import { useViewportPan } from "../ui/viewport-pan.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
@@ -53,6 +53,7 @@ type GraphLocation = {
 type GraphReturn = { location: GraphLocation; kind: "detail" | "range"; rangeChanged: boolean };
 export type SessionGraphTopicMemory = {
   topics: SessionGraphTopic[];
+  topicOverviews?: SessionGraphTopicOverview[];
   topicsMore: boolean;
   view: SessionGraphReadResult | null;
   selectedRecord: SessionGraphRecord | null;
@@ -64,6 +65,7 @@ export type SessionGraphTopicMemory = {
   recordPagingNeedsRefresh: boolean;
   scopes: GraphScope[];
   recency: SessionGraphRecencyRange;
+  layouts?: Map<string, SessionGraphLayout>;
 };
 function label(value: string) {
   return value
@@ -132,6 +134,8 @@ export function SessionGraphTopicView({
   toolbarActions,
   initialMemory,
   onMemoryChange,
+  allTopics = false,
+  onFocusTopic,
 }: {
   api: Pick<WithMateWindowApi, "readSessionGraph" | "subscribeSessionGraph">;
   sessionId: string;
@@ -142,8 +146,11 @@ export function SessionGraphTopicView({
   toolbarActions?: ReactNode;
   initialMemory?: SessionGraphTopicMemory | null;
   onMemoryChange?(memory: SessionGraphTopicMemory): void;
+  allTopics?: boolean;
+  onFocusTopic?(topicId: string): void;
 }) {
   const [topics, setTopics] = useState<SessionGraphTopic[]>(initialMemory?.topics ?? []);
+  const [topicOverviews, setTopicOverviews] = useState(initialMemory?.topicOverviews ?? []);
   const [topicsMore, setTopicsMore] = useState(initialMemory?.topicsMore ?? false);
   const [topicId, setTopicId] = useState(initialState.topicId ?? "");
   const [view, setView] = useState<SessionGraphReadResult | null>(initialMemory?.view ?? null);
@@ -181,7 +188,7 @@ export function SessionGraphTopicView({
   const nodesRef = useRef(new Map<string, HTMLButtonElement>());
   const labelElements = useRef(new Map<string, HTMLSpanElement>());
   const [labelSizes, setLabelSizes] = useState(new Map<string, SessionGraphLabelSize>());
-  const layouts = useRef(new Map<string, SessionGraphLayout>());
+  const layouts = useRef(new Map(initialMemory?.layouts));
   const pendingScroll = useRef<SessionGraphViewState | null>(initialState);
   const focusDetail = useRef(false);
   const restoreNodeFocus = useRef<string | null>(null);
@@ -201,7 +208,7 @@ export function SessionGraphTopicView({
     });
   }, []);
   useCtrlWheelZoom(viewportRef, 100, setViewportZoom);
-  const snapshot = (): SessionGraphViewState => ({ topicId: topicId || null, selectedId, zoom,
+  const snapshot = (): SessionGraphViewState => ({ topicId: allTopics ? null : topicId || null, selectedId, zoom,
     scrollLeft: viewportRef.current?.scrollLeft ?? stateRef.current.scrollLeft,
     scrollTop: viewportRef.current?.scrollTop ?? stateRef.current.scrollTop });
   // The position the reader chose, with the viewport size it was chosen at. A resize clamps
@@ -273,7 +280,10 @@ export function SessionGraphTopicView({
         const rebuildPaging = more && recordPagingNeedsRefresh;
         const append = more && !rebuildPaging;
         const loadedCount = returning ? returning.location.recordIds.length : (view?.items.length ?? 0) + (rebuildPaging ? PAGE_SIZE : 0);
-        let topicPage = await api.readSessionGraph(sessionId, "list_topics", {
+        const readTopics = (options: { limit: number; offset: number; expectedRevision?: number }) => allTopics
+          ? api.readSessionGraph(sessionId, "overview", options)
+          : api.readSessionGraph(sessionId, "list_topics", options);
+        let topicPage = await readTopics({
           limit: 200,
           offset: moreTopics ? topics.length : 0,
           expectedRevision: moreTopics ? topicsRevision.current : undefined,
@@ -284,27 +294,36 @@ export function SessionGraphTopicView({
             "The graph changed. Retry to load its current state.",
           );
         const nextTopics = moreTopics ? [...topics, ...topicPage.items] : [...topicPage.items];
-        while (!moreTopics && topicPage.hasMore && nextTopics.length < topics.length) {
-          topicPage = await api.readSessionGraph(sessionId, "list_topics", {
+        while (!moreTopics && topicPage.hasMore && (allTopics || nextTopics.length < topics.length)) {
+          topicPage = await readTopics({
             limit: 200, offset: nextTopics.length, expectedRevision: topicPage.revision,
           });
           if (request.current !== revision) return;
           if (topicPage.status !== "ok") throw new Error("The graph changed. Retry to load its current state.");
-          if (!topicPage.items.length) break;
+          if (!topicPage.items.length) throw new Error("Topic Retrieval Is Incomplete. Retry.");
           nextTopics.push(...topicPage.items);
+        }
+        if (allTopics) {
+          if (nextTopics.length !== topicPage.total) throw new Error("Topic Retrieval Is Incomplete. Retry.");
+          const order = new Map(topics.map((topic, index) => [topic.id, index]));
+          nextTopics.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity));
         }
         topicsRevision.current = topicPage.revision;
         setTopics(nextTopics);
         setTopicsMore(topicPage.hasMore);
         if (moreTopics) return;
-        const nextTopic = topicRef.current || nextTopics[0]?.id;
-        if (!nextTopic) {
+        const nextTopic = allTopics ? undefined : topicRef.current || nextTopics[0]?.id;
+        if (!allTopics && !nextTopic) {
           setView(null);
           return;
         }
-        if (!topicRef.current) setTopicId(nextTopic);
-        let result = await api.readSessionGraph(sessionId, "get_topic_view", {
-          topicId: nextTopic,
+        if (!allTopics && !topicRef.current) setTopicId(nextTopic!);
+        const readRecords = async (options: { limit: number; offset: number; expectedRevision?: number }) => {
+          if (!allTopics) return api.readSessionGraph(sessionId, "get_topic_view", { ...options, topicId: nextTopic! });
+          const page = await api.readSessionGraph(sessionId, "recent", options);
+          return page.status === "ok" ? { ...page, recency: {} } : page;
+        };
+        let result = await readRecords({
           limit: append
             ? PAGE_SIZE
             : Math.max(PAGE_SIZE, Math.min(200, loadedCount)),
@@ -325,8 +344,7 @@ export function SessionGraphTopicView({
           combined.hasMore &&
           combined.items.length < loadedCount
         ) {
-          result = await api.readSessionGraph(sessionId, "get_topic_view", {
-            topicId: nextTopic,
+          result = await readRecords({
             limit: Math.min(200, loadedCount - combined.items.length),
             offset: combined.items.length,
             expectedRevision: combined.revision,
@@ -341,7 +359,7 @@ export function SessionGraphTopicView({
           combined = mergeViews(combined, result);
         }
         const knownIds = returning ? [...returning.location.recordIds, ...returning.location.inspectedIds]
-          : [...inspectedRecords, ...(view?.items ?? [])].filter((record) => record.topicId === nextTopic).map((record) => record.id);
+          : [...inspectedRecords, ...(view?.items ?? [])].filter((record) => allTopics || record.topicId === nextTopic).map((record) => record.id);
         const extraIds = [...new Set(knownIds.filter((id) => !combined.items.some((item) => item.id === id)))];
         const refreshedExtras: SessionGraphRecord[] = [];
         if (!append) for (let offset = 0; offset < extraIds.length; offset += 200) {
@@ -379,6 +397,7 @@ export function SessionGraphTopicView({
         if (restoreLoadFocus && !combined.hasMore &&
           (document.activeElement === loadMoreRef.current || document.activeElement === document.body)) focusLoadedCount.current = true;
         setView(combined);
+        if (allTopics) setTopicOverviews(nextTopics as SessionGraphTopicOverview[]);
         setRecency(result.recency);
         setRecordPagingNeedsRefresh(needsPagingRefresh);
         if (returning) finishReturn(returning);
@@ -392,7 +411,7 @@ export function SessionGraphTopicView({
         }
       }
     },
-    [api, sessionId, topics.length, view, selectedId, inspectedRecords, recordPagingNeedsRefresh],
+    [api, sessionId, allTopics, topics, view, selectedId, inspectedRecords, recordPagingNeedsRefresh],
   );
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -429,7 +448,7 @@ export function SessionGraphTopicView({
         const record = result.items[0];
         setInspectedRecords((current) => [...current.filter((item) => item.id !== record.id), record]);
         setSelectedRecord(record);
-        if (record.topicId !== topicRef.current) {
+        if (!allTopics && record.topicId !== topicRef.current) {
           setView(null);
           setTopicId(record.topicId);
           setScopes([]);
@@ -443,7 +462,7 @@ export function SessionGraphTopicView({
         if (detailRequest.current === revision) setDetailLoading(false);
       }
     },
-    [api, sessionId, view?.revision],
+    [api, sessionId, allTopics, view?.revision],
   );
   useEffect(() => {
     if (selectedId) void selectRecord(selectedId);
@@ -453,9 +472,9 @@ export function SessionGraphTopicView({
   }, [selectedId, selectRecord]);
   const records = useMemo(() => {
     const items = view?.items ?? [];
-    const extra = inspectedRecords.filter((record) => record.topicId === topicId && !items.some((item) => item.id === record.id));
+    const extra = inspectedRecords.filter((record) => (allTopics || record.topicId === topicId) && !items.some((item) => item.id === record.id));
     return extra.length ? [...items, ...extra] : items;
-  }, [view, inspectedRecords, topicId]);
+  }, [view, inspectedRecords, topicId, allTopics]);
   const relations = relationState.relations;
   const relationsIncomplete = graphReadIsIncomplete(relationState);
   const loadRelations = async () => {
@@ -506,6 +525,12 @@ export function SessionGraphTopicView({
       ? Number.POSITIVE_INFINITY : sessionGraphCapacity(viewportSize?.width ?? 0, viewportSize?.height ?? 0),
     navigationId ? [navigationId] : scopes.at(-1)?.ids ?? null,
   ), [records, relations, relationsIncomplete, viewportSize, scopes, navigationId]);
+  const topicByNode = useMemo(() => allTopics ? new Map(topics.flatMap((topic) => {
+    const nodes = projection.nodes.filter((node) => node.records[0].topicId === topic.id);
+    return nodes.length ? nodes.map((node) => [node.id, topic.id] as const)
+      : !scopes.length && !navigationId ? [[`topic:${topic.id}`, topic.id] as const] : [];
+  })) : undefined, [allTopics, topics, projection, scopes.length, navigationId]);
+  const layoutNodes = useMemo(() => topicByNode ? [...topicByNode.keys()].map((id) => ({ id })) : projection.nodes, [topicByNode, projection]);
   const layoutKey = JSON.stringify([topicId, navigationId, scopes.map((scope) => scope.ids)]);
   useLayoutEffect(() => {
     const measure = () => {
@@ -523,11 +548,13 @@ export function SessionGraphTopicView({
     for (const element of labelElements.current.values()) observer.observe(element);
     return () => observer.disconnect();
   }, [projection.edges]);
+  const layoutReady = !!viewportSize && projection.edges.every((edge) => labelSizes.has(edge.id));
   const layout = useMemo(
-    () => layoutSessionGraph(projection.nodes, projection.edges, viewportSize?.width ?? 0, viewportSize?.height ?? 0, labelSizes, layouts.current.get(layoutKey)),
-    [projection, viewportSize, labelSizes, layoutKey],
+    () => !layoutReady && layouts.current.has(layoutKey) && layoutNodes.every((node) => layouts.current.get(layoutKey)!.positions.has(node.id)) ? layouts.current.get(layoutKey)!
+      : layoutSessionGraph(layoutNodes, projection.edges, viewportSize?.width ?? 0, viewportSize?.height ?? 0, labelSizes, layouts.current.get(layoutKey), topicByNode),
+    [layoutNodes, projection, viewportSize, labelSizes, layoutKey, topicByNode, layoutReady],
   );
-  useLayoutEffect(() => { layouts.current.set(layoutKey, layout); }, [layoutKey, layout]);
+  useLayoutEffect(() => { if (layoutReady) layouts.current.set(layoutKey, layout); }, [layoutKey, layout, layoutReady]);
   const edgeRoutes = projection.edges.flatMap((edge) => {
     const route = layout.edgeRoutes.get(edge.id);
     return route ? [{ edge, route }] : [];
@@ -558,7 +585,7 @@ export function SessionGraphTopicView({
     detailRequest.current += 1;
     setDetailError("");
     setDetailLoading(false);
-    if (location.state.topicId !== topicId) {
+    if ((location.state.topicId ?? "") !== topicId) {
       pendingReturn.current = returning;
       setSelectedId(null);
       setSelectedRecord(null);
@@ -581,7 +608,7 @@ export function SessionGraphTopicView({
   };
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
-    if (view && viewportSize !== null && pendingScroll.current && viewport) {
+    if (view && layoutReady && pendingScroll.current && viewport) {
       viewport.scrollLeft = pendingScroll.current.scrollLeft;
       viewport.scrollTop = pendingScroll.current.scrollTop;
       pendingScroll.current = null;
@@ -613,10 +640,10 @@ export function SessionGraphTopicView({
       headingRef.current?.focus({ preventScroll: true });
       focusDetail.current = false;
     }
-  }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord, viewportSize, scopes, projection]);
+  }, [topicId, selectedId, zoom, view, topics.length, detailLoading, selectedRecord, viewportSize, scopes, projection, layoutReady]);
   useLayoutEffect(() => {
-    onMemoryChange?.({ topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes, recency });
-  }, [topics, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes, recency, onMemoryChange]);
+    onMemoryChange?.({ topics, topicOverviews, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes, recency, layouts: new Map(layouts.current) });
+  }, [topics, topicOverviews, topicsMore, view, selectedRecord, relationState, navigationId, inspectedRecords, backStack, rangeBackStack, recordPagingNeedsRefresh, scopes, recency, layout, onMemoryChange]);
   const chooseRecord = (id: string, related = false, event?: MouseEvent) => {
     if (event && (event.ctrlKey || event.metaKey) && onOpenWindow) {
       onOpenWindow({ ...snapshot(), selectedId: id });
@@ -625,7 +652,7 @@ export function SessionGraphTopicView({
     const rangeChanged = related && !projection.nodes.some((node) => node.records.length === 1 && node.records[0].id === id);
     const location: GraphLocation = { state: snapshot(), title: selectedRecord?.title ?? "Graph", scopes,
       recordIds: view?.items.map((record) => record.id) ?? [],
-      inspectedIds: inspectedRecords.filter((record) => record.topicId === topicId).map((record) => record.id), navigationId };
+      inspectedIds: inspectedRecords.filter((record) => allTopics || record.topicId === topicId).map((record) => record.id), navigationId };
     setBackStack((current) => related ? [...current, { ...location, rangeChanged }] : []);
     if (rangeChanged) {
       setRangeBackStack((current) => [...current, location]);
@@ -668,12 +695,14 @@ export function SessionGraphTopicView({
       onPointerOver={() => setTooltipsDismissed(false)}
     >
       <header className="session-graph-toolbar">
+        {allTopics ? <strong>All Topics</strong> : null}
         {topics.length ? (
           <select
             ref={topicSelectRef}
             aria-label="Graph Topic"
-            value={topicId}
+            value={allTopics ? "" : topicId}
             onChange={(event) => {
+              if (allTopics) { if (event.target.value) onFocusTopic?.(event.target.value); return; }
               clearSelection(false);
               pendingReturn.current = null;
               setRangeBackStack([]);
@@ -687,6 +716,7 @@ export function SessionGraphTopicView({
               setTopicId(event.target.value);
             }}
           >
+            {allTopics ? <option value="">All Topics</option> : null}
             {topics.map((topic) => (
               <option key={topic.id} value={topic.id}>
                 {topic.title}
@@ -792,6 +822,18 @@ export function SessionGraphTopicView({
                   transform: `scale(${zoom})`,
                 }}
               >
+                {layout.topicGroups?.map((group) => {
+                  const topic = topicOverviews.find((item) => item.id === group.topicId);
+                  const loaded = records.filter((record) => record.topicId === group.topicId).length;
+                  return <section key={group.topicId} className="session-graph-topic-band" aria-label={topic?.title ?? "Topic"}
+                    style={{ left: group.x, top: group.y, width: group.width, height: group.height }}>
+                    <div className="session-graph-topic-heading">
+                      <button type="button" onClick={() => onFocusTopic?.(group.topicId)} title={topic?.title} aria-label={`Focus Topic: ${topic?.title ?? "Topic"}`}>{topic?.title ?? topics.find((item) => item.id === group.topicId)?.title}</button>
+                      <small>{loaded} / {topic?.recordCount ?? "—"} Records</small>
+                    </div>
+                    {!loaded ? <p className="session-graph-topic-empty">{topic?.recordCount === 0 ? "No Records" : "Records Not Loaded"}</p> : null}
+                  </section>;
+                })}
                 <svg
                   className="session-graph-edges"
                   width={layout.width}
@@ -835,7 +877,7 @@ export function SessionGraphTopicView({
                   const point = layout.positions.get(node.id)!;
                   const record = node.records[0];
                   const updatedAt = node.records.reduce((latest, item) => item.updatedAt > latest ? item.updatedAt : latest, record.updatedAt);
-                  const freshness = sessionGraphRecency(updatedAt, recency);
+                  const freshness = sessionGraphRecency(updatedAt, allTopics ? topicOverviews.find((topic) => topic.id === record.topicId)?.recency ?? {} : recency);
                   const recencyDescription = `${freshness.latest ? "Latest In Topic. " : ""}Updated ${new Date(updatedAt).toLocaleString("en-US")}`;
                   const nodeStyle = { left: point.x, top: point.y, "--session-graph-recency": freshness.background } as CSSProperties;
                   if (node.records.length > 1) return <button
@@ -877,6 +919,7 @@ export function SessionGraphTopicView({
                           tooltipDetails={provenanceText(record)}
                       />
                         <span className="session-graph-node-status">
+                          <span className="session-graph-node-kind">{label(record.kind)}</span>{sessionGraphStatuses(record).length ? " · " : ""}
                           {sessionGraphStatuses(record).map(label).join(" · ")}
                         </span>
                       <Provenance record={record} />
