@@ -5,6 +5,7 @@ import { CHARACTER_CONTEXT_SCHEMA_VERSION, isCharacterContextError } from "../..
 import { BackgroundAffectApplicationService } from "../../src-electron/character/background-affect-application-service.js";
 import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../../src-electron/character/character-affect-storage.js";
 import { currentRuntimeTurnAdmissionState } from "../../src-electron/platform/memory/runtime-turn-admission.js";
+import { StorageWorkerUnknownOutcomeError } from "../../src-electron/storage/storage-worker-client.js";
 import { backgroundAffectFixture, completedAt, secondCompletedAt } from "../helpers/background-affect-fixture.js";
 
 function candidate(overrides: Partial<AffectCandidate> = {}): AffectCandidate {
@@ -212,6 +213,7 @@ test("known failures and unknown acknowledgments preserve confirmed prefix and n
           if (mode === "idempotency") throw new CharacterAffectIdempotencyConflictError();
           await f.affect.recordAppraisal(event);
           if (mode === "canceled-unknown") f.executions.finish(execution);
+          if (mode === "unknown") throw new StorageWorkerUnknownOutcomeError("Write response lost");
           throw new Error("Write response lost");
         } },
       });
@@ -228,6 +230,48 @@ test("known failures and unknown acknowledgments preserve confirmed prefix and n
       f.executions.finish(execution);
     }
     assert.equal(f.memoryCount(), 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "Worker未送信が確定した失敗は保存前でも確定prefix後でもeffect noneとし、先行結果と後続未呼出を保持する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#affect候補とmain内部保存; src-electron/storage/storage-worker-client.ts" }
+// fault = "recordAppraisalの呼出開始をWorker送信済みと同一視し、close済みWorkerの既知未送信をunknownへ分類する"
+// observable = "実Memory Worker close後の用途結果・保存呼出件数・DBのevent件数"
+// observation_boundary = "consumer"
+// scope = "background-affect known-unsent Worker failure"
+// lifecycle = "permanent"
+// impact = "呼出元が既知の未保存と結果不明を区別できない"
+// distinction = "既存のtyped error注入と異なり、実Worker clientの未送信拒否から用途結果までを通す"
+// @end-test-value
+test("closed Worker failures are known-unsaved before and after an acknowledged prefix", async () => {
+  const f = await backgroundAffectFixture();
+  try {
+    let writes = 0;
+    const app = new BackgroundAffectApplicationService({ ...f.deps, affectService: {
+      async recordAppraisal(event) {
+        writes++;
+        const result = await f.affect.recordAppraisal(event);
+        await f.worker.close();
+        return result;
+      },
+    } });
+    const execution = f.start();
+    const partial = await app.apply(execution, output(candidate(), candidate(), candidate()));
+    assert.equal(partial.kind, "stopped");
+    if (partial.kind !== "stopped") return;
+    assert.equal(partial.saved.length, 1); assert.equal(partial.saved[0].candidateIndex, 0);
+    assert.ok(partial.saved[0].eventId); assert.equal(partial.saved[0].created, true);
+    assert.deepEqual(partial.failure, { code: "save_failed", effect: "none", candidateIndex: 1 });
+    assert.deepEqual(partial.unattemptedCandidateIndexes, [2]); assert.equal(writes, 2); assert.equal(f.eventCount(), 1);
+    f.executions.finish(execution);
+
+    const next = f.start();
+    const rejected = await app.apply(next, output(candidate(), candidate()));
+    assert.deepEqual(rejected, { kind: "stopped", saved: [],
+      failure: { code: "save_failed", effect: "none", candidateIndex: 0 }, unattemptedCandidateIndexes: [1] });
+    assert.equal(writes, 3); assert.equal(f.eventCount(), 1); assert.equal(f.memoryCount(), 0);
   } finally { await f.close(); }
 });
 

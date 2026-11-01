@@ -8,6 +8,7 @@ import { RuntimeTurnInactiveError, assertRuntimeTurnAdmission, runWithRuntimeTur
 import type { AgentRuntimeBindingRegistry } from "../providers/agent-runtime-binding.js";
 import type { BackgroundExecution } from "../providers/background-execution-service.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
+import { StorageWorkerGenerationError } from "../storage/storage-worker-client.js";
 import type { CharacterAffectService } from "./character-affect-service.js";
 import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "./character-affect-storage.js";
 
@@ -110,10 +111,10 @@ export class BackgroundAffectApplicationService {
     if (output.kind === "no_change") return { kind: "no_change" };
     const saved: BackgroundAffectSaved[] = [];
     for (const [candidateIndex, event] of events.entries()) {
-      let dispatched = false;
+      let appraisalStarted = false;
       try {
         const result = await runWithRuntimeTurnAdmission(execution.admission, () => {
-          dispatched = true;
+          appraisalStarted = true;
           return this.deps.affectService.recordAppraisal(event);
         });
         saved.push({ candidateIndex, eventId: result.event.id, created: result.created, replayed: !result.created });
@@ -121,7 +122,7 @@ export class BackgroundAffectApplicationService {
         const code = error instanceof RuntimeTurnInactiveError ? "canceled"
           : error instanceof CharacterAffectVersionConflictError ? "version_conflict"
           : error instanceof CharacterAffectIdempotencyConflictError ? "idempotency_conflict" : "save_failed";
-        const effect = !dispatched || error instanceof RuntimeTurnInactiveError
+        const effect = !appraisalStarted || error instanceof RuntimeTurnInactiveError || error instanceof StorageWorkerGenerationError
           || error instanceof CharacterAffectVersionConflictError || error instanceof CharacterAffectIdempotencyConflictError ? "none" : "unknown";
         return { kind: "stopped", saved, failure: { code, effect, candidateIndex },
           unattemptedCandidateIndexes: indexes.slice(candidateIndex + 1) };
