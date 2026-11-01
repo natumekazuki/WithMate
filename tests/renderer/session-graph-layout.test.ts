@@ -267,4 +267,11 @@ test("topic bands contain their records and reserve readable headings around cro
       }
     }
   }
+  const mixedNodes = [...records.slice(0, 3), { id: "topic:b" }, { id: "topic:c" }];
+  const mixedMembership = new Map(mixedNodes.map((item) => [item.id, item.id.startsWith("topic:") ? item.id.slice(6) : "a"]));
+  const mixed = layoutSessionGraph(mixedNodes, [relation("mixed", "0", "topic:b")], 1440, 800, new Map([["mixed", { width: 90, height: 26 }]]), undefined, mixedMembership, new Set(["a"]));
+  assert.deepEqual(mixed.topicGroups?.map((group) => group.topicId), ["a"]);
+  assert.equal(mixed.positions.get("topic:b")!.y, mixed.positions.get("topic:c")!.y);
+  assert.ok(mixed.positions.get("topic:b")!.y >= mixed.topicGroups![0].y + mixed.topicGroups![0].height);
+  assertGeometry(mixed);
 });

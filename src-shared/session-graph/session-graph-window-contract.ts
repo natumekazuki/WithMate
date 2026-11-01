@@ -3,11 +3,13 @@ import type { SessionGraphUiReadOperation, SessionGraphUiReadRequest, SessionGra
 
 export const sessionGraphOverviewStateSchema = z.object({
   selectedId: z.string().nullable(), zoom: z.number().finite().positive(),
+  expandedTopicIds: z.array(z.string().min(1)).optional(),
   scrollLeft: z.number().finite().nonnegative(), scrollTop: z.number().finite().nonnegative(),
 }).strict();
 
 export const sessionGraphViewStateSchema = z.object({
   topicId: z.string().nullable(), selectedId: z.string().nullable(),
+  expandedTopicIds: z.array(z.string().min(1)).optional(),
   zoom: z.number().finite().positive(), scrollLeft: z.number().finite().nonnegative(), scrollTop: z.number().finite().nonnegative(),
   overview: sessionGraphOverviewStateSchema.optional(),
 }).strict();

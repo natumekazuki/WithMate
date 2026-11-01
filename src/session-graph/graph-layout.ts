@@ -140,6 +140,7 @@ export function layoutSessionGraph(
   labelSizes: ReadonlyMap<string, SessionGraphLabelSize> = new Map(),
   previousLayout?: SessionGraphLayout,
   topicByNode?: ReadonlyMap<string, string>,
+  expandedTopics?: ReadonlySet<string>,
 ): SessionGraphLayout {
   const previous = previousLayout?.viewportWidth === availableWidth &&
     previousLayout.viewportHeight === availableHeight ? previousLayout : undefined;
@@ -195,20 +196,28 @@ export function layoutSessionGraph(
       Math.floor((Math.max(COLUMN_STEP, availableWidth) - PADDING * 2 + columnStep - CARD_WIDTH) / columnStep)));
     const slots = new Map<string, { row: number; column: number }>();
     const headerRows = new Map<number, string>();
+    const topicRows: Array<{ topicId: string; start: number; end: number }> = [];
     let row = 0;
     let column = 0;
     let lastTopic: string | undefined;
     for (const id of ids) {
       const topic = topicByNode?.get(id);
       if (topic !== lastTopic) {
-        if (slots.size && column) { row += 1; column = 0; }
-        if (topic) headerRows.set(row, topic);
+        const wasExpanded = !!lastTopic && (!expandedTopics || expandedTopics.has(lastTopic));
+        const isExpanded = !!topic && (!expandedTopics || expandedTopics.has(topic));
+        if ((wasExpanded || isExpanded) && slots.size && column) { row += 1; column = 0; }
+        if (wasExpanded) topicRows.at(-1)!.end = row;
+        if (isExpanded) {
+          headerRows.set(row, topic!);
+          topicRows.push({ topicId: topic!, start: row, end: row });
+        }
         lastTopic = topic;
       }
       slots.set(id, { row, column });
       if (++column === columns) { row += 1; column = 0; }
     }
     const slotRows = row + (column ? 1 : 0);
+    if (lastTopic && (!expandedTopics || expandedTopics.has(lastTopic))) topicRows.at(-1)!.end = slotRows;
     const headerHeight = (index: number) => headerRows.has(index) ? 68 : 0;
     // Removing a blocked straight candidate adds only that edge to the detour
     // lanes. Each retry removes at least one candidate and therefore terminates.
@@ -351,10 +360,7 @@ export function layoutSessionGraph(
       return left.occupancy - right.occupancy || left.area - right.area || a.y - b.y || a.x - b.x;
     })[0]);
     components.push(component);
-    const bands = [...headerRows];
-    for (let index = 0; index < bands.length; index += 1) {
-      const [start, topicId] = bands[index];
-      const end = bands[index + 1]?.[0] ?? slotRows;
+    for (const { start, end, topicId } of topicRows) {
       topicGroups.push({ topicId, x: component.x - 10, y: component.y + rowHeights.slice(0, start).reduce((sum, height) => sum + height, 0),
         width: component.width + 20, height: rowHeights.slice(start, end).reduce((sum, height) => sum + height, 0) - (end < slotRows ? 12 : 0) });
     }

@@ -29,8 +29,8 @@ export function SessionGraphPreview({ api, sessionId, onOpenPath, initialState =
   const memory = useRef<SessionGraphPreviewMemory>(initialMemory ?? {});
   const saveMemory = () => onMemoryChange?.(memory.current);
   const withOverview = (state: SessionGraphViewState): SessionGraphViewState => {
-    const { selectedId, zoom, scrollLeft, scrollTop } = overviewState.current;
-    return { ...state, overview: { selectedId, zoom, scrollLeft, scrollTop } };
+    const { selectedId, zoom, scrollLeft, scrollTop, expandedTopicIds } = overviewState.current;
+    return { ...state, overview: { selectedId, zoom, scrollLeft, scrollTop, expandedTopicIds } };
   };
   const publish = (state: SessionGraphViewState) => onStateChange?.(withOverview(state));
   const openWindow = onOpenWindow ? (state: SessionGraphViewState) => onOpenWindow(withOverview(state)) : undefined;

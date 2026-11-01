@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { SessionGraphRecord, SessionGraphRelation } from "../../src-shared/session-graph/session-graph-contract.js";
-import type { SessionGraphTopicOverview } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
+import type { SessionGraphTopicOverview, SessionGraphTopicRelation } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 import type { SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { SessionGraphPreview, type SessionGraphPreviewMemory } from "../../src/session-graph/SessionGraphPreview.js";
 
@@ -27,15 +27,16 @@ function fixture(records: SessionGraphRecord[], ids = ["a", "b", "empty"], relat
   const topics = ids.map((id) => topic(id, records));
   const calls: Array<{ operation: string; request: Record<string, unknown> }> = [];
   let revision = 1;
-  let failRecent = false;
+  let failRecords = false;
+  const topicRelations: SessionGraphTopicRelation[] = [];
   let notify = (_id: string) => {};
   const api = {
     readSessionGraph: (async (_id: string, operation: string, request: Record<string, unknown>) => {
       calls.push({ operation, request });
-      if (request.expectedRevision !== undefined && request.expectedRevision !== revision || operation === "recent" && failRecent) return { status: "conflict", revision };
+      if (request.expectedRevision !== undefined && request.expectedRevision !== revision || operation === "get_topic_view" && failRecords) return { status: "conflict", revision };
       const offset = Number(request.offset ?? 0), limit = Number(request.limit ?? 40);
       if (operation === "overview" || operation === "list_topics") return { status: "ok", revision, items: topics.slice(offset, offset + limit), total: topics.length,
-        offset, hasMore: offset + limit < topics.length, incomplete: false, topicRelations: [], recency: {} };
+        offset, hasMore: offset + limit < topics.length, incomplete: false, topicRelations, recency: {} };
       const source = operation === "get" ? records.filter((item) => (request.ids as string[]).includes(item.id))
         : operation === "get_topic_view" ? records.filter((item) => item.topicId === request.topicId) : records;
       const items = source.slice(offset, offset + limit), visible = new Set(items.map((item) => item.id));
@@ -46,7 +47,7 @@ function fixture(records: SessionGraphRecord[], ids = ["a", "b", "empty"], relat
     }) as WithMateWindowApi["readSessionGraph"],
     subscribeSessionGraph: (listener: (id: string) => void) => { notify = listener; return () => {}; },
   };
-  return { api, calls, topics, update(fail = false) { revision += 1; failRecent = fail; notify("main"); } };
+  return { api, calls, topics, topicRelations, update(fail = false) { revision += 1; failRecords = fail; notify("main"); } };
 }
 async function withDom(run: (doc: Document, root: Root) => Promise<void>, width = 1440) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "http://localhost" });
@@ -69,13 +70,19 @@ async function withDom(run: (doc: Document, root: Root) => Promise<void>, width 
 }
 async function click(element: Element | undefined | null) { assert.ok(element); await act(async () => (element as HTMLElement).click()); }
 const node = (doc: Document, id: string) => [...doc.querySelectorAll(".session-graph-node")].find((item) => item.querySelector(".session-graph-node-title")?.textContent === `Record ${id}`);
+const expand = (doc: Document, id: string) => click(doc.querySelector(`[aria-label='Expand Topic: Topic ${id}']`));
+async function doubleClickTopic(doc: Document, id: string) {
+  const card = [...doc.querySelectorAll(".session-graph-topic-card")].find((item) => item.getAttribute("aria-label") === `Topic ${id}`);
+  assert.ok(card);
+  await act(async () => card.dispatchEvent(new doc.defaultView!.MouseEvent("dblclick", { bubbles: true, detail: 2 })));
+}
 
 // @test-value v2
 // kind = "contract"
-// claim = "All Topicsは空Topicを含む所属のまとまりと実record間の有向関係を図示し、record選択後も全体範囲を保つ"
+// claim = "All Topicsは初期にTopicカードだけを読み、個別の展開・縮小と実record間の有向関係を保ち、record選択で範囲を切り替えない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
-// fault = "Topicをリンクのみにする、Topic間の保存済み関係を落とす、またはrecord選択でTopic単独へ切り替える"
-// observable = "Topic帯の名称、record nodeの種類・状態、関係labelと矢印marker、選択後の公開topicIdと本文"
+// fault = "初期に全recordを取得する、無関係なTopicも展開・縮小する、関係の向きを落とす、またはrecord選択でTopic単独へ切り替える"
+// observable = "初期のoverview呼出、Topic帯とカード、recordの種類・状態、集約/実関係のlabel・方向、選択本文、縮小後のfocusと他Topicの展開"
 // observation_boundary = "component-behavior"
 // scope = "SessionGraphPreviewのAll Topics描画とrecord詳細"
 // lifecycle = "permanent"
@@ -85,10 +92,17 @@ const node = (doc: Document, id: string) => [...doc.querySelectorAll(".session-g
 test("all topics draws record relationships and opens one record without leaving the graph", async () => {
   await withDom(async (doc, root) => {
     const f = fixture([record("work"), record("old", "b", "issue")], undefined, [{ id: "dependency", fromId: "work", toId: "old", kind: "depends_on", label: "Needs Investigation" }]);
+    f.topicRelations.push({ fromTopicId: "a", toTopicId: "b", kind: "depends_on", count: 1 });
     let state: SessionGraphViewState | undefined;
     await act(async () => root.render(<SessionGraphPreview api={f.api} sessionId="main" onOpenPath={() => {}} onStateChange={(value) => { state = value; }} />));
-    assert.deepEqual([...doc.querySelectorAll(".session-graph-topic-heading button")].map((item) => item.textContent), ["Topic a", "Topic b", "Topic empty"]);
-    assert.match(doc.querySelector(".session-graph-topic-empty")!.textContent!, /No Records/);
+    assert.deepEqual([...doc.querySelectorAll(".session-graph-topic-card > strong")].map((item) => item.textContent), ["Topic a", "Topic b", "Topic empty"]);
+    assert.deepEqual(f.calls.map((call) => call.operation), ["overview"]);
+    assert.match(doc.querySelector("[data-relation-id]")?.getAttribute("title") ?? "", /Topic a → Topic b/);
+    await doubleClickTopic(doc, "a");
+    assert.ok(node(doc, "work")); assert.equal(doc.querySelectorAll(".session-graph-topic-band").length, 1);
+    assert.ok(doc.querySelector("[aria-label='Expand Topic: Topic b']"));
+    assert.match(doc.querySelector("[data-relation-id]")?.getAttribute("title") ?? "", /Record work → Topic b/);
+    await expand(doc, "b");
     assert.match(node(doc, "old")!.textContent!, /Issue · Unresolved/);
     assert.equal(doc.querySelector("[data-relation-id='dependency']")?.textContent, "Needs Investigation");
     assert.equal(doc.querySelector("[data-relation-id='dependency']")?.getAttribute("title"), "Depends On: Record work → Record old");
@@ -97,8 +111,15 @@ test("all topics draws record relationships and opens one record without leaving
     assert.equal(state?.topicId, null);
     assert.equal(state?.selectedId, "old");
     assert.match(doc.querySelector("aside")!.textContent!, /Body old/);
-    assert.equal(doc.querySelectorAll(".session-graph-topic-band").length, 3);
+    assert.equal(doc.querySelectorAll(".session-graph-topic-band").length, 2);
     assert.ok(node(doc, "work")!.classList.contains("is-connected"));
+    await click(doc.querySelector("[aria-label='Close Record Details']"));
+    await click(doc.querySelector("[aria-label='Collapse Topic: Topic b']"));
+    assert.equal(state?.expandedTopicIds?.join(","), "a");
+    assert.ok(node(doc, "work"));
+    assert.equal(doc.activeElement, doc.querySelector("[aria-label='Expand Topic: Topic b']"));
+    await doubleClickTopic(doc, "empty");
+    assert.match(doc.querySelector(".session-graph-topic-empty")!.textContent!, /No Records/);
   });
 });
 
@@ -109,23 +130,28 @@ test("all topics draws record relationships and opens one record without leaving
 // fault = "先頭pageを全体と誤認し、末尾の空Topicまたは代表外の古い未解決recordへ到達できない"
 // observable = "Topic option総数、Topic/record pageのoffsetとexpectedRevision、追加後の未解決nodeと本文"
 // observation_boundary = "component-behavior"
-// scope = "All Topicsのoverview/recent page統合"
+// scope = "All Topicsのoverviewと展開対象のget_topic_view page統合"
 // lifecycle = "permanent"
 // impact = "全体の図から古い残件を見落とす"
 // distinction = "公開MCPやStorageのpage testではrendererの取得範囲統合を保証できない"
 // @end-test-value
 test("all topics reaches every topic and older records through revision-bound pages", async () => {
   await withDom(async (doc, root) => {
-    const records = [...Array.from({ length: 40 }, (_, i) => record(String(i))), record("old", "b", "issue")];
+    const records = [...Array.from({ length: 40 }, (_, i) => record(String(i))), record("old", "a", "issue"), record("other", "b")];
     const f = fixture(records, ["a", "b", ...Array.from({ length: 199 }, (_, i) => `empty${i}`)]);
     await act(async () => root.render(<SessionGraphPreview api={f.api} sessionId="main" onOpenPath={() => {}} />));
     assert.equal(doc.querySelectorAll("select option").length, 202);
     assert.deepEqual(f.calls[1], { operation: "overview", request: { limit: 200, offset: 200, expectedRevision: 1 } });
+    await doubleClickTopic(doc, "a");
     assert.match(doc.querySelector(".session-graph-record-status")!.textContent!, /40 \/ 41 Records Loaded/);
-    assert.match([...doc.querySelectorAll(".session-graph-topic-band")].find((item) => item.getAttribute("aria-label") === "Topic b")!.textContent!, /Records Not Loaded/);
+    assert.ok(doc.querySelector("[aria-label='Expand Topic: Topic b']"));
+    const beforeMore = f.calls.length;
     await click(doc.querySelector(".session-graph-load-more"));
     assert.ok(node(doc, "old"));
-    assert.ok(f.calls.some((call) => call.operation === "recent" && call.request.offset === 40 && call.request.expectedRevision === 1));
+    assert.match(doc.querySelector(".session-graph-record-status")!.textContent!, /41 \/ 41 Records Loaded/);
+    const addedReads = f.calls.slice(beforeMore).filter((call) => call.operation === "get_topic_view");
+    assert.ok(addedReads.length > 0); assert.ok(addedReads.every((call) => call.request.expectedRevision === 1));
+    assert.ok(f.calls.filter((call) => call.operation === "get_topic_view").every((call) => call.request.topicId === "a"));
     await click(node(doc, "old"));
     assert.match(doc.querySelector("aside")!.textContent!, /Body old/);
   });
@@ -150,6 +176,7 @@ test("all topics restores its selection zoom and position after topic focus and 
     let windowState: SessionGraphViewState | undefined;
     const render = (key: string, initialState?: SessionGraphViewState, initialMemory?: SessionGraphPreviewMemory) => <SessionGraphPreview key={key} api={f.api} sessionId="main" onOpenPath={() => {}} initialState={initialState} initialMemory={initialMemory} onOpenWindow={(value) => { windowState = value; }} onStateChange={(value) => { state = value; }} onMemoryChange={(value) => { memory = value; }} />;
     await act(async () => root.render(render("first")));
+    await expand(doc, "a");
     await click(doc.querySelector("[aria-label='Zoom In']"));
     await click(node(doc, "2"));
     const viewport = doc.querySelector<HTMLElement>(".session-graph-viewport")!;
@@ -159,10 +186,11 @@ test("all topics restores its selection zoom and position after topic focus and 
     assert.equal(state?.topicId, "a");
     await act(async () => node(doc, "2")!.dispatchEvent(new doc.defaultView!.MouseEvent("click", { ctrlKey: true, bubbles: true })));
     assert.equal(windowState?.topicId, "a"); assert.equal(windowState?.selectedId, "2");
-    assert.deepEqual(windowState?.overview, { selectedId: "2", zoom: 1.1, scrollLeft: 40, scrollTop: 120 });
+    assert.deepEqual(windowState?.overview, { selectedId: "2", zoom: 1.1, scrollLeft: 40, scrollTop: 120, expandedTopicIds: ["a"] });
     await click(doc.querySelector("[aria-label='All Topics']"));
     const assertRestored = () => {
       assert.equal(state?.topicId, null); assert.equal(state?.selectedId, "2"); assert.equal(state?.zoom, 1.1);
+      assert.deepEqual(state?.expandedTopicIds, ["a"]);
       assert.equal(doc.querySelector<HTMLElement>(".session-graph-viewport")!.scrollTop, 120);
       assert.equal(doc.querySelector<HTMLElement>(".session-graph-viewport")!.scrollLeft, 40);
       assert.match(doc.querySelector("aside")!.textContent!, /Body 2/);
@@ -193,6 +221,7 @@ test("all topics retains its graph on conflicting refresh and its order on succe
     const records = [record("work"), record("issue", "b", "issue")], f = fixture(records);
     let state: SessionGraphViewState | undefined;
     await act(async () => root.render(<SessionGraphPreview api={f.api} sessionId="main" onOpenPath={() => {}} onStateChange={(value) => { state = value; }} />));
+    await expand(doc, "a"); await expand(doc, "b");
     await click(node(doc, "work")); await click(doc.querySelector("[aria-label='Zoom In']"));
     await act(async () => f.update(true));
     assert.match(doc.querySelector("[role='alert']")!.textContent!, /graph changed/);
@@ -221,6 +250,7 @@ test("all topics focuses record details and restores the node on Escape", async 
   await withDom(async (doc, root) => {
     const f = fixture([record("work")]);
     await act(async () => root.render(<SessionGraphPreview api={f.api} sessionId="main" onOpenPath={() => {}} />));
+    await expand(doc, "a");
     const source = node(doc, "work")!;
     await click(source);
     assert.equal(doc.activeElement, doc.querySelector("aside h2"));
@@ -228,4 +258,47 @@ test("all topics focuses record details and restores the node on Escape", async 
     await act(async () => doc.querySelector("aside")!.dispatchEvent(new doc.defaultView!.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     assert.equal(doc.activeElement, source); assert.equal(source.getAttribute("aria-pressed"), "false");
   }, 600);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Topicを縮小した後の遅いrecord/本文応答は縮小を取り消さず、ほかのTopicの展開を保持する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
+// fault = "縮小前の非同期readが完了すると閉じたTopicを再展開するか、別Topicの図を上書きする"
+// observable = "応答解放後の展開ID・選択ID、Topicカードと別Topicのrecord node"
+// observation_boundary = "component-behavior"
+// scope = "All Topicsの展開read・詳細getと縮小の競合"
+// lifecycle = "permanent"
+// impact = "Topicの増加を抑えるために閉じた表示が勝手に戻り、利用者の閲覧範囲を失う"
+// distinction = "通常のpaging/revision testでは同じrevision内の操作順と遅延応答の衝突を検証できない"
+// @end-test-value
+test("late topic and detail reads cannot undo a collapse", async () => {
+  await withDom(async (doc, root) => {
+    const f = fixture([record("work"), record("other", "b")]);
+    const read = f.api.readSessionGraph;
+    let releaseTopic!: () => void, releaseDetail!: () => void;
+    let holdTopic = true, holdDetail = false;
+    const topicGate = new Promise<void>((resolve) => { releaseTopic = resolve; });
+    const detailGate = new Promise<void>((resolve) => { releaseDetail = resolve; });
+    f.api.readSessionGraph = (async (id: string, operation: string, request: Record<string, unknown>) => {
+      if (operation === "get_topic_view" && request.topicId === "a" && holdTopic) await topicGate;
+      if (operation === "get" && holdDetail) await detailGate;
+      return read(id, operation as "get", request as { ids: string[] });
+    }) as WithMateWindowApi["readSessionGraph"];
+    let state: SessionGraphViewState | undefined;
+    await act(async () => root.render(<SessionGraphPreview api={f.api} sessionId="main" onOpenPath={() => {}} onStateChange={(value) => { state = value; }} />));
+    await expand(doc, "a");
+    await click(doc.querySelector("[aria-label='Collapse Topic: Topic a']"));
+    await expand(doc, "b");
+    await act(async () => { holdTopic = false; releaseTopic(); });
+    assert.deepEqual(state?.expandedTopicIds, ["b"]); assert.ok(node(doc, "other"));
+    await expand(doc, "a");
+    await click(node(doc, "other"));
+    holdDetail = true;
+    await click(node(doc, "work"));
+    await click(doc.querySelector("[aria-label='Collapse Topic: Topic a']"));
+    await act(async () => { holdDetail = false; releaseDetail(); });
+    assert.deepEqual(state?.expandedTopicIds, ["b"]); assert.equal(state?.selectedId, null);
+    assert.ok(doc.querySelector("[aria-label='Expand Topic: Topic a']")); assert.ok(node(doc, "other"));
+  });
 });
