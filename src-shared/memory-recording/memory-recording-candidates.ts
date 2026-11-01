@@ -30,14 +30,14 @@ export type Grounding = Readonly<{
   refs: readonly [EvidenceRef, ...EvidenceRef[]];
 }>;
 
-/** The caller supplies only saved evidence in its captured source; unknown is never inferred as success. */
+/** The caller supplies saved evidence locations; interpreting their content belongs to the generating LLM. */
 export type MemoryRecordingEvidenceContext = Readonly<{
   history: Pick<SessionHistoryReadScope, "fromMessageSeq" | "throughMessageSeq">;
   messages: readonly Readonly<{
     seq: number;
     processing: boolean;
-    operations: readonly Readonly<{ index: number; outcome: "succeeded" | "failed" | "unknown" }>[];
-    runChecks: readonly Readonly<{ index: number; outcome: "succeeded" | "failed" | "unknown" }>[];
+    operations: readonly Readonly<{ index: number }>[];
+    runChecks: readonly Readonly<{ index: number }>[];
   }>[];
 }>;
 export type CharacterMemoryTarget = Extract<MemoryTargetSelector, { owner: "character"; scope: "character" }>;
@@ -121,8 +121,6 @@ function createGroundingSchema(context: MemoryRecordingEvidenceContext, allowInt
       const evidence = (ref.kind === "operation" ? message.operations : message.runChecks).find((item) => item.index === ref.index);
       if (!evidence) {
         ctx.addIssue({ code: "custom", path: ["refs", index], message: "The saved evidence does not exist." });
-      } else if (grounding.basis === "execution_result" && evidence.outcome !== "succeeded") {
-        ctx.addIssue({ code: "custom", path: ["refs", index], message: "Failed or unknown evidence cannot confirm execution success." });
       }
     });
   });

@@ -22,8 +22,8 @@ const characterContext: CharacterMemoryValidationContext = {
   messages: [
     { seq: 10, processing: false, operations: [], runChecks: [] },
     { seq: 12, processing: true,
-      operations: [{ index: 0, outcome: "succeeded" }, { index: 1, outcome: "failed" }, { index: 2, outcome: "unknown" }],
-      runChecks: [{ index: 3, outcome: "succeeded" }, { index: 4, outcome: "failed" }, { index: 5, outcome: "unknown" }] },
+      operations: [{ index: 0 }],
+      runChecks: [{ index: 3 }] },
     { seq: 20, processing: true, operations: [], runChecks: [] },
   ],
 };
@@ -236,25 +236,27 @@ test("固定historyとprocessingの実在根拠だけを受け付ける", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "実行確認には成功確認済み操作/checkを必要とし、対象知識へCharacter解釈を入れない"
+// claim = "実行結果の根拠は保存操作/checkを参照し、対象知識へCharacter解釈を入れない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memory生成の純粋な用途契約" }
-// fault = "失敗/unknown/発言だけを実行成功にするか、Characterの主観を対象知識として返す"
-// observable = "basisと根拠outcome別の受理またはZodError"
+// fault = "発言だけを操作結果の根拠として認めるか、Characterの主観を対象知識として返す"
+// observable = "操作/check参照とbasisを保持した候補、またはZodError"
 // observation_boundary = "component-behavior"
 // scope = "memory-recording-grounding-basis"
 // lifecycle = "permanent"
-// distinction = "同じ構造の根拠でも用途と保存済み成否により異なる判定を観測する"
+// distinction = "参照の実在だけでは保証できないbasisと参照種別/用途の対応を両validatorで観測する"
 // @end-test-value
-test("報告・実行確認・Character解釈の境界を守る", () => {
+test("実行結果の参照種別とCharacter解釈の用途境界を守る", () => {
   for (const ref of [{ kind: "operation", seq: 12, index: 0 }, { kind: "run_check", seq: 12, index: 3 }]) {
-    assert.doesNotThrow(() => validateTargetMemoryFinal(targetFinal({ grounding: [{ basis: "execution_result", refs: [ref] }] }), targetContext));
-  }
-  for (const ref of [{ kind: "message", seq: 12 }, { kind: "operation", seq: 12, index: 1 }, { kind: "operation", seq: 12, index: 2 },
-    { kind: "run_check", seq: 12, index: 4 }, { kind: "run_check", seq: 12, index: 5 }]) {
     const candidate = { grounding: [{ basis: "execution_result", refs: [ref] }] };
-    assert.throws(() => validateTargetMemoryFinal(targetFinal(candidate), targetContext), z.ZodError);
-    assert.throws(() => validateCharacterMemoryFinal(episodeFinal({}, candidate), characterContext), z.ZodError);
+    const target = validateTargetMemoryFinal(targetFinal(candidate), targetContext);
+    const character = validateCharacterMemoryFinal(episodeFinal({}, candidate), characterContext);
+    if (target.outcome !== "candidates" || character.final.outcome !== "candidates") throw new Error("candidate missing");
+    assert.deepEqual(target.entries[0].grounding, candidate.grounding);
+    assert.deepEqual(character.final.episodes[0].grounding, candidate.grounding);
   }
+  const messageOnly = { grounding: [{ basis: "execution_result", refs: [{ kind: "message", seq: 12 }] }] };
+  assert.throws(() => validateTargetMemoryFinal(targetFinal(messageOnly), targetContext), z.ZodError);
+  assert.throws(() => validateCharacterMemoryFinal(episodeFinal({}, messageOnly), characterContext), z.ZodError);
   assert.throws(() => validateTargetMemoryFinal(targetFinal({ grounding: [{ basis: "character_interpretation", refs: [{ kind: "message", seq: 12 }] }] }), targetContext), z.ZodError);
   assert.throws(() => validateTargetMemoryFinal(targetFinal({ grounding: [{ basis: "unagreed_proposal", refs: [{ kind: "message", seq: 12 }] }] }), targetContext), z.ZodError);
   assert.doesNotThrow(() => validateTargetMemoryFinal(targetFinal({ grounding: [{ basis: "agreed_decision", refs: [{ kind: "message", seq: 12 }] }] }), targetContext));
