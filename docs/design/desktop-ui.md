@@ -76,7 +76,7 @@ Electronデスクトップアプリとして、各Windowの現行UIと操作の�
 
 Session headerの`Graph`はMainと配下Auxiliaryが共有する[Session Graph](session-graph.md)を、現在の送信対象の会話の隣に開く。Graph全体表示と2領域への復帰、`Close Graph`による元の会話分割への復帰、幅の扱いは同文書の閲覧UIに従う。入口はヘッダーの展開時に表示する。隣の外向きiconまたはCtrl/Cmd付きの操作では元の表示を維持して独立Graph Windowを追加でき、同じ話題の複数ビューも並べられる。
 
-`All Topics`で話題を横断し、Topicの要点・担当別進行・記録間関係からTopic/record詳細へ進む閲覧専用面である。全体とTopic詳細の往復、会話切替、Graph開閉で閲覧状態を保ち、送信先や下書きを変更しない。
+`All Topics`で話題を横断する閲覧専用面である。初期表示はTopicごと1枚のカードとし、ダブルクリックまたは展開アイコン（▸）で対象Topicの実record・状態・担当と有向関係を展開する。見出しのダブルクリックまたは縮小アイコン（▾）でそのTopicだけを縮小できる。recordを選ぶと全体を保ったまま一件の本文を開き、帯の外向きbuttonまたはselectorでTopic単独表示へ進める。全体とTopic単独の往復、会話切替、Graph開閉でTopicの展開状態と閲覧位置を保ち、送信先や下書きを変更しない。
 
 新しさの背景・最新帯、選択枠、担当アイコンの色縁を中央/独立Windowで共用する。画像・mmdと同じCtrl＋wheelの拡縮とCtrl＋左dragのpanを使い、共通のwheel刻み設定・倍率範囲に従う。詳細の×は選択解除、独立Windowのnative ×はそのWindowだけを閉じる。Main削除の確認は、Auxiliary会話とGraphも削除されることを示す。
 

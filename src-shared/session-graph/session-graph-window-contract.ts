@@ -2,12 +2,14 @@ import { z } from "zod";
 import type { SessionGraphUiReadOperation, SessionGraphUiReadRequest, SessionGraphUiReadResult } from "./session-graph-ui-read-contract.js";
 
 export const sessionGraphOverviewStateSchema = z.object({
-  selectedTopicId: z.string().nullable(), zoom: z.number().finite().positive(),
+  selectedId: z.string().nullable(), zoom: z.number().finite().positive(),
+  expandedTopicIds: z.array(z.string().min(1)).optional(),
   scrollLeft: z.number().finite().nonnegative(), scrollTop: z.number().finite().nonnegative(),
 }).strict();
 
 export const sessionGraphViewStateSchema = z.object({
   topicId: z.string().nullable(), selectedId: z.string().nullable(),
+  expandedTopicIds: z.array(z.string().min(1)).optional(),
   zoom: z.number().finite().positive(), scrollLeft: z.number().finite().nonnegative(), scrollTop: z.number().finite().nonnegative(),
   overview: sessionGraphOverviewStateSchema.optional(),
 }).strict();

@@ -453,6 +453,47 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
 
 // @test-value v2
 // kind = "contract"
+// claim = "queued実行のlive stateは保存済みturn IDとprovider native IDを区別し、複数回の進捗でも両方を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: Main／Auxiliaryの通常応答はrequest／turnの表示identityを保つ; src-shared/session/runtime-state.ts: LiveSessionRunState" }
+// fault = "保存済みturn IDをlive stateへ渡さないか、providerの進捗で上書きするか、native IDを保存IDへ置換する"
+// observable = "開始通知のturn IDと、Main/Auxiliaryの初期・進捗live stateにあるsessionTurnId・turnId・本文"
+// observation_boundary = "public-boundary"
+// scope = "SessionRuntimeServiceのqueued開始とprovider進捗合流"
+// lifecycle = "permanent"
+// impact = "実行中の本文・質問・承認を受付済み要求へ対応付けられず、native IDを使うsteerが失敗する"
+// distinction = "renderer fixtureや型検査はruntimeが保存IDとprovider IDを別々に配信することを検証しない"
+// @end-test-value
+it("queued runtimeは保存turn IDとnative turn IDをlive stateで区別する", async () => {
+  for (const auxiliary of [false, true]) {
+    const session = createSession({ incarnationId: "owner" });
+    let live: LiveSessionRunState | null = null;
+    const states: LiveSessionRunState[] = [];
+    const starts: string[] = [];
+    const runtime = createProgressRuntime(session, async (input, progress) => {
+      for (const assistantText of ["partial", "partial updated"]) {
+        await emitTestProgress(progress, { ...createLiveRunState({ sessionId: input.session.id, assistantText }),
+          sessionTurnId: "provider-value", turnId: "native-turn", inputAvailable: true });
+      }
+      return createPartialResult({ assistantText: "partial updated" });
+    }, {
+      isAuxiliarySession: () => auxiliary,
+      assertCapturedComposerAttachmentsAvailable: async () => {},
+      persistQueuedTurnStart: (next, _count, _id, turn) => ({ session: next, turn: { ...turn, id: 41 } }),
+      appendTerminalSession: (next) => next,
+      setLiveSessionRun: (_id, state) => { live = state; if (state) states.push(state); },
+      getLiveSessionRun: () => live,
+    });
+    assert.deepEqual(await runtime.runQueuedSessionTurn(queuedReceipt(session), async ({ turnId }) => { starts.push(turnId); }), { state: "completed" });
+    assert.deepEqual(starts, ["41"]);
+    assert.equal(states[0]?.sessionTurnId, "41");
+    assert.deepEqual(states.filter((state) => state.inputAvailable).map((state) => [state.sessionTurnId, state.turnId, state.assistantText]), [
+      ["41", "native-turn", "partial"], ["41", "native-turn", "partial updated"],
+    ]);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "queued実行は候補一覧にない捕捉model/depthと開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Run Cancel; src-electron/session/session-running-turn-start.ts" }
 // fault = "本文を再previewするか捕捉設定を現在選択で置換し、開始を分割保存するかterminal応答でcleanup guardを解放する"

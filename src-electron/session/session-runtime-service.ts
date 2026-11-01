@@ -1006,6 +1006,7 @@ export class SessionRuntimeService {
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
         ...buildEmptyLiveSessionRunState(sessionId, runningSession.threadId),
+        ...(queued ? { sessionTurnId: String(runningTurn.id) } : {}),
         backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
         reasoningText: "",
       };
@@ -1125,6 +1126,7 @@ export class SessionRuntimeService {
         const currentLiveState = this.deps.getLiveSessionRun(sessionId);
         const nextLiveState: LiveSessionRunState = {
           ...state,
+          sessionTurnId: String(runningTurn.id),
           steps: changes.snapshot === false
             ? applyProviderProgressChanges(currentLiveState?.steps ?? [], changes.steps) : state.steps,
           backgroundTasks: changes.snapshot === false
@@ -1223,6 +1225,7 @@ export class SessionRuntimeService {
           }
           this.setRuntimeLiveState(sessionId, {
             ...buildEmptyLiveSessionRunState(sessionId, ""),
+            sessionTurnId: String(runningTurn.id),
             backgroundTasks: this.deps.getLiveSessionRun(sessionId)?.backgroundTasks ?? [],
           });
         }

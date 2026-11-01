@@ -109,7 +109,7 @@ export function useConversationMessageColumn({
   const retainedBridges = useRef<{ owner: string; projections: LiveAssistantProjection[] }>({ owner: "", projections: [] });
   const stableMessageKeys = useRef<{ owner: string; keys: Map<number, { role: "user" | "assistant"; key: string }>; responses: Map<string, string> }>({ owner: "", keys: new Map(), responses: new Map() });
   const liveResponseOwner = useRef<{ owner: string; turnId?: string; messageIndex: number } | null>(null);
-  const responsePresentation = useRef<{ owner: string; requestId?: string; turnId?: string; key: string } | null>(null);
+  const responsePresentation = useRef<{ owner: string; requestId?: string; sessionTurnId?: string; turnId?: string; key: string } | null>(null);
   const [browsePage, setBrowsePage] = useState<ConversationPage | null>(null);
   const [pageLoading, setPageLoading] = useState(false);
   const [pageError, setPageError] = useState("");
@@ -283,13 +283,13 @@ export function useConversationMessageColumn({
   const liveRun = liveRunOverride !== undefined ? liveRunOverride : conversation.liveRun;
   const previousResponse = responsePresentation.current;
   // An empty request surface cannot identify an unbound live turn; resolve the receipt before attaching its body or forms.
-  const isResponseBindingPending = !!api?.listSessionTurnQueue && !!liveRun?.turnId
+  const isResponseBindingPending = !!api?.listSessionTurnQueue && !!(liveRun?.sessionTurnId || liveRun?.turnId)
     && previousResponse?.owner === pageOwner && !!previousResponse.requestId
     && !(displayedBridge.current?.owner === pageOwner && displayedBridge.current.projection.text)
     && queue.receipts.some((receipt) => !receipt.inputTurnId && (receipt.state === "starting"
       || receipt.requestId === previousResponse.requestId && (receipt.state === "queued" || receipt.state === "running")))
-    && !queue.receipts.some((receipt) => receipt.turnId === liveRun.turnId && !receipt.inputTurnId);
-  useEffect(() => { if (isResponseBindingPending) queue.reload(); }, [pageOwner, liveRun?.turnId, isResponseBindingPending, queue.reload]);
+    && !queue.receipts.some((receipt) => !!liveRun?.sessionTurnId && receipt.turnId === liveRun.sessionTurnId && !receipt.inputTurnId);
+  useEffect(() => { if (isResponseBindingPending) queue.reload(); }, [pageOwner, liveRun?.sessionTurnId, isResponseBindingPending, queue.reload]);
   const isCancelRequested = baseProps.pendingCancelSessionIds?.has(sessionId) ?? false;
   const hasActiveRun = isCancelRequested || !!liveRun?.cancellationState || (liveRun?.runState !== undefined ? liveRun.runState === "running" : session?.runState === "running" || !!liveRun);
   const assistantText = isResponseBindingPending ? "" : api ? liveRun?.assistantText ?? "" : baseProps.liveRunAssistantText;
@@ -438,18 +438,21 @@ export function useConversationMessageColumn({
     && (liveResponseOwner.current?.owner !== pageOwner || bridge?.messageIndex === liveResponseOwner.current.messageIndex)
     && !projection.messages.slice(responseIndex + 1).some((message) => message.role === "user")
     ? bridgeKey : null;
+  const responseSessionTurnId = hasActiveRun && !isResponseBindingPending ? liveRun?.sessionTurnId : undefined;
   const responseTurnId = hasActiveRun && !isResponseBindingPending ? liveRun?.turnId : undefined;
   const responseReceipt = queuedProjection.activeReceipt;
   const previous = responsePresentation.current;
   const receiptTurnId = responseReceipt?.turnId
-    ?? (responseReceipt && previous?.owner === pageOwner && previous.requestId === responseReceipt.requestId ? previous.turnId : undefined);
-  const responseRequestId = responseTurnId && receiptTurnId && receiptTurnId !== responseTurnId
+    ?? (responseReceipt && previous?.owner === pageOwner && previous.requestId === responseReceipt.requestId ? previous.sessionTurnId : undefined);
+  const responseRequestId = responseSessionTurnId && receiptTurnId && receiptTurnId !== responseSessionTurnId
     ? undefined : responseReceipt?.requestId ?? queuedProjection.pendingSubmission?.requestId;
-  if (responseRequestId || responseTurnId) {
-    const sameResponse = previous?.owner === pageOwner && (responseTurnId && previous.turnId
-      ? previous.turnId === responseTurnId : responseRequestId && previous.requestId === responseRequestId);
-    responsePresentation.current = { owner: pageOwner, requestId: responseRequestId ?? (sameResponse ? previous.requestId : undefined), turnId: responseTurnId ?? (sameResponse ? previous.turnId : undefined),
-      key: sameResponse ? previous.key : `response-${pageOwner}-${responseRequestId ?? responseTurnId}` };
+  if (responseRequestId || responseSessionTurnId || responseTurnId) {
+    const sameResponse = previous?.owner === pageOwner && (responseSessionTurnId && previous.sessionTurnId
+      ? previous.sessionTurnId === responseSessionTurnId : responseTurnId && previous.turnId
+        ? previous.turnId === responseTurnId : responseRequestId && previous.requestId === responseRequestId);
+    responsePresentation.current = { owner: pageOwner, requestId: responseRequestId ?? (sameResponse ? previous.requestId : undefined),
+      sessionTurnId: responseSessionTurnId ?? (sameResponse ? previous.sessionTurnId : undefined), turnId: responseTurnId ?? (sameResponse ? previous.turnId : undefined),
+      key: sameResponse ? previous.key : `response-${pageOwner}-${responseRequestId ?? responseSessionTurnId ?? responseTurnId}` };
   }
   const responsePresentationKey = !isBrowsing && responsePresentation.current?.owner === pageOwner
     ? responsePresentation.current.key : !isBrowsing && hasActiveRun

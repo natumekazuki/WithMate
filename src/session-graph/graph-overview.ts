@@ -38,6 +38,7 @@ export function projectSessionGraph(
     const after = outs[0];
     if (before.fromId === id || after.toId === id || before.fromId === after.toId) continue;
     if (!byId.has(before.fromId) || !byId.has(after.toId)) continue;
+    if (byId.get(before.fromId)!.topicId !== byId.get(id)!.topicId || byId.get(after.toId)!.topicId !== byId.get(id)!.topicId) continue;
     if (before.kind === after.kind && before.label === after.label) eligible.add(id);
   }
   const groups = new Map<string, GraphOverviewNode>();

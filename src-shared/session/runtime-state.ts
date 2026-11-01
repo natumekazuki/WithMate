@@ -188,6 +188,8 @@ export type LiveSessionRunState = {
   sessionId: string;
   threadId: string;
   runState?: string;
+  /** Persisted WithMate session turn ID, distinct from the provider's turn ID. */
+  sessionTurnId?: string;
   turnId?: string;
   inputAvailable?: boolean;
   cancellationState?: "requested" | "terminating";
