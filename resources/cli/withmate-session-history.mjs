@@ -5621,11 +5621,16 @@ var sessionHistoryOperationRequestSchemas = {
 	}).strict(),
 	get_operation_detail: object({
 		seq,
-		kind: _enum(["operation", "changed_file"]),
-		index: number().int().nonnegative(),
+		kind: _enum([
+			"operation",
+			"changed_file",
+			"elicitation"
+		]),
+		index: number().int().nonnegative().describe("Operation, changed file or elicitation record index."),
+		row: number().int().nonnegative().optional().describe("kind=changed_file only. Reads one diff row as JSON text in pieces; offset then counts UTF-16 code units."),
 		offset,
-		maxChars: number().int().min(1).max(SESSION_HISTORY_TEXT_LIMIT).optional().describe("kind=operation only. Counted in UTF-16 code units."),
-		maxRows: number().int().min(1).max(500).optional().describe("kind=changed_file only.")
+		maxChars: number().int().min(1).max(SESSION_HISTORY_TEXT_LIMIT).optional().describe("Counted in UTF-16 code units. Text pieces, and the size budget of a changed_file row listing; a row over the budget is listed as oversized and read with row."),
+		maxRows: number().int().min(1).max(500).optional().describe("kind=changed_file row listing only.")
 	}).strict()
 };
 var SESSION_HISTORY_RUNTIME_OPERATION_PATHS = Object.fromEntries(Object.keys(sessionHistoryOperationRequestSchemas).map((key) => [key, `/v1/session-history/${key.replaceAll("_", "-")}`]));
