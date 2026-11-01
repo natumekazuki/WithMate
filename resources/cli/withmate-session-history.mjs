@@ -5591,7 +5591,8 @@ object({
 		sessionId: id,
 		parentSessionId: id,
 		parentIncarnationId: id,
-		createdAt: id
+		createdAt: id,
+		draftIncarnation: id
 	}).strict()]),
 	window: object({
 		fromSeq: seq,
@@ -5624,8 +5625,17 @@ var sessionHistoryOperationRequestSchemas = {
 		kind: _enum([
 			"operation",
 			"changed_file",
+			"run_check",
 			"elicitation"
 		]),
+		field: _enum([
+			"details",
+			"summary",
+			"error",
+			"path",
+			"label",
+			"value"
+		]).optional().describe("Reads one saved text field in pieces. operation: details (default), summary, error. changed_file: path or summary (omit for diff rows). run_check: label or value (default value)."),
 		index: number().int().nonnegative().describe("Operation, changed file or elicitation record index."),
 		row: number().int().nonnegative().optional().describe("kind=changed_file only. Reads one diff row as JSON text in pieces; offset then counts UTF-16 code units."),
 		offset,

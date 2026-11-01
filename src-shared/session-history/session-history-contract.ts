@@ -8,7 +8,7 @@ const offset = z.number().int().nonnegative().optional();
 export const sessionHistoryReadScopeSchema = z.object({
   source: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("main"), sessionId: id, incarnationId: id }).strict(),
-    z.object({ kind: z.literal("auxiliary"), sessionId: id, parentSessionId: id, parentIncarnationId: id, createdAt: id }).strict(),
+    z.object({ kind: z.literal("auxiliary"), sessionId: id, parentSessionId: id, parentIncarnationId: id, createdAt: id, draftIncarnation: id }).strict(),
   ]),
   window: z.object({ fromSeq: seq, toSeq: seq }).strict().refine((window) => window.fromSeq <= window.toSeq, "fromSeq must not exceed toSeq."),
 }).strict();
@@ -41,7 +41,8 @@ export const sessionHistoryOperationRequestSchemas = {
   }).strict(),
   get_operation_detail: z.object({
     seq,
-    kind: z.enum(["operation", "changed_file", "elicitation"]),
+    kind: z.enum(["operation", "changed_file", "run_check", "elicitation"]),
+    field: z.enum(["details", "summary", "error", "path", "label", "value"]).optional().describe("Reads one saved text field in pieces. operation: details (default), summary, error. changed_file: path or summary (omit for diff rows). run_check: label or value (default value)."),
     index: z.number().int().nonnegative().describe("Operation, changed file or elicitation record index."),
     row: z.number().int().nonnegative().optional().describe("kind=changed_file only. Reads one diff row as JSON text in pieces; offset then counts UTF-16 code units."),
     offset,

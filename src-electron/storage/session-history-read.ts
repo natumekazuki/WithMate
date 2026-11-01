@@ -37,13 +37,14 @@ function checkSource(db: DatabaseSync, source: Source): SessionHistoryResult | n
     return incarnationOf(source.sessionId, row.incarnation_id) === source.incarnationId ? null
       : failure("HISTORY_SOURCE_REPLACED", "The source Session was recreated after the history scope was fixed.");
   }
-  const row = db.prepare(`SELECT a.created_at, a.parent_session_id, p.incarnation_id AS parent_incarnation
-    FROM auxiliary_sessions a LEFT JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`).get(source.sessionId) as
-    { created_at: string; parent_session_id: string; parent_incarnation: string | null } | undefined;
-  if (!row || (row.parent_session_id === source.parentSessionId && row.parent_incarnation === null)) {
+  const row = db.prepare(`SELECT a.created_at, a.parent_session_id, p.incarnation_id AS parent_incarnation, d.incarnation AS draft_incarnation
+    FROM auxiliary_sessions a LEFT JOIN sessions_v6 p ON p.id = a.parent_session_id
+    LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id WHERE a.id = ?`).get(source.sessionId) as
+    { created_at: string; parent_session_id: string; parent_incarnation: string | null; draft_incarnation: string | null } | undefined;
+  if (!row || row.draft_incarnation === null || (row.parent_session_id === source.parentSessionId && row.parent_incarnation === null)) {
     return failure("HISTORY_SOURCE_DELETED", "The source Auxiliary Session or its parent no longer exists.");
   }
-  return row.created_at === source.createdAt && row.parent_session_id === source.parentSessionId
+  return row.created_at === source.createdAt && row.draft_incarnation === source.draftIncarnation && row.parent_session_id === source.parentSessionId
     && incarnationOf(row.parent_session_id, row.parent_incarnation) === source.parentIncarnationId ? null
     : failure("HISTORY_SOURCE_REPLACED", "The source Auxiliary Session was recreated after the history scope was fixed.");
 }
@@ -171,22 +172,30 @@ function getMessage(db: DatabaseSync, layout: Layout, sessionId: string, row: Me
   };
 }
 
+const LIST_TEXT_PREVIEW_CHARS = 200;
+
+/** List rows carry bounded previews; the full saved text is read with get_operation_detail `field`. */
+function listText(name: string, text: string): Record<string, unknown> {
+  const preview = sliceText(text, 0, LIST_TEXT_PREVIEW_CHARS);
+  return preview.nextOffset === null ? { [name]: text } : { [name]: preview.text, [`${name}Truncated`]: true, [`${name}Chars`]: text.length };
+}
+
 function listOperations(seq: number, saved: { artifact: MessageArtifact; detailSaved: boolean }, request: SessionHistoryRequest<"list_operations">): SessionHistoryResult {
   const { artifact } = saved;
   const operations = artifact.operationTimeline ?? [];
   const section = request.section ?? "operations";
   const all: readonly object[] = section === "operations"
     ? operations.map((operation, index) => ({
-      index, ...(operation.id !== undefined ? { id: operation.id } : {}), type: operation.type, summary: operation.summary,
+      index, ...(operation.id !== undefined ? { id: operation.id } : {}), type: operation.type, ...listText("summary", operation.summary),
       ...(operation.status !== undefined ? { status: operation.status } : {}),
       ...(operation.exitCode !== undefined ? { exitCode: operation.exitCode } : {}),
-      ...(operation.error ? { error: operation.error } : {}),
+      ...(operation.error ? { error: { ...listText("message", operation.error.message), ...(operation.error.code !== undefined ? { code: operation.error.code } : {}) } } : {}),
       ...(operation.truncated !== undefined ? { truncated: operation.truncated } : {}),
       detailSaved: operation.details !== undefined,
     }))
     : section === "changed_files"
-      ? artifact.changedFiles.map((file, index) => ({ index, kind: file.kind, path: file.path, summary: file.summary, diffRowCount: file.diffRows.length }))
-      : artifact.runChecks.map((check, index) => ({ index, label: check.label, value: check.value }));
+      ? artifact.changedFiles.map((file, index) => ({ index, kind: file.kind, ...listText("path", file.path), ...listText("summary", file.summary), diffRowCount: file.diffRows.length }))
+      : artifact.runChecks.map((check, index) => ({ index, ...listText("label", check.label), ...listText("value", check.value) }));
   const page = pageOf(all, request.offset ?? 0, request.limit ?? SESSION_HISTORY_DEFAULT_OPERATION_LIST_LIMIT);
   if (!page) return failure("HISTORY_INVALID_REQUEST", "offset is beyond the listed section.");
   return {
@@ -196,7 +205,7 @@ function listOperations(seq: number, saved: { artifact: MessageArtifact; detailS
 }
 
 function getElicitation(message: Message, request: SessionHistoryRequest<"get_operation_detail">): SessionHistoryResult {
-  if (request.maxRows !== undefined || request.row !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows and row do not apply to elicitation.");
+  if (request.maxRows !== undefined || request.row !== undefined || request.field !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows, row and field do not apply to elicitation.");
   const record = message.elicitationRecords?.[request.index];
   if (!record) return failure("HISTORY_NOT_SAVED", "No elicitation record is saved at the requested index.");
   return textDetail(request.seq, "elicitation", request, JSON.stringify(record));
@@ -215,11 +224,29 @@ function getOperationDetail(seq: number, saved: { artifact: MessageArtifact; det
     if (request.maxRows !== undefined || request.row !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows and row apply to changed_file only.");
     const operation = saved.artifact.operationTimeline?.[request.index];
     if (!operation) return failure("HISTORY_NOT_SAVED", "No operation is saved at the requested index.");
-    if (operation.details === undefined) return failure("HISTORY_NOT_SAVED", "No detail is saved for the operation.");
-    return textDetail(seq, "operation", request, operation.details, { type: operation.type, truncatedAtSave: operation.truncated === true });
+    const field = request.field ?? "details";
+    const text = field === "details" ? operation.details : field === "summary" ? operation.summary : field === "error" ? operation.error?.message : undefined;
+    if (text === undefined) return failure(field === "details" || field === "error" ? "HISTORY_NOT_SAVED" : "HISTORY_INVALID_REQUEST",
+      field === "details" || field === "error" ? `No ${field} is saved for the operation.` : "field does not apply to an operation.");
+    // truncatedAtSave is reported only when the producer recorded it; an unrecorded flag is not "false".
+    return textDetail(seq, "operation", request, text, { type: operation.type, field,
+      ...(field === "details" && operation.truncated !== undefined ? { truncatedAtSave: operation.truncated } : {}) });
+  }
+  if (request.kind === "run_check") {
+    if (request.maxRows !== undefined || request.row !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows and row apply to changed_file only.");
+    const check = saved.artifact.runChecks[request.index];
+    if (!check) return failure("HISTORY_NOT_SAVED", "No run check is saved at the requested index.");
+    const field = request.field ?? "value";
+    if (field !== "label" && field !== "value") return failure("HISTORY_INVALID_REQUEST", "field does not apply to a run check.");
+    return textDetail(seq, "run_check", request, check[field], { field });
   }
   const file = saved.artifact.changedFiles[request.index];
   if (!file) return failure("HISTORY_NOT_SAVED", "No changed file is saved at the requested index.");
+  if (request.field !== undefined) {
+    if (request.field !== "path" && request.field !== "summary") return failure("HISTORY_INVALID_REQUEST", "field does not apply to a changed file.");
+    if (request.maxRows !== undefined || request.row !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows and row do not apply with field.");
+    return textDetail(seq, "changed_file", request, file[request.field], { field: request.field });
+  }
   if (!saved.detailSaved) return failure("HISTORY_NOT_SAVED", "The diff of the changed file is not saved.");
   const budget = request.maxChars ?? SESSION_HISTORY_DEFAULT_TEXT_LIMIT;
   if (request.row !== undefined) {

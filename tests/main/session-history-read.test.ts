@@ -164,13 +164,21 @@ test("削除・再作成された元Sessionと親が一致しないAuxiliaryを�
     const session = main.insertSession(mainSession("main-2"));
     const aux = auxiliary.upsertAuxiliarySession(auxiliarySession(session.id));
     const auxScope: SessionHistoryReadScope = { source: { kind: "auxiliary", sessionId: aux.id, parentSessionId: session.id,
-      parentIncarnationId: getSessionIncarnationId(session), createdAt: aux.createdAt }, window: { fromSeq: 0, toSeq: 1 } };
+      parentIncarnationId: getSessionIncarnationId(session), createdAt: aux.createdAt,
+      draftIncarnation: auxiliary.getAuxiliaryDraft(aux.id)!.incarnation }, window: { fromSeq: 0, toSeq: 1 } };
     const auxList = read(auxiliary, auxScope, "list_messages", {}) as Record<string, any>;
     assert.deepEqual(auxList.items.map((item: any) => item.textPreview), ["aux question", "aux answer"]);
     const staleParent = { ...auxScope, source: { ...auxScope.source, parentIncarnationId: "another-incarnation" } } as SessionHistoryReadScope;
     assert.equal(failureCode(read(auxiliary, staleParent, "list_messages", {})), "HISTORY_SOURCE_REPLACED");
     assert.throws(() => read(main, auxScope, "list_messages", {}), /require a main source/);
     assert.throws(() => read(auxiliary, mainScope(session), "list_messages", {}), /require an auxiliary source/);
+
+    // Editing the draft keeps the same conversation; recreating it with the same ID, parent and createdAt does not.
+    auxiliary.saveAuxiliaryDraft({ ...auxiliary.getAuxiliaryDraft(aux.id)!, draftText: "edited", durableRevision: auxiliary.getAuxiliaryDraft(aux.id)!.durableRevision + 1 } as never);
+    assert.equal(read(auxiliary, auxScope, "list_messages", {}).ok, true);
+    auxiliary.deleteAuxiliarySessionsForParent(session.id);
+    auxiliary.upsertAuxiliarySession({ ...auxiliarySession(session.id), messages: [{ role: "user", text: "replacement" }, { role: "assistant", text: "replacement answer" }] });
+    assert.equal(failureCode(read(auxiliary, auxScope, "list_messages", {})), "HISTORY_SOURCE_REPLACED");
 
     const scope = mainScope(session);
     main.deleteSession(session.id);
@@ -180,5 +188,64 @@ test("削除・再作成された元Sessionと親が一致しないAuxiliaryを�
     assert.notEqual(getSessionIncarnationId(recreated), getSessionIncarnationId(session));
     assert.equal(failureCode(read(main, scope, "list_messages", {})), "HISTORY_SOURCE_REPLACED");
     assert.equal(failureCode(read(auxiliary, auxScope, "list_messages", {})), "HISTORY_SOURCE_DELETED");
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "保存時のtruncatedが未記録の操作を省略なしと答えず、一覧の長い文字列はpreviewに制限して詳細取得で保存内容を欠落なく読める"
+// oracle = { type = "contract", ref = "docs/design/session-history.md" }
+// fault = "未記録のtruncatedをfalseに変換する、または一覧が長いsummary・error・path・check値を全文で返し応答量が制御されない"
+// observable = "get_operation_detailのtruncatedAtSave有無、一覧のpreview・Truncated・Chars、fieldで取得した全文の連結結果"
+// observation_boundary = "public-boundary"
+// scope = "session-history-read"
+// lifecycle = "permanent"
+// impact = "呼出側が保存時省略を見落とすことと、詳細を要求しない一覧で大きな入力が流れることを防ぐ"
+// distinction = "型やschemaでは保存済みartifactの未記録状態と一覧の応答量を保証できない"
+// @end-test-value
+test("未記録の省略状態を保ち、一覧の長い文字列をpreviewにして詳細取得で全文を読める", async () => {
+  await withStorages(async ({ main }) => {
+    const long = "L".repeat(450);
+    const session = main.insertSession({ ...mainSession("main-3"), messages: [{ role: "user", text: "q" }, { role: "assistant", text: "a", artifact: {
+      title: "Run", activitySummary: [],
+      operationTimeline: [
+        { type: "tool", summary: long, details: "detail", error: { message: long, code: "E1" } },
+        { type: "tool", summary: "short", details: "marked", truncated: false },
+      ],
+      changedFiles: [{ kind: "edit", path: long, summary: long, diffRows: [] }], runChecks: [{ label: "check", value: long }],
+    } }] });
+    const scope = mainScope(session, 1);
+    const detail = read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 0 }) as Record<string, any>;
+    assert.equal("truncatedAtSave" in detail, false);
+    const marked = read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 1 }) as Record<string, any>;
+    assert.equal(marked.truncatedAtSave, false);
+
+    const listed = read(main, scope, "list_operations", { seq: 1 }) as Record<string, any>;
+    const first = listed.items[0];
+    assert.deepEqual([first.summary.length, first.summaryTruncated, first.summaryChars, first.error.message.length, first.error.messageChars, first.error.code], [200, true, 450, 200, 450, "E1"]);
+    assert.deepEqual([listed.items[1].summary, listed.items[1].summaryTruncated], ["short", undefined]);
+    const file = (read(main, scope, "list_operations", { seq: 1, section: "changed_files" }) as Record<string, any>).items[0];
+    assert.deepEqual([file.path.length, file.pathChars, file.summary.length, file.summaryChars], [200, 450, 200, 450]);
+    const check = (read(main, scope, "list_operations", { seq: 1, section: "run_checks" }) as Record<string, any>).items[0];
+    assert.deepEqual([check.label, check.value.length, check.valueChars], ["check", 200, 450]);
+
+    for (const [request, saved] of [
+      [{ kind: "operation", index: 0, field: "summary" }, long], [{ kind: "operation", index: 0, field: "error" }, long],
+      [{ kind: "changed_file", index: 0, field: "path" }, long], [{ kind: "changed_file", index: 0, field: "summary" }, long],
+      [{ kind: "run_check", index: 0 }, long],
+    ] as const) {
+      let text = "";
+      let offset: number | null = 0;
+      while (offset !== null) {
+        const page = read(main, scope, "get_operation_detail", { seq: 1, ...request, offset, maxChars: 200 } as never) as Record<string, any>;
+        assert.equal(page.ok, true);
+        text += page.text;
+        offset = page.nextOffset;
+      }
+      assert.equal(text, saved);
+    }
+    assert.equal(failureCode(read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 1, field: "error" })), "HISTORY_NOT_SAVED");
+    assert.equal(failureCode(read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 0, field: "path" })), "HISTORY_INVALID_REQUEST");
+    assert.equal(failureCode(read(main, scope, "get_operation_detail", { seq: 1, kind: "run_check", index: 0, field: "summary" })), "HISTORY_INVALID_REQUEST");
   });
 });

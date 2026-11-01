@@ -10,7 +10,7 @@ Session Historyは、アプリが管理する背景実行へ、元Sessionの保�
 type SessionHistoryReadScope = {
   source:
     | { kind: "main"; sessionId: string; incarnationId: string }
-    | { kind: "auxiliary"; sessionId: string; parentSessionId: string; parentIncarnationId: string; createdAt: string };
+    | { kind: "auxiliary"; sessionId: string; parentSessionId: string; parentIncarnationId: string; createdAt: string; draftIncarnation: string };
   window: { fromSeq: number; toSeq: number }; // message seqの閉区間
 };
 ```
@@ -20,7 +20,7 @@ type SessionHistoryReadScope = {
 - bindingが有効で、操作のgrantを持つ。
 - `sessionHistoryScope`が形式どおりに存在する。
 - 要求のturn capabilityが現在の実行handleと一致する。全操作が対象で、読取の完了後にも再確認し、取り消された実行には結果を返さない。
-- storage側が同じ読取の中で元Sessionの存在とincarnationを照合し、`toSeq`が保存済み会話の範囲内であることを確認する。Mainはincarnation、Auxiliaryは自身の作成時刻と親のID・incarnationが一致しなければならない。
+- storage側が同じ読取の中で元Sessionの存在とincarnationを照合し、`toSeq`が保存済み会話の範囲内であることを確認する。Mainはincarnation、Auxiliaryは自身の作成時刻・保存済みdraftのincarnation（同じIDで再作成すると変わる）と、親のID・incarnationが一致しなければならない。draft本文の編集ではincarnationは変わらず、同じ会話として読める。
 
 背景実行の起動・設定・実行identity・対象範囲（`window`）の確定は背景呼出し側が所有する。履歴操作は与えられた範囲を超えて読まず、範囲外の要求を空の成功にしない。
 
@@ -30,8 +30,8 @@ type SessionHistoryReadScope = {
 | --- | --- | --- |
 | `session_history.list_messages` | `list-messages` | 範囲内のmessage一覧。role、記録済みTurn、本文previewと文字数、操作件数 |
 | `session_history.get_message` | `get-message` | 1 messageの本文を`maxChars`（UTF-16 code unit、最大100,000）単位で取得 |
-| `session_history.list_operations` | `list-operations` | 1 messageの操作・変更file・checkを`section`ごとに一覧。操作は成否・終了コード・error・省略・詳細保存の有無を持つ |
-| `session_history.get_operation_detail` | `get-operation-detail` | 操作1件の保存済み出力（`kind: "operation"`）、質問記録1件のJSON（`kind: "elicitation"`）を`maxChars`単位で取得。変更file 1件のdiff行（`kind: "changed_file"`、`maxRows`と`maxChars`の量上限）も取得し、上限を超える1行は`oversized`として一覧し、`row`指定で分割取得する |
+| `session_history.list_operations` | `list-operations` | 1 messageの操作・変更file・checkを`section`ごとに一覧。操作は成否・終了コード・error・省略・詳細保存の有無を持つ。長い文字列（summary、error、変更filepath・summary、check値）は先頭200文字のpreviewで、省略時は`<名前>Truncated`と全長`<名前>Chars`を付ける |
+| `session_history.get_operation_detail` | `get-operation-detail` | 操作1件の保存済み出力（`kind: "operation"`、`field`で`summary`／`error`も指定可）、check 1件（`kind: "run_check"`、`field`は`label`／`value`）、変更fileの`path`／`summary`（`field`）、質問記録1件のJSON（`kind: "elicitation"`）を`maxChars`単位で取得。変更file 1件のdiff行（`kind: "changed_file"`、`maxRows`と`maxChars`の量上限）も取得し、上限を超える1行は`oversized`として一覧し、`row`指定で分割取得する |
 
 一覧は`offset`／`limit`（messageは最大100、操作等は最大200）で読み、応答の`total`と`nextOffset`で続きを判断する。`nextOffset: null`が終端である。本文・詳細も`offset`と`nextOffset`で分割する。pageはsurrogate pairの途中で終わらず、`maxChars`が1でpairの先頭なら、進捗のためpair全体（2 code unit）を返す。pairの途中を指す`offset`は`HISTORY_INVALID_REQUEST`である。`get_message`は質問記録を含めず、件数`elicitationRecordCount`だけを返す。
 
@@ -41,7 +41,7 @@ CLIは`--json <json>`、`--file <path>`、`@file`、`--stdin`のいずれか1つ
 
 Turnの対応は、Turn記録の`user_message_seq`／`assistant_message_seq`が一致するmessageだけに付く。追加入力（steer）など一致しないmessageのTurnは`null`で、範囲の包含などから推定しない。失敗Turnにはその理由が`turn.errorMessage`に含まれる。
 
-操作の一覧と詳細は、保存済みのmessage artifactから読む。操作の成否（`status`、`exitCode`、`error`）、`truncated`、`details`は保存されている場合だけ返す。保存されるのは出力の一部（プレビュー）であり、command・toolの全引数や出力全文は保存されないため補完しない。`truncated: true`は出力が保存時に省略されたことを示し、`detailSaved: false`の操作や、詳細を保存していないmessageの変更file diffは詳細取得が`HISTORY_NOT_SAVED`になる。`artifactDetailSaved: false`は、一覧の内容が縮約済みの本文側から読まれたことを示す。
+操作の一覧と詳細は、保存済みのmessage artifactから読む。操作の成否（`status`、`exitCode`、`error`）、`truncated`、`details`は保存されている場合だけ返す。保存されるのは出力の一部（プレビュー）であり、command・toolの全引数や出力全文は保存されないため補完しない。`truncated: true`は出力が保存時に省略されたことを示す。保存時に`truncated`が記録されていない操作は、詳細取得でも`truncatedAtSave`を返さず、省略なしとは扱わない。`detailSaved: false`の操作や、詳細を保存していないmessageの変更file diffは詳細取得が`HISTORY_NOT_SAVED`になる。`artifactDetailSaved: false`は、一覧の内容が縮約済みの本文側から読まれたことを示す。
 
 実行中のTurnのうち未保存の応答や操作は保存正本にないため返さない。非公開推論、runtimeの認証情報、内部bindingは保存履歴にもfieldにも含まれず返さない。
 
