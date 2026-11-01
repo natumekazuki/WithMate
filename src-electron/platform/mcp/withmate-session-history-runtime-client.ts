@@ -39,8 +39,10 @@ export async function callSessionHistoryRuntime(
         signal: controller.signal, bindingReference, turnCapability: resolveAgentRuntimeTurnCapability(deps.env),
         exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
       });
-    return response.value && typeof response.value === "object" && !Array.isArray(response.value)
-      ? response.value as Record<string, unknown> : createSessionHistoryTransportError();
+    if (!response.value || typeof response.value !== "object" || Array.isArray(response.value)) return createSessionHistoryTransportError();
+    const result = response.value as Record<string, unknown>;
+    if (result.ok === false || (response.ok && result.ok === true)) return result;
+    return createSessionHistoryTransportError();
   } catch {
     return createSessionHistoryTransportError();
   } finally { clearTimeout(timeout); }

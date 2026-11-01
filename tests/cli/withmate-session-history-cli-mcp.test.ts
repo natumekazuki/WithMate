@@ -55,7 +55,7 @@ it("4操作のCLIとSDK MCPは同じbinding付き要求と結果・拒否を共�
   const runtimeCall: typeof callWithMateMemoryRuntime = async (selected, operation, options) => {
     assert.deepEqual(selected, connection);
     calls.push({ operation, binding: options.bindingReference, turn: options.turnCapability, exchange: options.exchangePath });
-    return { ok: true, status: reject ? 404 : 200, value: reject ? { ok: false, code: "HISTORY_NOT_SAVED", message: "none", effect: "none" } : { ok: true, received: operation.body } };
+    return { ok: !reject, status: reject ? 404 : 200, value: reject ? { ok: false, code: "HISTORY_NOT_SAVED", message: "none", effect: "none" } : { ok: true, received: operation.body } };
   };
   await mcp(runtimeCall, async (client) => {
     assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), Object.keys(inputs).map((name) => `session_history.${name}`).sort());
@@ -110,6 +110,43 @@ it("対象選択入力・不正入力・binding欠落・通信失敗をdispatch�
     assert.deepEqual([result.exit, tool.isError, result.value], [3, true, tool.structuredContent]);
     assert.equal(result.value.code, "SESSION_HISTORY_TRANSPORT_ERROR");
   });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "HTTP拒否や履歴結果でないJSONをCLI/MCPが成功にせず、履歴固有の失敗codeは維持する"
+// oracle = { type = "contract", ref = "docs/design/session-history.md#失敗の区別" }
+// fault = "HTTP statusの拒否やokのないerror envelopeをCLI exit0/MCP isErrorなしで返すか、履歴固有拒否をtransport失敗へ潰す"
+// observable = "CLI exit/code/okとSDK MCP isError/structuredContent"
+// observation_boundary = "public-boundary"
+// scope = "shared history runtime client HTTP/result classification"
+// lifecycle = "permanent"
+// impact = "背景処理の呼出元が取得失敗を正常読取と誤認する"
+// distinction = "例外throwの通信失敗testと違い、HTTP応答として解決した拒否envelopeと不正成功を両consumerで確認する"
+// @end-test-value
+it("HTTP拒否envelopeと不正な履歴結果を両入口の明示失敗へ変換する", async () => {
+  const historyFailure = { ok: false, code: "HISTORY_OUT_OF_RANGE", message: "outside", effect: "none" };
+  const transportFailure = { ok: false, code: "SESSION_HISTORY_TRANSPORT_ERROR", message: "Session history runtime request failed.", effect: "none" };
+  const responses = [
+    { ok: false, status: 401, value: { schemaVersion: 6, error: { code: "MEMORY_UNAUTHORIZED", message: "denied" } } },
+    { ok: false, status: 503, value: { error: "unavailable" } },
+    { ok: false, status: 401, value: { ok: true, items: [] } },
+    { ok: true, status: 200, value: { items: [] } },
+    { ok: true, status: 200, value: { ok: "true" } },
+    { ok: false, status: 400, value: historyFailure },
+  ];
+  for (const response of responses) {
+    const runtimeCall: typeof callWithMateMemoryRuntime = async () => response;
+    await mcp(runtimeCall, async (client) => {
+      const result = await cli(["list-messages"], runtimeCall);
+      const tool = await client.callTool({ name: "session_history.list_messages", arguments: {} });
+      const preserved = response.value === historyFailure;
+      assert.equal(result.exit, preserved ? 1 : 3);
+      assert.equal(tool.isError, true);
+      assert.deepEqual(result.value, preserved ? historyFailure : transportFailure);
+      assert.deepEqual(tool.structuredContent, result.value);
+    });
+  }
 });
 
 // @test-value v2

@@ -123,9 +123,9 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       body: JSON.stringify({ jsonrpc: "2.0", id: 71, method: "tools/call", params: { name, arguments: { seq: 0 } } }) });
   }
   return { directory, db, sessions, scope, start, started, project, connect, request, bindings, turns, executions, host, worker, auxiliary,
-    async connectRuntimeContext(env: NodeJS.ProcessEnv) {
+    async connectRuntimeContext(env: NodeJS.ProcessEnv, credential = connection.credential) {
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-      const server = createWithMateSessionHistoryMcpServer({ env, connection }, getSessionHistoryAgentRuntimeOperations());
+      const server = createWithMateSessionHistoryMcpServer({ env, connection: { ...connection, credential } }, getSessionHistoryAgentRuntimeOperations());
       const client = new Client({ name: "history-context", version: "1" });
       clients.push(client); servers.push(server);
       await server.connect(serverTransport); await client.connect(clientTransport);

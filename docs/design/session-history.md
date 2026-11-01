@@ -65,7 +65,7 @@ Turnの対応は、Turn記録の`user_message_seq`／`assistant_message_seq`が�
 | `HISTORY_READ_FAILED` | 保存の読取に失敗した。内部の詳細は返さない |
 | `SESSION_HISTORY_BINDING_REQUIRED` | 入口（CLI／MCP adapter）の環境にbinding参照がない。通信前の失敗で、`message`は付かない |
 | `SESSION_BINDING_INVALID`／`SESSION_BINDING_FORBIDDEN` | binding／capabilityが無効、通常turn、または具体的履歴grantがない |
-| `SESSION_HISTORY_TRANSPORT_ERROR` | runtimeとの通信に失敗した。読取専用のため保存効果はない |
+| `SESSION_HISTORY_TRANSPORT_ERROR` | runtimeとの通信失敗、履歴結果ではないHTTP拒否、または不正な結果envelope。履歴固有の拒否codeは保持する。読取専用のため保存効果はない |
 
 ## 実装境界
 

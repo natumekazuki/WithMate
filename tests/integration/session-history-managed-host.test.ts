@@ -86,14 +86,14 @@ test("bundled history CLI and managed MCP read the same saved history under the 
 
 // @test-value v2
 // kind = "security"
-// claim = "実背景の履歴grantとcapabilityをMCP/配布CLIが共通検証し、通常turn・部分grantの許可外操作・capability欠落と別実行・終了済みbindingを拒否する"
-// oracle = { type = "contract", ref = "docs/design/session-history.md#認可と範囲" }
-// fault = "MCPのtool非表示だけで認可し直接callを許すか、CLIまたはMCP adapterが通常bindingや別handleを認可する"
+// claim = "実背景の履歴grantとcapabilityをMCP/配布CLIが共通検証し、通常turn・部分grantの許可外操作・capability欠落と別実行・終了済みbinding・実HTTP認証拒否を失敗にする"
+// oracle = { type = "contract", ref = "docs/design/session-history.md" }
+// fault = "MCPのtool非表示だけで認可し直接callを許す、通常bindingや別handleを認可する、またはHTTP認証拒否を成功にする"
 // observable = "hostの公開toolと直接HTTP 403、実runtimeへ接続するSDK MCPと別process CLIのcode/ok、許可操作の継続成功"
 // observation_boundary = "consumer"
 // scope = "managed host and MCP adapter/CLI through production runtime authorization"
 // lifecycle = "permanent"
-// impact = "通常turnや権限の狭い背景処理が許可外の保存履歴へ到達する"
+// impact = "通常turnや権限の狭い背景処理が許可外の保存履歴へ到達するか、取得失敗を成功として後続処理を進める"
 // distinction = "正常系parityとroute単体では配布bundleとfactoryが環境capabilityを正しく伝えることを確認できない。異常envのMCPはSDK in-memory transportから実HTTP runtimeへ接続する"
 // @end-test-value
 test("両入口で実背景のoperation grantとcapability境界を守る", async () => {
@@ -128,6 +128,15 @@ test("両入口で実背景のoperation grantとcapability境界を守る", asyn
       assert.deepEqual(tool.structuredContent, cli.value);
     };
     for (const { env, code } of contexts) await check(env, code);
+    const rejectedEnv = { ...f.cliEnv(binding), WITHMATE_MEMORY_MCP_API_SECRET: "wrong-mcp-secret" };
+    const rejectedMcp = await f.connectRuntimeContext(rejectedEnv, { adapter: "mcp", adapterSecret: "wrong-mcp-secret" });
+    const rejectedTool = await rejectedMcp.callTool({ name: "session_history.list_messages", arguments: {} });
+    const rejectedCli = await invokeCli(f, binding, "list-messages", {}, rejectedEnv);
+    assert.equal(rejectedCli.code, 3);
+    assert.equal(rejectedCli.value.code, "SESSION_HISTORY_TRANSPORT_ERROR");
+    assert.equal(rejectedTool.isError, true);
+    assert.deepEqual(rejectedTool.structuredContent, rejectedCli.value);
+    assert.equal((await invokeCli(f, binding, "list-messages")).value.ok, true);
     f.executions.finish(execution);
     await check(f.cliEnv(binding), "SESSION_BINDING_INVALID");
   } finally { await f.close(); }
