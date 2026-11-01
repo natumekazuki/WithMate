@@ -103,10 +103,8 @@ test("Session Window shows Graph reference failures for Main and Auxiliary witho
         await click(button("Graph"));
         assert.ok(doc.querySelector(".session-graph-preview"));
       }
-      if (doc.querySelector(".topic-overview-card")) {
-        await click(doc.querySelector(".topic-overview-card"));
-        await click(button("Open Topic"));
-      }
+      const expandTopic = button("Expand Topic: Topic");
+      if (expandTopic) await click(expandTopic);
       if (!doc.querySelector(".session-graph-details")) await click(doc.querySelector(".session-graph-node"));
       outcome = "failed";
       await click(doc.querySelector(".session-graph-references button"));
