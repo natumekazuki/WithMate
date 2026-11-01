@@ -4,6 +4,8 @@
 
 Accepted
 
+#909のCharacter Memory・対象Memoryについては、checkpointと保存確定・復旧に関する判断を[後継判断](#909-memory記録の後継判断)で置き換える。共通binding／履歴read／admissionと#910の判断はこの置換の対象ではない。
+
 ## Context
 
 Issue #888の三用途を通常Sessionのactor／Providerキーで実行すると、通常turnのbinding再利用・置換と競合する。#908の履歴readは元会話を参照するが、生成purposeやMemory記録の処理位置は読取能力そのものの条件ではない。Auxiliaryの再作成はcreatedAtだけでは区別できず、既存のconversation ownerIdentityに含まれるdraft incarnationも必要になる。
@@ -25,3 +27,11 @@ Issue #888の三用途を通常Sessionのactor／Providerキーで実行する�
 実装済みの共通基盤と寿命は[Background Execution](../design/background-execution.md)を正本とする。Providerの制限された単発推論、用途別設定、生成・保存の統合、checkpointの実装をこのADRの採用だけで完了扱いしない。
 
 ADR028の「専用post-turn生成を設けない」という方針は今回の背景生成方針で置換する。ただし現在稼働する通常turn内のMemory／Affect操作は、生成担当の接続と現行説明の更新を同じ論理変更で行うまで維持する。保存済みevent／episode／一般Memory・version・idempotency情報を削除する判断ではない。ADR029のMCP／CLI同等契約と通常turnの認可は維持する。
+
+## #909 Memory記録の後継判断
+
+Character Memory・対象Memoryは、取得時点の許可された材料から一度生成し、final全体を検証して既存操作へ一候補ずつ保存する。順序・鮮度・重複・取りこぼしの厳密な調整は保証しない。この二用途では、Decision末尾の用途別checkpoint、保存結果と処理位置の同一connection・transaction確定、応答消失・再起動後の正本照合の判断を適用対象外とする。
+
+未開始対象の末尾はowner×用途ごとにアプリ生存期間内だけ保持し、admissionを取得して開始したときに進める。失敗／unknownでも戻さず、開始見送りなら進めない。この位置は保存成功の証明ではない。保存の失敗／unknown／取消では残りの候補を呼ばず、確認できた保存だけを成功として扱う。永続checkpoint、候補queue、新batchによる一括確定、read-reconcile、自動再送や失敗範囲の完全回収を後続の必須課題にしない。
+
+認可・正しいowner／target・失効拒否・入力検証・既存privacy忘却とデータ保護は維持する。共通binding／履歴read／admissionおよび#910の方針は変更しない。現在の実装済み範囲は[Memory生成の純粋な用途契約](../design/background-execution.md#memory生成の純粋な用途契約)を正本とし、後継判断の採用をProvider・read・保存接続の実装完了とは扱わない。

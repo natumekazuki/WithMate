@@ -35,7 +35,7 @@ Provider builderは通常接続の既存3 endpointと背景のsession-history en
 
 native完了時は`nativeCompleted()`から`host.closeConnection()`を呼び、HTTP token・MCP endpoint・進行中readを閉じる。論理admissionは維持し、アプリの保存結果確定後に`finish()`する。取消・source／親削除・runtime停止はbinding／handleを失効し、未確定の保存をadmissionで拒否する。確定済み保存は巻き戻さない。provider credential変更・無効化ではその背景Providerの実行を失効させる。
 
-この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。Providerの副作用制限・実LLM呼出し、用途別設定、背景Memory read・用途保存への接続は実装済みとして扱わない。採用判断は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。Providerの副作用制限・実LLM呼出し、用途別設定、背景Memory read・用途保存への接続は実装済みとして扱わない。共通基盤の採用判断は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、二用途のMemory記録方針は同ADRの[#909後継判断](../adr/035-background-execution-binding-and-history-scope.md#909-memory記録の後継判断)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
 
 ## Memory生成の純粋な用途契約
 
