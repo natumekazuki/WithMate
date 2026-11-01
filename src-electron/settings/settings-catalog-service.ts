@@ -58,6 +58,7 @@ export type SettingsCatalogServiceDeps = {
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
   onChatLayoutPreferenceSaveError?(update: ChatLayoutPreferenceUpdate, error: unknown): void;
   onProviderTurnAvailable?(providerId: string): void;
+  invalidateBackgroundProvider?(providerId: string): void;
   getModelCatalog(): Awaitable<ModelCatalogSnapshot>;
   replaceAllSessions(
     nextSessions: Session[],
@@ -256,6 +257,12 @@ export class SettingsCatalogService {
     let savedSettings: AppSettings | null = null;
     try {
       savedSettings = await this.deps.updateAppSettings(nextSettings);
+      for (const providerId of Object.keys(previousSettings.codingProviderSettings)) {
+        if (providersWithApiKeyChangeSet.has(providerId)
+          || (previousSettings.codingProviderSettings[providerId].enabled && !nextSettings.codingProviderSettings[providerId]?.enabled)) {
+          this.deps.invalidateBackgroundProvider?.(providerId);
+        }
+      }
       for (const providerId of providersWithApiKeyChange) {
         this.deps.clearProviderQuotaTelemetry(providerId);
       }

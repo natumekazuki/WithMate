@@ -57,6 +57,7 @@
 | [Electron Session Store](electron-session-store.md) | Session・turn・設定・catalogの読書きと保存owner |
 | [Session Graph](session-graph.md) | Main/Auxiliary共有の構造化記録、MCP、競合、閲覧図 |
 | [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
+| [Background Execution](background-execution.md) | アプリ管理の独立binding、履歴read認可と接続／保存admissionの寿命 |
 | [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
 | [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |
 | [Provider Model Discovery](model-catalog.md) | SDK model一覧の取得、cache、選択と実行の境界 |

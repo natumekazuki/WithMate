@@ -239,6 +239,7 @@ import {
 } from "./glossary/glossary-application-service.js";
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
+import { BackgroundExecutionService } from "./providers/background-execution-service.js";
 import { buildProviderAgentRuntimeAuthoritySnapshot } from "./providers/provider-agent-runtime-binding.js";
 import { resolveMemoryV6ProjectCandidate } from "./memory/memory-v6-project-resolver.js";
 import { resolveBundledMemoryCliScriptPath } from "./platform/cli-runtime-paths.js";
@@ -572,7 +573,7 @@ const glossarySessionProjectionService = new GlossarySessionProjectionService({
   getBindingGeneration: (sessionId, providerId) =>
     agentRuntimeBindingRegistry.getExecutionGeneration(sessionId, providerId),
   subscribeBindingChanges: (listener) => agentRuntimeBindingRegistry.subscribeChanges((change) => {
-    listener({ sessionId: change.actorSessionId, providerId: change.providerId });
+    if (!change.backgroundBindingId) listener({ sessionId: change.actorSessionId, providerId: change.providerId });
   }),
 });
 const glossaryWindowSubscriptionCoordinator = new SessionGlossaryWindowSubscriptionCoordinator<BrowserWindow>({
@@ -731,6 +732,11 @@ async function ensureSessionGlossarySubscription(sessionId: string): Promise<voi
 }
 
 const providerAgentRuntimeTurns = new ProviderAgentRuntimeTurnCoordinator();
+const backgroundExecutions = new BackgroundExecutionService({
+  bindings: agentRuntimeBindingRegistry,
+  turns: providerAgentRuntimeTurns,
+  closeConnection: (handle) => memoryV6RuntimeApi?.managedMcp?.closeConnection(handle),
+});
 async function resolveSessionGraphSession(sessionId: string): Promise<ResolvedSessionGraphSession | null> {
   const generation = mainStoreContext.storageWorker;
   const sessions = requireSessionStorage();
@@ -911,6 +917,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       log: writeAppLog,
     });
     mainStoreContext.setMemoryRuntimeStatus("running");
+    backgroundExecutions.start();
     mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
   } catch (error) {
     mainStoreContext.setMemoryRuntimeStatus("failed");
@@ -932,6 +939,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
 }
 
 async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
+  backgroundExecutions.stop();
   const runtimeApi = memoryV6RuntimeApi;
   memoryV6RuntimeApi = null;
   mainStoreContext.setMemoryRuntimeStatus("stopped");
@@ -2767,6 +2775,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
       listAuxiliaryCredentialThreads: () => requireAuxiliarySessionStorage().listAuxiliaryCredentialThreads(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       updateAppSettings,
+      invalidateBackgroundProvider: (providerId) => agentRuntimeBindingRegistry.revokeBackgroundProvider(providerId),
       updateChatLayoutPreference: (update) => requireAppSettingsStorage().updateChatLayoutPreference(update),
       onChatLayoutPreferenceSaveError: (update, error) => writeAppLog({
         level: "error",

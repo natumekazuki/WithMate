@@ -73,7 +73,7 @@ import { MemoryV6WorkerClient } from "./memory-v6-worker-client.js";
 import type { MemoryV6StorageAccess } from "./memory-v6-service.js";
 import type { CharacterAffectStorageAccess } from "../character/character-affect-service.js";
 import { secureWindowsRuntimePath } from "../platform/runtime-path-security.js";
-import { ManagedHttpMcpHost } from "./managed-http-mcp-host.js";
+import { ManagedHttpMcpHost, type SessionHistoryMcpRegistration } from "./managed-http-mcp-host.js";
 
 export type MemoryV6RuntimeApiHandle = {
   baseUrl: string;
@@ -94,6 +94,7 @@ export type MemoryV6RuntimeApiHandle = {
 };
 
 export type StartMemoryV6RuntimeApiOptions = {
+  sessionHistoryMcp?: SessionHistoryMcpRegistration;
   userDataPath: string;
   applicationInstanceId: string;
   buildChannel: RuntimeBuildChannel;
@@ -108,7 +109,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   now?: () => Date;
   log?: (input: AppLogInput) => void;
   storageOperationDiagnosticSink?: StorageOperationDiagnosticSink;
-  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve"> & Partial<Pick<AgentRuntimeBindingRegistry, "subscribeChanges">>;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve"> & Partial<Pick<AgentRuntimeBindingRegistry, "subscribeChanges" | "resolveIdentity">>;
   providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit"> & Partial<Pick<ProviderAgentRuntimeTurnCoordinator, "end">>;
   resolveActorSession?: (
     sessionId: string,
@@ -1482,7 +1483,7 @@ export async function startMemoryV6RuntimeApi(
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const registry = options.agentRuntimeBindingRegistry;
     const turns = options.providerAgentRuntimeTurns;
-    if (registry?.subscribeChanges && turns?.end) {
+    if (registry?.subscribeChanges && registry.resolveIdentity && turns?.end) {
       managedMcp = new ManagedHttpMcpHost({
         connection: {
           api: { baseUrl, apiSecret, applicationInstanceId: options.applicationInstanceId,
@@ -1490,8 +1491,10 @@ export async function startMemoryV6RuntimeApi(
           credential: { adapter: "mcp", adapterSecret: mcpApiSecret },
         },
         fallbackAdmissionSecret: fallbackAdmissionApiSecret,
-        bindingRegistry: { resolve: registry.resolve.bind(registry), subscribeChanges: registry.subscribeChanges.bind(registry) },
+        bindingRegistry: { resolve: registry.resolve.bind(registry), resolveIdentity: registry.resolveIdentity.bind(registry),
+          subscribeChanges: registry.subscribeChanges.bind(registry) },
         turns: { admit: turns.admit.bind(turns), end: turns.end.bind(turns) },
+        sessionHistory: options.sessionHistoryMcp,
       });
       await managedMcp.start();
     }

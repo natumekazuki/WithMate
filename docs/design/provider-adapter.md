@@ -104,6 +104,8 @@ providerごとの差は次。
 
 ### Managed HTTP MCP
 
+アプリ管理の独立binding／handleと履歴専用接続の共通基盤は[Background Execution](background-execution.md)を参照する。Providerの通常turn対応を、背景呼出しの副作用制限・実接続確認済みと読み替えない。
+
 Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。endpointは`/mcp/memory`、`/mcp/glossary`、`/mcp/session-graph`である。tool schemaとruntime clientは`src-electron/platform/mcp/`に置き、Memory／Glossaryではstdio CLIとも共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
 
 - Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。

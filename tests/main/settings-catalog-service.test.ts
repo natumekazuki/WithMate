@@ -218,6 +218,44 @@ function createCatalogSnapshot(): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "provider credential変更・無効化の保存後に該当背景Providerを失効し、保存失敗や無関係な設定変更では失効しない"
+  // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
+  // fault = "保存前に背景を失効する、credential変更を元会話のProvider列挙だけへ限定する、または無効化で背景を残す"
+  // observable = "invalidateBackgroundProviderのProvider列と保存成功・失敗"
+  // observation_boundary = "component-behavior"
+  // scope = "SettingsCatalogService provider lifecycle notification"
+  // lifecycle = "permanent"
+  // impact = "元会話とは別Providerの背景呼出しがcredential無効化後も結果を適用できる"
+  // distinction = "既存の通常thread無効化testは通常会話のない背景Providerを扱わない。registry側の取消testとは保存境界の責務が異なる"
+  // @end-test-value
+  it("保存済みcredential変更とProvider無効化を背景実行へ通知する", async () => {
+    let saved = createDefaultAppSettings();
+    const invalidated: string[] = [];
+    let failSave = false;
+    const service = new SettingsCatalogService({
+      hasInFlightSessionRuns: () => false, isSessionRunInFlight: () => false, isRunningSession: () => false,
+      listSessions: () => [], listAuxiliarySessions: () => [], getAppSettings: () => saved,
+      updateAppSettings: (settings) => { if (failSave) throw new Error("save failed"); saved = settings; return settings; },
+      invalidateBackgroundProvider: (providerId) => invalidated.push(providerId),
+      getModelCatalog: () => createCatalogSnapshot(), clearProviderQuotaTelemetry: () => {}, clearSessionContextTelemetry: () => {},
+      invalidateProviderSessionThread: () => {}, broadcastSessions: () => {}, broadcastAppSettings: () => {}, broadcastModelCatalog: () => {},
+    });
+    await service.updateAppSettings({ ...saved, launchAtLoginEnabled: true });
+    assert.deepEqual(invalidated, []);
+    await service.updateAppSettings({ ...saved, codingProviderSettings: { ...saved.codingProviderSettings,
+      codex: { ...saved.codingProviderSettings.codex, apiKey: "changed-fixture-key" } } });
+    assert.deepEqual(invalidated, ["codex"]);
+    await service.updateAppSettings({ ...saved, codingProviderSettings: { ...saved.codingProviderSettings,
+      codex: { ...saved.codingProviderSettings.codex, enabled: false } } });
+    assert.deepEqual(invalidated, ["codex", "codex"]);
+    failSave = true;
+    await assert.rejects(service.updateAppSettings({ ...saved, codingProviderSettings: { ...saved.codingProviderSettings,
+      codex: { ...saved.codingProviderSettings.codex, apiKey: "rejected-fixture-key" } } }), /save failed/);
+    assert.deepEqual(invalidated, ["codex", "codex"]);
+  });
+
 
   // @test-value v2
   // kind = "contract"
