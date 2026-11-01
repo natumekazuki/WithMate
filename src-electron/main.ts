@@ -249,6 +249,9 @@ import { getGlossaryAgentRuntimeOperations } from "../src-shared/glossary/glossa
 import { getSessionGraphAgentRuntimeOperations } from "../src-shared/session-graph/session-graph-operation-schema.js";
 import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from "./session-graph/session-graph-application-service.js";
 import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
+import { SessionHistoryRuntimeService } from "./session-history/session-history-runtime-service.js";
+import { createWithMateSessionHistoryMcpServer } from "./platform/mcp/withmate-session-history-mcp.js";
+import { SESSION_HISTORY_TOOL_OPERATIONS } from "../src-shared/session-history/session-history-contract.js";
 import { SessionGraphWindowService } from "./session-graph/session-graph-window-service.js";
 import { registerSessionGraphWindowHandlers } from "./ipc/session-graph-window.js";
 import { WITHMATE_SESSION_FILE_PREVIEW_WINDOWS_CHANGED_EVENT } from "../src-shared/ipc/withmate-ipc-channels.js";
@@ -796,6 +799,17 @@ const sessionGraphRuntimeService = new SessionGraphRuntimeService({
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
 });
+const sessionHistoryRuntimeService = new SessionHistoryRuntimeService({
+  read: async (input) => {
+    const generation = mainStoreContext.storageWorker;
+    if (!generation || databaseMaintenanceRequested) throw new Error("Session history storage is unavailable.");
+    const result = await (input.scope.source.kind === "main" ? generation.stores.session.readSessionHistory(input) : generation.stores.auxiliary.readSessionHistory(input));
+    if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested) throw new Error("Session history storage changed during the read.");
+    return result;
+  },
+  bindingRegistry: agentRuntimeBindingRegistry,
+  providerAgentRuntimeTurns,
+});
 
 function listPreviewWindowsIncludingGraphs() {
   const groups = requireMainWindowFacade().listFilePreviewWindows();
@@ -913,7 +927,8 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       agentRuntimeBindingRegistry,
       providerAgentRuntimeTurns,
       resolveActorSession: resolveAgentRuntimeActorSession,
-      routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
+      sessionHistoryMcp: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer },
+      routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
     mainStoreContext.setMemoryRuntimeStatus("running");

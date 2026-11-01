@@ -31,7 +31,7 @@ Mainはruntime開始成功で`start()`し、停止開始で`stop()`する。停�
 
 履歴factoryとtool→operation対応を`SessionHistoryMcpRegistration`で登録する。factoryは許可operationだけを登録し、hostも直接tools/callの操作grantを検証する。履歴専用endpointは背景だけに公開し、通常turnからは利用できない。初期の背景接続は履歴endpointだけを許可し、Memory／Glossary／Session Graph endpointを拒否する。Memory読取の追加接続は別の実装単位であり、現段階で背景Memory書込を許可するものではない。
 
-Provider builderは通常接続の既存3 endpointと背景のsession-history endpointを分ける。factory未登録なら背景接続を拒否し、空の履歴成功へ置換しない。履歴の操作schema・factory・CLIは#908が所有し、共通host／projection／builder／main配線と同時編集しない。
+Provider builderは通常接続の既存3 endpointと背景のsession-history endpointを分ける。Mainはruntime開始時に履歴の実factoryとtool→operation対応を登録し、認可resolverの共通scope・admissionをStorage Workerの履歴readへ渡す。factory未登録なら背景接続を拒否し、空の履歴成功へ置換しない。公開操作と配布CLIの契約は[Session History](session-history.md)を参照する。
 
 native完了時は`nativeCompleted()`から`host.closeConnection()`を呼び、HTTP token・MCP endpoint・進行中readを閉じる。論理admissionは維持し、アプリの保存結果確定後に`finish()`する。取消・source／親削除・runtime停止はbinding／handleを失効し、未確定の保存をadmissionで拒否する。確定済み保存は巻き戻さない。provider credential変更・無効化ではその背景Providerの実行を失効させる。
 

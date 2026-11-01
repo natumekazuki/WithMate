@@ -1,164 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { z } from "zod";
-import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
-import { matchesSessionHistorySource, type SessionHistorySource } from "../../src-shared/session/session-history-read-scope.js";
-import type { BackgroundPurpose, BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
-import { readConversationQuerySnapshot, type MessageTable } from "../../src-electron/storage/conversation-query.js";
-import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
-import { AgentRuntimeBindingRegistry, type ProviderAgentRuntimeBindingProjection } from "../../src-electron/providers/agent-runtime-binding.js";
-import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
-import { BackgroundExecutionService, type BackgroundExecution } from "../../src-electron/providers/background-execution-service.js";
+import { buildManagedHttpMcpServers, buildCodexManagedHttpMcpConfig, buildCodexManagedHttpMcpArguments } from "../../src-electron/providers/managed-http-mcp.js";
 import { authorizeSessionHistoryRead } from "../../src-electron/providers/session-history-runtime-authorization.js";
-import { buildCodexManagedHttpMcpArguments, buildCodexManagedHttpMcpConfig, buildManagedHttpMcpServers,
-  WITHMATE_MANAGED_MCP_TOKEN_HEADER } from "../../src-electron/providers/managed-http-mcp.js";
-import { resolveAgentRuntimeBindingReference, resolveAgentRuntimeTurnCapability } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
-import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
-import { ManagedHttpMcpHost, type SessionHistoryMcpRegistration } from "../../src-electron/memory/managed-http-mcp-host.js";
-import { createMemoryV6HttpServer } from "../../src-electron/memory/memory-v6-http-server.js";
-import { MemoryV6Storage } from "../../src-electron/memory/memory-v6-storage.js";
-import { MemoryV6Service } from "../../src-electron/memory/memory-v6-service.js";
-
-const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111111", runtimeGenerationId: "22222222-2222-4222-8222-222222222222" };
-// Synthetic #908 factory/route: the registry, coordinator, host, authenticated exchange and source snapshots are production code.
-const operations = { "session_history.read_messages": "session_history.route.read_messages",
-  "session_history.get_operation": "session_history.route.get_operation" };
-const readOperation = operations["session_history.read_messages"];
-
-async function fixture() {
-  const directory = await mkdtemp(join(tmpdir(), "withmate-background-foundation-"));
-  const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
-  const auxiliary = new AuxiliarySessionStorage(dbPath);
-  const db = new DatabaseSync(dbPath);
-  const sessions = new Map<string, Session>();
-  db.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES ('character','Character','now','now')").run();
-  for (const id of ["main", "other"]) {
-    const session = { ...buildNewSession({ taskTitle: id, workspaceLabel: "fixture", workspacePath: directory, branch: "main",
-      characterId: "character", character: "Character", characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#abcdef" },
-      approvalMode: "on-request" }), id, incarnationId: `inc-${id}` };
-    sessions.set(id, session);
-    db.prepare(`INSERT INTO sessions_v6(id,incarnation_id,title,state,provider_id,catalog_revision,model_id,approval_mode,
-      character_id,character_snapshot_json,created_at,updated_at,last_active_at)
-      VALUES (?,?,'Source','active','codex',1,'test','on-request','character','{}','now','now','now')`).run(id, session.incarnationId);
-    db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,created_at) VALUES (?,0,'user',?, 'now')")
-      .run(id, JSON.stringify({ role: "user", text: "saved source" }));
-  }
-  db.prepare("INSERT INTO auxiliary_sessions(id,parent_session_id,status,created_at,updated_at) VALUES ('aux','main','active','same-created-at','now')").run();
-  db.prepare("INSERT INTO auxiliary_session_drafts(auxiliary_session_id,parent_session_id,incarnation,updated_at) VALUES ('aux','main','draft-a','now')").run();
-  db.prepare("INSERT INTO auxiliary_session_messages(auxiliary_session_id,seq,role,body,created_at) VALUES ('aux',0,'user',?,'now')")
-    .run(JSON.stringify({ role: "user", text: "auxiliary source" }));
-  sessions.set("aux", { ...sessions.get("main")!, id: "aux", incarnationId: "same-created-at" });
-  const bindings = new AgentRuntimeBindingRegistry();
-  const turns = new ProviderAgentRuntimeTurnCoordinator();
-  const storage = new MemoryV6Storage(dbPath);
-  const runtime = createMemoryV6HttpServer({ ...owner, apiSecret: "api", mcpApiSecret: "mcp", operatorApiSecret: "operator",
-    service: new MemoryV6Service({ storage }), agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
-    resolveActorSession: (id) => sessions.has(id) ? { id, providerId: "codex", characterId: "character" } : null,
-    routeAgentRuntimeExtension: (request) => {
-      if (request.path !== "/v1/session-history/fixture-read") return null;
-      const result = authorizeSessionHistoryRead({ bindings, turns }, { bindingReference: request.bindingReference,
-        turnCapability: request.turnCapability, operation: readOperation });
-      if (!result.ok) return { status: 403, value: { ok: false, code: result.code } };
-      return runWithRuntimeTurnAdmission(result.context.admission, () => {
-        const scope = result.context.scope;
-        const table: MessageTable = scope.source.kind === "main" ? "session_messages_v6" : "auxiliary_session_messages";
-        if (!matchesSessionHistorySource(scope.source, readConversationQuerySnapshot(db, table, scope.source.sessionId))) {
-          return { status: 409, value: { ok: false, code: "source_changed" } };
-        }
-        const input = request.body as { seq?: number };
-        const seq = input.seq ?? scope.fromMessageSeq;
-        if (seq < scope.fromMessageSeq || seq > scope.throughMessageSeq) return { status: 403, value: { ok: false, code: "outside_range" } };
-        const column = scope.source.kind === "main" ? "session_id" : "auxiliary_session_id";
-        const row = db.prepare(`SELECT body FROM ${table} WHERE ${column} = ? AND seq = ?`).get(scope.source.sessionId, seq) as { body: string } | undefined;
-        assertRuntimeTurnAdmission();
-        return { status: 200, value: { ok: true, body: row ? JSON.parse(row.body) : null } };
-      });
-    },
-  });
-  await runtime.start();
-  const registration: SessionHistoryMcpRegistration = { toolOperations: operations, createServer(deps, allowed) {
-    const server = new McpServer({ name: "withmate-session-history", version: "fixture" });
-    for (const [name, operation] of Object.entries(operations)) {
-      if (!allowed.includes(operation)) continue;
-      server.registerTool(name, { inputSchema: z.object({ seq: z.number().int().nonnegative().optional() }).strict() }, async (input) => {
-        const response = await deps.runtimeCall(deps.connection, { method: "POST", path: "/v1/session-history/fixture-read", body: input }, {
-          signal: new AbortController().signal, bindingReference: resolveAgentRuntimeBindingReference(deps.env),
-          turnCapability: resolveAgentRuntimeTurnCapability(deps.env), exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
-        });
-        const value = response.value as Record<string, unknown>;
-        return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value, isError: value.ok === false };
-      });
-    }
-    return server;
-  } };
-  const host = new ManagedHttpMcpHost({ connection: { api: { ...owner, runtimeInstanceId: owner.runtimeGenerationId,
-    baseUrl: `http://127.0.0.1:${runtime.address()!.port}`, apiSecret: "api" }, credential: { adapter: "mcp", adapterSecret: "mcp" } },
-    bindingRegistry: bindings, turns, fallbackAdmissionSecret: "fallback", sessionHistory: registration });
-  await host.start();
-  const executions = new BackgroundExecutionService({ bindings, turns, closeConnection: (handle) => host.closeConnection(handle) });
-  executions.start();
-  const clients: Client[] = [];
-  function scope(id = "main", purpose: BackgroundPurpose = "affect"): BackgroundExecutionScope {
-    const kind = id === "aux" ? "auxiliary" : "main";
-    const snapshot = readConversationQuerySnapshot(db, kind === "main" ? "session_messages_v6" : "auxiliary_session_messages", id)!;
-    const source: SessionHistorySource = kind === "auxiliary"
-      ? { kind, sessionId: id, incarnationId: snapshot.incarnationId, ownerIdentity: snapshot.ownerIdentity,
-        parent: { sessionId: "main", incarnationId: "inc-main" } }
-      : { kind, sessionId: id, incarnationId: snapshot.incarnationId, ownerIdentity: snapshot.ownerIdentity };
-    return { purpose, history: { source, fromMessageSeq: 0, throughMessageSeq: 0 },
-      processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] };
-  }
-  function start(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal) {
-    return executions.begin({ actorSessionId: id, providerId, session: sessions.get(id)!, scope: scope(id, purpose),
-      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants: [readOperation], signal });
-  }
-  function started(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal) {
-    const result = start(id, providerId, purpose, signal);
-    if (!result.ok) assert.fail(result.reason);
-    return result.execution;
-  }
-  function project(execution: BackgroundExecution): ProviderAgentRuntimeBindingProjection {
-    const binding = { ...execution.binding, memoryRuntimeOwner: owner };
-    return { ...binding, managedMcp: host.issue(binding, execution.handle, execution.signal) };
-  }
-  async function connect(binding: ProviderAgentRuntimeBindingProjection) {
-    const client = new Client({ name: "background-test", version: "1" });
-    clients.push(client);
-    const transport = new StreamableHTTPClientTransport(new URL(binding.managedMcp!.sessionHistoryUrl!), {
-      requestInit: { headers: { [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: binding.managedMcp!.token } },
-    });
-    await client.connect(transport);
-    return { client, transport };
-  }
-  async function request(binding: ProviderAgentRuntimeBindingProjection, url: string, name: string, sessionId?: string) {
-    return fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream",
-      [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: binding.managedMcp!.token, ...(sessionId ? { "mcp-session-id": sessionId } : {}) },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 71, method: "tools/call", params: { name, arguments: {} } }) });
-  }
-  return { db, sessions, scope, start, started, project, connect, request, bindings, turns, executions, host,
-    async close() {
-      executions.stop();
-      await Promise.all(clients.map((client) => client.close()));
-      await host.stop(); await runtime.stop(); storage.close(); auxiliary.close(); db.close();
-      await rm(directory, { recursive: true, force: true });
-    } };
-}
+import { runWithRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
+import { backgroundHistoryFixture as fixture, owner, readOperation } from "../helpers/background-history-fixture.js";
 
 // @test-value v2
 // kind = "contract"
 // claim = "同じ実Sessionで通常次turnと同Provider背景が共存し、別Provider背景も固定した保存履歴だけを読める"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
 // fault = "背景発行や通常binding置換が相互失効するか、別Providerを元SessionのProviderとして扱いreadを拒否する"
-// observable = "実MCP tools listと保存本文、通常generation、各handleのadmission、Provider builderのendpoint一覧"
+// observable = "実MCP tools listと保存本文、背景発行/終了前後の通常Glossary接続、通常generation、各handleのadmission、Provider builderのendpoint一覧"
 // observation_boundary = "public-boundary"
 // scope = "real binding/handle/HTTP host/runtime exchange with saved source fixture"
 // lifecycle = "permanent"
@@ -170,24 +22,31 @@ test("通常次turnと同Provider・別Providerの背景が同じ保存sourceを
   try {
     const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex", operationGrants: ["memory.route.list_targets"] });
     const first = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
+    const normalProjection = { ...normal, memoryRuntimeOwner: owner, turnCapability: first.capability };
+    const normalConnection = await f.connect({ ...normalProjection, managedMcp: f.host.issue(normalProjection, first) }, "glossaryUrl");
+    const normalTools = (await normalConnection.client.listTools()).tools;
     const codex = f.started();
     const claude = f.started("main", "claude", "target-memory");
     const codexBinding = f.project(codex);
     const claudeBinding = f.project(claude);
+    assert.deepEqual((await normalConnection.client.listTools()).tools, normalTools);
     f.turns.end(first);
     const nextBinding = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex", operationGrants: ["memory.route.search"] });
     const next = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
+    const nextProjection = { ...nextBinding, memoryRuntimeOwner: owner, turnCapability: next.capability };
+    const nextConnection = await f.connect({ ...nextProjection, managedMcp: f.host.issue(nextProjection, next) }, "glossaryUrl");
+    const nextTools = (await nextConnection.client.listTools()).tools;
     assert.notEqual(normal.bindingId, nextBinding.bindingId);
-    f.db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,created_at) VALUES ('main',1,'user',?,'now')")
+    f.db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,created_at) VALUES ('main',2,'user',?,'now')")
       .run(JSON.stringify({ text: "later turn" }));
     const a = await f.connect(codexBinding);
     const b = await f.connect(claudeBinding);
-    assert.deepEqual((await a.client.listTools()).tools.map((tool) => tool.name), ["session_history.read_messages"]);
+    assert.deepEqual((await a.client.listTools()).tools.map((tool) => tool.name), ["session_history.list_messages", "session_history.get_message", "session_history.list_operations", "session_history.get_operation_detail"]);
     for (const client of [a.client, b.client]) {
-      assert.deepEqual((await client.callTool({ name: "session_history.read_messages", arguments: {} })).structuredContent,
-        { ok: true, body: { role: "user", text: "saved source" } });
-      assert.deepEqual((await client.callTool({ name: "session_history.read_messages", arguments: { seq: 1 } })).structuredContent,
-        { ok: false, code: "outside_range" });
+      assert.deepEqual((await client.callTool({ name: "session_history.get_message", arguments: { seq: 0 } })).structuredContent,
+        { ok: true, seq: 0, role: "user", text: "saved source", offset: 0, nextOffset: null, totalChars: 12, turn: null });
+      assert.deepEqual((await client.callTool({ name: "session_history.get_message", arguments: { seq: 2 } })).structuredContent,
+        { ok: false, code: "HISTORY_OUT_OF_RANGE", message: "The requested message is outside the permitted history range.", effect: "none" });
     }
     assert.equal(f.turns.admit({ actorSessionId: "main", providerId: "codex", turnCapability: next.capability }).ok, true);
     assert.equal(f.bindings.getExecutionGeneration("main", "codex"), nextBinding.executionGeneration);
@@ -195,6 +54,9 @@ test("通常次turnと同Provider・別Providerの背景が同じ保存sourceを
     assert.deepEqual(Object.keys(buildCodexManagedHttpMcpConfig(codexBinding)), ["withmate-session-history-http"]);
     assert.match(buildCodexManagedHttpMcpArguments(codexBinding).join(" "), /mcp_servers.withmate-session-history-http=/);
     assert.equal(f.sessions.get("main")!.provider, "codex");
+    f.executions.finish(codex);
+    f.executions.finish(claude);
+    assert.deepEqual((await nextConnection.client.listTools()).tools, nextTools);
     f.turns.end(next);
   } finally { await f.close(); }
 });
@@ -215,24 +77,24 @@ test("通常次turnと同Provider・別Providerの背景が同じ保存sourceを
 test("専用endpointと具体的grantで通常turn・許可外操作・別bindingを拒否する", async () => {
   const f = await fixture();
   try {
-    const execution = f.started();
+    const execution = f.started("main", "codex", "affect", undefined, [readOperation]);
     const binding = f.project(execution);
     const { client, transport } = await f.connect(binding);
-    assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "session_history.get_operation", transport.sessionId)).status, 403);
+    assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "session_history.list_operations", transport.sessionId)).status, 403);
     assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "memory.append", transport.sessionId)).status, 403);
     assert.equal((await f.request(binding, binding.managedMcp!.memoryUrl, "memory.append")).status, 403);
     const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex", operationGrants: [readOperation] });
     const turn = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
     const projected = { ...normal, memoryRuntimeOwner: owner, turnCapability: turn.capability };
     const ordinary = { ...projected, managedMcp: f.host.issue(projected, turn) };
-    assert.equal((await f.request(ordinary, binding.managedMcp!.sessionHistoryUrl!, "session_history.read_messages")).status, 403);
+    assert.equal((await f.request(ordinary, binding.managedMcp!.sessionHistoryUrl!, "session_history.get_message")).status, 403);
     const auth = (reference: string, capability?: string, operation = readOperation) => authorizeSessionHistoryRead({ bindings: f.bindings, turns: f.turns },
       { bindingReference: reference, turnCapability: capability, operation });
     assert.deepEqual(auth(normal.bindingReference, turn.capability), { ok: false, code: "SESSION_BINDING_FORBIDDEN" });
     assert.deepEqual(auth(binding.bindingReference), { ok: false, code: "SESSION_BINDING_INVALID" });
     assert.deepEqual(auth(binding.bindingReference, turn.capability), { ok: false, code: "SESSION_BINDING_INVALID" });
-    assert.deepEqual(auth(binding.bindingReference, binding.turnCapability, operations["session_history.get_operation"]), { ok: false, code: "SESSION_BINDING_FORBIDDEN" });
-    assert.equal((await client.callTool({ name: "session_history.read_messages", arguments: {} })).isError, false);
+    assert.deepEqual(auth(binding.bindingReference, binding.turnCapability, "session_history.route.list_operations"), { ok: false, code: "SESSION_BINDING_FORBIDDEN" });
+    assert.partialDeepStrictEqual((await client.callTool({ name: "session_history.get_message", arguments: { seq: 0 } })).structuredContent, { ok: true });
     f.host.release(turn);
   } finally { await f.close(); }
 });
@@ -247,7 +109,7 @@ test("専用endpointと具体的grantで通常turn・許可外操作・別bindin
 // scope = "native completion versus logical application completion"
 // lifecycle = "permanent"
 // impact = "正常生成結果を保存できないか、取消済みの遅延結果を適用する"
-// distinction = "通常turnの一段階endのtestでは二つの寿命を区別できない。保存callbackはsyntheticでatomic保存の証明ではない"
+// distinction = "通常turnの一段階endのtestでは二つの寿命を区別できない。保存callbackはfixtureでatomic保存の証明ではない"
 // @end-test-value
 test("MCPを閉じてから論理finishまでの保存admissionを保持する", async () => {
   const f = await fixture();
@@ -255,7 +117,7 @@ test("MCPを閉じてから論理finishまでの保存admissionを保持する",
     const execution = f.started();
     const binding = f.project(execution);
     f.executions.nativeCompleted(execution);
-    assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "session_history.read_messages")).status, 401);
+    assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "session_history.get_message")).status, 401);
     let saved = 0;
     runWithRuntimeTurnAdmission(execution.admission, () => { saved += 1; });
     assert.equal(saved, 1);
@@ -270,34 +132,26 @@ test("MCPを閉じてから論理finishまでの保存admissionを保持する",
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存sourceの再作成を拒否し、Auxiliaryは同createdAt・同親でもdraft incarnation変更を区別し本文編集だけでは失効しない"
+// claim = "親Sessionの失効通知がMainと配下Auxiliaryの背景実行・保存admissionを終了する"
 // oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md" }
-// fault = "Auxiliary ownerIdentityからdraft incarnationを落とすか、古いMainのscopeで同IDの新履歴を返す"
-// observable = "実MCP readのsource_changedと通常draft編集後の本文、親失効後signal・admission"
+// fault = "親失効時にAuxiliaryの背景bindingを列挙せず、未確定保存の権限を残す"
+// observable = "親失効後のMain/Auxiliary signalと保存admission例外"
 // observation_boundary = "public-boundary"
-// scope = "captured production conversation snapshot and saved SQLite source identity"
+// scope = "source/parent binding revocation"
 // lifecycle = "permanent"
 // impact = "再作成された別会話の本文が古い背景処理へ公開される"
-// distinction = "Session IDやcreatedAtの単体照合では検出できないdraft ownerの差を同じ保存fixtureとHTTP経路で観測する"
+// distinction = "storageのsource拒否とは異なり、既存親失効通知で実行と未確定保存の両方が終了することを確認する"
 // risk_tags = ["authorization", "privacy"]
 // @end-test-value
-test("MainとAuxiliaryのstorage ownerIdentityをreadと同じ境界で照合する", async () => {
+test("親Session失効がMainとAuxiliaryの背景保存権限を終了する", async () => {
   const f = await fixture();
   try {
     const main = f.started();
     const aux = f.started("aux");
-    const a = await f.connect(f.project(main));
-    const b = await f.connect(f.project(aux));
-    f.db.prepare("UPDATE auxiliary_session_drafts SET draft_text='editing', durable_revision=durable_revision+1 WHERE auxiliary_session_id='aux'").run();
-    assert.equal((await b.client.callTool({ name: "session_history.read_messages", arguments: {} })).isError, false);
-    f.db.prepare("UPDATE auxiliary_session_drafts SET incarnation='draft-b' WHERE auxiliary_session_id='aux'").run();
-    assert.deepEqual((await b.client.callTool({ name: "session_history.read_messages", arguments: {} })).structuredContent, { ok: false, code: "source_changed" });
-    f.db.prepare("UPDATE sessions_v6 SET incarnation_id='inc-recreated' WHERE id='main'").run();
-    assert.deepEqual((await a.client.callTool({ name: "session_history.read_messages", arguments: {} })).structuredContent, { ok: false, code: "source_changed" });
     f.bindings.revokeSession("main");
     assert.equal(aux.signal.aborted, true);
     assert.equal(main.signal.aborted, true);
-    assert.throws(() => runWithRuntimeTurnAdmission(aux.admission, () => undefined), /no longer active/);
+    for (const execution of [main, aux]) assert.throws(() => runWithRuntimeTurnAdmission(execution.admission, () => undefined), /no longer active/);
   } finally { await f.close(); }
 });
 
@@ -353,7 +207,7 @@ test("Provider失効とruntime停止が背景の論理寿命まで終了する",
     f.bindings.revokeBackgroundProvider("claude");
     assert.equal(claude.signal.aborted, true);
     assert.equal(codex.signal.aborted, false);
-    assert.equal((await connected.client.callTool({ name: "session_history.read_messages", arguments: {} })).isError, false);
+    assert.partialDeepStrictEqual((await connected.client.callTool({ name: "session_history.get_message", arguments: { seq: 0 } })).structuredContent, { ok: true });
     f.executions.nativeCompleted(codex);
     f.executions.stop();
     assert.throws(() => runWithRuntimeTurnAdmission(codex.admission, () => undefined), /no longer active/);

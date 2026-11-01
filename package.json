@@ -140,6 +140,10 @@
       {
         "from": "build/cli/withmate-session-graph.cmd",
         "to": "withmate-session-graph.cmd"
+      },
+      {
+        "from": "build/cli/withmate-session-history.cmd",
+        "to": "withmate-session-history.cmd"
       }
     ],
     "win": {
