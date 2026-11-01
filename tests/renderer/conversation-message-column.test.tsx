@@ -23,7 +23,102 @@ import type { MarkdownImageApi } from "../../src/ui/markdown/image-resource-load
 import type { SessionFilePreviewImageActionRequest, SessionImageResourceRequest } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { installIntersectionObserver } from "../support/intersection-observer.js";
 import { SessionTurnSubmissions } from "../../src/chat/runtime/session-turn-submissions.js";
+import { subscribeSessionRunControls } from "../../src/chat/runtime/session-window-live-ingress.js";
 import type { HtmlPreviewEvent, HtmlPreviewMountRequest } from "../../src-shared/window/html-preview.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "新規・既存のMain/Auxiliaryは保存turn IDとnative IDが異なっても初回送信からlive本文を更新し、保存応答へ同じ応答面を引き継ぐ"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: pending 中の live activity / streaming response" }
+// fault = "receiptの保存IDをnative IDと比較して本文を隠すか、保存履歴への切替で本文を欠落・重複させる"
+// observable = "実Column DOMの待機・逐次本文・保存本文の行identityと件数、live controlsのnative ID"
+// observation_boundary = "consumer"
+// scope = "共有live ingress・queue receipt・Column。providerとIPCはfixtureで代替"
+// lifecycle = "permanent"
+// impact = "利用者が実行中の応答を読めず、完了時に応答の対応や内容を見失う"
+// distinction = "provider単体や型検査はlocal submissionと別IDのlive ingressが実表示へ合流することを検証しない"
+// @end-test-value
+test("conversation column は異なる保存IDとnative IDで初回のlive応答を表示する", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.requestAnimationFrame = () => 1;
+  dom.window.cancelAnimationFrame = () => {};
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, { offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["session", "auxiliary"] as const) for (const priorHistory of [false, true]) {
+      const store = new SessionTurnSubmissions();
+      const liveListeners = new Set<(id: string, state: LiveSessionRunState | null) => void>();
+      let queueChanged: ((id: string) => void) | undefined;
+      let live: LiveSessionRunState | null = null;
+      let saved: SessionMessageColumnProps["messages"] = priorHistory
+        ? [{ role: "user", text: "old prompt" }, { role: "assistant", text: "old response" }] : [];
+      const userMessageSeq = saved.length;
+      let receipt: SessionTurnQueueReceipt = {
+        sessionId: kind, incarnationId: "inc", id: "receipt", requestId: "request", sequence: 1, queuePosition: 1,
+        state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+        captured: { request: { clientRequestId: "request", userMessage: "new prompt", executionOptions: { model: "model", reasoningEffort: "medium", approvalMode: "on-request", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "" } }, attachments: [], provider: "codex", workspacePath: "workspace" },
+      };
+      const api = {
+        getLiveSessionRun: async () => live,
+        subscribeLiveSessionRun: (listener: (id: string, state: LiveSessionRunState | null) => void) => { liveListeners.add(listener); return () => { liveListeners.delete(listener); }; },
+        listSessionTurnQueue: async () => receipt.state === "completed" ? [] : [receipt],
+        getSessionTurnQueueReceipt: async () => receipt,
+        onSessionTurnQueueChanged: (listener: (id: string) => void) => { queueChanged = listener; return () => { queueChanged = undefined; }; },
+      };
+      let controlTurnId: string | undefined;
+      const disposeControls = subscribeSessionRunControls({ api, sessionId: kind, onChange: (controls) => { controlTurnId = controls.inputTurnId; } });
+      let latest: SessionMessageColumnProps | null = null;
+      function View() {
+        latest = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages: saved, runState: live ? "running" : "idle" },
+          baseProps: { ...createBaseProps(kind), turnSubmissions: store }, messageSourceKind: kind, enabled: true, api });
+        return latest ? <SessionMessageColumn {...latest} /> : null;
+      }
+      const render = () => act(async () => root.render(<View key={`${kind}-${priorHistory}`} />));
+      const responses = () => [...dom.window.document.querySelectorAll(".message-row.assistant")];
+      await render();
+      await act(async () => {
+        store.start({ sessionId: kind, incarnationId: "inc", requestId: "request", userMessage: "new prompt", historyMessageCount: userMessageSeq, queuedBehindRun: false, error: "" });
+        store.accept(receipt); queueChanged?.(kind);
+      });
+      const response = responses().at(-1);
+      assert.ok(response, "the submitted request already owns a waiting response");
+      receipt = { ...receipt, state: "running", turnId: "42", userMessageSeq };
+      saved = [...saved, { role: "user", text: "new prompt" }];
+      await act(async () => { queueChanged?.(kind); root.render(<View key={`${kind}-${priorHistory}`} />); });
+      live = { sessionId: kind, threadId: "thread", sessionTurnId: "42", turnId: "native-codex-turn", inputAvailable: true,
+        runState: "running", assistantText: "first live response", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      await act(async () => { liveListeners.forEach((listener) => listener(kind, live)); });
+      assert.equal((latest as SessionMessageColumnProps | null)?.liveRunAssistantText, "first live response");
+      assert.equal(controlTurnId, "native-codex-turn");
+      assert.ok(responses().at(-1) === response);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+      assert.match(response.textContent ?? "", /first live response/);
+      live = { ...live, assistantText: "first live response extended" };
+      await act(async () => { liveListeners.forEach((listener) => listener(kind, live)); });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 120)); });
+      assert.equal((latest as SessionMessageColumnProps | null)?.liveRunAssistantText, "first live response extended");
+      assert.match(response.textContent ?? "", /first live response extended/);
+      receipt = { ...receipt, state: "completed" };
+      saved = [...saved, { role: "assistant", text: "saved response" }];
+      live = null;
+      await act(async () => { liveListeners.forEach((listener) => listener(kind, live)); queueChanged?.(kind); root.render(<View key={`${kind}-${priorHistory}`} />); });
+      assert.ok(responses().at(-1) === response);
+      assert.match(response.textContent ?? "", /saved response/);
+      assert.equal(responses().length, priorHistory ? 2 : 1);
+      assert.deepEqual((latest as SessionMessageColumnProps | null)?.messages.map((message) => message.text), [
+        ...(priorHistory ? ["old prompt", "old response"] : []), "new prompt", "saved response",
+      ]);
+      disposeControls();
+    }
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -225,10 +320,10 @@ test("conversation column retains empty responses when the next turn starts befo
       const firstCard = first.querySelector(".message-card");
       terminals.set("request-1", { ...receipt(1), state: "completed", turnId: "turn-1", userMessageSeq: 0 });
       active = [{ ...receipt(2), state: nextState, turnId: nextState === "running" ? "turn-2" : null, userMessageSeq: nextState === "running" ? nextUserSeq : null }];
-      const nextLive: LiveSessionRunState = { sessionId: kind, threadId: "thread", turnId: "turn-2", runState: "running", assistantText: "response-2", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      const nextLive: LiveSessionRunState = { sessionId: kind, threadId: "thread", sessionTurnId: "turn-2", turnId: "native-turn-2", runState: "running", assistantText: "response-2", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
       if (nextState === "starting" && liveFirst) {
         nextLive.approvalRequest = { requestId: "approval-2", provider: "codex", kind: "command", title: "Approve next task", summary: "Next task approval", decisionMode: "direct-decision" };
-        nextLive.elicitationRequest = { requestId: "question-2", provider: "codex", turnId: "turn-2", kind: "question", delivery: "user-message", mode: "form", message: "Next task question", fields: [{ type: "text", name: "answer", title: "Next answer", required: true }] };
+        nextLive.elicitationRequest = { requestId: "question-2", provider: "codex", turnId: "native-turn-2", kind: "question", delivery: "user-message", mode: "form", message: "Next task question", fields: [{ type: "text", name: "answer", title: "Next answer", required: true }] };
       }
       if (liveFirst) live = nextLive;
       await act(async () => {
@@ -288,7 +383,7 @@ test("conversation column retains empty responses when the next turn starts befo
       const third = responses().at(-1);
       assert.ok(third && third !== second);
       active = [{ ...receipt(4), state: "running", turnId: "turn-3", userMessageSeq: thirdUserSeq }];
-      live = { ...nextLive, turnId: "turn-3", assistantText: "", approvalRequest: null, elicitationRequest: null };
+      live = { ...nextLive, sessionTurnId: "turn-3", turnId: "native-turn-3", assistantText: "", approvalRequest: null, elicitationRequest: null };
       await act(async () => { changed?.(kind); root.render(<View key={viewKey} />); });
       assert.ok(responses().at(-1) === third, "a request's own first live cannot replace its pending surface");
       live = { ...live, runState: "completed", assistantText: "final-3" };
@@ -972,7 +1067,7 @@ test("conversation column は連続queueの各応答とcanonical行identityを�
       let enabled = true;
       let latest: SessionMessageColumnProps | null = null;
       const column = () => { assert.ok(latest); return latest; };
-      const run = (sequence: number): LiveSessionRunState => ({ sessionId: kind, threadId: "thread", turnId: `turn-${sequence}`, runState: "running", assistantText: `response-${sequence}`, steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null });
+      const run = (sequence: number): LiveSessionRunState => ({ sessionId: kind, threadId: "thread", sessionTurnId: `turn-${sequence}`, turnId: `native-turn-${sequence}`, runState: "running", assistantText: `response-${sequence}`, steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null });
       function View() {
         latest = useConversationMessageColumn({ session: { id: kind, incarnationId: "inc", messages: saved, runState: live?.runState ?? "idle" }, baseProps: { ...createBaseProps(kind), turnSubmissions: store }, messageSourceKind: kind, enabled, api, liveRun: live });
         return null;
@@ -1911,7 +2006,7 @@ test("conversation column bridges optimistic sends to receipts and canonical res
       assert.equal(pendingCount(), 1);
       active = [{ ...receipt, state: "running", turnId: "turn", userMessageSeq: 0 }];
       resolved = active[0];
-      live = { sessionId: kind, threadId: "thread", turnId: "turn", runState: "running", assistantText: "", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
+      live = { sessionId: kind, threadId: "thread", sessionTurnId: "turn", turnId: "native-turn", runState: "running", assistantText: "", steps: [], backgroundTasks: [], usage: null, errorMessage: "", approvalRequest: null, elicitationRequest: null };
       await act(async () => { changed?.(kind); root.render(<View key={kind} />); });
       assert.equal(promptCount(), 1);
       assert.equal(pendingCount(), 1);
