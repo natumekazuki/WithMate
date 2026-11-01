@@ -39,7 +39,7 @@ type AsyncStore<T extends object> = {
 const STORE_METHODS = {
   sessionGraph: ["execute"],
   session: [
-    "getSessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
+    "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
@@ -52,7 +52,7 @@ const STORE_METHODS = {
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
   queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
-    "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
+    "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
     "listActiveAuxiliarySessionSummaries", "listRunningActiveAuxiliarySessions", "getActiveAuxiliarySession",
     "getAuxiliarySession", "getAuxiliarySessionSummary", "getAuxiliarySessionMetadata", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",

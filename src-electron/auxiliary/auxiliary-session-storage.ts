@@ -2,6 +2,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { assertFullConversation, conversationMessageColumns, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink, type ConversationQueryRow } from "../storage/conversation-query.js";
 import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
+import type { SessionHistoryReadInput, SessionHistoryResult } from "../../src-shared/session-history/session-history-contract.js";
+import { readSessionHistory } from "../storage/session-history-read.js";
 import { randomUUID } from "node:crypto";
 
 import {
@@ -520,6 +522,11 @@ export class AuxiliarySessionStorage {
 
   readConversationQueryBatch(sessionId: string, afterSeq: number) {
     return this.withDb((db) => readConversationQueryBatch(db, "auxiliary_session_messages", sessionId, afterSeq));
+  }
+
+  readSessionHistory(input: SessionHistoryReadInput): SessionHistoryResult {
+    if (input.scope.source.kind !== "auxiliary") throw new Error("Auxiliary history reads require an auxiliary source.");
+    return this.withDb((db) => readSessionHistory(db, input));
   }
 
   getAuxiliaryDraft(auxiliarySessionId: string): AuxiliaryDraftRecord | null {

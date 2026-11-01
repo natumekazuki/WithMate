@@ -11,6 +11,7 @@ import { buildProviderAgentRuntimeBindingEnv } from "../providers/provider-agent
 import { createWithMateMemoryMcpServer } from "../platform/mcp/withmate-memory-mcp.js";
 import { createWithMateGlossaryMcpServer } from "../platform/mcp/withmate-glossary-mcp.js";
 import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-session-graph-mcp.js";
+import { createWithMateSessionHistoryMcpServer } from "../platform/mcp/withmate-session-history-mcp.js";
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
 
@@ -134,7 +135,7 @@ export class ManagedHttpMcpHost {
       context.removeAbortListener = () => signal.removeEventListener("abort", abort);
     }
     const baseUrl = `http://127.0.0.1:${this.#address.port}`;
-    return { memoryUrl: `${baseUrl}/mcp/memory`, glossaryUrl: `${baseUrl}/mcp/glossary`, sessionGraphUrl: `${baseUrl}/mcp/session-graph`, token: context.token };
+    return { memoryUrl: `${baseUrl}/mcp/memory`, glossaryUrl: `${baseUrl}/mcp/glossary`, sessionGraphUrl: `${baseUrl}/mcp/session-graph`, sessionHistoryUrl: `${baseUrl}/mcp/session-history`, token: context.token };
   }
 
   release(handle: ProviderAgentRuntimeTurnHandle): void {
@@ -203,6 +204,7 @@ export class ManagedHttpMcpHost {
           },
         })
       : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
+      : pathname === "/mcp/session-history" ? createWithMateSessionHistoryMcpServer(deps)
       : createWithMateSessionGraphMcpServer(deps);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
@@ -217,7 +219,7 @@ export class ManagedHttpMcpHost {
 
   async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const pathname = request.url;
-    if (pathname !== "/mcp/memory" && pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph") {
+    if (pathname !== "/mcp/memory" && pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph" && pathname !== "/mcp/session-history") {
       reply(response, 404, "Unknown MCP endpoint."); return;
     }
     if (request.socket.remoteAddress !== "127.0.0.1"

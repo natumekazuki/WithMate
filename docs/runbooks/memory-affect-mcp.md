@@ -43,7 +43,7 @@ Affectのcorrect/resetは `explicitUserRequest: true` と具体的な `reason` �
 - status / instances / metrics / 容量等の診断集計はbindingなしで利用できる。bindingを提示した場合は、その許可範囲と失効を検証する。無効bindingを無視してunboundへ降格しない。
 - bound mutationはcurrent turn capabilityを検証する。readはcapability省略を許すが、提示されたcapabilityがstaleなら拒否する。取消・失効後の未確定副作用も同じapplication境界で停止する。
 
-Session Graphもbinding必須であり、Memoryとは別の公開操作を持つ。詳細は[Session Graph](../design/session-graph.md)を参照する。
+Session Graphもbinding必須であり、Memoryとは別の公開操作を持つ。詳細は[Session Graph](../design/session-graph.md)を参照する。保存済み履歴の読取は、背景実行だけが使うSession Historyの別操作であり、通常turnのbindingには付与しない。詳細は[Session History](../design/session-history.md)を参照する。
 
 `memory.list_tags`は`targets`へ明示targetを1件だけ指定する。`limit`で1 pageのtag総数を制限し、`nextCursor`が返る間は同じtargetとcount条件で継続する。cursorはruntime発行値だけを使う。`sampleLimit`は`withCounts: true`時の各tagのsample数だけを制限し、tag総数の上限には使わない。
 

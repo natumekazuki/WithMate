@@ -2,6 +2,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { assertFullConversation, conversationMessageColumns, readConversationPage, readConversationQuerySnapshot, readConversationQueryBatch, type ConversationMutationSink } from "../storage/conversation-query.js";
 import { withMessageRunFailure } from "../../src-shared/session/message-run-failure.js";
 import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
+import type { SessionHistoryReadInput, SessionHistoryResult } from "../../src-shared/session-history/session-history-contract.js";
+import { readSessionHistory } from "../storage/session-history-read.js";
 import type { SessionFilePinOwner, SessionFilePinReference, StoredSessionFilePin } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { randomUUID } from "node:crypto";
 
@@ -568,6 +570,11 @@ export class SessionStorageV6 {
 
   readConversationQueryBatch(sessionId: string, afterSeq: number) {
     return readConversationQueryBatch(this.db, "session_messages_v6", sessionId, afterSeq);
+  }
+
+  readSessionHistory(input: SessionHistoryReadInput): SessionHistoryResult {
+    if (input.scope.source.kind !== "main") throw new Error("Main history reads require a main source.");
+    return readSessionHistory(this.db, input);
   }
 
   getSessionSummary(sessionId: string): SessionSummary | null {

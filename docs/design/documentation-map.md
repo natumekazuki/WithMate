@@ -56,6 +56,7 @@
 | [Auxiliary Session](auxiliary-session.md) | 複数Auxiliary、一覧、共通Composer、draftの保存・consume・flush |
 | [Electron Session Store](electron-session-store.md) | Session・turn・設定・catalogの読書きと保存owner |
 | [Session Graph](session-graph.md) | Main/Auxiliary共有の構造化記録、MCP、競合、閲覧図 |
+| [Session History](session-history.md) | 背景実行向けの保存済み会話・操作記録の読取、認可範囲、MCP／CLI |
 | [Provider Adapter](provider-adapter.md) | provider連携とadapterの境界 |
 | [Coding Agent Capability Matrix](coding-agent-capability-matrix.md) | providerごとの対応機能 |
 | [Provider Usage Telemetry](provider-usage-telemetry.md) | usage、quota、context情報 |
