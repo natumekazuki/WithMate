@@ -28,7 +28,7 @@ const messages: Message[] = [
     runChecks: [{ label: "npm test", value: "fail" }],
   } },
   { role: "user", text: "retry" },
-  { role: "assistant", text: "capacity reached" },
+  { role: "assistant", text: "capacity reached", elicitationRecords: [{ requestId: "q1", kind: "question", message: "Q".repeat(50), fields: [{ title: "choice" }], status: "pending" }] },
   { role: "user", text: "still waiting" },
   { role: "user", text: "steered input" },
 ];
@@ -126,9 +126,23 @@ test("Mainの固定範囲を順序とTurn対応を保って返し、省略と未
     const rest = read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 0, offset: first.nextOffset }) as Record<string, any>;
     assert.deepEqual([first.text + rest.text, rest.nextOffset], [longDetail, null]);
     assert.equal(failureCode(read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 1 })), "HISTORY_NOT_SAVED");
+    const emoji = read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 0, maxChars: 1, offset: 0 }) as Record<string, any>;
+    assert.deepEqual([emoji.text, emoji.nextOffset], ["a", 1]);
+    assert.equal(failureCode(read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 0, offset: 3 })), "HISTORY_INVALID_REQUEST");
+    const pair = read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 0, maxChars: 1, offset: 2 }) as Record<string, any>;
+    assert.deepEqual([pair.text, pair.nextOffset], ["\u{1F600}", 4]);
+    const budgeted = read(main, scope, "get_operation_detail", { seq: 1, kind: "changed_file", index: 0, maxChars: 80 }) as Record<string, any>;
+    assert.deepEqual([budgeted.rows.length, budgeted.nextOffset], [1, 1]);
+    const oneRow = read(main, scope, "get_operation_detail", { seq: 1, kind: "changed_file", index: 0, row: 1, maxChars: 10 }) as Record<string, any>;
+    assert.deepEqual([oneRow.text.length, oneRow.nextOffset, oneRow.row], [10, 10, 1]);
     const rows = read(main, scope, "get_operation_detail", { seq: 1, kind: "changed_file", index: 0, offset: 1, maxRows: 1 }) as Record<string, any>;
     assert.deepEqual([rows.rows.length, rows.nextOffset, rows.totalRows], [1, 2, 3]);
     assert.equal(failureCode(read(main, scope, "get_operation_detail", { seq: 1, kind: "operation", index: 0, maxRows: 1 })), "HISTORY_INVALID_REQUEST");
+    const withQuestion = read(main, scope, "get_message", { seq: 3, maxChars: 1 }) as Record<string, any>;
+    assert.deepEqual([withQuestion.text, withQuestion.elicitationRecordCount, withQuestion.elicitationRecords], ["c", 1, undefined]);
+    const question = read(main, scope, "get_operation_detail", { seq: 3, kind: "elicitation", index: 0, maxChars: 20 }) as Record<string, any>;
+    assert.deepEqual([question.text.length, question.nextOffset], [20, 20]);
+    assert.equal(failureCode(read(main, scope, "get_operation_detail", { seq: 3, kind: "elicitation", index: 1 })), "HISTORY_NOT_SAVED");
     assert.equal(failureCode(read(main, mainScope(session, 99), "list_messages", {})), "HISTORY_RANGE_UNAVAILABLE");
   });
 });

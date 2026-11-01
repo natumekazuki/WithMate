@@ -31,9 +31,9 @@ type SessionHistoryReadScope = {
 | `session_history.list_messages` | `list-messages` | 範囲内のmessage一覧。role、記録済みTurn、本文previewと文字数、操作件数 |
 | `session_history.get_message` | `get-message` | 1 messageの本文を`maxChars`（UTF-16 code unit、最大100,000）単位で取得 |
 | `session_history.list_operations` | `list-operations` | 1 messageの操作・変更file・checkを`section`ごとに一覧。操作は成否・終了コード・error・省略・詳細保存の有無を持つ |
-| `session_history.get_operation_detail` | `get-operation-detail` | 操作1件の保存済み出力（`kind: "operation"`、`maxChars`）、または変更file 1件のdiff行（`kind: "changed_file"`、`maxRows`）を取得 |
+| `session_history.get_operation_detail` | `get-operation-detail` | 操作1件の保存済み出力（`kind: "operation"`）、質問記録1件のJSON（`kind: "elicitation"`）を`maxChars`単位で取得。変更file 1件のdiff行（`kind: "changed_file"`、`maxRows`と`maxChars`の量上限）も取得し、上限を超える1行は`oversized`として一覧し、`row`指定で分割取得する |
 
-一覧は`offset`／`limit`（messageは最大100、操作等は最大200）で読み、応答の`total`と`nextOffset`で続きを判断する。`nextOffset: null`が終端である。本文・詳細も`offset`と`nextOffset`で分割し、surrogate pairの途中では切らない。
+一覧は`offset`／`limit`（messageは最大100、操作等は最大200）で読み、応答の`total`と`nextOffset`で続きを判断する。`nextOffset: null`が終端である。本文・詳細も`offset`と`nextOffset`で分割する。pageはsurrogate pairの途中で終わらず、`maxChars`が1でpairの先頭なら、進捗のためpair全体（2 code unit）を返す。pairの途中を指す`offset`は`HISTORY_INVALID_REQUEST`である。`get_message`は質問記録を含めず、件数`elicitationRecordCount`だけを返す。
 
 CLIは`--json <json>`、`--file <path>`、`@file`、`--stdin`のいずれか1つで入力する。`help`と`schema`はruntime接続なしで操作の使い方と入力schemaを返す。bindingとturn capabilityは環境から受け取り、入力で指定しない。
 
@@ -62,7 +62,8 @@ Turnの対応は、Turn記録の`user_message_seq`／`assistant_message_seq`が�
 | `HISTORY_SCOPE_INVALID` | bindingに有効な履歴scopeがない |
 | `HISTORY_EXECUTION_INACTIVE` | 背景実行が終了・取消・失効している |
 | `HISTORY_READ_FAILED` | 保存の読取に失敗した。内部の詳細は返さない |
-| `SESSION_BINDING_REQUIRED`／`SESSION_BINDING_INVALID`／`SESSION_BINDING_FORBIDDEN` | bindingがない・無効・履歴grantがない |
+| `SESSION_HISTORY_BINDING_REQUIRED` | 入口（CLI／MCP adapter）の環境にbinding参照がない。通信前の失敗で、`message`は付かない |
+| `SESSION_BINDING_INVALID`／`SESSION_BINDING_FORBIDDEN` | routeでbindingが無効、または履歴grantがない |
 | `SESSION_HISTORY_TRANSPORT_ERROR` | runtimeとの通信に失敗した。読取専用のため保存効果はない |
 
 ## 実装境界

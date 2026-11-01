@@ -75,10 +75,17 @@ function toTurn(row: TurnRow) {
   };
 }
 
+function splitsSurrogatePair(text: string, offset: number): boolean {
+  const unit = text.charCodeAt(offset);
+  const before = text.charCodeAt(offset - 1);
+  return offset > 0 && unit >= 0xdc00 && unit <= 0xdfff && before >= 0xd800 && before <= 0xdbff;
+}
+
+/** A page never ends inside a surrogate pair; a budget of one code unit at a pair returns the whole pair so paging progresses. */
 function sliceText(text: string, offset: number, max: number) {
   let end = Math.min(text.length, offset + max);
   const last = text.charCodeAt(end - 1);
-  if (end < text.length && end > offset + 1 && last >= 0xd800 && last <= 0xdbff) end -= 1;
+  if (end < text.length && last >= 0xd800 && last <= 0xdbff) end = end > offset + 1 ? end - 1 : end + 1;
   return { text: text.slice(offset, end), offset, nextOffset: end < text.length ? end : null, totalChars: text.length };
 }
 
@@ -116,6 +123,8 @@ export function readSessionHistory(db: DatabaseSync, input: SessionHistoryReadIn
   const row = db.prepare(`SELECT seq, role, body, artifact_body FROM ${layout.table} WHERE ${layout.owner} = ? AND seq = ?`).get(source.sessionId, request.seq) as MessageRow | undefined;
   if (!row) return failure("HISTORY_NOT_SAVED", "No message is saved at the requested position.");
   if (input.operation === "get_message") return getMessage(db, layout, source.sessionId, row, input.request as SessionHistoryRequest<"get_message">);
+  const detail = input.request as SessionHistoryRequest<"get_operation_detail">;
+  if (input.operation === "get_operation_detail" && detail.kind === "elicitation") return getElicitation(decodeMessage(row, source.sessionId), detail);
   const artifact = loadArtifact(row, source.sessionId);
   if (!artifact) return failure("HISTORY_NOT_SAVED", "The message has no saved operation record.");
   return input.operation === "list_operations"
@@ -154,10 +163,11 @@ function getMessage(db: DatabaseSync, layout: Layout, sessionId: string, row: Me
   const message = decodeMessage(row, sessionId);
   const offset = request.offset ?? 0;
   if (offset > message.text.length) return failure("HISTORY_INVALID_REQUEST", "offset is beyond the message text.");
+  if (splitsSurrogatePair(message.text, offset)) return failure("HISTORY_INVALID_REQUEST", "offset is inside a surrogate pair.");
   return {
     ok: true, seq: row.seq, role: message.role, turn: readTurns(db, layout, sessionId, row.seq, row.seq).get(row.seq) ?? null,
     ...sliceText(message.text, offset, request.maxChars ?? SESSION_HISTORY_DEFAULT_TEXT_LIMIT),
-    ...(message.elicitationRecords?.length ? { elicitationRecords: message.elicitationRecords } : {}),
+    ...(message.elicitationRecords?.length ? { elicitationRecordCount: message.elicitationRecords.length } : {}),
   };
 }
 
@@ -185,26 +195,52 @@ function listOperations(seq: number, saved: { artifact: MessageArtifact; detailS
   };
 }
 
+function getElicitation(message: Message, request: SessionHistoryRequest<"get_operation_detail">): SessionHistoryResult {
+  if (request.maxRows !== undefined || request.row !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows and row do not apply to elicitation.");
+  const record = message.elicitationRecords?.[request.index];
+  if (!record) return failure("HISTORY_NOT_SAVED", "No elicitation record is saved at the requested index.");
+  return textDetail(request.seq, "elicitation", request, JSON.stringify(record));
+}
+
+function textDetail(seq: number, kind: string, request: SessionHistoryRequest<"get_operation_detail">, text: string, extra: Record<string, unknown> = {}): SessionHistoryResult {
+  const offset = request.offset ?? 0;
+  if (offset > text.length) return failure("HISTORY_INVALID_REQUEST", "offset is beyond the detail text.");
+  if (splitsSurrogatePair(text, offset)) return failure("HISTORY_INVALID_REQUEST", "offset is inside a surrogate pair.");
+  return { ok: true, seq, kind, index: request.index, ...extra, ...sliceText(text, offset, request.maxChars ?? SESSION_HISTORY_DEFAULT_TEXT_LIMIT) };
+}
+
 function getOperationDetail(seq: number, saved: { artifact: MessageArtifact; detailSaved: boolean }, request: SessionHistoryRequest<"get_operation_detail">): SessionHistoryResult {
   const offset = request.offset ?? 0;
   if (request.kind === "operation") {
-    if (request.maxRows !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows applies to changed_file only.");
+    if (request.maxRows !== undefined || request.row !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows and row apply to changed_file only.");
     const operation = saved.artifact.operationTimeline?.[request.index];
     if (!operation) return failure("HISTORY_NOT_SAVED", "No operation is saved at the requested index.");
     if (operation.details === undefined) return failure("HISTORY_NOT_SAVED", "No detail is saved for the operation.");
-    if (offset > operation.details.length) return failure("HISTORY_INVALID_REQUEST", "offset is beyond the operation detail.");
-    return {
-      ok: true, seq, kind: "operation", index: request.index, type: operation.type,
-      ...sliceText(operation.details, offset, request.maxChars ?? SESSION_HISTORY_DEFAULT_TEXT_LIMIT),
-      truncatedAtSave: operation.truncated === true,
-    };
+    return textDetail(seq, "operation", request, operation.details, { type: operation.type, truncatedAtSave: operation.truncated === true });
   }
-  if (request.maxChars !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxChars applies to operation only.");
   const file = saved.artifact.changedFiles[request.index];
   if (!file) return failure("HISTORY_NOT_SAVED", "No changed file is saved at the requested index.");
   if (!saved.detailSaved) return failure("HISTORY_NOT_SAVED", "The diff of the changed file is not saved.");
-  const page = pageOf(file.diffRows, offset, request.maxRows ?? SESSION_HISTORY_DEFAULT_ROW_LIMIT);
-  if (!page) return failure("HISTORY_INVALID_REQUEST", "offset is beyond the diff rows.");
-  return { ok: true, seq, kind: "changed_file", index: request.index, path: file.path, changeKind: file.kind, rows: page.items,
-    offset: page.offset, nextOffset: page.nextOffset, totalRows: page.total };
+  const budget = request.maxChars ?? SESSION_HISTORY_DEFAULT_TEXT_LIMIT;
+  if (request.row !== undefined) {
+    if (request.maxRows !== undefined) return failure("HISTORY_INVALID_REQUEST", "maxRows does not apply when row is given.");
+    const row = file.diffRows[request.row];
+    if (!row) return failure("HISTORY_NOT_SAVED", "No diff row is saved at the requested row.");
+    return textDetail(seq, "changed_file", request, JSON.stringify(row), { path: file.path, row: request.row });
+  }
+  if (offset > file.diffRows.length) return failure("HISTORY_INVALID_REQUEST", "offset is beyond the diff rows.");
+  const maxRows = request.maxRows ?? SESSION_HISTORY_DEFAULT_ROW_LIMIT;
+  const rows: unknown[] = [];
+  let chars = 0;
+  let end = offset;
+  while (end < file.diffRows.length && rows.length < maxRows) {
+    const length = JSON.stringify(file.diffRows[end]).length;
+    if (rows.length && chars + length > budget) break;
+    // A row larger than the budget is not inlined; it is read with `row` in pieces.
+    rows.push(length > budget ? { row: end, oversized: true, chars: length } : file.diffRows[end]);
+    chars += Math.min(length, budget);
+    end += 1;
+  }
+  return { ok: true, seq, kind: "changed_file", index: request.index, path: file.path, changeKind: file.kind, rows,
+    offset, nextOffset: end < file.diffRows.length ? end : null, totalRows: file.diffRows.length };
 }

@@ -41,11 +41,12 @@ export const sessionHistoryOperationRequestSchemas = {
   }).strict(),
   get_operation_detail: z.object({
     seq,
-    kind: z.enum(["operation", "changed_file"]),
-    index: z.number().int().nonnegative(),
+    kind: z.enum(["operation", "changed_file", "elicitation"]),
+    index: z.number().int().nonnegative().describe("Operation, changed file or elicitation record index."),
+    row: z.number().int().nonnegative().optional().describe("kind=changed_file only. Reads one diff row as JSON text in pieces; offset then counts UTF-16 code units."),
     offset,
-    maxChars: z.number().int().min(1).max(SESSION_HISTORY_TEXT_LIMIT).optional().describe("kind=operation only. Counted in UTF-16 code units."),
-    maxRows: z.number().int().min(1).max(SESSION_HISTORY_ROW_LIMIT).optional().describe("kind=changed_file only."),
+    maxChars: z.number().int().min(1).max(SESSION_HISTORY_TEXT_LIMIT).optional().describe("Counted in UTF-16 code units. Text pieces, and the size budget of a changed_file row listing; a row over the budget is listed as oversized and read with row."),
+    maxRows: z.number().int().min(1).max(SESSION_HISTORY_ROW_LIMIT).optional().describe("kind=changed_file row listing only."),
   }).strict(),
 } as const;
 export type SessionHistoryOperation = keyof typeof sessionHistoryOperationRequestSchemas;
