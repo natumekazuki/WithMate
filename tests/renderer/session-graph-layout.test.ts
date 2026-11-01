@@ -220,4 +220,58 @@ test("live additions and reordered reads preserve established positions", () => 
   const extended = layoutSessionGraph(records.slice(0, 3), [...edges, relation("b", "1", "2")], 960, 600, new Map(), connected);
   for (const record of records.slice(0, 2)) assert.deepEqual(extended.positions.get(record.id), connected.positions.get(record.id));
   assertGeometry(extended);
+  const membership = new Map(records.slice(0, 3).map((record) => [record.id, "topic"]));
+  const band = layoutSessionGraph(records.slice(0, 3), [], 1440, 800, new Map(), undefined, membership);
+  const linked = layoutSessionGraph(records.slice(0, 3), [relation("new", "0", "2")], 1440, 800, new Map(), band, membership);
+  const translation = linked.positions.get("0")!.x - band.positions.get("0")!.x;
+  // A new detour can translate the band, but must not reorder its records.
+  for (const record of records.slice(0, 3)) assert.equal(linked.positions.get(record.id)!.x - band.positions.get(record.id)!.x, translation);
+  assertGeometry(linked);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "All Topicsの所属帯がrecordを包含し、Topicを跨ぐ保存済み関係の経路とlabelをcard・見出しに重ねない"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
+// fault = "異なるTopicのrecordを同じ帯へ混ぜるか、帯見出しの予約領域へ関係線・label・cardを配置する"
+// observable = "所属帯とrecordの包含、見出し矩形と関係経路の非交差、実寸labelの非交差"
+// observation_boundary = "consumer"
+// scope = "Topic所属付きlayoutの広幅・狭幅・長label・Topic間edge"
+// lifecycle = "permanent"
+// impact = "Topicの所属と関係を誤読するか、見出し・関係labelが読めなくなる"
+// distinction = "既存の非group layout testはTopic見出しの領域と所属の包含を扱わない"
+// @end-test-value
+test("topic bands contain their records and reserve readable headings around cross-topic edges", () => {
+  const records = Array.from({ length: 7 }, (_, i) => ({ id: String(i) }));
+  const membership = new Map(records.map((item, i) => [item.id, i < 3 ? "a" : i < 6 ? "b" : "empty"]));
+  const edges = [relation("inside", "0", "1"), relation("cross", "1", "3"), relation("return", "5", "2")];
+  const sizes = new Map(edges.map((edge) => [edge.id, { width: edge.id === "cross" ? 280 : 90, height: edge.id === "cross" ? 80 : 26 }]));
+  for (const width of [600, 1440]) {
+    const layout = layoutSessionGraph(records, edges, width, 800, sizes, undefined, membership);
+    assertGeometry(layout);
+    assert.deepEqual(layout.topicGroups?.map((group) => group.topicId), ["a", "b", "empty"]);
+    for (const group of layout.topicGroups!) {
+      const heading = { ...group, height: 56 };
+      for (const item of records) {
+        const position = layout.positions.get(item.id)!;
+        const node = { ...position, width: 240, height: 112 };
+        if (membership.get(item.id) === group.topicId) {
+          assert.ok(node.x >= group.x && node.x + node.width <= group.x + group.width);
+          assert.ok(node.y >= group.y + 68 && node.y + node.height <= group.y + group.height);
+        } else assert.equal(intersects(node, group), false);
+        assert.equal(intersects(node, heading), false);
+      }
+      for (const route of layout.edgeRoutes.values()) {
+        assert.equal(intersects(heading, { x: route.labelX - route.labelWidth / 2, y: route.labelY - route.labelHeight / 2, width: route.labelWidth, height: route.labelHeight }), false);
+        for (const points of route.segments) for (let i = 1; i < points.length; i += 1) assert.equal(segmentIntersects(points[i - 1], points[i], heading), false, JSON.stringify({ heading, from: points[i - 1], to: points[i] }));
+      }
+    }
+  }
+  const mixedNodes = [...records.slice(0, 3), { id: "topic:b" }, { id: "topic:c" }];
+  const mixedMembership = new Map(mixedNodes.map((item) => [item.id, item.id.startsWith("topic:") ? item.id.slice(6) : "a"]));
+  const mixed = layoutSessionGraph(mixedNodes, [relation("mixed", "0", "topic:b")], 1440, 800, new Map([["mixed", { width: 90, height: 26 }]]), undefined, mixedMembership, new Set(["a"]));
+  assert.deepEqual(mixed.topicGroups?.map((group) => group.topicId), ["a"]);
+  assert.equal(mixed.positions.get("topic:b")!.y, mixed.positions.get("topic:c")!.y);
+  assert.ok(mixed.positions.get("topic:b")!.y >= mixed.topicGroups![0].y + mixed.topicGroups![0].height);
+  assertGeometry(mixed);
 });

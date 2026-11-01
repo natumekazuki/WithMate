@@ -410,7 +410,7 @@ test("graph overview groups long paths and expands every record without inventin
 
 // @test-value v2
 // kind = "invariant"
-// claim = "俯瞰の集約は分岐・合流・関係の種類やlabelや向きの変更・循環・未取得端点を隠さない"
+// claim = "俯瞰の集約はTopic境界・分岐・合流・関係の種類やlabelや向きの変更・循環・未取得端点を隠さない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md" }
 // fault = "次数だけで集約し意味の境界や不完全な接続を一本道に見せる"
 // observable = "境界recordの個別node、循環の全recordとedge、集約内外のrecord被覆"
@@ -420,6 +420,7 @@ test("graph overview groups long paths and expands every record without inventin
 // @end-test-value
 test("graph overview retains semantic boundaries, branches, cycles and unloaded endpoints", () => {
   const { records, relations } = chainRecords(24);
+  records[2].topicId = "other-topic";
   records.push(record("branch"));
   relations[5].kind = "supports";
   relations[9].label = "Condition";
@@ -428,7 +429,7 @@ test("graph overview retains semantic boundaries, branches, cycles and unloaded 
   relations.push({ id: "unloaded", fromId: "node-21", toId: "outside", kind: "depends_on" });
   const overview = projectSessionGraph(records, relations, 3);
   const singles = new Set(overview.nodes.filter((node) => node.records.length === 1).map((node) => node.records[0].id));
-  for (const id of [0, 5, 6, 9, 10, 13, 14, 17, 21, 23]) assert.ok(singles.has(`node-${id}`), `boundary ${id}`);
+  for (const id of [0, 1, 2, 3, 5, 6, 9, 10, 13, 14, 17, 21, 23]) assert.ok(singles.has(`node-${id}`), `boundary ${id}`);
   assert.ok(singles.has("branch"));
   assert.deepEqual(overview.nodes.flatMap((node) => node.records.map((item) => item.id)).sort(), records.map((item) => item.id).sort());
   const cycle = chainRecords(8);
