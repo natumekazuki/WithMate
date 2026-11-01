@@ -80,7 +80,7 @@ function authority(value: unknown, field = "authority"): CharacterOperationAutho
   throw new CharacterContextValidationError(`${field}.kind is not supported.`, `${field}.kind`);
 }
 
-function episode(value: unknown, field = "episode"): CharacterMemoryEpisodeInput {
+export function validateCharacterMemoryEpisodeInput(value: unknown, field = "episode"): CharacterMemoryEpisodeInput {
   const input = record(value, field);
   exactKeys(input, ["title", "body", "preview", "motif", "observedFact", "characterObservation"], field);
   const observedFact = optionalText(input.observedFact, `${field}.observedFact`);
@@ -246,7 +246,7 @@ export function validateCharacterMemoryAppendEpisodeRequest(value: unknown): Cha
     sessionId: text(input.sessionId, "sessionId"),
     authority: authority(input.authority),
     idempotencyKey: text(input.idempotencyKey, "idempotencyKey"),
-    episode: episode(input.episode),
+    episode: validateCharacterMemoryEpisodeInput(input.episode),
   };
 }
 
@@ -261,7 +261,7 @@ export function validateCharacterMemoryCorrectRequest(value: unknown): Character
     authority: authority(input.authority),
     reason: text(input.reason, "reason"),
     idempotencyKey: text(input.idempotencyKey, "idempotencyKey"),
-    replacement: episode(input.replacement, "replacement"),
+    replacement: validateCharacterMemoryEpisodeInput(input.replacement, "replacement"),
   };
 }
 
