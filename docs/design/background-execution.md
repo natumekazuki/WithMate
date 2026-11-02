@@ -79,7 +79,25 @@ native完了時は`nativeCompleted()`から`host.closeConnection()`を呼び、H
 
 アプリは固定history範囲、参照可能な保存messageとそのprocessing所属、操作／checkのindexをcontextへ渡す。validatorは根拠の実在・範囲と候補ごとにprocessing根拠があることを確認する。`execution_result`には保存済みの操作またはcheck参照を必要とするが、成功・失敗・成否不明によって候補を拒否しない。実行結果の解釈と記録内容の意味判断は生成LLMに委ね、validatorに成否判定入力は持たせない。対象Memoryへ`character_interpretation`は保存候補として返さない。これは参照・値の検証であり、自然言語の真偽や同一性を証明するものではない。成否不明を成功へ補完しない等の生成指示や既存の保護境界を、validatorによる意味の完全保証へ置き換えない。
 
-Characterの保存先はcontextの当該Character targetで固定し、対象Memoryはcontextのslot→targetだけを返す。モデル出力にowner、target tuple、権限、保存key等を受け付けない。contextはアプリが認可済みの実sourceから構成する内部入力であり、生成出力の自己申告から作らない。実owner／admissionの認可は接続側が担う。schemaは`z.toJSONSchema(schema, { io: "input" })`で生成用の構造schemaにでき、実在確認・正規化はvalidatorを通す。現時点では通常turnのMemory操作・生成経路にこのmoduleを配線していない。
+Characterの保存先はcontextの当該Character targetで固定し、対象Memoryはcontextのslot→targetだけを返す。モデル出力にowner、target tuple、権限、保存key等を受け付けない。contextはアプリが認可済みの実sourceから構成する内部入力であり、生成出力の自己申告から作らない。実owner／admissionの認可は接続側が担う。schemaは`z.toJSONSchema(schema, { io: "input" })`で生成用の構造schemaにでき、実在確認・正規化はvalidatorを通す。通常turnのMemory操作は変更せず、背景の内部保存入口からこのvalidatorを利用する。
+
+## Memory候補のMain内部保存
+
+`src-electron/memory/background-memory-application-service.ts`の`BackgroundMemoryApplicationService.apply(execution, final, context)`は、既存の同一`BackgroundExecution`を受け取るtrusted appの保存入口である。第二のbeginや独自の実行管理を持たず、finishも呼ばない。
+
+`BackgroundMemoryContext`は許可read時にアプリが構成したfull `SessionHistoryReadScope`、processing Turn範囲、保存messageのseq・processing所属・操作/check index、slot→targetを持つ。historyとprocessingはregistryの実bindingのscopeと一致し、slotの全targetはその`memoryTargets`内でなければならない。モデルからcontextを構成しない。実行結果の成否や意味を判定する入力は不要である。
+
+保存入口はregistryの実背景binding、current handle／capabilityと共有admission state、Memory用途、local-userとCharacterを確認する。注入される`readMainSource(history)`は実Main metadataと同じ保存読取境界で観測した既存ownerIdentityを返す。Main ID・incarnation・ownerIdentity・Characterを照合し、source不存在、read-only、character-authoring、Auxiliary、別executionや許可範囲を広げるcontextは保存前に拒否する。source readはアプリ所有portであり、モデル値や親Mainへの付け替えで代用しない。
+
+final全体を既存二用途validatorで検証してから最初のwriteへ進む。CharacterはbindingのCharacter owner＋character scopeに固定し、既存`CharacterContextApplicationService.appendEpisode`のCharacter／Main scope検証からMemory appendへ進む。対象Memoryは許可slotを解決して既存`MemoryV6Service.append`へ進む。アプリが実binding由来の`session_binding` principal（memory.appendのみ）、schemaVersion、新規保存keyを補い、正規化済みtagを公開入力のtype/valueへ写像する。無条件のlocal-user principal、通常会話のwrite credential、新batch／別storeは使わない。Affect eventやlinked episodeは生成しない。
+
+一候補ずつ`runWithRuntimeTurnAdmission(execution.admission)`で保存し、既存Memory Workerのmutationへ同じ共有失効stateを伝播する。native完了後も既存admissionで保存でき、実行失効後の未確定writeはWorkerでも拒否される。失効を実装するためのrevision/hash再照合や、本文の鮮度比較は行わない。
+
+`BackgroundMemoryResult`は`no_candidates`、全件成功応答確認済みの`saved`、最初の拒否／失敗／取消／unknownで終了する`stopped`を区別する。確認済みprefixにはcandidateIndex・entryId・応答のcreated/replayedを残す。stoppedは停止候補index、error code・cause、当該保存のeffect（none／unknown）、未呼出indexを返す。候補配列を確定できない入力／権限拒否では停止indexと未呼出indexがnullになり得る。未呼出分は停止候補自体とは分ける。
+
+serviceのErrorResponseとthrowを扱い、保存前拒否・未送信の`StorageWorkerGenerationError`・効果なしが確定したWorker拒否はnoneとする。送信後の効果が分からない場合はunknownとし、成功や全件未保存に置換しない。Character appendもMemory部分で既知の未送信／拒否をnoneとして保持する。最初の非成功後は後続保存・補償・read-reconcile・自動再送を行わない。取消後も確認済みprefixを巻き戻さない。
+
+`toBackgroundMemorySaveResult`は共通の`BackgroundSaveResult`をimportして返す。no_candidatesはnone、savedは確認済みprefixの件数、stoppedは同じ確認済み件数とcause/codeに対応し、unknown候補を件数に含めない。この内部入口と本番source resolver・背景Memory read・共通runOnceのcallbackはまだ配線していない。実Mainの既存保存契約だけを利用し、Auxiliaryの保存owner/FK対応は含まない。
 
 ## Affect候補とMain内部保存
 
