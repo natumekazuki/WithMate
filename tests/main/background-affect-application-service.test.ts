@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { validateAffectCompositionOutput, type AffectCandidate } from "../../src-shared/character-affect/affect-composition.js";
+import { validateAffectCompositionOutput, type AffectCandidate, type AffectCompositionOutput } from "../../src-shared/character-affect/affect-composition.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION, isCharacterContextError } from "../../src-shared/character-context/character-context-contract.js";
 import { BackgroundAffectApplicationService } from "../../src-electron/character/background-affect-application-service.js";
 import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../../src-electron/character/character-affect-storage.js";
@@ -13,7 +13,7 @@ function candidate(overrides: Partial<AffectCandidate> = {}): AffectCandidate {
     value: { label: "Investigation", valence: 0.4, arousal: 0.2, dimensions: { focus: 0.5 } },
     intensity: 0.6, reason: "Reproduction narrows the cause", evidence: "Saved conversation", sourceTurnId: 1, ...overrides };
 }
-const output = (...candidates: unknown[]) => ({ kind: "events", candidates });
+const output = (...candidates: AffectCandidate[]): AffectCompositionOutput => ({ kind: "events", candidates });
 
 // @test-value v2
 // kind = "contract"
@@ -31,7 +31,7 @@ test("strict final validates the complete external shape and domain ranges", () 
   assert.deepEqual(validateAffectCompositionOutput(JSON.stringify(output(candidate()))), output(candidate()));
   assert.deepEqual(validateAffectCompositionOutput({ kind: "no_change" }), { kind: "no_change" });
   assert.equal(validateAffectCompositionOutput(output(...Array.from({ length: 10 }, () => candidate()))).kind, "events");
-  const invalid = ["not JSON", null, [], {}, { kind: "none" }, output(), output(...Array(11).fill(candidate())),
+  const invalid: unknown[] = ["not JSON", null, [], {}, { kind: "none" }, output(), output(...Array(11).fill(candidate())),
     { kind: "no_change", candidates: [] }, { ...output(candidate()), authority: {} }];
   for (const extra of ["memoryEpisode", "schemaVersion", "characterId", "userId", "sessionId", "idempotencyKey", "occurredAt", "admission"]) {
     invalid.push(output({ ...candidate(), [extra]: "injected" }));
@@ -43,7 +43,7 @@ test("strict final validates the complete external shape and domain ranges", () 
     { value: { label: "a", valence: Infinity } }, { value: { label: "a", valence: -1.1 } },
     { value: { label: "a", valence: 0, arousal: 1.1 } }, { value: { label: "a", valence: 0, other: 1 } },
     { value: { label: "a", valence: 0, dimensions: { " ": 0 } } }, { value: { label: "a", valence: 0, dimensions: { x: 2 } } }]) {
-    invalid.push(output(candidate(), { ...candidate(), ...patch }));
+    invalid.push({ kind: "events", candidates: [candidate(), { ...candidate(), ...patch }] });
   }
   for (const value of invalid) assert.throws(() => validateAffectCompositionOutput(value));
 });
@@ -103,17 +103,17 @@ test("Main candidates cross the real Worker and appear in normal context without
 
 // @test-value v2
 // kind = "invariant"
-// claim = "no_changeは正常終了し、不正候補は一件も保存せず、AffectとMemoryのwriteを呼ばない"
+// claim = "検証済みno_changeは正常終了し、AffectとMemoryのwriteを呼ばない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#affect候補とmain内部保存" }
-// fault = "no_changeからeventを捏造するか、後続候補の不正を検証する前に正常prefixを保存する"
+// fault = "no_changeからeventを捏造して保存する"
 // observable = "用途結果、recordAppraisal呼出件数とDBのAffect/Memory件数"
 // observation_boundary = "consumer"
 // scope = "background-affect preflight"
 // lifecycle = "permanent"
-// impact = "変化なしや不正finalから不要な永続変更が起きる"
-// distinction = "validator単体ではApplicationが保存前の全体検証を使うことを保証できない"
+// impact = "変化なしから不要な永続変更が起きる"
+// distinction = "validator単体ではApplicationが変化なしから永続変更しないことを保証できない"
 // @end-test-value
-test("no_change and invalid complete output never dispatch writes", async () => {
+test("validated no_change never dispatches writes", async () => {
   const f = await backgroundAffectFixture();
   try {
     let writes = 0;
@@ -122,9 +122,6 @@ test("no_change and invalid complete output never dispatch writes", async () => 
     } });
     const execution = f.start();
     assert.deepEqual(await app.apply(execution, { kind: "no_change" }), { kind: "no_change" });
-    const result = await app.apply(execution, output(candidate(), { ...candidate(), memoryEpisode: {} }));
-    assert.deepEqual(result, { kind: "stopped", saved: [], failure: { code: "invalid_output", candidateIndex: null, effect: "none" },
-      unattemptedCandidateIndexes: null });
     assert.equal(writes, 0); assert.equal(f.eventCount(), 0); assert.equal(f.memoryCount(), 0); assert.equal(f.episodeCalls(), 0);
   } finally { await f.close(); }
 });

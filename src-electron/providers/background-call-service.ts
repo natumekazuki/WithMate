@@ -3,11 +3,10 @@ import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/ba
 import {
   runWithRuntimeTurnAdmission,
   RuntimeTurnInactiveError,
-  type RuntimeTurnAdmission,
 } from "../platform/memory/runtime-turn-admission.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ProviderAgentRuntimeTurnHandle } from "./provider-agent-runtime-turn-coordinator.js";
-import type { BackgroundExecutionService } from "./background-execution-service.js";
+import type { BackgroundExecution, BackgroundExecutionService } from "./background-execution-service.js";
 
 export type BackgroundCallContext = Omit<
   Parameters<BackgroundExecutionService["begin"]>[0], "providerId" | "session"
@@ -29,12 +28,6 @@ export type BackgroundGenerationInput = Readonly<{
 /** A trusted adapter returns only the final value, not a transcript or intermediate output. */
 export type BackgroundGenerationPort = (input: BackgroundGenerationInput) => unknown | Promise<unknown>;
 
-export type BackgroundSaveContext = Readonly<{
-  scope: BackgroundExecutionScope;
-  admission: RuntimeTurnAdmission;
-  signal: AbortSignal;
-}>;
-
 export type BackgroundSaveResult =
   | { kind: "saved"; confirmedSavedCount: number }
   | { kind: "none" }
@@ -50,7 +43,7 @@ export type BackgroundCallInput<Output> = Readonly<{
     parse: (raw: unknown) => Output;
   }>;
   onAdmitted: () => void;
-  save: (output: Output, context: BackgroundSaveContext) => BackgroundSaveResult | Promise<BackgroundSaveResult>;
+  save: (output: Output, execution: BackgroundExecution) => BackgroundSaveResult | Promise<BackgroundSaveResult>;
 }>;
 
 export type BackgroundCallResult =
@@ -120,8 +113,7 @@ export class BackgroundCallService {
       try {
         const save = await runWithRuntimeTurnAdmission(execution.admission, () => {
           saveStarted = true;
-          return input.save(output, { scope: input.context.scope,
-            admission: execution.admission, signal: execution.signal });
+          return input.save(output, execution);
         });
         return { kind: "generated", save };
       } catch (error) {

@@ -5,7 +5,7 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import type { BackgroundPurpose } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
-import { BackgroundExecutionService } from "../../src-electron/providers/background-execution-service.js";
+import { BackgroundExecutionService, type BackgroundExecution } from "../../src-electron/providers/background-execution-service.js";
 import {
   BackgroundCallService, type BackgroundCallInput, type BackgroundGenerationInput, type BackgroundSaveResult,
 } from "../../src-electron/providers/background-call-service.js";
@@ -61,10 +61,10 @@ function fixture() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "runOnceは一度生成したfinalだけをparseして保存し、native閉鎖後の保存権限を保持してfinishで失効する"
+// claim = "runOnceはbeginの同一executionをsaveへ渡し、一度生成したfinalをparseしてnative閉鎖後も保存権限を保ちfinishで失効する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#共通の単発呼出" }
-// fault = "parse前に保存する、generationへ入力やschemaを渡さない、またはnative閉鎖で保存権限も終了する"
-// observable = "portの入力、呼出順、保存待ち中とfinish後のadmission、通常bindingと次turnの利用可否"
+// fault = "parse前に保存する、別executionをsaveへ渡す、generationへ入力やschemaを渡さない、またはnative閉鎖で保存権限も終了する"
+// observable = "begin返却とsave引数の同一性、portの入力、呼出順、保存待ち中とfinish後のadmission、通常bindingと次turnの利用可否"
 // observation_boundary = "consumer"
 // scope = "runOnce with real binding/turn ownership and fixed generation/save ports"
 // lifecycle = "permanent"
@@ -79,6 +79,13 @@ test("runOnce forwards inputs and keeps save admission after native completion w
   const release = deferred<void>();
   const events: string[] = [];
   const base = f.input();
+  let begun: BackgroundExecution | undefined;
+  const begin = f.executions.begin.bind(f.executions);
+  f.executions.begin = (input) => {
+    const result = begin(input);
+    if (result.ok) begun = result.execution;
+    return result;
+  };
   const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex", operationGrants: [] });
   const first = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
   let native: BackgroundGenerationInput | undefined;
@@ -102,7 +109,12 @@ test("runOnce forwards inputs and keeps save admission after native completion w
       return finalOutput.parse(raw);
     } }, save: async (output, context) => {
       events.push("save"); assert.deepEqual(output, generated);
-      assert.equal(context.scope, base.context.scope);
+      assert.equal(context, begun);
+      assert.equal(context.binding, native!.binding);
+      assert.equal(context.handle, native!.handle);
+      const binding = f.bindings.resolveIdentity(context.binding.bindingReference);
+      assert.ok(binding.ok);
+      assert.deepEqual(binding.binding.backgroundScope, base.context.scope);
       assert.equal(context.signal, native!.signal);
       assert.equal(currentRuntimeTurnAdmissionState(), context.admission.state);
       saving.resolve(context.admission);

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AFFECT_SCHEMA_VERSION, assertCanonicalUtcTimestamp, assertValidAffectEvent, type AffectEventInput } from "../../src-shared/character-affect/affect-contract.js";
-import { validateAffectCompositionOutput } from "../../src-shared/character-affect/affect-composition.js";
+import type { AffectCompositionOutput } from "../../src-shared/character-affect/affect-composition.js";
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
@@ -34,7 +34,7 @@ export type BackgroundAffectResult =
   | { kind: "saved"; saved: BackgroundAffectSaved[] }
   | { kind: "stopped"; saved: BackgroundAffectSaved[];
       failure: { code: BackgroundAffectFailureCode; candidateIndex: number | null; effect: "none" | "unknown" };
-      unattemptedCandidateIndexes: number[] | null };
+      unattemptedCandidateIndexes: number[] };
 
 class ScopeError extends Error {
   constructor(readonly code: BackgroundAffectFailureCode, readonly candidateIndex: number | null = null) { super(code); }
@@ -49,13 +49,7 @@ export class BackgroundAffectApplicationService {
     affectService: Pick<CharacterAffectService, "recordAppraisal">;
   }) {}
 
-  async apply(execution: BackgroundExecution, final: unknown): Promise<BackgroundAffectResult> {
-    let output;
-    try {
-      output = validateAffectCompositionOutput(final);
-    } catch {
-      return { kind: "stopped", saved: [], failure: { code: "invalid_output", candidateIndex: null, effect: "none" }, unattemptedCandidateIndexes: null };
-    }
+  async apply(execution: BackgroundExecution, output: AffectCompositionOutput): Promise<BackgroundAffectResult> {
     const candidates = output.kind === "events" ? output.candidates : [];
     const indexes = candidates.map((_, index) => index);
     let events: AffectEventInput[];

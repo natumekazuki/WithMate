@@ -53,7 +53,8 @@ export async function backgroundAffectFixture(diagnosticSink?: StorageOperationD
   }
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
-  const executions = new BackgroundExecutionService({ bindings, turns, closeConnection() {} });
+  const closes: string[] = [];
+  const executions = new BackgroundExecutionService({ bindings, turns, closeConnection(handle) { closes.push(handle.bindingId!); } });
   executions.start();
   const worker = new MemoryV6WorkerClient({ dbPath, workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url),
     diagnosticSink, now: () => new Date("2026-11-01T15:02:00.000Z") });
@@ -99,7 +100,7 @@ export async function backgroundAffectFixture(diagnosticSink?: StorageOperationD
     assert.ok(result.ok);
     return result.execution;
   }
-  return { db, worker, affect, context, deps, bindings, turns, executions, scope, start, episodeCalls: () => episodeCalls,
+  return { db, worker, affect, context, deps, bindings, turns, executions, session, closes, scope, start, episodeCalls: () => episodeCalls,
     eventCount: () => (db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get() as { count: number }).count,
     memoryCount: () => (db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get() as { count: number }).count,
     async close() {
