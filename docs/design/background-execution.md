@@ -20,7 +20,7 @@ Mainはruntime開始成功で`start()`し、停止開始で`stop()`する。停�
 - `selection`と`userInput`: 背景Provider／Modelと用途入力。generation portへ実source Sessionも渡し、通常promptの組立てへ接続できる。source SessionのProvider／threadは背景選択で書き換えない。
 - `final.schema`と`final.parse`: generation portへ渡すschemaと、返されたunknown値を検証する同期parser。
 - `onAdmitted`: 枠取得後に呼ぶ同期callback。起動側の開始対象位置更新用であり、保存成功通知ではない。
-- `save`: 検証済み出力と、同じ実行のscope・RuntimeTurnAdmission・AbortSignalを受けるtrusted appのcallback。
+- `save`: 検証済み出力と、beginが返した同一の`BackgroundExecution`を受けるtrusted appのcallback。binding・handle・admission・signalを別の実行から補わない。scopeが必要な用途では、そのexecutionのbindingReferenceをregistryで解決した実bindingのbackgroundScopeを使う。
 
 順序は`begin → onAdmitted → 一度生成 → nativeCompleted → final検証 → save → finish`。generation portはfinal値だけを返し、途中応答・前置き・transcriptをfinalへ混ぜない。通常threadや暗黙のProvider継続履歴を材料の代わりに使わない。portの実Provider adapterは現在接続していない。
 
@@ -67,7 +67,7 @@ Provider builderは通常接続の既存3 endpointと、背景のsession-history
 
 native完了時は`nativeCompleted()`から`closeBackgroundOperations()`で操作grantを取り除き、`host.closeConnection()`でHTTP token・MCP endpointを閉じる。旧bound CLIと遅延したread結果も操作認可で拒否する。identity・generation・論理admissionは維持し、アプリの保存結果が成功・失敗・unknownとして返った後に`finish()`する。取消・source／親削除・runtime停止はbinding／handleを失効し、未確定の保存をadmissionで拒否する。確定済み保存は巻き戻さない。provider credential変更・無効化ではその背景Providerの実行を失効させる。
 
-この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。実Providerの副作用制限・実LLM呼出し、用途別設定・通知、実storeへの用途保存とAuxiliary保存は共通runOnceだけでは接続されない。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、二用途のMemory記録方針は同ADRの[#909後継判断](../adr/035-background-execution-binding-and-history-scope.md#909-memory記録の後継判断)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。Affect用途は共通runOnceから実Worker保存へ接続し、Memory用途は内部保存入口までを提供する。実Providerの副作用制限・実LLM呼出し、用途別設定・通知、本番の用途組立てとAuxiliary保存は未接続である。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、二用途のMemory記録方針は同ADRの[#909後継判断](../adr/035-background-execution-binding-and-history-scope.md#909-memory記録の後継判断)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
 
 ## 背景Memory read
 
@@ -117,12 +117,16 @@ serviceのErrorResponseとthrowを扱い、保存前拒否・未送信の`Storag
 
 `affect-composition.ts`の`validateAffectCompositionOutput(unknown)`は、外部finalのJSON文字列またはparse済み値をstrictに検証する。`events`は1〜10件、`no_change`は正常な変化なしとする。候補は既存Affect domainのlayer・target・family・value・intensity・reason・evidenceと`sourceTurnId`だけを持つ。余剰field、memoryEpisode、空文字列、不正enum／数値／組合せは拒否し、不正候補の除去やno_changeへの置換はしない。用途指示は会話を基本材料とし、必要な操作結果だけを参照してCharacterの次の感情を構成する。非公開内面の復元・診断や、作業失敗から根拠のないユーザーへの敵意を構成しない。
 
-Main内部の`BackgroundAffectApplicationService.apply(execution, final)`は、registryの実背景binding、current handle／admission、affect用途とlocal-userの権限を検証する。アプリ所有の`readMainSource(historyScope)`は、実Mainのmetadata、同じstorage読取境界で観測した既存ownerIdentity、入力材料に渡した保存済みTurnのid／sessionId／phase／completedAt／assistantMessageSeqを返す。別owner・別Character・読取専用・character-authoring、許可history／processing範囲外のTurn、未対応のAuxiliaryは保存前に拒否する。targetType／targetIdは感情の対象であり保存ownerを選ばない。
+`BackgroundAffectCallService.runOnce(input)`は、共通呼出context／selection／userInput／onAdmittedを受け、AFFECT_COMPOSITION_INSTRUCTIONSと用途入力、生成用JSON schema、strictなfinal parser、Affect保存callbackを組み立てる。外部unknownの全候補検証は共通runOnceのfinal.parseで一度だけ行い、不正finalは保存callbackへ渡さない。
+
+Main内部の`BackgroundAffectApplicationService.apply(execution, output: AffectCompositionOutput)`は、検証済み候補と同一のexecutionを受ける。registryの実背景binding、current handle／admission、affect用途とlocal-userの権限を検証する。アプリ所有の`readMainSource(historyScope)`は、実Mainのmetadata、同じstorage読取境界で観測した既存ownerIdentity、入力材料に渡した保存済みTurnのid／sessionId／phase／completedAt／assistantMessageSeqを返す。別owner・別Character・読取専用・character-authoring、許可history／processing範囲外のTurn、未対応のAuxiliaryは保存前に拒否する。targetType／targetIdは感情の対象であり保存ownerを選ばない。
 
 final全体とsource参照を検証後、schemaVersion・Character／user／Main owner・Turnのcanonical UTC completedAt・新規保存keyをアプリが補う。occurredAtは観測上の時刻であり、非公開内面の発生時刻を認定しない。取得時点と保存時点のAffect version／projection／定義revisionは比較しない。
 
 保存は背景の`RuntimeTurnAdmission`を適用し、`CharacterAffectService.recordAppraisal`から既存Memory Workerの`affect.recordEvent`、`CharacterAffectStorage.recordEvent`へ一件ずつ進む。expectedVersionとmemoryEpisodeは渡さず、versionの付け直しやMemory appendは行わない。通常のcorrect／resetのversion契約とlinked episodeは変更しない。native完了後もadmissionを維持し、用途保存の成功・失敗・結果不明を受けて呼出元が`finish()`する。
 
-用途結果は`no_change`、全件応答確認済みの`saved`、最初の失敗で終了した`stopped`を区別する。確認済みprefixにはcandidateIndex・eventId・created／replayedを残し、失敗位置と未呼出indexを別に返す。構造不正で候補配列が確定しない場合の未呼出indexはnullとする。既存例外が未保存を保証する場合だけeffectをnoneとし、送信後の不明な効果はunknownとする。取消後も確定済みprefixを戻さず、後続、補償、再照合、自動再送を呼ばない。保存済みAffectは既存の通常getContext／projectionから利用する。専用checkpoint／receipt／batch／復旧待ちは持たない。
+用途結果は`no_change`、全件応答確認済みの`saved`、最初の失敗で終了した`stopped`を区別する。確認済みprefixにはcandidateIndex・eventId・created／replayedを残し、失敗位置と未呼出indexを別に返す。既存例外が未保存を保証する場合だけeffectをnoneとし、送信後の不明な効果はunknownとする。取消後も確定済みprefixを戻さず、後続、補償、再照合、自動再送を呼ばない。保存済みAffectは既存の通常getContext／projectionから利用する。専用checkpoint／receipt／batch／復旧待ちは持たない。
 
-この内部入口は共通runOnce・実Provider・終端通知・本番自動更新へ配線していない。readMainSourceの注入先には上記の内部Worker読取を使えるが、用途保存の本番組立ては未接続である。公開appraise／correct／reset／contextは維持し、Auxiliaryのowner／FK／context対応も含めない。
+Affect呼出側はno_changeを共通none、savedを共通savedと確認済み件数へ写像する。stoppedは確認済みprefix件数とfailure codeを保持し、effect=unknownを最優先でcause=unknownへ写像する。noneが保証された取消・失効はrevoked、保存失敗・source取得失敗はfailed、構造以外の入力・scope拒否と既存競合はrejectedとする。用途側が把握したprefixを一般例外へ落として件数nullにしない。
+
+この用途入口は共通runOnceから実Worker保存へ接続するが、実Provider・終端通知・本番自動更新へ配線していない。readMainSourceの注入先には上記の内部Worker読取を使えるが、本番の用途組立ては未接続である。公開appraise／correct／reset／contextは維持し、Auxiliaryのowner／FK／context対応も含めない。
