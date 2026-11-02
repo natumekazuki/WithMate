@@ -15,6 +15,8 @@ export type MemoryV6SessionBindingPrincipal = {
   providerId: string;
   characterId: string;
   allowedProjectIds?: readonly string[];
+  /** Present only for captured background reads; an empty set permits no target. */
+  readTargets?: readonly MemoryV6ResolvedTarget[];
   permissions: readonly MemoryPermission[];
 };
 
@@ -86,6 +88,10 @@ export function canAccessMemoryTarget(principal: MemoryV6Principal, target: Memo
   if (!isUserGlobalTarget && !isProjectTarget && !isCharacterTarget && !isCharacterProjectTarget) {
     return false;
   }
+  if (principal.type === "session_binding" && principal.readTargets !== undefined
+    && !principal.readTargets.some((allowed) => allowed.owner.type === target.owner.type
+      && allowed.owner.id === target.owner.id && allowed.scope.type === target.scope.type
+      && allowed.scope.id === target.scope.id)) return false;
   if (principal.type === "local_user" || target.owner.type !== "character") {
     return true;
   }

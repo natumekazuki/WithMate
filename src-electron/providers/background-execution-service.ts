@@ -66,7 +66,10 @@ export class BackgroundExecutionService {
   }
 
   nativeCompleted(execution: BackgroundExecution): void {
-    if (this.#active.get(execution.binding.bindingId)?.execution === execution) this.deps.closeConnection(execution.handle);
+    if (this.#active.get(execution.binding.bindingId)?.execution === execution) {
+      this.deps.bindings.closeBackgroundOperations(execution.binding.bindingId);
+      this.deps.closeConnection(execution.handle);
+    }
   }
 
   finish(execution: BackgroundExecution): void {

@@ -25429,10 +25429,18 @@ function toolResult(value) {
 		...isCharacterContextError(value) || isMemoryError(value) ? { isError: true } : {}
 	};
 }
-function createWithMateMemoryMcpServer(deps = {}) {
-	const fallbackAdmission = deps.fallbackAdmission ?? createMcpFallbackAdmission(deps);
-	const server = new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery);
-	registerWithMateMemoryTools(server, {
+function createWithMateMemoryMcpServer(deps = {}, allowedTools) {
+	const fallbackAdmission = allowedTools === void 0 ? deps.fallbackAdmission ?? createMcpFallbackAdmission(deps) : void 0;
+	const server = fallbackAdmission ? new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery) : new McpServer({
+		name: "withmate-memory",
+		version: "1.0.0"
+	}, { instructions: "Read only the captured Memory targets granted to this background execution. No write, file, or fallback authority is provided." });
+	const registerTool = server.registerTool.bind(server);
+	registerWithMateMemoryTools({ registerTool(name, config, callback) {
+		const tool = registerTool(name, config, callback);
+		if (allowedTools !== void 0 && !allowedTools.includes(name)) tool.remove();
+		return tool;
+	} }, {
 		...deps,
 		fallbackAdmission
 	});

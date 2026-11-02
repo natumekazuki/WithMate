@@ -18,8 +18,14 @@ import { BackgroundExecutionService, type BackgroundExecution } from "../../src-
 import { WITHMATE_MANAGED_MCP_TOKEN_HEADER } from "../../src-electron/providers/managed-http-mcp.js";
 import { ManagedHttpMcpHost } from "../../src-electron/memory/managed-http-mcp-host.js";
 import { createMemoryV6HttpServer } from "../../src-electron/memory/memory-v6-http-server.js";
-import { MemoryV6Storage } from "../../src-electron/memory/memory-v6-storage.js";
+import { MemoryV6WorkerClient } from "../../src-electron/memory/memory-v6-worker-client.js";
 import { MemoryV6Service } from "../../src-electron/memory/memory-v6-service.js";
+import { CharacterAffectService } from "../../src-electron/character/character-affect-service.js";
+import { CharacterContextApplicationService } from "../../src-electron/character/character-context-application-service.js";
+import { GlossaryApplicationService } from "../../src-electron/glossary/glossary-application-service.js";
+import { GlossaryRuntimeService } from "../../src-electron/glossary/glossary-runtime-service.js";
+import { SessionGraphApplicationService } from "../../src-electron/session-graph/session-graph-application-service.js";
+import { SessionGraphRuntimeService } from "../../src-electron/session-graph/session-graph-runtime-service.js";
 
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { SessionHistoryRuntimeService } from "../../src-electron/session-history/session-history-runtime-service.js";
@@ -60,7 +66,19 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   sessions.set("aux", { ...sessions.get("main")!, id: "aux", incarnationId: "same-created-at" });
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
-  const storage = new MemoryV6Storage(dbPath);
+  const memoryWorker = new MemoryV6WorkerClient({ dbPath,
+    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url), diagnosticSink });
+  const memory = new MemoryV6Service({ storage: memoryWorker.storage,
+    resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
+    resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath });
+  const affect = new CharacterAffectService(memoryWorker.affectStorage, { async evaluate() { return []; } }, {
+    async writeEpisode() { throw new Error("History fixture must not write episodes"); },
+    validateEpisode() { throw new Error("History fixture must not validate episodes"); },
+  }, "active");
+  const characterContext = new CharacterContextApplicationService({ memoryService: memory, affectService: affect,
+    resolveCharacterRuntimeSnapshot: (characterId) => characterId === "character" ? ({ characterId, name: "Character",
+      description: "", iconFilePath: "", theme: { main: "#123456", sub: "#abcdef" }, definitionMarkdown: "Character",
+      definitionSha256: "fixture", definitionByteSize: 9, snapshotAt: "2026-11-01T00:00:00.000Z" }) : null });
   const worker = createV6StorageWorkerBundle({ dbPath, userDataPath: directory, diagnosticSink });
   await worker.initialize();
   let readGate: (() => Promise<void>) | undefined;
@@ -69,10 +87,20 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       await readGate?.();
       return input.scope.source.kind === "main" ? worker.stores.session.readSessionHistory(input) : worker.stores.auxiliary.readSessionHistory(input);
     } });
+  const glossary = new GlossaryRuntimeService({ applicationService: new GlossaryApplicationService(),
+    bindingRegistry: bindings, providerAgentRuntimeTurns: turns, getProactiveCreateLimit: () => 1,
+    resolveActorSession: (id) => sessions.has(id) ? { id, providerId: "codex", characterId: "character", workspacePath: directory } : null });
+  const graph = new SessionGraphRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
+    applicationService: new SessionGraphApplicationService({ getStore: () => worker.stores.sessionGraph,
+      resolveSession: (id) => sessions.has(id) ? { owner: { sessionId: id, incarnationId: sessions.get(id)!.incarnationId! },
+        providerId: "codex", generation: "fixture", identity: { sessionId: id, sessionTitle: id, role: "main",
+          character: { id: "character", name: "Character" } } } : null }) });
   const runtime = createMemoryV6HttpServer({ ...owner, apiSecret: "api", mcpApiSecret: "mcp", operatorApiSecret: "operator",
-    service: new MemoryV6Service({ storage }), agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
+    service: memory, characterContextService: characterContext, agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
+    resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
+    resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath,
     resolveActorSession: (id) => sessions.has(id) ? { id, providerId: "codex", characterId: "character" } : null,
-    routeAgentRuntimeExtension: (request) => history.route(request),
+    routeAgentRuntimeExtension: async (request) => await history.route(request) ?? await glossary.route(request) ?? await graph.route(request),
   });
   await runtime.start();
   const connection = { api: { ...owner, runtimeInstanceId: owner.runtimeGenerationId,
@@ -95,12 +123,15 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     return { purpose, history: { source, fromMessageSeq: 0, throughMessageSeq: id === "main" ? 1 : 0 },
       processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] };
   }
-  function start(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations()) {
-    return executions.begin({ actorSessionId: id, providerId, session: sessions.get(id)!, scope: scope(id, purpose),
-      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants, signal });
+  type ReadOptions = { memoryTargets?: BackgroundExecutionScope["memoryTargets"]; allowedProjectIds?: string[]; authoritySnapshot?: Record<string, unknown> };
+  function start(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations(), options: ReadOptions = {}) {
+    return executions.begin({ actorSessionId: id, providerId, session: sessions.get(id)!,
+      scope: { ...scope(id, purpose), memoryTargets: options.memoryTargets ?? [] },
+      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: options.allowedProjectIds ?? [],
+        ...options.authoritySnapshot }, operationGrants, signal });
   }
-  function started(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations()) {
-    const result = start(id, providerId, purpose, signal, operationGrants);
+  function started(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations(), options: ReadOptions = {}) {
+    const result = start(id, providerId, purpose, signal, operationGrants, options);
     if (!result.ok) assert.fail(result.reason);
     return result.execution;
   }
@@ -108,7 +139,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     const binding = { ...execution.binding, memoryRuntimeOwner: owner };
     return { ...binding, managedMcp: host.issue(binding, execution.handle, execution.signal) };
   }
-  async function connect(binding: ProviderAgentRuntimeBindingProjection, endpoint: "sessionHistoryUrl" | "glossaryUrl" = "sessionHistoryUrl") {
+  async function connect(binding: ProviderAgentRuntimeBindingProjection, endpoint: "sessionHistoryUrl" | "glossaryUrl" | "memoryUrl" = "sessionHistoryUrl") {
     const client = new Client({ name: "background-test", version: "1" });
     clients.push(client);
     const transport = new StreamableHTTPClientTransport(new URL(binding.managedMcp![endpoint]!), {
@@ -117,12 +148,12 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     await client.connect(transport);
     return { client, transport };
   }
-  async function request(binding: ProviderAgentRuntimeBindingProjection, url: string, name: string, sessionId?: string) {
+  async function request(binding: ProviderAgentRuntimeBindingProjection, url: string, name: string, sessionId?: string, args: Record<string, unknown> = { seq: 0 }) {
     return fetch(url, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream",
       [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: binding.managedMcp!.token, ...(sessionId ? { "mcp-session-id": sessionId } : {}) },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 71, method: "tools/call", params: { name, arguments: { seq: 0 } } }) });
+      body: JSON.stringify({ jsonrpc: "2.0", id: 71, method: "tools/call", params: { name, arguments: args } }) });
   }
-  return { directory, db, sessions, scope, start, started, project, connect, request, bindings, turns, executions, host, worker, auxiliary,
+  return { directory, db, sessions, scope, start, started, project, connect, request, bindings, turns, executions, host, worker, memoryWorker, memory, connection, auxiliary,
     async connectRuntimeContext(env: NodeJS.ProcessEnv, credential = connection.credential) {
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       const server = createWithMateSessionHistoryMcpServer({ env, connection: { ...connection, credential } }, getSessionHistoryAgentRuntimeOperations());
@@ -136,12 +167,12 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1", WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
       WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: binding.turnCapability, WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: owner.applicationInstanceId,
       WITHMATE_MEMORY_RUNTIME_GENERATION_ID: owner.runtimeGenerationId, WITHMATE_MEMORY_API_URL: `http://127.0.0.1:${runtime.address()!.port}`,
-      WITHMATE_MEMORY_API_SECRET: "api", WITHMATE_MEMORY_MCP_API_SECRET: "mcp" }),
+      WITHMATE_MEMORY_API_SECRET: "api", WITHMATE_MEMORY_MCP_API_SECRET: "mcp", WITHMATE_MEMORY_OPERATOR_API_SECRET: "operator" }),
     async close() {
       executions.stop();
       await Promise.all(clients.map((client) => client.close()));
       await Promise.all(servers.map((server) => server.close()));
-      await host.stop(); await runtime.stop(); await worker.client.close(); storage.close(); auxiliary.close(); db.close();
+      await host.stop(); await runtime.stop(); await worker.client.close(); await memoryWorker.close(); auxiliary.close(); db.close();
       await rm(directory, { recursive: true, force: true });
     } };
 }

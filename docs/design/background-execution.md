@@ -26,7 +26,7 @@ Mainはruntime開始成功で`start()`し、停止開始で`stop()`する。停�
 
 capacity／already_activeでは`skipped`を返し、callbackを呼ばない。beginのsource／authority不備と停止runtimeの例外はrejectとして保持し、unavailableへ一括変換しない。事前取消は`canceled`。開始後の生成失敗は`failed`、不正finalは`invalid_output`、保存開始前の取消・失効は`canceled`を返す。callbackやparseが失敗してもfinishへ到達する。
 
-native終了時はMCP接続だけを閉じる。saveは既存`runWithRuntimeTurnAdmission`内で実行し、保存callbackが返るまで論理実行を保持する。generation／saveがpendingでも通常turnを予約・終了せず、主会話側へ待機を追加しない。通常Window closeや主会話のCancelを背景signalへ接続しない。
+native終了時はMCP接続と背景bindingの操作grantを閉じる。saveは既存`runWithRuntimeTurnAdmission`内で実行し、保存callbackが返るまでidentityと論理実行を保持する。generation／saveがpendingでも通常turnを予約・終了せず、主会話側へ待機を追加しない。通常Window closeや主会話のCancelを背景signalへ接続しない。
 
 ## 保存結果と例外
 
@@ -61,13 +61,27 @@ native終了時はMCP接続だけを閉じる。saveは既存`runWithRuntimeTurn
 
 共有`ManagedHttpMcpHost`は独立tokenをbinding・generation・handle・runtime ownerへ固定する。現在性確認にMemory固有grantを使わず、実操作ごとにgrantを検証する。
 
-履歴factoryとtool→operation対応を`SessionHistoryMcpRegistration`で登録する。factoryは許可operationだけを登録し、hostも直接tools/callの操作grantを検証する。履歴専用endpointは背景だけに公開し、通常turnからは利用できない。初期の背景接続は履歴endpointだけを許可し、Memory／Glossary／Session Graph endpointを拒否する。Memory読取の追加接続は別の実装単位であり、現段階で背景Memory書込を許可するものではない。
+履歴factoryとtool→operation対応を`SessionHistoryMcpRegistration`で登録する。factoryは許可operationだけを登録し、hostも直接tools/callの操作grantを検証する。履歴専用endpointは背景だけに公開し、通常turnからは利用できない。背景接続には履歴とMemoryのendpointだけを許可し、Glossary／Session Graphを拒否する。Memory factoryは背景readの具体的grantに一致するtoolだけを登録する。
 
-Provider builderは通常接続の既存3 endpointと背景のsession-history endpointを分ける。Mainはruntime開始時に履歴の実factoryとtool→operation対応を登録し、認可resolverの共通scope・admissionをStorage Workerの履歴readへ渡す。factory未登録なら背景接続を拒否し、空の履歴成功へ置換しない。公開操作と配布CLIの契約は[Session History](session-history.md)を参照する。
+Provider builderは通常接続の既存3 endpointと、背景のsession-history／Memory endpointを分ける。Mainはruntime開始時に履歴の実factoryとtool→operation対応を登録し、認可resolverの共通scope・admissionをStorage Workerの履歴readへ渡す。factory未登録なら背景接続を拒否し、空の履歴成功へ置換しない。公開操作と配布CLIの契約は[Session History](session-history.md)を参照する。
 
-native完了時は`nativeCompleted()`から`host.closeConnection()`を呼び、HTTP token・MCP endpoint・進行中readを閉じる。論理admissionは維持し、アプリの保存結果が成功・失敗・unknownとして返った後に`finish()`する。取消・source／親削除・runtime停止はbinding／handleを失効し、未確定の保存をadmissionで拒否する。確定済み保存は巻き戻さない。provider credential変更・無効化ではその背景Providerの実行を失効させる。
+native完了時は`nativeCompleted()`から`closeBackgroundOperations()`で操作grantを取り除き、`host.closeConnection()`でHTTP token・MCP endpointを閉じる。旧bound CLIと遅延したread結果も操作認可で拒否する。identity・generation・論理admissionは維持し、アプリの保存結果が成功・失敗・unknownとして返った後に`finish()`する。取消・source／親削除・runtime停止はbinding／handleを失効し、未確定の保存をadmissionで拒否する。確定済み保存は巻き戻さない。provider credential変更・無効化ではその背景Providerの実行を失効させる。
 
-この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。実Providerの副作用制限・実LLM呼出し、背景Memory read、用途別設定・通知、実storeへの用途保存とAuxiliary保存は共通runOnceだけでは接続されない。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、二用途のMemory記録方針は同ADRの[#909後継判断](../adr/035-background-execution-binding-and-history-scope.md#909-memory記録の後継判断)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。実Providerの副作用制限・実LLM呼出し、用途別設定・通知、実storeへの用途保存とAuxiliary保存は共通runOnceだけでは接続されない。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、二用途のMemory記録方針は同ADRの[#909後継判断](../adr/035-background-execution-binding-and-history-scope.md#909-memory記録の後継判断)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+
+## 背景Memory read
+
+公開toolと操作grantの対応は`src-shared/agent-runtime/background-memory-read.ts`を正本とする。`memory.search`、`memory.list_entries`、`memory.get_entry`、`memory.list_tags`、`character_memory.search`だけを許可候補とし、MCPの直接tools/callと配布bound CLIも同じMemory application認可へ通す。registryは背景bindingの操作上限を履歴4操作とこのMemory readへ限定し、指定grantが広くても書込・移動・忘却・file取得／export・横断一覧・fallback・Graph／Glossaryを認可しない。
+
+背景では実binding IDに結び付いたcurrent handle／capabilityを必須とし、元会話の実Characterとauthority snapshotを照合する。背景Providerは元会話と異なってよい。通常bindingのProvider一致条件は維持する。scopeの`memoryTargets`は実Characterと許可Projectからcanonical targetへ解決し、principalの`readTargets`で要求targetと照合する。空集合を全targetへ拡大せず、user-globalも明示captureされた場合だけ許可する。
+
+一般MemoryとCharacter Memoryの検索は、このprincipalを既存Memory serviceからMemory Worker／storeへ渡す。`get_entry`は要求targetに加え実entryの保存targetも確認し、範囲外entryを空の成功へ変換しない。forgotten本文の通常read除外は維持する。遅延readは返却前にもadmissionを検証し、native完了・取消・失効後の本文を返さない。通常turnの確定済みwrite結果の扱いは変更しない。
+
+## 内部Main source read
+
+`V6StorageWorkerBundle.stores.session.readMainSource(scope: SessionHistoryReadScope)`は`MainSourceSnapshot | null`を返す内部async入口である。型の正本は`src-shared/session/main-source-snapshot.ts`。Mainの実テーブルと既存ownerIdentityを照合し、Session metadataと、固定inclusive seq範囲内にassistantMessageSeqを持つ複数の保存済みTurnを返す。phaseとcompletedAtは保存値を返し、未設定の時刻を現在時刻で補わない。用途側が保存対象の終端phase・時刻・processing所属を検証する。
+
+削除・incarnation／owner不一致・未保存の末尾範囲はnull、Auxiliary scopeは拒否する。MainとAuxiliaryの同名IDを代用せず、Workerへ既存admission bufferを伝播する。公開履歴toolへ内部metadataを追加せず、Workerから用途applicationへ逆依存しない。用途保存との組立てや本番起動への配線は呼出側が所有する。
 
 ## Memory生成の純粋な用途契約
 
@@ -93,4 +107,4 @@ final全体とsource参照を検証後、schemaVersion・Character／user／Main
 
 用途結果は`no_change`、全件応答確認済みの`saved`、最初の失敗で終了した`stopped`を区別する。確認済みprefixにはcandidateIndex・eventId・created／replayedを残し、失敗位置と未呼出indexを別に返す。構造不正で候補配列が確定しない場合の未呼出indexはnullとする。既存例外が未保存を保証する場合だけeffectをnoneとし、送信後の不明な効果はunknownとする。取消後も確定済みprefixを戻さず、後続、補償、再照合、自動再送を呼ばない。保存済みAffectは既存の通常getContext／projectionから利用する。専用checkpoint／receipt／batch／復旧待ちは持たない。
 
-この内部入口は共通runOnce・実Provider・終端通知・本番自動更新へ配線していない。readMainSourceは注入portであり、本番のsource読取resolverは未接続である。公開appraise／correct／reset／contextは維持し、Auxiliaryのowner／FK／context対応も含めない。
+この内部入口は共通runOnce・実Provider・終端通知・本番自動更新へ配線していない。readMainSourceの注入先には上記の内部Worker読取を使えるが、用途保存の本番組立ては未接続である。公開appraise／correct／reset／contextは維持し、Auxiliaryのowner／FK／context対応も含めない。

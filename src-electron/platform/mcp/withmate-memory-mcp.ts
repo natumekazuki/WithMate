@@ -973,11 +973,22 @@ function toolResult(value: unknown) {
   };
 }
 
-export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpServer {
-  const fallbackAdmission = deps.fallbackAdmission ?? createMcpFallbackAdmission(deps);
-  const server = new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery);
-  const runtimeDeps = { ...deps, fallbackAdmission };
-  registerWithMateMemoryTools(server, runtimeDeps);
+export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}, allowedTools?: readonly string[]): McpServer {
+  const fallbackAdmission = allowedTools === undefined ? deps.fallbackAdmission ?? createMcpFallbackAdmission(deps) : undefined;
+  const server = fallbackAdmission
+    ? new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery)
+    : new McpServer({ name: "withmate-memory", version: "1.0.0" }, {
+        instructions: "Read only the captured Memory targets granted to this background execution. No write, file, or fallback authority is provided.",
+      });
+  const registerTool = server.registerTool.bind(server);
+  const publication: Pick<McpServer, "registerTool"> = {
+    registerTool(name, config, callback) {
+      const tool = registerTool(name, config, callback);
+      if (allowedTools !== undefined && !allowedTools.includes(name)) tool.remove();
+      return tool;
+    },
+  };
+  registerWithMateMemoryTools(publication, { ...deps, fallbackAdmission });
   return server;
 }
 

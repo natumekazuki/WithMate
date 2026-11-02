@@ -49,8 +49,9 @@ import {
   WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
 } from "../platform/memory/memory-runtime-exchange.js";
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
+import { resolveMemoryV6Target } from "./memory-v6-context-resolver.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
-import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
@@ -1116,7 +1117,12 @@ async function routeResolvedRequest(input: {
           bindingResolution.body,
         ));
     const result = await (bindingResolution.turnAdmission
-      ? runWithRuntimeTurnAdmission(bindingResolution.turnAdmission, dispatch)
+      ? runWithRuntimeTurnAdmission(bindingResolution.turnAdmission, async () => {
+          const value = await dispatch();
+          if (bindingResolution.principal?.type === "session_binding"
+            && bindingResolution.principal.readTargets !== undefined) assertRuntimeTurnAdmission();
+          return value;
+        })
       : dispatch());
     return projectAgentBoundResponse(input.route, bindingResolution.body, result, bindingResolution.authority);
   } catch (error) {
@@ -1293,12 +1299,14 @@ async function resolveRouteAgentRuntimeBinding(input: {
     };
   }
   const binding = resolved.binding;
+  const background = binding.backgroundScope;
   let turnAdmission: RuntimeTurnAdmission | undefined;
-  if (input.turnCapability || input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
+  if (background || input.turnCapability || input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
     const admission = input.options.providerAgentRuntimeTurns?.admit({
       actorSessionId: binding.actorSessionId,
       providerId: binding.providerId,
       turnCapability: input.turnCapability,
+      ...(background ? { bindingId: binding.bindingId } : {}),
     });
     if (!admission?.ok) return { ok: false, error: turnAdmissionFailure(input.route) };
     const handle = admission.handle;
@@ -1310,6 +1318,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
           actorSessionId: binding.actorSessionId,
           providerId: binding.providerId,
           turnCapability: input.turnCapability,
+          ...(background ? { bindingId: binding.bindingId } : {}),
         });
         return Boolean(currentBinding?.ok
           && currentBinding.binding.bindingId === binding.bindingId
@@ -1324,7 +1333,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
   if (
     !actorSession
     || actorSession.id !== resolved.binding.actorSessionId
-    || actorSession.providerId !== resolved.binding.providerId
+    || (!background && actorSession.providerId !== resolved.binding.providerId)
   ) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
   }
@@ -1337,14 +1346,34 @@ async function resolveRouteAgentRuntimeBinding(input: {
     return { ok: false, error: agentInputError(input.route, identityField, "Caller identity is not accepted.") };
   }
   if (turnAdmission) runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
-  const body = await resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority);
+  const targetOptions = background
+    ? { ...input.options, resolveProjectByPath: input.options.resolveKnownProjectByPath }
+    : input.options;
+  const body = await resolveAgentBoundRequestBody(targetOptions, input.route, input.body, actorSession, authority);
   if (!body.ok) {
     return { ok: false, error: body.error };
+  }
+  const principal = createSessionBindingMemoryPrincipal(binding, actorSession, authority);
+  if (background && principal.type === "session_binding") {
+    const readTargets = [];
+    for (const captured of background.memoryTargets) {
+      let selector = captured;
+      if (captured.scope === "project") {
+        const project = await resolveAllowedProject(targetOptions, captured.project, authority);
+        if (!project) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
+        selector = { ...captured, project: project.ref };
+      }
+      const target = await resolveMemoryV6Target(selector, principal, input.options, { projectPathResolution: "known" });
+      if (!target.ok) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
+      readTargets.push(target.target);
+    }
+    principal.readTargets = readTargets;
+    principal.permissions = ["memory.search", "memory.list_entries", "memory.get_entry", "memory.list_tags"];
   }
   return {
     ok: true,
     body: body.value,
-    principal: createSessionBindingMemoryPrincipal(binding, actorSession, authority),
+    principal,
     authority,
     turnAdmission,
   };

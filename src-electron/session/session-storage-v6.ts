@@ -4,6 +4,9 @@ import { withMessageRunFailure } from "../../src-shared/session/message-run-fail
 import type { ConversationPageRequest } from "../../src-shared/session/conversation-page.js";
 import type { SessionHistoryReadInput, SessionHistoryResult } from "../../src-shared/session-history/session-history-contract.js";
 import { readSessionHistory } from "../storage/session-history-read.js";
+import { assertSessionHistoryReadScope, matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
+import type { MainSourceSnapshot } from "../../src-shared/session/main-source-snapshot.js";
+import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { SessionFilePinOwner, SessionFilePinReference, StoredSessionFilePin } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { randomUUID } from "node:crypto";
 
@@ -575,6 +578,33 @@ export class SessionStorageV6 {
   readSessionHistory(input: SessionHistoryReadInput): SessionHistoryResult {
     if (input.scope.source.kind !== "main") throw new Error("Main history reads require a main source.");
     return readSessionHistory(this.db, input);
+  }
+
+  readMainSource(scope: SessionHistoryReadScope): MainSourceSnapshot | null {
+    assertRuntimeTurnAdmission();
+    assertSessionHistoryReadScope(scope);
+    if (scope.source.kind !== "main") throw new Error("Main source reads require a main source.");
+    const snapshot = readConversationQuerySnapshot(this.db, "session_messages_v6", scope.source.sessionId);
+    if (!matchesSessionHistorySource(scope.source, snapshot)) return null;
+    const last = this.db.prepare("SELECT MAX(seq) AS seq FROM session_messages_v6 WHERE session_id = ?")
+      .get(scope.source.sessionId) as { seq: number | null };
+    if (last.seq === null || last.seq < scope.throughMessageSeq) return null;
+    const session = this.getSessionSummary(scope.source.sessionId)!;
+    const rows = this.db.prepare(`SELECT id, session_id, phase, completed_at, assistant_message_seq
+      FROM session_turns_v6 WHERE session_id = ? AND assistant_message_seq BETWEEN ? AND ? ORDER BY id`)
+      .all(session.id, scope.fromMessageSeq, scope.throughMessageSeq) as {
+        id: number; session_id: string; phase: SessionTurnRecord["phase"];
+        completed_at: string | null; assistant_message_seq: number;
+      }[];
+    const result: MainSourceSnapshot = {
+      session: { id: session.id, incarnationId: session.incarnationId, characterId: session.characterId,
+        accessMode: session.accessMode, sourceSchemaVersion: session.sourceSchemaVersion, sessionKind: session.sessionKind },
+      ownerIdentity: snapshot!.ownerIdentity,
+      turns: rows.map((row) => ({ id: row.id, sessionId: row.session_id, phase: row.phase,
+        ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}), assistantMessageSeq: row.assistant_message_seq })),
+    };
+    assertRuntimeTurnAdmission();
+    return result;
   }
 
   getSessionSummary(sessionId: string): SessionSummary | null {

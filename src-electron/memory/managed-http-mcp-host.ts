@@ -13,6 +13,7 @@ import { createWithMateGlossaryMcpServer } from "../platform/mcp/withmate-glossa
 import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-session-graph-mcp.js";
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
+import { BACKGROUND_MEMORY_READ_TOOL_OPERATIONS } from "../../src-shared/agent-runtime/background-memory-read.js";
 
 type Endpoint = {
   server: McpServer;
@@ -222,7 +223,9 @@ export class ManagedHttpMcpHost {
             if (!delivery) throw new Error("MCP tools list delivery is missing.");
             await delivery;
           },
-        })
+        }, context.binding.background ? Object.entries(BACKGROUND_MEMORY_READ_TOOL_OPERATIONS)
+          .filter(([, operation]) => this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok)
+          .map(([name]) => name) : undefined)
       : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
       : pathname === "/mcp/session-graph" ? createWithMateSessionGraphMcpServer(deps)
       : this.#options.sessionHistory!.createServer(deps,
@@ -256,7 +259,7 @@ export class ManagedHttpMcpHost {
       if (context) this.release(context.handle);
       reply(response, 401, "MCP turn credential is inactive."); return;
     }
-    if (context.binding.background ? pathname !== "/mcp/session-history" : pathname === "/mcp/session-history") {
+    if (context.binding.background ? pathname !== "/mcp/session-history" && pathname !== "/mcp/memory" : pathname === "/mcp/session-history") {
       reply(response, 403, "MCP endpoint is outside this execution scope."); return;
     }
     if (request.method !== "POST" && request.method !== "DELETE") {
@@ -276,13 +279,15 @@ export class ManagedHttpMcpHost {
       const body = request.method === "POST" ? await readBody(request,
         pathname !== "/mcp/memory" ? WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES : 256 * 1024) : undefined;
       if (!this.#isCurrent(context)) { reply(response, 401, "MCP turn credential is inactive."); return; }
-      if (pathname === "/mcp/session-history" && body && typeof body === "object" && !Array.isArray(body)) {
+      if ((pathname === "/mcp/session-history" || pathname === "/mcp/memory" && context.binding.background)
+        && body && typeof body === "object" && !Array.isArray(body)) {
         const call = body as { method?: unknown; params?: { name?: unknown } };
         if (call.method === "tools/call") {
           const operation = typeof call.params?.name === "string"
-            ? this.#options.sessionHistory?.toolOperations[call.params.name] : undefined;
+            ? (pathname === "/mcp/session-history" ? this.#options.sessionHistory?.toolOperations
+              : BACKGROUND_MEMORY_READ_TOOL_OPERATIONS)?.[call.params.name] : undefined;
           if (!operation || !this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok) {
-            reply(response, 403, "Session history operation is not granted."); return;
+            reply(response, 403, "Background read operation is not granted."); return;
           }
         }
       }
