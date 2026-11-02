@@ -80,6 +80,7 @@ native完了時は`nativeCompleted()`から`host.closeConnection()`を呼び、H
 アプリは固定history範囲、参照可能な保存messageとそのprocessing所属、操作／checkのindexをcontextへ渡す。validatorは根拠の実在・範囲と候補ごとにprocessing根拠があることを確認する。`execution_result`には保存済みの操作またはcheck参照を必要とするが、成功・失敗・成否不明によって候補を拒否しない。実行結果の解釈と記録内容の意味判断は生成LLMに委ね、validatorに成否判定入力は持たせない。対象Memoryへ`character_interpretation`は保存候補として返さない。これは参照・値の検証であり、自然言語の真偽や同一性を証明するものではない。成否不明を成功へ補完しない等の生成指示や既存の保護境界を、validatorによる意味の完全保証へ置き換えない。
 
 Characterの保存先はcontextの当該Character targetで固定し、対象Memoryはcontextのslot→targetだけを返す。モデル出力にowner、target tuple、権限、保存key等を受け付けない。contextはアプリが認可済みの実sourceから構成する内部入力であり、生成出力の自己申告から作らない。実owner／admissionの認可は接続側が担う。schemaは`z.toJSONSchema(schema, { io: "input" })`で生成用の構造schemaにでき、実在確認・正規化はvalidatorを通す。現時点では通常turnのMemory操作・生成経路にこのmoduleを配線していない。
+
 ## Affect候補とMain内部保存
 
 `affect-composition.ts`の`validateAffectCompositionOutput(unknown)`は、外部finalのJSON文字列またはparse済み値をstrictに検証する。`events`は1〜10件、`no_change`は正常な変化なしとする。候補は既存Affect domainのlayer・target・family・value・intensity・reason・evidenceと`sourceTurnId`だけを持つ。余剰field、memoryEpisode、空文字列、不正enum／数値／組合せは拒否し、不正候補の除去やno_changeへの置換はしない。用途指示は会話を基本材料とし、必要な操作結果だけを参照してCharacterの次の感情を構成する。非公開内面の復元・診断や、作業失敗から根拠のないユーザーへの敵意を構成しない。
