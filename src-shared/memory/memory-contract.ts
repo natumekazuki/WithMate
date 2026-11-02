@@ -164,6 +164,8 @@ export type MemoryAppendRequest = {
   idempotencyKey?: string;
 };
 
+export type MemoryEntryContent = Pick<MemoryAppendRequest, "kind" | "title" | "body" | "preview" | "tags">;
+
 export const MEMORY_FORGET_REASONS = [
   "user_request",
   "incorrect",

@@ -67,4 +67,16 @@ Provider builderは通常接続の既存3 endpointと背景のsession-history en
 
 native完了時は`nativeCompleted()`から`host.closeConnection()`を呼び、HTTP token・MCP endpoint・進行中readを閉じる。論理admissionは維持し、アプリの保存結果が成功・失敗・unknownとして返った後に`finish()`する。取消・source／親削除・runtime停止はbinding／handleを失効し、未確定の保存をadmissionで拒否する。確定済み保存は巻き戻さない。provider credential変更・無効化ではその背景Providerの実行を失効させる。
 
-この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。実Providerの副作用制限・実LLM呼出し、背景Memory read、用途別設定・通知・頻度、実storeへの用途保存とAuxiliary保存は共通runOnceだけでは接続されない。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+この基盤は自動生成を起動せず、通常turn内の現行Memory／Affect操作は維持している。実Providerの副作用制限・実LLM呼出し、背景Memory read、用途別設定・通知、実storeへの用途保存とAuxiliary保存は共通runOnceだけでは接続されない。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md)、二用途のMemory記録方針は同ADRの[#909後継判断](../adr/035-background-execution-binding-and-history-scope.md#909-memory記録の後継判断)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+
+## Memory生成の純粋な用途契約
+
+`src-shared/memory-recording/`は二用途の頻度と構造化候補を扱う。Provider、DB、timer、admission取得、保存処理は持たない。
+
+`memory-recording-frequency.ts`は`character-memory`と`target-memory`に独立した既定5 Turn／idle 5分を提供する。設定validatorはTurn数を1以上の安全な整数、idle分数を正の有限値として検証し、不正値を既定値へ置換しない。`getMemoryRecordingTrigger`は呼出側がowner×用途ごとに渡す未開始の終端Turn件数・頻度・実行中状態・連続idle分数から、`none`／`turn_count`／`idle`だけを返す。0件は起動せず、N件以上は実行中でも件数条件を満たし、端数は実行中でなくT分idleのときだけ条件を満たす。全体上限や実開始は既存admissionの責務である。
+
+`memory-recording-candidates.ts`は用途別schemaとvalidatorを提供する。候補ありは非空配列、候補なしは明示的な`no_candidates`だけを受け入れ、未知fieldや不正値を拒否する。Characterは既存episode型と事実／受け取りの区別、対象Memoryは既存kind・本文・tagと許可slotを使う。本文の制限・trim・tag正規化は通常Memory appendと同じ純粋validatorを共用する。
+
+アプリは固定history範囲、参照可能な保存messageとそのprocessing所属、操作／checkのindexをcontextへ渡す。validatorは根拠の実在・範囲と候補ごとにprocessing根拠があることを確認する。`execution_result`には保存済みの操作またはcheck参照を必要とするが、成功・失敗・成否不明によって候補を拒否しない。実行結果の解釈と記録内容の意味判断は生成LLMに委ね、validatorに成否判定入力は持たせない。対象Memoryへ`character_interpretation`は保存候補として返さない。これは参照・値の検証であり、自然言語の真偽や同一性を証明するものではない。成否不明を成功へ補完しない等の生成指示や既存の保護境界を、validatorによる意味の完全保証へ置き換えない。
+
+Characterの保存先はcontextの当該Character targetで固定し、対象Memoryはcontextのslot→targetだけを返す。モデル出力にowner、target tuple、権限、保存key等を受け付けない。contextはアプリが認可済みの実sourceから構成する内部入力であり、生成出力の自己申告から作らない。実owner／admissionの認可は接続側が担う。schemaは`z.toJSONSchema(schema, { io: "input" })`で生成用の構造schemaにでき、実在確認・正規化はvalidatorを通す。現時点では通常turnのMemory操作・生成経路にこのmoduleを配線していない。
