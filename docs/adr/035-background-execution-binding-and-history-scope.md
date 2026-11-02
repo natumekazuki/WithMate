@@ -6,6 +6,8 @@ Accepted
 
 三用途に共通するcheckpointと保存確定・復旧の判断は、[適用範囲](#適用範囲)の後継判断で置き換える。#909のCharacter Memory・対象Memoryに固有の開始位置と保存停止の扱いは[#909後継判断](#909-memory記録の後継判断)に定める。共通binding／履歴read／admissionと既存データ保護の判断は維持する。
 
+2026-11-03に、三用途の専用構造化finalとnative完了後の保存phaseを[背景実行内の直接登録](#背景実行内のmcpcli直接登録)へ置き換える判断を採用した。この後継判断は採用済み・未適用であり、現行実装の説明ではない。以下の従前判断の本文は保持する。
+
 ## Context
 
 Issue #888の三用途を通常Sessionのactor／Providerキーで実行すると、通常turnのbinding再利用・置換と競合する。#908の履歴readは元会話を参照するが、生成purposeやMemory記録の処理位置は読取能力そのものの条件ではない。Auxiliaryの再作成はcreatedAtだけでは区別できず、既存のconversation ownerIdentityに含まれるdraft incarnationも必要になる。
@@ -37,3 +39,34 @@ Character Memory・対象Memoryは、取得時点の許可された材料から�
 未開始対象の末尾はowner×用途ごとにアプリ生存期間内だけ保持し、admissionを取得して開始したときに進める。失敗／unknownでも戻さず、開始見送りなら進めない。この位置は保存成功の証明ではない。保存の失敗／unknown／取消では残りの候補を呼ばず、確認できた保存だけを成功として扱う。永続checkpoint、候補queue、新batchによる一括確定、read-reconcile、自動再送や失敗範囲の完全回収を後続の必須課題にしない。
 
 認可・正しいowner／target・失効拒否・入力検証・既存privacy忘却とデータ保護は維持する。共通binding／履歴read／admissionおよび#910の方針は変更しない。現在の実装済み範囲は[Memory生成の純粋な用途契約](../design/background-execution.md#memory生成の純粋な用途契約)を正本とし、後継判断の採用をProvider・read・保存接続の実装完了とは扱わない。
+
+## 背景実行内のMCP／CLI直接登録
+
+### 判断と理由
+
+Affect、Character Memory、対象Memoryは、背景Agentの一回の実行内で許可された材料を読み、必要な記録を既存MCP／CLIから登録する。登録用の構造化finalを返し、アプリが後段で保存する二段階方式は採用しない。構造化入力の検証と保存はtoolのapplication境界に集約し、同じ候補をfinalとして再解析・受渡しする責務を削減する。
+
+| 用途 | 登録操作 |
+| --- | --- |
+| Affect | `character_affect.appraise` |
+| Character Memory | `character_memory.append_episode` |
+| 対象Memory | `memory.append` |
+
+MCPとCLIは同じ用途別の操作・入力・認可・保存効果・エラー契約を使う。背景に通常turnのwrite権限全体やunbound fallbackを渡さない。Affect用途からのlinked episode生成、Memory用途からのAffect生成、移動・忘却・file／export・Graph／Glossary等への権限拡張は含まない。
+
+### 維持する境界
+
+- 実行identityは独立した背景binding、sourceは元の実会話とする。owner／Character／Session、許可read範囲、用途、保存先はtrusted contextから決め、Agentの自己申告で拡張しない。必要なsource参照の実在・範囲検証と入力検証をtool境界で行う。
+- tool登録から既存application service／storeへ進み、同一背景実行のadmissionを保存境界まで伝える。取消・source／親の削除や再作成・runtime停止等による失効後の未確定writeを拒否する。確定済み保存は巻き戻さない。
+- 主会話のCancelから独立し、通常Window closeでも継続する。背景全体3件、用途×会話1件、capacity時の起動見送り、永続queueなしを維持する。
+- 生成指示は、何を根拠に何を記録するか、記録しない条件、使用する登録操作を定める。記録不要ならwriteしない。最終応答は保存用schemaを要求せず、自然文による完了宣言を保存成功の根拠にしない。
+- 呼出単位で検証・保存し、後続の失敗・取消・結果不明があっても確認済みの先行保存を維持する。背景実行の終了と保存効果を区別し、不明を成功や全件未保存へ変換しない。
+- 順序・鮮度・重複・取りこぼしの厳密な調停、補償、自動再送・読取再照合・専用復旧、checkpoint／receipt／独自台帳は導入しない。既存のデータ保護・保存契約を再利用する。
+
+### 置換範囲と適用
+
+上記Decisionの「native終端後も専用の保存phaseを行う」選択、および#909後継判断の「final全体を検証してから保存する」選択は、本判断の適用対象ではない。背景toolをread-onlyに限定する実装も、用途に必要な登録操作を許可する形へ変更する。既存の登録境界で必要な入力検証・認可を省略する判断ではなく、失敗時に先行保存を戻す全件atomic契約への変更でもない。
+
+構造化finalのschema／parser、後段保存callback、用途別の専用保存applicationと結果変換は、直接登録へ接続した範囲から、不要な型・test・説明とともに整理する。必要な検証はtool境界へ移し、通常turnの公開操作や保存済みデータを削除しない。実Provider接続、自動起動・設定、Auxiliaryの保存対応を、この方式の採用だけで完了扱いしない。
+
+現行説明は各branchの実装変更と同じ論理変更で更新する。本判断の採用時点では、[Background Execution](../design/background-execution.md)に記載された構造化final／後段保存方式が実装されている。
