@@ -80,3 +80,16 @@ native完了時は`nativeCompleted()`から`host.closeConnection()`を呼び、H
 アプリは固定history範囲、参照可能な保存messageとそのprocessing所属、操作／checkのindexをcontextへ渡す。validatorは根拠の実在・範囲と候補ごとにprocessing根拠があることを確認する。`execution_result`には保存済みの操作またはcheck参照を必要とするが、成功・失敗・成否不明によって候補を拒否しない。実行結果の解釈と記録内容の意味判断は生成LLMに委ね、validatorに成否判定入力は持たせない。対象Memoryへ`character_interpretation`は保存候補として返さない。これは参照・値の検証であり、自然言語の真偽や同一性を証明するものではない。成否不明を成功へ補完しない等の生成指示や既存の保護境界を、validatorによる意味の完全保証へ置き換えない。
 
 Characterの保存先はcontextの当該Character targetで固定し、対象Memoryはcontextのslot→targetだけを返す。モデル出力にowner、target tuple、権限、保存key等を受け付けない。contextはアプリが認可済みの実sourceから構成する内部入力であり、生成出力の自己申告から作らない。実owner／admissionの認可は接続側が担う。schemaは`z.toJSONSchema(schema, { io: "input" })`で生成用の構造schemaにでき、実在確認・正規化はvalidatorを通す。現時点では通常turnのMemory操作・生成経路にこのmoduleを配線していない。
+## Affect候補とMain内部保存
+
+`affect-composition.ts`の`validateAffectCompositionOutput(unknown)`は、外部finalのJSON文字列またはparse済み値をstrictに検証する。`events`は1〜10件、`no_change`は正常な変化なしとする。候補は既存Affect domainのlayer・target・family・value・intensity・reason・evidenceと`sourceTurnId`だけを持つ。余剰field、memoryEpisode、空文字列、不正enum／数値／組合せは拒否し、不正候補の除去やno_changeへの置換はしない。用途指示は会話を基本材料とし、必要な操作結果だけを参照してCharacterの次の感情を構成する。非公開内面の復元・診断や、作業失敗から根拠のないユーザーへの敵意を構成しない。
+
+Main内部の`BackgroundAffectApplicationService.apply(execution, final)`は、registryの実背景binding、current handle／admission、affect用途とlocal-userの権限を検証する。アプリ所有の`readMainSource(historyScope)`は、実Mainのmetadata、同じstorage読取境界で観測した既存ownerIdentity、入力材料に渡した保存済みTurnのid／sessionId／phase／completedAt／assistantMessageSeqを返す。別owner・別Character・読取専用・character-authoring、許可history／processing範囲外のTurn、未対応のAuxiliaryは保存前に拒否する。targetType／targetIdは感情の対象であり保存ownerを選ばない。
+
+final全体とsource参照を検証後、schemaVersion・Character／user／Main owner・Turnのcanonical UTC completedAt・新規保存keyをアプリが補う。occurredAtは観測上の時刻であり、非公開内面の発生時刻を認定しない。取得時点と保存時点のAffect version／projection／定義revisionは比較しない。
+
+保存は背景の`RuntimeTurnAdmission`を適用し、`CharacterAffectService.recordAppraisal`から既存Memory Workerの`affect.recordEvent`、`CharacterAffectStorage.recordEvent`へ一件ずつ進む。expectedVersionとmemoryEpisodeは渡さず、versionの付け直しやMemory appendは行わない。通常のcorrect／resetのversion契約とlinked episodeは変更しない。native完了後もadmissionを維持し、用途保存の成功・失敗・結果不明を受けて呼出元が`finish()`する。
+
+用途結果は`no_change`、全件応答確認済みの`saved`、最初の失敗で終了した`stopped`を区別する。確認済みprefixにはcandidateIndex・eventId・created／replayedを残し、失敗位置と未呼出indexを別に返す。構造不正で候補配列が確定しない場合の未呼出indexはnullとする。既存例外が未保存を保証する場合だけeffectをnoneとし、送信後の不明な効果はunknownとする。取消後も確定済みprefixを戻さず、後続、補償、再照合、自動再送を呼ばない。保存済みAffectは既存の通常getContext／projectionから利用する。専用checkpoint／receipt／batch／復旧待ちは持たない。
+
+この内部入口は共通runOnce・実Provider・終端通知・本番自動更新へ配線していない。readMainSourceは注入portであり、本番のsource読取resolverは未接続である。公開appraise／correct／reset／contextは維持し、Auxiliaryのowner／FK／context対応も含めない。
