@@ -52,7 +52,7 @@ import { toMemoryEntrySummary, type MemoryEntryDetail } from "../../src-shared/m
 import { buildMemoryTargetAudit } from "./memory-v6-audit.js";
 import { resolveMemoryV6Target, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
-import { requireMemoryPermission, type MemoryV6Principal } from "./memory-v6-permission.js";
+import { canAccessMemoryTarget, memoryForbiddenError, requireMemoryPermission, type MemoryV6Principal } from "./memory-v6-permission.js";
 import {
   MemoryV6EntryNotFoundError,
   MemoryV6FileQuotaExceededError,
@@ -588,7 +588,10 @@ export class MemoryV6Service {
       return createMemoryGetEntryResponse(null);
     }
     const target = entryTarget(entry);
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !canAccessMemoryTarget(principal, target)) return toMemoryErrorResponse(memoryForbiddenError());
     if (!sameTarget(requestedTarget, target)) {
+      if (principal.type === "session_binding" && principal.readTargets !== undefined) return toMemoryErrorResponse(memoryForbiddenError());
       return createMemoryGetEntryResponse(null);
     }
     return createMemoryGetEntryResponse(entry);
