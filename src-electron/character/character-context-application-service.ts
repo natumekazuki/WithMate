@@ -43,6 +43,7 @@ import {
 import type { MemoryV6Service } from "../memory/memory-v6-service.js";
 import { countMemorySearchQueryTerms } from "../memory/memory-v6-storage.js";
 import { createLocalUserMemoryPrincipal, type MemoryV6Principal } from "../memory/memory-v6-permission.js";
+import { StorageWorkerGenerationError, StorageWorkerRemoteError } from "../storage/storage-worker-client.js";
 
 const LOCAL_USER_ID = "local-user" as const;
 
@@ -595,13 +596,20 @@ export class CharacterContextApplicationService {
       } catch (error) {
         return this.mapThrownError(error, "episode scope validation", "none");
       }
-      return this.appendMemoryEpisode({
-        principal,
-        characterId: input.characterId,
-        idempotencyKey: input.idempotencyKey,
-        episode: input.episode,
-        operation: "append_episode",
-      });
+      try {
+        return await this.appendMemoryEpisode({
+          principal,
+          characterId: input.characterId,
+          idempotencyKey: input.idempotencyKey,
+          episode: input.episode,
+          operation: "append_episode",
+        });
+      } catch (error) {
+        if (error instanceof StorageWorkerGenerationError || error instanceof StorageWorkerRemoteError && error.outcome !== "unknown") {
+          return this.mapThrownError(error, "episode append", "none");
+        }
+        throw error;
+      }
     });
   }
 
