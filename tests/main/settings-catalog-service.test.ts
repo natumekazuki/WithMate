@@ -263,7 +263,7 @@ describe("SettingsCatalogService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "appSettings-only reset成功後は無効化・credential変更された背景Providerのnative完了後の保存admissionも失効し、失敗時と無変更Providerは維持する"
+  // claim = "appSettings-only reset成功後は無効化・credential変更された背景Providerの実行中admissionを失効し、失敗時と無変更Providerは維持する"
   // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
   // fault = "設定resetが背景失効を通知しない、保存前に失効する、または無関係なProviderや通常bindingまで失効する"
   // observable = "resetの成功・失敗、Provider別signal、保存callback回数とadmission例外、通常bindingの解決結果"
@@ -308,7 +308,6 @@ describe("SettingsCatalogService", () => {
           processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] },
         });
         if (!result.ok) assert.fail(result.reason);
-        executions.nativeCompleted(result.execution);
         return result.execution;
       };
       try {

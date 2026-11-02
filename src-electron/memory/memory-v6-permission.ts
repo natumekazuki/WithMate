@@ -17,6 +17,8 @@ export type MemoryV6SessionBindingPrincipal = {
   allowedProjectIds?: readonly string[];
   /** Present only for captured background reads; an empty set permits no target. */
   readTargets?: readonly MemoryV6ResolvedTarget[];
+  /** Captured registration targets, present only after purpose/source/handler authorization. */
+  writeTargets?: readonly MemoryV6ResolvedTarget[];
   permissions: readonly MemoryPermission[];
 };
 

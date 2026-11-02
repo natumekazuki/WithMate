@@ -25434,7 +25434,7 @@ function createWithMateMemoryMcpServer(deps = {}, allowedTools) {
 	const server = fallbackAdmission ? new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery) : new McpServer({
 		name: "withmate-memory",
 		version: "1.0.0"
-	}, { instructions: "Read only the captured Memory targets granted to this background execution. No write, file, or fallback authority is provided." });
+	}, { instructions: "Use only the published reads and purpose-specific registration for this captured background execution. Final text is not proof of saving. No other write, file, or fallback authority is provided." });
 	const registerTool = server.registerTool.bind(server);
 	registerWithMateMemoryTools({ registerTool(name, config, callback) {
 		const tool = registerTool(name, config, callback);

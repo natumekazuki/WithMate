@@ -12,7 +12,6 @@ import type { CharacterContextApplicationService } from "../character/character-
 import { RuntimeTurnInactiveError, assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { AgentRuntimeBindingRegistry } from "../providers/agent-runtime-binding.js";
 import type { BackgroundExecution } from "../providers/background-execution-service.js";
-import type { BackgroundSaveResult } from "../providers/background-call-service.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import { StorageWorkerGenerationError, StorageWorkerRemoteError } from "../storage/storage-worker-client.js";
 import type { MemoryV6SessionBindingPrincipal } from "./memory-v6-permission.js";
@@ -63,12 +62,6 @@ function responseFailure(error: { code: string; effect?: string }, candidateInde
   const effect = error.effect === "none" || (error.effect === undefined && knownRejection) ? "none" : "unknown";
   return { candidateIndex, code: error.code, effect,
     cause: effect === "unknown" ? "unknown" : knownRejection || error.code === "authority_denied" || error.code === "invalid_input" ? "rejected" : "failed" };
-}
-
-export function toBackgroundMemorySaveResult(result: BackgroundMemoryResult): BackgroundSaveResult {
-  if (result.kind === "no_candidates") return { kind: "none" };
-  if (result.kind === "saved") return { kind: "saved", confirmedSavedCount: result.saved.length };
-  return { kind: "stopped", confirmedSavedCount: result.saved.length, cause: result.failure.cause, code: result.failure.code };
 }
 
 /** Main-only trusted save orchestration. The caller retains ownership of the execution lifetime. */

@@ -64,7 +64,6 @@ test("Main candidates cross the real Worker and appear in normal context without
   const f = await backgroundAffectFixture();
   try {
     const execution = f.start();
-    f.executions.nativeCompleted(execution);
     const received: unknown[] = [];
     const app = new BackgroundAffectApplicationService({ ...f.deps, affectService: {
       async recordAppraisal(event, options) {
@@ -276,7 +275,7 @@ test("closed Worker failures are known-unsaved before and after an acknowledged 
 // kind = "invariant"
 // claim = "失効済みadmissionは保存前に拒否し、prefix確定後の取消は確定分を保持して後続保存を止める"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
-// fault = "native完了と同じ扱いで取消後にも保存するか、確定済みprefixを失敗扱いで消す"
+// fault = "取消後にも保存するか、確定済みprefixを失敗扱いで消す"
 // observable = "取消結果・確認済みprefixと実DB件数"
 // observation_boundary = "consumer"
 // scope = "background-affect logical admission lifetime"

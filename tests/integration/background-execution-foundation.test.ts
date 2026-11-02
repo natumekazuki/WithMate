@@ -101,28 +101,24 @@ test("専用endpointと具体的grantで通常turn・許可外操作・別bindin
 
 // @test-value v2
 // kind = "contract"
-// claim = "native終端でHTTP tokenは失効するが保存admissionは残り、論理finish・取消後は同じadmissionが拒否される"
+// claim = "背景実行の終了と取消はHTTP tokenと同一admissionを失効させる"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
-// fault = "tool接続の閉鎖が保存まで失効するか、finish後も未確定保存を認可する"
-// observable = "旧tokenのHTTP 401、保存callbackの実行回数、admissionの例外、取消signal"
+// fault = "finish後も旧tokenで読めるか、未確定保存を認可する"
+// observable = "旧tokenのHTTP 401、admissionの例外、取消signal"
 // observation_boundary = "public-boundary"
-// scope = "native completion versus logical application completion"
+// scope = "background completion and cancellation"
 // lifecycle = "permanent"
-// impact = "正常生成結果を保存できないか、取消済みの遅延結果を適用する"
-// distinction = "通常turnの一段階endのtestでは二つの寿命を区別できない。保存callbackはfixtureでatomic保存の証明ではない"
+// impact = "終了済み背景が元会話を読み続けるか、取消済みの遅延結果を適用する"
+// distinction = "通常turnのendだけでは独立した背景binding・host token・admissionの終了を確認できない"
 // @end-test-value
-test("MCPを閉じてから論理finishまでの保存admissionを保持する", async () => {
+test("背景のfinishと取消がMCPとadmissionを終了する", async () => {
   const f = await fixture();
   try {
     const execution = f.started();
     const binding = f.project(execution);
-    f.executions.nativeCompleted(execution);
-    assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "session_history.get_message")).status, 401);
-    let saved = 0;
-    runWithRuntimeTurnAdmission(execution.admission, () => { saved += 1; });
-    assert.equal(saved, 1);
     f.executions.finish(execution);
-    assert.throws(() => runWithRuntimeTurnAdmission(execution.admission, () => { saved += 1; }), /no longer active/);
+    assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "session_history.get_message")).status, 401);
+    assert.throws(() => runWithRuntimeTurnAdmission(execution.admission, () => undefined), /no longer active/);
     const cancelled = f.started();
     f.executions.cancel(cancelled.binding.bindingId);
     assert.equal(cancelled.signal.aborted, true);
@@ -188,15 +184,15 @@ test("背景の上限・重複起動とsourceの適格性を守る", async () =>
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景Provider失効は元会話Providerに依存せず該当呼出しを取消し、runtime停止は接続閉鎖後のadmissionも失効して再起動まで開始を拒否する"
+// claim = "背景Provider失効は元会話Providerに依存せず該当呼出しを取消し、runtime停止は実行中admissionを失効して再起動まで開始を拒否する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
-// fault = "credential変更で元SessionのProviderだけを見て背景を残すか、接続閉鎖後のlogical runを終了対象から漏らす"
+// fault = "credential変更で元SessionのProviderだけを見て背景を残すか、実行中の背景を終了対象から漏らす"
 // observable = "Provider別signal、残った正常read、停止後admissionと開始の例外、再起動後の受付"
 // observation_boundary = "component-behavior"
 // scope = "provider-specific revocation and Main-owned runtime shutdown"
 // lifecycle = "permanent"
 // impact = "無効化されたProviderの遅延結果が保存可能なまま残る"
-// distinction = "host停止だけではnative完了後の論理admissionを列挙しないため、Mainと同じstop/startで終了・新規開始停止・再開を確認する"
+// distinction = "host停止だけでは呼出上限を所有するserviceの受付停止を確認できないため、Mainと同じstop/startで終了・新規開始停止・再開を確認する"
 // @end-test-value
 test("Provider失効とruntime停止が背景の論理寿命まで終了する", async () => {
   const f = await fixture();
@@ -208,7 +204,6 @@ test("Provider失効とruntime停止が背景の論理寿命まで終了する",
     assert.equal(claude.signal.aborted, true);
     assert.equal(codex.signal.aborted, false);
     assert.partialDeepStrictEqual((await connected.client.callTool({ name: "session_history.get_message", arguments: { seq: 0 } })).structuredContent, { ok: true });
-    f.executions.nativeCompleted(codex);
     f.executions.stop();
     assert.throws(() => runWithRuntimeTurnAdmission(codex.admission, () => undefined), /no longer active/);
     assert.throws(() => runWithRuntimeTurnAdmission(claude.admission, () => undefined), /no longer active/);

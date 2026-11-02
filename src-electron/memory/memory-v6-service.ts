@@ -775,6 +775,10 @@ export class MemoryV6Service {
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !principal.writeTargets?.some((target) => sameTarget(target, resolved.target))) {
+      return toMemoryErrorResponse(memoryForbiddenError());
+    }
     const files = validated.value.files ?? [];
     const hasFiles = files.length > 0;
     if (hasFiles && !this.deps.protectedObjectImporter) {

@@ -14,7 +14,6 @@ import { GlossaryApplicationService, projectGlossaryCheckoutAuthority } from "..
 import { getGlossaryAgentRuntimeOperations } from "../../src-shared/glossary/glossary-operation-schema.js";
 import { getSessionGraphAgentRuntimeOperations } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
-import { runWithRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
 import { backgroundHistoryFixture as fixture, owner } from "../helpers/background-history-fixture.js";
 
@@ -259,50 +258,5 @@ test("背景Memoryの範囲拡大・直接write・他identityとbindingを拒否
     f.turns.end(turn);
     assert.partialDeepStrictEqual((await client.callTool({ name: "memory.get_entry", arguments: { target: publicProject, entryId: ids.project } })).structuredContent,
       { entry: { body: "saved project needle body" } });
-  } finally { await f.close(); }
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "native完了でMCPと配布CLIのMemory readを失効し、アプリ保存admissionだけをfinish・cancel・runtime停止まで維持する"
-// oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
-// fault = "tokenだけを閉じCLI readを残すか、native完了でアプリの実Worker保存も失効させる"
-// observable = "旧MCP tokenの401、CLI readの非zero、native完了後の実Worker保存結果、終端後のadmission例外"
-// observation_boundary = "public-boundary"
-// scope = "native connection revocation versus logical application-save lifetime"
-// lifecycle = "permanent"
-// impact = "生成後の正当な保存を落とすか、終了したProviderが保存中の材料を取得し続ける"
-// distinction = "foundationのcallback回数だけではCLI read失効と実Memory Workerへの保存admissionの分離を観測できない"
-// @end-test-value
-test("native完了後のMCP・CLI読取とアプリ保存の寿命を分離する", async () => {
-  const f = await fixture();
-  try {
-    await seed(f);
-    const execution = start(f);
-    const binding = f.project(execution);
-    const input = { targets: [publicProject], query: "needle" };
-    assert.equal((await cli(f, binding, "search", input)).code, 0);
-    f.executions.nativeCompleted(execution);
-    assert.equal((await f.request(binding, binding.managedMcp!.memoryUrl, "memory.search", undefined, input)).status, 401);
-    const denied = await cli(f, binding, "search", input);
-    assert.notEqual(denied.code, 0);
-    assert.equal(denied.value.error.code, "MEMORY_FORBIDDEN");
-    const saved = await runWithRuntimeTurnAdmission(execution.admission, () => f.memory.append(createLocalUserMemoryPrincipal(), {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION, target: projectTarget, kind: "note", title: "application save",
-      body: "saved after native completion", preview: "saved", tags: [],
-    }));
-    assert.ok(!("error" in saved), JSON.stringify(saved));
-    assert.equal((await f.memoryWorker.storage.getEntry(saved.entry.id))!.body, "saved after native completion");
-    f.executions.finish(execution);
-    assert.throws(() => runWithRuntimeTurnAdmission(execution.admission, () => undefined), /no longer active/);
-    const cancelled = start(f);
-    f.executions.nativeCompleted(cancelled);
-    assert.doesNotThrow(() => runWithRuntimeTurnAdmission(cancelled.admission, () => undefined));
-    f.executions.cancel(cancelled.binding.bindingId);
-    assert.throws(() => runWithRuntimeTurnAdmission(cancelled.admission, () => undefined), /no longer active/);
-    const stopped = start(f);
-    f.executions.nativeCompleted(stopped);
-    f.executions.stop();
-    assert.throws(() => runWithRuntimeTurnAdmission(stopped.admission, () => undefined), /no longer active/);
   } finally { await f.close(); }
 });

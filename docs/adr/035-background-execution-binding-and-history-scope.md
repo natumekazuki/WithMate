@@ -6,7 +6,7 @@ Accepted
 
 三用途に共通するcheckpointと保存確定・復旧の判断は、[適用範囲](#適用範囲)の後継判断で置き換える。#909のCharacter Memory・対象Memoryに固有の開始位置と保存停止の扱いは[#909後継判断](#909-memory記録の後継判断)に定める。共通binding／履歴read／admissionと既存データ保護の判断は維持する。
 
-2026-11-03に、三用途の専用構造化finalとnative完了後の保存phaseを[背景実行内の直接登録](#背景実行内のmcpcli直接登録)へ置き換える判断を採用した。この後継判断は採用済み・未適用であり、現行実装の説明ではない。以下の従前判断の本文は保持する。
+2026-11-03に、三用途の専用構造化finalとnative完了後の保存phaseを[背景実行内の直接登録](#背景実行内のmcpcli直接登録)へ置き換える判断を採用した。現在の適用範囲は末尾の[共通基盤への適用](#共通基盤への適用)に示す。以下の従前判断の本文は保持する。
 
 ## Context
 
@@ -70,3 +70,9 @@ MCPとCLIは同じ用途別の操作・入力・認可・保存効果・エラ�
 構造化finalのschema／parser、後段保存callback、用途別の専用保存applicationと結果変換は、直接登録へ接続した範囲から、不要な型・test・説明とともに整理する。必要な検証はtool境界へ移し、通常turnの公開操作や保存済みデータを削除しない。実Provider接続、自動起動・設定、Auxiliaryの保存対応を、この方式の採用だけで完了扱いしない。
 
 現行説明は各branchの実装変更と同じ論理変更で更新する。本判断の採用時点では、[Background Execution](../design/background-execution.md)に記載された構造化final／後段保存方式が実装されている。
+
+### 共通基盤への適用
+
+共通runOnceは一回のAgent実行と実行終了の契約へ変更し、final schema／parser／後段save callbackと専用保存phaseを除去した。用途ごとのoperation上限、同一背景admissionとtrusted source／保存先を検証する登録port、未接続handlerのMCP非公開・直接runtime拒否を適用した。通常turnの公開操作と保存済みデータは維持する。
+
+三用途の入力検証と保存adapterは登録portへまだ接続していない。用途専用applicationは実行経路から外れており、検証移設と未使用コードの整理は用途担当が行う。実Provider・本番自動起動・設定・Auxiliary保存の適用完了を意味しない。現在の接続契約は[Background Execution](../design/background-execution.md#用途限定の登録接続)を正本とする。

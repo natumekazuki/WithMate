@@ -74,6 +74,7 @@ import type { MemoryV6StorageAccess } from "./memory-v6-service.js";
 import type { CharacterAffectStorageAccess } from "../character/character-affect-service.js";
 import { secureWindowsRuntimePath } from "../platform/runtime-path-security.js";
 import { ManagedHttpMcpHost, type SessionHistoryMcpRegistration } from "./managed-http-mcp-host.js";
+import type { BackgroundRegistration } from "../providers/background-registration.js";
 
 export type MemoryV6RuntimeApiHandle = {
   baseUrl: string;
@@ -95,6 +96,7 @@ export type MemoryV6RuntimeApiHandle = {
 
 export type StartMemoryV6RuntimeApiOptions = {
   sessionHistoryMcp?: SessionHistoryMcpRegistration;
+  backgroundRegistration?: BackgroundRegistration;
   userDataPath: string;
   applicationInstanceId: string;
   buildChannel: RuntimeBuildChannel;
@@ -1458,6 +1460,7 @@ export async function startMemoryV6RuntimeApi(
     server = createMemoryV6HttpServer({
       service,
       characterContextService,
+      backgroundRegistration: options.backgroundRegistration,
       apiSecret,
       operatorApiSecret,
       mcpApiSecret,
@@ -1495,6 +1498,7 @@ export async function startMemoryV6RuntimeApi(
           subscribeChanges: registry.subscribeChanges.bind(registry) },
         turns: { admit: turns.admit.bind(turns), end: turns.end.bind(turns) },
         sessionHistory: options.sessionHistoryMcp,
+        backgroundRegistration: options.backgroundRegistration,
       });
       await managedMcp.start();
     }

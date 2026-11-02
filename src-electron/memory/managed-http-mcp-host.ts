@@ -13,7 +13,8 @@ import { createWithMateGlossaryMcpServer } from "../platform/mcp/withmate-glossa
 import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-session-graph-mcp.js";
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
-import { BACKGROUND_MEMORY_READ_TOOL_OPERATIONS } from "../../src-shared/agent-runtime/background-memory-read.js";
+import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import type { BackgroundRegistration } from "../providers/background-registration.js";
 
 type Endpoint = {
   server: McpServer;
@@ -47,6 +48,7 @@ export type ManagedHttpMcpHostOptions = {
   bindingRegistry: Pick<AgentRuntimeBindingRegistry, "resolve" | "resolveIdentity" | "subscribeChanges">;
   turns: Pick<ProviderAgentRuntimeTurnCoordinator, "admit" | "end">;
   sessionHistory?: SessionHistoryMcpRegistration;
+  backgroundRegistration?: BackgroundRegistration;
 };
 
 function reply(response: ServerResponse, status: number, message: string): void {
@@ -204,6 +206,12 @@ export class ManagedHttpMcpHost {
       && admitted.ok && admitted.handle === context.handle;
   }
 
+  #backgroundMemoryOperations(context: TurnConnection): Readonly<Record<string, string>> {
+    const resolved = this.#options.bindingRegistry.resolveIdentity(context.binding.bindingReference);
+    const scope = resolved.ok ? resolved.binding.backgroundScope : undefined;
+    return scope ? backgroundMemoryToolOperations(scope.purpose, Boolean(this.#options.backgroundRegistration?.handlers[scope.purpose])) : {};
+  }
+
   async #createEndpoint(context: TurnConnection, pathname: string): Promise<Endpoint> {
     const deliveries = new Map<RequestId, Promise<void>>();
     const deps = {
@@ -223,7 +231,7 @@ export class ManagedHttpMcpHost {
             if (!delivery) throw new Error("MCP tools list delivery is missing.");
             await delivery;
           },
-        }, context.binding.background ? Object.entries(BACKGROUND_MEMORY_READ_TOOL_OPERATIONS)
+        }, context.binding.background ? Object.entries(this.#backgroundMemoryOperations(context))
           .filter(([, operation]) => this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok)
           .map(([name]) => name) : undefined)
       : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
@@ -285,9 +293,9 @@ export class ManagedHttpMcpHost {
         if (call.method === "tools/call") {
           const operation = typeof call.params?.name === "string"
             ? (pathname === "/mcp/session-history" ? this.#options.sessionHistory?.toolOperations
-              : BACKGROUND_MEMORY_READ_TOOL_OPERATIONS)?.[call.params.name] : undefined;
+              : this.#backgroundMemoryOperations(context))?.[call.params.name] : undefined;
           if (!operation || !this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok) {
-            reply(response, 403, "Background read operation is not granted."); return;
+            reply(response, 403, "Background operation is not granted or connected."); return;
           }
         }
       }

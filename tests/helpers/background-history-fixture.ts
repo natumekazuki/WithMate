@@ -32,11 +32,13 @@ import { SessionHistoryRuntimeService } from "../../src-electron/session-history
 import { createWithMateSessionHistoryMcpServer } from "../../src-electron/platform/mcp/withmate-session-history-mcp.js";
 import { SESSION_HISTORY_TOOL_OPERATIONS, getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import type { StorageOperationDiagnosticSink } from "../../src-electron/storage/storage-operation-diagnostics.js";
+import type { BackgroundRegistration } from "../../src-electron/providers/background-registration.js";
 
 export const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111111", runtimeGenerationId: "22222222-2222-4222-8222-222222222222" };
 export const readOperation = "session_history.route.get_message";
 
-export async function backgroundHistoryFixture(diagnosticSink?: StorageOperationDiagnosticSink) {
+export async function backgroundHistoryFixture(diagnosticSink?: StorageOperationDiagnosticSink,
+  registrationHandlers?: BackgroundRegistration["handlers"]) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-background-foundation-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
@@ -81,6 +83,9 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       definitionSha256: "fixture", definitionByteSize: 9, snapshotAt: "2026-11-01T00:00:00.000Z" }) : null });
   const worker = createV6StorageWorkerBundle({ dbPath, userDataPath: directory, diagnosticSink });
   await worker.initialize();
+  const backgroundRegistration: BackgroundRegistration | undefined = registrationHandlers ? {
+    handlers: registrationHandlers, readMainSource: (scope) => worker.stores.session.readMainSource(scope),
+  } : undefined;
   let readGate: (() => Promise<void>) | undefined;
   const history = new SessionHistoryRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     read: async (input) => {
@@ -97,6 +102,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
           character: { id: "character", name: "Character" } } } : null }) });
   const runtime = createMemoryV6HttpServer({ ...owner, apiSecret: "api", mcpApiSecret: "mcp", operatorApiSecret: "operator",
     service: memory, characterContextService: characterContext, agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
+    backgroundRegistration,
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath,
     resolveActorSession: (id) => sessions.has(id) ? { id, providerId: "codex", characterId: "character" } : null,
@@ -106,7 +112,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const connection = { api: { ...owner, runtimeInstanceId: owner.runtimeGenerationId,
     baseUrl: `http://127.0.0.1:${runtime.address()!.port}`, apiSecret: "api" }, credential: { adapter: "mcp" as const, adapterSecret: "mcp" } };
   const host = new ManagedHttpMcpHost({ connection,
-    bindingRegistry: bindings, turns, fallbackAdmissionSecret: "fallback",
+    bindingRegistry: bindings, turns, fallbackAdmissionSecret: "fallback", backgroundRegistration,
     sessionHistory: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer } });
   await host.start();
   const executions = new BackgroundExecutionService({ bindings, turns, closeConnection: (handle) => host.closeConnection(handle) });

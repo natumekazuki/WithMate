@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION, createCharacterContextError } from "../../src-shared/character-context/character-context-contract.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import { createMemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
-import { BackgroundMemoryApplicationService, toBackgroundMemorySaveResult } from "../../src-electron/memory/background-memory-application-service.js";
+import { BackgroundMemoryApplicationService } from "../../src-electron/memory/background-memory-application-service.js";
 import { createLocalUserMemoryPrincipal } from "../../src-electron/memory/memory-v6-permission.js";
 import { currentRuntimeTurnAdmissionState } from "../../src-electron/platform/memory/runtime-turn-admission.js";
 import { StorageWorkerGenerationError, StorageWorkerRemoteError, StorageWorkerUnknownOutcomeError } from "../../src-electron/storage/storage-worker-client.js";
@@ -28,7 +28,6 @@ test("both Main purposes save through the real Worker and normal reads", async (
     try {
       const scope = f.memoryScope(purpose);
       const execution = f.start(scope);
-      f.executions.nativeCompleted(execution);
       let calls = 0;
       const checkPrincipal = (principal: Parameters<typeof f.memory.append>[0]) => {
         calls++;
@@ -53,7 +52,6 @@ test("both Main purposes save through the real Worker and normal reads", async (
       assert.equal(calls, 2);
       assert.deepEqual(result.saved.map(({ candidateIndex, created }) => ({ candidateIndex, created })),
         [{ candidateIndex: 0, created: true }, { candidateIndex: 1, created: true }]);
-      assert.deepEqual(toBackgroundMemorySaveResult(result), { kind: "saved", confirmedSavedCount: 2 });
       const target = purpose === "character-memory" ? characterTarget : generalTarget;
       for (const saved of result.saved) {
         const entry = await f.memory.getEntry(createLocalUserMemoryPrincipal(), {
@@ -82,14 +80,14 @@ test("both Main purposes save through the real Worker and normal reads", async (
 
 // @test-value v2
 // kind = "contract"
-// claim = "二用途の明示no_candidatesは認可後にwriteせず共通noneへ対応する"
+// claim = "内部保存applicationは二用途の明示no_candidatesを認可後にwriteせず返す"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memory候補のmain内部保存" }
-// fault = "正常0件にダミーentryを書き込むか、共通結果を保存済み/失敗へ変える"
-// observable = "no_candidates、none、append呼出と実Memory件数0"
+// fault = "正常0件にダミーentryを書き込むか、候補なしを保存済み/失敗へ変える"
+// observable = "no_candidates、append呼出と実Memory件数0"
 // observation_boundary = "consumer"
 // scope = "Main memory no candidates"
 // lifecycle = "permanent"
-// distinction = "純粋parserの0件受理だけでは保存callbackと共通結果の無write契約を確認できない"
+// distinction = "純粋parserの0件受理だけでは内部保存applicationからWorkerへのwrite非呼出を確認できない"
 // @end-test-value
 test("no_candidates performs no writes for either purpose", async () => {
   const f = await backgroundMemoryFixture();
@@ -101,7 +99,6 @@ test("no_candidates performs no writes for either purpose", async () => {
       const scope = f.memoryScope(purpose), execution = f.start(scope);
       const result = await f.app.apply(execution, { outcome: "no_candidates" }, f.memoryContext(scope));
       assert.deepEqual(result, { kind: "no_candidates" });
-      assert.deepEqual(toBackgroundMemorySaveResult(result), { kind: "none" });
       f.executions.finish(execution);
     }
     assert.equal(writes, 0); assert.equal(f.memoryCount(), 0);
@@ -220,7 +217,7 @@ test("ineligible and unsupported saved sources are rejected without writes", asy
 // claim = "service ErrorResponseでは確認済みprefixだけを残し最初の拒否で残りを呼ばない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memory候補のmain内部保存" }
 // fault = "ErrorResponseを成功とみなすか後続保存を続け、部分保存を全件成功/0件へ変える"
-// observable = "保存prefix、停止index、未呼出index、共通結果、呼出数と実Memory件数"
+// observable = "保存prefix、停止index、未呼出index、呼出数と実Memory件数"
 // observation_boundary = "consumer"
 // scope = "Main memory partial ErrorResponse"
 // lifecycle = "permanent"
@@ -244,8 +241,6 @@ test("ErrorResponse stops at the rejected candidate and preserves the saved pref
       assert.equal(result.saved.length, 1); assert.equal(result.failure.candidateIndex, 1);
       assert.equal(result.failure.effect, "none"); assert.equal(result.failure.cause, "rejected");
       assert.deepEqual(result.unattemptedCandidateIndexes, [2]);
-      assert.deepEqual(toBackgroundMemorySaveResult(result), { kind: "stopped", confirmedSavedCount: 1,
-        cause: "rejected", code: purpose === "character-memory" ? "authority_denied" : "MEMORY_FORBIDDEN" });
       assert.equal(calls, 2); assert.equal(f.memoryCount(), 1);
     } finally { await f.close(); }
   }
@@ -256,7 +251,7 @@ test("ErrorResponse stops at the rejected candidate and preserves the saved pref
 // claim = "未送信generation/Worker拒否はnone、保存後の応答不明はunknownとし、確認済みprefixと未呼出分を保持する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memory候補のmain内部保存" }
 // fault = "未送信をunknownに潰すか、効果不明の候補を成功/未保存確定にし、後続/再送を呼ぶ"
-// observable = "両用途のeffect/cause、prefixと停止index、共通件数、呼出数と実Worker保存件数"
+// observable = "両用途のeffect/cause、prefixと停止index、呼出数と実Worker保存件数"
 // observation_boundary = "consumer"
 // scope = "Main memory Worker failure effects"
 // lifecycle = "permanent"
@@ -283,9 +278,6 @@ test("unsent and unknown Worker outcomes remain distinct for both purposes", asy
       assert.equal(result.failure.effect, failure === "unknown" ? "unknown" : "none");
       assert.equal(result.failure.cause, failure === "unknown" ? "unknown" : "failed");
       assert.deepEqual(result.unattemptedCandidateIndexes, [2]);
-      assert.equal(toBackgroundMemorySaveResult(result).kind, "stopped");
-      const common = toBackgroundMemorySaveResult(result);
-      assert.ok(common.kind === "stopped"); assert.equal(common.confirmedSavedCount, 1); assert.equal(common.cause, result.failure.cause);
       assert.equal(calls, 2); assert.equal(f.memoryCount(), failure === "unknown" ? 2 : 1);
     } finally { await f.close(); }
   }
