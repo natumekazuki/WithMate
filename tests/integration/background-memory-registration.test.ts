@@ -13,6 +13,8 @@ import { backgroundMemoryRegistrationHandlers, runBackgroundMemoryRegistration }
 import { BackgroundCallService, type BackgroundCallContext, type BackgroundAgentInput } from "../../src-electron/providers/background-call-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../../src-electron/providers/agent-runtime-binding.js";
 import { backgroundHistoryFixture as fixture, owner } from "../helpers/background-history-fixture.js";
+import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
+import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 type Purpose = MemoryRegistrationScope["purpose"];
@@ -190,5 +192,97 @@ test("登録なしと部分保存後のAgent失敗・取消を区別する", asy
       assert.notEqual((await cli(f, binding, operation(purpose, `${purpose}-${end}-late`))).code, 0);
     }
     assert.equal(count(f), 4);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Auxiliary二用途は実Auxiliary出典をMCPと配布CLIから保存し、同名Mainへ混同せず失効後も先行保存を保持する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
+// fault = "AuxiliaryをMainの出典FKへ流すか、owner列を混同し、失効後に追加保存する"
+// observable = "MCPとCLIの登録結果、Workerの本文とsource、拒否応答、Aux削除後の先行entryとFK検査"
+// observation_boundary = "public-boundary"
+// scope = "production Memory handlers with real Auxiliary source, same-ID Main, bundled CLI, MCP and SQLite"
+// lifecycle = "permanent"
+// distinction = "Main登録testはAuxiliaryのNULL sessionId・専用owner列と出典FKの保存を検査しない"
+// @end-test-value
+test("Auxiliaryの二用途を実storeへ登録し同名Mainと区別する", async () => {
+  const f = await fixture(undefined, backgroundMemoryRegistrationHandlers, undefined,
+    { "character-memory": ["main", "auxiliary"], "target-memory": ["main", "auxiliary"] });
+  try {
+    f.db.prepare(`INSERT INTO sessions_v6(id,incarnation_id,title,state,provider_id,catalog_revision,model_id,approval_mode,
+      character_id,character_snapshot_json,created_at,updated_at,last_active_at)
+      VALUES ('aux','different-main','Same ID','active','codex',1,'test','on-request','character','{}','now','now','now')`).run();
+    f.db.prepare("INSERT INTO auxiliary_session_messages(auxiliary_session_id,seq,role,body,created_at) VALUES ('aux',1,'assistant',?,'now')")
+      .run(JSON.stringify({ role: "assistant", text: "actual Auxiliary conversation" }));
+    f.db.prepare(`INSERT INTO session_turns_v6(id,auxiliary_session_id,phase,assistant_message_seq,started_at,completed_at,updated_at)
+      VALUES (50,'aux','completed',1,?,?,?)`).run(completedAt, completedAt, completedAt);
+    const entries: string[] = [];
+    for (const purpose of purposes) {
+      const base = context(f, purpose);
+      const scope = { ...f.scope("aux", purpose), history: { ...f.scope("aux", purpose).history, throughMessageSeq: 1 },
+        processing: { afterTurnId: null, throughTurnId: 50 }, memoryTargets: targets };
+      const execution = f.executions.begin({ ...base, session: f.sessions.get("aux")!, actorSessionId: "aux", providerId: "claude", scope });
+      const binding = f.project(execution);
+      const { client } = await f.connect(binding, "memoryUrl");
+      const op = operation(purpose, `aux-${purpose}-mcp`);
+      const result = await client.callTool({ name: op.tool, arguments: op.input });
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+      entries.push((result.structuredContent as { entry: { id: string } }).entry.id);
+      const child = await cli(f, binding, operation(purpose, `aux-${purpose}-cli`));
+      assert.equal(child.code, 0, JSON.stringify(child.value)); entries.push(child.value.entry.id);
+      const invalid = operation(purpose, "not-allowed");
+      if (purpose === "target-memory") invalid.input.target = { kind: "project", project: { type: "id", id: "not-allowed" } };
+      else invalid.input.episode.observedFact = "";
+      assert.equal((await client.callTool({ name: invalid.tool, arguments: invalid.input })).isError, true);
+      assert.notEqual((await cli(f, binding, invalid)).code, 0);
+      const forged = operation(purpose, "forged-owner"); forged.input.characterId = "another-character";
+      assert.equal((await client.callTool({ name: forged.tool, arguments: forged.input })).isError, true);
+      assert.notEqual((await cli(f, binding, forged)).code, 0);
+      f.executions.cancel(execution.binding.bindingId);
+      assert.notEqual((await cli(f, binding, operation(purpose, "late"))).code, 0);
+    }
+    assert.equal(entries.length, 4);
+    for (const id of entries) {
+      const entry = (await f.memoryWorker.storage.getEntry(id))!;
+      assert.equal(entry.source.sessionId, null); assert.equal(entry.source.auxiliarySessionId, "aux");
+      assert.ok(entry.body.startsWith("body aux-"));
+    }
+    f.db.prepare("DELETE FROM auxiliary_sessions WHERE id = 'aux'").run();
+    for (const id of entries) {
+      const entry = (await f.memoryWorker.storage.getEntry(id))!;
+      assert.equal(entry.source.sessionId, null); assert.equal(entry.source.auxiliarySessionId, undefined);
+      assert.ok(entry.body.startsWith("body aux-"));
+    }
+    assert.deepEqual(f.db.prepare("PRAGMA foreign_key_check").all(), []);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "既存V6へAuxiliary出典列を追加しても保存済みMain MemoryとFKを保持し、schema更新を再実行できる"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md" }
+// fault = "出典拡張で既存entryを消すか、既存V6を更新せず新selectが失敗する"
+// observable = "schema更新前後の実Worker entryとFK検査"
+// observation_boundary = "component-behavior"
+// scope = "V6 schema upgrade for Auxiliary Memory provenance with isolated real SQLite and Worker"
+// lifecycle = "permanent"
+// @end-test-value
+test("Auxiliary出典のschema更新は既存Memoryを保持する", async () => {
+  const f = await fixture();
+  try {
+    const input = operation("target-memory", "retained");
+    const saved = await f.memory.append({ type: "session_binding", sessionId: "main", characterId: "character",
+      providerId: "codex", bindingIdHash: "migration-fixture", permissions: ["memory.append"] }, { ...input.input,
+      target: { owner: "user", scope: "global" }, schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+    assert.ok("entry" in saved, JSON.stringify(saved));
+    const before = await f.memoryWorker.storage.getEntry(saved.entry.id);
+    assert.equal(before?.source.sessionId, "main");
+    // Construct the preceding V6 shape in this isolated test DB; no user database is used.
+    f.db.exec("ALTER TABLE memory_entries_v6 DROP COLUMN source_auxiliary_session_id");
+    ensureV6Schema(f.db); ensureV6Schema(f.db);
+    assert.deepEqual(await f.memoryWorker.storage.getEntry(saved.entry.id), before);
+    assert.ok(f.db.prepare("PRAGMA table_info(memory_entries_v6)").all().some((row) => row.name === "source_auxiliary_session_id"));
+    assert.deepEqual(f.db.prepare("PRAGMA foreign_key_check").all(), []);
   } finally { await f.close(); }
 });

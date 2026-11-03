@@ -587,14 +587,16 @@ export class CharacterContextApplicationService {
           effect: "none",
         });
       }
-      try {
-        await this.deps.affectService.getStateVersion({
-          characterId: input.characterId,
-          userId: LOCAL_USER_ID,
-          sessionId: input.sessionId,
+      if (principal.type === "session_binding" && principal.sourceKind === "auxiliary") {
+        if (principal.sessionId !== input.sessionId) return createCharacterContextError("authority_denied", "Episode source does not match the bound conversation.", {
+          retryable: false, conversationMayContinue: true, effect: "none", field: "sessionId",
         });
-      } catch (error) {
-        return this.mapThrownError(error, "episode scope validation", "none");
+      } else {
+        try {
+          await this.deps.affectService.getStateVersion({ characterId: input.characterId, userId: LOCAL_USER_ID, sessionId: input.sessionId });
+        } catch (error) {
+          return this.mapThrownError(error, "episode scope validation", "none");
+        }
       }
       try {
         return await this.appendMemoryEpisode({

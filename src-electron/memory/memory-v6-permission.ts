@@ -12,6 +12,8 @@ export type MemoryV6SessionBindingPrincipal = {
   type: "session_binding";
   bindingIdHash: string;
   sessionId: string;
+  /** Conversation kind captured by a validated registration handler; omitted for ordinary Main callers. */
+  sourceKind?: "main" | "auxiliary";
   providerId: string;
   characterId: string;
   allowedProjectIds?: readonly string[];

@@ -850,7 +850,8 @@ export class MemoryV6Service {
           } : {}),
           source: {
             type: "agent",
-            sessionId: sessionIdForPrincipal(principal),
+            sessionId: principal.type === "session_binding" && principal.sourceKind === "auxiliary" ? null : sessionIdForPrincipal(principal),
+            ...(principal.type === "session_binding" && principal.sourceKind === "auxiliary" ? { auxiliarySessionId: principal.sessionId } : {}),
             messageId: validated.value.sourceMessageId ?? null,
             providerId: providerIdForPrincipal(principal),
             appMessageId: null,

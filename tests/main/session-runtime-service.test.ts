@@ -45,6 +45,11 @@ import { createAuxiliarySessionRuntime } from "../../src-electron/auxiliary/auxi
 import type { SessionBackgroundEvent } from "../../src-electron/session/session-background-events.js";
 import type { SessionRuntimeService as ProductionSessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
+import { BackgroundProductionRuntime } from "../../src-electron/providers/background-production-runtime.js";
+import { BackgroundExecutionService } from "../../src-electron/providers/background-execution-service.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
+import { MemoryRecordingController } from "../../src-electron/memory/memory-recording-controller.js";
+import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -313,6 +318,63 @@ it("背景callbackの失敗と未完了は会話保存から隔離し、保存�
   await assert.rejects(runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" }), /storage unavailable/);
   await runtime.waitForPendingRuns();
   assert.deepEqual(events, ["run_state", "run_state"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "本番両assemblyの保存成功イベントからMemory controllerとprepare/runOnceへ届き、背景失敗は主会話を変えず保存拒否では発火しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
+// fault = "実terminalイベントがcontrollerへ届かないか、背景失敗を通常保存へ伝播するか保存失敗から生成する"
+// observable = "主会話の返却結果と背景Agent数・scope、保存拒否時のAgent数0"
+// observation_boundary = "consumer"
+// scope = "real Main/Auxiliary SessionRuntimeService assemblies through production event/runtime/controller with fake saved-source port and Agent"
+// lifecycle = "permanent"
+// distinction = "controller単体のpublishでは本番SessionRuntimeServiceの保存境界からの接続を検査できない"
+// @end-test-value
+it("実保存イベントからMemoryを発火し背景失敗を会話から隔離する", { timeout: 5000 }, async () => {
+  for (const kind of ["main", "auxiliary"] as const) for (const rejectSave of [false, true]) {
+    const session = createSession({ id: `${kind}-auto-memory`, incarnationId: "inc" });
+    const source: BackgroundSourceRef = kind === "main" ? { kind, sessionId: session.id, incarnationId: "inc" }
+      : { kind, sessionId: session.id, incarnationId: "inc", parent: { sessionId: "parent", incarnationId: "parent-inc" } };
+    const captured = { history: { source: { ...source, ownerIdentity: "saved-owner" }, fromMessageSeq: 0, throughMessageSeq: 0 },
+      snapshot: { session, ownerIdentity: "saved-owner", turns: Array<CapturedBackgroundSource["snapshot"]["turns"][number]>() } } satisfies CapturedBackgroundSource;
+    const settings = normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } });
+    for (const purpose of ["character-memory", "target-memory"] as const) {
+      settings.backgroundExecutionSettings[purpose] = { selection: { providerId: "claude", modelId: "test" } };
+    }
+    settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
+    const agents: string[] = [];
+    const executions = new BackgroundExecutionService({ bindings: new AgentRuntimeBindingRegistry(), turns: new ProviderAgentRuntimeTurnCoordinator(), closeConnection() {} });
+    const authority = () => ({ userId: "local-user" as const, characterId: session.characterId!, allowedProjectIds: [] });
+    const background = new BackgroundProductionRuntime({ executions, getAppSettings: () => settings,
+      getModelCatalog: () => ({ providers: [{ id: "claude", label: "Claude", defaultModelId: "test", defaultReasoningEffort: "",
+        models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] }),
+      captureSource: async () => structuredClone(captured), resolveAuthority: authority,
+      sourceKinds: { "character-memory": [kind], "target-memory": [kind] },
+      runAgent(input) { agents.push(input.scope.purpose); assert.equal(input.scope.history.source.kind, kind); throw new Error("background generation failed"); } });
+    const controller = new MemoryRecordingController({ runtime: background, getSettings: () => settings,
+      captureSource: async () => structuredClone(captured), resolveAuthority: authority, onError(error) { assert.fail(String(error)); } });
+    background.start(); controller.start();
+    const normal = createProgressRuntime(session, async () => createPartialResult({ assistantText: "saved" }), {
+      appendTerminalSession(next, terminal) {
+        if (rejectSave) throw new Error("storage denied");
+        captured.history.throughMessageSeq = terminal.assistantMessageSeq;
+        captured.snapshot.turns = [{ id: terminal.turnId, phase: terminal.phase, completedAt: terminal.completedAt,
+          assistantMessageSeq: terminal.assistantMessageSeq, sessionId: kind === "main" ? session.id : null,
+          ...(kind === "auxiliary" ? { auxiliarySessionId: session.id } : {}) }];
+        return next;
+      },
+      onBackgroundEvent(event) { background.publish({ ...event, source }); },
+    }, (deps) => assembleBackgroundEventRuntime(kind, deps));
+    try {
+      const pending = normal.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
+      if (rejectSave) await assert.rejects(pending, /storage denied/);
+      else assert.equal((await pending).runState, "idle");
+      await normal.waitForPendingRuns();
+      if (!rejectSave) await waitForCondition(() => agents.length === 2, "both Memory purposes did not start");
+      else { await new Promise<void>((done) => setImmediate(done)); assert.deepEqual(agents, []); }
+    } finally { background.stop(); }
+  }
 });
 
 function queuedReceipt(session: Session): SessionTurnQueueReceipt {

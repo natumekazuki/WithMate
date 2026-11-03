@@ -5,9 +5,11 @@ import type { MemoryRecordingPurpose } from "../../src-shared/memory-recording/m
 import type { BackgroundRegistration, BackgroundRegistrationHandler } from "../providers/background-registration.js";
 import type { BackgroundCallInput, BackgroundCallResult, BackgroundCallService } from "../providers/background-call-service.js";
 
-/** The shared registration boundary has already captured and authorized this real Main snapshot. */
+/** The shared registration boundary has already captured and authorized this real conversation snapshot. */
 function hasProcessingEvidence({ scope, source }: Parameters<BackgroundRegistrationHandler>[0]): boolean {
-  return source.turns.some((turn) => turn.sessionId === source.session.id
+  return source.turns.some((turn) => (scope.history.source.kind === "main"
+    ? turn.sessionId === source.session.id && turn.auxiliarySessionId === undefined
+    : turn.sessionId === null && turn.auxiliarySessionId === source.session.id)
     && turn.id > (scope.processing.afterTurnId ?? 0) && turn.id <= scope.processing.throughTurnId
     && (turn.phase === "completed" || turn.phase === "failed" || turn.phase === "canceled") && Boolean(turn.completedAt)
     && turn.assistantMessageSeq !== undefined && turn.assistantMessageSeq >= scope.history.fromMessageSeq
@@ -22,12 +24,13 @@ export const backgroundMemoryRegistrationHandlers: Required<Pick<BackgroundRegis
     if (!services.character) return createCharacterContextError("storage_unavailable", "Character registration is unavailable.", {
       retryable: false, conversationMayContinue: true, effect: "none",
     });
-    return services.character.appendEpisode(input.body, input.transport, input.principal);
+    return services.character.appendEpisode(input.body, input.transport,
+      { ...input.principal, sourceKind: input.scope.history.source.kind });
   },
   "target-memory": (input, services) => {
     if (!hasProcessingEvidence(input)) return createMemoryErrorResponse({ code: "MEMORY_INVALID_REQUEST",
       message: "No saved terminal Turn belongs to this processing range.", field: "processing", effect: "none" });
-    return services.memory.append(input.principal, input.body);
+    return services.memory.append({ ...input.principal, sourceKind: input.scope.history.source.kind }, input.body);
   },
 };
 

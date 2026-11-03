@@ -24076,6 +24076,7 @@ var memorySourceSchema = object$1({
 		"migration"
 	]),
 	sessionId: string().nullable(),
+	auxiliarySessionId: string().optional(),
 	messageId: string().nullable(),
 	providerId: string().nullable()
 }).strict();
@@ -24320,7 +24321,7 @@ var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "memory.append",
-		description: "Append one idempotent general Memory entry to an actor-relative target, optionally importing protected files atomically. Small everyday topics or preferences can be short note/preference entries without an explicit remember request or certainty of future usefulness. Supply title and preview suitable for search/list display; tags may be omitted (stored as []). First run memory.search against the same exact target; do not append an active semantic duplicate or create a conflicting replacement without correction authority. After response loss, reconcile only with the unchanged request and idempotency key, and distinguish replayed from a new effect.",
+		description: "Append one idempotent general Memory entry to an actor-relative target, optionally importing protected files atomically. Automatic registration belongs to background Memory tasks; normal turns use append for explicit remember requests. Supply title and preview suitable for search/list display; tags may be omitted (stored as []). First run memory.search against the same exact target; do not append an active semantic duplicate or create a conflicting replacement without correction authority. After response loss, reconcile only with the unchanged request and idempotency key, and distinguish replayed from a new effect.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
@@ -25156,16 +25157,16 @@ var mutationToolOutputSchema = createToolOutputSchema(mutationOutputSchema.optio
 ]);
 var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"Use character_context.get only when injected turn context is missing, stale, too small for the current topic, or when the client cannot inject context.",
-	"At a topic start, switch, or resumption, consider focused recall when past context could help. Reuse memories already in context; there is no per-turn search or save quota.",
+	"At a topic start, switch, or resumption, consider focused recall when past context could help. Reuse memories already in context; there is no per-turn search quota.",
 	"For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
 	"Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
 	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Normal-turn candidates need an explicit target, timestamp and idempotency key. Background Affect candidates instead supply sourceTurnId; the app supplies timestamp, identity and key, and linked episodes are unavailable.",
 	"Use character_affect.appraise during the normal turn when the exchange meaningfully changes the Character's own affect. It is optional, not a per-turn requirement or a final-response checklist. Do not submit unchanged-state events just to call the tool; skipping or failing this update does not trigger a separate evaluation or replacement generation.",
-	"Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
+	"Use character_memory.append_episode for explicit remember requests during a normal turn, or for the current background registration task. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
 	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
 	"Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",
 	"Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
-	"Brief everyday topics, small preferences, and actually shared exchanges can be notes or episodes: an explicit remember request, a major achievement, strong affect, or certainty of future usefulness is not a prerequisite for every save. Use general Memory for semantic facts/preferences, standalone Character episodes for shared events, and character_affect.appraise.memoryEpisode only for an episode linked to that affect event; do not duplicate the same record across routes.",
+	"Automatic general Memory and standalone episode registration belong to the background Memory task. During normal turns, retain explicit remember, correct and forget operations rather than automatically registering each exchange. Use character_affect.appraise.memoryEpisode only for an episode linked to that affect event; do not duplicate the same record across routes.",
 	"Current user input and Character Definition take precedence over past Memory. Do not store speculation as fact, secrets, private paths, raw logs, or repository contracts/implementation state as a replacement for their source of truth. Follow the host agent's permission rules; these usage examples do not grant authority.",
 	"The regular withmate-memory CLI exposes the same public inputs and operations without requiring an MCP failure. Character context, Affect, and Character-owned Memory require a valid Session binding; explicit user-global and Project Memory and runtime diagnostics use local runtime authentication without requiring one. Any supplied binding is validated and limits authority; an invalid binding never downgrades to unbound access.",
 	"The explicit --fallback-from mcp recovery mode is available only when this MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true. Invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; the runtime consumes the matching short-lived admission. Initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback in this explicit recovery mode. These admission requirements do not restrict ordinary CLI use."
@@ -25203,7 +25204,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_memory.append_episode",
-		description: "Append one standalone shared Character episode, including a small everyday exchange or shared event; a major achievement or strong affect is not required. Episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Do not also save the same episode through general Memory. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
+		description: "Append one standalone shared Character episode for the current background Memory task or an explicit normal-turn remember request. Episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Do not also save the same episode through general Memory. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,

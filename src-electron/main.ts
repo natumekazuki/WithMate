@@ -227,6 +227,7 @@ import {
   type MemoryV6RuntimeApiHandle,
 } from "./memory/memory-v6-runtime.js";
 import { backgroundMemoryRegistrationHandlers } from "./memory/background-memory-registration.js";
+import { MemoryRecordingController } from "./memory/memory-recording-controller.js";
 import { createElectronSafeStorageKeyProtector } from "./memory/memory-protected-object-key-store.js";
 import { MemoryV6MainAssembly } from "./memory/memory-v6-main-assembly.js";
 import { AgentRuntimeBindingRegistry } from "./providers/agent-runtime-binding.js";
@@ -747,7 +748,7 @@ const backgroundExecutions = new BackgroundExecutionService({
   closeConnection: (handle) => memoryV6RuntimeApi?.managedMcp?.closeConnection(handle),
 });
 const backgroundSourceKinds: BackgroundRegistration["sourceKinds"] = {
-  "character-memory": ["main"], "target-memory": ["main"], affect: ["main"],
+  "character-memory": ["main", "auxiliary"], "target-memory": ["main", "auxiliary"], affect: ["main"],
 };
 const backgroundRuntime = new BackgroundProductionRuntime({
   executions: backgroundExecutions,
@@ -774,6 +775,20 @@ const backgroundRuntime = new BackgroundProductionRuntime({
     resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
   }),
   sourceKinds: backgroundSourceKinds,
+});
+
+const memoryRecordingController = new MemoryRecordingController({
+  runtime: backgroundRuntime,
+  captureSource: (source) => {
+    const worker = mainStoreContext.storageWorker;
+    if (!worker || databaseMaintenanceRequested) throw new Error("Memory recording source storage is unavailable.");
+    return worker.stores.session.captureBackgroundSource(source);
+  },
+  getSettings: () => requireAppSettingsStorage().getSettings(),
+  resolveAuthority: (session) => buildProviderAgentRuntimeAuthoritySnapshot({ characterId: session.characterId,
+    workspacePath: session.workspacePath, resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id }),
+  onError: (error) => writeAppLog({ level: "warn", kind: "memory-recording.failed", process: "main",
+    message: "Memory recording preparation failed", data: { errorName: error instanceof Error ? error.name : "UnknownError" } }),
 });
 
 async function publishBackgroundConversationEvent(event: SessionBackgroundEvent, kind: "main" | "auxiliary"): Promise<void> {
@@ -991,6 +1006,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     });
     mainStoreContext.setMemoryRuntimeStatus("running");
     backgroundRuntime.start();
+    memoryRecordingController.start();
     mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
   } catch (error) {
     mainStoreContext.setMemoryRuntimeStatus("failed");
@@ -1692,8 +1708,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                       requireAuxiliarySessionService().getAuxiliarySession(sessionId),
                     updateAuxiliarySession: (nextSession) =>
                       requireAuxiliarySessionService().updateAuxiliarySession(nextSession),
-                    revokeSessionAgentRuntimeBindings: (sessionId) =>
-                      agentRuntimeBindingRegistry.revokeSession(sessionId),
+                    revokeSessionAgentRuntimeBindings: (sessionId) => {
+                      memoryRecordingController.forget("auxiliary", sessionId);
+                      agentRuntimeBindingRegistry.revokeSession(sessionId);
+                    },
                     invalidateProviderSessionThread,
                   });
                   broadcastSessions([updated.parentSessionId]);
@@ -1717,6 +1735,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     "auxiliary-session-close",
                   );
                   agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
+                  memoryRecordingController.forget("auxiliary", auxiliarySessionId);
                   mainStoreContext.executionSelections.forget(auxiliarySessionId);
                   await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
@@ -2794,6 +2813,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         clearSessionBackgroundActivities,
         invalidateProviderSessionThread,
         revokeSessionAgentRuntimeBindings: (sessionId) => {
+          memoryRecordingController.forget("main", sessionId);
           agentRuntimeBindingRegistry.revokeSession(sessionId);
           auxiliaryLiveRunParents.delete(sessionId, owner);
         },

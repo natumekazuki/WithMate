@@ -120,3 +120,11 @@ Providerの機械制限はSDK設定と同一bindingのmanaged MCPで行い、制
 2026-11-03に#888の同時上限撤廃、#909のMemory二用途、#910のAffect直接登録を統合した。Main runtimeは三用途のhandlerと実WorkerのMain source readを共通登録portへ接続する。Affectは保存済み終端Turnのprocessing／履歴所属を検証し、保存時刻をそのTurnの完了時刻から決め、既存のappraiseへ渡す。旧構造化final・専用後段保存と、その専用fixtureを除去した。
 
 三用途ともプリセットと編集本文を受け取る用途入力を持つ。共通基盤・Memory二用途の適用時点に記したAffect未接続・本文編集未適用という範囲は、この統合により置き換える。当時の記述は履歴として保持する。実Provider、本番発火・Memory未開始位置管理、設定の永続化・編集UI、通知、Auxiliary保存は未接続であり、本統合による実装完了とは扱わない。
+
+## Memory二用途の本番発火とAuxiliaryへの適用
+
+2026-11-03に、Memory二用途のcontrollerを既存本番イベント・prepare／runOnceへ接続した。会話owner×用途のインメモリ開始位置とone-shot idleを使い、実保存済み終端Turnの件数を既存頻度で判定する。位置は同期onAdmittedで進め、Agent完了を待たず新規範囲を並行開始する。初回・再開で過去を一括処理せず、最初の新規terminal通知は未開始対象として保持する。
+
+Auxiliary登録は既存のMemory／episodeサービスとWorkerを利用する。Main専用の出典FKとepisode scope確認だけでは実Auxiliaryを扱えないため、ユーザー承認に基づき既存MemoryへnullableなAuxiliary出典FKを追加し、実bindingによるepisodeの会話確認を利用する。Mainの出典欄や親IDへ付け替えず、通常明示操作と既存保存データ・忘却を維持する。別DB・同等application・別toolは作らない。
+
+この適用はMemory二用途に限り、共通接続時点のMemory controller／Auxiliary未接続という適用範囲を置き換える。Affect controller・Auxiliary保存、追加Provider、実認証による推論確認の完了は意味しない。現行の接続契約は[Background Execution](../design/background-execution.md#memoryの自動発火と開始位置)に示す。

@@ -926,6 +926,7 @@ export const CREATE_V6_MEMORY_ENTRIES_TABLE_SQL = `
     source_type TEXT NOT NULL CHECK (source_type IN ('agent', 'manual', 'migration')),
     source_session_id TEXT,
     source_app_message_id INTEGER,
+    source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
     source_provider_message_id TEXT,
     source_provider_id TEXT,
     superseded_by_id TEXT,
@@ -1584,6 +1585,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       WHERE e.state = 'active'
       GROUP BY e.owner_type, e.owner_id, e.scope_type, e.scope_id, t.tag_type_canonical, t.tag_value_canonical
     `);
+  }
+
+  if (!tableColumnNames(db, "memory_entries_v6").has("source_auxiliary_session_id")) {
+    db.exec("ALTER TABLE memory_entries_v6 ADD COLUMN source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL");
   }
 
   if (tableExists(db, "memory_mutation_events_v6")) {

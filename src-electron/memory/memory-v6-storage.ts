@@ -769,13 +769,14 @@ export class MemoryV6Storage {
           source_type,
           source_session_id,
           source_app_message_id,
+          source_auxiliary_session_id,
           source_provider_message_id,
           source_provider_id,
           superseded_by_id,
           created_at,
           updated_at,
           forgotten_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
       `).run(
         entryId,
         input.target.owner.type,
@@ -790,6 +791,7 @@ export class MemoryV6Storage {
         input.source.type,
         input.source.sessionId,
         input.source.appMessageId ?? null,
+        input.source.auxiliarySessionId ?? null,
         input.source.messageId,
         input.source.providerId,
         createdAt,
@@ -2148,6 +2150,7 @@ export class MemoryV6Storage {
         type: row.source_type,
         sessionId: row.source_session_id,
         messageId: row.source_provider_message_id ?? (row.source_app_message_id === null ? null : String(row.source_app_message_id)),
+        ...(row.source_auxiliary_session_id ? { auxiliarySessionId: row.source_auxiliary_session_id } : {}),
         providerId: row.source_provider_id,
       },
       supersedes: this.getSupersedes(row.id),

@@ -53,7 +53,7 @@ Provider builderは通常接続の既存3 endpointと、背景のsession-history
 
 Agent実行終了時の`finish()`は、既存実行管理からbinding・handle・admission・HTTP token・MCP endpointを閉じる。旧bound CLIと遅延readも拒否する。取消・source／親削除・runtime停止・背景Provider失効でも同じ権限を終了する。未確定writeは既存Workerの失効stateで拒否し、確定済みwriteは巻き戻さず、応答確認済みの効果を取消結果へ置換しない。
 
-通常turn内の公開Memory／Affect操作は維持する。Memory二用途とAffectの用途検証を含む背景登録handler、共通設定・Provider port・保存後通知はMain runtimeへ接続済みである。用途controllerによる本番自動発火とAuxiliary保存は未接続である。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+通常turn内の公開Memory／Affect操作は維持する。Memory二用途とAffectの用途検証を含む背景登録handler、共通設定・Provider port・保存後通知はMain runtimeへ接続済みである。Memory二用途はcontrollerによる本番自動発火とAuxiliary登録へ接続済みである。Affect側の自動発火・Auxiliary保存は未接続である。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
 
 ## 背景Memory read
 
@@ -67,7 +67,7 @@ read toolと操作grantの対応は`src-shared/agent-runtime/background-memory-r
 
 `src-shared/agent-runtime/background-operations.ts`は、Affectを`character_affect.appraise`、Character Memoryを`character_memory.append_episode`、対象Memoryを`memory.append`へ限定する。registryは要求grantが広くても当該purpose以外を認可しない。
 
-`src-electron/providers/background-registration.ts`の`BackgroundRegistration`をMemory runtimeへ注入する。`readBackgroundSource`は実Worker読取、`handlers[purpose]`は用途入力・source参照を検証し既存applicationへ登録するtrusted adapter、`sourceKinds[purpose]`はその用途が対応する会話kindである。runtimeは同じ接続定義をHTTPとhostへ渡す。handler未接続またはsource kind未対応ではMCPへ登録toolを公開せず、直接runtime／bound CLIも効果なし拒否とする。通常turnの登録handlerへfallbackしない。Mainは実Workerの`stores.session.readBackgroundSource`と、`backgroundMemoryRegistrationHandlers`の二用途・`registerBackgroundAffect`を組み込み、三用途とも対応kindをMainに限定する。
+`src-electron/providers/background-registration.ts`の`BackgroundRegistration`をMemory runtimeへ注入する。`readBackgroundSource`は実Worker読取、`handlers[purpose]`は用途入力・source参照を検証し既存applicationへ登録するtrusted adapter、`sourceKinds[purpose]`はその用途が対応する会話kindである。runtimeは同じ接続定義をHTTPとhostへ渡す。handler未接続またはsource kind未対応ではMCPへ登録toolを公開せず、直接runtime／bound CLIも効果なし拒否とする。通常turnの登録handlerへfallbackしない。Mainは実Workerの`stores.session.readBackgroundSource`と、`backgroundMemoryRegistrationHandlers`の二用途・`registerBackgroundAffect`を組み込み、Memory二用途の対応kindはMain／Auxiliary、AffectはMainに限定する。
 
 HTTP認可は実binding・元会話のCharacter・current handle／capabilityに加え、実sourceのownerIdentity／incarnation／metadataを読取境界で照合する。source不存在、read-only、character-authoring、用途が未対応の会話kindを拒否する。用途handlerにはcanonical body、scope、実source、principal、同じadmission、transportと既存Memory／Character serviceを渡す。用途側は必要な入力・保存済みsourceのprocessing所属を検証する。
 
@@ -95,13 +95,25 @@ Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続する。対応
 
 `SessionRuntimeService.onBackgroundEvent`は開始保存後の`run_state`と、終端保存成功後の`terminal_saved`を送る。completed／failed／canceledをすべて含み、保存失敗からterminal発火しない。Main／Auxiliaryのassemblyはこの接点を共通runtimeへ渡し、`subscribe()`の用途controllerへsource ref付きで公開する。設定変更とruntime停止も同じ接点で通知する。同期throw・非同期rejectを隔離し、subscriberのPromiseを通常turnの保存・終了待ちへ加えない。OS通知の設定やcanceled除外は発火の条件にしない。
 
-用途controllerの購読・自動発火・未開始位置管理とAuxiliary保存は別の接続範囲である。背景実行の完了をMemory保存成功や通常turnのOS通知へ変換しない。
+Memory二用途のcontrollerはこの購読接点へ接続されている。Affect側のcontroller・Auxiliary保存とは別の接続範囲である。背景実行の完了をMemory保存成功や通常turnのOS通知へ変換しない。
+
+## Memoryの自動発火と開始位置
+
+`MemoryRecordingController`はMainでruntime開始後に購読を開始し、`terminal_saved`／`run_state`／`settings_changed`を受ける。停止で購読・one-shot timer・用途状態を解放し、再開始で再購読する。削除・会話identity変更の既存Main／Auxiliary lifecycle接点でも当該sourceと配下の状態を解放する。Window closeや主会話だけのCancelを背景取消へ結び付けない。
+
+状態は実source kind＋IDとincarnation・親identityで区別し、Mainと同名Auxiliary、各Auxiliary、二用途の開始位置を分離する。初回の会話開始通知では、保存済みuser messageの位置までを基準に既存Workerの`captureBackgroundSource`から現在の終端位置を得る。最初にterminal通知を受けた場合はそのTurnより前だけを初期位置とし、通知された新規Turnを捨てない。停止・再起動前の過去を一括処理しない。
+
+未開始末尾より後の保存済みcompleted／failed／canceledを実件数で数え、既存`getMemoryRecordingTrigger`で0件は起動せず、N件以上は件数条件、端数は会話終了後の連続idleで起動する。IDの差分・stream・tool回数は件数にしない。会話開始でidleを解除し、終了・新規terminalと設定変更で必要なone-shot timerだけを再計算する。準備中の新規イベントも開始前に再評価し、会話再開前のidle条件で開始しない。固定周期pollingは持たない。
+
+二用途ごとに未開始範囲の準備をまとめ、Agent終了は待たない。同じ用途の先行実行が遅くても新規範囲は別bindingで並行開始する。実行範囲・設定選択・本文は開始ごとに固定し、`runOnce.onAdmitted`の同期callbackだけで開始末尾を進める。準備・begin失敗で進めず、開始後の失敗・取消で戻さない。これは保存成功checkpointではなく、永続化・失敗待ちqueue・自動再送はない。
+
+controllerは既存authorityの実Character targetと、対象Memoryでは許可Project targetを明示captureする。user-globalは推測で追加しない。共通runtimeの`prepare`が固定historyと指定processingを分けて組み立て、`runBackgroundMemoryRegistration`へ編集本文を渡す。材料の取得方法は技術情報として本文と分離する。未設定・利用不可・取得失敗は開始成功へ変換せず、未開始分を保ったまま次の会話・設定イベントで再評価する。設定変更は開始済み実行を再構成しない。
 
 ## Memory生成の純粋な用途契約
 
 `src-shared/memory-recording/`は二用途の頻度と自然言語の用途入力を扱う。Provider、DB、timer、admission取得、保存処理は持たない。
 
-`memory-recording-frequency.ts`は`character-memory`と`target-memory`に独立した既定5 Turn／idle 5分を提供する。設定validatorはTurn数を1以上の安全な整数、idle分数を正の有限値として検証し、不正値を既定値へ置換しない。`getMemoryRecordingTrigger`は呼出側がowner×用途ごとに渡す未開始の終端Turn件数・頻度・実行中状態・連続idle分数から、`none`／`turn_count`／`idle`だけを返す。0件は起動せず、N件以上は実行中でも件数条件を満たし、端数は実行中でなくT分idleのときだけ条件を満たす。実開始とその通知は共通の単発呼出が担う。本番の発火と未開始位置管理は未接続である。
+`memory-recording-frequency.ts`は`character-memory`と`target-memory`に独立した既定5 Turn／idle 5分を提供する。設定validatorはTurn数を1以上の安全な整数、idle分数を正の有限値として検証し、不正値を既定値へ置換しない。`getMemoryRecordingTrigger`は呼出側がowner×用途ごとに渡す未開始の終端Turn件数・頻度・実行中状態・連続idle分数から、`none`／`turn_count`／`idle`だけを返す。0件は起動せず、N件以上は実行中でも件数条件を満たし、端数は実行中でなくT分idleのときだけ条件を満たす。実開始とその通知は共通の単発呼出が担う。本番の発火と未開始位置はMemory controllerが管理する。
 
 ## Memoryの登録本文と直接登録
 
@@ -109,9 +121,9 @@ Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続する。対応
 
 `buildMemoryRegistrationInput({ scope, materials, instructionText? })`は、`instructionText`が未設定なら用途のプリセット、設定済みなら空文字列も含めその本文だけを使う。固定プリセットとの合成や追加指示レイヤーはない。本文、アプリが確定したprocessing／history／許可Memory target、参照材料、既存MCP／CLIの利用説明を別の節へ組み立てる。本文の編集で実binding、保存先上限、権限は変わらない。
 
-`src-electron/memory/background-memory-registration.ts`の`runBackgroundMemoryRegistration(calls, input)`は、編集本文と材料を受け取り、組み立てた入力を既存`BackgroundCallService.runOnce()`の`userInput`へ渡す入口である。同じAgent実行内で公開tool schemaの入力を使い、Character Memoryは`character_memory.append_episode`／CLI `character-memory-append-episode`、対象Memoryは`memory.append`／CLI `append`から登録する。設定・実Providerへの共通接点は本番runtimeを利用し、用途controllerによる自動起動・未開始位置管理は未接続である。
+`src-electron/memory/background-memory-registration.ts`の`runBackgroundMemoryRegistration(calls, input)`は、編集本文と材料を受け取り、組み立てた入力を既存`BackgroundCallService.runOnce()`の`userInput`へ渡す入口である。同じAgent実行内で公開tool schemaの入力を使い、Character Memoryは`character_memory.append_episode`／CLI `character-memory-append-episode`、対象Memoryは`memory.append`／CLI `append`から登録する。設定・実Providerへの共通接点は本番runtimeを利用し、用途controllerから自動起動・未開始位置管理へ接続されている。
 
-`backgroundMemoryRegistrationHandlers`の二handlerはMainのMemory runtimeへ組み込まれる。共通HTTP認可が確認した実Main snapshotについて、固定history範囲かつprocessing Turn範囲に属し、completed／failed／canceledとcompletedAt・assistantMessageSeqを持つ保存済みTurnがあることを確認する。登録単位の本文・tag・episodeの事実／受け取り等の入力検証は、既存`MemoryV6Service.append`／`CharacterContextApplicationService.appendEpisode`が担う。後者は同じMemory appendとWorkerへ進む。
+`backgroundMemoryRegistrationHandlers`の二handlerはMainのMemory runtimeへ組み込まれる。共通HTTP認可が確認した実Main／Auxiliary snapshotについて、固定history範囲かつprocessing Turn範囲に属し、completed／failed／canceledとcompletedAt・assistantMessageSeqを持つ保存済みTurnがあることを確認する。登録単位の本文・tag・episodeの事実／受け取り等の入力検証は、既存`MemoryV6Service.append`／`CharacterContextApplicationService.appendEpisode`が担う。後者は同じMemory appendとWorkerへ進む。AuxiliaryのTurnはsessionIdがnullで実auxiliarySessionIdを持つことを確認し、親Mainへ代用しない。出典はMain用sessionIdとAuxiliary用auxiliarySessionIdを分離して既存Memoryへ保存する。
 
 公開登録入力へ用途専用の候補schemaや個別の根拠参照fieldを追加しない。記録内容と会話・操作結果の意味上の対応はAgentが判断し、本文の真偽や成功・失敗を用途handlerが証明するものではない。処理対象となる保存済みTurnの実在・範囲はコードで確認し、実行結果を確認する材料は許可された履歴readで取得する。
 
