@@ -65,6 +65,14 @@ Memoryのowner、scope、忘却、idempotency、保護対象fileは[V6 Memory Fo
 
 Memory出典の`source_session_id`は実Main、`source_auxiliary_session_id`は実Auxiliaryを参照する。Auxiliary登録ではMain側をNULLにし、同名IDを親Mainへ代用しない。Auxiliary削除では出典FKをSET NULLにして登録済みMemory本文・targetを保持する。既存V6への列追加はWorkerの`ensureV6Schema`で行い、保存済みentryを作り直さない。公開readの`source.auxiliarySessionId`は出典がある場合だけ返し、MCP／CLIで同じ契約を使う。
 
+## Character Affect
+
+`character_affect_*_v6`をMain／Auxiliaryで共用する。session-layer eventとresetのscope ownerはMainの`session_id`かAuxiliaryの`auxiliary_session_id`の一方だけで、対象会話削除時にcascade削除する。relationship-layerは両scope列をNULLとし、Character／local-user単位で全会話に共有する。発生元は`source_session_id`か`source_auxiliary_session_id`に保持し、削除時はprovenanceだけをNULLにする。mutation／observationの会話参照も削除時にNULLとなる。
+
+内部`sessionSource`が実kind・incarnation・親identity、背景では既存WorkerのownerIdentityを伝え、同名Main／Auxiliaryを区別する。未指定の既存入力はMainである。projection／version／inspect／correct／resetは同じownerを使う。別会話の一時感情は既存afterglowのread-time規則だけで合成し、relationshipへ転写しない。詳細は[ADR018](../adr/018-character-affect-event-persistence.md)に従う。
+
+schema ensureは既存Affect tablesの列・CHECK・FKを更新する際、接続するevent／reset／idempotency／mutation／observationを同じsavepoint内で再構築する。既存Main行、ID、Memory link、fingerprint、監査をコピーして保持し、Mainのstate versionを変更しない。Memory tablesと保存本文は対象外で、`user_version`は6を維持する。
+
 ## Session Graph
 
 Session Graphも親MainのID/incarnationを所有境界とし、Mainと配下Auxiliaryが共有する。親削除で全記録をcascade削除し、AuxiliaryのCloseでは消さない。構造・競合・MCP・表示の契約は[Session Graph](session-graph.md)を参照する。

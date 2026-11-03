@@ -53,7 +53,7 @@ Provider builderは通常接続の既存3 endpointと、背景のsession-history
 
 Agent実行終了時の`finish()`は、既存実行管理からbinding・handle・admission・HTTP token・MCP endpointを閉じる。旧bound CLIと遅延readも拒否する。取消・source／親削除・runtime停止・背景Provider失効でも同じ権限を終了する。未確定writeは既存Workerの失効stateで拒否し、確定済みwriteは巻き戻さず、応答確認済みの効果を取消結果へ置換しない。
 
-通常turn内の公開Memory／Affect操作は維持する。Memory二用途とAffectの用途検証を含む背景登録handler、共通設定・Provider port・保存後通知はMain runtimeへ接続済みである。Memory二用途はcontrollerによる本番自動発火とAuxiliary登録へ接続済みである。Affect側の自動発火・Auxiliary保存は未接続である。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+通常turn内の公開Memory／Affect操作は維持する。Memory二用途とAffectの用途検証を含む背景登録handler、共通設定・Provider port・保存後通知はMain runtimeへ接続済みである。Memory二用途とAffectはcontrollerによるMain／Auxiliaryの本番自動発火と登録・contextへ接続済みである。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
 
 ## 背景Memory read
 
@@ -67,7 +67,7 @@ read toolと操作grantの対応は`src-shared/agent-runtime/background-memory-r
 
 `src-shared/agent-runtime/background-operations.ts`は、Affectを`character_affect.appraise`、Character Memoryを`character_memory.append_episode`、対象Memoryを`memory.append`へ限定する。registryは要求grantが広くても当該purpose以外を認可しない。
 
-`src-electron/providers/background-registration.ts`の`BackgroundRegistration`をMemory runtimeへ注入する。`readBackgroundSource`は実Worker読取、`handlers[purpose]`は用途入力・source参照を検証し既存applicationへ登録するtrusted adapter、`sourceKinds[purpose]`はその用途が対応する会話kindである。runtimeは同じ接続定義をHTTPとhostへ渡す。handler未接続またはsource kind未対応ではMCPへ登録toolを公開せず、直接runtime／bound CLIも効果なし拒否とする。通常turnの登録handlerへfallbackしない。Mainは実Workerの`stores.session.readBackgroundSource`と、`backgroundMemoryRegistrationHandlers`の二用途・`registerBackgroundAffect`を組み込み、Memory二用途の対応kindはMain／Auxiliary、AffectはMainに限定する。
+`src-electron/providers/background-registration.ts`の`BackgroundRegistration`をMemory runtimeへ注入する。`readBackgroundSource`は実Worker読取、`handlers[purpose]`は用途入力・source参照を検証し既存applicationへ登録するtrusted adapter、`sourceKinds[purpose]`はその用途が対応する会話kindである。runtimeは同じ接続定義をHTTPとhostへ渡す。handler未接続またはsource kind未対応ではMCPへ登録toolを公開せず、直接runtime／bound CLIも効果なし拒否とする。通常turnの登録handlerへfallbackしない。Mainは実Workerの`stores.session.readBackgroundSource`と、`backgroundMemoryRegistrationHandlers`の二用途・`registerBackgroundAffect`を組み込み、三用途の対応kindをMain／Auxiliaryにする。
 
 HTTP認可は実binding・元会話のCharacter・current handle／capabilityに加え、実sourceのownerIdentity／incarnation／metadataを読取境界で照合する。source不存在、read-only、character-authoring、用途が未対応の会話kindを拒否する。用途handlerにはcanonical body、scope、実source、principal、同じadmission、transportと既存Memory／Character serviceを渡す。用途側は必要な入力・保存済みsourceのprocessing所属を検証する。
 
@@ -95,7 +95,7 @@ Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続する。対応
 
 `SessionRuntimeService.onBackgroundEvent`は開始保存後の`run_state`と、終端保存成功後の`terminal_saved`を送る。completed／failed／canceledをすべて含み、保存失敗からterminal発火しない。Main／Auxiliaryのassemblyはこの接点を共通runtimeへ渡し、`subscribe()`の用途controllerへsource ref付きで公開する。設定変更とruntime停止も同じ接点で通知する。同期throw・非同期rejectを隔離し、subscriberのPromiseを通常turnの保存・終了待ちへ加えない。OS通知の設定やcanceled除外は発火の条件にしない。
 
-Memory二用途のcontrollerはこの購読接点へ接続されている。Affect側のcontroller・Auxiliary保存とは別の接続範囲である。背景実行の完了をMemory保存成功や通常turnのOS通知へ変換しない。
+Memory二用途とAffectのcontrollerはこの購読接点へ接続されている。背景実行の完了をMemory保存成功や通常turnのOS通知へ変換しない。
 
 ## Memoryの自動発火と開始位置
 
@@ -108,6 +108,10 @@ Memory二用途のcontrollerはこの購読接点へ接続されている。Affe
 二用途ごとに未開始範囲の準備をまとめ、Agent終了は待たない。同じ用途の先行実行が遅くても新規範囲は別bindingで並行開始する。実行範囲・設定選択・本文は開始ごとに固定し、`runOnce.onAdmitted`の同期callbackだけで開始末尾を進める。準備・begin失敗で進めず、開始後の失敗・取消で戻さない。これは保存成功checkpointではなく、永続化・失敗待ちqueue・自動再送はない。
 
 controllerは既存authorityの実Character targetと、対象Memoryでは許可Project targetを明示captureする。user-globalは推測で追加しない。共通runtimeの`prepare`が固定historyと指定processingを分けて組み立て、`runBackgroundMemoryRegistration`へ編集本文を渡す。材料の取得方法は技術情報として本文と分離する。未設定・利用不可・取得失敗は開始成功へ変換せず、未開始分を保ったまま次の会話・設定イベントで再評価する。設定変更は開始済み実行を再構成しない。
+
+## Affectの自動発火と開始位置
+
+Affectの`BackgroundAffectController`はMain runtimeの開始成功時に購読し、Main／Auxiliaryの`terminal_saved`ごとに共通prepareと単発呼出へ進む。位置はkind・実会話・incarnation・親identityごとに独立する。通知元はそのPromiseを待たず、同用途の前実行も待たない。初めて見るsourceは通知Turnより前の保存済み最新終端を初期位置とし、新規通知自体を処理対象に含める。実開始位置は`onAdmitted`でだけ進め、Agent失敗で戻さない。実行scope・選択・本文は開始後に変更しない。停止で購読と用途位置を解放し、source／親の解放・再作成も位置を破棄する。実行中の権限失効は共通serviceが担う。背景実行の完了を保存成功や通常turnのOS通知へ変換しない。
 
 ## Memory生成の純粋な用途契約
 
@@ -129,16 +133,18 @@ controllerは既存authorityの実Character targetと、対象Memoryでは許可
 
 登録ごとの既存保存応答とAgent実行の終了を区別する。`completed`は保存件数や保存成功の宣言ではなく、登録なしでも成立する。後続の登録拒否・Agent失敗・取消・結果不明でも確定済み保存は残し、専用の後段保存、全件atomic化、補償・自動再送・台帳は持たない。失効後の未確定writeは同じadmissionを受ける既存Worker境界で拒否する。
 
-## Affect登録入力とMain保存
+## Affect登録入力と会話owner
 
 `affect-composition.ts`の`AFFECT_COMPOSITION_INSTRUCTIONS`は、取得時点のCharacter定義・保存済み会話・既存Affectから必要な変化だけを`character_affect.appraise`で登録し、変化なしなら登録しない自然言語プリセットである。会話を基本材料とし、必要な操作結果だけを参照する。非公開内面の復元・診断、欠落情報の補完や、作業失敗から根拠のないユーザーへの敵意を構成しない。
 
-`buildAffectCompositionInput({ instructionBody?, characterDefinition, currentAffect }, scope)`は、本文未設定時だけプリセットを選ぶ。設定済み本文は空文字列も含め単独で使い、プリセットや追加の固定方針を重ねない。実行scope、Character定義、既存Affect、既存toolの技術的な利用説明は別節へ置く。本文を解釈する禁止文parserは持たず、権限は共通runtimeが制約する。`runBackgroundAffectCall(calls, input)`はこの入力を既存`BackgroundCallService.runOnce`の`userInput`へ渡し、同じAgent実行内のtoolで登録する。設定・実Providerは本番runtimeの共通接点を利用し、用途側の自動発火とAuxiliary保存は未接続である。
+`buildAffectCompositionInput({ instructionBody?, characterDefinition, currentAffect }, scope)`は、本文未設定時だけプリセットを選ぶ。設定済み本文は空文字列も含め単独で使い、プリセットや追加の固定方針を重ねない。実行scope、Character定義、既存Affect、既存toolの技術的な利用説明は別節へ置く。本文を解釈する禁止文parserは持たず、権限は共通runtimeが制約する。`runBackgroundAffectCall(calls, input)`はこの入力を既存`BackgroundCallService.runOnce`の`userInput`へ渡し、同じAgent実行内のtoolで登録する。Affect controllerは開始時点のCharacter定義・該当ownerの既存Affectと、実Characterを明示したMemory read targetを渡す。取得失敗を空の正常材料へ置換せず、AuxiliaryのCharacterを親Characterで代用しない。設定・実Providerは本番runtimeの共通接点を利用する。
 
 背景appraiseの候補はlayer・target・family・value・intensity・reason・evidenceと`sourceTurnId`だけを持つ。MCP／配布CLIは同じstrict候補schemaを公開する。`registerBackgroundAffect`はruntimeへ直接届いた入力も候補全体として再検証し、余剰field、memoryEpisode、空文字列、不正enum／数値／組合せを拒否する。時刻・保存key・schemaVersionをモデルから受け取らず、rootのexpectedVersionも受け取らない。通常turnのappraiseは従来の候補契約を使う。
 
-共通HTTP認可が実Mainのowner／Character／incarnationと同じadmissionを確定し、handlerが実WorkerのsourceTurnIdの実在・許可history／processing所属・終端phase（completed／failed／canceled）・completedAtを検証する。schemaVersion、保存identity、Turnのcanonical UTC completedAt、新規保存keyはアプリが補う。targetType／targetIdは感情の対象であり保存ownerを選ばない。occurredAtは観測上の時刻であり、非公開内面の発生時刻を認定しない。取得時点と保存時点のAffect version／projection／定義revisionは比較しない。
+共通HTTP認可が実Main／Auxiliaryのowner／Character／incarnationと同じadmissionを確定し、handlerが実WorkerのsourceTurnIdの実在・許可history／processing所属・終端phase（completed／failed／canceled）・completedAtを検証する。Main Turnは`sessionId`、Auxiliary Turnは`sessionId: null`と実`auxiliarySessionId`で所属を判定する。schemaVersion、保存identity、Turnのcanonical UTC completedAt、新規保存keyはアプリが補う。targetType／targetIdは感情の対象であり保存ownerを選ばない。occurredAtは観測上の時刻であり、非公開内面の発生時刻を認定しない。取得時点と保存時点のAffect version／projection／定義revisionは比較しない。
 
 handlerは既存`CharacterContextApplicationService.appraise`の応答をそのまま返す。保存は同じ`RuntimeTurnAdmission`内で`CharacterAffectService.recordAppraisal`から既存Memory Worker／storeへ進む。複数候補の途中失敗は既存appraiseの部分失敗と確認済みsaved prefixを返し、後続を呼ばない。呼出後の失敗・取消・効果不明でも確定済みeventは保持する。補償・自動再送・専用台帳・用途結果への写像は持たず、自然文finalは保存成功の根拠にしない。保存済みAffectは通常contextから利用する。
 
-背景AffectはMemory append permissionを持たず、linked episodeと一般Memory書込を許可しない。通常appraise／correct／reset／contextとlinked episode、保存済みevent／episode／Memoryは維持する。Auxiliaryのowner／FK／context対応は含めない。
+内部の`sessionSource`は既存source refとWorker由来ownerIdentityを既存application／Worker／storeまで渡し、保存直前にも実Character・incarnation・親を照合する。公開候補へowner指定を追加しない。session層は実MainまたはAuxiliaryをFK ownerとし、relationship層はCharacter／local-user全体で共有する。保存元削除でsession event／resetは削除し、relationshipはprovenanceだけNULLにして保持する。同名IDをkindで区別し、同Character重複用の分離・排他・設定は追加しない。schemaと現行projection契約は[Database Schema](database-schema.md#character-affect)を参照する。
+
+Main／Auxiliaryの通常turnは共通context resolverから取得時点の該当ownerのstateを使い、背景完了を待たない。通常Agentへ自動更新を促す指示は付けない。背景AffectはMemory append permissionを持たず、linked episodeと一般Memory書込を許可しない。通常公開appraise／correct／reset／contextとlinked episode、保存済みevent／episode／Memoryは維持する。

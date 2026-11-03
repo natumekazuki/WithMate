@@ -39,6 +39,7 @@ import {
 import {
   CharacterAffectIdempotencyConflictError,
   CharacterAffectVersionConflictError,
+  type AffectSessionSource,
 } from "./character-affect-storage.js";
 import type { MemoryV6Service } from "../memory/memory-v6-service.js";
 import { countMemorySearchQueryTerms } from "../memory/memory-v6-storage.js";
@@ -219,6 +220,7 @@ export class CharacterContextApplicationService {
     request: unknown,
     transport: CharacterContextTransport = "internal",
     turnSnapshot?: CharacterRuntimeSnapshot | null,
+    sessionSource?: AffectSessionSource,
   ): Promise<CharacterContextServiceResult<CharacterContextResponse>> {
     return this.measure("character_context.get", transport, "none", async () => {
       const input = validateCharacterContextGetRequest(request);
@@ -245,6 +247,7 @@ export class CharacterContextApplicationService {
             characterId: input.characterId,
             userId: LOCAL_USER_ID,
             sessionId: input.sessionId,
+            sessionSource,
           }),
         );
         const memory = input.query && (input.memoryLimit ?? 0) > 0
@@ -319,6 +322,7 @@ export class CharacterContextApplicationService {
   async appraise(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    sessionSource?: AffectSessionSource,
   ): Promise<CharacterContextServiceResult<CharacterAffectAppraiseResponse>> {
     return this.measure("character_affect.appraise", transport, "unknown", async () => {
       const input = validateCharacterAffectAppraiseRequest(request);
@@ -358,7 +362,7 @@ export class CharacterContextApplicationService {
           continue;
         }
         try {
-          const result = await this.deps.affectService.recordAppraisal(candidate, { expectedVersion });
+          const result = await this.deps.affectService.recordAppraisal(candidate, { expectedVersion, sessionSource });
           saved.push({
             candidateIndex: index,
             eventId: result.event.id,
@@ -372,6 +376,7 @@ export class CharacterContextApplicationService {
             characterId: input.characterId,
             userId: LOCAL_USER_ID,
             sessionId: input.sessionId,
+            sessionSource,
           })).version;
         } catch (error) {
           if (error instanceof CharacterAffectEpisodePersistenceError) {
@@ -409,6 +414,7 @@ export class CharacterContextApplicationService {
         characterId: input.characterId,
         userId: LOCAL_USER_ID,
         sessionId: input.sessionId,
+        sessionSource,
       });
       return {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -422,7 +428,7 @@ export class CharacterContextApplicationService {
     });
   }
 
-  async inspectAffect(request: unknown, transport: CharacterContextTransport = "internal"): Promise<unknown> {
+  async inspectAffect(request: unknown, transport: CharacterContextTransport = "internal", sessionSource?: AffectSessionSource): Promise<unknown> {
     return this.measure("character_affect.inspect", transport, "none", async () => {
       const input = validateCharacterAffectInspectRequest(request);
       try {
@@ -430,11 +436,13 @@ export class CharacterContextApplicationService {
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
+          sessionSource,
         });
         const version = await this.deps.affectService.getStateVersion({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
+          sessionSource,
         });
         return {
           schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -449,7 +457,7 @@ export class CharacterContextApplicationService {
     });
   }
 
-  async correctAffect(request: unknown, transport: CharacterContextTransport = "internal"): Promise<unknown> {
+  async correctAffect(request: unknown, transport: CharacterContextTransport = "internal", sessionSource?: AffectSessionSource): Promise<unknown> {
     return this.measure("character_affect.correct", transport, "unknown", async () => {
       const input = validateCharacterAffectCorrectRequest(request);
       const authorityError = requireExplicitAuthority(input.authority);
@@ -462,11 +470,12 @@ export class CharacterContextApplicationService {
           eventId: input.eventId,
           replacement: input.replacement,
           reason: input.reason,
-        }, { expectedVersion: input.expectedVersion });
+        }, { expectedVersion: input.expectedVersion, sessionSource });
         const version = await this.deps.affectService.getStateVersion({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
+          sessionSource,
         });
         return {
           schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -482,7 +491,7 @@ export class CharacterContextApplicationService {
     });
   }
 
-  async resetAffect(request: unknown, transport: CharacterContextTransport = "internal"): Promise<unknown> {
+  async resetAffect(request: unknown, transport: CharacterContextTransport = "internal", sessionSource?: AffectSessionSource): Promise<unknown> {
     return this.measure("character_affect.reset", transport, "unknown", async () => {
       const input = validateCharacterAffectResetRequest(request);
       const authorityError = requireExplicitAuthority(input.authority);
@@ -501,11 +510,13 @@ export class CharacterContextApplicationService {
         }, {
           expectedVersion: input.expectedVersion,
           versionSessionId: input.sessionId,
+          sessionSource,
         });
         const version = await this.deps.affectService.getStateVersion({
           characterId: input.characterId,
           userId: LOCAL_USER_ID,
           sessionId: input.sessionId,
+          sessionSource,
         });
         return {
           schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,

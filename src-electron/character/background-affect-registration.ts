@@ -18,8 +18,8 @@ const boundRequestSchema = z.object({
 const rejection = { retryable: false, conversationMayContinue: true, effect: "none" } as const;
 
 export const registerBackgroundAffect: BackgroundRegistrationHandler = async (input, services) => {
-  if (input.scope.purpose !== "affect" || input.scope.history.source.kind !== "main") {
-    return createCharacterContextError("authority_denied", "Affect registration requires a Main Affect execution.", rejection);
+  if (input.scope.purpose !== "affect") {
+    return createCharacterContextError("authority_denied", "Affect registration requires an Affect execution.", rejection);
   }
   const parsed = boundRequestSchema.safeParse(input.body);
   if (!parsed.success) {
@@ -29,12 +29,15 @@ export const registerBackgroundAffect: BackgroundRegistrationHandler = async (in
   const source = input.source;
   if (request.characterId !== source.session.characterId || request.sessionId !== source.session.id
     || request.candidates.some((candidate) => candidate.characterId !== request.characterId || candidate.sessionId !== request.sessionId)) {
-    return createCharacterContextError("authority_denied", "Affect owner does not match the saved Main source.", rejection);
+    return createCharacterContextError("authority_denied", "Affect owner does not match the saved source.", rejection);
   }
   const candidates = [];
   for (const [candidateIndex, { sourceTurnId, ...candidate }] of request.candidates.entries()) {
     const turn = source.turns.find((item) => item.id === sourceTurnId);
-    if (!turn || turn.sessionId !== source.session.id || !["completed", "failed", "canceled"].includes(turn.phase)
+    const belongsToSource = input.scope.history.source.kind === "main"
+      ? turn?.sessionId === source.session.id && turn.auxiliarySessionId === undefined
+      : turn?.sessionId === null && turn.auxiliarySessionId === source.session.id;
+    if (!turn || !belongsToSource || !["completed", "failed", "canceled"].includes(turn.phase)
       || !turn.completedAt || sourceTurnId <= (input.scope.processing.afterTurnId ?? 0)
       || sourceTurnId > input.scope.processing.throughTurnId || turn.assistantMessageSeq === undefined
       || turn.assistantMessageSeq < input.scope.history.fromMessageSeq || turn.assistantMessageSeq > input.scope.history.throughMessageSeq) {
@@ -51,5 +54,5 @@ export const registerBackgroundAffect: BackgroundRegistrationHandler = async (in
     candidates.push({ ...candidate, schemaVersion: AFFECT_SCHEMA_VERSION, occurredAt: turn.completedAt, idempotencyKey: randomUUID() });
   }
   if (!services.character) throw new Error("Character context service is unavailable.");
-  return services.character.appraise({ ...request, candidates }, input.transport);
+  return services.character.appraise({ ...request, candidates }, input.transport, input.scope.history.source);
 };

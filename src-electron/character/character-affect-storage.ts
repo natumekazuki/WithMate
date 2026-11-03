@@ -18,6 +18,12 @@ import {
   type EffectiveAffectState,
 } from "../../src-shared/character-affect/affect-contract.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
+import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
+import { matchesSessionHistorySource } from "../../src-shared/session/session-history-read-scope.js";
+import { readConversationQuerySnapshot } from "../storage/conversation-query.js";
+
+export type AffectSessionSource = BackgroundSourceRef & { ownerIdentity?: string };
+type AffectWriteOptions = { expectedVersion?: string; sessionSource?: AffectSessionSource };
 
 const LOCAL_USER_ID = "local-user";
 export const DEFAULT_SESSION_AFFECT_HALF_LIFE_MS = 6 * 60 * 60 * 1_000;
@@ -56,6 +62,7 @@ type EffectiveStateInput = {
   characterId: string;
   userId: string;
   sessionId: string;
+  sessionSource?: AffectSessionSource;
   baseline?: readonly AffectBaselineComponent[];
 };
 
@@ -64,6 +71,8 @@ export type StoredAffectEvent = Omit<AffectEventInput, "sessionId" | "family"> &
   sessionId: string | null;
   family: CharacterAffectFamily | null;
   sourceSessionId: string | null;
+  auxiliarySessionId: string | null;
+  sourceAuxiliarySessionId: string | null;
   state: "active" | "corrected";
   correctionOfEventId: string | null;
   memoryEntryId: string | null;
@@ -88,6 +97,8 @@ export type AffectMutationRecord = {
   userId: string;
   sessionId: string | null;
   sourceSessionId: string | null;
+  auxiliarySessionId: string | null;
+  sourceAuxiliarySessionId: string | null;
   eventId: string | null;
   resetId: string | null;
   reason: string;
@@ -97,6 +108,7 @@ export type AffectMutationRecord = {
 export type AffectResetRecord = Omit<AffectResetInput, "sessionId"> & {
   id: string;
   sessionId: string | null;
+  auxiliarySessionId: string | null;
   createdAt: string;
 };
 
@@ -113,6 +125,8 @@ type AffectEventRow = {
   user_id: string;
   session_id: string | null;
   source_session_id: string | null;
+  auxiliary_session_id: string | null;
+  source_auxiliary_session_id: string | null;
   layer: AffectLayer;
   target_type: AffectTargetType;
   target_id_bytes: Uint8Array;
@@ -199,29 +213,32 @@ export class CharacterAffectStorage {
 
   recordEvent(
     input: AffectEventInput,
-    options: { expectedVersion?: string } = {},
+    options: AffectWriteOptions = {},
   ): { event: StoredAffectEvent; created: boolean } {
     assertValidAffectEvent(input);
     assertLocalUser(input.userId);
-    const requestFingerprint = fingerprint({ operation: "record", input });
+    const auxiliary = options.sessionSource?.kind === "auxiliary";
+    const requestFingerprint = fingerprint({ operation: "record", input, ...(auxiliary ? { sessionKind: "auxiliary" } : {}) });
 
     const outcome = this.transaction(() => {
+      if (options.sessionSource) this.assertSessionOwner(input.sessionId, input.characterId, options.sessionSource);
       const replay = this.findIdempotency(input.characterId, input.userId, input.idempotencyKey);
       if (replay) {
         if (replay.operation !== "record" || replay.request_fingerprint !== requestFingerprint || !replay.event_id) {
-          this.insertObservation("idempotency", "rejected", input, replay.event_id, replay.reset_id, "Conflicting affect request.");
+          this.insertObservation("idempotency", "rejected", input, replay.event_id, replay.reset_id, "Conflicting affect request.", options.sessionSource);
           return { conflict: true } as const;
         }
-        this.insertObservation("idempotency", "replayed", input, replay.event_id, null, "Identical affect event replayed.");
+        this.insertObservation("idempotency", "replayed", input, replay.event_id, null, "Identical affect event replayed.", options.sessionSource);
         return { conflict: false, result: { event: toStoredEvent(this.requireEvent(replay.event_id)), created: false } } as const;
       }
 
-      this.assertSessionOwner(input.sessionId, input.characterId);
+      if (!options.sessionSource) this.assertSessionOwner(input.sessionId, input.characterId);
       if (options.expectedVersion) {
         const actualVersion = this.getStateVersion({
           characterId: input.characterId,
           userId: input.userId,
           sessionId: input.sessionId,
+          sessionSource: options.sessionSource,
         }).version;
         if (actualVersion !== options.expectedVersion) {
           throw new CharacterAffectVersionConflictError(options.expectedVersion, actualVersion);
@@ -229,18 +246,20 @@ export class CharacterAffectStorage {
       }
       const eventId = randomUUID();
       const createdAt = new Date().toISOString();
-      this.insertEvent(eventId, input, requestFingerprint, null, null, createdAt);
+      this.insertEvent(eventId, input, requestFingerprint, null, null, createdAt, options.sessionSource);
       this.insertIdempotency(input, "record", requestFingerprint, eventId, null, createdAt);
       this.insertMutation(
         "record",
         input.characterId,
         input.userId,
-        input.layer === "session" ? input.sessionId : null,
-        input.sessionId,
+        !auxiliary && input.layer === "session" ? input.sessionId : null,
+        auxiliary ? null : input.sessionId,
         eventId,
         null,
         input.reason,
         createdAt,
+        auxiliary && input.layer === "session" ? input.sessionId : null,
+        auxiliary ? input.sessionId : null,
       );
       return { conflict: false, result: { event: toStoredEvent(this.requireEvent(eventId)), created: true } } as const;
     });
@@ -254,18 +273,21 @@ export class CharacterAffectStorage {
     eventId: string;
     replacement: AffectEventInput;
     reason: string;
-  }, options: { expectedVersion?: string } = {}): { event: StoredAffectEvent; created: boolean } {
+  }, options: AffectWriteOptions = {}): { event: StoredAffectEvent; created: boolean } {
     assertValidAffectEvent(input.replacement);
     assertLocalUser(input.replacement.userId);
     requireText(input.reason, "reason");
+    const auxiliary = options.sessionSource?.kind === "auxiliary";
     const requestFingerprint = fingerprint({
       operation: "correct",
       eventId: input.eventId,
       replacement: input.replacement,
       reason: input.reason,
+      ...(auxiliary ? { sessionKind: "auxiliary" } : {}),
     });
 
     const outcome = this.transaction(() => {
+      if (options.sessionSource) this.assertSessionOwner(input.replacement.sessionId, input.replacement.characterId, options.sessionSource);
       const replay = this.findIdempotency(
         input.replacement.characterId,
         input.replacement.userId,
@@ -273,18 +295,19 @@ export class CharacterAffectStorage {
       );
       if (replay) {
         if (replay.operation !== "correct" || replay.request_fingerprint !== requestFingerprint || !replay.event_id) {
-          this.insertObservation("idempotency", "rejected", input.replacement, replay.event_id, replay.reset_id, "Conflicting affect correction.");
+          this.insertObservation("idempotency", "rejected", input.replacement, replay.event_id, replay.reset_id, "Conflicting affect correction.", options.sessionSource);
           return { conflict: true } as const;
         }
-        this.insertObservation("idempotency", "replayed", input.replacement, replay.event_id, null, "Identical affect correction replayed.");
+        this.insertObservation("idempotency", "replayed", input.replacement, replay.event_id, null, "Identical affect correction replayed.", options.sessionSource);
         return { conflict: false, result: { event: toStoredEvent(this.requireEvent(replay.event_id)), created: false } } as const;
       }
-      this.assertSessionOwner(input.replacement.sessionId, input.replacement.characterId);
+      if (!options.sessionSource) this.assertSessionOwner(input.replacement.sessionId, input.replacement.characterId);
       if (options.expectedVersion) {
         const actualVersion = this.getStateVersion({
           characterId: input.replacement.characterId,
           userId: input.replacement.userId,
           sessionId: input.replacement.sessionId,
+          sessionSource: options.sessionSource,
         }).version;
         if (actualVersion !== options.expectedVersion) {
           throw new CharacterAffectVersionConflictError(options.expectedVersion, actualVersion);
@@ -297,7 +320,9 @@ export class CharacterAffectStorage {
       ) {
         throw new Error("Correction must remain within the original character and user scope.");
       }
-      if (original.layer === "session" && original.session_id !== input.replacement.sessionId) {
+      if (original.layer === "session" && (auxiliary
+        ? original.auxiliary_session_id !== input.replacement.sessionId
+        : original.session_id !== input.replacement.sessionId)) {
         throw new Error("A session affect correction must remain within its original session scope.");
       }
       if (original.state !== "active") {
@@ -313,6 +338,7 @@ export class CharacterAffectStorage {
         original.id,
         original.memory_entry_id,
         createdAt,
+        options.sessionSource,
       );
       this.insertIdempotency(input.replacement, "correct", requestFingerprint, eventId, null, createdAt);
       this.db.prepare("UPDATE character_affect_events_v6 SET state = 'corrected' WHERE id = ?").run(original.id);
@@ -320,12 +346,14 @@ export class CharacterAffectStorage {
         "correct",
         input.replacement.characterId,
         input.replacement.userId,
-        input.replacement.layer === "session" ? input.replacement.sessionId : null,
-        input.replacement.sessionId,
+        !auxiliary && input.replacement.layer === "session" ? input.replacement.sessionId : null,
+        auxiliary ? null : input.replacement.sessionId,
         eventId,
         null,
         input.reason,
         createdAt,
+        auxiliary && input.replacement.layer === "session" ? input.replacement.sessionId : null,
+        auxiliary ? input.replacement.sessionId : null,
       );
       return { conflict: false, result: { event: toStoredEvent(this.requireEvent(eventId)), created: true } } as const;
     });
@@ -337,7 +365,7 @@ export class CharacterAffectStorage {
 
   reset(
     input: AffectResetInput,
-    options: { expectedVersion?: string; versionSessionId?: string } = {},
+    options: AffectWriteOptions & { versionSessionId?: string } = {},
   ): { resetId: string; created: boolean } {
     requireText(input.characterId, "characterId");
     requireText(input.userId, "userId");
@@ -347,20 +375,24 @@ export class CharacterAffectStorage {
     assertCanonicalUtcTimestamp(input.resetAt, "resetAt");
     if (input.layer === "session") {
       requireText(input.sessionId ?? "", "sessionId");
-      this.assertSessionOwner(input.sessionId!, input.characterId);
     } else if (input.sessionId !== undefined) {
       throw new Error("Relationship reset must not specify sessionId.");
     }
-    const requestFingerprint = fingerprint({ operation: "reset", input });
+    const auxiliary = options.sessionSource?.kind === "auxiliary";
+    const requestFingerprint = fingerprint({ operation: "reset", input, ...(auxiliary ? { sessionKind: "auxiliary" } : {}) });
 
     const outcome = this.transaction(() => {
+      if (input.layer === "session") this.assertSessionOwner(input.sessionId!, input.characterId, options.sessionSource);
+      else if (options.sessionSource) {
+        this.assertSessionOwner(options.versionSessionId ?? options.sessionSource.sessionId, input.characterId, options.sessionSource);
+      }
       const replay = this.findIdempotency(input.characterId, input.userId, input.idempotencyKey);
       if (replay) {
         if (replay.operation !== "reset" || replay.request_fingerprint !== requestFingerprint || !replay.reset_id) {
-          this.insertObservation("idempotency", "rejected", input, replay.event_id, replay.reset_id, "Conflicting affect reset.");
+          this.insertObservation("idempotency", "rejected", input, replay.event_id, replay.reset_id, "Conflicting affect reset.", options.sessionSource);
           return { conflict: true } as const;
         }
-        this.insertObservation("idempotency", "replayed", input, null, replay.reset_id, "Identical affect reset replayed.");
+        this.insertObservation("idempotency", "replayed", input, null, replay.reset_id, "Identical affect reset replayed.", options.sessionSource);
         return { conflict: false, result: { resetId: replay.reset_id, created: false } } as const;
       }
 
@@ -373,6 +405,7 @@ export class CharacterAffectStorage {
           characterId: input.characterId,
           userId: input.userId,
           sessionId: versionSessionId,
+          sessionSource: options.sessionSource,
         }).version;
         if (actualVersion !== options.expectedVersion) {
           throw new CharacterAffectVersionConflictError(options.expectedVersion, actualVersion);
@@ -384,31 +417,34 @@ export class CharacterAffectStorage {
       this.db.prepare(`
         INSERT INTO character_affect_resets_v6 (
           id, character_id, user_id, session_id, layer, reason, reset_at,
-          idempotency_key, request_fingerprint, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          idempotency_key, request_fingerprint, created_at, auxiliary_session_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         resetId,
         input.characterId,
         input.userId,
-        input.sessionId ?? null,
+        auxiliary ? null : input.sessionId ?? null,
         input.layer,
         input.reason,
         input.resetAt,
         input.idempotencyKey,
         requestFingerprint,
         createdAt,
+        auxiliary ? input.sessionId ?? null : null,
       );
       this.insertIdempotency(input, "reset", requestFingerprint, null, resetId, createdAt);
       this.insertMutation(
         "reset",
         input.characterId,
         input.userId,
-        input.sessionId ?? null,
-        input.sessionId ?? null,
+        auxiliary ? null : input.sessionId ?? null,
+        auxiliary ? null : input.sessionId ?? null,
         null,
         resetId,
         input.reason,
         createdAt,
+        auxiliary ? input.sessionId ?? null : null,
+        auxiliary ? input.sessionId ?? null : null,
       );
       return { conflict: false, result: { resetId, created: true } } as const;
     });
@@ -444,6 +480,8 @@ export class CharacterAffectStorage {
           null,
           "Linked Character Memory episode.",
           new Date().toISOString(),
+          event.auxiliary_session_id,
+          event.source_auxiliary_session_id,
         );
       }
     });
@@ -467,25 +505,30 @@ export class CharacterAffectStorage {
           null,
           "Character Memory episode candidate generated.",
           new Date().toISOString(),
+          event.auxiliary_session_id,
+          event.source_auxiliary_session_id,
         );
       }
     });
   }
 
-  recordRejection(input: { characterId: string; userId: string; sessionId: string; reason: string }): void {
+  recordRejection(input: { characterId: string; userId: string; sessionId: string; reason: string; sessionSource?: AffectSessionSource }): void {
     assertLocalUser(input.userId);
-    this.assertSessionOwner(input.sessionId, input.characterId);
+    this.assertSessionOwner(input.sessionId, input.characterId, input.sessionSource);
+    const auxiliary = input.sessionSource?.kind === "auxiliary";
     this.transaction(() => {
       this.insertMutation(
         "reject",
         input.characterId,
         input.userId,
-        input.sessionId,
-        input.sessionId,
+        auxiliary ? null : input.sessionId,
+        auxiliary ? null : input.sessionId,
         null,
         null,
         input.reason,
         new Date().toISOString(),
+        auxiliary ? input.sessionId : null,
+        auxiliary ? input.sessionId : null,
       );
     });
   }
@@ -518,7 +561,7 @@ export class CharacterAffectStorage {
   private projectState(input: EffectiveStateInput, includeAudit: false): ContextAffectState;
   private projectState(input: EffectiveStateInput, includeAudit: boolean): EffectiveAffectState | ContextAffectState {
     assertLocalUser(input.userId);
-    this.assertSessionOwner(input.sessionId, input.characterId);
+    this.assertSessionOwner(input.sessionId, input.characterId, input.sessionSource);
     for (const component of input.baseline ?? []) {
       assertValidAffectBaseline(component);
     }
@@ -526,7 +569,8 @@ export class CharacterAffectStorage {
     const evaluatedAtMs = Date.parse(evaluatedAt);
     const afterglowCutoff = new Date(evaluatedAtMs - this.sessionHalfLifeMs).toISOString();
     const relationshipResetAt = this.latestResetAt(input.characterId, input.userId, "relationship", null);
-    const sessionResetAt = this.latestResetAt(input.characterId, input.userId, "session", input.sessionId);
+    const sessionColumn = input.sessionSource?.kind === "auxiliary" ? "auxiliary_session_id" : "session_id";
+    const sessionResetAt = this.latestResetAt(input.characterId, input.userId, "session", input.sessionId, sessionColumn);
     const projectionColumns = `id, layer, target_type, CAST(target_id AS BLOB) AS target_id_bytes,
       family, value_json, intensity, occurred_at${includeAudit ? ", reason" : ""}`;
     const rows = this.db.prepare(`
@@ -537,7 +581,7 @@ export class CharacterAffectStorage {
         AND state = 'active'
         AND (
           (layer = 'relationship' AND occurred_at > ?)
-          OR (layer = 'session' AND session_id = ? AND occurred_at > ?)
+          OR (layer = 'session' AND ${sessionColumn} = ? AND occurred_at > ?)
         )
       ORDER BY occurred_at ASC, id ASC
     `).iterate(
@@ -549,13 +593,12 @@ export class CharacterAffectStorage {
     ) as Iterable<ProjectionEventRow>;
 
     const sourceSessionRow = this.db.prepare(`
-      SELECT session_id
+      SELECT session_id, auxiliary_session_id
       FROM character_affect_events_v6 AS events
       WHERE character_id = ?
         AND user_id = ?
         AND layer = 'session'
-        AND session_id IS NOT NULL
-        AND session_id <> ?
+        AND (${sessionColumn} IS NULL OR ${sessionColumn} <> ?)
         AND state = 'active'
         AND occurred_at > ?
         AND NOT EXISTS (
@@ -564,7 +607,8 @@ export class CharacterAffectStorage {
           WHERE resets.character_id = events.character_id
             AND resets.user_id = events.user_id
             AND resets.layer = 'session'
-            AND resets.session_id = events.session_id
+            AND resets.session_id IS events.session_id
+            AND resets.auxiliary_session_id IS events.auxiliary_session_id
             AND resets.reset_at >= events.occurred_at
         )
       ORDER BY occurred_at DESC, id ASC
@@ -574,7 +618,7 @@ export class CharacterAffectStorage {
       input.userId,
       input.sessionId,
       afterglowCutoff,
-    ) as { session_id: string } | undefined;
+    ) as { session_id: string | null; auxiliary_session_id: string | null } | undefined;
     const afterglowRows = sourceSessionRow
       ? this.db.prepare(`
         SELECT ${projectionColumns}
@@ -582,7 +626,7 @@ export class CharacterAffectStorage {
         WHERE character_id = ?
           AND user_id = ?
           AND layer = 'session'
-          AND session_id = ?
+          AND session_id IS ? AND auxiliary_session_id IS ?
           AND state = 'active'
           AND occurred_at > ?
           AND NOT EXISTS (
@@ -591,7 +635,8 @@ export class CharacterAffectStorage {
             WHERE resets.character_id = events.character_id
               AND resets.user_id = events.user_id
               AND resets.layer = 'session'
-              AND resets.session_id = events.session_id
+              AND resets.session_id IS events.session_id
+              AND resets.auxiliary_session_id IS events.auxiliary_session_id
               AND resets.reset_at >= events.occurred_at
           )
         ORDER BY occurred_at DESC, id ASC
@@ -600,6 +645,7 @@ export class CharacterAffectStorage {
         input.characterId,
         input.userId,
         sourceSessionRow.session_id,
+        sourceSessionRow.auxiliary_session_id,
         afterglowCutoff,
       ) as ProjectionEventRow[]
       : [];
@@ -709,6 +755,7 @@ export class CharacterAffectStorage {
     characterId: string;
     userId: string;
     sessionId: string;
+    sessionSource?: AffectSessionSource;
   }): CharacterAffectStateVersion {
     return this.readTransaction(() => this.readStateVersion(input));
   }
@@ -718,13 +765,14 @@ export class CharacterAffectStorage {
     const { data_version: dataVersion } = this.db.prepare("PRAGMA data_version").get() as { data_version: number };
     const { changes } = this.db.prepare("SELECT total_changes() AS changes").get() as { changes: number };
     assertLocalUser(input.userId);
-    this.assertSessionOwner(input.sessionId, input.characterId);
+    this.assertSessionOwner(input.sessionId, input.characterId, input.sessionSource);
+    const sessionColumn = input.sessionSource?.kind === "auxiliary" ? "auxiliary_session_id" : "session_id";
     const cacheChanges = `${dataVersion}:${changes}`;
     if (cacheChanges !== this.versionCacheChanges) {
       this.versionCache.clear();
       this.versionCacheChanges = cacheChanges;
     }
-    const key = JSON.stringify([input.characterId, input.userId, input.sessionId]);
+    const key = JSON.stringify([input.characterId, input.userId, sessionColumn, input.sessionId]);
     const cached = this.versionCache.get(key);
     if (cached) {
       this.versionCache.delete(key);
@@ -736,7 +784,7 @@ export class CharacterAffectStorage {
       FROM character_affect_events_v6
       WHERE character_id = ?
         AND user_id = ?
-        AND (layer = 'relationship' OR session_id = ?)
+        AND (layer = 'relationship' OR ${sessionColumn} = ?)
       ORDER BY occurred_at ASC, id ASC
     `).iterate(input.characterId, input.userId, input.sessionId) as Iterable<{
       id: string;
@@ -749,7 +797,7 @@ export class CharacterAffectStorage {
       FROM character_affect_resets_v6
       WHERE character_id = ?
         AND user_id = ?
-        AND (layer = 'relationship' OR session_id = ?)
+        AND (layer = 'relationship' OR ${sessionColumn} = ?)
       ORDER BY reset_at ASC, id ASC
     `).iterate(input.characterId, input.userId, input.sessionId) as Iterable<{
       id: string;
@@ -780,15 +828,16 @@ export class CharacterAffectStorage {
     return { ...version };
   }
 
-  inspect(input: { characterId: string; userId: string; sessionId?: string }): {
+  inspect(input: { characterId: string; userId: string; sessionId?: string; sessionSource?: AffectSessionSource }): {
     events: StoredAffectEvent[];
     resets: AffectResetRecord[];
     mutations: AffectMutationRecord[];
   } {
     assertLocalUser(input.userId);
     if (input.sessionId) {
-      this.assertSessionOwner(input.sessionId, input.characterId);
+      this.assertSessionOwner(input.sessionId, input.characterId, input.sessionSource);
     }
+    const auxiliary = input.sessionSource?.kind === "auxiliary";
     const allEvents = this.db.prepare(`
       SELECT *, CAST(target_id AS BLOB) AS target_id_bytes FROM character_affect_events_v6
       WHERE character_id = ? AND user_id = ?
@@ -796,7 +845,8 @@ export class CharacterAffectStorage {
     `).all(input.characterId, input.userId) as AffectEventRow[];
     const relevantEventIds = new Set(
       allEvents
-        .filter((event) => !input.sessionId || event.layer === "relationship" || event.session_id === input.sessionId)
+        .filter((event) => !input.sessionId || event.layer === "relationship"
+          || (auxiliary ? event.auxiliary_session_id : event.session_id) === input.sessionId)
         .map((event) => event.id),
     );
     let expanded = true;
@@ -827,6 +877,7 @@ export class CharacterAffectStorage {
         character_id AS characterId,
         user_id AS userId,
         session_id AS sessionId,
+        auxiliary_session_id AS auxiliarySessionId,
         layer,
         reason,
         reset_at AS resetAt,
@@ -837,7 +888,8 @@ export class CharacterAffectStorage {
       ORDER BY reset_at ASC, id ASC
     `).all(input.characterId, input.userId) as AffectResetRecord[];
     const resets = allResets.filter(
-      (reset) => !input.sessionId || reset.layer === "relationship" || reset.sessionId === input.sessionId,
+      (reset) => !input.sessionId || reset.layer === "relationship"
+        || (auxiliary ? reset.auxiliarySessionId : reset.sessionId) === input.sessionId,
     );
     const relevantResetIds = new Set(resets.map((reset) => reset.id));
 
@@ -849,6 +901,8 @@ export class CharacterAffectStorage {
         user_id AS userId,
         session_id AS sessionId,
         source_session_id AS sourceSessionId,
+        auxiliary_session_id AS auxiliarySessionId,
+        source_auxiliary_session_id AS sourceAuxiliarySessionId,
         event_id AS eventId,
         reset_id AS resetId,
         reason,
@@ -859,7 +913,7 @@ export class CharacterAffectStorage {
     `).all(input.characterId, input.userId) as AffectMutationRecord[];
     const mutations = allMutations.filter(
       (mutation) => !input.sessionId
-        || mutation.sessionId === input.sessionId
+        || (auxiliary ? mutation.auxiliarySessionId : mutation.sessionId) === input.sessionId
         || (mutation.eventId ? relevantEventIds.has(mutation.eventId) : false)
         || (mutation.resetId ? relevantResetIds.has(mutation.resetId) : false),
     );
@@ -964,20 +1018,22 @@ export class CharacterAffectStorage {
     correctionOfEventId: string | null,
     supersedesMemoryEntryId: string | null,
     createdAt: string,
+    sessionSource?: AffectSessionSource,
   ): void {
+    const auxiliary = sessionSource?.kind === "auxiliary";
     this.db.prepare(`
       INSERT INTO character_affect_events_v6 (
         id, character_id, user_id, session_id, source_session_id, layer, target_type, target_id,
         family, value_json, intensity, reason, evidence, occurred_at, idempotency_key,
         request_fingerprint, correction_of_event_id, state, memory_entry_id,
-        supersedes_memory_entry_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?)
+        supersedes_memory_entry_id, created_at, auxiliary_session_id, source_auxiliary_session_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?, ?, ?)
     `).run(
       eventId,
       input.characterId,
       input.userId,
-      input.layer === "session" ? input.sessionId : null,
-      input.sessionId,
+      !auxiliary && input.layer === "session" ? input.sessionId : null,
+      auxiliary ? null : input.sessionId,
       input.layer,
       input.targetType,
       input.targetId,
@@ -992,6 +1048,8 @@ export class CharacterAffectStorage {
       correctionOfEventId,
       supersedesMemoryEntryId,
       createdAt,
+      auxiliary && input.layer === "session" ? input.sessionId : null,
+      auxiliary ? input.sessionId : null,
     );
   }
 
@@ -1005,12 +1063,14 @@ export class CharacterAffectStorage {
     resetId: string | null,
     reason: string,
     createdAt: string,
+    auxiliarySessionId: string | null = null,
+    sourceAuxiliarySessionId: string | null = null,
   ): void {
     this.db.prepare(`
       INSERT INTO character_affect_mutations_v6 (
         id, operation, character_id, user_id, session_id, source_session_id,
-        event_id, reset_id, reason, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        event_id, reset_id, reason, created_at, auxiliary_session_id, source_auxiliary_session_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       randomUUID(),
       operation,
@@ -1022,6 +1082,8 @@ export class CharacterAffectStorage {
       resetId,
       reason,
       createdAt,
+      auxiliarySessionId,
+      sourceAuxiliarySessionId,
     );
   }
 
@@ -1065,26 +1127,28 @@ export class CharacterAffectStorage {
     eventId: string | null,
     resetId: string | null,
     reason: string,
+    sessionSource?: AffectSessionSource,
   ): void {
-    const sessionId = input.sessionId && this.sessionExists(input.sessionId)
-      ? input.sessionId
-      : null;
+    const auxiliary = sessionSource?.kind === "auxiliary";
+    const sessionId = input.sessionId && this.db.prepare(`SELECT 1 FROM ${auxiliary ? "auxiliary_sessions" : "sessions_v6"} WHERE id = ?`).get(input.sessionId)
+      ? input.sessionId : null;
     this.db.prepare(`
       INSERT INTO character_affect_observations_v6 (
         id, kind, outcome, character_id, user_id, session_id,
-        event_id, reset_id, reason, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        event_id, reset_id, reason, created_at, auxiliary_session_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       randomUUID(),
       kind,
       outcome,
       input.characterId,
       input.userId,
-      sessionId,
+      auxiliary ? null : sessionId,
       eventId,
       resetId,
       reason,
       new Date().toISOString(),
+      auxiliary ? sessionId : null,
     );
   }
 
@@ -1100,28 +1164,40 @@ export class CharacterAffectStorage {
     return row;
   }
 
-  private latestResetAt(characterId: string, userId: string, layer: AffectLayer, sessionId: string | null): string {
+  private latestResetAt(characterId: string, userId: string, layer: AffectLayer, sessionId: string | null,
+    sessionColumn: "session_id" | "auxiliary_session_id" = "session_id"): string {
     const row = this.db.prepare(`
       SELECT reset_at
       FROM character_affect_resets_v6
-      WHERE character_id = ? AND user_id = ? AND layer = ? AND session_id IS ?
+      WHERE character_id = ? AND user_id = ? AND layer = ? AND ${sessionColumn} IS ?
       ORDER BY reset_at DESC, id DESC
       LIMIT 1
     `).get(characterId, userId, layer, sessionId) as { reset_at: string } | undefined;
     return row?.reset_at ?? "";
   }
 
-  private assertSessionOwner(sessionId: string, characterId: string): void {
-    const row = this.db.prepare("SELECT character_id FROM sessions_v6 WHERE id = ?").get(sessionId) as
-      | { character_id: string | null }
+  private assertSessionOwner(sessionId: string, characterId: string, source?: AffectSessionSource): void {
+    if (source && source.sessionId !== sessionId) throw new Error("Affect source Session ID does not match sessionId.");
+    const auxiliary = source?.kind === "auxiliary";
+    const row = this.db.prepare(`SELECT character_id${auxiliary ? ", parent_session_id" : ""}
+      FROM ${auxiliary ? "auxiliary_sessions" : "sessions_v6"} WHERE id = ?`).get(sessionId) as
+      | { character_id: string | null; parent_session_id?: string }
       | undefined;
     if (!row || row.character_id !== characterId) {
       throw new Error("Session does not belong to the Character affect owner.");
     }
-  }
-
-  private sessionExists(sessionId: string): boolean {
-    return Boolean(this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ?").get(sessionId));
+    if (!source) return;
+    const snapshot = readConversationQuerySnapshot(this.db, auxiliary ? "auxiliary_session_messages" : "session_messages_v6", sessionId);
+    if (!snapshot || snapshot.incarnationId !== source.incarnationId
+      || (source.ownerIdentity !== undefined && !matchesSessionHistorySource({ ...source, ownerIdentity: source.ownerIdentity }, snapshot))) {
+      throw new Error("Character affect source Session was replaced.");
+    }
+    if (source.kind === "auxiliary") {
+      const parent = readConversationQuerySnapshot(this.db, "session_messages_v6", source.parent.sessionId);
+      if (row.parent_session_id !== source.parent.sessionId || !parent || parent.incarnationId !== source.parent.incarnationId) {
+        throw new Error("Character affect source parent Session was replaced.");
+      }
+    }
   }
 
 
@@ -1158,6 +1234,8 @@ function toStoredEvent(row: AffectEventRow): StoredAffectEvent {
     userId: row.user_id,
     sessionId: row.session_id,
     sourceSessionId: row.source_session_id,
+    auxiliarySessionId: row.auxiliary_session_id,
+    sourceAuxiliarySessionId: row.source_auxiliary_session_id,
     layer: row.layer,
     targetType: row.target_type,
     targetId: decodeSqliteText(row.target_id_bytes),

@@ -1,4 +1,4 @@
-import type { Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { LiveApprovalDecision, LiveApprovalRequest, LiveElicitationResponse, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
@@ -6,6 +6,9 @@ import type { ModelCatalogProvider } from "../../src-shared/settings/model-catal
 import type { SessionTurnNotificationTarget } from "../session/session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
+import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
+import type { CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
+import { resolveRuntimeCharacterContext } from "../character/character-context-runtime.js";
 
 type AuxiliaryRuntimeOwner = {
   assertActive(operation: string): void;
@@ -44,6 +47,8 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   };
   memory: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
+    getCharacterContextService?: () => Pick<CharacterContextApplicationService, "getContext"> | null;
+    onCharacterContextFailure?: (session: Session, error: CharacterContextErrorResponse) => void;
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: {
@@ -111,6 +116,21 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     resetProviderSessionThread: (providerId, sessionId) => guarded("provider thread reset", () => deps.provider.resetProviderSessionThread!(providerId, sessionId)),
     isAuxiliarySession: (sessionId) => guarded("Auxiliary session check", () => deps.auxiliary.isAuxiliarySession(sessionId)),
     getSessionMemory: (session) => createDefaultSessionMemory({ id: session.id, workspacePath: session.workspacePath, threadId: session.threadId, taskTitle: session.taskTitle }),
+    resolveCharacterContext: (session, query) => guarded("character context", async () => {
+      const service = deps.memory.getCharacterContextService?.();
+      if (session.sessionKind !== "default" || !session.characterId || !service) return null;
+      const auxiliary = await deps.auxiliary.getSession(session.id);
+      const parent = auxiliary && await deps.parent.getSession(auxiliary.parentSessionId);
+      if (!auxiliary || !parent) throw new Error("Auxiliary Character context owner is unavailable.");
+      return resolveRuntimeCharacterContext({
+        session, query, service,
+        sessionSource: {
+          kind: "auxiliary", sessionId: session.id, incarnationId: getSessionIncarnationId(session),
+          parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) },
+        },
+        onFailure: (owner, error) => deps.memory.onCharacterContextFailure?.(owner, error),
+      });
+    }),
     resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn: (entry) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
     updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),

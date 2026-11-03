@@ -1,7 +1,6 @@
-import type { Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { CharacterContextResponse, CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
-import { isCharacterContextError } from "../../src-shared/character-context/character-context-contract.js";
-import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
+import { resolveRuntimeCharacterContext } from "../character/character-context-runtime.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
 import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { resolveConversationTimingContext, type ConversationTimingContext, type ConversationTimingStorageSnapshot } from "../session/conversation-timing.js";
@@ -61,20 +60,12 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
 
   const resolveCharacterContext = async (session: Session, query: string): Promise<CharacterContextResponse | null> => {
     assertOwner("character context");
-    const service = deps.memory.getCharacterContextService?.();
-    if (session.sessionKind !== "default" || !session.characterId || !service) return null;
-    const result = await service.getContext({
-      schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-      characterId: session.characterId,
-      sessionId: session.id,
-      query,
-      memoryLimit: 3,
-    }, "lifecycle", session.characterRuntimeSnapshot);
+    const result = await resolveRuntimeCharacterContext({
+      session, query, service: deps.memory.getCharacterContextService?.(),
+      sessionSource: { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
+      onFailure: deps.memory.onCharacterContextFailure,
+    });
     assertOwner("character context");
-    if (isCharacterContextError(result)) {
-      deps.memory.onCharacterContextFailure(session, result);
-      return null;
-    }
     return result;
   };
 

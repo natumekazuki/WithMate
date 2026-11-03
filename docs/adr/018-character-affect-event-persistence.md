@@ -63,6 +63,16 @@ family列はnullableかつ固定enumのCHECK付きでadditive追加する。既�
 
 アプリ版をrollbackした場合、旧版は追加tableを参照せず既存V6 dataを読み続けられる。感情tableを自動dropしないため、再upgrade時にevent履歴を再利用できる。物理削除が必要な場合は、別の明示的なdestructive migrationとして扱う。
 
+## Main／Auxiliary ownerへの適用
+
+session単位の一時状態とCharacter／local-user単位のrelationship共有はMain／Auxiliaryにも同じ意味で適用する。session層のscopeはMainの`session_id`またはAuxiliaryの`auxiliary_session_id`で、relationship層では両方NULLとする。発生元は対応する`source_session_id`／`source_auxiliary_session_id`へ保存する。各FKは上記のscope削除・provenance保持と同じCASCADE／SET NULLを使い、Auxiliaryを親Mainへ付け替えない。
+
+公開inspection等ではMainの`sessionId`／`sourceSessionId`に加え、Auxiliaryの`auxiliarySessionId`／`sourceAuxiliarySessionId`を用いる。既存Main入力はそのまま受理し、内部のtrusted `sessionSource`だけでAuxiliary kind、実incarnation、親identity、取得済みownerIdentityを渡す。projection／version／inspect／correct／resetはこの実ownerを参照する。同名IDをkindで区別し、Auxiliary自身と親のCharacterが異なっても実Characterのrelationshipだけを共有する。
+
+afterglowのsource選択におけるSessionも実kindと会話IDの組で識別し、その他のTTL・減衰・continuity・件数・非公開化・version規則は変えない。同CharacterがMain／Auxiliaryに重複する場合の重なりを許容し、重複専用の分離・排他・共有設定は設けない。
+
+このowner拡張では上記Migrationのadditive-only方式に代わり、既存CHECKの更新に必要なAffect tablesだけを同一savepoint内で再構築する。event／reset／idempotency／mutation／observationの既存行・ID・fingerprint・Memory link・監査を保持し、新しいAuxiliary列はNULLとする。Memory本文や他のtables、Mainのstate version、`user_version`は変更しない。失敗は全体rollbackし、実環境の再作成・データ破棄を行わない。
+
 ## Consequences
 
 - 同時sessionは別session eventをappendするため、現在気分を相互上書きしない。

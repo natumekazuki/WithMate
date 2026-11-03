@@ -167,7 +167,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: binding.managedMcp!.token, ...(sessionId ? { "mcp-session-id": sessionId } : {}) },
       body: JSON.stringify({ jsonrpc: "2.0", id: 71, method: "tools/call", params: { name, arguments: args } }) });
   }
-  return { directory, db, sessions, scope, started, project, connect, request, bindings, turns, executions, host, worker, memoryWorker, memory, connection, auxiliary,
+  return { directory, db, sessions, scope, started, project, connect, request, bindings, turns, executions, host, worker, memoryWorker, memory, characterContext, connection, auxiliary,
     async connectRuntimeContext(env: NodeJS.ProcessEnv, credential = connection.credential) {
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       const server = createWithMateSessionHistoryMcpServer({ env, connection: { ...connection, credential } }, getSessionHistoryAgentRuntimeOperations());
