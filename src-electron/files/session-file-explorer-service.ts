@@ -851,26 +851,23 @@ export class SessionFileExplorerService {
   }
 
   async createHtmlPreviewResourceRoot(request: SessionFileResourceRequest): Promise<{
+    rootRealPath: string;
     relativePath: string;
     open(relativePath: string): Promise<{ handle: ReadableFileHandle; byteLength: number }>;
   }> {
-    const source = await this.openLocalFile(request);
+    const resolution = isSessionFileAbsoluteResource(request)
+      ? await this.resolvePreviewTarget(request.sessionId, request.absolutePath) : null;
+    const source = await this.openLocalFile(resolution?.type === "file" ? resolution.resource : request);
     try {
       const rootPath = source.candidate.rootAbsolutePath;
       const rootRealPath = source.candidate.rootRealPath;
       const rootStats = await stat(rootRealPath, { bigint: true });
       const relativePath = path.relative(rootRealPath, source.targetRealPath).split(path.sep).join("/");
       return {
+        rootRealPath,
         relativePath,
         open: async (assetPath) => {
           const normalized = normalizeRelativePath(assetPath, false);
-          // Re-resolve configured roots so a removed/reassigned root cannot retain access.
-          if (!isSessionFileAbsoluteResource(request)) {
-            const current = await this.resolveTargetCandidate(request, false);
-            if (pathKey(current.rootRealPath) !== pathKey(rootRealPath)) {
-              throw new Error("The HTML preview file root changed.");
-            }
-          }
           const opened = await this.openAuthorizedCandidate({
             rootAbsolutePath: rootPath,
             rootRealPath,

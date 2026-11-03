@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -16,7 +16,7 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
-import { WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
+import { WITHMATE_INSPECT_SESSION_FILE_CHANNEL, WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL } from "../../src-shared/ipc/withmate-ipc-channels.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -108,15 +108,59 @@ async function createNavigation() {
     resolveSessionWindow: (id: string) => id === "parent" ? ownerWindow : null,
     getSessionFileExplorerOwnerSessionId: async (id: string) => (await getSessionContext(id))?.parentSessionId ?? null,
     isFilePreviewWindow: (window: ReturnType<typeof createWindow>, id: string) => windows.isFilePreviewWindow(window, id),
-    getFilePreviewWindowResource: (window: ReturnType<typeof createWindow>, id: string) => windows.getFilePreviewWindowResource(window, id),
+    getFilePreviewWindowResource: (window: ReturnType<typeof createWindow>, id: string, representation?: "source" | "absolute") => windows.getFilePreviewWindowResource(window, id, representation),
+    inspectSessionFile: (request: Parameters<ReturnType<typeof runtime.getExplorer>["inspectFile"]>[0]) => runtime.getExplorer().inspectFile(request),
+    readSessionFileChunk: (request: Parameters<ReturnType<typeof runtime.getExplorer>["readFileChunk"]>[0]) => runtime.getExplorer().readFileChunk(request),
     openSessionFilePreviewWindow: (request: SessionFilePreviewWindowOpenRequest, assertSender: () => Promise<void>) =>
       runtime.getPreview().open(request, assertSender),
   } as unknown as MainIpcSessionQueryDeps;
   registerSessionQueryHandlers({ handle: (channel, handler) => { handlers.set(channel, handler); } }, deps);
   const open = async (request: SessionFilePreviewWindowOpenRequest): Promise<SessionFilePreviewWindowOpenResult> =>
     handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)!({ sender: state.sender.webContents } as never, request);
-  return { temp, workspacePath, additionalPath, ownerWindow, state, created, windows, runtime, open, externalOpened, directoryOpened };
+  const invoke = (channel: string, request: unknown) => Promise.resolve(handlers.get(channel)!({ sender: state.sender.webContents } as never, request));
+  return { temp, workspacePath, additionalPath, ownerWindow, state, created, windows, runtime, open, invoke, externalOpened, directoryOpened };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "明示PreviewはAdditional Directory解除後も同じ実fileを読めるが、detached Windowは他fileを読めずExplorer rootは失効する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md: File Preview; docs/design/electron-window-runtime.md: Local Path Operation Boundary" }
+// fault = "通常PreviewをSession root解除で失効させる、detached Previewに別fileを許す、またはExplorer rootを延命する"
+// observable = "実fileのinspectとchunk本文、別fileのIPC拒否、解除rootのExplorer拒否"
+// observation_boundary = "public-boundary"
+// scope = "preview Window binding -> IPC -> real filesystem after directory removal"
+// lifecycle = "permanent"
+// impact = "開いたPreviewを継続利用でき、Agent作業範囲とWindow対象の境界を保つ"
+// distinction = "単体stubではcanonical payloadからIPCと実fileへの接続、root解除後の継続を確認できない"
+// @end-test-value
+test("通常Previewのfile読込は作業root解除から独立しWindow対象に束縛される", async () => {
+  const h = await createNavigation();
+  try {
+    const alias = path.join(h.temp, "root-alias");
+    const linkType = process.platform === "win32" ? "junction" : "dir";
+    await symlink(h.additionalPath, alias, linkType);
+    h.state.allowedAdditionalDirectories = [alias];
+    await h.open({ kind: "link", sessionId: "aux", target: path.join(alias, "extra.txt") });
+    const original = h.windows.getFilePreviewWindowResource(h.created[0]!, "aux")!;
+    const absolute = h.windows.getFilePreviewWindowResource(h.created[0]!, "aux", "absolute")!;
+    h.state.sender = h.created[0]!;
+    await rm(alias);
+    await symlink(h.workspacePath, alias, linkType);
+    await writeFile(path.join(h.workspacePath, "extra.txt"), "different file");
+    await assert.rejects(h.invoke(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, original), /current Preview resource/);
+    h.state.allowedAdditionalDirectories = [];
+    const descriptor = await h.invoke(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, absolute) as { revision: string };
+    const chunk = await h.invoke(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, {
+      ...absolute, offset: 0, length: 100, expectedRevision: descriptor.revision,
+    }) as { data: ArrayBuffer };
+    assert.equal(new TextDecoder().decode(chunk.data), "extra\n");
+    await assert.rejects(h.invoke(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, {
+      sessionId: "aux", absolutePath: path.join(h.temp, "outside.md"),
+    }), /current Preview resource/);
+    assert.ok("rootId" in original);
+    await assert.rejects(h.runtime.getExplorer().inspectFile(original), /root is not available/);
+  } finally { await rm(h.temp, { recursive: true, force: true }); }
+});
 
 // @test-value v2
 // kind = "security"
@@ -247,10 +291,11 @@ test("Files link操作は解決結果・権限追加なし・directory再認可�
     assert.ok("message" in senderChanged && /sender changed/.test(senderChanged.message));
     assert.equal(senderChanged.status, "failed");
     h.state.sender = h.created[0]!;
+    const previewBase = h.windows.getFilePreviewWindowResource(h.created[0]!, "aux", "absolute")!;
     h.state.beforeDirectoryOpen = () => h.created[0]!.close();
     const closed = await h.open({
       kind: "link", sessionId: "aux", target: ".",
-      baseResource: { sessionId: "aux", rootId: "workspace", relativePath: "docs/guide.md" },
+      baseResource: previewBase,
     });
     assert.equal(closed.status, "failed");
     assert.ok("message" in closed && /current Preview/.test(closed.message));

@@ -2,6 +2,8 @@
 
 - Status: Accepted
 
+通常fileのPreviewとMarkdown linkのCopy FileをSession作業rootへ制限する判断、およびowning Session rendererのabsolute-file読込を拒否する判断は適用対象外とする。ユーザーによる閲覧・コピーとエージェントへ渡す作業範囲を分離する。現行定義は[Desktop UI](../design/desktop-ui.md)と[Local Path Operation Boundary](../design/electron-window-runtime.md#local-path-operation-boundary)を参照する。以下の当時の本文は保持する。
+
 画像の自動読込をroot-scopedに限定する判断は適用対象外とし、[ADR 026](026-shared-image-resource-loading.md)で置換する。汎用file resourceの認可とWindow所有関係は継続する。
 
 登録root外directoryを拒否する判断は適用対象外とし、[ADR 025](025-explicit-directory-link-open.md)で置換する。以下の当時の本文は保持し、file preview・自動resource・Window所有関係に関する判断は継続する。

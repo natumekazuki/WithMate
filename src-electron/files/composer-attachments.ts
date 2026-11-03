@@ -1,10 +1,10 @@
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { extractComposerAttachmentReferenceCandidates } from "../../src-shared/files/path-reference.js";
-import { isPathWithinAnyDirectory, normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
+import { isPathWithinDirectory, normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"]);
 const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/;
@@ -78,14 +78,22 @@ async function resolveAttachmentCandidate(
     throw new Error(`Expected a file: ${candidate.path}`);
   }
 
-  const workspaceRelativePath = toWorkspaceRelativePath(session.workspacePath, absolutePath);
-  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
-    session.workspacePath,
-    session.allowedAdditionalDirectories,
-  );
-  if (workspaceRelativePath === null && !isPathWithinAnyDirectory(absolutePath, allowedAdditionalDirectories)) {
+  const targetRealPath = await realpath(absolutePath);
+  const directories = [session.workspacePath, ...normalizeAllowedAdditionalDirectories(
+    session.workspacePath, session.allowedAdditionalDirectories,
+  )];
+  let withinWorkScope = false;
+  for (const directory of directories) {
+    const directoryRealPath = await realpath(directory).catch(() => null);
+    if (directoryRealPath && isPathWithinDirectory(targetRealPath, directoryRealPath)) {
+      withinWorkScope = true;
+      break;
+    }
+  }
+  if (!withinWorkScope) {
     throw new Error(`Path is outside the workspace. Add its directory before attaching: ${candidate.path}`);
   }
+  const workspaceRelativePath = toWorkspaceRelativePath(session.workspacePath, absolutePath);
   const displayPath = toDisplayPath(session.workspacePath, absolutePath);
 
   return {

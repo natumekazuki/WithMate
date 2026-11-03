@@ -226,6 +226,7 @@ export type MainIpcFilePreviewWindowDeps = {
   getFilePreviewWindowResource(
     window: BrowserWindow,
     sessionId: string,
+    representation?: "source" | "absolute",
   ): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
 };

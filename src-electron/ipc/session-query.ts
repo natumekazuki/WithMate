@@ -787,6 +787,7 @@ export function registerSessionQueryHandlers(
           relativePath: request.relativePath,
         },
         deps,
+        "source",
       );
       return deps.getFileRootDiff(request);
     },

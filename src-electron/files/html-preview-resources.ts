@@ -50,18 +50,30 @@ function rangeFor(request: Request, size: number): { start: number; end: number;
 /** The caller authorizes this source and rechecks its owner before every read. */
 export async function createHtmlPreviewResources(
   explorer: Pick<SessionFileExplorerService, "createHtmlPreviewResourceRoot">,
-  git: Pick<FileRootGitChangesService, "readHtmlPreviewHistoryFile">,
+  git: Pick<FileRootGitChangesService, "readHtmlPreviewHistoryFile" | "resolveHistoryFilePreview">,
   source: SessionFilePreviewResourceRequest,
 ): Promise<HtmlPreviewResources> {
   const local = isSessionFileGitCommitResource(source) ? null : await explorer.createHtmlPreviewResourceRoot(source);
   const sourcePath = isSessionFileGitCommitResource(source) ? source.relativePath.replaceAll("\\", "/") : local!.relativePath;
-  const pathname = encodeAssetPath(sourcePath);
+  let rootPath: string;
+  if (isSessionFileGitCommitResource(source)) {
+    rootPath = (await git.resolveHistoryFilePreview(source)).absoluteFilePath;
+    for (const _segment of sourcePath.split("/")) rootPath = path.dirname(rootPath);
+  } else {
+    rootPath = local!.rootRealPath;
+  }
+  const volumeRoot = path.parse(rootPath).root;
+  const pathname = encodeAssetPath(path.relative(volumeRoot, path.join(rootPath, ...sourcePath.split("/"))).split(path.sep).join("/"));
   decodeAssetPath(pathname);
   return {
     pathname,
     async read(assetPath, request) {
       if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 405 });
-      const relativePath = decodeAssetPath(assetPath);
+      const absolutePath = path.join(volumeRoot, ...decodeAssetPath(assetPath).split("/"));
+      const relativePath = path.relative(rootPath, absolutePath).split(path.sep).join("/");
+      if (!relativePath || relativePath === ".." || relativePath.startsWith("../") || path.isAbsolute(relativePath)) {
+        throw new Error("The HTML resource is outside the file root.");
+      }
       const historical = isSessionFileGitCommitResource(source)
         ? await git.readHtmlPreviewHistoryFile({ ...source, relativePath }) : null;
       const opened = local ? await local.open(relativePath) : null;

@@ -31,9 +31,7 @@ import type {
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import {
   getSessionFileResourceDisplayPath,
-  isSessionFileAbsoluteResource,
   isSessionFileGitCommitResource,
-  isSessionFileRootResource,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { getSessionFileObjectCopyFeedbackTone } from "../../src-shared/file-explorer/session-file-object-copy-contract.js";
 import {
@@ -204,9 +202,7 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
-  const resource: SessionFilePreviewResourceRequest = isSessionFileAbsoluteResource(descriptor)
-    ? { sessionId: descriptor.sessionId, absolutePath: descriptor.absolutePath }
-    : isSessionFileGitCommitResource(descriptor)
+  const resource: SessionFilePreviewResourceRequest = isSessionFileGitCommitResource(descriptor)
       ? {
           resourceKind: "git-commit-file",
           sessionId: descriptor.sessionId,
@@ -217,8 +213,7 @@ async function readWholeResource(
         }
       : {
         sessionId: descriptor.sessionId,
-        rootId: descriptor.rootId,
-        relativePath: descriptor.relativePath,
+        absolutePath: descriptor.absoluteFilePath,
       };
   while (offset < descriptor.byteLength) {
     const result = await api.readSessionFileChunk({
@@ -566,7 +561,7 @@ function VirtualizedSplitDiffContent({
 
 export function SessionFilePreview({
   api,
-  request,
+  request: sourceRequest,
   backNavigation,
   onCopyText,
   onQuoteText,
@@ -575,6 +570,11 @@ export function SessionFilePreview({
   diffLoadingScope = null,
   diffAvailabilityMessage = "",
 }: SessionFilePreviewProps) {
+  const targetRef = useRef({ source: sourceRequest, resource: sourceRequest });
+  if (targetRef.current.source !== sourceRequest) {
+    targetRef.current = { source: sourceRequest, resource: sourceRequest };
+  }
+  const request = targetRef.current.resource;
   const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
   const currentFileActionsAvailable = !isSessionFileGitCommitResource(request);
   const markdownLinkFileContext = useMemo(() => isSessionFileGitCommitResource(request)
@@ -709,6 +709,9 @@ export function SessionFilePreview({
       if (loadRevisionRef.current !== revision) {
         return;
       }
+      if (!isSessionFileGitCommitResource(descriptor)) {
+        targetRef.current.resource = { sessionId: descriptor.sessionId, absolutePath: descriptor.absoluteFilePath };
+      }
       if (descriptor.kind !== "binary" && descriptor.byteLength >= SESSION_FILE_LARGE_WARNING_BYTES) {
         setLoadState({ status: "large-warning", descriptor });
       } else {
@@ -729,7 +732,7 @@ export function SessionFilePreview({
       activePreviewAccumulatorRef.current?.release();
       activePreviewAccumulatorRef.current = null;
     };
-  }, [api, loadDescriptor, reloadRevision, request]);
+  }, [api, loadDescriptor, reloadRevision, sourceRequest]);
 
   const descriptor = loadState.status === "inspecting" || loadState.status === "error"
     ? null

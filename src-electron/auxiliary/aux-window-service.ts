@@ -183,6 +183,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   getFilePreviewWindowResource(
     window: TWindow,
     sessionId: string,
+    representation: "source" | "absolute" = "source",
   ): SessionFilePreviewResourceRequest | null {
     for (const [token, candidate] of this.filePreviewWindows.entries()) {
       const payload = this.filePreviewStore.get(token);
@@ -192,6 +193,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
         && payload
         && getFilePreviewPayloadSessionId(payload) === sessionId
       ) {
+        if (representation === "absolute") {
+          return !("historyDiff" in payload) && !isSessionFileGitCommitResource(payload.resource)
+            ? { sessionId, absolutePath: payload.displayPath } : null;
+        }
         return getFilePreviewPayloadResource(payload);
       }
     }
