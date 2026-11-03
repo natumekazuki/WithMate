@@ -28,6 +28,7 @@ import type { CharacterContextResponse } from "../../src-shared/character-contex
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 import { applyProviderProgressChanges } from "../providers/provider-progress.js";
+import type { SessionBackgroundEvent } from "./session-background-events.js";
 
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -124,6 +125,7 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
   notifySessionTurnTerminal?: (notification: SessionTurnTerminalNotification) => Awaitable<void>;
+  onBackgroundEvent?: (event: SessionBackgroundEvent) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   currentDate?: () => Date;
   providerCancelGraceMs?: number;
@@ -1023,6 +1025,7 @@ export class SessionRuntimeService {
         elapsedMs: Date.now() - investigationStartedAt,
       });
       this.startingSessionRuns.delete(sessionId);
+      this.publishBackgroundEvent({ kind: "run_state", session: runningSession, running: true });
     } catch (error) {
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
@@ -1258,7 +1261,7 @@ export class SessionRuntimeService {
       const completedSessionUpsertStartedAt = Date.now();
       const completedThreadId = pickPreferredThreadId(result.threadId, completedSession.threadId);
       terminalPersistenceStarted = true;
-      const storedCompletedSession = await this.deps.appendTerminalSession(completedSession, {
+      const terminal: SessionTurnTerminalCommit = {
         turnId: runningTurn.id,
         sessionId,
         phase: "completed",
@@ -1266,7 +1269,8 @@ export class SessionRuntimeService {
         threadId: completedThreadId,
         errorMessage: "",
         completedAt,
-      }, {
+      };
+      const storedCompletedSession = await this.deps.appendTerminalSession(completedSession, terminal, {
         confirmedFinalAssistantText: result.lastNonEmptyAssistantMessageText,
       });
       if (queued) queued.outcome = { state: "completed" };
@@ -1279,6 +1283,7 @@ export class SessionRuntimeService {
         storedStatus: storedCompletedSession.status,
       });
       activeRunningSession = storedCompletedSession;
+      this.publishBackgroundEvent({ kind: "terminal_saved", session: storedCompletedSession, terminal });
       if (!runAbortController.signal.aborted) {
         notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
           outcome: "completed",
@@ -1344,7 +1349,7 @@ export class SessionRuntimeService {
       };
 
       const failedSessionUpsertStartedAt = Date.now();
-      const storedFailedSession = await this.deps.appendTerminalSession(failedSession, {
+      const terminal: SessionTurnTerminalCommit = {
         turnId: runningTurn.id,
         sessionId,
         phase: canceled ? "canceled" : "failed",
@@ -1352,7 +1357,8 @@ export class SessionRuntimeService {
         threadId: failedTurnThreadId,
         errorMessage: failureMessage,
         completedAt,
-      });
+      };
+      const storedFailedSession = await this.deps.appendTerminalSession(failedSession, terminal);
       if (queued) queued.outcome = { state: canceled ? "canceled" : "failed", reason: failureMessage };
       logSessionRunStuckInvestigation("runtime.terminal-session-upsert.done", {
         sessionId,
@@ -1363,6 +1369,7 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
+      this.publishBackgroundEvent({ kind: "terminal_saved", session: storedFailedSession, terminal });
       if (!canceled && !this.pendingSessionRunCancels.has(sessionId)
         && !runAbortController.signal.aborted) {
         notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
@@ -1404,6 +1411,7 @@ export class SessionRuntimeService {
         this.setRuntimeLiveState(sessionId, null);
       }
       this.deps.broadcastLiveSessionRun(sessionId);
+      this.publishBackgroundEvent({ kind: "run_state", session: activeRunningSession, running: false });
       logSessionRunStuckInvestigation("runtime.finally.done", {
         sessionId,
         clientRequestId,
@@ -1414,6 +1422,16 @@ export class SessionRuntimeService {
         preservedReasoningChars: preservedReasoningText.length,
         liveRunAfterFinally: this.deps.getLiveSessionRun(sessionId) ? "present" : "null",
       });
+    }
+  }
+
+  private publishBackgroundEvent(event: SessionBackgroundEvent): void {
+    const notify = this.deps.onBackgroundEvent;
+    if (!notify) return;
+    try {
+      void Promise.resolve(notify(event)).catch((error) => console.warn("Background lifecycle callback failed", error));
+    } catch (error) {
+      console.warn("Background lifecycle callback failed", error);
     }
   }
 

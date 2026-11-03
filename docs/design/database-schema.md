@@ -6,6 +6,8 @@
 
 永続化データの正本と、Markdownやprovider instructionなどのgenerated projectionを混同しない。生成された投影は手編集を正本とせず、削除・忘却した情報を再投影やproviderへの送信に残さない。
 
+背景三用途のProvider／model・登録本文は`app_settings`の`background_execution_settings_json`、Memory二用途の頻度は`memory_recording_frequencies_json`に保存する。既存AppSettingsの読込・保存・変更通知を用い、キー欠落時だけ初期化し、不正値を既定値へ置換しない。選択未設定と本文未設定・空文字列を区別する。
+
 V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存操作はstorage Workerが所有する。Mainは許可されたtyped commandを非同期で送る。close、reset、reopen後に旧storage generationの遅延応答を新しいDBへ適用しない。
 
 ## Storage Overview

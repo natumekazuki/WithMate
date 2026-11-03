@@ -36,6 +36,8 @@ const GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY = "glossary_proactive_crea
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
+const BACKGROUND_EXECUTION_SETTINGS_KEY = "background_execution_settings_json";
+const MEMORY_RECORDING_FREQUENCIES_KEY = "memory_recording_frequencies_json";
 const OBSOLETE_MICROCOPY_SETTING_KEYS = [
   "user_microcopy_catalog_json",
   "user_microcopy_catalog_english_migrated",
@@ -456,7 +458,14 @@ export class AppSettingsStorage {
       }
     }
 
-    return normalizeAppSettings(settings);
+    // Missing keys use defaults; malformed or invalid explicit values must surface to the caller.
+    const backgroundSettingsRow = rows.find((row) => row.setting_key === BACKGROUND_EXECUTION_SETTINGS_KEY);
+    const memoryFrequenciesRow = rows.find((row) => row.setting_key === MEMORY_RECORDING_FREQUENCIES_KEY);
+    return normalizeAppSettings({
+      ...settings,
+      backgroundExecutionSettings: backgroundSettingsRow ? JSON.parse(backgroundSettingsRow.setting_value) : undefined,
+      memoryRecordingFrequencies: memoryFrequenciesRow ? JSON.parse(memoryFrequenciesRow.setting_value) : undefined,
+    });
   }
 
   updateSettings(nextSettings: AppSettings): AppSettings {
@@ -674,6 +683,15 @@ export class AppSettingsStorage {
           JSON.stringify(normalized.mateMemoryGenerationSettings),
           updatedAt,
         );
+      const saveBackgroundSetting = this.db.prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET
+          setting_value = excluded.setting_value,
+          updated_at = excluded.updated_at
+      `);
+      saveBackgroundSetting.run(BACKGROUND_EXECUTION_SETTINGS_KEY, JSON.stringify(normalized.backgroundExecutionSettings), updatedAt);
+      saveBackgroundSetting.run(MEMORY_RECORDING_FREQUENCIES_KEY, JSON.stringify(normalized.memoryRecordingFrequencies), updatedAt);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

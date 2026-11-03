@@ -11,7 +11,7 @@
 
 - 設定は `Home Window` から開く独立 `Settings Window` とする
 - Character定義は`Characters` editorで管理し、Session開始時の`CharacterRuntimeSnapshot`をruntime promptへ渡す
-- current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Diagnostics`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
+- current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Background Execution`、`Diagnostics`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
 - Settings のsectionとprovider rowは意味上のgroupを保つが、入れ子の装飾card、重複するsection見出し、説明だけの空行は置かない
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` はfieldsetの内外でsection間の余白を24pxに揃え、直前の入力欄やfocus枠と区切り線を離す。内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
@@ -24,7 +24,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動する
+3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings、背景用途のmodel・本文・Memory頻度を編集して保存する。window が小さいときは内部スクロールで下端まで移動する
 4. 結果は window 内の短いフィードバックで返す
 
 設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。
@@ -60,6 +60,10 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
       - `Root Directory`
       - `Skill Relative Path`
       - `Instruction Relative Path`
+  - `Background Execution`
+    - `Character Memory` / `Target Memory` / `Character Affect`ごとの`Provider / Model`と`Registration Instructions`
+    - Memory二用途の`Every Turns`と`Idle Minutes`
+    - `Use Preset`の解除で本文を編集し、有効化でプリセットへ戻す
   - `Diagnostics`
     - `Open Logs` / `Open Crash Dumps`
     - Memory V6 read-only diagnostics
@@ -77,6 +81,10 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - 結果フィードバック
 
 ## Current Scope
+
+- 背景三用途は`AppSettings.backgroundExecutionSettings`に用途別の選択と本文を保存する。Provider／modelは初期未設定で、通常Sessionの選択や別用途のMemory生成設定を流用しない。catalogの実IDで選択し、未設定、利用不可、一覧取得失敗を区別する。利用不可でも保存値を保持し、対応する選択への修正先を示す。背景対応Providerの判定は共有`background-provider-support.ts`を使い、無効なProviderは`Coding Agent Providers`での有効化を案内する。
+- 登録本文は未設定なら用途presetを使う。`Use Preset`を解除すると現行presetを編集本文へコピーし、設定後は空文字列も含めその本文だけを使う。preset本文の正本は`memory-registration-input.ts`と`affect-composition.ts`とし、Settings側に複製しない。
+- `memoryRecordingFrequencies`はMemory二用途のTurn数・idle分を保持し、既定はそれぞれ5。Turn数は1以上の整数、idle分は0より大きい有限数とする。入力不正は入力欄に示して保存を止める。保存・読込境界も明示された不正値を拒否し、欠落だけを既定化する。既存`app_settings`のJSON値へ保存し、専用tableは持たない。
 
 - `App` の `Close Action Dock After Send` を含む表示設定の保存
 - `Preview Wheel Zoom Step`は画像／SVG／Mermaidの共通previewと画像lightboxのCtrl＋wheelの加算刻みを設定する。labelと3桁用の短い入力欄を横並びにし、通常時の説明文・単位表示は置かない。単位はpercentage points、既定値5、範囲は整数1〜100とする。空入力・小数・範囲外は入力欄にエラーを示して保存を止め、保存境界でも不正値を拒否する。設定項目がない既存データは5で初期化し、明示された不正な保存値を既定値へ置き換えない

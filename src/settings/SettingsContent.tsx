@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+import { BackgroundExecutionSettings, type BackgroundExecutionSettingsProps } from "./BackgroundExecutionSettings.js";
+import { parseMemoryRecordingFrequencies } from "../../src-shared/settings/background-settings.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
@@ -51,6 +53,9 @@ import { SettingsActionButton } from "./SettingsActionButton.js";
 import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
 
 export type HomeSettingsContentProps = {
+  modelCatalog?: BackgroundExecutionSettingsProps["catalog"];
+  onChangeBackgroundPurpose: BackgroundExecutionSettingsProps["onChangePurpose"];
+  onChangeMemoryRecordingFrequencies: BackgroundExecutionSettingsProps["onChangeFrequencies"];
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
@@ -149,6 +154,9 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
 }
 
 export function HomeSettingsContent({
+  modelCatalog = null,
+  onChangeBackgroundPurpose,
+  onChangeMemoryRecordingFrequencies,
   settingsDraft,
   providerSettingRows,
   memoryV6Diagnostics,
@@ -202,6 +210,8 @@ export function HomeSettingsContent({
   const [invalidPreviewWheelZoomStep, setInvalidPreviewWheelZoomStep] = useState<string | null>(null);
   const [cleaningSessionFiles, setCleaningSessionFiles] = useState(false);
   const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
+  let memoryRecordingFrequenciesInvalid = false;
+  try { parseMemoryRecordingFrequencies(settingsDraft.memoryRecordingFrequencies); } catch { memoryRecordingFrequenciesInvalid = true; }
   const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
   const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
   const runAction = async (action: SettingsActionKey, callback: () => void | Promise<void>) => {
@@ -508,6 +518,10 @@ export function HomeSettingsContent({
           </> : null}
           </fieldset>
 
+          {settingsDraftLoaded ? <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
+            <BackgroundExecutionSettings settings={settingsDraft} catalog={modelCatalog}
+              onChangePurpose={onChangeBackgroundPurpose} onChangeFrequencies={onChangeMemoryRecordingFrequencies} />
+          </fieldset> : null}
           <section className="settings-section-card">
             <div className="settings-field">
               <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
@@ -735,7 +749,7 @@ export function HomeSettingsContent({
           className="launch-toggle"
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
-          disabled={!settingsDirty || previewWheelZoomStepInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
+          disabled={!settingsDirty || previewWheelZoomStepInvalid || memoryRecordingFrequenciesInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >

@@ -241,6 +241,10 @@ import {
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
 import { BackgroundExecutionService } from "./providers/background-execution-service.js";
+import { BackgroundProductionRuntime } from "./providers/background-production-runtime.js";
+import { createBackgroundProviderAgent } from "./providers/background-provider-agent.js";
+import type { SessionBackgroundEvent } from "./session/session-background-events.js";
+import type { BackgroundRegistration } from "./providers/background-registration.js";
 import { registerBackgroundAffect } from "./character/background-affect-registration.js";
 import { buildProviderAgentRuntimeAuthoritySnapshot } from "./providers/provider-agent-runtime-binding.js";
 import { resolveMemoryV6ProjectCandidate } from "./memory/memory-v6-project-resolver.js";
@@ -704,8 +708,8 @@ function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null
   return memoryV6MainAssembly.forgetEntry(entryId, reason);
 }
 
-async function resolveAgentRuntimeActorSession(sessionId: string) {
-  const session = getSession(sessionId);
+async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "main" | "auxiliary") {
+  const session = sourceKind === "auxiliary" ? null : getSession(sessionId);
   if (session) {
     return {
       id: session.id,
@@ -714,7 +718,7 @@ async function resolveAgentRuntimeActorSession(sessionId: string) {
       workspacePath: session.workspacePath,
     };
   }
-  if (!mainStoreContext.auxiliarySessionStorage) {
+  if (sourceKind === "main" || !mainStoreContext.auxiliarySessionStorage) {
     return null;
   }
   const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
@@ -742,6 +746,49 @@ const backgroundExecutions = new BackgroundExecutionService({
   turns: providerAgentRuntimeTurns,
   closeConnection: (handle) => memoryV6RuntimeApi?.managedMcp?.closeConnection(handle),
 });
+const backgroundSourceKinds: BackgroundRegistration["sourceKinds"] = {
+  "character-memory": ["main"], "target-memory": ["main"], affect: ["main"],
+};
+const backgroundRuntime = new BackgroundProductionRuntime({
+  executions: backgroundExecutions,
+  runAgent: createBackgroundProviderAgent({
+    getModelCatalog: (input) => getModelCatalog({ providerId: input.selection.providerId, workspacePath: input.session.workspacePath }),
+    projectBinding: (input) => {
+      const runtime = memoryV6RuntimeApi;
+      if (!runtime?.managedMcp) throw new Error("Background managed MCP runtime is unavailable.");
+      const binding = { ...input.binding, memoryRuntimeOwner: {
+        applicationInstanceId: runtime.applicationInstanceId, runtimeGenerationId: runtime.runtimeGenerationId,
+      } };
+      return { ...binding, managedMcp: runtime.managedMcp.issue(binding, input.handle, input.signal) };
+    },
+  }),
+  getAppSettings: () => requireAppSettingsStorage().getSettings(),
+  getModelCatalog: (session, providerId) => getModelCatalog({ providerId, workspacePath: session.workspacePath }),
+  captureSource: (source) => {
+    const worker = mainStoreContext.storageWorker;
+    if (!worker || databaseMaintenanceRequested) throw new Error("Background source storage is unavailable.");
+    return worker.stores.session.captureBackgroundSource(source);
+  },
+  resolveAuthority: (session) => buildProviderAgentRuntimeAuthoritySnapshot({
+    characterId: session.characterId, workspacePath: session.workspacePath,
+    resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
+  }),
+  sourceKinds: backgroundSourceKinds,
+});
+
+async function publishBackgroundConversationEvent(event: SessionBackgroundEvent, kind: "main" | "auxiliary"): Promise<void> {
+  const { session } = event;
+  const identity = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
+  if (kind === "main") {
+    backgroundRuntime.publish({ ...event, source: { kind, ...identity } });
+    return;
+  }
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliarySessionMetadata(session.id);
+  const parent = auxiliary ? await requireSessionStorage().getSessionMetadata?.(auxiliary.parentSessionId) : null;
+  if (!auxiliary || !parent) return;
+  backgroundRuntime.publish({ ...event, source: { kind, ...identity,
+    parent: { sessionId: auxiliary.parentSessionId, incarnationId: getSessionIncarnationId(parent.summary) } } });
+}
 async function resolveSessionGraphSession(sessionId: string): Promise<ResolvedSessionGraphSession | null> {
   const generation = mainStoreContext.storageWorker;
   const sessions = requireSessionStorage();
@@ -932,17 +979,18 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       sessionHistoryMcp: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer },
       backgroundRegistration: {
         handlers: { ...backgroundMemoryRegistrationHandlers, affect: registerBackgroundAffect },
-        readMainSource: (scope) => {
+        sourceKinds: backgroundSourceKinds,
+        readBackgroundSource: (scope) => {
           const generation = mainStoreContext.storageWorker;
           if (!generation || databaseMaintenanceRequested) throw new Error("Main source storage is unavailable.");
-          return generation.stores.session.readMainSource(scope);
+          return generation.stores.session.readBackgroundSource(scope);
         },
       },
       routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
     mainStoreContext.setMemoryRuntimeStatus("running");
-    backgroundExecutions.start();
+    backgroundRuntime.start();
     mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
   } catch (error) {
     mainStoreContext.setMemoryRuntimeStatus("failed");
@@ -964,7 +1012,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
 }
 
 async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
-  backgroundExecutions.stop();
+  backgroundRuntime.stop();
   const runtimeApi = memoryV6RuntimeApi;
   memoryV6RuntimeApi = null;
   mainStoreContext.setMemoryRuntimeStatus("stopped");
@@ -2541,6 +2589,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },
       interaction: { waitForApprovalDecision: waitForLiveApprovalDecision, waitForElicitationResponse: waitForLiveElicitationResponse, resolvePendingApprovalRequest: (sessionId) => requireSessionApprovalService().cancelSession(sessionId), resolvePendingElicitationRequest: (sessionId) => requireSessionElicitationService().cancelSession(sessionId), invalidateProviderSessionThread },
       notification: {
+        onBackgroundEvent: (event) => publishBackgroundConversationEvent(event, "main"),
         notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
         onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
       },
@@ -2691,6 +2740,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       notification: async (notification, context) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification, context); },
       getQueuedInputReceipt: (receipt) => owner.storageWorker!.stores.queue.getReceipt(receipt, receipt.requestId),
       onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
+      onBackgroundEvent: (event) => publishBackgroundConversationEvent(event, "auxiliary"),
       currentTimestampLabel,
     });
   }
@@ -3309,6 +3359,7 @@ async function broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): Pr
 
 async function broadcastAppSettings(settings?: AppSettings): Promise<void> {
   const current = settings ?? await requireAppSettingsStorage().getSettings();
+  backgroundRuntime.publish({ kind: "settings_changed", settings: current });
   requireMainObservabilityFacade().configureProviderQuotaPolling(current);
   await requireMainBroadcastFacade().broadcastAppSettings(current);
   if (providerModelDiscoveryService) {

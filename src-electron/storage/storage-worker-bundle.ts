@@ -39,7 +39,7 @@ type AsyncStore<T extends object> = {
 const STORE_METHODS = {
   sessionGraph: ["execute"],
   session: [
-    "getSessionView", "getConversationPage", "readSessionHistory", "readMainSource", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
+    "getSessionView", "getConversationPage", "readSessionHistory", "readBackgroundSource", "captureBackgroundSource", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
@@ -166,7 +166,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "sessionGraph" || input.method === "readSessionHistory" || input.method === "readMainSource") && input.runtimeTurnAdmissionState !== undefined) {
+      if ((input.store === "sessionGraph" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
         if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }
@@ -222,7 +222,7 @@ export function createV6StorageWorkerBundle(options: {
         if (!methods.includes(property as never)) return undefined;
         return (...args: unknown[]) => {
           const graphMutation = store === "sessionGraph" && args[1] === "apply";
-          const needsTurnAdmission = graphMutation || property === "readSessionHistory" || property === "readMainSource";
+          const needsTurnAdmission = graphMutation || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
           const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"

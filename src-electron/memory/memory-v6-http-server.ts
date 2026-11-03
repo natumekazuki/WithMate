@@ -50,9 +50,9 @@ import {
 } from "../platform/memory/memory-runtime-exchange.js";
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
 import { resolveMemoryV6Target } from "./memory-v6-context-resolver.js";
-import type { BackgroundRegistration } from "../providers/background-registration.js";
+import { supportsBackgroundRegistration, type BackgroundRegistration } from "../providers/background-registration.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
-import { matchesSessionHistorySource } from "../../src-shared/session/session-history-read-scope.js";
+import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { getSessionIncarnationId, isReadOnlySession } from "../../src-shared/session/session-state.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
@@ -83,6 +83,7 @@ export type MemoryV6HttpServerOptions = {
   resolveKnownProjectByPath?: (projectPath: string) => Promise<MemoryV6ProjectContext | null> | MemoryV6ProjectContext | null;
   resolveActorSession?: (
     sessionId: string,
+    sourceKind?: SessionHistoryReadScope["source"]["kind"],
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
   routeAgentRuntimeExtension?: (
     request: AgentRuntimeExtensionRequest,
@@ -1335,7 +1336,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
       },
     };
   }
-  const actorSession = await input.options.resolveActorSession?.(resolved.binding.actorSessionId) ?? null;
+  const actorSession = await input.options.resolveActorSession?.(binding.actorSessionId, background?.history.source.kind) ?? null;
   if (
     !actorSession
     || actorSession.id !== resolved.binding.actorSessionId
@@ -1386,11 +1387,11 @@ async function resolveRouteAgentRuntimeBinding(input: {
         : createMemoryErrorResponse({ code: "MEMORY_FORBIDDEN", message: `Background registration is unavailable: ${reason}.`,
             retryable: false, conversationMayContinue: true, effect: "none", details: { backgroundRegistration: reason } }) });
       if (!registration || !handler) return denied("not_connected");
-      if (background.history.source.kind !== "main") return denied("unsupported_source");
+      if (!supportsBackgroundRegistration(registration, background.purpose, background.history.source.kind)) return denied("unsupported_source");
       // Domain adapters must also validate their source references and construct trusted save inputs.
       let source;
       try {
-        source = await runWithRuntimeTurnAdmission(turnAdmission!, () => registration.readMainSource(background.history));
+        source = await runWithRuntimeTurnAdmission(turnAdmission!, () => registration.readBackgroundSource(background.history));
       } catch (error) {
         if (error instanceof RuntimeTurnInactiveError) throw error;
         return denied("source_unavailable");

@@ -36,6 +36,60 @@
   padding: 0 18px 18px;
 }
 
+.settings-background-purpose {
+  display: grid;
+  gap: 12px;
+  padding-top: 18px;
+}
+
+.settings-background-purpose + .settings-background-purpose {
+  margin-top: 18px;
+  border-top: 1px solid rgba(203, 213, 225, 0.12);
+}
+
+.settings-background-purpose h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.settings-background-frequency {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settings-background-instruction-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 0.86rem;
+}
+
+.settings-background-preset-toggle {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.settings-background-purpose textarea[readonly] {
+  color: var(--muted);
+}
+
+.settings-field .settings-background-preset-toggle input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.settings-background-warning {
+  color: var(--danger, #f0aaa5);
+  font-size: 0.82rem;
+}
+
 .settings-loading-state {
   display: grid;
   place-items: center;

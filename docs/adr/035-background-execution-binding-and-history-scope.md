@@ -109,6 +109,12 @@ Character Memory、対象Memory、Affectの三用途は標準の自然言語登�
 
 Decisionと直接登録の維持境界にある二つの同時上限・その起動見送りは適用対象外とする。当時の本文は保持する。本番発火・Memory未開始位置管理・実Provider・設定UI・Auxiliary保存の実装完了を意味しない。
 
+## 本番共通接続への適用
+
+共通runtimeへ三用途のAppSettings・編集面、Claude専用単発Provider port、Main／Auxiliary共通のsource capture／read、保存成功後terminalと会話実行状態・設定変更・停止の購読接点を接続した。登録本文未設定時だけ用途presetを使い、空文字列を含む編集本文は単独で渡す。通常会話のthread・選択・出力は変更しない。
+
+Providerの機械制限はSDK設定と同一bindingのmanaged MCPで行い、制限を保証できないProvider・構成へfallbackしない。共通source対応と用途保存対応は区別し、三用途の現行handlerはMainだけを有効にする。用途controllerの購読・自動発火・未開始位置管理、Auxiliaryの保存意味・store対応、実認証推論の確認はこの適用範囲へ含めない。現行APIと制限は[Background Execution](../design/background-execution.md#本番共通runtimeとprovider)を正本とする。
+
 ## 三用途の統合への適用
 
 2026-11-03に#888の同時上限撤廃、#909のMemory二用途、#910のAffect直接登録を統合した。Main runtimeは三用途のhandlerと実WorkerのMain source readを共通登録portへ接続する。Affectは保存済み終端Turnのprocessing／履歴所属を検証し、保存時刻をそのTurnの完了時刻から決め、既存のappraiseへ渡す。旧構造化final・専用後段保存と、その専用fixtureを除去した。

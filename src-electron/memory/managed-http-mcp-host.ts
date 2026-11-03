@@ -14,7 +14,7 @@ import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-se
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
 import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
-import type { BackgroundRegistration } from "../providers/background-registration.js";
+import { supportsBackgroundRegistration, type BackgroundRegistration } from "../providers/background-registration.js";
 
 type Endpoint = {
   server: McpServer;
@@ -209,7 +209,8 @@ export class ManagedHttpMcpHost {
   #backgroundMemoryOperations(context: TurnConnection): Readonly<Record<string, string>> {
     const resolved = this.#options.bindingRegistry.resolveIdentity(context.binding.bindingReference);
     const scope = resolved.ok ? resolved.binding.backgroundScope : undefined;
-    return scope ? backgroundMemoryToolOperations(scope.purpose, Boolean(this.#options.backgroundRegistration?.handlers[scope.purpose])) : {};
+    return scope ? backgroundMemoryToolOperations(scope.purpose,
+      supportsBackgroundRegistration(this.#options.backgroundRegistration, scope.purpose, scope.history.source.kind)) : {};
   }
 
   async #createEndpoint(context: TurnConnection, pathname: string): Promise<Endpoint> {

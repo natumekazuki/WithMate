@@ -7,6 +7,7 @@ import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 import { buildWithMateMemoryCli } from "../../scripts/build/build-withmate-memory-cli.js";
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
+import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import type { BackgroundPurpose, BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { validateCharacterMemoryAppendEpisodeRequest } from "../../src-shared/character-context/character-context-validation.js";
@@ -17,6 +18,7 @@ import { AFFECT_COMPOSITION_INSTRUCTIONS } from "../../src-shared/character-affe
 import { AFFECT_SCHEMA_VERSION, type EffectiveAffectState } from "../../src-shared/character-affect/affect-contract.js";
 import { validateMemoryAppendRequest } from "../../src-shared/memory/memory-validation.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
+import { createMemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
 import type { BackgroundRegistration } from "../../src-electron/providers/background-registration.js";
 import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/memory-v6-http-server.js";
@@ -99,7 +101,7 @@ async function cli(f: Fixture, binding: Binding, op: ReturnType<typeof operation
 }
 async function direct(f: Fixture, binding: Binding, op: ReturnType<typeof operation>, capability = binding.turnCapability) {
   return callWithMateMemoryRuntime(f.connection, { method: "POST", path: `/v1/${op.route}`, body: {
-    schemaVersion: op.route === "append" ? MEMORY_V6_SCHEMA_VERSION : CHARACTER_CONTEXT_SCHEMA_VERSION, ...op.input,
+    schemaVersion: op.route.startsWith("character_") ? CHARACTER_CONTEXT_SCHEMA_VERSION : MEMORY_V6_SCHEMA_VERSION, ...op.input,
   } }, { bindingReference: binding.bindingReference, turnCapability: capability, signal: AbortSignal.timeout(5_000) });
 }
 async function assertSaved(f: Fixture, purpose: BackgroundPurpose, value: Record<string, any>, key: string) {
@@ -271,6 +273,104 @@ test("未接続を拒否し終了・取消後も先行保存だけを保持す�
       assert.equal((await f.memoryWorker.storage.getEntry(saved.value.entry.id))!.body, `body saved-${end}`);
     }
     assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 2);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "Auxiliary履歴readは有効なまま、用途handlerが未対応のsource kindのwriteをMCP一覧・直接call・配布CLI・HTTPで拒否する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#用途限定の登録接続" }
+// fault = "handlerの存在だけでAuxiliary登録を公開・dispatchするか、Auxiliary履歴readまで閉じる"
+// observable = "MCP公開toolと拒否status、CLIのunsupported_source、履歴本文、用途handler呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "Auxiliary background source kind support through managed MCP, CLI and HTTP"
+// lifecycle = "permanent"
+// impact = "Main専用保存handlerへAuxiliaryのownerを誤投入することを防ぐ"
+// distinction = "source読取単体では各公開入口の用途別tool公開とdispatch認可の一致を確認できない"
+// @end-test-value
+test("未対応のAuxiliary用途登録は各入口で拒否し履歴readは維持する", async () => {
+  let calls = 0;
+  const handler = () => { calls += 1; return {}; };
+  const f = await fixture(undefined, { affect: handler, "target-memory": handler, "character-memory": handler });
+  try {
+    for (const purpose of purposes) {
+      const execution = f.started("aux", "claude", purpose, undefined, [
+        ...getBackgroundMemoryReadOperations(), ...getSessionHistoryAgentRuntimeOperations(), BACKGROUND_REGISTRATION_OPERATIONS[purpose].operation,
+      ], { memoryTargets: [target, characterTarget] });
+      const binding = f.project(execution);
+      const { client, transport } = await f.connect(binding, "memoryUrl");
+      const op = operation(purpose, `aux-${purpose}`);
+      assert.equal((await client.listTools()).tools.some((tool) => tool.name === op.tool), false);
+      assert.equal((await f.request(binding, binding.managedMcp!.memoryUrl, op.tool, transport.sessionId, op.input)).status, 403);
+      const child = await cli(f, binding, op);
+      assert.notEqual(child.code, 0);
+      assert.match(JSON.stringify(child.value), /unsupported_source/);
+      assert.match(JSON.stringify((await direct(f, binding, op)).value), /unsupported_source/);
+      const { client: history } = await f.connect(binding, "sessionHistoryUrl");
+      const read = await history.callTool({ name: "session_history.get_message", arguments: { seq: 0 } });
+      assert.equal(read.isError, undefined, JSON.stringify(read));
+      assert.match(JSON.stringify(read.structuredContent), /auxiliary source/);
+      f.executions.finish(execution);
+    }
+    assert.equal(calls, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryが同名IDで異Characterでも、kindを保持した共通認可は実AuxiliaryのMemory readと対応明示handler呼出をHTTP・MCP・CLIで許可し、Auxiliary削除後はMainへ代用しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#用途限定の登録接続" }
+// fault = "actor resolverへsource kindを渡さず同名Mainを先に採用するかAuxiliaryの代わりに親metadataを渡す"
+// observable = "3入口のMemory read応答、MCP登録tool公開と登録応答、handlerの実source ID・Character・ownerIdentity"
+// observation_boundary = "public-boundary"
+// scope = "same-ID different-Character Main/Auxiliary actor resolution and explicit auxiliary adapter contract, not Auxiliary domain persistence"
+// lifecycle = "permanent"
+// distinction = "Auxiliary保存用途の意味を変えず共通portの接続可能性を実Worker読取で確認する"
+// @end-test-value
+test("同名MainとAuxiliaryは異Characterでも共通Memory認可が実source kindを保持する", async () => {
+  const sources: string[] = [];
+  const f = await fixture(undefined, { "target-memory": (input) => {
+    sources.push(input.source.ownerIdentity);
+    assert.equal(input.source.session.id, "aux");
+    assert.equal(input.source.session.characterId, "character");
+    assert.equal(input.scope.history.source.kind, "auxiliary");
+    return createMemoryErrorResponse({ code: "MEMORY_FORBIDDEN", message: "Fixture adapter inspected the Auxiliary source without saving.",
+      retryable: false, conversationMayContinue: true, effect: "none" });
+  } }, undefined, { "target-memory": ["auxiliary"] });
+  try {
+    const auxiliary = f.sessions.get("aux")!;
+    f.db.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES ('main-character','Main','now','now')").run();
+    const sameMain = await f.worker.stores.session.insertSession({ ...f.sessions.get("main")!, id: "aux",
+      incarnationId: "same-id-main", characterId: "main-character", workspacePath: join(f.directory, "other-main") });
+    f.sessions.set("aux", sameMain);
+    const execution = f.executions.begin({ actorSessionId: auxiliary.id, providerId: "claude", session: auxiliary,
+      scope: { ...f.scope("aux", "target-memory"), memoryTargets: [target] },
+      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+      operationGrants: [...getBackgroundMemoryReadOperations(), BACKGROUND_REGISTRATION_OPERATIONS["target-memory"].operation] });
+    const binding = f.project(execution);
+    const { client } = await f.connect(binding, "memoryUrl");
+    assert.equal((await client.listTools()).tools.some((tool) => tool.name === "memory.append"), true);
+    const read: Operation = { tool: "memory.list_entries", command: "list-entries", route: "list_entries",
+      input: { target: { kind: "user-global" } } };
+    const mcpRead = await client.callTool({ name: read.tool, arguments: read.input });
+    assert.equal(mcpRead.isError, undefined, JSON.stringify(mcpRead));
+    const cliRead = await cli(f, binding, read);
+    assert.equal(cliRead.code, 0, JSON.stringify(cliRead));
+    assert.deepEqual(mcpRead.structuredContent, cliRead.value);
+    assert.equal(((await direct(f, binding, read)).value as Record<string, unknown>).error, undefined);
+    const mcpWrite = await client.callTool({ name: "memory.append", arguments: operation("target-memory", "aux-mcp").input });
+    assert.equal(mcpWrite.isError, true, JSON.stringify(mcpWrite));
+    assert.match(JSON.stringify(mcpWrite.structuredContent), /Fixture adapter inspected/);
+    assert.match(JSON.stringify((await direct(f, binding, operation("target-memory", "aux-http"))).value), /Fixture adapter inspected/);
+    const child = await cli(f, binding, operation("target-memory", "aux-port"));
+    assert.notEqual(child.code, 0, JSON.stringify(child));
+    assert.match(JSON.stringify(child.value), /Fixture adapter inspected/);
+    assert.deepEqual(sources, Array(3).fill(f.scope("aux", "target-memory").history.source.ownerIdentity));
+    f.db.prepare("DELETE FROM auxiliary_sessions WHERE id = 'aux'").run();
+    const afterDeletion = await cli(f, binding, read);
+    assert.notEqual(afterDeletion.code, 0);
+    assert.partialDeepStrictEqual(afterDeletion.value, { error: { code: "MEMORY_FORBIDDEN", effect: "none" } });
+    assert.deepEqual(sources.length, 3);
   } finally { await f.close(); }
 });
 

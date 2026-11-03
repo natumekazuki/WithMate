@@ -28,11 +28,13 @@ function failure(code: SessionHistoryErrorCode, message: string): SessionHistory
   return { ok: false, code, message, effect: "none" };
 }
 
-function checkSource(db: DatabaseSync, source: Source): SessionHistoryResult | null {
+export function checkSessionHistorySource(db: DatabaseSync, source: Source): SessionHistoryResult | null {
   const table = source.kind === "main" ? "session_messages_v6" : "auxiliary_session_messages";
   const snapshot = readConversationQuerySnapshot(db, table, source.sessionId);
   if (!snapshot) return failure("HISTORY_SOURCE_DELETED", "The source Session or its parent no longer exists.");
   if (source.kind === "auxiliary") {
+    const owner = db.prepare("SELECT parent_session_id FROM auxiliary_sessions WHERE id = ?").get(source.sessionId) as { parent_session_id: string };
+    if (owner.parent_session_id !== source.parent.sessionId) return failure("HISTORY_SOURCE_REPLACED", "The source parent does not match the captured parent.");
     const parent = readConversationQuerySnapshot(db, "session_messages_v6", source.parent.sessionId);
     if (!parent) return failure("HISTORY_SOURCE_DELETED", "The source parent no longer exists.");
     if (parent.incarnationId !== source.parent.incarnationId) return failure("HISTORY_SOURCE_REPLACED", "The source parent was recreated.");
@@ -110,7 +112,7 @@ function readCurrentHistory(db: DatabaseSync, input: SessionHistoryReadInput): S
   const window = { fromSeq: fromMessageSeq, toSeq: throughMessageSeq };
   const layout: Layout = source.kind === "main"
     ? { table: "session_messages_v6", owner: "session_id" } : { table: "auxiliary_session_messages", owner: "auxiliary_session_id" };
-  const sourceFailure = checkSource(db, source);
+  const sourceFailure = checkSessionHistorySource(db, source);
   if (sourceFailure) return sourceFailure;
   const last = db.prepare(`SELECT MAX(seq) AS seq FROM ${layout.table} WHERE ${layout.owner} = ?`).get(source.sessionId) as { seq: number | null };
   if (last.seq === null || last.seq < window.toSeq) {

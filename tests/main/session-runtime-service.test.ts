@@ -40,6 +40,11 @@ import { SessionElicitationService } from "../../src-electron/session/session-el
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
+import { createMainSessionRuntime } from "../../src-electron/app/main-session-runtime-assembly.js";
+import { createAuxiliarySessionRuntime } from "../../src-electron/auxiliary/auxiliary-session-runtime-assembly.js";
+import type { SessionBackgroundEvent } from "../../src-electron/session/session-background-events.js";
+import type { SessionRuntimeService as ProductionSessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -161,7 +166,8 @@ function createLiveRunState(overrides?: Partial<LiveSessionRunState>): LiveSessi
   };
 }
 
-function createProgressRuntime(session: Session, run: ProviderCodingAdapter["runSessionTurn"], overrides: Partial<SessionRuntimeServiceDeps>): SessionRuntimeService {
+function createProgressRuntime(session: Session, run: ProviderCodingAdapter["runSessionTurn"], overrides: Partial<SessionRuntimeServiceDeps>,
+  createRuntime: (deps: SessionRuntimeServiceDeps) => ProductionSessionRuntimeService = createTestRuntime): ProductionSessionRuntimeService {
   let stored = session;
   let live: LiveSessionRunState | null = null;
   const adapter: ProviderCodingAdapter = {
@@ -171,7 +177,7 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     async invalidateAllSessionThreads() {},
     runSessionTurn: run,
   };
-  return createTestRuntime({
+  return createRuntime({
     getSession: () => stored,
     upsertSession(next) { stored = next; return next; },
     async resolveComposerPreview() { return { attachments: [], errors: [] }; },
@@ -193,6 +199,121 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     ...overrides,
   });
 }
+
+function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps): ProductionSessionRuntimeService {
+  const writes = {
+    getSession: deps.getSession,
+    persistRunningTurnStart: deps.persistRunningTurnStart ?? ((session: Session) => deps.upsertSession(session)),
+    appendRunningInput: deps.appendRunningInput ?? ((session: Session) => deps.upsertSession(session)),
+    checkpointRuntimeMetadata: deps.checkpointRuntimeMetadata ?? ((session: Session) => deps.upsertSession(session)),
+    appendTerminalSession: deps.appendTerminalSession ?? ((session: Session) => deps.upsertSession(session)),
+  };
+  const owner = { assertActive() {}, isActive: () => true };
+  const admission = { runSessionAdmissionExclusive: async <T>(_id: string, operation: () => T | Promise<T>): Promise<T> => operation() };
+  const resolution = { resolveRuntimeSessionForTurn: (session: Session) => session,
+    resolveComposerPreview: deps.resolveComposerPreview, resolveProviderCatalog: deps.resolveProviderCatalog };
+  const live = { setLiveSessionRun: deps.setLiveSessionRun, getLiveSessionRun: deps.getLiveSessionRun,
+    setProviderQuotaTelemetry: deps.setProviderQuotaTelemetry, setSessionContextTelemetry: deps.setSessionContextTelemetry,
+    scheduleProviderQuotaTelemetryRefresh: deps.scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun: deps.broadcastLiveSessionRun };
+  const turn = { createSessionTurn: deps.createSessionTurn, updateSessionTurn: deps.updateSessionTurn };
+  if (kind === "main") return createMainSessionRuntime({ owner, admission,
+    sessions: { ...writes, clearCharacterAuthoringRuntimeState: (session) => session },
+    resolution: { ...resolution, resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture" },
+    provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter },
+    memory: { getAppSettings: deps.getAppSettings, resolveProjectMemoryEntriesForPrompt: deps.resolveProjectMemoryEntriesForPrompt, onCharacterContextFailure() {} },
+    turn, live, interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
+      resolvePendingApprovalRequest: deps.resolvePendingApprovalRequest, resolvePendingElicitationRequest: deps.resolvePendingElicitationRequest,
+      invalidateProviderSessionThread: deps.invalidateProviderSessionThread },
+    notification: { onBackgroundEvent: deps.onBackgroundEvent, notifySessionTurnTerminal: deps.notifySessionTurnTerminal }, timing: {},
+  });
+  return createAuxiliarySessionRuntime({ owner, admission,
+    auxiliary: { ...writes, getRuntimeSession: async (id) => deps.getSession(id), getSession: async () => null,
+      persistRunningTurnStart: async (session, count) => writes.persistRunningTurnStart(session, count), isAuxiliarySession: async () => true },
+    parent: { getSession: async () => null }, resolution,
+    provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter, resetProviderSessionThread: async () => {},
+      resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture",
+      issueRuntimeBinding: async (session, provider) => new AgentRuntimeBindingRegistry().issueOrReuse({ actorSessionId: session.id, providerId: provider.id, operationGrants: [] }) },
+    memory: { getAppSettings: deps.getAppSettings }, turn, live,
+    interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
+      cancelApprovals: (id) => deps.resolvePendingApprovalRequest(id, "deny"), cancelElicitations: (id) => deps.resolvePendingElicitationRequest(id, { action: "cancel" }),
+      invalidateProviderSessionThread: async (provider, id) => { await deps.invalidateProviderSessionThread(provider, id); } },
+    notification() {}, onBackgroundEvent: deps.onBackgroundEvent,
+  });
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryの本番assemblyはcompleted・failed・canceledを終端保存成功後に発行し、会話の実行開始終了を渡す"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "assemblyがイベントを未接続にする、保存完了前に発行する、またはOS通知と同様にcanceledを落とす"
+// observable = "保存gate前後のイベント列、terminalのphaseと保存済みSession、run_stateの順序"
+// observation_boundary = "consumer"
+// scope = "real SessionRuntimeService through main and auxiliary production assemblies"
+// lifecycle = "permanent"
+// distinction = "通知testはcanceledを対象外とし、assemblyのbackground callbackと保存成功境界を確認しない"
+// @end-test-value
+it("本番両assemblyは保存完了後だけ背景terminalを発行する", { timeout: 5000 }, async () => {
+  for (const kind of ["main", "auxiliary"] as const) for (const phase of ["completed", "failed", "canceled"] as const) {
+    const session = createSession({ id: `${kind}-source` });
+    const entered = queueGate(), release = queueGate();
+    const events: SessionBackgroundEvent[] = [];
+    let stored: Session | undefined;
+    const runtime = createProgressRuntime(session, async () => {
+      const result = createPartialResult({ assistantText: "saved response" });
+      if (phase !== "completed") throw new ProviderTurnError("provider stopped", result, phase === "canceled");
+      return result;
+    }, { appendTerminalSession: async (next) => { entered.resolve(); await release.promise; stored = next; return next; },
+      onBackgroundEvent: (event) => { events.push(event); },
+    }, (deps) => assembleBackgroundEventRuntime(kind, deps));
+    const pending = runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
+    try {
+      await entered.promise;
+      assert.deepEqual(events.map((event) => event.kind), ["run_state"]);
+      assert.equal(events[0]!.kind === "run_state" && events[0]!.running, true);
+      release.resolve(); await pending; await runtime.waitForPendingRuns();
+      assert.deepEqual(events.map((event) => event.kind), ["run_state", "terminal_saved", "run_state"]);
+      const terminal = events[1]!;
+      assert.equal(terminal.kind === "terminal_saved" && terminal.terminal.phase, phase);
+      assert.equal(terminal.session, stored);
+      assert.equal(terminal.session.id, session.id);
+      assert.equal(events[2]!.kind === "run_state" && events[2]!.running, false);
+    } finally { release.resolve(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "保存拒否では背景terminalを発行せず、背景callbackの同期throw・reject・未解決Promiseは主会話を失敗させず完了待ちへ加えない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "保存失敗を保存済みとして公開するか、背景callbackの失敗や未完了を主会話へ伝播する"
+// observable = "主会話の保存phaseと返却、イベント列、保存拒否のreject"
+// observation_boundary = "consumer"
+// scope = "session runtime terminal persistence and best effort background callback"
+// lifecycle = "permanent"
+// distinction = "OS通知の失敗隔離testではbackground callbackと保存拒否によるevent不発火を扱わない"
+// @end-test-value
+it("背景callbackの失敗と未完了は会話保存から隔離し、保存拒否では発火しない", { timeout: 5000 }, async () => {
+  for (const callback of ["throw", "reject", "pending"] as const) {
+    const session = createSession(); const phases: string[] = []; const events: string[] = [];
+    const runtime = createProgressRuntime(session, async () => createPartialResult({ assistantText: "saved" }), {
+      appendTerminalSession(next, terminal) { phases.push(terminal.phase); return next; },
+      onBackgroundEvent(event) { events.push(event.kind); if (callback === "throw") throw new Error("background failure");
+        return callback === "reject" ? Promise.reject(new Error("background failure")) : new Promise<void>(() => {}); },
+    });
+    const result = await runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
+    await runtime.waitForPendingRuns();
+    assert.equal(result.runState, "idle"); assert.deepEqual(phases, ["completed"]);
+    assert.deepEqual(events, ["run_state", "terminal_saved", "run_state"]);
+  }
+  const session = createSession(); const events: string[] = [];
+  const runtime = createProgressRuntime(session, async () => createPartialResult({ assistantText: "not saved" }), {
+    appendTerminalSession: async () => { throw new Error("storage unavailable"); },
+    onBackgroundEvent: (event) => { events.push(event.kind); },
+  });
+  await assert.rejects(runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" }), /storage unavailable/);
+  await runtime.waitForPendingRuns();
+  assert.deepEqual(events, ["run_state", "run_state"]);
+});
 
 function queuedReceipt(session: Session): SessionTurnQueueReceipt {
   return { sessionId: session.id, incarnationId: getSessionIncarnationId(session), id: "queue-1", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",

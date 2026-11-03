@@ -49,7 +49,7 @@ import { createAppDatabaseBootstrapWorker } from "../storage/app-database-bootst
 import {
   createMemoryV6HttpServer,
   type MemoryV6HttpServer,
-  type AgentRuntimeActorSession,
+  type MemoryV6HttpServerOptions,
   type AgentRuntimeExtensionRequest,
   type AgentRuntimeExtensionResponse,
 } from "./memory-v6-http-server.js";
@@ -113,9 +113,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   storageOperationDiagnosticSink?: StorageOperationDiagnosticSink;
   agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve"> & Partial<Pick<AgentRuntimeBindingRegistry, "subscribeChanges" | "resolveIdentity">>;
   providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit"> & Partial<Pick<ProviderAgentRuntimeTurnCoordinator, "end">>;
-  resolveActorSession?: (
-    sessionId: string,
-  ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
+  resolveActorSession?: MemoryV6HttpServerOptions["resolveActorSession"];
   routeAgentRuntimeExtension?: (
     request: AgentRuntimeExtensionRequest,
   ) => Promise<AgentRuntimeExtensionResponse | null> | AgentRuntimeExtensionResponse | null;

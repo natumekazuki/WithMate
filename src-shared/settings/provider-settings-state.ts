@@ -1,4 +1,11 @@
 import {
+  createDefaultBackgroundExecutionSettings,
+  parseBackgroundExecutionSettings,
+  parseMemoryRecordingFrequencies,
+  type BackgroundExecutionSettings,
+} from "./background-settings.js";
+import type { MemoryRecordingFrequencies } from "../memory-recording/memory-recording-frequency.js";
+import {
   DEFAULT_MODEL_ID,
   DEFAULT_PROVIDER_ID,
   DEFAULT_REASONING_EFFORT,
@@ -18,6 +25,8 @@ import {
 } from "./keyboard-shortcut-state.js";
 
 export type AppSettings = {
+  backgroundExecutionSettings: BackgroundExecutionSettings;
+  memoryRecordingFrequencies: MemoryRecordingFrequencies;
   memoryGenerationEnabled: boolean;
   launchAtLoginEnabled: boolean;
   sessionTurnNotificationEnabled: boolean;
@@ -120,6 +129,8 @@ export const DEFAULT_MATE_MEMORY_GENERATION_SETTINGS: MateMemoryGenerationSettin
 
 export function createDefaultAppSettings(): AppSettings {
   return {
+    backgroundExecutionSettings: createDefaultBackgroundExecutionSettings(),
+    memoryRecordingFrequencies: parseMemoryRecordingFrequencies(undefined),
     memoryGenerationEnabled: true,
     launchAtLoginEnabled: false,
     sessionTurnNotificationEnabled: true,
@@ -396,6 +407,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     glossaryProactiveCreateLimit: normalizeGlossaryProactiveCreateLimit(
       candidate.glossaryProactiveCreateLimit,
     ),
+    backgroundExecutionSettings: parseBackgroundExecutionSettings(candidate.backgroundExecutionSettings),
+    memoryRecordingFrequencies: parseMemoryRecordingFrequencies(candidate.memoryRecordingFrequencies),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
     codingProviderSettings,
     memoryExtractionProviderSettings,
@@ -404,11 +417,11 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 
 export function getProviderAppSettings(settings: AppSettings, providerId: string | null | undefined): ProviderAppSettings {
   const normalizedProviderId = normalizeProviderId(providerId);
-  const resolvedSettings = normalizeAppSettings(settings);
-  return normalizeProviderAppSettings(
-    resolvedSettings.codingProviderSettings[normalizedProviderId],
+  const providerSettings = normalizeProviderAppSettings(
+    settings.codingProviderSettings[normalizedProviderId],
     normalizedProviderId === DEFAULT_PROVIDER_ID,
   );
+  return normalizedProviderId === "opencode" ? { ...providerSettings, apiKey: "" } : providerSettings;
 }
 
 export function getMemoryExtractionProviderSettings(
@@ -416,15 +429,13 @@ export function getMemoryExtractionProviderSettings(
   providerId: string | null | undefined,
 ): MemoryExtractionProviderSettings {
   const normalizedProviderId = normalizeProviderId(providerId);
-  const resolvedSettings = normalizeAppSettings(settings);
   return normalizeMemoryExtractionProviderSettings(
-    resolvedSettings.memoryExtractionProviderSettings[normalizedProviderId],
+    settings.memoryExtractionProviderSettings[normalizedProviderId],
   );
 }
 
 export function getMateMemoryGenerationSettings(settings: AppSettings): MateMemoryGenerationSettings {
-  const resolvedSettings = normalizeAppSettings(settings);
-  return normalizeMateMemoryGenerationSettings(resolvedSettings.mateMemoryGenerationSettings);
+  return normalizeMateMemoryGenerationSettings(settings.mateMemoryGenerationSettings);
 }
 
 export function getResolvedProviderSettingsBundle(

@@ -451,7 +451,7 @@ export default function HomeApp() {
         if (!active) return;
         setAppSettingsLoadStatus("loaded");
         setAppSettingsLoadError("");
-        applyIncomingAppSettings(settings, { force: isSettingsWindowMode });
+        applyIncomingAppSettings(settings);
       },
       onInitialLoadError: (error) => {
         if (!active) return;
@@ -767,6 +767,7 @@ export default function HomeApp() {
   const canUsePrimaryFeatures = mateState !== null;
 
   const baseSettingsContentProps: HomeSettingsContentBaseProps = {
+    modelCatalog,
     settingsDraft,
     providerSettingRows,
     memoryV6Diagnostics,

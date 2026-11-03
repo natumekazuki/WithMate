@@ -37,7 +37,8 @@ export const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111
 export const readOperation = "session_history.route.get_message";
 
 export async function backgroundHistoryFixture(diagnosticSink?: StorageOperationDiagnosticSink,
-  registrationHandlers?: BackgroundRegistration["handlers"], now?: () => Date) {
+  registrationHandlers?: BackgroundRegistration["handlers"], now?: () => Date,
+  sourceKinds: BackgroundRegistration["sourceKinds"] = { "character-memory": ["main"], "target-memory": ["main"], affect: ["main"] }) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-background-foundation-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
@@ -60,7 +61,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   ], changedFiles: [], runChecks: [] };
   db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,artifact_body,created_at) VALUES ('main',1,'assistant',?,?,'now')")
     .run(JSON.stringify({ role: "assistant", text: "saved answer", artifact }), JSON.stringify(artifact));
-  db.prepare("INSERT INTO auxiliary_sessions(id,parent_session_id,status,created_at,updated_at) VALUES ('aux','main','active','same-created-at','now')").run();
+  db.prepare("INSERT INTO auxiliary_sessions(id,parent_session_id,status,created_at,updated_at,character_id) VALUES ('aux','main','active','same-created-at','now','character')").run();
   db.prepare("INSERT INTO auxiliary_session_drafts(auxiliary_session_id,parent_session_id,incarnation,updated_at) VALUES ('aux','main','draft-a','now')").run();
   db.prepare("INSERT INTO auxiliary_session_messages(auxiliary_session_id,seq,role,body,created_at) VALUES ('aux',0,'user',?,'now')")
     .run(JSON.stringify({ role: "user", text: "auxiliary source" }));
@@ -83,7 +84,8 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const worker = createV6StorageWorkerBundle({ dbPath, userDataPath: directory, diagnosticSink });
   await worker.initialize();
   const backgroundRegistration: BackgroundRegistration | undefined = registrationHandlers ? {
-    handlers: registrationHandlers, readMainSource: (scope) => worker.stores.session.readMainSource(scope),
+    handlers: registrationHandlers, readBackgroundSource: (scope) => worker.stores.session.readBackgroundSource(scope),
+    sourceKinds,
   } : undefined;
   let readGate: (() => Promise<void>) | undefined;
   const history = new SessionHistoryRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
@@ -104,7 +106,19 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     backgroundRegistration,
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath,
-    resolveActorSession: (id) => sessions.has(id) ? { id, providerId: "codex", characterId: "character" } : null,
+    resolveActorSession: (id, sourceKind) => {
+      if (sourceKind === "auxiliary") {
+        const row = db.prepare(`SELECT a.character_id, a.provider_id, a.parent_session_id FROM auxiliary_sessions a
+          JOIN sessions_v6 p ON p.id = a.parent_session_id WHERE a.id = ?`).get(id) as {
+          character_id: string; provider_id: string; parent_session_id: string;
+        } | undefined;
+        return row ? { id, providerId: row.provider_id, characterId: row.character_id,
+          workspacePath: sessions.get(row.parent_session_id)?.workspacePath } : null;
+      }
+      if (sourceKind === "main" && !db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ?").get(id)) return null;
+      const session = sessions.get(id);
+      return session ? { id, providerId: session.provider, characterId: session.characterId, workspacePath: session.workspacePath } : null;
+    },
     routeAgentRuntimeExtension: async (request) => await history.route(request) ?? await glossary.route(request) ?? await graph.route(request),
   });
   await runtime.start();

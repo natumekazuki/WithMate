@@ -65,6 +65,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   currentTimestampLabel?: () => string;
   getQueuedInputReceipt?: SessionRuntimeServiceDeps["getQueuedInputReceipt"];
   onSessionRunReleased?: SessionRuntimeServiceDeps["onSessionRunReleased"];
+  onBackgroundEvent?: SessionRuntimeServiceDeps["onBackgroundEvent"];
 };
 
 export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssemblyDeps): SessionRuntimeService {
@@ -88,6 +89,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments)) : undefined,
     getQueuedInputReceipt: deps.getQueuedInputReceipt ? (receipt) => guarded("queued input receipt", () => deps.getQueuedInputReceipt!(receipt)) : undefined,
     onSessionRunReleased: deps.onSessionRunReleased,
+    onBackgroundEvent: deps.onBackgroundEvent,
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),
     resolveProviderSession: (session) => guarded("provider session path", async () => {

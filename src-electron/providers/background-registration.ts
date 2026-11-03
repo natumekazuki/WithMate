@@ -1,5 +1,5 @@
 import type { BackgroundPurpose, BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import type { MainSourceSnapshot } from "../../src-shared/session/main-source-snapshot.js";
+import type { BackgroundSourceSnapshot } from "../../src-shared/session/background-source-snapshot.js";
 import type { SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import type { CharacterContextApplicationService, CharacterContextTransport } from "../character/character-context-application-service.js";
 import type { MemoryV6SessionBindingPrincipal } from "../memory/memory-v6-permission.js";
@@ -11,7 +11,7 @@ export type BackgroundRegistrationHandler = (input: Readonly<{
   /** Actor identity and Character conversation authority are server-owned; domain values still require validation. */
   body: unknown;
   scope: BackgroundExecutionScope;
-  source: MainSourceSnapshot;
+  source: BackgroundSourceSnapshot;
   principal: MemoryV6SessionBindingPrincipal;
   admission: RuntimeTurnAdmission;
   transport: CharacterContextTransport;
@@ -20,8 +20,14 @@ export type BackgroundRegistrationHandler = (input: Readonly<{
   character: Pick<CharacterContextApplicationService, "appraise" | "appendEpisode"> | undefined;
 }>) => unknown | Promise<unknown>;
 
-/** No handler means no registration publication or dispatch; normal turn writes are never a fallback. */
+/** Both a handler and explicit source-kind support are required; normal turn writes are never a fallback. */
 export type BackgroundRegistration = Readonly<{
-  readMainSource: (scope: SessionHistoryReadScope) => Promise<MainSourceSnapshot | null>;
+  readBackgroundSource: (scope: SessionHistoryReadScope) => Promise<BackgroundSourceSnapshot | null>;
   handlers: Readonly<Partial<Record<BackgroundPurpose, BackgroundRegistrationHandler>>>;
+  sourceKinds: Readonly<Partial<Record<BackgroundPurpose, readonly SessionHistoryReadScope["source"]["kind"][]>>>;
 }>;
+
+export function supportsBackgroundRegistration(registration: BackgroundRegistration | undefined, purpose: BackgroundPurpose,
+  kind: SessionHistoryReadScope["source"]["kind"]): boolean {
+  return Boolean(registration?.handlers[purpose] && registration.sourceKinds[purpose]?.includes(kind));
+}

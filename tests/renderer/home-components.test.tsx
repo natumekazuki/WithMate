@@ -70,6 +70,9 @@ describe("HomeSettingsContent", () => {
 
   const buildSettingsContent = (params?: RenderSettingsParams) => (
     <HomeSettingsContent
+      modelCatalog={modelCatalog}
+      onChangeBackgroundPurpose={noOp}
+      onChangeMemoryRecordingFrequencies={noOp}
       settingsDraft={params?.settingsDraft ?? settingsDraft}
       providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
       memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
