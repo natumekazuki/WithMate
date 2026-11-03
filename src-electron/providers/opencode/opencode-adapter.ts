@@ -1,3 +1,4 @@
+import { resolveRunExecutionTarget } from "../provider-runtime.js";
 import { randomUUID } from "node:crypto";
 import { access, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -186,9 +187,9 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
   }
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
-    if (this.active.has(input.session.id)) throw new Error("OpenCode Session is still running or terminating");
+    if (this.active.has(resolveRunExecutionTarget(input).id)) throw new Error("OpenCode Session is still running or terminating");
     const workspacePath = resolveRunWorkspacePath(input);
-    this.assertCleanupComplete(workspacePath, input.session.id, input.session.threadId);
+    this.assertCleanupComplete(workspacePath, resolveRunExecutionTarget(input).id, resolveRunExecutionTarget(input).threadId);
     if (!input.runtimeOwner?.id || !input.runtimeOwner.incarnationId) throw new Error("OpenCode runtime owner is required");
     if (input.executionOptions.approvalMode !== "on-request" && input.executionOptions.approvalMode !== "never") throw new Error("Unsupported OpenCode approval mode");
     const owner = input.runtimeOwner;
@@ -206,14 +207,14 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       transport = (this.options.createTransport ?? ((options) => new OpenCodeTransport(options)))({ executable: this.options.executable, cwd: workspacePath, env: environment });
     } catch (error) {
       input.signal?.removeEventListener("abort", abort);
-      throw new ProviderTurnError(redactor.sanitizeText(error instanceof Error ? error.message : String(error)), { threadId: input.session.threadId || null, assistantText: "", usage: null }, controller.signal.aborted, controller.signal.aborted ? "canceled" : "provider_unavailable");
+      throw new ProviderTurnError(redactor.sanitizeText(error instanceof Error ? error.message : String(error)), { threadId: resolveRunExecutionTarget(input).threadId || null, assistantText: "", usage: null }, controller.signal.aborted, controller.signal.aborted ? "canceled" : "provider_unavailable");
     }
     const transports = [transport];
-    this.active.set(input.session.id, { controller, transports });
+    this.active.set(resolveRunExecutionTarget(input).id, { controller, transports });
     const signal = controller.signal;
     const requestID = `msg_${randomUUID()}`;
     const metadata = { withmateOwner: { schema: 1, ...owner }, withmateRequestID: requestID };
-    let threadReference = input.session.threadId || "";
+    let threadReference = resolveRunExecutionTarget(input).threadId || "";
     let rootID = threadReference.startsWith(NATIVE_THREAD_PREFIX) ? threadReference.slice(NATIVE_THREAD_PREFIX.length) : threadReference;
     let projection = new OpenCodeTurnProjection(rootID);
     let client: OpenCodeClient | undefined;
@@ -234,7 +235,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
     const publish = async () => {
       if (!onProgress) return;
       const steps = redactor.sanitize([...projection.steps.values()]);
-      await onProgress({ sessionId: input.session.id, threadId: threadReference, turnId: requestID, assistantText: redactor.sanitizeText(projection.assistantText), reasoningText: redactor.sanitizeText(projection.reasoningText),
+      await onProgress({ sessionId: resolveRunExecutionTarget(input).id, threadId: threadReference, turnId: requestID, assistantText: redactor.sanitizeText(projection.assistantText), reasoningText: redactor.sanitizeText(projection.reasoningText),
         steps, backgroundTasks: [], usage: projection.tokenUsage, errorMessage: "", approvalRequest: null, elicitationRequest: null }, { steps: { upserts: steps, removes: [] }, backgroundTasks: { upserts: [], removes: [] } });
     };
     try {
@@ -368,7 +369,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
           if (idle.outcome !== "succeeded" || event.type !== "session.execution.succeeded") throw new Error(`OpenCode root ${idle.outcome}: ${JSON.stringify(idle.error ?? ("error" in event.data ? event.data.error : ""))}`);
           terminal = true;
           const lastResponse = [...messages].reverse().find((message) => message.type === "assistant" && message.tokens);
-          if (info.limit.context > 0 && lastResponse?.type === "assistant" && lastResponse.tokens) await input.onSessionContextTelemetry?.({ provider: "opencode", sessionId: input.session.id, updatedAt: new Date().toISOString(), tokenLimit: info.limit.context,
+          if (info.limit.context > 0 && lastResponse?.type === "assistant" && lastResponse.tokens) await input.onSessionContextTelemetry?.({ provider: "opencode", sessionId: resolveRunExecutionTarget(input).id, updatedAt: new Date().toISOString(), tokenLimit: info.limit.context,
             currentTokens: lastResponse.tokens.input + lastResponse.tokens.cache.read + lastResponse.tokens.cache.write + lastResponse.tokens.output + lastResponse.tokens.reasoning, messagesLength: messages.length });
         }
       }
@@ -401,14 +402,14 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       input.signal?.removeEventListener("abort", abort);
       void iterator?.return?.().catch(() => undefined);
       await interactionTail;
-      try { await Promise.all(transports.map((item) => item.close())); this.active.delete(input.session.id); }
+      try { await Promise.all(transports.map((item) => item.close())); this.active.delete(resolveRunExecutionTarget(input).id); }
       catch (error) {
         this.options.log?.({ level: "warn", kind: "opencode.cleanup", message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)) });
         const completion = Promise.all(transports.map((item) => item.whenClosed())).then(() => {
-          if (this.active.get(input.session.id)?.transports === transports) this.active.delete(input.session.id);
-          if (this.pendingCleanups.get(input.session.id)?.completion === completion) this.pendingCleanups.delete(input.session.id);
+          if (this.active.get(resolveRunExecutionTarget(input).id)?.transports === transports) this.active.delete(resolveRunExecutionTarget(input).id);
+          if (this.pendingCleanups.get(resolveRunExecutionTarget(input).id)?.completion === completion) this.pendingCleanups.delete(resolveRunExecutionTarget(input).id);
         });
-        this.pendingCleanups.set(input.session.id, { workspace: path.resolve(workspacePath), threadId: threadReference, completion });
+        this.pendingCleanups.set(resolveRunExecutionTarget(input).id, { workspace: path.resolve(workspacePath), threadId: threadReference, completion });
         input.onCleanupPending?.(completion);
       }
     }

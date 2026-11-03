@@ -159,6 +159,7 @@ function buildFolderContextSection(
 }
 
 export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromptComposition {
+  if (input.executionTarget) return input.executionTarget.prompt;
   const workspacePath = resolveRunWorkspacePath(input);
   const additionalDirectories = normalizeAllowedAdditionalDirectories(
     workspacePath,

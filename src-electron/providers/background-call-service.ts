@@ -1,4 +1,5 @@
 import type { Session } from "../../src-shared/session/session-state.js";
+import type { ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
@@ -9,7 +10,7 @@ export type BackgroundCallContext = Omit<
   Parameters<BackgroundExecutionService["begin"]>[0], "providerId" | "session"
 > & { session: Session };
 
-export type BackgroundSelection = Readonly<{ providerId: string; modelId: string }>;
+export type BackgroundSelection = Readonly<{ providerId: string; modelId: string; reasoningEffort?: ModelReasoningEffort }>;
 
 export type BackgroundAgentInput = Readonly<{
   session: Session;

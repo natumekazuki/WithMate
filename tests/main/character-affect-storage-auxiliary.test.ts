@@ -227,12 +227,12 @@ it("Auxiliary削除と実親Session削除でscopeを消し、relationshipと同�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main-onlyの既存Affect schemaを繰り返し更新・再openしてもevent/reset/冪等性/監査IDとMemory link・本文・同じstate versionを保持し、Auxiliary ownerを新たに保存できる"
-// oracle = { type = "contract", ref = "docs/releases/README.md#保存と参照; Issue #910 accepted existing Main data preservation policy" }
-// fault = "Affect table再構成で既存rowをcascade消失・ID採番し直し・Memory参照NULL化するか、ensure再実行でデータを変える"
-// observable = "Main-only SQL fixture移行前後の全既存列snapshot、context/version、linked Memory・訂正chain、FK整合性と新Auxiliary書込み"
+// claim = "既存Main-only DBのMemory出典列追加とAffect再構成を同時に繰り返し適用・再openしてもevent/reset/冪等性/監査IDとMemory link・本文・同じstate versionを保持し、Auxiliary ownerを新たに保存できる"
+// oracle = { type = "contract", ref = "docs/releases/README.md#保存と参照; docs/design/database-schema.md; Issue #888 accepted Memory/Affect coexistence policy" }
+// fault = "Memory出典列追加とAffect table再構成の併用で既存rowをcascade消失・ID採番し直し・Memory参照NULL化するか、ensure再実行でデータを変える"
+// observable = "Main-only SQL fixture移行前後の全既存列snapshot、context/version、linked Memory・訂正chain、Memory新出典列とFK整合性、新Auxiliary書込み"
 // observation_boundary = "component-behavior"
-// scope = "ensureV6Schemaの既存Main Affect table再構成と再起動"
+// scope = "ensureV6Schemaの既存Main Memory出典列追加とAffect table再構成の共存および再起動"
 // lifecycle = "permanent"
 // impact = "公開済みMain会話の感情履歴、確定監査、関連Memoryの喪失・重複を防ぐ"
 // distinction = "fresh DBやschema宣言のtestでは既存rowと連結FKを含むDDL再構成の実挙動を検出できない"
@@ -269,9 +269,12 @@ it("実Main-only schemaのAffect・Memory・linkとversionを再構成と再起�
     }
     for (const table of [...affectTables].reverse()) f.db.exec(`DROP TABLE ${table}`);
     for (const table of affectTables) f.db.exec(`ALTER TABLE ${table}_legacy RENAME TO ${table}`);
+    f.db.exec("ALTER TABLE memory_entries_v6 DROP COLUMN source_auxiliary_session_id");
+    const memoryColumns = (f.db.prepare("PRAGMA table_info(memory_entries_v6)").all() as Array<{ name: string }>)
+      .map((column) => `"${column.name}"`).join(", ");
     const snapshot = () => [
       ...affectTables.map((table) => f.db.prepare(`SELECT ${columns.get(table)} FROM ${table} ORDER BY rowid`).all()),
-      f.db.prepare("SELECT * FROM memory_entries_v6 ORDER BY id").all(),
+      f.db.prepare(`SELECT ${memoryColumns} FROM memory_entries_v6 ORDER BY id`).all(),
     ];
     const before = snapshot();
     assert.equal((f.db.prepare("PRAGMA table_info(character_affect_events_v6)").all() as Array<{ name: string }>)
@@ -281,6 +284,9 @@ it("実Main-only schemaのAffect・Memory・linkとversionを再構成と再起�
       ensureV6Schema(f.db);
       ensureV6Schema(f.db);
       assert.deepEqual(snapshot(), before);
+      assert.equal(f.db.prepare("SELECT source_auxiliary_session_id FROM memory_entries_v6 WHERE id = 'episode'").get()?.source_auxiliary_session_id, null);
+      assert.ok(f.db.prepare("PRAGMA foreign_key_list(memory_entries_v6)").all().some((key) =>
+        key.from === "source_auxiliary_session_id" && key.table === "auxiliary_sessions" && key.on_delete === "SET NULL"));
       assert.deepEqual(f.db.prepare("PRAGMA foreign_key_check").all(), []);
       assert.equal(isValidV6Database(f.dbPath), true);
       storage = new CharacterAffectStorage(f.dbPath, { now: () => new Date(now) });

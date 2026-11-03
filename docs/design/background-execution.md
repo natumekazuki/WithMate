@@ -15,7 +15,7 @@ sourceは既存`isReadOnlySession`の対象とcharacter-authoringを除外する
 正本は`src-electron/providers/background-call-service.ts`。`BackgroundCallInput`は次を受ける。
 
 - `context`: 実Session、actorSessionId、authority snapshot、operation grants、scope、任意の背景signal。
-- `selection`／`userInput`: 背景Provider／Modelと用途入力。元SessionのProvider／threadは変更しない。
+- `selection`／`userInput`: 背景Provider／Model／任意のDepthと用途入力。元SessionのProvider／threadは変更しない。
 - `onAdmitted`: 実行を開始した直後の同期callback。起動側の開始位置更新用であり、保存成功通知ではない。
 
 `BackgroundAgentPort`は`BackgroundAgentInput`のsession・scope・selection・userInput・binding・handle・signalを受け、同一実行内のbound MCP／CLIで材料を読み、必要な登録を行う。`void | Promise<void>`で実行終了を伝え、保存用final schema／parser／後段save callbackは持たない。通常threadや暗黙のProvider履歴を材料の代用にしない。実Providerへの接続は[本番共通runtimeとProvider](#本番共通runtimeとprovider)に従う。
@@ -85,13 +85,15 @@ Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決�
 
 `BackgroundProductionRuntime`は`prepare()`で用途設定・Provider／model・source kind・実sourceを確認し、`buildBackgroundExecutionScope()`で固定historyとcontroller指定のprocessing末尾を組み立てる。`ready`にcall context・selection・編集本文を返し、`not_configured`・`unavailable`・取得の`failed`を区別する。本文はMemoryの`instructionText`、Affectの`instructionBody`へ渡す。`calls`は同じ共通単発呼出であり、用途の発火判断・未開始位置・保存結果を所有しない。
 
-Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続する。対応はClaudeのcatalog実modelのみとし、他Providerは利用不可とする。Claude SDKのbuilt-in tools・skills・plugins・filesystem settings・hooks・自動Memory・cloud connectorを無効化し、strict MCPで同じ実行の履歴／Memory endpointだけを渡す。本文のslash／file展開も無効化する。native managed設定およびカスタムendpoint／認証方式の構成は実行前に拒否し、通常設定へfallbackしない。機械制限は自然言語の禁止指示に依存しない。
+Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続し、既存のProvider解決からCodex／Copilot／Claude／OpenCodeの同じcoding adapterを使う。選択したcatalog実modelと任意の`reasoningEffort`を通常adapterのnative写像へ渡し、通常会話や別用途の選択へfallbackしない。開始準備で選択と本文をsnapshotし、設定変更は次の呼出しへ適用する。
 
-通常のcoding adapter・thread・run stateは再利用せず、既存Claude SDK・binary解決・認証とmanaged MCP builderを利用する。背景出力は消費して破棄し、登録本文へCharacterのpersonaを二重注入しない。取消はnative processのcleanupまで待ち、Agent終端で共通寿命を閉じる。fake SDKによる接続検証と実認証の推論確認は区別する。
+共通呼出層は実source Sessionを認可・workspace・通常承認設定の文脈に保ち、`executionTarget`に背景binding ID、新規thread、用途入力のpromptを渡す。adapterのnative cache・active turn・cleanupはこの実行IDを使い、元会話threadのresume・保存・結果適用を行わない。偽のSessionを永続化せず、threadの監視・比較・復元も持たない。通常会話のprogress／thread更新callbackを渡さず、出力は消費して破棄する。登録本文へCharacterのpersonaを二重注入しない。取消はnative processのcleanupまで待ち、Agent終端で共通寿命を閉じる。
+
+行動・tool使用方針は用途presetまたは編集本文へ集約し、固定promptは独立実行・材料・返却先の技術情報だけを示す。背景だけのenv allowlist、tool／skill／plugin／hook／native設定の一括無効化、managed／custom接続の一律拒否は設けない。自然言語の方針を技術的な使用不能保証とはしない。通常adapterのapproval／sandbox／管理者policyは維持し、背景だけの無条件許可を追加しない。対話承認・質問callbackを持たないため、既存policyで対話判断が必要な操作は拒否され、登録できず終了する場合もある。fake SDKによる接続検証と実認証の推論確認は区別する。
 
 ## 共通設定と用途controllerへの通知
 
-`AppSettings.backgroundExecutionSettings`は三用途別の`selection?: { providerId, modelId }`と`instructionText?: string`を持つ。初期selectionは未設定で、既存Providerが有効かつ対応modelを取得できる用途だけ開始できる。本文未設定時だけ用途presetを使い、空文字列を含む編集本文はそのまま使う。別の追加指示レイヤーは持たない。`memoryRecordingFrequencies`は既存二用途の各5 Turn／idle 5分を既定とし、欠落時だけ初期化する。不正値は保存・読込境界で拒否する。既存AppSettings保存／変更通知とSettings編集へ接続し、通常会話の選択は変更しない。
+`AppSettings.backgroundExecutionSettings`は三用途別の`selection?: { providerId, modelId, reasoningEffort? }`と`instructionText?: string`を持つ。初期selectionは未設定で、既存Providerが有効かつ対応modelを取得できる用途だけ開始できる。本文未設定時だけ用途presetを使い、空文字列を含む編集本文はそのまま使う。別の追加指示レイヤーは持たない。`memoryRecordingFrequencies`は既存二用途の各5 Turn／idle 5分を既定とし、欠落時だけ初期化する。不正値は保存・読込境界で拒否する。既存AppSettings保存／変更通知とSettings編集へ接続し、通常会話の選択は変更しない。
 
 `SessionRuntimeService.onBackgroundEvent`は開始保存後の`run_state`と、終端保存成功後の`terminal_saved`を送る。completed／failed／canceledをすべて含み、保存失敗からterminal発火しない。Main／Auxiliaryのassemblyはこの接点を共通runtimeへ渡し、`subscribe()`の用途controllerへsource ref付きで公開する。設定変更とruntime停止も同じ接点で通知する。同期throw・非同期rejectを隔離し、subscriberのPromiseを通常turnの保存・終了待ちへ加えない。OS通知の設定やcanceled除外は発火の条件にしない。
 

@@ -104,7 +104,7 @@ providerごとの差は次。
 
 ### Managed HTTP MCP
 
-アプリ管理の独立binding／handleと履歴専用接続の共通基盤は[Background Execution](background-execution.md)を参照する。Providerの通常turn対応を、背景呼出しの副作用制限・実接続確認済みと読み替えない。
+アプリ管理の背景呼出しも既存の四つのadapterを使う。共通層の独立`executionTarget`でnative threadとcacheを元会話から分け、通常の承認・sandbox・管理者policyを維持する。独立binding／handle・履歴専用接続・指示と出力の境界は[Background Execution](background-execution.md)を参照する。通常adapterの対応を、背景だけの絶対的な副作用隔離や実認証推論確認済みと読み替えない。
 
 Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。endpointは`/mcp/memory`、`/mcp/glossary`、`/mcp/session-graph`である。tool schemaとruntime clientは`src-electron/platform/mcp/`に置き、Memory／Glossaryではstdio CLIとも共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
 
@@ -116,7 +116,7 @@ Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
 - HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。CLIは同じ公開操作・認可の明示入口として利用でき、admission付きの同一要求再照合は通常CLIとは別の限定経路として扱う。
 
-provider adapterは通常turn実行を所有する。Affect専用の背景生成経路は持たず、Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
+provider adapterは共通のnative実行を所有し、用途別の背景SDK engineは持たない。Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
 
 ### Coding Plane
 

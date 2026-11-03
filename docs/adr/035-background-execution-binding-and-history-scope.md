@@ -10,6 +10,8 @@ Accepted
 
 同日の後継判断として、背景全体3件・用途×会話1件という同時上限の条項は[同時上限の撤廃](#同時上限の撤廃)で置き換える。直接登録、認可、実行寿命、データ保護の判断は維持する。
 
+同日の[共通Provider実行とDepth](#共通provider実行とdepth)により、本番共通接続時点のClaude専用portと背景だけの機械的完全隔離は適用対象外とする。当時の本文は保持する。
+
 ## Context
 
 Issue #888の三用途を通常Sessionのactor／Providerキーで実行すると、通常turnのbinding再利用・置換と競合する。#908の履歴readは元会話を参照するが、生成purposeやMemory記録の処理位置は読取能力そのものの条件ではない。Auxiliaryの再作成はcreatedAtだけでは区別できず、既存のconversation ownerIdentityに含まれるdraft incarnationも必要になる。
@@ -128,3 +130,15 @@ Providerの機械制限はSDK設定と同一bindingのmanaged MCPで行い、制
 Auxiliary登録は既存のMemory／episodeサービスとWorkerを利用する。Main専用の出典FKとepisode scope確認だけでは実Auxiliaryを扱えないため、ユーザー承認に基づき既存MemoryへnullableなAuxiliary出典FKを追加し、実bindingによるepisodeの会話確認を利用する。Mainの出典欄や親IDへ付け替えず、通常明示操作と既存保存データ・忘却を維持する。別DB・同等application・別toolは作らない。
 
 この適用はMemory二用途に限り、共通接続時点のMemory controller／Auxiliary未接続という適用範囲を置き換える。Affect controller・Auxiliary保存、追加Provider、実認証による推論確認の完了は意味しない。現行の接続契約は[Background Execution](../design/background-execution.md#memoryの自動発火と開始位置)に示す。
+
+## 共通Provider実行とDepth
+
+2026-11-03に採用・適用。三用途とも既存Codex／Copilot／Claude／OpenCode adapterを共用する。通常会話のSessionはsource・認可・workspace・通常policyの文脈として維持し、共通層が背景binding IDと新規threadの独立実行先を渡す。元threadを再開・更新せず、出力・progressを元会話へ適用しない。偽の永続Session、用途別SDK engine、thread監視・比較・復元は追加しない。
+
+用途別Provider／Model／任意のDepth（既存reasoningEffort型）と登録本文を開始準備で固定する。通常会話・別用途へfallbackせず、Depthは既存catalogとnative写像を使う。本文未設定時だけpresetを用い、空を含む編集本文へ隠れた登録方針を重ねない。
+
+背景だけの絶対的機械隔離、独自env allowlist、全tool／skill／plugin／hook／native設定の無効化、managed／custom構成の一律拒否を廃止する。行動・tool使用方針は編集本文に集約し、自然言語を使用不能の技術保証とはしない。通常approval／sandbox／管理者policyは維持し、背景だけの自動承認を加えない。
+
+WithMateの履歴範囲・owner／保存先・入力・用途operation grantは行動制限ではなく、trusted sourceからのアクセス認可とデータ保護として維持する。独立binding、失効後の未確定write拒否、確定済み保存保持、同用途並行、主Cancel／Window closeからの独立も維持する。
+
+#909と#910の本番controller、Main／Auxiliary登録・contextを共存させた。Memory出典列追加とAffect owner schema再構成は既存行・ID・link・versionを保持する。通常Auxiliary手動Affect owner公開APIは拡張しない。実認証推論と統合先branchへの適用は、この担当branchの実装・fake transport検証とは区別する。現行契約は[Background Execution](../design/background-execution.md)に示す。

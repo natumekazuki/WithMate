@@ -754,6 +754,8 @@ const backgroundSourceKinds: BackgroundRegistration["sourceKinds"] = {
 const backgroundRuntime = new BackgroundProductionRuntime({
   executions: backgroundExecutions,
   runAgent: createBackgroundProviderAgent({
+    getAppSettings: () => requireAppSettingsStorage().getSettings(),
+    getProviderCodingAdapter,
     getModelCatalog: (input) => getModelCatalog({ providerId: input.selection.providerId, workspacePath: input.session.workspacePath }),
     projectBinding: (input) => {
       const runtime = memoryV6RuntimeApi;

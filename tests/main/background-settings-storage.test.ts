@@ -10,9 +10,9 @@ import { resolveBackgroundInstructionText } from "../../src-shared/settings/back
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景用途の選択・空本文・頻度はSQLite再open後も保持され、未設定本文だけpresetを使う"
+// claim = "背景三用途のProvider・Model・任意Depth・空本文・頻度はSQLite再open後も独立して保持され、未設定本文だけpresetを使う"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-// fault = "新設定を保存しないか、明示した空本文をpresetへ置換する"
+// fault = "用途別選択や任意Depthを保存しないか、明示した空本文をpresetへ置換する"
 // observable = "getSettingsの再読込値と本文resolverの返却値"
 // observation_boundary = "public-boundary"
 // scope = "background-settings-persistence"
@@ -31,8 +31,9 @@ it("背景設定を保存して再読込し未設定と空本文を区別する"
       ...initial,
       backgroundExecutionSettings: {
         ...initial.backgroundExecutionSettings,
-        "character-memory": { selection: { providerId: "claude", modelId: "real-model-id" }, instructionText: "" },
-        affect: { instructionText: "Appraise this event." },
+        "character-memory": { selection: { providerId: "codex", modelId: "real-model-id", reasoningEffort: "ultra" }, instructionText: "" },
+        "target-memory": { selection: { providerId: "copilot", modelId: "other-model-id" } },
+        affect: { selection: { providerId: "opencode", modelId: "native/model", reasoningEffort: "native-depth" }, instructionText: "Appraise this event." },
       },
       memoryRecordingFrequencies: { ...initial.memoryRecordingFrequencies, "target-memory": { turnCount: 8, idleMinutes: 2.5 } },
     };
@@ -68,7 +69,7 @@ it("背景設定の不正値を保存と読込で拒否する", async () => {
   const storage = new AppSettingsStorage(dbPath);
   try {
     const initial = storage.getSettings();
-    for (const value of [null, { "character-memory": { selection: { providerId: "claude", modelId: "" } } }, { affect: { instructionText: null } }]) {
+    for (const value of [null, { "character-memory": { selection: { providerId: "claude", modelId: "" } } }, { affect: { instructionText: null } }, { affect: { selection: { providerId: "codex", modelId: "model", reasoningEffort: 1 } } }]) {
       assert.throws(() => normalizeAppSettings({ backgroundExecutionSettings: value }));
     }
     for (const frequency of [{ turnCount: 0, idleMinutes: 5 }, { turnCount: 1.5, idleMinutes: 5 }, { turnCount: 5, idleMinutes: 0 }, { turnCount: 5, idleMinutes: Number.NaN }]) {

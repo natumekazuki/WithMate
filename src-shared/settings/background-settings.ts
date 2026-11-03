@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isModelReasoningEffort, type ModelReasoningEffort } from "./model-catalog.js";
 import type { BackgroundPurpose } from "../agent-runtime/background-execution-scope.js";
 import {
   DEFAULT_MEMORY_RECORDING_FREQUENCIES,
@@ -11,6 +12,7 @@ export const BACKGROUND_PURPOSES = ["character-memory", "target-memory", "affect
 const selectionSchema = z.object({
   providerId: z.string().min(1).refine((value) => value.trim() === value),
   modelId: z.string().min(1).refine((value) => value.trim() === value),
+  reasoningEffort: z.custom<ModelReasoningEffort>(isModelReasoningEffort).optional(),
 }).strict();
 const purposeSettingsSchema = z.object({
   selection: selectionSchema.optional(),

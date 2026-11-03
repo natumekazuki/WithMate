@@ -206,3 +206,55 @@ test("本番prepareは設定失敗を区別し、保存済み範囲を固定す�
     assert.equal(calls, 0);
   } finally { await f.close(); }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "開始準備中の設定変更は取得済みProvider・Model・Depth・空本文を変えず、後続呼出しだけへ反映する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#本番共通runtimeとprovider" }
+// fault = "catalog取得await中に共有設定を参照し続け、開始済みの選択や登録本文を別設定へ差し替える"
+// observable = "共通runOnceのAgent入力selectionと登録指示本文、後続prepareの選択と本文"
+// observation_boundary = "consumer"
+// scope = "production preparation snapshot across asynchronous catalog lookup and purpose consumer"
+// lifecycle = "permanent"
+// distinction = "設定保存とadapter native写像のtestだけでは非同期prepare中の共有設定変更を観測できない"
+// @end-test-value
+test("開始準備の選択と本文は設定変更から独立し、次の呼出しへ反映する", async () => {
+  const f = await backgroundHistoryFixture();
+  const entered = gate(), release = gate();
+  try {
+    seed(f);
+    let observed: BackgroundAgentInput | undefined;
+    const { deps, settings, input } = setup(f, (agent) => { observed = agent; });
+    settings.backgroundExecutionSettings["target-memory"] = {
+      selection: { providerId: "claude", modelId: "test", reasoningEffort: "high" }, instructionText: "",
+    };
+    settings.codingProviderSettings.codex.enabled = true;
+    const snapshotCatalog: ModelCatalogSnapshot = { providers: [...catalog.providers, {
+      id: "codex", label: "Codex", defaultModelId: "next", defaultReasoningEffort: "",
+      models: [{ id: "next", label: "Next", reasoningEfforts: ["low"] }],
+    }] };
+    const runtime = new BackgroundProductionRuntime({ ...deps, getModelCatalog: async () => {
+      entered.resolve(); await release.promise; return snapshotCatalog;
+    } });
+    const pending = runtime.prepare(input);
+    await entered.promise;
+    const configured = settings.backgroundExecutionSettings["target-memory"];
+    Object.assign(configured.selection!, { providerId: "codex", modelId: "next", reasoningEffort: "low" });
+    configured.instructionText = "Next instructions";
+    release.resolve();
+    const prepared = await pending;
+    assert.equal(prepared.status, "ready");
+    assert.deepEqual(prepared.call.selection, { providerId: "claude", modelId: "test", reasoningEffort: "high" });
+    assert.equal(prepared.instructionText, "");
+    assert.deepEqual(await runBackgroundMemoryRegistration(runtime.calls, { ...prepared.call,
+      context: { ...prepared.call.context, scope: { ...prepared.call.context.scope, purpose: "target-memory" } },
+      materials: "saved materials", instructionText: prepared.instructionText, onAdmitted() {},
+    }), { kind: "completed" });
+    assert.deepEqual(observed!.selection, prepared.call.selection);
+    assert.equal(observed!.userInput.split("# 登録指示本文\n\n")[1]!.split("\n\n# 実行情報")[0], "");
+    const next = await runtime.prepare(input);
+    assert.equal(next.status, "ready");
+    assert.deepEqual(next.call.selection, configured.selection);
+    assert.equal(next.instructionText, "Next instructions");
+  } finally { release.resolve(); await f.close(); }
+});

@@ -88,7 +88,7 @@ export class BackgroundProductionRuntime {
     let settings: AppSettings;
     try { settings = await this.deps.getAppSettings(); }
     catch { return { status: "failed", code: "BACKGROUND_SETTINGS_UNAVAILABLE", reason: "Background settings could not be retrieved." }; }
-    const configured = settings.backgroundExecutionSettings[input.purpose];
+    const configured = structuredClone(settings.backgroundExecutionSettings[input.purpose]);
     if (!configured.selection) return { status: "not_configured", code: "BACKGROUND_NOT_CONFIGURED", reason: "Select a provider and model for this purpose in Settings." };
     if (!settings.codingProviderSettings[configured.selection.providerId]?.enabled) {
       return { status: "unavailable", code: "BACKGROUND_PROVIDER_DISABLED", reason: "Enable the selected provider in Settings." };

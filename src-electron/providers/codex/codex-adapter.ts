@@ -1,3 +1,4 @@
+import { resolveRunExecutionTarget } from "../provider-runtime.js";
 import path from "node:path";
 import { createRequire } from "node:module";
 import {
@@ -1146,10 +1147,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
           diagnostics: args.diagnostics,
           redactor,
         };
-        this.activeTurns.set(sessionInput.session.id, active);
+        this.activeTurns.set(resolveRunExecutionTarget(sessionInput).id, active);
       }
       projectionId = await this.projection.begin({
-        sessionId: sessionInput?.session.id ?? "", threadId: state.threadId, turnId: state.turnId,
+        sessionId: (sessionInput ? resolveRunExecutionTarget(sessionInput).id : undefined) ?? "", threadId: state.threadId, turnId: state.turnId,
         binding: sessionInput?.agentRuntimeBinding, apiKey: args.apiKey,
         progress: Boolean(sessionInput && args.onProgress),
         diagnosticTrace: false,
@@ -1247,7 +1248,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           asyncQuestions.abort();
           if (active) active.inputAvailable = false;
           interactions?.close();
-          if (sessionInput) this.activeTurns.delete(sessionInput.session.id);
+          if (sessionInput) this.activeTurns.delete(resolveRunExecutionTarget(sessionInput).id);
           publishControl();
         }
         while (pendingEvents.size >= 8) {
@@ -1279,9 +1280,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
       if (active) active.inputAvailable = false;
       if (
         sessionInput &&
-        this.activeTurns.get(sessionInput.session.id) === active
+        this.activeTurns.get(resolveRunExecutionTarget(sessionInput).id) === active
       )
-        this.activeTurns.delete(sessionInput.session.id);
+        this.activeTurns.delete(resolveRunExecutionTarget(sessionInput).id);
       await Promise.all(pendingEvents);
       await progress(true).catch((error) => {
         failProjection(error);
@@ -1302,7 +1303,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         args.diagnostics.cleanupError = message;
         appendDiagnostic(args.diagnostics, { type: "withmate.process_cleanup_failed", data: { message } });
         this.writeLog({ level: "error", kind: "codex.run.cleanup-failed", message });
-        this.pendingCleanups.set(transport, { sessionId: sessionInput?.session.id, workspace: workspaceKey(options.workingDirectory), threadId: state.threadId });
+        this.pendingCleanups.set(transport, { sessionId: (sessionInput ? resolveRunExecutionTarget(sessionInput).id : undefined), workspace: workspaceKey(options.workingDirectory), threadId: state.threadId });
         const completion = transport.whenClosed().then(() => { this.pendingCleanups.delete(transport); });
         try {
           sessionInput?.onCleanupPending?.(completion);
@@ -1498,7 +1499,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         kind: "codex.run.snapshot-timeout",
         message: summary,
         data: {
-          sessionId: input.session.id,
+          sessionId: resolveRunExecutionTarget(input).id,
           timeoutMs:
             this.options.snapshotDeadlineMs ??
             DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
@@ -1547,9 +1548,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
     input: RunSessionTurnInput,
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult> {
-    this.assertCleanupComplete(resolveRunWorkspacePath(input), input.session.id, input.session.threadId);
+    this.assertCleanupComplete(resolveRunWorkspacePath(input), resolveRunExecutionTarget(input).id, resolveRunExecutionTarget(input).threadId);
     const prompt = this.composePrompt(input);
-    const state = createCodexTurnStreamState(input.session.threadId || null);
+    const state = createCodexTurnStreamState(resolveRunExecutionTarget(input).threadId || null);
     const diagnostics: CodexTurnDiagnostics = { rawItems: [] };
     const { options, selection } = buildCodexThreadSettings(
       input.session,

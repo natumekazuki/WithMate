@@ -88,10 +88,10 @@ test("保存済み終端から同用途を並行開始し入力を固定する",
 
 // @test-value v2
 // kind = "contract"
-// claim = "未設定・材料失敗・停止・source解放は開始位置を成功扱いせず、再開始では過去を生成せず最新の新規通知を処理する"
+// claim = "未設定・材料失敗は開始位置を進めず、source解放は遅延読取を無効にし、停止再購読後は最新の新規通知を処理する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "空Affectで失敗を救済する、not_configuredで位置を進める、停止後の遅延読取から実行する、または購読が重複・欠落する"
-// observable = "Agent開始件数、onFailure、再開始後のprocessing範囲、stopped/source解放後の未実行"
+// fault = "空Affectで失敗を救済する、not_configuredで位置を進める、source解放後の遅延読取から実行する、または停止再購読が重複・欠落する"
+// observable = "Agent開始件数、onFailure、再購読後のprocessing範囲、source解放後の未実行"
 // observation_boundary = "consumer"
 // scope = "controller material/prepare failures and subscription/source lifetime using real capture and runtime"
 // lifecycle = "permanent"

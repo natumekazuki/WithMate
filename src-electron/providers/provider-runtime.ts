@@ -19,6 +19,12 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
+  /** Independent native execution; the source Session remains authorization/workspace context. */
+  executionTarget?: {
+    id: string;
+    threadId: null;
+    prompt: ProviderPromptComposition;
+  };
   runtimeOwner?: {
     kind: "main" | "auxiliary";
     id: string;
@@ -27,8 +33,8 @@ export type RunSessionTurnInput = {
   executionOptions: SessionExecutionOptions;
   executionWorkspacePath?: string;
   sessionFolderPath?: string;
-  sessionMemory: SessionMemory;
-  projectMemoryEntries: ProjectMemoryEntry[];
+  sessionMemory?: SessionMemory;
+  projectMemoryEntries?: ProjectMemoryEntry[];
   character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
@@ -45,6 +51,10 @@ export type RunSessionTurnInput = {
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };
+
+export function resolveRunExecutionTarget(input: Pick<RunSessionTurnInput, "session" | "executionTarget">): { id: string; threadId: string | null } {
+  return input.executionTarget ?? input.session;
+}
 
 export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "session" | "executionWorkspacePath">): string {
   const normalized = input.executionWorkspacePath?.trim() ?? "";
