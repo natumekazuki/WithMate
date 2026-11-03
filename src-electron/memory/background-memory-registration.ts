@@ -1,0 +1,46 @@
+import { createCharacterContextError } from "../../src-shared/character-context/character-context-contract.js";
+import { createMemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
+import { buildMemoryRegistrationInput, type MemoryRegistrationScope } from "../../src-shared/memory-recording/memory-registration-input.js";
+import type { MemoryRecordingPurpose } from "../../src-shared/memory-recording/memory-recording-frequency.js";
+import type { BackgroundRegistration, BackgroundRegistrationHandler } from "../providers/background-registration.js";
+import type { BackgroundCallInput, BackgroundCallResult, BackgroundCallService } from "../providers/background-call-service.js";
+
+/** The shared registration boundary has already captured and authorized this real Main snapshot. */
+function hasProcessingEvidence({ scope, source }: Parameters<BackgroundRegistrationHandler>[0]): boolean {
+  return source.turns.some((turn) => turn.sessionId === source.session.id
+    && turn.id > (scope.processing.afterTurnId ?? 0) && turn.id <= scope.processing.throughTurnId
+    && (turn.phase === "completed" || turn.phase === "failed" || turn.phase === "canceled") && Boolean(turn.completedAt)
+    && turn.assistantMessageSeq !== undefined && turn.assistantMessageSeq >= scope.history.fromMessageSeq
+    && turn.assistantMessageSeq <= scope.history.throughMessageSeq);
+}
+
+export const backgroundMemoryRegistrationHandlers: Required<Pick<BackgroundRegistration["handlers"], MemoryRecordingPurpose>> = {
+  "character-memory": (input, services) => {
+    if (!hasProcessingEvidence(input)) return createCharacterContextError("invalid_input", "No saved terminal Turn belongs to this processing range.", {
+      field: "processing", retryable: false, conversationMayContinue: true, effect: "none",
+    });
+    if (!services.character) return createCharacterContextError("storage_unavailable", "Character registration is unavailable.", {
+      retryable: false, conversationMayContinue: true, effect: "none",
+    });
+    return services.character.appendEpisode(input.body, input.transport, input.principal);
+  },
+  "target-memory": (input, services) => {
+    if (!hasProcessingEvidence(input)) return createMemoryErrorResponse({ code: "MEMORY_INVALID_REQUEST",
+      message: "No saved terminal Turn belongs to this processing range.", field: "processing", effect: "none" });
+    return services.memory.append(input.principal, input.body);
+  },
+};
+
+export type BackgroundMemoryRegistrationInput = Omit<BackgroundCallInput, "userInput" | "context"> & Readonly<{
+  context: BackgroundCallInput["context"] & { scope: MemoryRegistrationScope };
+  materials: string;
+  instructionText?: string;
+}>;
+
+export function runBackgroundMemoryRegistration(
+  calls: Pick<BackgroundCallService, "runOnce">,
+  input: BackgroundMemoryRegistrationInput,
+): Promise<BackgroundCallResult> {
+  const { materials, instructionText, ...call } = input;
+  return calls.runOnce({ ...call, userInput: buildMemoryRegistrationInput({ scope: input.context.scope, materials, instructionText }) });
+}

@@ -53,7 +53,7 @@ Provider builderは通常接続の既存3 endpointと、背景のsession-history
 
 Agent実行終了時の`finish()`は、既存実行管理からbinding・handle・admission・HTTP token・MCP endpointを閉じる。旧bound CLIと遅延readも拒否する。取消・source／親削除・runtime停止・背景Provider失効でも同じ権限を終了する。未確定writeは既存Workerの失効stateで拒否し、確定済みwriteは巻き戻さず、応答確認済みの効果を取消結果へ置換しない。
 
-通常turn内の公開Memory／Affect操作は維持する。用途検証を含む背景登録handler、実Provider、本番起動・設定・通知、Auxiliary保存は未接続である。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
+通常turn内の公開Memory／Affect操作は維持する。Memory二用途の背景登録handlerはMainへ接続済みである。Affect登録handler、実Provider、本番起動・設定・通知、Auxiliary保存は未接続である。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
 
 ## 背景Memory read
 
@@ -67,9 +67,9 @@ read toolと操作grantの対応は`src-shared/agent-runtime/background-memory-r
 
 `src-shared/agent-runtime/background-operations.ts`は、Affectを`character_affect.appraise`、Character Memoryを`character_memory.append_episode`、対象Memoryを`memory.append`へ限定する。registryは要求grantが広くても当該purpose以外を認可しない。
 
-`src-electron/providers/background-registration.ts`の`BackgroundRegistration`をMemory runtimeへ注入する。`readMainSource`は実Worker読取、`handlers[purpose]`は用途入力・source参照を検証し既存applicationへ登録するtrusted adapterである。runtimeは同じ接続定義をHTTPとhostへ渡す。handler未接続ではMCPへ登録toolを公開せず、直接runtime／bound CLIも`details.backgroundRegistration = "not_connected"`の効果なし拒否とする。通常turnの登録handlerへfallbackしない。現在のMainは三用途のhandlerを登録していない。
+`src-electron/providers/background-registration.ts`の`BackgroundRegistration`をMemory runtimeへ注入する。`readMainSource`は実Worker読取、`handlers[purpose]`は用途入力・sourceを検証し既存applicationへ登録するtrusted adapterである。runtimeは同じ接続定義をHTTPとhostへ渡す。handler未接続ではMCPへ登録toolを公開せず、直接runtime／bound CLIも`details.backgroundRegistration = "not_connected"`の効果なし拒否とする。通常turnの登録handlerへfallbackしない。現在のMainはMemory二用途のhandlerを登録する。
 
-HTTP認可は実binding・元会話のCharacter・current handle／capabilityに加え、実MainのownerIdentity／incarnation／metadataを読取境界で照合する。source不存在、read-only、character-authoring、Auxiliary保存を拒否する。用途handlerにはcanonical body、scope、実Main source、principal、同じadmission、transportと既存Memory／Character serviceを渡す。必要な候補値・source参照・processing所属・時刻などの検証は用途handlerが実装してから接続する。
+HTTP認可は実binding・元会話のCharacter・current handle／capabilityに加え、実MainのownerIdentity／incarnation／metadataを読取境界で照合する。source不存在、read-only、character-authoring、Auxiliary保存を拒否する。用途handlerにはcanonical body、scope、実Main source、principal、同じadmission、transportと既存Memory／Character serviceを渡す。用途側は必要な入力・保存済みsourceのprocessing所属を検証する。
 
 Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決し、readTargetsとは別の`writeTargets`と`memory.append` permissionを、用途登録の認可後に設定する。Character Memoryは当該Character＋character scopeへ限定する。`MemoryV6Service.append`もwriteTargetsを照合し、read制限だけではwriteを許可しない。AffectはMemory append permissionを持たず、linked episodeを拒否する。対象Memoryのfile appendも拒否する。
 
@@ -83,35 +83,23 @@ Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決�
 
 ## Memory生成の純粋な用途契約
 
-`src-shared/memory-recording/`は二用途の頻度と構造化候補を扱う。Provider、DB、timer、admission取得、保存処理は持たない。
+`src-shared/memory-recording/`は二用途の頻度と自然言語の用途入力を扱う。Provider、DB、timer、admission取得、保存処理は持たない。
 
 `memory-recording-frequency.ts`は`character-memory`と`target-memory`に独立した既定5 Turn／idle 5分を提供する。設定validatorはTurn数を1以上の安全な整数、idle分数を正の有限値として検証し、不正値を既定値へ置換しない。`getMemoryRecordingTrigger`は呼出側がowner×用途ごとに渡す未開始の終端Turn件数・頻度・実行中状態・連続idle分数から、`none`／`turn_count`／`idle`だけを返す。0件は起動せず、N件以上は実行中でも件数条件を満たし、端数は実行中でなくT分idleのときだけ条件を満たす。全体上限や実開始は既存admissionの責務である。
 
-`memory-recording-candidates.ts`は用途別schemaとvalidatorを提供する。候補ありは非空配列、候補なしは明示的な`no_candidates`だけを受け入れ、未知fieldや不正値を拒否する。Characterは既存episode型と事実／受け取りの区別、対象Memoryは既存kind・本文・tagと許可slotを使う。本文の制限・trim・tag正規化は通常Memory appendと同じ純粋validatorを共用する。
+## Memoryの登録本文と直接登録
 
-アプリは固定history範囲、参照可能な保存messageとそのprocessing所属、操作／checkのindexをcontextへ渡す。validatorは根拠の実在・範囲と候補ごとにprocessing根拠があることを確認する。`execution_result`には保存済みの操作またはcheck参照を必要とするが、成功・失敗・成否不明によって候補を拒否しない。実行結果の解釈と記録内容の意味判断は生成LLMに委ね、validatorに成否判定入力は持たせない。対象Memoryへ`character_interpretation`は保存候補として返さない。これは参照・値の検証であり、自然言語の真偽や同一性を証明するものではない。成否不明を成功へ補完しない等の生成指示や既存の保護境界を、validatorによる意味の完全保証へ置き換えない。
+`memory-registration-input.ts`の`MEMORY_REGISTRATION_PRESETS`は二用途の標準本文である。Character Memoryは観察事実とCharacterの受け取りを区別したepisode、対象Memoryは事実・合意・制約・好み・実行結果を許可対象へ登録する。欠落情報や不明な成否を補完せず、不要なら登録しない。
 
-Characterの保存先はcontextの当該Character targetで固定し、対象Memoryはcontextのslot→targetだけを返す。モデル出力にowner、target tuple、権限、保存key等を受け付けない。contextはアプリが認可済みの実sourceから構成する内部入力であり、生成出力の自己申告から作らない。実owner／admissionの認可は接続側が担う。schemaは`z.toJSONSchema(schema, { io: "input" })`で生成用の構造schemaにでき、実在確認・正規化はvalidatorを通す。通常turnのMemory操作は変更せず、背景の内部保存入口からこのvalidatorを利用する。
+`buildMemoryRegistrationInput({ scope, materials, instructionText? })`は、`instructionText`が未設定なら用途のプリセット、設定済みなら空文字列も含めその本文だけを使う。固定プリセットとの合成や追加指示レイヤーはない。本文、アプリが確定したprocessing／history／許可Memory target、参照材料、既存MCP／CLIの利用説明を別の節へ組み立てる。本文の編集で実binding、保存先上限、権限は変わらない。
 
-## Memory候補のMain内部保存
+`src-electron/memory/background-memory-registration.ts`の`runBackgroundMemoryRegistration(calls, input)`は、編集本文と材料を受け取り、組み立てた入力を既存`BackgroundCallService.runOnce()`の`userInput`へ渡す入口である。同じAgent実行内で公開tool schemaの入力を使い、Character Memoryは`character_memory.append_episode`／CLI `character-memory-append-episode`、対象Memoryは`memory.append`／CLI `append`から登録する。設定永続化・編集UI、実Provider・本番自動起動は未接続である。
 
-`src-electron/memory/background-memory-application-service.ts`の`BackgroundMemoryApplicationService.apply(execution, final, context)`は、既存の同一`BackgroundExecution`を受け取るtrusted appの保存入口である。第二のbeginや独自の実行管理を持たず、finishも呼ばない。
+`backgroundMemoryRegistrationHandlers`の二handlerはMainのMemory runtimeへ組み込まれる。共通HTTP認可が確認した実Main snapshotについて、固定history範囲かつprocessing Turn範囲に属し、completed／failed／canceledとcompletedAt・assistantMessageSeqを持つ保存済みTurnがあることを確認する。登録単位の本文・tag・episodeの事実／受け取り等の入力検証は、既存`MemoryV6Service.append`／`CharacterContextApplicationService.appendEpisode`が担う。後者は同じMemory appendとWorkerへ進む。
 
-この内部moduleは単体で保持されているが、共通runOnceやMCP／CLIの登録経路からは呼ばない。用途検証のtool境界への接続は未実装である。
+公開登録入力へ用途専用の候補schemaや個別の根拠参照fieldを追加しない。記録内容と会話・操作結果の意味上の対応はAgentが判断し、本文の真偽や成功・失敗を用途handlerが証明するものではない。処理対象となる保存済みTurnの実在・範囲はコードで確認し、実行結果を確認する材料は許可された履歴readで取得する。
 
-`BackgroundMemoryContext`は許可read時にアプリが構成したfull `SessionHistoryReadScope`、processing Turn範囲、保存messageのseq・processing所属・操作/check index、slot→targetを持つ。historyとprocessingはregistryの実bindingのscopeと一致し、slotの全targetはその`memoryTargets`内でなければならない。モデルからcontextを構成しない。実行結果の成否や意味を判定する入力は不要である。
-
-保存入口はregistryの実背景binding、current handle／capabilityと共有admission state、Memory用途、local-userとCharacterを確認する。注入される`readMainSource(history)`は実Main metadataと同じ保存読取境界で観測した既存ownerIdentityを返す。Main ID・incarnation・ownerIdentity・Characterを照合し、source不存在、read-only、character-authoring、Auxiliary、別executionや許可範囲を広げるcontextは保存前に拒否する。source readはアプリ所有portであり、モデル値や親Mainへの付け替えで代用しない。
-
-final全体を既存二用途validatorで検証してから最初のwriteへ進む。CharacterはbindingのCharacter owner＋character scopeに固定し、既存`CharacterContextApplicationService.appendEpisode`のCharacter／Main scope検証からMemory appendへ進む。対象Memoryは許可slotを解決して既存`MemoryV6Service.append`へ進む。アプリが実binding由来の`session_binding` principal（memory.appendのみ）、schemaVersion、新規保存keyを補い、正規化済みtagを公開入力のtype/valueへ写像する。無条件のlocal-user principal、通常会話のwrite credential、新batch／別storeは使わない。Affect eventやlinked episodeは生成しない。
-
-一候補ずつ`runWithRuntimeTurnAdmission(execution.admission)`で保存し、既存Memory Workerのmutationへ同じ共有失効stateを伝播する。実行中のadmissionを使い、実行失効後の未確定writeはWorkerでも拒否される。失効を実装するためのrevision/hash再照合や、本文の鮮度比較は行わない。
-
-`BackgroundMemoryResult`は`no_candidates`、全件成功応答確認済みの`saved`、最初の拒否／失敗／取消／unknownで終了する`stopped`を区別する。確認済みprefixにはcandidateIndex・entryId・応答のcreated/replayedを残す。stoppedは停止候補index、error code・cause、当該保存のeffect（none／unknown）、未呼出indexを返す。候補配列を確定できない入力／権限拒否では停止indexと未呼出indexがnullになり得る。未呼出分は停止候補自体とは分ける。
-
-serviceのErrorResponseとthrowを扱い、保存前拒否・未送信の`StorageWorkerGenerationError`・効果なしが確定したWorker拒否はnoneとする。送信後の効果が分からない場合はunknownとし、成功や全件未保存に置換しない。Character appendもMemory部分で既知の未送信／拒否をnoneとして保持する。最初の非成功後は後続保存・補償・read-reconcile・自動再送を行わない。取消後も確認済みprefixを巻き戻さない。
-
-このmoduleは実Mainの既存保存契約だけを利用し、Auxiliaryの保存owner/FK対応は含まない。
+登録ごとの既存保存応答とAgent実行の終了を区別する。`completed`は保存件数や保存成功の宣言ではなく、登録なしでも成立する。後続の登録拒否・Agent失敗・取消・結果不明でも確定済み保存は残し、専用の後段保存、全件atomic化、補償・自動再送・台帳は持たない。失効後の未確定writeは同じadmissionを受ける既存Worker境界で拒否する。
 
 ## Affect候補とMain内部保存
 
