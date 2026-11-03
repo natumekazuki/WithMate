@@ -472,4 +472,3 @@ const LEGACY_MAIN_AFFECT_SQL = `CREATE TABLE IF NOT EXISTS character_affect_even
 
   CREATE INDEX IF NOT EXISTS idx_v6_character_affect_observations_scope
     ON character_affect_observations_v6(character_id, user_id, created_at DESC, id DESC);`;
-
