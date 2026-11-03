@@ -105,7 +105,7 @@ title/previewは検索・一覧で本文取得前にも表示されるため、�
 | `forget` | `memory.forget` | target/entryIds/reason/idempotencyKey。dryRunで非変更preview |
 | `move-entry` | `memory.move_entry` | entryId/from/to/reason/idempotencyKey。entry identityを保持 |
 | `context-get` | `character_context.get` | binding必須。任意query、memoryLimit既定3 |
-| `affect-appraise` | `character_affect.appraise` | binding必須。candidates、任意expectedVersion |
+| `affect-appraise` | `character_affect.appraise` | binding必須。通常はcandidates、任意expectedVersion。背景Affectはdomain値とsourceTurnIdだけのcandidates |
 | `affect-inspect` | `character_affect.inspect` | binding必須。現在Character / Sessionのevent・reset・version |
 | `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/explicitUserRequest/reason/replacement |
 | `affect-reset` | `character_affect.reset` | binding必須。layer/expectedVersion/explicitUserRequest/reason/resetAt/idempotencyKey |
@@ -161,9 +161,11 @@ metricsとapp logには会話本文、Memory本文、secretを記録しない。
 
 Agentが記録する意味のある感情変化を認識した場合は、通常turn中にruntime binding付きの`character_affect.appraise`で保存する。感情が後で解消、反転、減衰しても先行eventは残す。具体的なeventがないturnでMCP appraisalを儀式的に呼ぶ必要はない。
 
-同じturnの後続appraisalには直前の成功応答で返されたversionを渡す。別時点または別の根拠を持つeventはfamily、target、label、意味が似ていても新しいkeyを使う。
+背景Affectの`appraise`候補はlayer・targetType・targetId・family・value・intensity・reason・evidenceと、許可範囲の保存済みMain Turnを指す`sourceTurnId`を使う。occurredAt・schemaVersion・idempotencyKey・memoryEpisode・caller identityを指定せず、expectedVersionも送らない。アプリがsourceの終端時刻とownerを検証して保存入力を確定する。変化なしなら登録toolを呼ばない。背景呼出は毎回新規keyを割り当てるため冪等ではなく、結果不明時の自動再送・補償を行わない。tool全体の`idempotentHint`もfalseとする。本文編集と実行範囲は[背景実行](../design/background-execution.md#affect登録入力とmain保存)を参照する。
 
-同一requestのtimeout、response loss、client resendだけはrequestを変えず同じkeyで照合する。`effect: unknown`は同じrequestとkeyでreconcileし、未commitの`effect: none` version conflictは最新contextから再評価する。requestを変更した場合は新しいkeyを使う。
+通常turnの後続appraisalには直前の成功応答で返されたversionを渡す。別時点または別の根拠を持つeventはfamily、target、label、意味が似ていても新しいkeyを使う。
+
+通常turnの同一requestのtimeout、response loss、client resendだけはrequestを変えず同じkeyで照合する。`effect: unknown`は同じrequestとkeyでreconcileし、未commitの`effect: none` version conflictは最新contextから再評価する。requestを変更した場合は新しいkeyを使う。
 
 linked Memory episodeは同じappraisalの`memoryEpisode`だけで保存し、別routeへ重複送信しない。
 

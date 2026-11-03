@@ -241,6 +241,7 @@ import {
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
 import { BackgroundExecutionService } from "./providers/background-execution-service.js";
+import { registerBackgroundAffect } from "./character/background-affect-registration.js";
 import { buildProviderAgentRuntimeAuthoritySnapshot } from "./providers/provider-agent-runtime-binding.js";
 import { resolveMemoryV6ProjectCandidate } from "./memory/memory-v6-project-resolver.js";
 import { resolveBundledMemoryCliScriptPath } from "./platform/cli-runtime-paths.js";
@@ -930,7 +931,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       resolveActorSession: resolveAgentRuntimeActorSession,
       sessionHistoryMcp: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer },
       backgroundRegistration: {
-        handlers: backgroundMemoryRegistrationHandlers,
+        handlers: { ...backgroundMemoryRegistrationHandlers, affect: registerBackgroundAffect },
         readMainSource: (scope) => {
           const generation = mainStoreContext.storageWorker;
           if (!generation || databaseMaintenanceRequested) throw new Error("Main source storage is unavailable.");

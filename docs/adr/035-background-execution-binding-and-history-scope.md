@@ -108,3 +108,9 @@ Character Memory、対象Memory、Affectの三用途は標準の自然言語登�
 `BackgroundExecutionService.begin()`の全体件数・用途×会話の実行中チェックと専用の`scopeKey`を除去した。開始した`BackgroundExecution`を直接返し、共通呼出の上限由来の起動見送り結果と利用側分岐も除去した。実行中mapは独立binding／handle／admissionの取消・失効・終了時cleanupに維持し、実開始時の`onAdmitted`通知、固定processing／履歴範囲、用途別認可と保存先は変更しない。
 
 Decisionと直接登録の維持境界にある二つの同時上限・その起動見送りは適用対象外とする。当時の本文は保持する。本番発火・Memory未開始位置管理・実Provider・設定UI・Auxiliary保存の実装完了を意味しない。
+
+## 三用途の統合への適用
+
+2026-11-03に#888の同時上限撤廃、#909のMemory二用途、#910のAffect直接登録を統合した。Main runtimeは三用途のhandlerと実WorkerのMain source readを共通登録portへ接続する。Affectは保存済み終端Turnのprocessing／履歴所属を検証し、保存時刻をそのTurnの完了時刻から決め、既存のappraiseへ渡す。旧構造化final・専用後段保存と、その専用fixtureを除去した。
+
+三用途ともプリセットと編集本文を受け取る用途入力を持つ。共通基盤・Memory二用途の適用時点に記したAffect未接続・本文編集未適用という範囲は、この統合により置き換える。当時の記述は履歴として保持する。実Provider、本番発火・Memory未開始位置管理、設定の永続化・編集UI、通知、Auxiliary保存は未接続であり、本統合による実装完了とは扱わない。

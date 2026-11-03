@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage, MessageExtraInfo, RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { backgroundAffectCandidateSchema } from "../../../src-shared/character-affect/affect-composition.js";
 
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -699,7 +700,7 @@ export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
   "At a topic start, switch, or resumption, consider focused recall when past context could help. Reuse memories already in context; there is no per-turn search or save quota.",
   "For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
   "Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
-  "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
+  "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Normal-turn candidates need an explicit target, timestamp and idempotency key. Background Affect candidates instead supply sourceTurnId; the app supplies timestamp, identity and key, and linked episodes are unavailable.",
   "Use character_affect.appraise during the normal turn when the exchange meaningfully changes the Character's own affect. It is optional, not a per-turn requirement or a final-response checklist. Do not submit unchanged-state events just to call the tool; skipping or failing this update does not trigger a separate evaluation or replacement generation.",
   "Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
   "Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
@@ -719,8 +720,8 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_affect.appraise",
-    description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. An episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry.",
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. In normal turns, an episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry. Background Affect instead accepts domain values and sourceTurnId only; the app supplies timestamp, identity and a new key for each call. Background calls cannot include memoryEpisode or expectedVersion and are not idempotent retries.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "character_memory.search",
@@ -1045,7 +1046,7 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
     ...definitions.get("character_affect.appraise")!,
     inputSchema: z.object({
       expectedVersion: z.string().min(1).optional(),
-      candidates: z.array(affectCandidateSchema).min(1).max(10),
+      candidates: z.array(z.union([affectCandidateSchema, backgroundAffectCandidateSchema])).min(1).max(10),
     }).strict(),
     outputSchema: appraisalToolOutputSchema,
   }, async (input) => toolResult(await callRuntime(

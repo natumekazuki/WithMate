@@ -37,7 +37,7 @@ export const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111
 export const readOperation = "session_history.route.get_message";
 
 export async function backgroundHistoryFixture(diagnosticSink?: StorageOperationDiagnosticSink,
-  registrationHandlers?: BackgroundRegistration["handlers"]) {
+  registrationHandlers?: BackgroundRegistration["handlers"], now?: () => Date) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-background-foundation-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
@@ -68,7 +68,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const bindings = new AgentRuntimeBindingRegistry();
   const turns = new ProviderAgentRuntimeTurnCoordinator();
   const memoryWorker = new MemoryV6WorkerClient({ dbPath,
-    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url), diagnosticSink });
+    workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url), diagnosticSink, now });
   const memory = new MemoryV6Service({ storage: memoryWorker.storage,
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath });
