@@ -77,11 +77,13 @@ MCPとCLIは同じ用途別の操作・入力・認可・保存効果・エラ�
 
 共通runOnceは一回のAgent実行と実行終了の契約へ変更し、final schema／parser／後段save callbackと専用保存phaseを除去した。用途ごとのoperation上限、同一背景admissionとtrusted source／保存先を検証する登録port、未接続handlerのMCP非公開・直接runtime拒否を適用した。通常turnの公開操作と保存済みデータは維持する。
 
-三用途の入力検証と保存adapterは登録portへまだ接続していない。用途専用applicationは実行経路から外れており、検証移設と未使用コードの整理は用途担当が行う。実Provider・本番自動起動・設定・Auxiliary保存の適用完了を意味しない。現在の接続契約は[Background Execution](../design/background-execution.md#用途限定の登録接続)を正本とする。
+共通基盤取り込み時点では、三用途の入力検証と保存adapterは登録portへまだ接続していない。用途専用applicationは実行経路から外れており、検証移設と未使用コードの整理は用途担当が行う。実Provider・本番自動起動・設定・Auxiliary保存の適用完了を意味しない。現在の接続契約は[Background Execution](../design/background-execution.md#用途限定の登録接続)を正本とする。
+
+2026-11-03に#909のMemory二用途へ直接登録を適用した。既存の公開入力とappend／episode validatorを利用し、実Mainの保存済み終端Turnのhistory／processing所属を用途handlerで確認する。個別の構造化根拠参照契約は新設せず、内容の意味判断はAgentへ委ねる。旧候補finalと専用後段保存を撤去し、Mainへ二handlerを接続した。Affect登録、実Provider・本番起動・設定・Auxiliary保存はこの適用に含まない。
 
 ## 登録指示のプリセットと本文編集
 
-2026-11-03に採用。以下は採用済み・未適用の判断であり、編集・保存機能の実装完了を意味しない。
+2026-11-03に採用。Memory二用途はプリセットと編集本文を受け取る用途入力へ適用済み。設定の永続化・編集UI、およびAffect側への適用完了を意味しない。
 
 Character Memory、対象Memory、Affectの三用途は標準の自然言語登録指示を持ち、ユーザーはその本文を直接編集できる。未設定時はプリセット、設定時は編集済み本文をその用途の登録指示として使う。別の追加指示レイヤーやプリセットとの合成ルールは設けない。例えばサブエージェントを使用しない方針は、本文への記述で指定する。
 

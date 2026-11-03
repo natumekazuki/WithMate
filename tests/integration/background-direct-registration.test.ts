@@ -39,7 +39,7 @@ before(async () => {
 });
 after(async () => { await rm(directory, { recursive: true, force: true }); });
 
-// These adapters are fixture-only: production purpose validators are connected by #909/#910.
+// These adapters isolate the common registration boundary from production purpose policy.
 // Shared request validation and the real source turn are checked before existing applications run.
 const handlers: BackgroundRegistration["handlers"] = {
   "target-memory": async (input, services) => {

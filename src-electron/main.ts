@@ -226,6 +226,7 @@ import {
   startMemoryV6RuntimeApi,
   type MemoryV6RuntimeApiHandle,
 } from "./memory/memory-v6-runtime.js";
+import { backgroundMemoryRegistrationHandlers } from "./memory/background-memory-registration.js";
 import { createElectronSafeStorageKeyProtector } from "./memory/memory-protected-object-key-store.js";
 import { MemoryV6MainAssembly } from "./memory/memory-v6-main-assembly.js";
 import { AgentRuntimeBindingRegistry } from "./providers/agent-runtime-binding.js";
@@ -928,6 +929,14 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       providerAgentRuntimeTurns,
       resolveActorSession: resolveAgentRuntimeActorSession,
       sessionHistoryMcp: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer },
+      backgroundRegistration: {
+        handlers: backgroundMemoryRegistrationHandlers,
+        readMainSource: (scope) => {
+          const generation = mainStoreContext.storageWorker;
+          if (!generation || databaseMaintenanceRequested) throw new Error("Main source storage is unavailable.");
+          return generation.stores.session.readMainSource(scope);
+        },
+      },
       routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
