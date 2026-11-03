@@ -23885,6 +23885,56 @@ var EMPTY_COMPLETION_RESULT = { completion: {
 	values: [],
 	hasMore: false
 } };
+// src-shared/character-affect/affect-contract.ts
+var CHARACTER_AFFECT_FAMILIES = [
+	"joy",
+	"relief",
+	"interest",
+	"anticipation",
+	"affinity",
+	"gratitude",
+	"concern",
+	"frustration",
+	"disappointment",
+	"regret",
+	"determination",
+	"other"
+];
+// src-shared/character-affect/affect-composition.ts
+var text = string().refine((value) => value.trim().length > 0, "Must not be empty.");
+var dimension = number().finite().min(-1).max(1);
+var backgroundAffectCandidateSchema = object$1({
+	layer: _enum(["relationship", "session"]),
+	targetType: _enum([
+		"user",
+		"relationship",
+		"task",
+		"bug",
+		"artifact",
+		"self"
+	]),
+	targetId: text,
+	family: _enum(CHARACTER_AFFECT_FAMILIES),
+	value: object$1({
+		label: text,
+		valence: dimension,
+		arousal: dimension.optional(),
+		dimensions: record(text, dimension).optional()
+	}).strict(),
+	intensity: number().finite().min(0).max(1),
+	reason: text,
+	evidence: text,
+	sourceTurnId: number().int().positive().max(Number.MAX_SAFE_INTEGER)
+}).strict().refine((candidate) => candidate.layer !== "relationship" || candidate.targetType === "user" || candidate.targetType === "relationship", {
+	message: "Relationship affect may only target the user or relationship.",
+	path: ["targetType"]
+});
+[
+	"取得時点のCharacter定義・保存済み会話・既存Affectから、必要な感情の変化だけをcharacter_affect.appraiseで登録する。変化がなければ登録しない。",
+	"主会話Agentの非公開の内面を復元・診断したとは扱わない。",
+	"会話を基本材料とし、作業結果の裏付けが必要な場合だけ操作の成否と必要な詳細を参照する。欠落した情報は補完しない。",
+	"原因・感情の対象・sourceTurnIdを保ち、作業上の失敗を根拠なくユーザーへの敵意へ変換しない。"
+].join("\n");
 new Set(MEMORY_ENTRY_KINDS);
 new Set(MEMORY_APPEND_FILE_ROLES);
 new Set(MEMORY_FORGET_REASONS);
@@ -25109,7 +25159,7 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"At a topic start, switch, or resumption, consider focused recall when past context could help. Reuse memories already in context; there is no per-turn search or save quota.",
 	"For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
 	"Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
-	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
+	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Normal-turn candidates need an explicit target, timestamp and idempotency key. Background Affect candidates instead supply sourceTurnId; the app supplies timestamp, identity and key, and linked episodes are unavailable.",
 	"Use character_affect.appraise during the normal turn when the exchange meaningfully changes the Character's own affect. It is optional, not a per-turn requirement or a final-response checklist. Do not submit unchanged-state events just to call the tool; skipping or failing this update does not trigger a separate evaluation or replacement generation.",
 	"Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
 	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
@@ -25133,11 +25183,11 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_affect.appraise",
-		description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. An episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry.",
+		description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. In normal turns, an episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry. Background Affect instead accepts domain values and sourceTurnId only; the app supplies timestamp, identity and a new key for each call. Background calls cannot include memoryEpisode or expectedVersion and are not idempotent retries.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
-			idempotentHint: true,
+			idempotentHint: false,
 			openWorldHint: false
 		}
 	},
@@ -25558,7 +25608,7 @@ function registerWithMateMemoryTools(server, runtimeDeps) {
 		...definitions.get("character_affect.appraise"),
 		inputSchema: object$1({
 			expectedVersion: string().min(1).optional(),
-			candidates: array(affectCandidateSchema).min(1).max(10)
+			candidates: array(union([affectCandidateSchema, backgroundAffectCandidateSchema])).min(1).max(10)
 		}).strict(),
 		outputSchema: appraisalToolOutputSchema
 	}, async (input) => toolResult(await callRuntime("/v1/character_affect/appraise", buildWithMateMemoryMcpRuntimeBody("affect_appraise", input), "write", runtimeDeps)));

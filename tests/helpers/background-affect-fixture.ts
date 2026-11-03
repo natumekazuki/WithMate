@@ -11,7 +11,8 @@ import type { StorageOperationDiagnosticSink } from "../../src-electron/storage/
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { BackgroundExecutionService } from "../../src-electron/providers/background-execution-service.js";
-import { BackgroundAffectApplicationService, type BackgroundAffectMainSource } from "../../src-electron/character/background-affect-application-service.js";
+import type { MainSourceSnapshot } from "../../src-shared/session/main-source-snapshot.js";
+import type { SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { CharacterAffectService } from "../../src-electron/character/character-affect-service.js";
 import { CharacterContextApplicationService } from "../../src-electron/character/character-context-application-service.js";
 import { MemoryV6WorkerClient } from "../../src-electron/memory/memory-v6-worker-client.js";
@@ -63,9 +64,9 @@ export async function backgroundAffectFixture(diagnosticSink?: StorageOperationD
     validateEpisode() { episodeCalls++; throw new Error("Background must not validate episodes"); },
     async writeEpisode() { episodeCalls++; throw new Error("Background must not write episodes"); },
   }, "active");
-  const deps: ConstructorParameters<typeof BackgroundAffectApplicationService>[0] = {
+  const deps = {
     bindings, turns, affectService: affect,
-    async readMainSource(scope) {
+    async readMainSource(scope: SessionHistoryReadScope) {
       // The test's app-owned resolver reads real saved Main rows, not model-supplied identity.
       const snapshot = readConversationQuerySnapshot(db, "session_messages_v6", scope.source.sessionId);
       const row = db.prepare("SELECT character_id AS characterId, incarnation_id AS incarnationId FROM sessions_v6 WHERE id = ?")
@@ -73,7 +74,7 @@ export async function backgroundAffectFixture(diagnosticSink?: StorageOperationD
       if (!snapshot || !row) return null;
       const savedTurns = db.prepare(`SELECT id, session_id AS sessionId, phase, completed_at AS completedAt,
         assistant_message_seq AS assistantMessageSeq FROM session_turns_v6 WHERE session_id = ?`)
-        .all(scope.source.sessionId) as Array<BackgroundAffectMainSource["turns"][number]>;
+        .all(scope.source.sessionId) as Array<MainSourceSnapshot["turns"][number]>;
       return { session: { ...session, id: scope.source.sessionId, ...row }, ownerIdentity: snapshot.ownerIdentity, turns: savedTurns };
     },
   };

@@ -9,7 +9,12 @@ import { buildWithMateMemoryCli } from "../../scripts/build/build-withmate-memor
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import type { BackgroundPurpose, BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import { validateCharacterAffectAppraiseRequest, validateCharacterMemoryAppendEpisodeRequest } from "../../src-shared/character-context/character-context-validation.js";
+import { validateCharacterMemoryAppendEpisodeRequest } from "../../src-shared/character-context/character-context-validation.js";
+import { registerBackgroundAffect } from "../../src-electron/character/background-affect-registration.js";
+import { runBackgroundAffectCall } from "../../src-electron/character/background-affect-call.js";
+import { BackgroundCallService } from "../../src-electron/providers/background-call-service.js";
+import { AFFECT_COMPOSITION_INSTRUCTIONS } from "../../src-shared/character-affect/affect-composition.js";
+import { AFFECT_SCHEMA_VERSION, type EffectiveAffectState } from "../../src-shared/character-affect/affect-contract.js";
 import { validateMemoryAppendRequest } from "../../src-shared/memory/memory-validation.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
@@ -17,7 +22,7 @@ import type { BackgroundRegistration } from "../../src-electron/providers/backgr
 import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/memory-v6-http-server.js";
 import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import { currentRuntimeTurnAdmissionState, RuntimeTurnInactiveError } from "../../src-electron/platform/memory/runtime-turn-admission.js";
-import { backgroundHistoryFixture as fixture } from "../helpers/background-history-fixture.js";
+import { backgroundHistoryFixture as fixture, owner } from "../helpers/background-history-fixture.js";
 
 const execFileAsync = promisify(execFile);
 function deferred() {
@@ -39,8 +44,7 @@ before(async () => {
 });
 after(async () => { await rm(directory, { recursive: true, force: true }); });
 
-// These adapters are fixture-only: production purpose validators are connected by #909/#910.
-// Shared request validation and the real source turn are checked before existing applications run.
+// Memory adapters are fixture-only. Affect uses the production registration handler.
 const handlers: BackgroundRegistration["handlers"] = {
   "target-memory": async (input, services) => {
     assert.equal(input.source.turns[0]?.phase, "completed");
@@ -56,19 +60,7 @@ const handlers: BackgroundRegistration["handlers"] = {
     assert.equal(request.characterId, input.source.session.characterId);
     return services.character!.appendEpisode(request, input.transport, input.principal);
   },
-  affect: async (input, services) => {
-    assert.deepEqual((input.body as Record<string, unknown>).authority, { kind: "conversation" });
-    const request = validateCharacterAffectAppraiseRequest(input.body);
-    assert.equal(request.sessionId, input.source.session.id);
-    assert.equal(request.characterId, input.source.session.characterId);
-    assert.equal(input.principal.writeTargets, undefined);
-    assert.deepEqual(input.principal.permissions, []);
-    for (const candidate of request.candidates) {
-      assert.equal(candidate.occurredAt, input.source.turns[0]?.completedAt);
-      assert.equal(candidate.memoryEpisode, undefined);
-    }
-    return services.character!.appraise(request, input.transport);
-  },
+  affect: registerBackgroundAffect,
 };
 
 function seed(f: Fixture) {
@@ -91,9 +83,9 @@ function operation(purpose: BackgroundPurpose, key: string): Operation {
     route: "character_memory/append_episode", input: { idempotencyKey: key,
       episode: { title: key, body: `body ${key}`, preview: key, observedFact: "The saved source turn completed." } } };
   return { tool: "character_affect.appraise", command: "affect-appraise", route: "character_affect/appraise", input: {
-    candidates: [{ schemaVersion: "withmate-affect-v1", layer: "session", targetType: "bug",
+    candidates: [{ sourceTurnId: 1, layer: "session", targetType: "bug",
       targetId: "fixture", family: "interest", value: { label: "interest", valence: 0.4, arousal: 0.3 }, intensity: 0.6,
-      reason: "A reproduction was found.", evidence: "The saved source turn completed.", occurredAt: completedAt, idempotencyKey: key }],
+      reason: "A reproduction was found.", evidence: "The saved source turn completed." }],
   } };
 }
 async function cli(f: Fixture, binding: Binding, op: ReturnType<typeof operation>, env: NodeJS.ProcessEnv = {}) {
@@ -128,7 +120,7 @@ async function assertSaved(f: Fixture, purpose: BackgroundPurpose, value: Record
 // fault = "背景登録を通常turnへ迂回するか、公開入口から既存保存境界へ届かない"
 // observable = "公開tool一覧、MCPとCLIの保存結果、Worker読取本文とSQLite Affect eventのsource時刻"
 // observation_boundary = "public-boundary"
-// scope = "fixture-only purpose adapters through real managed MCP, bundled CLI and Memory/Character applications with Worker storage"
+// scope = "production Affect handler and fixture Memory adapters through managed MCP, bundled CLI and existing applications with Worker storage"
 // lifecycle = "permanent"
 // distinction = "単体認可testでは別Providerの実HTTPと配布CLI childからWorker保存までの配線を検証できない。3用途を同一fixtureでまとめる"
 // @end-test-value
@@ -325,5 +317,205 @@ test("受付済み登録の取消をapplicationからWorkerへの保存境界で
       assert.equal(blocked, true);
       assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 0);
     } finally { release.resolve(); await f.close(); }
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "背景Affectは候補全体の値と実Main Turnの範囲・終端・時刻を検証し、偽造値や不正sourceで一件も保存しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#affect登録入力とmain保存" }
+// fault = "public schemaを迂回した余剰fieldや別会話・範囲外・未完了Turnを受理する"
+// observable = "MCPのisError、配布CLIの非zero、直接runtimeのerror、実DBのAffectとMemory件数"
+// observation_boundary = "public-boundary"
+// scope = "production Affect handler, real Main source Worker and MCP/CLI/runtime input boundaries"
+// lifecycle = "permanent"
+// impact = "背景モデルが保存ownerや時刻を偽造し、許可外会話の感情を保存する"
+// distinction = "schemaだけでは実DBにあるTurnのowner・処理範囲・終端時刻を確認できず、公開入力だけではruntime迂回を検出できない"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("背景Affectの候補値と実sourceを保存前に検証する", async () => {
+  const f = await fixture(undefined, handlers);
+  try {
+    seed(f);
+    f.db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,created_at) VALUES ('main',2,'assistant','{}','now')").run();
+    for (const [id, sessionId, phase, seq, time] of [
+      [2, "other", "completed", 0, completedAt], [3, "main", "running", 1, completedAt],
+      [4, "main", "completed", 1, null], [5, "main", "completed", 1, "2026-11-01T01:00:00+00:00"],
+      [6, "main", "completed", 2, completedAt], [7, "main", "completed", 1, completedAt],
+    ] as const) {
+      f.db.prepare(`INSERT INTO session_turns_v6(id,session_id,phase,assistant_message_seq,started_at,completed_at,updated_at)
+        VALUES (?,?,?,?,?,?,?)`).run(id, sessionId, phase, seq, completedAt, time, completedAt);
+    }
+    for (const afterTurnId of [null, 1]) {
+      const begun = f.executions.begin({ actorSessionId: "main", providerId: "claude", session: f.sessions.get("main")!,
+        scope: { ...f.scope(), processing: { afterTurnId, throughTurnId: 6 } },
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+        operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
+      assert.ok(begun.ok);
+      const binding = f.project(begun.execution);
+      const { client } = await f.connect(binding, "memoryUrl");
+      for (const sourceTurnId of afterTurnId ? [1] : [999, 2, 3, 4, 5, 6, 7]) {
+        const op = operation("affect", "invalid-source");
+        op.input.candidates[0].sourceTurnId = sourceTurnId;
+        const mcp = await client.callTool({ name: op.tool, arguments: op.input });
+        assert.equal(mcp.isError, true, String(sourceTurnId));
+        assert.partialDeepStrictEqual(mcp.structuredContent, { error: { code: "invalid_input", effect: "none" } });
+        const child = await cli(f, binding, op);
+        assert.notEqual(child.code, 0, String(sourceTurnId));
+        assert.partialDeepStrictEqual(child.value, { error: { code: "invalid_input", effect: "none" } });
+      }
+      if (!afterTurnId) {
+        const original = operation("affect", "invalid-values");
+        const candidate = original.input.candidates[0];
+        const invalid = [
+          { ...candidate, occurredAt: completedAt }, { ...candidate, idempotencyKey: "caller-key" },
+          { ...candidate, characterId: "other-character" }, { ...candidate, authority: { kind: "operator" } },
+          { ...candidate, value: { ...candidate.value, extra: true } }, { ...candidate, reason: " " },
+          { ...candidate, layer: "bad" }, { ...candidate, targetType: "bad" }, { ...candidate, family: "bad" },
+          { ...candidate, value: { label: "bad", valence: 2 } }, { ...candidate, intensity: -1 },
+          { ...candidate, sourceTurnId: 1.5 }, { ...candidate, layer: "relationship", targetType: "bug" },
+        ];
+        for (const bad of invalid) {
+          const op = { ...original, input: { candidates: [candidate, bad] } };
+          assert.equal((await client.callTool({ name: op.tool, arguments: op.input })).isError, true);
+          assert.ok(((await direct(f, binding, op)).value as Record<string, unknown>).error);
+        }
+        assert.notEqual((await cli(f, binding, { ...original, input: { candidates: [invalid[0]] } })).code, 0);
+        for (const candidates of [[], Array.from({ length: 11 }, () => candidate)]) {
+          assert.ok(((await direct(f, binding, { ...original, input: { candidates } })).value as Record<string, unknown>).error);
+        }
+        assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
+        for (const phase of ["failed", "canceled"]) {
+          f.db.prepare("UPDATE session_turns_v6 SET phase = ? WHERE id = 1").run(phase);
+          const saved = await cli(f, binding, original);
+          assert.equal(saved.code, 0, JSON.stringify(saved.value));
+        }
+      }
+      f.executions.finish(begun.execution);
+    }
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 2);
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Affect用途入力は未設定時だけpresetを使い、編集本文・材料を同一runOnceのAgentへ渡し、登録なし・登録後失敗・取消を保存実態と区別する"
+// oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#登録指示のプリセットと本文編集" }
+// fault = "編集本文へpresetを重ねる、別実行で保存する、Agentの終了状態から登録成功を捏造するか確定済み保存を失う"
+// observable = "Agentが受ける本文とscope・材料、runOnce結果、MCP/CLI保存応答、通常contextと実DB件数"
+// observation_boundary = "public-boundary"
+// scope = "purpose input through real BackgroundCallService, MCP/CLI handler and normal context read"
+// lifecycle = "permanent"
+// impact = "ユーザーの本文編集が無効になる、登録されていない変更を保存済みと扱う、または失敗で先行保存が消える"
+// distinction = "入力builderの単体testでは同一実行のtool経路と通常contextへの反映を確認できない。モデルが文言に従うことは保証しない"
+// @end-test-value
+test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持する", async () => {
+  const f = await fixture(undefined, handlers, () => new Date(completedAt));
+  try {
+    seed(f);
+    const context = { actorSessionId: "main", session: f.sessions.get("main")!, scope: f.scope(),
+      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+      operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] };
+    const currentAffect: EffectiveAffectState = { schemaVersion: AFFECT_SCHEMA_VERSION, characterId: "character",
+      userId: "local-user", sessionId: "main", evaluatedAt: completedAt, layers: [], components: [] };
+    const base = { context, selection: { providerId: "claude", modelId: "fixture" }, onAdmitted() {},
+      characterDefinition: "definition material", currentAffect };
+    for (const instructionBody of [undefined, "サブエージェントを使わない。必要な変化を登録する。", ""]) {
+      let calls = 0;
+      const service = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
+        calls++;
+        const body = agent.userInput.split("## 登録指示\n\n")[1]!.split("\n\n## 実行範囲")[0];
+        assert.equal(body, instructionBody ?? AFFECT_COMPOSITION_INSTRUCTIONS);
+        if (instructionBody !== undefined) assert.equal(agent.userInput.includes(AFFECT_COMPOSITION_INSTRUCTIONS), false);
+        assert.ok(agent.userInput.includes(base.characterDefinition));
+        assert.ok(agent.userInput.includes(JSON.stringify(currentAffect)));
+        assert.ok(agent.userInput.includes(JSON.stringify(context.scope)));
+        // The Agent may finish without any registration. No model obedience is assumed.
+      } });
+      assert.deepEqual(await runBackgroundAffectCall(service, { ...base, instructionBody }), { kind: "completed" });
+      assert.equal(calls, 1);
+      assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
+    }
+    for (const ending of ["failure", "cancel"] as const) {
+      const service = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
+        const binding = { ...agent.binding, memoryRuntimeOwner: owner,
+          managedMcp: f.host.issue({ ...agent.binding, memoryRuntimeOwner: owner }, agent.handle, agent.signal) };
+        const { client } = await f.connect(binding, "memoryUrl");
+        const op = operation("affect", ending);
+        const saved = await client.callTool({ name: op.tool, arguments: op.input });
+        await assertSaved(f, "affect", saved.structuredContent!, ending);
+        const invalid = { ...op, input: { candidates: [{ ...op.input.candidates[0], sourceTurnId: 999 }] } };
+        assert.notEqual((await cli(f, binding, invalid)).code, 0);
+        if (ending === "failure") throw new Error("Agent failed after confirmed registration");
+        f.executions.cancel(agent.binding.bindingId);
+        assert.notEqual((await cli(f, binding, op)).code, 0);
+      } });
+      const result = await runBackgroundAffectCall(service, base);
+      assert.equal(result.kind, ending === "failure" ? "failed" : "canceled");
+    }
+    const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants: getMemoryV6AgentRuntimeOperations() });
+    const turn = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
+    try {
+      const result = await callWithMateMemoryRuntime(f.connection, { method: "POST", path: "/v1/character_context/get",
+        body: { schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, memoryLimit: 0 } },
+        { bindingReference: normal.bindingReference, turnCapability: turn.capability, signal: AbortSignal.timeout(5_000) });
+      const value = result.value as Record<string, any>;
+      assert.equal(value.error, undefined, JSON.stringify(value));
+      assert.equal(value.affect.mode, "active");
+      assert.ok(value.affect.effective.some((component: Record<string, unknown>) => component.targetId === "fixture"));
+    } finally { f.turns.end(turn); }
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 2);
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景Affectの途中保存が失敗または応答喪失しても確認済みprefixを返し、後続を呼ばず確定済みeventを残す"
+// oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録" }
+// fault = "appraiseが部分失敗を全件成功または効果なしへ変換する、後続候補を保存する、または確定済みeventを巻き戻す"
+// observable = "MCP/配布CLIのpartial errorとsaved prefix・failed index、Workerからのevent保存件数とtarget"
+// observation_boundary = "public-boundary"
+// scope = "production handler with failure or lost response at the existing Affect Worker boundary"
+// lifecycle = "permanent"
+// distinction = "入力拒否やAgent失敗のtestでは既存appraiseの複数候補途中失敗と応答不明を観測できない"
+// @end-test-value
+test("途中失敗と保存応答喪失でも先行Affectを保持し後続を呼ばない", async () => {
+  for (const failure of ["before-write", "lost-response"] as const) {
+    const f = await fixture(undefined, handlers);
+    try {
+      seed(f);
+      const record = f.memoryWorker.affectStorage.recordEvent.bind(f.memoryWorker.affectStorage);
+      let attempted = 0;
+      f.memoryWorker.affectStorage.recordEvent = async (event, options) => {
+        attempted++;
+        if (attempted === 2 && failure === "before-write") throw new Error("storage unavailable before dispatch");
+        const result = await record(event, options);
+        if (attempted === 2) throw new Error("storage response lost after commit");
+        return result;
+      };
+      const binding = f.project(start(f, "affect"));
+      const { client } = await f.connect(binding, "memoryUrl");
+      const op = operation("affect", "partial");
+      const candidate = op.input.candidates[0];
+      op.input.candidates = [candidate, { ...candidate, targetId: "uncertain" }, { ...candidate, targetId: "unattempted" }];
+      const response = failure === "before-write"
+        ? (await client.callTool({ name: op.tool, arguments: op.input })).structuredContent!
+        : (await cli(f, binding, op)).value;
+      assert.partialDeepStrictEqual(response, { error: { code: "partial_failure", effect: "partial",
+        details: { failedCandidateIndex: 1 } } });
+      const saved = (response as Record<string, any>).error.details.saved;
+      assert.equal(saved.length, 1);
+      assert.equal(saved[0].candidateIndex, 0);
+      assert.equal(attempted, 2);
+      assert.ok(f.db.prepare("SELECT id FROM character_affect_events_v6 WHERE id = ?").get(saved[0].eventId));
+      assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count,
+        failure === "before-write" ? 1 : 2);
+      assert.deepEqual(f.db.prepare("SELECT target_id FROM character_affect_events_v6 ORDER BY target_id").all().map((row) => row.target_id),
+        failure === "before-write" ? ["fixture"] : ["fixture", "uncertain"]);
+      assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 0);
+    } finally { await f.close(); }
   }
 });

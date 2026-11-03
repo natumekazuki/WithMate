@@ -240,6 +240,7 @@ import {
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
 import { BackgroundExecutionService } from "./providers/background-execution-service.js";
+import { createBackgroundAffectRegistration } from "./character/background-affect-registration.js";
 import { buildProviderAgentRuntimeAuthoritySnapshot } from "./providers/provider-agent-runtime-binding.js";
 import { resolveMemoryV6ProjectCandidate } from "./memory/memory-v6-project-resolver.js";
 import { resolveBundledMemoryCliScriptPath } from "./platform/cli-runtime-paths.js";
@@ -928,6 +929,11 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       providerAgentRuntimeTurns,
       resolveActorSession: resolveAgentRuntimeActorSession,
       sessionHistoryMcp: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer },
+      backgroundRegistration: createBackgroundAffectRegistration(async (scope) => {
+        const worker = mainStoreContext.storageWorker;
+        if (!worker) throw new Error("Main source storage is unavailable.");
+        return worker.stores.session.readMainSource(scope);
+      }),
       routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
