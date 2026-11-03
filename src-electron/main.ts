@@ -241,6 +241,7 @@ import {
 import { GlossaryRuntimeService } from "./glossary/glossary-runtime-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "./providers/provider-agent-runtime-turn-coordinator.js";
 import { BackgroundExecutionService } from "./providers/background-execution-service.js";
+import { BackgroundAffectController } from "./character/background-affect-controller.js";
 import { BackgroundProductionRuntime } from "./providers/background-production-runtime.js";
 import { createBackgroundProviderAgent } from "./providers/background-provider-agent.js";
 import type { SessionBackgroundEvent } from "./session/session-background-events.js";
@@ -747,7 +748,7 @@ const backgroundExecutions = new BackgroundExecutionService({
   closeConnection: (handle) => memoryV6RuntimeApi?.managedMcp?.closeConnection(handle),
 });
 const backgroundSourceKinds: BackgroundRegistration["sourceKinds"] = {
-  "character-memory": ["main"], "target-memory": ["main"], affect: ["main"],
+  "character-memory": ["main"], "target-memory": ["main"], affect: ["main", "auxiliary"],
 };
 const backgroundRuntime = new BackgroundProductionRuntime({
   executions: backgroundExecutions,
@@ -774,6 +775,30 @@ const backgroundRuntime = new BackgroundProductionRuntime({
     resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
   }),
   sourceKinds: backgroundSourceKinds,
+});
+
+const backgroundAffectController = new BackgroundAffectController({
+  runtime: backgroundRuntime,
+  captureSource: (source) => {
+    const worker = mainStoreContext.storageWorker;
+    if (!worker || databaseMaintenanceRequested) throw new Error("Affect source storage is unavailable.");
+    return worker.stores.session.captureBackgroundSource(source);
+  },
+  readMaterials: async (session, source) => {
+    const runtime = memoryV6RuntimeApi;
+    if (!runtime) throw new Error("Affect runtime is unavailable.");
+    const characterId = source.snapshot.session.characterId;
+    const snapshot = await requireCharacterService().createRuntimeSnapshot(characterId);
+    if (!snapshot) throw new Error("Affect Character definition is unavailable.");
+    const currentAffect = await runtime.affectStorage.getEffectiveState({
+      characterId, userId: "local-user", sessionId: session.id,
+      sessionSource: source.history.source,
+    });
+    return { characterDefinition: snapshot.definitionMarkdown, currentAffect };
+  },
+  onFailure: (source, error) => writeAppLog({ level: "warn", kind: "background.affect.failed", process: "main",
+    message: "Background Affect did not complete", data: { sourceKind: source.kind, sessionId: source.sessionId,
+      errorName: error instanceof Error ? error.name : "BackgroundUnavailable" } }),
 });
 
 async function publishBackgroundConversationEvent(event: SessionBackgroundEvent, kind: "main" | "auxiliary"): Promise<void> {
@@ -991,6 +1016,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     });
     mainStoreContext.setMemoryRuntimeStatus("running");
     backgroundRuntime.start();
+    backgroundAffectController.start();
     mainStoreContext.setDatabaseDiagnostics(await inspectCurrentAppDatabase());
   } catch (error) {
     mainStoreContext.setMemoryRuntimeStatus("failed");
@@ -1717,6 +1743,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     "auxiliary-session-close",
                   );
                   agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
+                  backgroundAffectController.forgetSource("auxiliary", auxiliarySessionId);
                   mainStoreContext.executionSelections.forget(auxiliarySessionId);
                   await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
@@ -2720,7 +2747,11 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         issueRuntimeBinding: async (session, provider) => await issueProviderAgentRuntimeBinding(session, provider.id),
         beginRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal),
       },
-      memory: { getAppSettings: () => requireAppSettingsStorage().getSettings() },
+      memory: {
+        getAppSettings: () => requireAppSettingsStorage().getSettings(),
+        getCharacterContextService: () => memoryV6RuntimeApi?.characterContextService ?? null,
+        onCharacterContextFailure: (session, result) => writeAppLog({ level: "warn", kind: "character-context.lifecycle.read-failed", process: "main", message: "Character context was unavailable for an Auxiliary turn", data: { sessionId: session.id, sourceKind: "auxiliary", code: result.error.code, retryable: result.error.retryable, conversationMayContinue: result.error.conversationMayContinue } }),
+      },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: {
         setLiveSessionRun: (sessionId, state) => setLiveSessionRun(sessionId, state),
@@ -2794,6 +2825,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         clearSessionBackgroundActivities,
         invalidateProviderSessionThread,
         revokeSessionAgentRuntimeBindings: (sessionId) => {
+          backgroundAffectController.forgetSource("main", sessionId);
           agentRuntimeBindingRegistry.revokeSession(sessionId);
           auxiliaryLiveRunParents.delete(sessionId, owner);
         },
@@ -3157,6 +3189,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   mainStoreContext.setActivePersistentStoreOwner(null);
   auxiliaryLiveRunParents.clear();
   const memoryRuntimeToStop = memoryV6RuntimeApi;
+  backgroundRuntime.stop();
   memoryV6RuntimeApi = null;
   mainStoreContext.setMemoryRuntimeStatus("stopped");
   if (memoryRuntimeToStop) {

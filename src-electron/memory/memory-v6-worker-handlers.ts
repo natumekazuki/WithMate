@@ -93,16 +93,16 @@ export function createStorageWorkerCommandHandlers(): StorageWorkerCommandHandle
     "memory.moveEntry": (payload) => memory.moveEntry(input(payload)),
     "memory.forgetEntryForReview": (payload) => memory.forgetEntryForReview(input(payload)),
     "affect.recordEvent": (payload) => {
-      const value = input<{ event: Parameters<CharacterAffectStorage["recordEvent"]>[0]; expectedVersion?: string }>(setObservedAt(affect, payload));
-      return affect.recordEvent(value.event, value.expectedVersion ? { expectedVersion: value.expectedVersion } : {});
+      const { event, ...options } = input<{ event: Parameters<CharacterAffectStorage["recordEvent"]>[0] } & NonNullable<Parameters<CharacterAffectStorage["recordEvent"]>[1]>>(setObservedAt(affect, payload));
+      return affect.recordEvent(event, options);
     },
     "affect.correctEvent": (payload) => {
-      const value = input<{ event: Parameters<CharacterAffectStorage["correctEvent"]>[0]; expectedVersion?: string }>(setObservedAt(affect, payload));
-      return affect.correctEvent(value.event, value.expectedVersion ? { expectedVersion: value.expectedVersion } : {});
+      const { event, ...options } = input<{ event: Parameters<CharacterAffectStorage["correctEvent"]>[0] } & NonNullable<Parameters<CharacterAffectStorage["correctEvent"]>[1]>>(setObservedAt(affect, payload));
+      return affect.correctEvent(event, options);
     },
     "affect.reset": (payload) => {
-      const value = input<{ reset: Parameters<CharacterAffectStorage["reset"]>[0]; expectedVersion?: string }>(setObservedAt(affect, payload));
-      return affect.reset(value.reset, value.expectedVersion ? { expectedVersion: value.expectedVersion } : {});
+      const { reset, ...options } = input<{ reset: Parameters<CharacterAffectStorage["reset"]>[0] } & NonNullable<Parameters<CharacterAffectStorage["reset"]>[1]>>(setObservedAt(affect, payload));
+      return affect.reset(reset, options);
     },
     "affect.linkMemoryEpisode": (payload) => {
       const value = input<{ eventId: string; memoryEntryId: string }>(setObservedAt(affect, payload));

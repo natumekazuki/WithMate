@@ -140,7 +140,7 @@ export class CharacterAffectService {
 
   async recordAppraisal(
     candidate: Parameters<CharacterAffectStorage["recordEvent"]>[0],
-    options: { expectedVersion?: string } = {},
+    options: Parameters<CharacterAffectStorage["recordEvent"]>[1] = {},
   ): Promise<{ event: StoredAffectEvent; created: boolean }> {
     if (candidate.memoryEpisode) {
       await this.episodeWriter.validateEpisode({
@@ -161,12 +161,7 @@ export class CharacterAffectService {
     }
   }
 
-  async getEffectiveState(input: {
-    characterId: string;
-    userId: string;
-    sessionId: string;
-    baseline?: readonly AffectBaselineComponent[];
-  }): Promise<EffectiveAffectState & { mode: CharacterAffectServiceMode }> {
+  async getEffectiveState(input: Parameters<CharacterAffectStorage["getEffectiveState"]>[0]): Promise<EffectiveAffectState & { mode: CharacterAffectServiceMode }> {
     return { ...(await this.storage.getEffectiveState(input)), mode: this.mode };
   }
 
