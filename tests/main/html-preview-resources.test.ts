@@ -15,8 +15,12 @@ function explorerAt(workspacePath: string) {
     getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
   });
 }
-const noGit = { readHtmlPreviewHistoryFile: async (): Promise<Uint8Array> => { throw new Error("Unexpected Git read"); } };
+const noGit = {
+  readHtmlPreviewHistoryFile: async (): Promise<Uint8Array> => { throw new Error("Unexpected Git read"); },
+  resolveHistoryFilePreview: async (): Promise<{ name: string; absoluteFilePath: string }> => { throw new Error("Unexpected Git read"); },
+};
 const request = (headers?: HeadersInit) => new Request("https://preview.invalid/", { headers });
+const assetPath = (provider: { pathname: string }, relativePath: string) => new URL(relativePath, `https://preview.invalid${provider.pathname}`).pathname;
 
 // @test-value v2
 // kind = "contract"
@@ -41,7 +45,7 @@ test("HTML resources preserve nested paths, MIME and ranges", async () => {
     await writeFile(path.join(directory, "日本語", "clip.mp4"), "0123456789");
     const provider = await createHtmlPreviewResources(explorerAt(directory), noGit,
       { sessionId: "session-1", rootId: "workspace", relativePath: "日本語/index.html" });
-    assert.equal(provider.pathname, `/${encodeURIComponent("日本語")}/index.html`);
+    assert.ok(provider.pathname.endsWith(`/${encodeURIComponent("日本語")}/index.html`));
     const cssUrl = new URL("styles/main.css", `https://preview.invalid${provider.pathname}`);
     const css = await provider.read(cssUrl.pathname, request());
     assert.equal(css.headers.get("Content-Type"), "text/css");
@@ -63,10 +67,10 @@ test("HTML resources preserve nested paths, MIME and ranges", async () => {
 
 // @test-value v2
 // kind = "invariant"
-// claim = "HTML asset reads stay inside the authorized root or absolute source parent and reject escaping symlinks and replaced roots"
+// claim = "HTML assets preserve actual parent-directory semantics, stay inside the pinned root, and reject escaping symlinks and replaced roots"
 // oracle = { type = "contract", ref = "user request: retain Session/File Preview authorization and prevent arbitrary filesystem reads" }
-// fault = "URL decoding or symlink/root replacement permits reading outside the source's pinned resource root"
-// observable = "provider read rejection for traversal, outside junction, and root replacement; successful absolute-parent asset body"
+// fault = "URL normalization aliases a parent reference to another file or symlink/root replacement permits reading outside the pinned resource root"
+// observable = "rejection of normalized outside and invalid paths, outside junction and root replacement; correct body for a real root reentry"
 // observation_boundary = "public-boundary"
 // scope = "HTML resource provider plus identity-bound local file open"
 // lifecycle = "permanent"
@@ -87,18 +91,20 @@ test("HTML resources reject traversal, escaping links and root replacement", asy
     const explorer = explorerAt(workspace);
     const provider = await createHtmlPreviewResources(explorer, noGit,
       { sessionId: "session-1", rootId: "workspace", relativePath: "index.html" });
-    for (const target of ["/../outside/secret.txt", "/%2e%2e/secret.txt", "/%2fsecret.txt", "/C%3a/secret.txt", "/escape/secret.txt"]) {
+    for (const target of ["/../outside/secret.txt", "/%2e%2e/secret.txt", "/%2fsecret.txt", "/C%3a/secret.txt", assetPath(provider, "escape/secret.txt")]) {
       await assert.rejects(provider.read(target, request()));
     }
     const absolute = await createHtmlPreviewResources(explorer, noGit,
       { sessionId: "session-1", absolutePath: path.join(outside, "index.html") });
-    assert.equal(absolute.pathname, "/index.html");
-    assert.equal(await (await absolute.read("/secret.txt", request())).text(), "secret");
-    await assert.rejects(absolute.read("/../workspace/index.html", request()));
+    assert.equal(await (await absolute.read(assetPath(absolute, "secret.txt"), request())).text(), "secret");
+    for (const target of ["../secret.txt", "../_files/secret.txt", "../workspace/index.html"]) {
+      await assert.rejects(absolute.read(assetPath(absolute, target), request()), /outside the file root/);
+    }
+    assert.equal(await (await absolute.read(assetPath(absolute, "../outside/secret.txt"), request())).text(), "secret");
     await rename(workspace, path.join(directory, "old-workspace"));
     await mkdir(workspace);
     await writeFile(path.join(workspace, "index.html"), "replacement");
-    await assert.rejects(provider.read("/index.html", request()), /root changed/);
+    await assert.rejects(provider.read(provider.pathname, request()), /root changed/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -141,8 +147,9 @@ test("Git HTML resources read selected-commit regular blobs only", async () => {
       resourceKind: "git-commit-file", sessionId: "session-1", rootId: "workspace",
       repositoryId: repositories.repositories[0]!.repositoryId, commitId, relativePath: "index.html",
     });
-    assert.equal(await (await provider.read("/style.css", request())).text(), "old css");
-    await assert.rejects(provider.read("/new.css", request()), /not previewable/);
-    await assert.rejects(provider.read("/link.css", request()), /symbolic links/);
+    assert.equal(await (await provider.read(assetPath(provider, "style.css"), request())).text(), "old css");
+    await assert.rejects(provider.read(assetPath(provider, "new.css"), request()), /not previewable/);
+    await assert.rejects(provider.read(assetPath(provider, "link.css"), request()), /symbolic links/);
+    await assert.rejects(provider.read(assetPath(provider, "../_files/style.css"), request()), /outside the file root/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

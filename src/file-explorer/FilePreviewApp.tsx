@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getWithMateApi, isDesktopRuntime } from "../app/renderer-withmate-api.js";
 import { startAppSettingsSubscription } from "../settings/app-settings-subscription.js";
@@ -17,6 +17,7 @@ import {
   areSessionFileResourcesEqual,
   getSessionFileResourceDisplayPath,
   isFileRootGitHistoryComparisonDiffRequest,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
@@ -266,6 +267,10 @@ export default function FilePreviewApp() {
     }
   }, [loadDiff, payload, showPreview]);
 
+  const previewResource = useMemo(() => !payload || "historyDiff" in payload ? null
+    : isSessionFileGitCommitResource(payload.resource) ? payload.resource
+      : { sessionId: payload.resource.sessionId, absolutePath: payload.displayPath }, [payload]);
+
   if (!isDesktopRuntime()) {
     return <main className="file-preview-window-page"><p>File preview must be opened from the desktop app.</p></main>;
   }
@@ -355,7 +360,7 @@ export default function FilePreviewApp() {
       ) : (
         <SessionFilePreview
           api={api}
-          request={payload.resource}
+          request={previewResource!}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           diffScopes={diffScopes}
           diffAvailabilityMessage={[diffAvailabilityMessage, navigationMessage].filter(Boolean).join(" ")}

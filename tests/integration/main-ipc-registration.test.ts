@@ -612,7 +612,7 @@ type Handler = (...args: unknown[]) => unknown;
 // kind = "security"
 // claim = "画像専用IPCはowning Sessionまたはcurrent preview baseのみ許可し、読込中のbase変更を結果返却前に拒否する"
 // oracle = { type = "contract", ref = "src-electron/ipc/shared.ts: assertSessionFileLinkSender" }
-// fault = "別windowや別session・stale preview baseへ自動画像読込を認可する、または画像権限をgeneric absolute readへ広げる"
+// fault = "別windowや別session・stale preview baseへ画像を公開する、またはdetached Previewが他の通常fileを読む"
 // observable = "画像IPCの返却値・拒否Error、service呼出数、generic read IPCの拒否Error"
 // observation_boundary = "public-boundary"
 // scope = "registered inspect/read image IPC and existing generic file IPC"
@@ -620,7 +620,7 @@ type Handler = (...args: unknown[]) => unknown;
 // impact = "任意windowから画像や一般fileを読み取れてwindow/session権限を逸脱する"
 // distinction = "service testや型検査ではsenderとpreview lifecycleのIPC認可を実行確認できない;既存stubで低コストに確認する"
 // @end-test-value
-test("image IPC authorizes owner and current preview base without broadening generic reads", async () => {
+test("image IPC authorizes owner and current preview base while keeping detached file reads bound", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
   const previewWindow = createWindowStub("file:///file-preview.html?token=preview");
@@ -649,6 +649,7 @@ test("image IPC authorizes owner and current preview base without broadening gen
   registerMainIpcHandlers(ipcMain, deps);
   const request = { sessionId: "aux-1", target: "/outside/image.png" };
   assert.deepEqual(await handlers.get(WITHMATE_INSPECT_SESSION_IMAGE_CHANNEL)?.({}, request), { mimeType: "image/png" });
+  currentWindow = previewWindow;
   await assert.rejects(() => handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, {
     sessionId: "aux-1", absolutePath: "/outside/image.png", offset: 0, length: 1, expectedRevision: "revision",
   }) as Promise<unknown>, /current Preview resource/);
@@ -1803,22 +1804,14 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   });
   assert.deepEqual(openRequests, [openRequest]);
   const outsideResource = { sessionId: "aux-1", absolutePath: "C:/outside/current.md" };
-  await assert.rejects(
-    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, outsideResource) as Promise<unknown>,
-    /current Preview resource/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, {
+  await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, outsideResource);
+  const outsideReadRequest = {
       ...outsideResource,
       offset: 0,
       length: 1024,
-    }) as Promise<unknown>,
-    /current Preview resource/,
-  );
-  await assert.rejects(
-    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, outsideResource) as Promise<unknown>,
-    /current Preview resource/,
-  );
+  };
+  await handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, outsideReadRequest);
+  await handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, outsideResource);
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
       kind: "resource",
@@ -1826,9 +1819,9 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     }) as Promise<unknown>,
     /must be root-scoped/,
   );
-  assert.deepEqual(inspectRequests, []);
-  assert.deepEqual(readRequests, []);
-  assert.deepEqual(openRequests, [openRequest]);
+  assert.deepEqual(inspectRequests, [outsideResource]);
+  assert.deepEqual(readRequests, [outsideReadRequest]);
+  assert.deepEqual(openRequests, [openRequest, outsideResource]);
   const previewRequest = {
     kind: "resource",
     resource: openRequest,
@@ -2070,7 +2063,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     "opened",
   );
   await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, currentPreviewResource);
-  assert.deepEqual(inspectRequests, [currentPreviewResource]);
+  assert.deepEqual(inspectRequests, [outsideResource, currentPreviewResource]);
   assert.deepEqual(
     await handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, currentPreviewResource),
     { status: "opened", targetType: "local-path", target: "C:/repo/src/App.tsx" },

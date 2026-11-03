@@ -12,7 +12,6 @@ import type {
   SessionFileResourceRequest,
   SessionFileRootResourceRequest,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
-import { isSessionFileRootResource } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import type { AuthorizedSessionFileOperationResult } from "./session-file-explorer-service.js";
 import type { NativeFileDropWriteResult } from "./windows-file-drop-clipboard-writer.js";
 
@@ -69,7 +68,7 @@ export class SessionFileObjectCopyService {
         request.target,
         request.baseResource,
       );
-      if (resolution.type !== "file" || !isSessionFileRootResource(resolution.resource)) {
+      if (resolution.type !== "file") {
         return null;
       }
       const confirmation = await authorization.withAuthorizedFilePath(

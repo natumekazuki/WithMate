@@ -176,7 +176,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
   };
   const descriptor: SessionFileDescriptor = {
     ...resource,
-    absoluteFilePath: "C:\\additional\\src\\notes.txt",
+    absoluteFilePath: "C:/repo/src/notes.txt",
     name: "notes.txt",
     kind: "text",
     byteLength: 0,
@@ -186,6 +186,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     revision: "empty-r1",
   };
   const diffRequests: unknown[] = [];
+  const fileResource = { sessionId: resource.sessionId, absolutePath: descriptor.absoluteFilePath };
   const inspectRequests: SessionFilePreviewResourceRequest[] = [];
   let releaseDiff: (() => void) | undefined;
   const diffGate = new Promise<void>((resolve) => {
@@ -203,7 +204,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
         resource,
         ownerSessionId: "session-1",
         windowTitle: "notes.txt",
-        displayPath: "C:/repo/notes.txt",
+        displayPath: descriptor.absoluteFilePath,
         view: { kind: "diff" as const, scope: "working-tree" as const },
       };
     },
@@ -212,7 +213,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     },
     async inspectSessionFile(request: SessionFilePreviewResourceRequest) {
       inspectRequests.push(request);
-      assert.deepEqual(request, resource);
+      assert.deepEqual(request, fileResource);
       return descriptor;
     },
     async listSessionFileRoots() {
@@ -281,14 +282,14 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
     assert.deepEqual(diffRequests, [{ ...resource, scope: "working-tree" }]);
     assert.deepEqual(inspectRequests, []);
     await act(async () => openPreviewButton.click());
-    assert.deepEqual(inspectRequests, [resource]);
+    assert.deepEqual(inspectRequests, [fileResource]);
     const restoredPreview = dom.window.document.querySelector("[aria-label='File preview']");
     assert.ok(restoredPreview);
     assert.equal(restoredPreview.querySelector(".session-file-preview-title strong")?.textContent, "notes.txt");
     assert.equal(dom.window.document.querySelector("[aria-label='Git diff preview']"), null);
     await act(async () => releaseDiff?.());
     assert.equal(dom.window.document.querySelector("[aria-label='File preview'] .session-file-preview-title strong")?.textContent, "notes.txt");
-    assert.deepEqual(inspectRequests, [resource]);
+    assert.deepEqual(inspectRequests, [fileResource]);
     assert.equal(dom.window.document.querySelector("[aria-label='Git diff preview']"), null);
   } finally {
     if (root) {

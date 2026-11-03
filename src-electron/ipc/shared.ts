@@ -26,7 +26,6 @@ import {
   areSessionFileResourcesEqual,
   isFileRootGitHistoryComparisonDiffRequest,
   isSessionFileGitCommitResource,
-  isSessionFileRootResource,
 } from "../../src-shared/file-explorer/file-explorer-contract.js";
 
 import { resolveWorkspaceDirectoryValidationMessage } from "../../src-shared/window/workspace-directory-validation.js";
@@ -214,6 +213,7 @@ export async function assertSessionFileResourceSender(
         sessionId: string,
       ): Awaitable<string | null>;
     },
+  representation: "source" | "absolute" = isSessionFileGitCommitResource(resource) ? "source" : "absolute",
 ): Promise<void> {
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(
     resource.sessionId,
@@ -223,12 +223,12 @@ export async function assertSessionFileResourceSender(
     ownerSessionId &&
     window &&
     deps.resolveSessionWindow(ownerSessionId) === window &&
-    isSessionFileRootResource(resource)
+    !isSessionFileGitCommitResource(resource)
   ) {
     return;
   }
   const currentResource = window
-    ? deps.getFilePreviewWindowResource(window, resource.sessionId)
+    ? deps.getFilePreviewWindowResource(window, resource.sessionId, representation)
     : null;
   if (
     currentResource &&
@@ -264,7 +264,7 @@ export async function assertSessionFileLinkSender(
     return;
   }
   const currentResource = window
-    ? deps.getFilePreviewWindowResource(window, sessionId)
+    ? deps.getFilePreviewWindowResource(window, sessionId, baseResource && isSessionFileGitCommitResource(baseResource) ? "source" : "absolute")
     : null;
   if (
     currentResource &&

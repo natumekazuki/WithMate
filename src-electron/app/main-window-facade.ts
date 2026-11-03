@@ -105,8 +105,9 @@ export class MainWindowFacade {
   getFilePreviewWindowResource(
     window: BrowserWindow,
     sessionId: string,
+    representation?: "source" | "absolute",
   ): SessionFilePreviewResourceRequest | null {
-    return this.deps.getAuxWindowService().getFilePreviewWindowResource(window, sessionId);
+    return this.deps.getAuxWindowService().getFilePreviewWindowResource(window, sessionId, representation);
   }
 
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean {

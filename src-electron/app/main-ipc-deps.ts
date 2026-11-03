@@ -185,7 +185,7 @@ export type MainIpcWindowDepsArgs = {
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
-  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string, representation?: "source" | "absolute"): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;

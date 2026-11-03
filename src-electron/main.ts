@@ -1376,8 +1376,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 closeSessionFilePreviewWindows: (ownerSessionId) => { requireMainWindowFacade().closeFilePreviewWindowsForOwner(ownerSessionId); sessionGraphWindowService.closeOwner(ownerSessionId); },
                 isFilePreviewWindow: (window, sessionId) =>
                   requireMainWindowFacade().isFilePreviewWindow(window, sessionId),
-                getFilePreviewWindowResource: (window, sessionId) =>
-                  requireMainWindowFacade().getFilePreviewWindowResource(window, sessionId),
+                getFilePreviewWindowResource: (window, sessionId, representation) =>
+                  requireMainWindowFacade().getFilePreviewWindowResource(window, sessionId, representation),
                 isFilePreviewTokenWindow: (window, token) =>
                   requireMainWindowFacade().isFilePreviewTokenWindow(window, token),
                 pickDirectory: (targetWindow, initialPath) =>

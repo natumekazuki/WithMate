@@ -75,7 +75,8 @@ const MARKDOWN_BYTES = new TextEncoder().encode("![sample](./image.png)");
 const IMAGE_BYTES = Uint8Array.of(137, 80, 78, 71);
 
 function resourcePath(resource: { relativePath: string } | { absolutePath: string }): string {
-  return "relativePath" in resource ? resource.relativePath : resource.absolutePath;
+  return "relativePath" in resource ? resource.relativePath
+    : resource.absolutePath.replaceAll("\\", "/").replace(/^C:\/workspace\//, "");
 }
 
 const MARKDOWN_DESCRIPTOR: SessionFileDescriptor = {
@@ -219,7 +220,9 @@ function createPreviewApi(
   const api: PreviewApi = {
     ...DEFAULT_IMAGE_COPY_API,
     async inspectSessionImage(request) {
-      assert.deepEqual(request, { sessionId: MARKDOWN_REQUEST.sessionId, baseResource: MARKDOWN_REQUEST, target: "./image.png" });
+      assert.deepEqual(request, { sessionId: MARKDOWN_REQUEST.sessionId, baseResource: {
+        sessionId: MARKDOWN_REQUEST.sessionId, absolutePath: MARKDOWN_DESCRIPTOR.absoluteFilePath,
+      }, target: "./image.png" });
       imageInspectCount += 1;
       return inspectImage(imageInspectCount);
     },
@@ -397,7 +400,8 @@ test("通常とGit履歴のMarkdown画像は本文とlightboxのcopy menuへcont
         assert.deepEqual([mouse, keyboard, largeMouse, largeKeyboard].map((event) => event.defaultPrevented), [true, true, true, true]);
         assert.deepEqual(menuRequests, [{ x: 40, y: 50 }, { x: 70, y: 60 }, { x: 80, y: 90 }, { x: 130, y: 90 }].map((point) => ({
           sessionId: "session-1", point,
-          ...(source.startsWith("/") ? { image: { target: source, baseResource: request } } : {}),
+          ...(source.startsWith("/") ? { image: { target: source, baseResource: isCommit ? request
+            : { sessionId: "session-1", absolutePath: "C:/workspace/docs/readme.md" } } } : {}),
         })));
       } finally {
         if (root) await act(async () => root!.unmount());
@@ -678,7 +682,9 @@ test("HTML File PreviewはReloadでviewを再生成し原文SourceとFindを保�
       const mode = container.querySelector("[aria-label='HTML display mode']");
       assert.equal(mode?.querySelector(".is-active")?.textContent, "Preview");
       assert.equal(mounts.length, 1);
-      assert.deepEqual(mounts[0].source, { kind: "resource", resource: request });
+      assert.deepEqual(mounts[0].source, { kind: "resource", resource: {
+        sessionId: "session-1", absolutePath: `C:/workspace/docs/${name}`,
+      } });
       const reload = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Reload");
       assert.ok(reload);
       await act(async () => reload.click());
@@ -1029,7 +1035,7 @@ test("File Preview はcopy availability APIが有効な場合だけCopy Fileを�
       copyFile.click();
       await Promise.resolve();
     });
-    assert.deepEqual(copyRequests, [IMAGE_DESCRIPTOR]);
+    assert.deepEqual(copyRequests, [{ sessionId: "session-1", absolutePath: IMAGE_DESCRIPTOR.absoluteFilePath }]);
     const copyFeedback = container.querySelector<HTMLElement>(".session-file-preview-copy-feedback");
     assert.equal(copyFeedback?.textContent, "File copy status is unknown.");
     assert.ok(copyFeedback?.classList.contains("error"));
@@ -1671,7 +1677,8 @@ test("Mermaidのfile linkはpreview contextと失敗時の図を保持する", a
             await act(async () => container.querySelector(".message-mermaid-canvas a text")!.dispatchEvent(event));
             assert.equal(event.defaultPrevented, true);
             assert.deepEqual(navigationRequests.at(-1), {
-              kind: "link", sessionId: request.sessionId, target: "../next%20file.md#L10", baseResource: request,
+              kind: "link", sessionId: request.sessionId, target: "../next%20file.md#L10", baseResource: outsideRoot ? request
+                : { sessionId: "session-1", absolutePath: `C:/workspace/docs/diagram.${extension}` },
             });
             assert.equal(container.querySelector(".message-mermaid-canvas svg"), diagram);
             const feedback = container.querySelector(".session-file-preview-feedback[role=alert]");
@@ -2727,7 +2734,7 @@ test("file切替後に完了したOpenの結果を新しいpreviewへ表示し�
     await act(async () => {
       openButton.click();
     });
-    assert.deepEqual(openRequests, [firstRequest]);
+    assert.deepEqual(openRequests, [{ sessionId: "session-1", absolutePath: "C:/workspace/first.txt" }]);
 
     await render(secondRequest);
     await waitFor(() => container.textContent?.includes("second.txt") ?? false);

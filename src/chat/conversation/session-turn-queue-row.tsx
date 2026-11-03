@@ -12,7 +12,7 @@ import { SessionRunFailureRow } from "./session-run-failure.js";
 export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
   return <><article className="message-row user" data-message-source="turn-submission">
     <div className="message-card user"><div className="message-card-content">
-      <MessageRichText text={submission.userMessage} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} />
+      <MessageRichText text={submission.userMessage} resolveImageSource={resolveImageSource} markdownImageContext={markdownImageContext} markdownLinkFileContext={markdownImageContext} />
       {submission.error ? submission.uncertain ? <p className="pending-run-error-note" role="alert">{submission.error}</p> : null
         : <LoadingIndicator inline label="Queued turn" />}
     </div></div>
@@ -74,7 +74,7 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
 export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
   return <><article className="message-row user" data-message-source="turn-queue">
     <div className="message-card user"><div className="message-card-content">
-      <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} />
+      <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
       <SessionTurnQueueStatus {...props} />
     </div></div>
   </article>

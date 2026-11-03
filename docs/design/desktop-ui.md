@@ -397,6 +397,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Git rootがない正常状態はblankで表現する。Changesは変更が0件でも対象Git rootの見出し・path・0件表示を残し、ファイル一覧の本文だけをblankにする。変更ありから0件への更新後や、変更あり・なしの混在でも同じ表示を維持する。Git repositoryのdiscovery・availability・rejectと、Changes / Historyの取得・diff操作の失敗は理由を持つ実エラーとして扱い、正常blankへ潰さない。File Explorerのroot読込失敗は`role="alert"`で示し、読込中はspinner/statusと区別する
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
+  - 通常File Previewの読込・Reload・Open・Show In Explorer・Copy Fileと相対linkの基準は、Mainが解決した実fileのcanonical absolute pathを使う。Workspace／Additional Directoryの登録・解除は開いたPreviewの利用条件にせず、エージェントの作業範囲も変更しない。Git Changes／History／DiffはSession作業rootの対象範囲を維持する
   - ファイル名・操作のheaderと本文の間に、絶対パス専用の全幅領域を置く。pathはread-onlyで、長い場合は折り返して全文を表示し、Tabでfocusして選択・copyできる。狭幅では操作群も折り返す。通常fileはMainが解決したcanonical path、commit snapshotは選択root内の対応pathを表示し、Commit表示で本文の版を区別する。resourceの識別・認可や読込先は表示pathから変更しない
   - Text、Markdown、Mermaid（`.mmd`）、HTML（`.html` / `.htm`）、raster image、SVG、PDF、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - PDFは中央・独立PreviewとCodexの`visualize`による本文埋め込みで同じ閲覧専用readerを使う。本文埋め込みは会話の幅に収めた独立scroll領域とし、上部に元fileのlinkとReloadを置く。文書を主面積とし、reader上部にページ番号／label指定、前後ページ・移動履歴、10%〜800%の倍率、100% reset、Fit Width／Page、90度回転、Continuous／Single Page／Two Pages／Two Pages With CoverとFindを置く。本文はnative scrollとCtrl＋左dragによるpanを持ち、Ctrl＋wheelは保存済みの`Preview Wheel Zoom Step`を次の操作から適用する。折り畳みsidebarはThumbnails、Outline、Layers、Attachments、Infoを切り替える
@@ -413,7 +414,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 共通の倍率操作を持つMermaid、中央・独立File Previewの画像／SVG、会話・Markdownの画像lightboxは、表示領域上のCtrl＋左dragでscroll位置を移動し、Ctrl＋上wheelで拡大、Ctrl＋下wheelで縮小する。wheelはSettingsの`Preview Wheel Zoom Step`で整数1〜100ポイントを選べ、既定は5ポイント刻み（100%→105%）。刻みはapp共通で保存し、保存後の次のwheel操作から適用するが、現在倍率・Fit状態・pan位置は変更しない。Zoom In／Out buttonは10ポイント刻みとし、上下限は共通の10%〜800%で、Fit中は現在の実効倍率を起点にする（10%未満のFitからwheelで拡大する際は10%へ移る）。Ctrlなしのwheelはnative scrollに任せ、Ctrl＋wheelは表示対象だけに作用させてWindow全体のzoomや親scroll操作へ渡さない
   - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。通常Markdown画像とchat画像は本文内・拡大表示のnative context menuに`Copy Image`を持ち、local画像には元fileの絶対pathをcopyする`Copy Path`も表示する。focusした画像previewからShift+F10／Context Menu keyでも操作できる
   - File Explorerのroot、directory、regular file rowはnative context menuに`Copy path`と`Insert path`を表示する。pathはMain processが現在のSession rootから再解決し、copyはlexical absolute pathをclipboardへ書く。insertはworkspace内をworkspace相対、workspace外をslash正規化したabsolute pathとして、既存の`@path`挿入処理へ渡す。menu表示後にactive ownerまたはcomposerの書き込み可否が変わった場合は挿入しない。symbolic linkとother rowは対象外とする
-  - Windowsでは、File Explorerのregular file rowでpath操作の後ろをseparatorで区切り、file preview header、root-scopedなMarkdown local-file linkと同じく、既存regular file一件をExplorer互換のfile objectとしてclipboardへcopyできる。directoryとroot外Markdown linkは対象外とし、Copy Imageやpath文字列のcopyとは別操作にする
+  - Windowsでは、File Explorerのregular file rowでpath操作の後ろをseparatorで区切り、file preview header、Markdown local-file linkと同じく、既存regular file一件をExplorer互換のfile objectとしてclipboardへcopyできる。Markdown linkは送信待ちの本文も含み、作業root外も対象にする。directory・不存在file・外部URLは対象外とし、Copy Imageやpath文字列のcopyとは別操作にする
   - File PreviewのCopy File / Copy Image結果は、共有`AppNotification` primitiveを使ったheader内のoverlayとして表示する。通知は操作列のflex配置に参加せず、操作列の直下・右寄せに重なるため、既存の操作ボタンを移動・折り返しさせない
   - Copy成功はsuccess toneと`role="status"` / `aria-live="polite"`、Copy失敗はerror toneと`role="alert"` / `aria-live="assertive"`で表示する。下端の`session-file-preview-feedback`はpreview自体のエラー専用で、Copy成功通知には使わない。`AppNotification`の現在のconsumerはFile Previewだけとし、他画面への適用は各UIの意味と配置を確認してから行う
   - Ctrl+F は active な chat / Text / Markdown / Mermaid / HTML Source / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、Mermaid、HTML Source、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する。rich previewのCopy／Quoteはブラウザーが選択した本文を使い、倍率toolbarなど選択不可の操作表示を含めない
@@ -519,6 +520,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 添付 toolbar は Agent の作業 chat 用であり、メイトークでは表示しない
   - Add DirectoryとAdd Directory By Pathは隣接した1group内の直接操作とし、中間menuを挟まない。追加済み一覧は別のfolder iconと件数を持つDirs toggleへ分離する
 - composer と textarea の間に独立した attachment tray / chip list は置かない。添付はpopover、paste、textareaへの `@path` 挿入から送信時の解決へ渡す既存経路を維持する
+- Composer attachment work scope: 添付候補と送信直前の再検証は、対象とWorkspace／Additional Directoryをrealpathで解決して実体の包含を判定する。junction／symlinkの置き場所だけで作業範囲を広げず、範囲外の実体はそのdirectoryを明示追加するまで添付しない。捕捉したpathは保持して実行時に再解決する。通常File Preview・Copy Fileとは別の境界とする
 - textarea 内の `@path` 参照
 - `@path` 入力中の workspace file path 候補表示は持たない
 - 手入力または paste された `@path` は送信時に検証し、存在しない path は composer feedback として表示して送信しない
