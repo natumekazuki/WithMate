@@ -301,14 +301,12 @@ describe("SettingsCatalogService", () => {
         broadcastSessions() {}, broadcastAppSettings() {}, broadcastModelCatalog() {},
       });
       const begin = (providerId: string, purpose: "affect" | "target-memory") => {
-        const result = executions.begin({ actorSessionId: session.id, providerId, session,
+        return executions.begin({ actorSessionId: session.id, providerId, session,
           authoritySnapshot: { characterId: session.characterId }, operationGrants: ["session_history.route.read_messages"],
           scope: { purpose, history: { source: { kind: "main", sessionId: session.id,
             incarnationId: getSessionIncarnationId(session), ownerIdentity: "fixture-owner" }, fromMessageSeq: 0, throughMessageSeq: 0 },
           processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] },
         });
-        if (!result.ok) assert.fail(result.reason);
-        return result.execution;
       };
       try {
         const codex = begin("codex", "affect");

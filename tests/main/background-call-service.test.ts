@@ -64,7 +64,7 @@ test("runOnce forwards Agent inputs and keeps admission independently of the mai
   let calls = 0, admitted = 0;
   const begin = f.executions.begin.bind(f.executions);
   f.executions.begin = (input) => {
-    const result = begin(input); if (result.ok) begun = result.execution; return result;
+    begun = begin(input); return begun;
   };
   const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex", operationGrants: [] });
   const first = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
@@ -99,14 +99,14 @@ test("runOnce forwards Agent inputs and keeps admission independently of the mai
 
 // @test-value v2
 // kind = "contract"
-// claim = "Agent終了と例外を区別し、受付通知失敗時はAgentを呼ばず、どの終了でも実行枠を解放する"
+// claim = "Agent終了と例外を区別し、受付通知失敗時はAgentを呼ばず、どの終了でも実行権限を閉じる"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#共通の単発呼出" }
 // fault = "例外を正常終了にする、通知失敗後もAgentを起動する、または失敗でbindingを残す"
 // observable = "結果code、port回数、終了後のbinding件数と再受付"
 // observation_boundary = "consumer"
 // scope = "Agent completion and callback failures"
 // lifecycle = "permanent"
-// impact = "処理失敗が隠れるか枠漏れで後続が止まる"
+// impact = "処理失敗が隠れるか終了済み実行の権限が残る"
 // distinction = "begin単体testにはAgentや受付通知の例外経路がない"
 // @end-test-value
 test("Agent completion and callback errors release ownership", async () => {
@@ -126,40 +126,48 @@ test("Agent completion and callback errors release ownership", async () => {
           : scenario === "coded-agent" ? "PROVIDER_FAILED" : "BACKGROUND_AGENT_FAILED" });
       assert.equal(calls, scenario === "admitted" ? 0 : 1);
       assert.equal(f.bindings.getActiveBindingCount(), 0); assert.equal(f.closes.length, 1);
-      assert.equal(f.executions.begin({ ...base.context, providerId: base.selection.providerId }).ok, true);
+      assert.equal(f.executions.begin({ ...base.context, providerId: base.selection.providerId }).signal.aborted, false);
     } finally { f.executions.stop(); }
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景全体3・用途owner1の見送りではportを呼ばず、Agent待ち中も枠を保持して終了後に再受付する"
-// oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#維持する境界" }
-// fault = "Agent待ち中に枠を解放するか見送りでも受付通知やAgentを呼ぶ"
-// observable = "skipped reason、port回数、binding数、終了後の同owner再実行"
+// claim = "同用途同会話のAgentを並行開始し、各受付を実開始時に通知して個別の完了・取消を他の実行へ波及させない"
+// oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#同時上限の撤廃" }
+// fault = "同用途を見送るか直列化する、通知を完了まで遅延する、または一件の終了で他のadmissionを閉じる"
+// observable = "Agent開始数、終了前の受付通知、実行別結果と取消signal、残った実行のadmission"
 // observation_boundary = "consumer"
-// scope = "runOnce capacity delegation including Main/Auxiliary scope"
+// scope = "concurrent runOnce ownership through Agent awaits"
 // lifecycle = "permanent"
-// impact = "上限超過や同一会話用途の二重実行を許す"
-// distinction = "begin単体testはrunOnceがAgentのawait前にfinishする欠陥を検出しない"
+// impact = "有効な背景処理が開始されないか、別実行の終了で処理と権限が失われる"
+// distinction = "型検査とbegin単体testはrunOnceの通知時点・Agentのawait・個別finallyを確認できない。小さい固定並行数で検証する"
 // @end-test-value
-test("capacity and owner-purpose skips retain slots through Agent invocation", async () => {
-  const f = fixture(), release = deferred(), entered = deferred(); let admitted = 0, agents = 0;
-  const service = new BackgroundCallService({ executions: f.executions, runAgent: async () => {
-    agents += 1; if (agents === 3) entered.resolve(); await release.promise; assertRuntimeTurnAdmission();
+test("concurrent same-scope Agents receive independent admission and cleanup", async () => {
+  const f = fixture(), releases = Array.from({ length: 5 }, deferred);
+  const agents: BackgroundAgentInput[] = []; let admitted = 0;
+  const service = new BackgroundCallService({ executions: f.executions, runAgent: async (input) => {
+    const index = agents.length; agents.push(input);
+    assert.equal(admitted, index + 1);
+    await releases[index]!.promise; assertRuntimeTurnAdmission();
   } });
-  const run = (purpose: BackgroundPurpose, id = "main") => service.runOnce({ ...f.input(purpose, id),
-    onAdmitted: () => { admitted += 1; } });
-  const pending = [run("affect"), run("character-memory"), run("affect", "aux")];
+  const pending = releases.map(() => service.runOnce({ ...f.input(), onAdmitted: () => { admitted += 1; } }));
   try {
-    await entered.promise;
-    assert.deepEqual(await run("affect"), { kind: "skipped", reason: "already_active" });
-    assert.deepEqual(await run("target-memory", "other"), { kind: "skipped", reason: "capacity" });
-    assert.deepEqual([admitted, agents, f.bindings.getActiveBindingCount()], [3, 3, 3]);
-    release.resolve();
-    for (const result of await Promise.all(pending)) assert.deepEqual(result, { kind: "completed" });
-    assert.equal(f.bindings.getActiveBindingCount(), 0); assert.deepEqual(await run("affect"), { kind: "completed" });
-  } finally { release.resolve(); f.executions.stop(); }
+    assert.deepEqual([admitted, agents.length, f.bindings.getActiveBindingCount()], [5, 5, 5]);
+    assert.equal(new Set(agents.map((agent) => agent.binding.bindingId)).size, 5);
+    releases[1]!.resolve(); assert.deepEqual(await pending[1], { kind: "completed" });
+    f.executions.cancel(agents[3]!.binding.bindingId);
+    releases[3]!.resolve(); assert.deepEqual(await pending[3], { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" });
+    assert.equal(f.bindings.getActiveBindingCount(), 3);
+    for (const index of [0, 2, 4]) {
+      assert.equal(agents[index]!.signal.aborted, false);
+      releases[index]!.resolve(); assert.deepEqual(await pending[index], { kind: "completed" });
+    }
+    assert.equal(f.bindings.getActiveBindingCount(), 0);
+    assert.equal(new Set(f.closes).size, 5); assert.equal(f.closes.length, 5);
+  } finally {
+    f.executions.stop(); for (const release of releases) release.resolve(); await Promise.allSettled(pending);
+  }
 });
 
 // @test-value v2
@@ -200,14 +208,14 @@ test("cancellation rejects pending Agent writes while preserving prior effects",
 
 // @test-value v2
 // kind = "contract"
-// claim = "begin時の不正sourceと停止runtimeを見送りへ潰さず、事前取消ではportを呼ばない"
+// claim = "begin時の不正sourceと停止runtimeの例外を保持し、事前取消ではportを呼ばない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#共通の単発呼出" }
-// fault = "begin例外を容量待ちへ変換するか事前取消でもAgentを呼ぶ"
+// fault = "begin例外を正常な終了へ変換するか事前取消でもAgentを呼ぶ"
 // observable = "runOnceのrejectと取消結果、port回数とbinding件数"
 // observation_boundary = "consumer"
 // scope = "begin failures before acquiring a background execution"
 // lifecycle = "permanent"
-// impact = "認可失敗を容量待ちと誤認するか取消済み要求へ生成を課金する"
+// impact = "認可失敗を隠すか取消済み要求へ生成を課金する"
 // distinction = "begin単体testはrunOnceによる例外の誤変換を検出しない"
 // @end-test-value
 test("begin failures remain errors and pre-cancel does not start work", async () => {

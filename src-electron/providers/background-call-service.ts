@@ -3,7 +3,7 @@ import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/ba
 import { runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ProviderAgentRuntimeTurnHandle } from "./provider-agent-runtime-turn-coordinator.js";
-import type { BackgroundExecutionService } from "./background-execution-service.js";
+import type { BackgroundExecution, BackgroundExecutionService } from "./background-execution-service.js";
 
 export type BackgroundCallContext = Omit<
   Parameters<BackgroundExecutionService["begin"]>[0], "providerId" | "session"
@@ -32,7 +32,6 @@ export type BackgroundCallInput = Readonly<{
 }>;
 
 export type BackgroundCallResult =
-  | { kind: "skipped"; reason: "capacity" | "already_active" }
   | { kind: "failed" | "canceled"; code: string }
   | { kind: "completed" };
 
@@ -41,7 +40,7 @@ function errorCode(error: unknown, fallback: string): string {
     ? error.code : fallback;
 }
 
-/** One invocation; execution ownership and capacity remain in BackgroundExecutionService. */
+/** One invocation; execution ownership remains in BackgroundExecutionService. */
 export class BackgroundCallService {
   constructor(private readonly deps: {
     executions: BackgroundExecutionService;
@@ -49,9 +48,9 @@ export class BackgroundCallService {
   }) {}
 
   async runOnce(input: BackgroundCallInput): Promise<BackgroundCallResult> {
-    let begun: ReturnType<BackgroundExecutionService["begin"]>;
+    let execution: BackgroundExecution;
     try {
-      begun = this.deps.executions.begin({ ...input.context, providerId: input.selection.providerId });
+      execution = this.deps.executions.begin({ ...input.context, providerId: input.selection.providerId });
     } catch (error) {
       if (input.context.signal?.aborted && error === input.context.signal.reason) {
         return { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" };
@@ -59,8 +58,6 @@ export class BackgroundCallService {
       // Invalid authority/source and unavailable runtimes retain their existing begin failure.
       throw error;
     }
-    if (!begun.ok) return { kind: "skipped", reason: begun.reason };
-    const { execution } = begun;
     try {
       try {
         input.onAdmitted();

@@ -44,11 +44,9 @@ test("bundled history CLI and managed MCP read the same saved history under the 
     const normalHandle = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
     const normal = { binding: { ...normalBinding, turnCapability: normalHandle.capability } };
     const captured = f.scope();
-    const began = f.executions.begin({ actorSessionId: "main", providerId: "claude", session: f.sessions.get("main")!,
+    const execution = f.executions.begin({ actorSessionId: "main", providerId: "claude", session: f.sessions.get("main")!,
       scope: { ...captured, history: { ...captured.history, fromMessageSeq: 1 } },
       authoritySnapshot: { characterId: "character" }, operationGrants: getSessionHistoryAgentRuntimeOperations() });
-    if (!began.ok) assert.fail(began.reason);
-    const execution = began.execution;
     const background = { binding: f.project(execution) };
     const { client: mcp } = await f.connect(background.binding);
     for (const seq of [2, 3]) f.db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,created_at) VALUES ('main',?,'user',?,'now')")

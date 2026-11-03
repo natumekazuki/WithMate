@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,16 +129,11 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] };
   }
   type ReadOptions = { memoryTargets?: BackgroundExecutionScope["memoryTargets"]; allowedProjectIds?: string[]; authoritySnapshot?: Record<string, unknown> };
-  function start(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations(), options: ReadOptions = {}) {
+  function started(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations(), options: ReadOptions = {}) {
     return executions.begin({ actorSessionId: id, providerId, session: sessions.get(id)!,
       scope: { ...scope(id, purpose), memoryTargets: options.memoryTargets ?? [] },
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: options.allowedProjectIds ?? [],
         ...options.authoritySnapshot }, operationGrants, signal });
-  }
-  function started(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations(), options: ReadOptions = {}) {
-    const result = start(id, providerId, purpose, signal, operationGrants, options);
-    if (!result.ok) assert.fail(result.reason);
-    return result.execution;
   }
   function project(execution: BackgroundExecution): ProviderAgentRuntimeBindingProjection {
     const binding = { ...execution.binding, memoryRuntimeOwner: owner };
@@ -159,7 +153,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       [WITHMATE_MANAGED_MCP_TOKEN_HEADER]: binding.managedMcp!.token, ...(sessionId ? { "mcp-session-id": sessionId } : {}) },
       body: JSON.stringify({ jsonrpc: "2.0", id: 71, method: "tools/call", params: { name, arguments: args } }) });
   }
-  return { directory, db, sessions, scope, start, started, project, connect, request, bindings, turns, executions, host, worker, memoryWorker, memory, connection, auxiliary,
+  return { directory, db, sessions, scope, started, project, connect, request, bindings, turns, executions, host, worker, memoryWorker, memory, connection, auxiliary,
     async connectRuntimeContext(env: NodeJS.ProcessEnv, credential = connection.credential) {
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       const server = createWithMateSessionHistoryMcpServer({ env, connection: { ...connection, credential } }, getSessionHistoryAgentRuntimeOperations());

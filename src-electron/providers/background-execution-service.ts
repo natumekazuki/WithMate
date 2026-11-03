@@ -11,7 +11,7 @@ export type BackgroundExecution = Readonly<{
   admission: RuntimeTurnAdmission;
 }>;
 
-type ActiveExecution = { execution: BackgroundExecution; abort: AbortController; scopeKey: string; removeAbort?: () => void };
+type ActiveExecution = { execution: BackgroundExecution; abort: AbortController; removeAbort?: () => void };
 
 /** In-memory invocation lifetime only; it does not enqueue work or advance processing checkpoints. */
 export class BackgroundExecutionService {
@@ -32,7 +32,7 @@ export class BackgroundExecutionService {
     session: Pick<Session, "id" | "incarnationId" | "accessMode" | "sourceSchemaVersion" | "sessionKind" | "characterId">;
     scope: BackgroundExecutionScope;
     signal?: AbortSignal;
-  }): { ok: true; execution: BackgroundExecution } | { ok: false; reason: "capacity" | "already_active" } {
+  }): BackgroundExecution {
     if (!this.#accepting) throw new Error("Background execution runtime is unavailable.");
     input.signal?.throwIfAborted();
     const source = input.scope.history.source;
@@ -42,9 +42,6 @@ export class BackgroundExecutionService {
       || input.authoritySnapshot?.characterId !== input.session.characterId) {
       throw new Error("Background execution requires its current eligible source Session and Character.");
     }
-    const scopeKey = JSON.stringify([input.scope.purpose, source.ownerIdentity]);
-    if ([...this.#active.values()].some((active) => active.scopeKey === scopeKey)) return { ok: false, reason: "already_active" };
-    if (this.#active.size >= 3) return { ok: false, reason: "capacity" };
     const binding = this.deps.bindings.issueBackground(input);
     const handle = this.deps.turns.beginBackground({ actorSessionId: input.actorSessionId,
       providerId: binding.providerId, bindingId: binding.bindingId });
@@ -55,14 +52,14 @@ export class BackgroundExecutionService {
         return this.#active.get(binding.bindingId)?.execution === execution && current.ok
           && current.binding.bindingId === binding.bindingId && current.binding.executionGeneration === binding.executionGeneration;
       } } });
-    const active: ActiveExecution = { execution, abort, scopeKey };
+    const active: ActiveExecution = { execution, abort };
     this.#active.set(binding.bindingId, active);
     if (input.signal) {
       const cancel = () => this.cancel(binding.bindingId);
       input.signal.addEventListener("abort", cancel, { once: true });
       active.removeAbort = () => input.signal!.removeEventListener("abort", cancel);
     }
-    return { ok: true, execution };
+    return execution;
   }
 
   finish(execution: BackgroundExecution): void {

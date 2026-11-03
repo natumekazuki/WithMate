@@ -2,13 +2,13 @@
 
 ## 共通基盤の責務
 
-`BackgroundExecutionService`は一回の背景実行と同時上限を所有する。`BackgroundCallService.runOnce()`はこのserviceへ実行を委譲し、注入されたAgent portを一度呼ぶ。三用途は`character-memory`、`target-memory`、`affect`であり、通常Session・Auxiliaryの実行状態・threadを書き換えない。
+`BackgroundExecutionService`は呼出しごとの背景実行の寿命を所有する。`BackgroundCallService.runOnce()`はこのserviceへ実行を委譲し、注入されたAgent portを一度呼ぶ。三用途は`character-memory`、`target-memory`、`affect`であり、通常Session・Auxiliaryの実行状態・threadを書き換えない。
 
 `AgentRuntimeBindingRegistry.issueBackground()`は呼出しごとの新規binding IDを発行する。actorSessionIdは元の実Sessionで、背景Providerは元SessionのProviderと独立する。通常bindingの再利用indexへ背景を入れず、通常turnの次回開始と相互に置換しない。
 
 sourceは既存`isReadOnlySession`の対象とcharacter-authoringを除外する。開始時に実SessionとscopeのSession／incarnation／Characterを照合する。主会話のCancelと通常Window closeは背景取消へ接続しない。
 
-背景全体3件、用途×conversation ownerIdentityごと1件までを保持する。満杯・同用途の実行中は明示的な起動見送りを返し、bindingを発行しない。永続queue・timer・第二の実行管理表は持たない。Mainはruntime開始成功で`start()`し、停止開始で`stop()`して実行中の権限を失効させる。
+背景の同時数にアプリ独自の上限を設けず、同じ用途・同じ会話でも独立したbinding／handle／admissionで並行開始できる。`begin()`は開始した`BackgroundExecution`を直接返す。実行中mapは取消・失効・終了時cleanupに用い、一件の終了や取消で他の実行を終了しない。待機queue・代替の同時数制限・直列化・timer・第二の実行管理表は持たない。Mainはruntime開始成功で`start()`し、停止開始で`stop()`して実行中の権限を失効させる。
 
 ## 共通の単発呼出
 
@@ -16,13 +16,13 @@ sourceは既存`isReadOnlySession`の対象とcharacter-authoringを除外する
 
 - `context`: 実Session、actorSessionId、authority snapshot、operation grants、scope、任意の背景signal。
 - `selection`／`userInput`: 背景Provider／Modelと用途入力。元SessionのProvider／threadは変更しない。
-- `onAdmitted`: 枠取得後の同期callback。起動側の開始位置更新用であり、保存成功通知ではない。
+- `onAdmitted`: 実行を開始した直後の同期callback。起動側の開始位置更新用であり、保存成功通知ではない。
 
 `BackgroundAgentPort`は`BackgroundAgentInput`のsession・scope・selection・userInput・binding・handle・signalを受け、同一実行内のbound MCP／CLIで材料を読み、必要な登録を行う。`void | Promise<void>`で実行終了を伝え、保存用final schema／parser／後段save callbackは持たない。通常threadや暗黙のProvider履歴を材料の代用にしない。実Provider adapterは未接続である。
 
 順序は`begin → onAdmitted → runAgent → finish`。Agent実行全体に同じ`RuntimeTurnAdmission`を適用する。完了・失敗・取消のいずれでもfinallyでfinishし、専用の保存phaseは設けない。実行中も通常turnを予約・終了せず、主会話を待機させない。
 
-capacity／already_activeは`skipped`でcallbackを呼ばない。beginのsource／authority不備と停止runtimeは既存例外を保持する。事前取消・実行中取消は`canceled`、AgentまたはonAdmittedの失敗は`failed`、正常終了は`completed`を返す。これらは実行の結果であり、保存成功・保存件数・全件未保存を意味しない。自然文の完了宣言も保存成功の証明にしない。
+beginのsource／authority不備と停止runtimeは既存例外を保持し、callbackを呼ばない。事前取消・実行中取消は`canceled`、AgentまたはonAdmittedの失敗は`failed`、正常終了は`completed`を返す。これらは実行の結果であり、保存成功・保存件数・全件未保存を意味しない。自然文の完了宣言も保存成功の証明にしない。
 
 ## 登録と保存効果
 
@@ -85,7 +85,7 @@ Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決�
 
 `src-shared/memory-recording/`は二用途の頻度と構造化候補を扱う。Provider、DB、timer、admission取得、保存処理は持たない。
 
-`memory-recording-frequency.ts`は`character-memory`と`target-memory`に独立した既定5 Turn／idle 5分を提供する。設定validatorはTurn数を1以上の安全な整数、idle分数を正の有限値として検証し、不正値を既定値へ置換しない。`getMemoryRecordingTrigger`は呼出側がowner×用途ごとに渡す未開始の終端Turn件数・頻度・実行中状態・連続idle分数から、`none`／`turn_count`／`idle`だけを返す。0件は起動せず、N件以上は実行中でも件数条件を満たし、端数は実行中でなくT分idleのときだけ条件を満たす。全体上限や実開始は既存admissionの責務である。
+`memory-recording-frequency.ts`は`character-memory`と`target-memory`に独立した既定5 Turn／idle 5分を提供する。設定validatorはTurn数を1以上の安全な整数、idle分数を正の有限値として検証し、不正値を既定値へ置換しない。`getMemoryRecordingTrigger`は呼出側がowner×用途ごとに渡す未開始の終端Turn件数・頻度・実行中状態・連続idle分数から、`none`／`turn_count`／`idle`だけを返す。0件は起動せず、N件以上は実行中でも件数条件を満たし、端数は実行中でなくT分idleのときだけ条件を満たす。実開始とその通知は共通の単発呼出が担う。本番の発火と未開始位置管理は未接続である。
 
 `memory-recording-candidates.ts`は用途別schemaとvalidatorを提供する。候補ありは非空配列、候補なしは明示的な`no_candidates`だけを受け入れ、未知fieldや不正値を拒否する。Characterは既存episode型と事実／受け取りの区別、対象Memoryは既存kind・本文・tagと許可slotを使う。本文の制限・trim・tag正規化は通常Memory appendと同じ純粋validatorを共用する。
 

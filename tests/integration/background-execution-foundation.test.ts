@@ -101,28 +101,45 @@ test("専用endpointと具体的grantで通常turn・許可外操作・別bindin
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景実行の終了と取消はHTTP tokenと同一admissionを失効させる"
+// claim = "同用途同会話の並行実行は個別の終了・取消でそのHTTP tokenとadmissionだけを失効し、runtime停止で残りも失効する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#接続と論理実行の寿命" }
-// fault = "finish後も旧tokenで読めるか、未確定保存を認可する"
-// observable = "旧tokenのHTTP 401、admissionの例外、取消signal"
+// fault = "同会話の実行identityを共有して他件を失効させるか、終了済み実行のread・未確定保存を認可する"
+// observable = "実行別binding・capability・失効state、旧tokenのHTTP 401、admission例外、残った実MCP read"
 // observation_boundary = "public-boundary"
-// scope = "background completion and cancellation"
+// scope = "five parallel same-scope background bindings with real MCP host and runtime shutdown"
 // lifecycle = "permanent"
-// impact = "終了済み背景が元会話を読み続けるか、取消済みの遅延結果を適用する"
-// distinction = "通常turnのendだけでは独立した背景binding・host token・admissionの終了を確認できない"
+// impact = "別実行が誤って終了するか、終了済み背景が元会話を読み続けて遅延結果を適用する"
+// distinction = "型検査と単発のendでは並行する実binding・host token・admissionの分離を確認できない。固定5件で寿命契約を観測する"
 // @end-test-value
-test("背景のfinishと取消がMCPとadmissionを終了する", async () => {
+test("同用途同会話の並行実行を個別終了しruntime停止で残りも失効する", async () => {
   const f = await fixture();
   try {
-    const execution = f.started();
-    const binding = f.project(execution);
-    f.executions.finish(execution);
-    assert.equal((await f.request(binding, binding.managedMcp!.sessionHistoryUrl!, "session_history.get_message")).status, 401);
-    assert.throws(() => runWithRuntimeTurnAdmission(execution.admission, () => undefined), /no longer active/);
-    const cancelled = f.started();
-    f.executions.cancel(cancelled.binding.bindingId);
-    assert.equal(cancelled.signal.aborted, true);
-    assert.throws(() => runWithRuntimeTurnAdmission(cancelled.admission, () => undefined), /no longer active/);
+    const executions = Array.from({ length: 5 }, () => f.started());
+    const bindings = executions.map((execution) => f.project(execution));
+    const connections = await Promise.all(bindings.map((binding) => f.connect(binding)));
+    assert.equal(new Set(bindings.map((binding) => binding.bindingId)).size, 5);
+    assert.equal(new Set(executions.map((execution) => execution.handle.capability)).size, 5);
+    assert.equal(new Set(executions.map((execution) => execution.admission.state)).size, 5);
+    f.executions.finish(executions[0]!);
+    f.executions.cancel(executions[1]!.binding.bindingId);
+    for (const index of [0, 1]) {
+      assert.equal(executions[index]!.signal.aborted, true);
+      assert.throws(() => runWithRuntimeTurnAdmission(executions[index]!.admission, () => undefined), /no longer active/);
+      assert.equal((await f.request(bindings[index]!, bindings[index]!.managedMcp!.sessionHistoryUrl!, "session_history.get_message")).status, 401);
+    }
+    for (const index of [2, 3, 4]) {
+      assert.equal(executions[index]!.signal.aborted, false);
+      runWithRuntimeTurnAdmission(executions[index]!.admission, () => undefined);
+      assert.partialDeepStrictEqual((await connections[index]!.client.callTool({ name: "session_history.get_message", arguments: { seq: 0 } })).structuredContent,
+        { ok: true, text: "saved source" });
+    }
+    f.executions.stop();
+    assert.equal(f.bindings.getActiveBindingCount(), 0);
+    for (const [index, execution] of executions.entries()) {
+      assert.equal(execution.signal.aborted, true);
+      assert.throws(() => runWithRuntimeTurnAdmission(execution.admission, () => undefined), /no longer active/);
+      assert.equal((await f.request(bindings[index]!, bindings[index]!.managedMcp!.sessionHistoryUrl!, "session_history.get_message")).status, 401);
+    }
   } finally { await f.close(); }
 });
 
@@ -153,31 +170,24 @@ test("親Session失効がMainとAuxiliaryの背景保存権限を終了する", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "全体3・用途会話1の起動見送りはbindingを増やさず、現在のread-onlyとauthoring sourceを背景に採用しない"
+// claim = "現在のread-onlyと旧schema保護中・authoringのsourceを背景に採用しない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#共通基盤の責務" }
-// fault = "満杯で実行を積み増す、source保護を新旧accessModeだけの比較で落とす、または制作会話を自動記録対象にする"
-// observable = "beginのreason、binding件数、終了後の再受付、source適格性の例外"
+// fault = "source保護を新旧accessModeだけの比較で落とすか、制作会話を自動記録対象にする"
+// observable = "source適格性の例外とbinding未発行"
 // observation_boundary = "public-boundary"
 // scope = "background invocation admission without queue or inference"
 // lifecycle = "permanent"
-// impact = "背景呼出しが無制限に増えるか、保護中の履歴・制作上の仮定を自動生成へ渡す"
-// distinction = "型検査ではresource枠や旧schema保護を確認できない。固定3件の小さいfixtureで未起動と実行中を区別する"
+// impact = "保護中の履歴・制作上の仮定を自動生成へ渡す"
+// distinction = "Session型はread-onlyや旧schemaも表すため、型検査では開始時の適格性判定を確認できない"
 // @end-test-value
-test("背景の上限・重複起動とsourceの適格性を守る", async () => {
+test("背景sourceの適格性を守る", async () => {
   const f = await fixture();
   try {
-    const first = f.started();
-    f.started("main", "codex", "character-memory");
-    f.started("main", "claude", "target-memory");
-    assert.deepEqual(f.start(), { ok: false, reason: "already_active" });
-    assert.deepEqual(f.start("other"), { ok: false, reason: "capacity" });
-    assert.equal(f.bindings.getActiveBindingCount(), 3);
-    f.executions.finish(first);
-    f.started("other");
     const session = f.sessions.get("main")!;
     for (const override of [{ accessMode: "legacy_readonly" as const }, { sourceSchemaVersion: 1 }, { sessionKind: "character-authoring" as const }]) {
       f.sessions.set("main", { ...session, ...override });
-      assert.throws(() => f.start(), /eligible source/);
+      assert.throws(() => f.started(), /eligible source/);
+      assert.equal(f.bindings.getActiveBindingCount(), 0);
     }
   } finally { await f.close(); }
 });
@@ -192,7 +202,7 @@ test("背景の上限・重複起動とsourceの適格性を守る", async () =>
 // scope = "provider-specific revocation and Main-owned runtime shutdown"
 // lifecycle = "permanent"
 // impact = "無効化されたProviderの遅延結果が保存可能なまま残る"
-// distinction = "host停止だけでは呼出上限を所有するserviceの受付停止を確認できないため、Mainと同じstop/startで終了・新規開始停止・再開を確認する"
+// distinction = "host停止だけでは実行寿命を所有するserviceの受付停止を確認できないため、Mainと同じstop/startで終了・新規開始停止・再開を確認する"
 // @end-test-value
 test("Provider失効とruntime停止が背景の論理寿命まで終了する", async () => {
   const f = await fixture();
@@ -207,7 +217,7 @@ test("Provider失効とruntime停止が背景の論理寿命まで終了する",
     f.executions.stop();
     assert.throws(() => runWithRuntimeTurnAdmission(codex.admission, () => undefined), /no longer active/);
     assert.throws(() => runWithRuntimeTurnAdmission(claude.admission, () => undefined), /no longer active/);
-    assert.throws(() => f.start(), /runtime is unavailable/);
+    assert.throws(() => f.started(), /runtime is unavailable/);
     f.executions.start();
     assert.equal(f.started().signal.aborted, false);
   } finally { await f.close(); }

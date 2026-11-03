@@ -1,4 +1,3 @@
-import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -94,11 +93,9 @@ export async function backgroundAffectFixture(diagnosticSink?: StorageOperationD
   }
   function start(capturedScope = scope()) {
     const source = capturedScope.history.source;
-    const result = executions.begin({ actorSessionId: source.sessionId, providerId: "codex",
+    return executions.begin({ actorSessionId: source.sessionId, providerId: "codex",
       session: { ...session, id: source.sessionId, incarnationId: source.incarnationId }, scope: capturedScope,
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants: [] });
-    assert.ok(result.ok);
-    return result.execution;
   }
   return { db, worker, affect, context, deps, bindings, turns, executions, session, closes, scope, start, episodeCalls: () => episodeCalls,
     eventCount: () => (db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get() as { count: number }).count,
