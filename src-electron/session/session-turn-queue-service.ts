@@ -32,6 +32,7 @@ export class SessionTurnQueueService {
   private readonly blocked = new Set<string>();
   private readonly lastClaim = new Map<string, SessionTurnQueueReceipt>();
   private readonly wakeRequested = new Set<string>();
+  private readonly edits = new Map<string, { incarnationId: string; id: string }>();
   private closing = false;
   private closed = false;
 
@@ -74,6 +75,7 @@ export class SessionTurnQueueService {
   cancelQueued(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     return this.track(this.withLock(owner.sessionId, async () => {
+      this.assertNotEditing(owner, id);
       const receipt = await this.deps.store.cancelQueued(owner, id);
       if (this.isCurrentOwner(owner)) {
         this.notify(owner);
@@ -81,6 +83,61 @@ export class SessionTurnQueueService {
       }
       return receipt;
     }));
+  }
+
+  beginQueuedEdit(owner: SessionTurnQueueOwner, id: string, validateOwner: () => Promise<void>): Promise<SessionTurnQueueReceipt> {
+    this.requireAccepting();
+    return this.track(this.withLock(owner.sessionId, async () => {
+      this.requireAccepting();
+      await validateOwner();
+      const edit = this.edits.get(owner.sessionId);
+      if (edit && (edit.incarnationId !== owner.incarnationId || edit.id !== id)) throw new Error("Another queued message is being edited.");
+      const receipt = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
+      if (!receipt || receipt.state !== "queued") throw new Error("Only a queued receipt can be edited.");
+      this.adoptOwner(owner);
+      this.edits.set(owner.sessionId, { incarnationId: owner.incarnationId, id });
+      return receipt;
+    }));
+  }
+
+  updateQueued(owner: SessionTurnQueueOwner, id: string,
+    prepare: (receipt: SessionTurnQueueReceipt) => Promise<{ userMessage: string; attachments: SessionTurnQueueCapturedInput["attachments"] }>): Promise<SessionTurnQueueReceipt> {
+    this.requireAccepting();
+    return this.track(this.withLock(owner.sessionId, async () => {
+      this.requireAccepting();
+      const edit = this.edits.get(owner.sessionId);
+      if (edit?.incarnationId !== owner.incarnationId || edit.id !== id) throw new Error("The queued message is not being edited.");
+      const current = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
+      if (!current || current.state !== "queued") throw new Error("Only a queued receipt can be edited.");
+      const input = await prepare(current);
+      const receipt = await this.deps.store.updateQueued(owner, id, input);
+      this.edits.delete(owner.sessionId);
+      this.notify(owner);
+      this.wake(owner.sessionId);
+      return receipt;
+    }));
+  }
+
+  cancelQueuedEdit(owner: SessionTurnQueueOwner, id: string): Promise<void> {
+    return this.track(this.withLock(owner.sessionId, async () => {
+      const edit = this.edits.get(owner.sessionId);
+      if (!edit) return;
+      if (edit.incarnationId !== owner.incarnationId || edit.id !== id) throw new Error("The queued edit identity changed.");
+      this.edits.delete(owner.sessionId);
+      this.wake(owner.sessionId);
+    }));
+  }
+
+  releaseQueuedEdit(sessionId: string): Promise<void> {
+    return this.track(this.withLock(sessionId, async () => {
+      this.edits.delete(sessionId);
+      this.wake(sessionId);
+    }));
+  }
+
+  private assertNotEditing(owner: SessionTurnQueueOwner, id: string): void {
+    const edit = this.edits.get(owner.sessionId);
+    if (edit?.incarnationId === owner.incarnationId && edit.id === id) throw new Error("The queued message is being edited.");
   }
 
   reorderQueued(owner: SessionTurnQueueOwner, expectedQueuedIds: string[], queuedIds: string[]) {
@@ -101,6 +158,7 @@ export class SessionTurnQueueService {
     return this.track((async () => {
       const receipt = await this.withLock(owner.sessionId, async () => {
         this.requireAccepting();
+        this.assertNotEditing(owner, id);
         if (!this.deps.sendInput) throw new Error("Queued Session input is unavailable.");
         const candidate = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
         if (!candidate || candidate.state !== "queued") throw new Error("The queued input is no longer available.");
@@ -216,7 +274,7 @@ export class SessionTurnQueueService {
 
   wake(sessionId: string): void {
     const owner = this.owners.get(sessionId);
-    if (this.closing || this.blocked.has(sessionId) || !owner) return;
+    if (this.closing || this.blocked.has(sessionId) || this.edits.has(sessionId) || !owner) return;
     if (this.drains.has(sessionId)) {
       this.wakeRequested.add(sessionId);
       return;
@@ -261,7 +319,7 @@ export class SessionTurnQueueService {
     const { sessionId } = owner;
     while (!this.closing && this.isCurrentOwner(owner) && !this.blocked.has(sessionId)) {
       const receipt = await this.withLock(sessionId, async () => {
-        if (this.closing || !this.isCurrentOwner(owner) || this.blocked.has(sessionId) || await this.deps.isRunInFlight(sessionId)) return null;
+        if (this.closing || !this.isCurrentOwner(owner) || this.blocked.has(sessionId) || this.edits.has(sessionId) || await this.deps.isRunInFlight(sessionId)) return null;
         const active = await this.deps.store.listActive(owner);
         if (this.closing || !this.isCurrentOwner(owner) || await this.deps.isRunInFlight(sessionId)) return null;
         for (const released of active) {
@@ -329,6 +387,7 @@ export class SessionTurnQueueService {
     if (!this.isCurrentOwner(owner)) {
       this.blocked.delete(owner.sessionId);
       this.lastClaim.delete(owner.sessionId);
+      this.edits.delete(owner.sessionId);
     }
     this.owners.set(owner.sessionId, { ...owner });
   }

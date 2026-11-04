@@ -7,6 +7,7 @@ import {
 } from "../../src-shared/settings/chat-layout-preference.js";
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { normalizeSessionSidePane, type SessionSidePane } from "../../src-shared/settings/session-side-pane.js";
+import { normalizeModelAvailability } from "../../src-shared/settings/model-availability.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "../storage/database-schema-v1.js";
 import { SESSION_GRAPH_CONTRACT_INITIALIZED_KEY } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
@@ -34,6 +35,7 @@ const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY = "glossary_proactive_create_limit";
 const GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY = "glossary_proactive_create_limit_initialized";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
+const MODEL_AVAILABILITY_KEY = "model_availability_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
 const OBSOLETE_MICROCOPY_SETTING_KEYS = [
@@ -404,6 +406,11 @@ export class AppSettingsStorage {
       settings.glossaryProactiveCreateLimit = null;
     }
 
+    const modelAvailabilityJson = rows.find((row) => row.setting_key === MODEL_AVAILABILITY_KEY)?.setting_value;
+    if (modelAvailabilityJson !== undefined) {
+      settings.modelAvailability = normalizeModelAvailability(JSON.parse(modelAvailabilityJson));
+    }
+
     const providerSettingsJson = rows.find((row) => row.setting_key === CODING_PROVIDER_SETTINGS_KEY)?.setting_value;
     if (providerSettingsJson) {
       try {
@@ -466,6 +473,15 @@ export class AppSettingsStorage {
     // Chat layout preferences have their own write path so stale full-settings snapshots cannot overwrite them.
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(MODEL_AVAILABILITY_KEY, JSON.stringify(normalized.modelAvailability), updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

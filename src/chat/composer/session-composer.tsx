@@ -58,6 +58,7 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
+  queuedTurnEdit?: { busy: boolean; canceling: boolean; unavailable: boolean; onSubmit(): void; onCancel(): void };
   isActive?: boolean;
   directoryScopeLabel?: string;
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
@@ -120,6 +121,7 @@ export type SessionComposerExpandedProps = {
   speedOptions: Array<{ value: CodexSpeed; label: string }>;
   selectedCodexSpeed: CodexSpeed;
   modelOptions: ModelSelectOption[];
+  modelAvailability?: import("../../../src-shared/settings/model-availability.js").ModelAvailabilitySettings;
   modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
   modelDiscoveryError?: string;
   modelDiscoveryHasCache?: boolean;
@@ -162,6 +164,7 @@ export type SessionComposerExpandedProps = {
 };
 
 export function SessionComposerExpanded({
+  queuedTurnEdit,
   isActive = true,
   composerController,
   onRetryComposerSave,
@@ -223,6 +226,7 @@ export function SessionComposerExpanded({
   speedOptions = [],
   selectedCodexSpeed = "standard",
   modelOptions,
+  modelAvailability,
   modelDiscoveryStatus,
   modelDiscoveryError,
   modelDiscoveryHasCache,
@@ -274,8 +278,9 @@ export function SessionComposerExpanded({
   const displayedDraft = composerController ? composerControllerState.draft : draft;
   const composerFrozen = composerController?.registry.isFrozen === true;
   const composerSaveFailed = composerControllerState.saveState === "error";
-  const canQueueTurn = isRunning && !!onQueueTurn;
-  const composerControlsDisabled = !isActive || composerBlocked || composerFrozen || (isRunning && !canQueueTurn);
+  const canQueueTurn = !!queuedTurnEdit || isRunning && !!onQueueTurn;
+  const composerControlsDisabled = !isActive || composerBlocked || composerFrozen || !!queuedTurnEdit?.busy || (isRunning && !canQueueTurn);
+  const executionControlsDisabled = composerControlsDisabled || !!queuedTurnEdit;
   const turnRecoveryBusyReason = turnRecoveryAction === "check" ? "Checking turn acceptance."
     : turnRecoveryAction === "retry" ? "Retrying the original turn." : "";
   const projectedComposerSendability = composerController
@@ -303,7 +308,7 @@ export function SessionComposerExpanded({
       : sendButtonTitle;
   const showBusySendState = !turnRecoveryAction && (queueTurnBusy || ((!isRunning || canSendInput || canQueueTurn) && displayedComposerSendability.isBusy === true));
   const sendDisabled = (isRunning && !canSendInput && !canQueueTurn) || (isCanceling && !canQueueTurn)
-    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction;
+    || displayedIsSendDisabled || composerBlocked || composerFrozen || queueTurnBusy || !!turnRecoveryAction || !!queuedTurnEdit?.unavailable;
   const sendDisabledReason = composerFrozen
     ? "Input is frozen while the window is closing."
     : turnRecoveryAction === "check"
@@ -320,7 +325,7 @@ export function SessionComposerExpanded({
                 ? displayedComposerSendability.primaryFeedback || "Message cannot be sent in this conversation."
                 : displayedSendButtonTitle || displayedComposerSendability.busyReason || "Message cannot be sent.";
   const sendTitle = appendShortcutLabel(
-    sendDisabled ? sendDisabledReason : displayedSendButtonTitle || "Send",
+    sendDisabled ? sendDisabledReason : queuedTurnEdit ? "Submit" : displayedSendButtonTitle || "Send",
     SHORTCUT_COMMAND_IDS.composerSubmit,
     undefined,
     keyboardShortcuts,
@@ -410,7 +415,7 @@ export function SessionComposerExpanded({
         <div className="composer-attachments-toolbar">
           {showAttachmentControls ? (
             <ComposerAttachmentMenu
-              disabled={!isActive || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen}
+              disabled={!isActive || (isRunning && !canSendInput && !onQueueTurn) || composerBlocked || composerFrozen || !!queuedTurnEdit?.busy}
               isOpen={isActive && isAttachmentMenuOpen}
               onOpenChange={(isOpen) => {
                 if (isOpen) {
@@ -468,7 +473,7 @@ export function SessionComposerExpanded({
               loading={isCustomAgentListLoading}
               label={selectedCustomAgentLabel}
               title={selectedCustomAgentTitle}
-              disabled={!canSelectCustomAgent || composerControlsDisabled}
+              disabled={!canSelectCustomAgent || executionControlsDisabled}
               onSelect={onSelectCustomAgent}
               onClose={onCloseAgentPicker}
               onToggle={() => {
@@ -674,7 +679,7 @@ export function SessionComposerExpanded({
           ) : null}
           {submissionError && !onCheckTurnReceipt ? (
             <div id={submissionErrorId} className="composer-save-feedback">
-              <span role="status">Message could not be sent.</span>
+              <span role="status">{queuedTurnEdit ? "Queued message edit could not be completed." : "Message could not be sent."}</span>
               <ComposerErrorDetails key={`${errorOwnerKey}:submission:${submissionError}`} isActive={isActive} label="Message Submission Error Details" message={submissionError} />
             </div>
           ) : null}
@@ -712,7 +717,7 @@ export function SessionComposerExpanded({
                 options={approvalOptions}
                 onChange={(value) => selectApprovalMode(value as ApprovalMode)}
                 selectRef={approvalSelectRef}
-                disabled={composerControlsDisabled}
+                disabled={executionControlsDisabled}
                 invalid={approvalOptions.some((option) => option.value === selectedApprovalMode && option.disabled)}
               />
 
@@ -724,7 +729,7 @@ export function SessionComposerExpanded({
                   options={reviewerOptions}
                   onChange={(value) => onChangeCodexReviewer(value as CodexReviewer)}
                   invalid={reviewerOptions.some((option) => option.value === selectedCodexReviewer && option.disabled)}
-                  disabled={isCodexReviewerControlDisabled({
+                  disabled={!!queuedTurnEdit || isCodexReviewerControlDisabled({
                     approvalMode: selectedApprovalMode,
                     isRunning: isRunning && !canQueueTurn,
                     composerBlocked: composerBlocked || composerFrozen,
@@ -740,7 +745,7 @@ export function SessionComposerExpanded({
                   value={selectedCodexSandboxMode}
                   options={sandboxOptions}
                   onChange={(value) => onChangeCodexSandboxMode(value as CodexSandboxMode)}
-                  disabled={composerControlsDisabled}
+                  disabled={executionControlsDisabled}
                 />
               ) : null}
             </>
@@ -749,6 +754,8 @@ export function SessionComposerExpanded({
           <ModelPicker
             key={errorOwnerKey}
             options={modelOptions}
+            modelAvailability={modelAvailability}
+            providerId={providerId}
             discoveryStatus={modelDiscoveryStatus}
             discoveryError={modelDiscoveryError}
             discoveryHasCache={modelDiscoveryHasCache}
@@ -756,7 +763,7 @@ export function SessionComposerExpanded({
             fallbackLabel={selectedModelFallbackLabel}
             onChange={onChangeModel}
             onOpen={onModelPickerOpen}
-            disabled={composerControlsDisabled}
+            disabled={executionControlsDisabled}
           />
 
           {reasoningOptions.length > 0 ? <ComposerSettingSelect
@@ -765,7 +772,7 @@ export function SessionComposerExpanded({
             value={selectedReasoningEffort}
             options={reasoningOptions}
             onChange={onChangeReasoningEffort}
-            disabled={composerControlsDisabled}
+            disabled={executionControlsDisabled}
           /> : null}
 
           {speedOptions.length > 0 ? (
@@ -775,7 +782,7 @@ export function SessionComposerExpanded({
               value={selectedCodexSpeed}
               options={speedOptions}
               onChange={(value) => onChangeCodexSpeed(value as CodexSpeed)}
-              disabled={composerControlsDisabled}
+              disabled={executionControlsDisabled}
             />
           ) : null}
         </div>
@@ -785,7 +792,7 @@ export function SessionComposerExpanded({
           title={sendTitle}
           tabIndex={sendDisabled ? 0 : undefined}
           role={sendDisabled ? "group" : undefined}
-          aria-label={sendDisabled ? "Send unavailable" : undefined}
+          aria-label={sendDisabled ? queuedTurnEdit ? "Submit unavailable" : "Send unavailable" : undefined}
           aria-describedby={sendDisabled ? sendReasonId : undefined}
           onFocus={(event) => setIsSendReasonFocused(event.target === event.currentTarget)}
           onBlur={() => setIsSendReasonFocused(false)}
@@ -797,16 +804,20 @@ export function SessionComposerExpanded({
             }
           }}
         >
+          {queuedTurnEdit ? <button type="button" className="drawer-toggle compact secondary composer-icon-button composer-cancel-edit"
+            title="Cancel Edit" aria-label="Cancel Edit" disabled={queuedTurnEdit.busy || composerFrozen} aria-busy={queuedTurnEdit.canceling || undefined} onClick={queuedTurnEdit.onCancel}>
+            <ButtonContent busy={queuedTurnEdit.canceling}><ComposerIcon name="close" /></ButtonContent>
+          </button> : null}
           <button
             className={`session-send-button composer-icon-button${showBusySendState ? " loading" : ""}`}
             type="button"
-            onClick={canQueueTurn ? onQueueTurn : canSendInput ? onSendInput : onSendOrCancel}
+            onClick={queuedTurnEdit ? queuedTurnEdit.onSubmit : canQueueTurn ? onQueueTurn : canSendInput ? onSendInput : onSendOrCancel}
             disabled={sendDisabled}
             aria-describedby={sendDisabled ? sendReasonId : undefined}
             aria-busy={showBusySendState || undefined}
             title={sendTitle}
           >
-            <ButtonContent busy={showBusySendState}><ComposerIcon name="send" /><span className="visually-hidden">Send</span></ButtonContent>
+            <ButtonContent busy={showBusySendState}><ComposerIcon name={queuedTurnEdit ? "submit" : "send"} /><span className="visually-hidden">{queuedTurnEdit ? "Submit" : "Send"}</span></ButtonContent>
           </button>
           {sendDisabled ? (
             <span

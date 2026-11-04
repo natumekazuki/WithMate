@@ -1,14 +1,15 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { searchModelPickerOptions } from "./model-picker-options.js";
+import { searchModelPickerOptions } from "../../settings/model-search.js";
 import type { ModelSelectOption } from "../../settings/model-select-options.js";
 import type { ModelCatalogItem } from "../../../src-shared/settings/model-catalog.js";
+import { getModelDisabledReason, type ModelAvailabilitySettings } from "../../../src-shared/settings/model-availability.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
 
 const ROW_HEIGHT = 56;
 type PickerOption = ModelSelectOption & { disabled?: boolean };
 
-export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, disabled, invalid, discoveryStatus, discoveryError, discoveryHasCache }: {
+export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, disabled, invalid, discoveryStatus, discoveryError, discoveryHasCache, modelAvailability = {}, providerId = "codex" }: {
   options: readonly ModelSelectOption[];
   value: string;
   fallbackLabel?: string;
@@ -19,6 +20,8 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   discoveryStatus?: "idle" | "loading" | "ready" | "error";
   discoveryError?: string;
   discoveryHasCache?: boolean;
+  modelAvailability?: ModelAvailabilitySettings;
+  providerId?: string;
 }) {
   const id = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -34,7 +37,10 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   const [position, setPosition] = useState({ left: 8, top: 8, width: 320, listHeight: 280 });
   const [theme, setTheme] = useState<Record<string, string>>({});
   const open = snapshot !== null && !disabled;
-  const visible = useMemo(() => searchModelPickerOptions(snapshot ?? [], query), [snapshot, query]);
+  const availabilityKey = JSON.stringify(modelAvailability[providerId] ?? null);
+  const isExcluded = useMemo(() => (modelId: string) => getModelDisabledReason(modelAvailability, providerId, modelId) !== null, [availabilityKey, providerId]);
+  const visible = useMemo(() => searchModelPickerOptions((snapshot ?? []).filter((option) => !isExcluded(option.value)), query), [snapshot, query, isExcluded]);
+  useEffect(() => { setActive(-1); }, [availabilityKey, providerId]);
   const current = (snapshot ?? options).find((option) => option.value === value);
   const selectedLabel = current?.label ?? fallbackLabel ?? value;
   const loading = discoveryStatus === "idle" || discoveryStatus === "loading";
@@ -62,8 +68,9 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
       .map((property) => [property, style.getPropertyValue(property)])));
     setSnapshot(sorted);
     setQuery("");
-    const selectedIndex = sorted.findIndex((option) => option.value === value);
-    setActive(selectedIndex >= 0 ? selectedIndex : sorted.findIndex((option) => !option.disabled));
+    const nextVisible = sorted.filter((option) => !isExcluded(option.value));
+    const selectedIndex = nextVisible.findIndex((option) => option.value === value);
+    setActive(selectedIndex >= 0 ? selectedIndex : nextVisible.findIndex((option) => !option.disabled));
     setScrollTop(0);
     onOpen?.();
   }
@@ -73,12 +80,12 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
     awaitingFirstResult.current = false;
     const next: PickerOption[] = options.map((option) => ({ ...structuredClone(option), disabled: !option.model }));
     if (value && !next.some((option) => option.value === value)) next.push({ value, label: fallbackLabel ?? value, model: null, disabled: true });
-    const nextVisible = searchModelPickerOptions(next, query);
+    const nextVisible = searchModelPickerOptions(next.filter((option) => !isExcluded(option.value)), query);
     const previousActive = visible[active]?.value;
     const nextActive = nextVisible.findIndex((option) => option.value === (previousActive ?? value));
     setSnapshot(next);
     setActive(nextActive >= 0 ? nextActive : nextVisible.findIndex((option) => !option.disabled));
-  }, [open, discoveryStatus, options, value, fallbackLabel, query, visible, active]);
+  }, [open, discoveryStatus, options, value, fallbackLabel, query, visible, active, isExcluded]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -205,7 +212,7 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
           aria-describedby={error ? `${id}-error` : undefined}
           value={query} onChange={(event) => {
             setQuery(event.target.value);
-            setActive(searchModelPickerOptions(snapshot, event.target.value).findIndex((option) => !option.disabled));
+            setActive(searchModelPickerOptions((snapshot ?? []).filter((option) => !isExcluded(option.value)), event.target.value).findIndex((option) => !option.disabled));
             setScrollTop(0);
             if (listRef.current) listRef.current.scrollTop = 0;
           }} onKeyDown={onSearchKeyDown} onCompositionStart={() => { composing.current = true; }}

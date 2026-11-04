@@ -87,8 +87,6 @@
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
-  background-image: radial-gradient(var(--line) 1px, transparent 1px);
-  background-size: 24px 24px;
 }
 .session-graph-viewport.is-panning {
   cursor: grabbing;

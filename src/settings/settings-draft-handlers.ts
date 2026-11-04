@@ -44,6 +44,7 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeMemoryFileQuotaMegabytes"
   | "onChangeGlossaryProactiveCreateLimit"
   | "onChangeProviderEnabled"
+  | "onChangeModelAvailability"
   | "onChangeProviderInstructionRelativePath"
   | "onChangeProviderSkillRootPath"
   | "onChangeProviderSkillRelativePath"
@@ -59,6 +60,9 @@ export function buildSettingsDraftHandlers({
   };
 
   return {
+    onChangeModelAvailability: (modelAvailability) => {
+      updateSettingsDraft((current) => ({ ...current, modelAvailability }));
+    },
     onChangeAutoCollapseActionDockOnSend: (enabled) => {
       handleChangeAutoCollapseActionDockOnSend({ enabled, setSettingsDraft: updateSettingsDraft });
     },

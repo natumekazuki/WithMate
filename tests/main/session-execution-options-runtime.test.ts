@@ -396,6 +396,32 @@ it("空modelを保存とProvider起動前に拒否する", async () => {
 
 // @test-value v2
 // kind = "contract"
+// claim = "保存済み現在選択でも無効Modelの新規turnを拒否し、再有効化後は同Modelを実行できる"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-availability" }
+// fault = "保存済み選択を理由に無効化を迂回するか、別Modelに置換して実行する"
+// observable = "runSessionTurnの拒否、開始保存とProvider呼出し件数、再有効化後のModel"
+// observation_boundary = "public-boundary"
+// scope = "共通Runtimeの実行前Model検証"
+// lifecycle = "permanent"
+// impact = "ユーザーが無効化したModelへ送信される"
+// distinction = "共有helperや受付testは実行開始の設定再取得を通らない"
+// @end-test-value
+it("現在選択の無効Modelを実行前に拒否し再有効化後に同Modelを実行する", async () => {
+  const observe = { composed: [] as RunSessionTurnInput[], executed: [] as RunSessionTurnInput[], turn: [] as Array<Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0]>, persisted: [] as Session[] };
+  const settings = normalizeAppSettings({ modelAvailability: { codex: { disabledServiceIds: [], disabledModelIds: ["model-a"] } } });
+  const { service, stored } = makeService(observe, { getAppSettings: () => settings });
+  const request = { userMessage: "run", executionOptions: captureSessionExecutionOptions(stored) };
+  await assert.rejects(service.runSessionTurn(stored.id, request), /disabled/);
+  assert.equal(observe.persisted.length, 0);
+  assert.equal(observe.executed.length, 0);
+  assert.equal(observe.turn.length, 0);
+  settings.modelAvailability = {};
+  await service.runSessionTurn(stored.id, request);
+  assert.equal(observe.executed[0]?.executionOptions.model, "model-a");
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "discoveryにない保存modelと任意depthを送信時の値のままproviderへ渡す"
 // oracle = { type = "contract", ref = "accepted behavior: discovery updates never replace captured selections" }
 // fault = "最新候補にないmodelやdepthを拒否または既定値へ置換する"

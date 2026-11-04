@@ -372,10 +372,10 @@ describe("composeProviderPrompt", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Character snapshot不在ではiconを出さずfolder contextはsystem promptへ残る"
+  // claim = "Character snapshot不在ではCharacter sectionを出さずfolder contextはsystem promptへ残る"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
-  // fault = "Character欠落を理由にworkspace contextまで落とすか、表示用iconだけをpromptへ出す"
-  // observable = "systemBodyTextのfolder sectionとlogicalPrompt.composedTextのIcon行の有無"
+  // fault = "Character欠落を理由にworkspace contextまで落とすか、未採用のCharacter情報をpromptへ出す"
+  // observable = "systemBodyTextのfolder sectionとlogicalPrompt.composedTextのCharacter sectionの有無"
   // observation_boundary = "component-behavior"
   // scope = "Character がなくても folder context"
   // lifecycle = "permanent"
@@ -414,7 +414,6 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.inputBodyText, /# Character/);
     assert.doesNotMatch(prompt.inputBodyText, /あなたは丁寧に説明する。/);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
-    assert.doesNotMatch(prompt.logicalPrompt.composedText, /^Icon:|display-only\.png/m);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
     assert.equal(prompt.inputBodyText, "# User Input\n\nfolder context が system 側でも user input は残ることを確認する");
@@ -436,17 +435,17 @@ describe("composeProviderPrompt", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Character定義とicon参照は保存済みsnapshotからsystem側だけへ投影し、user本文・画像添付・許可directoryへ混入しない"
+  // claim = "保存済みCharacter名・説明・定義をsystem側へ投影し、自然言語と成果物・技術判断の境界およびtool前の短い応答指示を保持する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
-  // fault = "現在のCharacter profileを代用するか、icon参照を変形・添付化・filesystem許可へ追加する"
-  // observable = "systemBodyTextのCharacter metadata、inputBodyText、imagePaths、additionalDirectories"
+  // fault = "現在のCharacter profileを代用する、定義をuser本文へ混ぜる、または成果物・技術判断・tool前応答の境界指示を落とす"
+  // observable = "systemBodyTextのCharacter metadata・Output Boundary・Tool Call Presence、inputBodyText、imagePaths、additionalDirectories"
   // observation_boundary = "component-behavior"
   // scope = "保存済み CharacterRuntimeSnapshot"
   // lifecycle = "permanent"
-  // impact = "採用済みCharacterと異なる参照や意図しない画像添付・権限をproviderへ渡す"
-  // distinction = "snapshot由来文面をprompt本文で観測する"
+  // impact = "採用済みCharacterと異なる定義や意図しない添付・権限をproviderへ渡す"
+  // distinction = "snapshot由来文面と通常会話の境界・tool前応答指示をprovider向けprompt本文で観測する"
   // @end-test-value
-  it("保存済み CharacterRuntimeSnapshot の定義とicon参照を system prompt に注入する", () => {
+  it("保存済み CharacterRuntimeSnapshot の名前・説明・定義を system prompt に投影する", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -487,24 +486,20 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
     assert.match(prompt.systemBodyText, /Character: Saved Character/);
     assert.match(prompt.systemBodyText, /Description: frontmatter に頼らず保持する説明/);
-    assert.ok(prompt.systemBodyText.includes('Icon: ` C:\\Character Data\\保存済み キャラ\\icon.png `'));
-    assert.doesNotMatch(prompt.systemBodyText, /current-catalog-icon\.png/);
     assert.equal(prompt.inputBodyText, "# User Input\n\n続けて");
     assert.deepEqual(prompt.imagePaths, []);
     assert.deepEqual(prompt.additionalDirectories, []);
     assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
-    assert.match(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
-    assert.match(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
-    assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
     assert.match(prompt.systemBodyText, /# Output Boundary/);
+    assert.match(prompt.systemBodyText, /技術判断、操作、権限、検証結果、未確認事実の扱いはCharacter定義で置き換えず、通常のcoding agentとして正確に扱ってください。/);
     assert.match(prompt.systemBodyText, /生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
     assert.match(prompt.systemBodyText, /成果物は repository instruction、既存文体、対象ファイルの目的を優先してください。/);
     assert.match(prompt.systemBodyText, /# Tool Call Presence/);
-    assert.match(prompt.systemBodyText, /最初の tool call より前に、ユーザーへ1〜3文程度の短い自然言語レスポンスを返してください/);
-    assert.match(prompt.systemBodyText, /キャラクターが無言のまま作業へ入り、応答が止まったように見える体験を避ける/);
-    assert.match(prompt.systemBodyText, /routine な tool call ごとに実況する必要はありません/);
-    assert.match(prompt.systemBodyText, /tool call が不要な応答では、このルールのためだけに前置きを追加する必要はありません/);
-    assert.doesNotMatch(prompt.systemBodyText, /厳密な無人格回答へ戻りすぎず/);
+    assert.match(prompt.systemBodyText, /最初の実行前に1〜3文で自然に応答してください/);
+    assert.match(prompt.systemBodyText, /詳細な計画・操作説明は不要/);
+    assert.match(prompt.systemBodyText, /長い作業では必要な経過や反応を伝えてください/);
+    assert.match(prompt.systemBodyText, /定型の開始挨拶や、操作ごとの実況は不要/);
+    assert.match(prompt.systemBodyText, /tool callが不要な応答には、このためだけの前置きを加えないでください/);
     assert.doesNotMatch(prompt.systemBodyText, /character-notes\.md/);
     assert.doesNotMatch(prompt.systemBodyText, /^---$/m);
     assert.doesNotMatch(prompt.systemBodyText, /^schema:/m);
@@ -529,57 +524,9 @@ describe("composeProviderPrompt", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "各snapshotのicon参照はMarkdown特殊文字を含め保持し、空参照・定義なし・neutralでは省略する"
-  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#通常Sessionの入力" }
-  // fault = "同名の別Characterのiconへ置換する、参照を正規化する、または空参照を出す"
-  // observable = "system側Icon metadataの文字列とコードの囲み、Character sectionの有無"
-  // observation_boundary = "component-behavior"
-  // scope = "character-icon-reference-projection"
-  // lifecycle = "permanent"
-  // impact = "agentが異なる画像を参照するか、パス内の文字が別の指示として解釈される"
-  // distinction = "通常のsnapshot testと異なり、特殊文字・scheme・未設定の境界値を小さな入力表で確認する"
-  // @end-test-value
-  it("各snapshotのicon参照を保持し、空参照やCharacter定義なしでは省略する", () => {
-    const snapshots = [
-      createCharacterRuntimeSnapshot({ characterId: "main-character", iconFilePath: "  /character data/メイン/icon.png  " }),
-      createCharacterRuntimeSnapshot({ characterId: "aux-character", iconFilePath: 'https://example.invalid/```[icon](image)".png\n# not an instruction' }),
-      createCharacterRuntimeSnapshot({ iconFilePath: "" }),
-      createCharacterRuntimeSnapshot({ iconFilePath: " \t\n " }),
-      createCharacterRuntimeSnapshot({ definitionMarkdown: "" }),
-      createCharacterRuntimeSnapshot({ definitionMarkdown: "---\nschema: withmate.character.v1\nname: Empty\n---" }),
-      null,
-    ];
-    for (const [index, snapshot] of snapshots.entries()) {
-      const session = buildNewSession({
-        taskTitle: "icon reference", workspaceLabel: "workspace", workspacePath: "workspace", branch: "",
-        characterId: snapshot?.characterId ?? NEUTRAL_CHARACTER_ID, character: "Saved Character",
-        characterIconPath: "not-adopted.png", characterThemeColors,
-        characterRuntimeSnapshot: snapshot, approvalMode: "untrusted",
-      });
-      const prompt = composeProviderPrompt({
-        session, executionOptions: captureSessionExecutionOptions(session),
-        sessionMemory: createDefaultSessionMemory(session), projectMemoryEntries: [], providerCatalog,
-        userMessage: "続けて", appSettings: createDefaultAppSettings(), attachments: [],
-      });
-      if (index === 0) {
-        assert.ok(prompt.systemBodyText.includes('Icon: `   /character data/メイン/icon.png   `'));
-      } else if (index === 1) {
-        assert.ok(prompt.systemBodyText.includes('Icon:\n````\nhttps://example.invalid/```[icon](image)".png\n# not an instruction\n````'));
-      } else {
-        assert.doesNotMatch(prompt.systemBodyText, /^Icon:/m);
-      }
-      if (index >= 4) assert.doesNotMatch(prompt.systemBodyText, /# Character Definition Snapshot/);
-      assert.doesNotMatch(prompt.logicalPrompt.composedText, /not-adopted\.png/);
-      assert.equal(prompt.inputBodyText, "# User Input\n\n続けて");
-      assert.deepEqual(prompt.imagePaths, []);
-    }
-  });
-
-  // @test-value v2
-  // kind = "invariant"
-  // claim = "character-authoring sessionではsnapshotのicon参照を渡し、通常Character成果物境界を注入しない"
+  // claim = "character-authoring sessionではsnapshotの定義を渡し、通常Character成果物境界を注入しない"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
-  // fault = "authoringのicon参照を落とすか、通常SessionのCharacter制約を混入する"
+  // fault = "authoringの定義を落とすか、通常SessionのCharacter制約を混入する"
   // observable = "systemBodyTextのCharacter metadata/Output Boundary sections"
   // observation_boundary = "component-behavior"
   // scope = "character-authoring session では"
@@ -620,12 +567,8 @@ describe("composeProviderPrompt", () => {
 
     assert.match(prompt.systemBodyText, /# Character Definition Snapshot/);
     assert.match(prompt.systemBodyText, /authoring 対象の character\.md。/);
-    assert.ok(prompt.systemBodyText.includes('Icon: ` icon.png `'));
-    assert.doesNotMatch(prompt.systemBodyText, /開始時点の Character 定義/);
     assert.doesNotMatch(prompt.systemBodyText, /# Output Boundary/);
     assert.doesNotMatch(prompt.systemBodyText, /# Tool Call Presence/);
-    assert.doesNotMatch(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
-    assert.doesNotMatch(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
     assert.doesNotMatch(prompt.systemBodyText, /生成ファイル、diff、artifact summary/);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# Character Definition Snapshot",
@@ -852,7 +795,6 @@ describe("composeProviderPrompt", () => {
     assert.match(affectOff.systemBodyText, /# Workspace/);
     assert.match(affectOff.inputBodyText, /# User Input\n\n続けて/);
     assert.doesNotMatch(characterDefinitionOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
-    assert.doesNotMatch(characterDefinitionOff.logicalPrompt.composedText, /^Icon:|icon\.png/m);
     assert.deepEqual(characterDefinitionOff.imagePaths, []);
     assert.match(characterDefinitionOff.systemBodyText, /# Output Boundary/);
     assert.match(characterDefinitionOff.systemBodyText, /# Tool Call Presence/);

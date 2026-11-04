@@ -50,7 +50,7 @@ const STORE_METHODS = {
     "deleteSession", "deleteSessions", "clearSessions",
   ],
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
-  queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
+  queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
@@ -81,7 +81,7 @@ const STORE_METHODS = {
 } as const;
 
 const MUTATIONS = new Set([
-  "reorderQueued",
+  "reorderQueued", "updateQueued",
   "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted",
   "pinSessionFile", "unpinSessionFile",
   "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",

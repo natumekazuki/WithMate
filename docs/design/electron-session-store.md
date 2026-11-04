@@ -60,6 +60,8 @@ queued開始は`appendRunningTurnStart`の既存transactionで、user message、
 
 active取得は保存済み実行順、cursor付きreceipt履歴取得は不変の受付順とし、request IDによる個別照会と分ける。変更通知はowning Session Windowへ対象IDだけを送り、Homeや他Windowへ本文や履歴をbroadcastしない。実行・明示解放・shutdownの契約は[Session Run Lifecycle](session-run-lifecycle.md#gui-turn-queue)を参照する。
 
+予約の編集は既存receiptのqueued状態とowner／incarnationをtransaction内で確認し、`captured_json`の本文と解決済み添付descriptorだけを同時更新する。受付ID・request ID・sequence・実行順・実行設定・provider／workspaceは維持する。添付は編集後の本文を既存Composer previewで再解決し、通常のpath認可を適用する。更新は既存Workerのtyped commandから行い、専用tableや編集履歴を追加しない。
+
 ### Files認可metadata
 
 Filesのcontextとsender owner解決は、Main／親のsummaryとAuxiliary metadataだけを読み、会話本文やartifactを取得しない。Auxiliary metadataもserviceのCharacter snapshot検証を通し、親workspaceと親incarnation、親Mainを正本とする共通Additional Directoryを使用する。各読取の前後で捕捉したstorage ownerを確認し、削除やgeneration交換、読取失敗を旧cacheや親Characterへのfallbackで成功扱いしない。

@@ -64,6 +64,7 @@ import {
   resolveComposerSendabilityState,
 } from "./session-composer-feedback.js";
 import { buildRuntimeSelectionOptions } from "../../settings/runtime-selection-options.js";
+import type { ModelAvailabilitySettings } from "../../../src-shared/settings/model-availability.js";
 import {
   applyComposerDraftClearCommand,
   buildOnDraftCompositionHandlers,
@@ -104,6 +105,7 @@ export type SessionComposerFeatureBridge = {
     isPromptTemplateWorkspaceOpen: boolean;
     providerCatalog: ModelCatalogProvider | null | undefined;
     models: readonly ModelCatalogItem[];
+    modelAvailability?: ModelAvailabilitySettings;
     modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
     modelDiscoveryError?: string;
     modelDiscoveryHasCache?: boolean;
@@ -198,6 +200,7 @@ export function useSessionComposerFeature(input: {
   composerRegistry: ComposerControllerRegistry;
   composerOwner: ComposerOwner;
   composerDraft: string;
+  canChangeDraft?: () => boolean;
   activeRunSessionId: string | null;
   selectedSessionId?: string | null;
   sessionProvider?: string | null;
@@ -225,7 +228,8 @@ export function useSessionComposerFeature(input: {
 
   const composerState = {
     ...composerSnapshot,
-    setDraft: (value: string, selection?: ComposerSelection) => input.composerRegistry.setDraft(input.composerOwner, value, selection),
+    setDraft: (value: string, selection?: ComposerSelection) => input.canChangeDraft?.() === false
+      ? input.composerRegistry.get(input.composerOwner).revision : input.composerRegistry.setDraft(input.composerOwner, value, selection),
     setSelection: (value: SetStateAction<ComposerSelection>) => input.composerRegistry.setSelection(input.composerOwner, value),
     setPreview: (value: ComposerPreview) => input.composerRegistry.setPreview(input.composerOwner, value),
     setImeComposing: (value: boolean) => input.composerRegistry.setImeComposing(input.composerOwner, value),
@@ -576,6 +580,7 @@ export function useSessionComposerFeature(input: {
       speedOptions: runtimeOptions.speedSelectOptions,
       selectedCodexSpeed: bridge.session.codexSpeed,
       modelOptions: runtimeOptions.modelSelectOptions,
+      modelAvailability: bridge.runtime.modelAvailability,
       modelDiscoveryStatus: bridge.runtime.modelDiscoveryStatus,
       modelDiscoveryError: bridge.runtime.modelDiscoveryError,
       modelDiscoveryHasCache: bridge.runtime.modelDiscoveryHasCache,
@@ -687,7 +692,7 @@ export function useSessionComposerFeature(input: {
     setIsAdditionalDirectoryListOpen(false);
     input.setForceComposerBlockedFeedback(false);
     composerState.setImeComposing(false);
-  }, [input.activeRunSessionId]);
+  }, [input.activeRunSessionId, input.composerOwner.kind]);
 
   useLayoutEffect(() => {
     applyComposerDraftClearCommand({

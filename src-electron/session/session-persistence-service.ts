@@ -30,6 +30,7 @@ import type {
 import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage-errors.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { assertModelEnabled } from "../../src-shared/settings/model-availability.js";
 import type { ConfirmedReviewerChange, SetExecutionOptionsResult, SetSessionTitleResult } from "../../src-shared/session/session-mutation-contract.js";
 import type {
   SessionCharacterAuthoringRuntimeClearInput,
@@ -173,6 +174,7 @@ export class SessionPersistenceService {
       throw new Error(`Provider ${provider.id} has no available model. Complete model discovery before creating a Session.`);
     }
     const requestedReasoningEffort = input.reasoningEffort ?? provider.defaultReasoningEffort;
+    assertModelEnabled(appSettings.modelAvailability, provider.id, requestedModel);
     const selection = resolveModelSelection(
       provider,
       requestedModel,

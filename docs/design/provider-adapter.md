@@ -170,7 +170,7 @@ workspace 外 path の access control は provider 任せにせず、WithMate �
 
 picker で選んだ file / folder / image も renderer 側では textarea に `@path` を挿入するだけで、実行直前の解決対象は textarea の `@path` のみとする。
 
-the text prompt 側には `# System Prompt` と `# User Input Prompt` を自動付与し、各レイヤーを空行区切りで結合する。
+共通promptは`composeProviderPrompt`で論理system本文とinput本文に分け、providerごとのtransportへ渡す。
 
 詳細は `docs/design/prompt-composition.md` を参照する。
 

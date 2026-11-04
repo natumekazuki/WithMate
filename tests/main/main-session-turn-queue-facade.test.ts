@@ -6,6 +6,7 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { ComposerPreview, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 const requestId = "13d5a026-53b0-4d79-94bc-a63b7733ab10";
 // @test-value v2
@@ -53,6 +54,7 @@ function fixture() {
   const calls = { preview: 0, provider: 0, workspace: 0, acceptance: 0 };
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected queue operation"); };
   const store: SessionTurnQueueStore = {
+    updateQueued: unexpected,
     reorderQueued: unexpected,
     enqueue: async (owner, captured) => {
       calls.acceptance += 1;
@@ -73,6 +75,7 @@ function fixture() {
     absolutePath: "C:/workspace/input.txt", displayPath: "input.txt", workspaceRelativePath: "input.txt", isOutsideWorkspace: false }] };
   const deps: MainSessionTurnQueueFacadeDeps = {
     assertActive() {}, assertAccepting() {}, getSession: async () => session,
+    getAppSettings: async () => createDefaultAppSettings(),
     validateWorkspace: async () => { calls.workspace += 1; },
     validateProvider: async () => {
       calls.provider += 1;
@@ -88,6 +91,39 @@ function fixture() {
   };
   return { session, rows, calls, service, preview, deps, input, facade: new MainSessionTurnQueueFacade(deps) };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "新規受付は現在のModel無効化設定で拒否し、既知要求の再確認は元receiptを返す"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-availability" }
+// fault = "preview中に無効化されたModelを受付するか、設定変更で既知要求の再確認を拒否する"
+// observable = "preflight拒否、永続受付件数、再確認時のreceipt identity"
+// observation_boundary = "public-boundary"
+// scope = "共通queue受付のModel無効化境界"
+// lifecycle = "permanent"
+// impact = "古いUIやMCPの指定で無効Modelが実行待ちに入り、再試行が重複受付になる"
+// distinction = "共有判定testは受付の非同期待機と既知要求の順序を通らない"
+// @end-test-value
+test("受付は最新のModel無効化を適用し既知receiptは保持する", async () => {
+  const f = fixture();
+  const settings = createDefaultAppSettings();
+  f.deps.getAppSettings = async () => settings;
+  f.deps.preview = async () => {
+    settings.modelAvailability.codex = { disabledServiceIds: [], disabledModelIds: [f.session.model] };
+    return f.preview;
+  };
+  await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, f.input),
+    (error) => error instanceof SessionTurnQueuePreflightRejectedError && /disabled/.test(error.message));
+  assert.equal(f.calls.acceptance, 0);
+  settings.modelAvailability = {};
+  f.deps.preview = async () => f.preview;
+  const accepted = await f.facade.enqueueSessionTurn(f.session.id, f.input);
+  settings.modelAvailability.codex = { disabledServiceIds: [], disabledModelIds: [f.session.model] };
+  assert.equal(await f.facade.enqueueSessionTurn(f.session.id, f.input), accepted);
+  await assert.rejects(f.facade.enqueueSessionTurn(f.session.id, { ...f.input, clientRequestId: "2ab10148-99c6-4f0c-a6c2-05ae0d24dc55" }), /disabled/);
+  assert.equal(f.calls.acceptance, 1);
+  await f.service.close();
+});
 
 // @test-value v2
 // kind = "contract"

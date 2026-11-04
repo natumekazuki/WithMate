@@ -5,6 +5,7 @@ import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/
 import { normalizeSessionTurnCorrelation } from "../../src-shared/session/runtime-state.js";
 import { placeElicitationRecords } from "../../src-shared/session/question-placement.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { assertModelEnabled } from "../../src-shared/settings/model-availability.js";
 import { type CharacterProfile } from "../../src-shared/character/character-state.js";
 import { buildLiveRunMessageOperations } from "../../src-shared/session/live-run-message-operations.js";
 import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
@@ -965,6 +966,13 @@ export class SessionRuntimeService {
         this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
       )
       : null;
+    throwIfRunCanceled(runAbortController.signal, queued);
+    try {
+      assertModelEnabled((await this.deps.getAppSettings()).modelAvailability, provider.id, executionOptions.model);
+    } catch (error) {
+      if (queued) throw new QueuedTurnPreflightError(error instanceof Error ? error.message : "The captured model is unavailable.");
+      throw error;
+    }
     throwIfRunCanceled(runAbortController.signal, queued);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 

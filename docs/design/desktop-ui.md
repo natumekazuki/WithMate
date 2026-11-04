@@ -573,6 +573,14 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `Open In Window` による `Diff Window` popout
 - inline `Diff Viewer` overlay は open 時に dialog 内へ focus を移し、`Escape` で閉じ、`Tab` / `Shift+Tab` を dialog 内で循環させる
 
+### Queued Message Edit
+
+Main／Auxiliaryの未開始の予約には、`Steer`の隣に`Edit`を表示する。Steer非対応のproviderでも編集できる。Editすると対象会話をActionDockの送信対象にし、既存のPromptを展開して本文を編集する。通常下書きとは別の会話別入力を使い、Auxiliaryの通常下書き保存へ編集本文を混ぜない。
+
+編集中だけ既存Sendの紙飛行機をチェックiconへ替え、tooltipとaccessible nameを`Submit`にする。その左に×のicon buttonを置き、`Cancel Edit`とする。追加の状態label、bubbleの強調枠、専用pane、復帰用buttonは設けない。上段の実行中TurnのCancelは別操作として維持する。予約時の実行設定は変更せず既存controlで参照し、本文・添付を更新する。
+
+通常送信shortcutも編集中は更新を行い、直接Steer shortcutは予約編集に使わない。折りたたみ、Terminal、Main／Auxiliaryの切替では編集入力と保留を保持し、既存のPrompt・展開・対象切替から戻る。保存成功またはCancel Editで通常下書きとSendへ戻し、送信設定による自動折りたたみは行わない。保存待機中は入力と編集操作を固定し、失敗では入力を保持して理由と再操作手段を示す。
+
 ## Diff Window
 
 - side-by-side split diff

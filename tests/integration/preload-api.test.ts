@@ -795,6 +795,9 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionTurnQueue",
     "listSessionTurnQueueReceipts",
     "cancelQueuedSessionTurn",
+    "beginQueuedSessionTurnEdit",
+    "updateQueuedSessionTurn",
+    "cancelQueuedSessionTurnEdit",
     "reorderQueuedSessionTurns",
     "releaseInterruptedSessionTurn",
     "sendQueuedSessionInput",
@@ -1015,6 +1018,11 @@ test("queue preloadは専用引数を伝達しchanged購読を解除する", asy
   assert.deepEqual(await api.listSessionTurnQueue("session-1"), { channel: "withmate:list-session-turn-queue", args: ["session-1"] });
   assert.deepEqual(await api.listSessionTurnQueueReceipts("session-1", { cursor: 4, limit: 20 }), { channel: "withmate:list-session-turn-queue-receipts", args: ["session-1", { cursor: 4, limit: 20 }] });
   assert.deepEqual(await api.cancelQueuedSessionTurn("session-1", "item-1"), { channel: "withmate:cancel-queued-session-turn", args: ["session-1", "item-1"] });
+  const edit = { incarnationId: "owner-1", id: "item-1" };
+  assert.deepEqual(await api.beginQueuedSessionTurnEdit("session-1", edit), { channel: "withmate:begin-queued-session-turn-edit", args: ["session-1", edit] });
+  const update = { ...edit, userMessage: "Edited @input.txt" };
+  assert.deepEqual(await api.updateQueuedSessionTurn("session-1", update), { channel: "withmate:update-queued-session-turn", args: ["session-1", update] });
+  assert.deepEqual(await api.cancelQueuedSessionTurnEdit("session-1", edit), { channel: "withmate:cancel-queued-session-turn-edit", args: ["session-1", edit] });
   assert.deepEqual(await api.releaseInterruptedSessionTurn("session-1", "item-1"), { channel: "withmate:release-interrupted-session-turn", args: ["session-1", "item-1"] });
   assert.deepEqual(await api.sendQueuedSessionInput("aux-1", "item-2", "turn-1"), { channel: "withmate:send-queued-session-input", args: ["aux-1", "item-2", "turn-1"] });
   const changed: string[] = [];
