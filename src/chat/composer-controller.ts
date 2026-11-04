@@ -3,7 +3,7 @@ import { useCallback, useMemo, useSyncExternalStore, type SetStateAction } from 
 import type { ComposerPreview } from "../../src-shared/session/runtime-state.js";
 import { createEmptyComposerPreview } from "./composer/composer-preview-config.js";
 
-export type ComposerOwnerKind = "main" | "auxiliary";
+export type ComposerOwnerKind = "main" | "auxiliary" | "queue-edit";
 export type ComposerOwner = Readonly<{ kind: ComposerOwnerKind; id: string }>;
 export type ComposerSelection = Readonly<{ start: number; end: number }>;
 export type ComposerSaveState = "idle" | "saving" | "saved" | "error";

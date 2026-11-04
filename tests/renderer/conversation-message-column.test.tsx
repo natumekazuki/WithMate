@@ -1853,7 +1853,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
     getReceipt: async () => terminal, listActive: async () => [], claimNext: async () => null,
     enqueue: unexpected, listReceipts: unexpected, listPendingOwners: unexpected, markStarted: unexpected,
     settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected, releaseInterrupted: unexpected,
-    claimForInput: unexpected, restoreQueuedInput: unexpected, reorderQueued: unexpected,
+    claimForInput: unexpected, restoreQueuedInput: unexpected, reorderQueued: unexpected, updateQueued: unexpected,
   };
   let listener: ((id: string) => void) | undefined;
   const notifications: Array<() => void> = [];

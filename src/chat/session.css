@@ -4199,6 +4199,19 @@
   border-radius: 999px;
 }
 
+.composer-send-control:has(.composer-cancel-edit) {
+  gap: 8px;
+}
+
+.session-action-dock-slot.is-expanded .composer:has(.composer-cancel-edit) .composer-input-row {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.session-action-dock-slot.is-expanded .composer:has(.composer-cancel-edit) .composer-box {
+  grid-template-rows: minmax(0, 1fr);
+}
+
 .composer-send-control:focus-visible {
   outline: 2px solid var(--character-main, var(--ink));
   outline-offset: 3px;

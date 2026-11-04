@@ -198,6 +198,7 @@ export function useSessionComposerFeature(input: {
   composerRegistry: ComposerControllerRegistry;
   composerOwner: ComposerOwner;
   composerDraft: string;
+  canChangeDraft?: () => boolean;
   activeRunSessionId: string | null;
   selectedSessionId?: string | null;
   sessionProvider?: string | null;
@@ -225,7 +226,8 @@ export function useSessionComposerFeature(input: {
 
   const composerState = {
     ...composerSnapshot,
-    setDraft: (value: string, selection?: ComposerSelection) => input.composerRegistry.setDraft(input.composerOwner, value, selection),
+    setDraft: (value: string, selection?: ComposerSelection) => input.canChangeDraft?.() === false
+      ? input.composerRegistry.get(input.composerOwner).revision : input.composerRegistry.setDraft(input.composerOwner, value, selection),
     setSelection: (value: SetStateAction<ComposerSelection>) => input.composerRegistry.setSelection(input.composerOwner, value),
     setPreview: (value: ComposerPreview) => input.composerRegistry.setPreview(input.composerOwner, value),
     setImeComposing: (value: boolean) => input.composerRegistry.setImeComposing(input.composerOwner, value),
@@ -687,7 +689,7 @@ export function useSessionComposerFeature(input: {
     setIsAdditionalDirectoryListOpen(false);
     input.setForceComposerBlockedFeedback(false);
     composerState.setImeComposing(false);
-  }, [input.activeRunSessionId]);
+  }, [input.activeRunSessionId, input.composerOwner.kind]);
 
   useLayoutEffect(() => {
     applyComposerDraftClearCommand({

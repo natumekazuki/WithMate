@@ -639,7 +639,10 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
     cancelSessionRun(sessionId: string): void;
     queue?: Pick<import("../../src-shared/ipc/withmate-window-api.js").WithMateWindowSessionApi,
       "enqueueSessionTurn" | "getSessionTurnQueueReceipt" | "listSessionTurnQueue" | "reorderQueuedSessionTurns" |
-      "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput">;
+      "listSessionTurnQueueReceipts" | "cancelQueuedSessionTurn" | "releaseInterruptedSessionTurn" | "sendQueuedSessionInput" |
+      "beginQueuedSessionTurnEdit" | "updateQueuedSessionTurn" | "cancelQueuedSessionTurnEdit"> & {
+        releaseQueuedSessionTurnEdit(sessionId: string): Promise<void>;
+      };
     getAuxiliarySessionStatus?(sessionId: string): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliarySessionStatus | null>;
     steerSessionTurn?(sessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   };

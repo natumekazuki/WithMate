@@ -53,6 +53,7 @@ function fixture() {
   const calls = { preview: 0, provider: 0, workspace: 0, acceptance: 0 };
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected queue operation"); };
   const store: SessionTurnQueueStore = {
+    updateQueued: unexpected,
     reorderQueued: unexpected,
     enqueue: async (owner, captured) => {
       calls.acceptance += 1;

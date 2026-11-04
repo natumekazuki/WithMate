@@ -3,7 +3,7 @@ import { normalizeSessionTurnClientRequestId, normalizeSessionTurnSubmitSource, 
 import { captureSessionExecutionOptions, validateSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import type { ReorderQueuedSessionTurnsRequest, SessionTurnQueueOwner, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import type { QueuedSessionTurnEditRequest, UpdateQueuedSessionTurnRequest, ReorderQueuedSessionTurnsRequest, SessionTurnQueueOwner, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import type { SessionTurnQueueService } from "../session/session-turn-queue-service.js";
 
 export type MainSessionTurnQueueFacadeDeps = {
@@ -103,6 +103,51 @@ export class MainSessionTurnQueueFacade {
   async cancelQueuedSessionTurn(sessionId: string, id: string) {
     this.deps.assertAccepting();
     return this.deps.service.cancelQueued(this.owner(await this.readSession(sessionId)), this.requireId(id));
+  }
+
+  beginQueuedSessionTurnEdit(sessionId: string, input: QueuedSessionTurnEditRequest) {
+    this.deps.assertAccepting();
+    const owner = this.editOwner(sessionId, input);
+    return this.deps.service.beginQueuedEdit(owner, input.id, async () => {
+      await this.readEditSession(owner);
+    });
+  }
+
+  updateQueuedSessionTurn(sessionId: string, input: UpdateQueuedSessionTurnRequest) {
+    this.deps.assertAccepting();
+    const owner = this.editOwner(sessionId, input);
+    return this.deps.service.updateQueued(owner, input.id, async (receipt) => {
+      if (typeof input.userMessage !== "string" || !input.userMessage.trim()) throw new Error("A queued message is required.");
+      const session = await this.readEditSession(owner);
+      if (session.provider !== receipt.captured.provider || session.workspacePath !== receipt.captured.workspacePath) throw new Error("The queued Session execution context changed.");
+      await this.deps.validateWorkspace(session);
+      await this.deps.validateProvider(session);
+      const userMessage = input.userMessage.trim();
+      const preview = await this.deps.preview(session, userMessage);
+      if (preview.errors.length) throw new Error(preview.errors[0]);
+      const current = await this.readEditSession(owner);
+      if (current.provider !== session.provider || current.workspacePath !== session.workspacePath) throw new Error("The Session execution context changed during editing.");
+      this.deps.assertAccepting();
+      return { userMessage, attachments: preview.attachments };
+    });
+  }
+
+  async cancelQueuedSessionTurnEdit(sessionId: string, input: QueuedSessionTurnEditRequest): Promise<void> {
+    const owner = this.editOwner(sessionId, input);
+    await this.readEditSession(owner);
+    await this.deps.service.cancelQueuedEdit(owner, input.id);
+  }
+
+  private editOwner(sessionId: string, input: QueuedSessionTurnEditRequest): SessionTurnQueueOwner {
+    if (typeof sessionId !== "string" || !sessionId.trim() || !input || typeof input.incarnationId !== "string" || !input.incarnationId.trim()) throw new Error("A Session identity is required.");
+    this.requireId(input.id);
+    return { sessionId, incarnationId: input.incarnationId };
+  }
+
+  private async readEditSession(owner: SessionTurnQueueOwner): Promise<Session> {
+    const session = await this.readSession(owner.sessionId);
+    if (getSessionIncarnationId(session) !== owner.incarnationId) throw new Error("The Session identity changed. Reopen it before editing.");
+    return session;
   }
 
   async reorderQueuedSessionTurns(sessionId: string, input: ReorderQueuedSessionTurnsRequest) {
