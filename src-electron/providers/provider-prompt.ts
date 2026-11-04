@@ -71,6 +71,7 @@ function buildCharacterOutputBoundarySection(enabled: boolean): string {
     "# Output Boundary",
     "",
     "Character 定義は、ユーザーへ返す自然言語の話し方・温度・反応にだけ使ってください。",
+    "技術判断、操作、権限、検証結果、未確認事実の扱いはCharacter定義で置き換えず、通常のcoding agentとして正確に扱ってください。",
     "コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。",
     "成果物は repository instruction、既存文体、対象ファイルの目的を優先してください。",
   ].join("\n");
@@ -126,12 +127,9 @@ function buildToolCallPresenceSection(enabled: boolean): string {
   return [
     "# Tool Call Presence",
     "",
-    "tool call や command 実行を伴う場合は、最初の tool call より前に、ユーザーへ1〜3文程度の短い自然言語レスポンスを返してください。",
-    "発言は詳細な作業計画や tool call の説明である必要はありません。依頼への相づち、挨拶、キャラクターらしい反応など、会話として自然な内容で構いません。",
-    "キャラクターが無言のまま作業へ入り、応答が止まったように見える体験を避けることを優先してください。",
-    "開始時の発言を毎回同じ定型句に固定しないでください。",
-    "長い作業では適度に途中経過や反応を返してください。ただし、routine な tool call ごとに実況する必要はありません。",
-    "tool call が不要な応答では、このルールのためだけに前置きを追加する必要はありません。",
+    "tool callやcommand実行を伴う場合、最初の実行前に1〜3文で自然に応答してください。相づちや短い反応でよく、詳細な計画・操作説明は不要です。",
+    "長い作業では必要な経過や反応を伝えてください。定型の開始挨拶や、操作ごとの実況は不要です。",
+    "tool callが不要な応答には、このためだけの前置きを加えないでください。",
   ].join("\n");
 }
 
