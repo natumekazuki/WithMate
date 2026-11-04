@@ -63,6 +63,7 @@ test("service toggles preserve model choices and missing disabled models remain 
     const service = () => document.querySelector<HTMLInputElement>('[aria-label="vendor Service"]')!;
     const model = (id: string) => document.querySelector<HTMLInputElement>(`label[title="${id}"] input`)!;
     await render(props());
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="vendor Models"]')!.click());
     assert.equal(model("vendor/model2").checked, false);
     await act(async () => service().click());
     await render(props());
@@ -75,8 +76,71 @@ test("service toggles preserve model choices and missing disabled models remain 
     assert.equal(model("vendor/model2").checked, false);
     assert.equal(model("vendor/model2").disabled, false);
     assert.equal(model("missing/old").checked, false);
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="missing Models"]')!.click());
     await act(async () => model("missing/old").click());
     assert.deepEqual(availability.opencode.disabledModelIds, ["vendor/model2"]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "接続先の開閉は有効設定と独立し、検索は一致Modelを開いて検索解除時に通常の開閉状態へ戻す"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#model-management" }
+// fault = "閉じる操作で設定を変更する、有効切替で開閉する、または検索結果を閉じたままにして通常時の開閉状態を失う"
+// observable = "開閉buttonのaria-expanded/controls、配下一覧のhidden、focus、onChange値と件数"
+// observation_boundary = "component-behavior"
+// scope = "ProviderModelSettings OpenCodeの開閉・有効設定・検索"
+// lifecycle = "permanent"
+// impact = "大量Modelの管理中に意図せず接続先を無効化するか検索で目的のModelを見つけられない"
+// distinction = "既存の有効化と検索のtestは開閉操作・検索中の手動開閉・通常表示復帰の結線を検証しない"
+// @end-test-value
+test("service disclosure and search preserve independent availability and browse expansion", async () => {
+  await withSettings(async ({ document, window, render }) => {
+    let availability: ModelAvailabilitySettings = { opencode: { disabledServiceIds: [], disabledModelIds: ["vendor/model2"] } };
+    let changes = 0;
+    const catalog = { ...provider("opencode"), models: [...provider("opencode").models, { id: "other/model2", label: "Model 2", reasoningEfforts: [] }] };
+    const props = () => ({ provider: catalog, availability, providerEnabled: true, onChange: (next: ModelAvailabilitySettings) => { changes++; availability = next; }, onBack: () => {} });
+    const button = (service: string) => document.querySelector<HTMLButtonElement>(`[aria-label="${service} Models"]`)!;
+    const list = (service: string) => document.getElementById(button(service).getAttribute("aria-controls")!)!;
+    const toggle = async (service: string) => { await act(async () => { button(service).focus(); button(service).click(); }); };
+    const search = async (value: string) => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Search Models"]')!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new window.Event("input", { bubbles: true }));
+      });
+    };
+    await render(props());
+    assert.equal(button("vendor").getAttribute("aria-expanded"), "false");
+    assert.equal(list("vendor").hidden, true);
+    assert.equal(list("other").hidden, true);
+    await toggle("vendor");
+    assert.equal(document.activeElement, button("vendor"));
+    assert.equal(button("vendor").getAttribute("aria-expanded"), "true");
+    assert.equal(list("vendor").hidden, false);
+    await toggle("vendor");
+    assert.equal(changes, 0);
+    const service = () => document.querySelector<HTMLInputElement>('[aria-label="vendor Service"]')!;
+    await act(async () => service().click());
+    await render(props());
+    assert.equal(list("vendor").hidden, true);
+    assert.deepEqual(availability.opencode, { disabledServiceIds: ["vendor"], disabledModelIds: ["vendor/model2"] });
+    await act(async () => service().click());
+    await render(props());
+    await toggle("vendor");
+    await search("Model 2");
+    assert.equal(list("vendor").hidden, false);
+    assert.equal(list("other").hidden, false);
+    await toggle("other");
+    await render(props());
+    assert.equal(list("other").hidden, true);
+    await search("Model");
+    assert.equal(list("other").hidden, false);
+    await search("");
+    assert.equal(list("vendor").hidden, false);
+    assert.equal(list("other").hidden, true);
+    assert.deepEqual(availability.opencode, { disabledServiceIds: [], disabledModelIds: ["vendor/model2"] });
+    assert.equal(changes, 2);
   });
 });
 

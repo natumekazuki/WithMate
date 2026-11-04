@@ -19,10 +19,13 @@ export type ProviderModelSettingsProps = {
 export function ProviderModelSettings({ provider, availability, providerEnabled, discovery, onChange, onBack, onRetry }: ProviderModelSettingsProps) {
   const [query, setQuery] = useState("");
   const [focusedModel, setFocusedModel] = useState<ModelSelectOption | null>(null);
+  const [expandedServices, setExpandedServices] = useState<ReadonlySet<string>>(() => new Set());
+  const [collapsedSearchServices, setCollapsedSearchServices] = useState<ReadonlySet<string>>(() => new Set());
   const headingId = useId();
   const disabledReasonId = useId();
   const current = availability[provider.id] ?? { disabledServiceIds: [], disabledModelIds: [] };
   const loading = discovery?.status === "loading" || discovery?.status === "idle" && providerEnabled;
+  const searching = query.trim().length > 0;
   const options = useMemo(() => {
     const result = buildModelSelectOptions(provider.models);
     const knownIds = new Set(result.map((option) => option.value));
@@ -71,23 +74,42 @@ export function ProviderModelSettings({ provider, availability, providerEnabled,
         <button type="button" className="drawer-toggle compact secondary" onClick={onBack}>Back</button>
         <h2 id={headingId}>{provider.label} Models</h2>
       </header>
-      <input className="provider-model-search" type="search" aria-label="Search Models" autoFocus value={query} onChange={(event) => setQuery(event.target.value)} />
+      <input className="provider-model-search" type="search" aria-label="Search Models" autoFocus value={query} onChange={(event) => {
+        setQuery(event.target.value);
+        setCollapsedSearchServices(new Set());
+      }} />
       {!providerEnabled ? <p id={disabledReasonId} className="provider-model-disabled-reason">Enable {provider.label} to use these models.</p> : null}
       <div className="provider-model-status">
         {loading ? <LoadingIndicator label={`Loading ${provider.label} Models`} inline /> : null}
         {discovery?.status === "error" ? <LoadError message={discovery.error || "Could not load models."} onRetry={onRetry} /> : null}
       </div>
       <div className="provider-model-groups" aria-label={`${provider.label} Models`}>
-        {groups.map(([serviceId, models]) => {
+        {groups.map(([serviceId, models], index) => {
           const serviceEnabled = serviceId === null || !current.disabledServiceIds.includes(serviceId);
+          const expanded = serviceId === null || (searching ? !collapsedSearchServices.has(serviceId) : expandedServices.has(serviceId));
+          const modelsId = `${headingId}-models-${index}`;
+          const countId = `${modelsId}-count`;
           return (
             <div className="provider-model-group" key={serviceId ?? ""}>
-              {serviceId !== null ? <label className="provider-model-service">
-                <input type="checkbox" checked={serviceEnabled} aria-label={`${serviceId} Service`} onChange={(event) => changeEnabled("disabledServiceIds", serviceId, event.target.checked)} />
-                <span>{serviceId}</span>
-                {!serviceEnabled ? <span className="provider-model-state">Service Disabled</span> : null}
-              </label> : null}
-              <div className={serviceId === null ? "provider-model-list" : "provider-model-list provider-model-list-nested"}>
+              {serviceId !== null ? <div className="provider-model-service">
+                <button type="button" className="provider-model-service-disclosure" aria-label={`${serviceId} Models`} aria-describedby={countId} aria-expanded={expanded} aria-controls={modelsId} onClick={() => {
+                  const update = searching ? setCollapsedSearchServices : setExpandedServices;
+                  update((currentIds) => {
+                    const next = new Set(currentIds);
+                    if (next.has(serviceId)) next.delete(serviceId); else next.add(serviceId);
+                    return next;
+                  });
+                }}>
+                  <span className="provider-model-service-caret" aria-hidden="true">▸</span>
+                  <span className="provider-model-service-name">{serviceId}</span>
+                  <span id={countId} className="provider-model-service-count">{models.length.toLocaleString("en-US")} {models.length === 1 ? "Model" : "Models"}</span>
+                </button>
+                <label className="provider-model-service-enabled">
+                  {!serviceEnabled ? <span className="provider-model-state">Service Disabled</span> : null}
+                  <input type="checkbox" checked={serviceEnabled} aria-label={`${serviceId} Service`} onChange={(event) => changeEnabled("disabledServiceIds", serviceId, event.target.checked)} />
+                </label>
+              </div> : null}
+              <div id={modelsId} hidden={!expanded} className={serviceId === null ? "provider-model-list" : "provider-model-list provider-model-list-nested"}>
                 {models.map((model) => <label className="provider-model-row" key={model.value} title={model.value}>
                   <input type="checkbox" checked={!current.disabledModelIds.includes(model.value)} disabled={!providerEnabled || !serviceEnabled} aria-describedby={!providerEnabled ? disabledReasonId : undefined} onFocus={() => setFocusedModel(model)} onBlur={() => setFocusedModel(null)} onChange={(event) => changeEnabled("disabledModelIds", model.value, event.target.checked)} />
                   <span className="provider-model-name">{model.label}</span>

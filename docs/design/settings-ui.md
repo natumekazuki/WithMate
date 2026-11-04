@@ -81,6 +81,8 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 
 `Coding Agent Providers`の各providerに`Models`入口を置き、同じSettings Windowの本文を共通の管理画面へ切り替える。検索とModel単位のcheckboxは4 provider共通とし、OpenCodeだけnativeサービスごとのcheckboxと配下のModel一覧を持つ。サービスOFFは個別設定を上書きせず、サービスONで元の個別設定へ戻る。
 
+OpenCodeの接続先は、名前とModel件数を示す開閉buttonで配下一覧を折りたたむ。初期状態は閉とし、有効化checkboxは別の操作として配置する。開閉だけでは有効設定、draftのdirty状態、保存値を変更しない。検索中は一致する接続先を展開し、手動で閉じることもできる。検索語を変えると一致結果を再展開し、検索を解除すると通常時の開閉状態へ戻す。開閉状態は画面内だけで保持し、永続化しない。
+
 現在のSDK cacheから一覧を作り、cacheから消えた保存済みの無効IDも再有効化できる形で表示する。検索・自然順は通常のModel pickerと共有し、管理画面のcheckbox操作とは分離する。cache更新で編集中draftや検索文字列、操作中の行のfocusを失わない。取得中・失敗は対象領域で表示する。
 
 `Back`はproviderの`Models`入口へfocusを戻し、編集内容を単一の`AppSettings draft`へ保持する。既存の`Save Settings` footerとdirty判定を共用し、独立した保存、Window、設定storeは追加しない。候補の除外と実行時の検査は[Model Availability](model-catalog.md#model-availability)に従う。

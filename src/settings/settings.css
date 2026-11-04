@@ -188,7 +188,7 @@
   line-height: 1.55;
 }
 
-.settings-field input {
+.settings-field input:where(:not([type="checkbox"])) {
   width: 100%;
   border: 1px solid rgba(32, 36, 55, 0.12);
   border-radius: 16px;
@@ -219,7 +219,7 @@
   box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.12);
 }
 
-.settings-field input:focus {
+.settings-field input:where(:not([type="checkbox"])):focus {
   outline: none;
   border-color: rgba(15, 139, 141, 0.5);
   box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.12);
@@ -715,11 +715,6 @@
   color-scheme: dark;
 }
 
-.session-folder-cleanup-all-dates input {
-  width: auto;
-  margin: 0;
-}
-
 .session-folder-cleanup-size-row {
   display: flex;
   align-items: end;
@@ -1019,12 +1014,6 @@
   gap: 10px;
   color: var(--ink);
   font-size: 0.92rem;
-}
-
-.settings-reset-target input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
 }
 
 .settings-reset-target input:disabled + span {
