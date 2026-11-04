@@ -13,7 +13,7 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
-import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
+import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
@@ -221,7 +221,7 @@ test("Auxiliary本番assemblyは次の通常turnのProviderへ保存済みAffect
         theme: { main: "#123456", sub: "#abcdef" }, definitionMarkdown: "Character", definitionSha256: "fixture",
         definitionByteSize: 9, snapshotAt: time } };
     let live: LiveSessionRunState | null = null;
-    const contexts: (CharacterContextResponse | null | undefined)[] = [];
+    const contexts: (CharacterAffectContext | null | undefined)[] = [];
     const adapter: ProviderCodingAdapter = {
       composePrompt() { return { systemBodyText: "system", inputBodyText: "input", logicalPrompt: {
         systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }; },

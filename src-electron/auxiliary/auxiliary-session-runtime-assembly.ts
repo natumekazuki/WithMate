@@ -1,6 +1,5 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { LiveApprovalDecision, LiveApprovalRequest, LiveElicitationResponse, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { SessionTurnNotificationTarget } from "../session/session-turn-notification-service.js";
@@ -115,15 +114,14 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     endProviderAgentRuntimeTurn: deps.provider.endProviderAgentRuntimeTurn,
     resetProviderSessionThread: (providerId, sessionId) => guarded("provider thread reset", () => deps.provider.resetProviderSessionThread!(providerId, sessionId)),
     isAuxiliarySession: (sessionId) => guarded("Auxiliary session check", () => deps.auxiliary.isAuxiliarySession(sessionId)),
-    getSessionMemory: (session) => createDefaultSessionMemory({ id: session.id, workspacePath: session.workspacePath, threadId: session.threadId, taskTitle: session.taskTitle }),
-    resolveCharacterContext: (session, query) => guarded("character context", async () => {
+    resolveCharacterContext: (session) => guarded("character context", async () => {
       const service = deps.memory.getCharacterContextService?.();
       if (session.sessionKind !== "default" || !session.characterId || !service) return null;
       const auxiliary = await deps.auxiliary.getSession(session.id);
       const parent = auxiliary && await deps.parent.getSession(auxiliary.parentSessionId);
       if (!auxiliary || !parent) throw new Error("Auxiliary Character context owner is unavailable.");
       return resolveRuntimeCharacterContext({
-        session, query, service,
+        session, service,
         sessionSource: {
           kind: "auxiliary", sessionId: session.id, incarnationId: getSessionIncarnationId(session),
           parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) },
@@ -131,7 +129,6 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
         onFailure: (owner, error) => deps.memory.onCharacterContextFailure?.(owner, error),
       });
     }),
-    resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn: (entry) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
     updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },

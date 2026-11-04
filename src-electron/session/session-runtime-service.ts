@@ -1,7 +1,6 @@
 import { currentTimestampLabel as defaultCurrentTimestampLabel } from "../../src-shared/time-state.js";
 import type { ComposerAttachment, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry, SteerSessionTurnRequest, SteerSessionTurnResult } from "../../src-shared/session/runtime-state.js";
 import type { MessageArtifact } from "../../src-shared/session/session-state.js";
-import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeSessionTurnCorrelation } from "../../src-shared/session/runtime-state.js";
 import { placeElicitationRecords } from "../../src-shared/session/question-placement.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -24,7 +23,7 @@ import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js
 import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
-import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
+import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 import { applyProviderProgressChanges } from "../providers/provider-progress.js";
@@ -71,20 +70,13 @@ export type SessionRuntimeServiceDeps = {
     provider: ModelCatalogProvider;
   }>;
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
-  getSessionMemory(session: Session): Awaitable<SessionMemory>;
-  resolveProjectMemoryEntriesForPrompt(
-    session: Session,
-    userMessage: string,
-    sessionMemory: SessionMemory,
-  ): Awaitable<ProjectMemoryEntry[]>;
   resolveConversationTimingContext?: (
     session: Session,
     observedAt: Date,
   ) => Awaitable<ConversationTimingContext | null>;
   resolveCharacterContext?: (
     session: Session,
-    query: string,
-  ) => Awaitable<CharacterContextResponse | null>;
+  ) => Awaitable<CharacterAffectContext | null>;
   createSessionTurn(input: SessionTurnInput): Awaitable<SessionTurnRecord>;
   updateSessionTurn(id: number, input: SessionTurnInput): Awaitable<void | SessionTurnRecord>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -954,8 +946,6 @@ export class SessionRuntimeService {
     let agentRuntimeBinding = await Promise.resolve(
       this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
     );
-    const sessionMemory = await this.deps.getSessionMemory(session);
-    const projectMemoryEntries = await this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
     const conversationTimingContext = appSettings.conversationTimingEnabled
       ? await Promise.resolve(
@@ -964,7 +954,7 @@ export class SessionRuntimeService {
       : null;
     const characterContext = appSettings.characterAffectContextEnabled
       ? await Promise.resolve(
-        this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
+        this.deps.resolveCharacterContext?.(session) ?? null,
       )
       : null;
     throwIfRunCanceled(runAbortController.signal, queued);
@@ -1088,8 +1078,6 @@ export class SessionRuntimeService {
         },
         executionOptions,
         sessionFolderPath: await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
-        sessionMemory,
-        projectMemoryEntries,
         providerCatalog: provider,
         userMessage: nextMessage,
         appSettings,

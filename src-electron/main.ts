@@ -2633,7 +2633,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal), endProviderAgentRuntimeTurn: endManagedProviderTurn },
       memory: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
-        resolveProjectMemoryEntriesForPrompt: () => [],
         getCharacterContextService: () => memoryV6RuntimeApi?.characterContextService ?? null,
         onCharacterContextFailure: (session, result) => writeAppLog({ level: "warn", kind: "character-context.lifecycle.read-failed", process: "main", message: "Character context was unavailable for a session turn", data: { sessionId: session.id, code: result.error.code, retryable: result.error.retryable, conversationMayContinue: result.error.conversationMayContinue } }),
         getConversationTimingSnapshot: async (sessionId, observedAt) => {

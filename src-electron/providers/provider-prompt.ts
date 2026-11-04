@@ -97,20 +97,13 @@ function buildCharacterAffectContextSection(context: RunSessionTurnInput["charac
       version: context.affect.version,
       updatedAt: context.affect.updatedAt,
     },
-    relatedCharacterMemory: context.memory.items.map((item) => ({
-      id: item.id,
-      title: item.title,
-      preview: item.preview,
-      tags: item.tags,
-      updatedAt: item.updatedAt,
-    })),
     baselineRef: context.baseline,
   };
   return [
     "# Character Affect Context",
     "",
     "This is a versioned, ephemeral state envelope for the current turn. It does not amend the Character Definition.",
-    "Use it only to adjust the Character's response tone and relevant recall. Do not present it as a diagnosis of the user or expose internal state unnecessarily.",
+    "Use it only to adjust the Character's response tone. Do not present it as a diagnosis of the user or expose internal state unnecessarily.",
     "",
     "```json",
     JSON.stringify(snapshot, null, 2),

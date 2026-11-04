@@ -1,8 +1,7 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
-import type { CharacterContextResponse, CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
+import type { CharacterAffectContext, CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
 import { resolveRuntimeCharacterContext } from "../character/character-context-runtime.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
-import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { resolveConversationTimingContext, type ConversationTimingContext, type ConversationTimingStorageSnapshot } from "../session/conversation-timing.js";
 import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
 
@@ -25,7 +24,6 @@ export type MainSessionRuntimeAssemblyDeps = {
   };
   provider: Pick<SessionRuntimeServiceDeps, "getProviderCodingAdapter" | "resetProviderSessionThread" | "getProviderAgentRuntimeBinding" | "beginProviderAgentRuntimeTurn" | "endProviderAgentRuntimeTurn">;
   memory: {
-    resolveProjectMemoryEntriesForPrompt: SessionRuntimeServiceDeps["resolveProjectMemoryEntriesForPrompt"];
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
     getCharacterContextService?: () => Pick<CharacterContextApplicationService, "getContext"> | null;
     onCharacterContextFailure: (session: Session, error: CharacterContextErrorResponse) => void;
@@ -38,7 +36,6 @@ export type MainSessionRuntimeAssemblyDeps = {
   timing: {
     currentTimestampLabel?: () => string;
   };
-  resolveSessionMemory?: SessionRuntimeServiceDeps["getSessionMemory"];
 };
 
 /** Creates the main-process runtime with its owner guard and domain callback assembly. */
@@ -51,17 +48,10 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     return result;
   };
 
-  const getSessionMemory: SessionRuntimeServiceDeps["getSessionMemory"] = deps.resolveSessionMemory ?? ((session: Session) => createDefaultSessionMemory({
-    id: session.id,
-    workspacePath: session.workspacePath,
-    threadId: session.threadId,
-    taskTitle: session.taskTitle,
-  }));
-
-  const resolveCharacterContext = async (session: Session, query: string): Promise<CharacterContextResponse | null> => {
+  const resolveCharacterContext = async (session: Session): Promise<CharacterAffectContext | null> => {
     assertOwner("character context");
     const result = await resolveRuntimeCharacterContext({
-      session, query, service: deps.memory.getCharacterContextService?.(),
+      session, service: deps.memory.getCharacterContextService?.(),
       sessionSource: { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
       onFailure: deps.memory.onCharacterContextFailure,
     });
@@ -98,8 +88,6 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     getProviderAgentRuntimeBinding: deps.provider.getProviderAgentRuntimeBinding,
     beginProviderAgentRuntimeTurn: deps.provider.beginProviderAgentRuntimeTurn,
     endProviderAgentRuntimeTurn: deps.provider.endProviderAgentRuntimeTurn,
-    getSessionMemory,
-    resolveProjectMemoryEntriesForPrompt: deps.memory.resolveProjectMemoryEntriesForPrompt,
     resolveConversationTimingContext: deps.memory.getConversationTimingSnapshot
       ? async (session, observedAt): Promise<ConversationTimingContext | null> => {
         assertOwner("conversation timing");

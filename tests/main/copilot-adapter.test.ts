@@ -6,7 +6,6 @@ import type { CopilotClient, CopilotSession, PermissionRequest, SessionEvent } f
 
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { LiveRunStep, LiveApprovalRequest, LiveSessionRunState, LiveElicitationRequest, LiveElicitationResponse } from "../../src-shared/session/runtime-state.js";
 import type { LiveBackgroundTask, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
@@ -403,8 +402,6 @@ function createRunSessionInput(options?: {
   return {
     session,
     executionOptions: captureSessionExecutionOptions(session),
-    sessionMemory: createDefaultSessionMemory(session),
-    projectMemoryEntries: [],
     character: {} as never,
     providerCatalog: COPILOT_PROVIDER_CATALOG,
     userMessage: "hello",

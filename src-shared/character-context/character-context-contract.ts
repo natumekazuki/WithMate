@@ -67,7 +67,7 @@ export type CharacterMemoryPreview = {
   updatedAt: string;
 };
 
-export type CharacterContextResponse = {
+export type CharacterAffectContext = {
   schemaVersion: typeof CHARACTER_CONTEXT_SCHEMA_VERSION;
   baseline: {
     definitionSha256: string;
@@ -80,6 +80,9 @@ export type CharacterContextResponse = {
     version: string;
     updatedAt: string | null;
   };
+};
+
+export type CharacterContextResponse = CharacterAffectContext & {
   memory: {
     items: CharacterMemoryPreview[];
     relatedTags?: MemoryTag[];

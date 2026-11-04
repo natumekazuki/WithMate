@@ -10,7 +10,6 @@ import { backgroundHistoryFixture } from "../helpers/background-history-fixture.
 import { SessionRuntimeFixture } from "../main/session-runtime-fixture.js";
 import { ProviderTurnError, type ProviderCodingAdapter } from "../../src-electron/providers/provider-runtime.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 
 const time = "2026-11-03T00:00:00.000Z";
 function gate() {
@@ -179,7 +178,6 @@ test("実会話の終端保存からAffectを開始し主会話と保存失敗�
       return { snapshot: { providers: [provider] }, provider };
     },
     getProviderCodingAdapter: () => adapter,
-    getSessionMemory: (session) => createDefaultSessionMemory(session), resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn: (turn) => f.worker.stores.turn.createSessionTurn(turn),
     updateSessionTurn: (id, turn) => f.worker.stores.turn.updateSessionTurn(id, turn),
     setLiveSessionRun() {}, getLiveSessionRun: () => null, waitForApprovalDecision: () => "approve",

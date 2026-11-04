@@ -6,7 +6,6 @@ import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import { NEUTRAL_CHARACTER_ID } from "../../src-shared/character/character-owner.js";
-import { createDefaultSessionMemory, type ProjectMemoryEntry } from "../../src-shared/memory/session-memory-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
@@ -29,20 +28,6 @@ const characterThemeColors = {
   main: "#000000",
   sub: "#111111",
 };
-
-function makeProjectMemoryEntry(partial: Partial<ProjectMemoryEntry> & Pick<ProjectMemoryEntry, "id" | "category" | "detail">): ProjectMemoryEntry {
-  return {
-    projectScopeId: "scope-1",
-    sourceSessionId: "session-1",
-    title: partial.detail,
-    keywords: [],
-    evidence: [],
-    createdAt: "2026-03-28T00:00:00.000Z",
-    updatedAt: "2026-03-28T00:00:00.000Z",
-    lastUsedAt: null,
-    ...partial,
-  };
-}
 
 function assertSectionOrder(text: string, sections: string[]): void {
   let previousIndex = -1;
@@ -113,8 +98,6 @@ describe("composeProviderPrompt", () => {
       executionOptions: captureSessionExecutionOptions(session),
       executionWorkspacePath: "execution-workspace",
       sessionFolderPath: "F:/user-data/session-files/session-1",
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "実行して",
       appSettings: createDefaultAppSettings(),
@@ -159,8 +142,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "続きやろっか",
       appSettings: createDefaultAppSettings(),
@@ -229,8 +210,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "開始",
       appSettings: createDefaultAppSettings(),
@@ -257,17 +236,17 @@ describe("composeProviderPrompt", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "User Input sectionは明示しMemoryは再注入しない"
+  // claim = "User Input sectionは作業directory情報と分離し、論理promptと表示用promptで同じ入力本文を保持する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
-  // fault = "Memoryを毎turn promptへ重複注入する"
+  // fault = "ユーザー入力をsystem側へ混ぜるか、論理promptと表示用promptで本文または結合順序を変える"
   // observable = "logicalPrompt/inputBodyTextのsection"
   // observation_boundary = "component-behavior"
   // scope = "User Input 境界を明示"
   // lifecycle = "permanent"
   // impact = "Providerの会話文脈が重複または混乱する"
-  // distinction = "境界とMemory不在をprompt本文で観測する"
+  // distinction = "user本文を含む入力に対し、system/inputの分離と論理promptの対応を観測する"
   // @end-test-value
-  it("User Input 境界を明示し、Memory は注入しない", () => {
+  it("User Input 境界を明示し、論理promptの本文と順序を保持する", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -279,26 +258,10 @@ describe("composeProviderPrompt", () => {
       characterThemeColors,
       approvalMode: "untrusted",
     });
-    const sessionMemory = {
-      ...createDefaultSessionMemory(session),
-      goal: "approval UI を整理する",
-      decisions: ["Codex には approval callback がある"],
-      openQuestions: ["Copilot 側をどう揃えるか"],
-      nextActions: ["retrieval を実装する"],
-      notes: ["context: UI contract は provider-neutral にする"],
-    };
 
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory,
-      projectMemoryEntries: [
-        makeProjectMemoryEntry({
-          id: "entry-1",
-          category: "decision",
-          detail: "Copilot の image は file attachment として扱う",
-        }),
-      ],
       providerCatalog,
       userMessage: "approval UI の次を進めて",
       appSettings: createDefaultAppSettings(),
@@ -321,9 +284,6 @@ describe("composeProviderPrompt", () => {
         : prompt.logicalPrompt.inputText,
     );
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
-    assert.doesNotMatch(prompt.inputBodyText, /# Session Memory/);
-    assert.doesNotMatch(prompt.inputBodyText, /# Project Memory/);
-    assert.doesNotMatch(prompt.inputBodyText, /# Project Context/);
     assert.match(prompt.inputBodyText, /^# User Input\n\napproval UI の次を進めて$/);
     assertSectionOrder(prompt.logicalPrompt.composedText, ["# User Input", "approval UI の次を進めて"]);
   });
@@ -356,8 +316,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "   \n\t  ",
       appSettings: createDefaultAppSettings(),
@@ -398,8 +356,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "folder context が system 側でも user input は残ることを確認する",
       appSettings: createDefaultAppSettings(),
@@ -476,8 +432,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "続けて",
       appSettings: createDefaultAppSettings(),
@@ -558,7 +512,7 @@ describe("composeProviderPrompt", () => {
       });
       const prompt = composeProviderPrompt({
         session, executionOptions: captureSessionExecutionOptions(session),
-        sessionMemory: createDefaultSessionMemory(session), projectMemoryEntries: [], providerCatalog,
+        providerCatalog,
         userMessage: "続けて", appSettings: createDefaultAppSettings(), attachments: [],
       });
       if (index === 0) {
@@ -610,8 +564,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "character.md を改善して",
       appSettings: createDefaultAppSettings(),
@@ -639,8 +591,8 @@ describe("composeProviderPrompt", () => {
 
   // @test-value v2
   // kind = "security"
-  // claim = "Memory itemが空の入力で、provider promptのCharacter Affect Contextはidentityを含めず、baseline・affect version・全effective componentを保持し、非公開Affect fieldを投影しない"
-  // oracle = { type = "adr", ref = "docs/adr/024-provider-common-memory-mcp-boundary.md#character-tool-inputとcontext-projection" }
+  // claim = "provider promptのCharacter Affect Contextはidentityを含めず、baseline・affect version・全effective componentを保持し、非公開Affect fieldを投影しない"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#通常Sessionの入力" }
   // fault = "prompt assemblyが公開baseline・affect情報を欠落させるか、入力の非公開Affect fieldまたは内部Character identityをproviderへ漏らす"
   // observable = "provider向けCharacter Affect Context JSON envelopeとsystem section順序"
   // observation_boundary = "component-behavior"
@@ -665,8 +617,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "続けて",
       appSettings: createDefaultAppSettings(),
@@ -699,7 +649,6 @@ describe("composeProviderPrompt", () => {
           version: "affect-v1-provider-prompt",
           updatedAt: "2026-08-09T00:00:00.000Z",
         },
-        memory: { items: [], updatedAt: null },
       },
     });
 
@@ -712,7 +661,6 @@ describe("composeProviderPrompt", () => {
         version: string;
         updatedAt: string | null;
       };
-      relatedCharacterMemory: unknown[];
       baselineRef: { definitionSha256: string; snapshotAt: string };
     };
     assertSectionOrder(prompt.logicalPrompt.composedText, [
@@ -729,7 +677,7 @@ describe("composeProviderPrompt", () => {
     assert.equal(context.characterAffect.evaluatedAt, evaluatedAt);
     assert.equal(context.characterAffect.version, "affect-v1-provider-prompt");
     assert.equal(context.characterAffect.updatedAt, "2026-08-09T00:00:00.000Z");
-    assert.deepEqual(Object.keys(context).sort(), ["baselineRef", "characterAffect", "relatedCharacterMemory"]);
+    assert.deepEqual(Object.keys(context).sort(), ["baselineRef", "characterAffect"]);
     assert.deepEqual(Object.keys(context.characterAffect).sort(), ["effective", "evaluatedAt", "updatedAt", "version"]);
     assert.doesNotMatch(
       contextJson,
@@ -800,13 +748,10 @@ describe("composeProviderPrompt", () => {
         version: "affect-v1-provider-prompt",
         updatedAt: "2026-08-09T00:00:00.000Z",
       },
-      memory: { items: [], updatedAt: null },
     };
     const baseInput = {
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "続けて",
       attachments: [],
@@ -844,7 +789,7 @@ describe("composeProviderPrompt", () => {
     }
 
     assert.doesNotMatch(affectOff.systemBodyText, /# Character Affect Context/);
-    assert.doesNotMatch(affectOff.systemBodyText, /affect-v1-provider-prompt|relatedCharacterMemory/);
+    assert.doesNotMatch(affectOff.systemBodyText, /affect-v1-provider-prompt/);
     assert.match(affectOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
     assert.match(affectOff.systemBodyText, /# Output Boundary/);
     assert.match(affectOff.inputBodyText, /# Conversation Timing/);
@@ -918,8 +863,6 @@ describe("composeProviderPrompt", () => {
     const prompt = composeProviderPrompt({
       session,
       executionOptions: captureSessionExecutionOptions(session),
-      sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [],
       providerCatalog,
       userMessage: "続けて",
       appSettings: createDefaultAppSettings(),

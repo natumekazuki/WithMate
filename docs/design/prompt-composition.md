@@ -23,7 +23,9 @@ coding planeへ渡す指示の正本、順序、成果物境界を定める。Ch
 
 `Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残し、コード、設定、test、文書、commit message案、PR本文案、diff等の成果物へCharacter表現を混ぜない。`Tool Call Presence`は最初のtool call前の短い自然言語応答を求めるが、すべての操作の実況は求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
 
-`Conversation Timing`はturn開始時に固定した観測値を`User Input`直前へ置き、会話のペースの弱いシグナルとして扱う。別Sessionの内容や生活状況を推測しない。`Character Affect Context`はread projectionであり、生event全体、Memory検索結果全体、secretを含めない。Affectのfamily集約とsession layerの時間減衰はCharacter Context側が所有する。
+`Conversation Timing`はturn開始時に固定した観測値を`User Input`直前へ置き、会話のペースの弱いシグナルとして扱う。別Sessionの内容や生活状況を推測しない。`Character Affect Context`はAffectのread projectionであり、生event全体、Memory本文・preview、secretを含めない。Affectのfamily集約、session layerの時間減衰とafterglowはCharacter Context側が所有する。
+
+通常Main／Auxiliaryのturn開始時には、ユーザー入力によるMemory検索を行わない。Memoryは会話Agentが必要と判断したときに既存MCP／CLIで検索・一覧・本文取得し、アプリが検索結果をpromptへ自動注入しない。公開`character_context.get`／CLI `context-get`の任意queryによる明示取得も、この能動取得の経路に含む。
 
 ## 設定とSession種別
 
@@ -37,4 +39,4 @@ composerの`@path`は手入力とpicker入力を同じ参照として検証す�
 
 画像やCopilotの`systemMessage`等の別送情報を、論理promptだけから実transportと同一だと推定しない。prompt、transport payload、raw eventの独立した重複保存は行わず、通常履歴には会話本文と表示に必要なartifactを保存する。
 
-Claude Agentでは、system側の共通sectionをSDKの`claude_code` presetへ`append`し、`snapshot: false`でturnごとに現在のCharacter snapshotとAffect / Memory contextへ置き換える。過去のAffectを追記し続けたり、WithMateの会話履歴を全文再送したりしない。この方式ではSDKのprompt cache効率や過去のthinking保持が変わり得る。user側の共通sectionはそのturnの入力として渡し、Claudeのnativeな`CLAUDE.md`やSkill、MCP設定の読込経路は書き換えない。
+Claude Agentでは、system側の共通sectionをSDKの`claude_code` presetへ`append`し、`snapshot: false`でturnごとに現在のCharacter snapshotとAffect contextへ置き換える。過去のAffectを追記し続けたり、WithMateの会話履歴を全文再送したりしない。この方式ではSDKのprompt cache効率や過去のthinking保持が変わり得る。user側の共通sectionはそのturnの入力として渡し、Claudeのnativeな`CLAUDE.md`やSkill、MCP設定の読込経路は書き換えない。

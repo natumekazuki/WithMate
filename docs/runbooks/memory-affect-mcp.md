@@ -157,7 +157,9 @@ metricsとapp logには会話本文、Memory本文、secretを記録しない。
 
 ## Turn lifecycle
 
-通常のWithMate Sessionは各turnの応答前にapplication serviceから最新context versionを取得する。Character Definitionとは別の最小envelopeをpromptへ注入する。保存済みAffectとMemoryの取得、取得時のafterglow projectionは追加LLMを使わない。
+通常Main／Auxiliaryは、`characterAffectContextEnabled`が有効な各turnの応答前にapplication serviceから保存済みAffectの最新状態とversionを取得・合成する。Character Definitionとは別の`Character Affect Context`をpromptへ注入し、取得時のafterglow projectionも追加LLMを使わない。ユーザー入力をqueryとするMemory検索やMemory本文・previewの自動prompt注入は行わない。
+
+Memoryは会話Agentが必要と判断したときに既存MCP／CLIで検索・一覧・本文取得する。公開`character_context.get`／CLI `context-get`も任意queryによるCharacter Memoryの明示取得を維持する。Affect contextの設定は、これらの能動取得、背景のMemory登録・Affect更新、用途別設定・権限を切り替えない。
 
 Agentが記録する意味のある感情変化を認識した場合は、通常turn中にruntime binding付きの`character_affect.appraise`で保存する。感情が後で解消、反転、減衰しても先行eventは残す。具体的なeventがないturnでMCP appraisalを儀式的に呼ぶ必要はない。
 

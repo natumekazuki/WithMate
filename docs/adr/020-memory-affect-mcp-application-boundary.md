@@ -6,6 +6,8 @@ Accepted
 
 ## Subsequent decisions
 
+通常Main／Auxiliaryのpre-turnでMemoryを検索し、Character Memoryをpromptへ自動注入する判断は現行運用の適用対象外とする。Memory想起は会話Agentが必要時に既存MCP／CLIで行う検索・一覧・本文取得へ統一し、公開`character_context.get`／CLI `context-get`の任意queryによる明示取得は維持する。pre-turnで維持するのはAffectの最新状態取得・合成、afterglow projectionと`Character Affect Context`の注入である。後継の現行定義は[V6 Memory Foundation](../design/v6-memory-foundation.md#affectの更新とcontext)と[Prompt Composition](../design/prompt-composition.md#通常sessionの入力)を参照する。以下の当時の本文は保持する。
+
 [ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI専用operator操作とMCPの公開範囲を分ける判断、通常CLIを障害時に限る判断は現行運用の適用対象外とする。両入口の公開契約と文脈別binding要否を統一する。共通application boundaryと保存・検証契約は維持し、以下の本文は当時の判断として保持する。
 
 [ADR 028](028-in-turn-affect-mcp-only.md)により、必須post-turn appraisal、専用durable settlement、評価候補・retry・quarantine・起動時回収は現行運用の適用対象外とする。lifecycleとMCPを別event producerとして維持する判断も適用対象外とする。

@@ -9,7 +9,6 @@ import { SessionRuntimeFixture as SessionRuntimeService } from "./session-runtim
 import { ProviderTurnError } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { LiveElicitationResponse, LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
@@ -228,8 +227,6 @@ function fixture(options: { cancelGraceMs?: number; runtimeGraceMs?: number; rea
     getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } }),
     resolveProviderCatalog: () => ({ snapshot: { revision: 1, providers: [catalog] }, provider: catalog }),
     getProviderCodingAdapter: () => adapter,
-    getSessionMemory: (session) => createDefaultSessionMemory(session),
-    resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn: (entry) => { const turn = { id: turns.length + 1, ...entry }; turns.push(turn); return turn; },
     updateSessionTurn: (id, entry) => { const index = turns.findIndex((turn) => turn.id === id); turns[index] = { id, ...entry }; },
     setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
@@ -267,8 +264,8 @@ it("Copilotのprogress burstは全量処理しconsumer完了と実失敗を区�
     let delivered = 0;
     let settled = false;
     const run = f.adapter.runSessionTurn({
-      session, executionOptions: captureSessionExecutionOptions(session), sessionMemory: createDefaultSessionMemory(session),
-      projectMemoryEntries: [], providerCatalog: { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high", models: [{ id: "gpt-4.1", label: "GPT", reasoningEfforts: ["high"] }] },
+      session, executionOptions: captureSessionExecutionOptions(session),
+      providerCatalog: { id: "copilot", label: "Copilot", defaultModelId: "gpt-4.1", defaultReasoningEffort: "high", models: [{ id: "gpt-4.1", label: "GPT", reasoningEfforts: ["high"] }] },
       userMessage: "pressure", appSettings: normalizeAppSettings({}), attachments: [],
     }, (state) => { if (state.assistantText) { delivered += 1; return gate.promise; } });
     const outcome = run.then(result => { settled = true; return result; }, (error: unknown) => { settled = true; return error; });

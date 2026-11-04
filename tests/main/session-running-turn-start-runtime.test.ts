@@ -7,7 +7,6 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import type { ComposerPreview, LiveApprovalDecision } from "../../src-shared/session/runtime-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
-import type { SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { CharacterRuntimeSnapshot } from "../../src-shared/character/character-catalog.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -63,21 +62,6 @@ function createProviderCatalog(): ModelCatalogProvider {
   };
 }
 
-function createSessionMemory(sessionId: string): SessionMemory {
-  return {
-    sessionId,
-    workspacePath: "C:/workspace",
-    threadId: "",
-    schemaVersion: 1,
-    goal: "テストする",
-    decisions: [],
-    openQuestions: [],
-    nextActions: [],
-    notes: [],
-    updatedAt: "2026-08-30T00:00:00.000Z",
-  };
-}
-
 type CreateSessionTurnInput = Parameters<SessionRuntimeServiceDeps["createSessionTurn"]>[0];
 
 function createSessionTurn(input: CreateSessionTurnInput): SessionTurnRecord {
@@ -99,8 +83,6 @@ function createRuntimeDeps(
       return { snapshot: { providers: [provider] }, provider };
     },
     getProviderCodingAdapter: () => adapter,
-    getSessionMemory: (current) => createSessionMemory(current.id),
-    resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn,
     updateSessionTurn: () => undefined,
     setLiveSessionRun: () => undefined,
@@ -329,7 +311,6 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
         version: "sentinel-affect",
         updatedAt: null,
       },
-      memory: { items: [], updatedAt: null },
     } satisfies NonNullable<RunSessionTurnInput["characterContext"]>;
     const partialAdapter: ProviderCodingAdapter = {
       ...createAdapter(async (input) => {

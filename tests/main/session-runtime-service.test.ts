@@ -10,7 +10,6 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import type { ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
-import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
@@ -28,7 +27,7 @@ import {
   isRetryableStaleThreadSessionError,
 } from "../../src-electron/session/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
-import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
+import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
@@ -81,21 +80,6 @@ function createSession(overrides?: Partial<Session>): Session {
 }
 
 const TEST_EXECUTION_OPTIONS = captureSessionExecutionOptions(createSession());
-
-function createSessionMemory(sessionId: string): SessionMemory {
-  return {
-    sessionId,
-    workspacePath: "C:/workspace",
-    threadId: "",
-    schemaVersion: 1,
-    goal: "テストする",
-    decisions: [],
-    openQuestions: [],
-    nextActions: [],
-    notes: [],
-    updatedAt: new Date().toISOString(),
-  };
-}
 
 function createCharacter(): CharacterProfile {
   return {
@@ -189,8 +173,6 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     getAppSettings: () => normalizeAppSettings({}),
     resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
     getProviderCodingAdapter: () => adapter,
-    getSessionMemory: () => createSessionMemory(session.id),
-    resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn: createSessionTurnBase,
     updateSessionTurn() {},
     setLiveSessionRun(_id, state) { live = state; },
@@ -225,7 +207,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     sessions: { ...writes, clearCharacterAuthoringRuntimeState: (session) => session },
     resolution: { ...resolution, resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture" },
     provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter },
-    memory: { getAppSettings: deps.getAppSettings, resolveProjectMemoryEntriesForPrompt: deps.resolveProjectMemoryEntriesForPrompt, onCharacterContextFailure() {} },
+    memory: { getAppSettings: deps.getAppSettings, onCharacterContextFailure() {} },
     turn, live, interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
       resolvePendingApprovalRequest: deps.resolvePendingApprovalRequest, resolvePendingElicitationRequest: deps.resolvePendingElicitationRequest,
       invalidateProviderSessionThread: deps.invalidateProviderSessionThread },
@@ -1015,7 +997,7 @@ describe("SessionRuntimeService", () => {
         getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
         resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
         resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-        getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+        getProviderCodingAdapter: () => adapter,
         createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, update) => { phases.push(update.phase); },
         setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
         waitForApprovalDecision: () => "deny", waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
@@ -1282,7 +1264,7 @@ describe("SessionRuntimeService", () => {
       upsertTerminalSession: async (next) => { saveStarted = true; await saveGate; stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1358,7 +1340,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1438,7 +1420,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1511,7 +1493,7 @@ describe("SessionRuntimeService", () => {
       },
       getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1564,7 +1546,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async (_session, text) => { if (text === "race") { previewStarted = true; await previewGate; } return { attachments: [], errors: [] }; }, getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1608,7 +1590,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }), resetProviderSessionThread: () => { resets += 1; },
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1689,8 +1671,6 @@ describe("SessionRuntimeService", () => {
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
-      getSessionMemory: (session) => createSessionMemory(session.id),
-      resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase,
       updateSessionTurn() {},
       setLiveSessionRun: (_id, next) => { live = next; },
@@ -1748,13 +1728,11 @@ describe("SessionRuntimeService", () => {
       resolveCharacterContext: () => ({ schemaVersion: "withmate-character-context-v1",
         baseline: { definitionSha256: current, snapshotAt: "2026-10-03T00:00:00Z" },
         affect: { mode: "active", effective: [{ contributingLayers: ["session"], targetType: "user", targetId: "user", family: null,
-          label: `Affect ${current}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: current, updatedAt: null },
-        memory: { items: [], updatedAt: null } }),
+          label: `Affect ${current}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: current, updatedAt: null } }),
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
-      getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {},
@@ -1850,8 +1828,6 @@ describe("SessionRuntimeService", () => {
           getAppSettings: () => normalizeAppSettings({}),
           resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
           getProviderCodingAdapter: () => adapter,
-          getSessionMemory: (session) => createSessionMemory(session.id),
-          resolveProjectMemoryEntriesForPrompt: () => [],
           createSessionTurn: createSessionTurnBase,
           updateSessionTurn() {},
           setLiveSessionRun: (_id, next) => { live = next; },
@@ -1954,8 +1930,6 @@ describe("SessionRuntimeService", () => {
       resolveProviderCatalog: (id) => facade.resolveProviderCatalog(id),
       getProviderCodingAdapter: (id) => facade.getProviderCodingAdapter(id),
       getProviderAgentRuntimeBinding: () => { bindingIssues += 1; return null; },
-      getSessionMemory: () => createSessionMemory(session.id),
-      resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: unexpectedWrite,
       updateSessionTurn: unexpectedWrite,
       getLiveSessionRun: () => null,
@@ -2028,7 +2002,7 @@ describe("SessionRuntimeService", () => {
         };
       },
     };
-    const context = (version: number): CharacterContextResponse => ({
+    const context = (version: number): CharacterAffectContext => ({
       schemaVersion: "withmate-character-context-v1",
       baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
       affect: {
@@ -2038,7 +2012,6 @@ describe("SessionRuntimeService", () => {
         version: `affect-v1-${version}`,
         updatedAt: "2026-08-09T00:00:00.000Z",
       },
-      memory: { items: [], updatedAt: null },
     });
 
     const service = createTestRuntime({
@@ -2080,12 +2053,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(session) {
-        return createSessionMemory(session.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       resolveConversationTimingContext() {
         timingCompletionSnapshots.push(lastCommittedAt);
@@ -2256,12 +2223,6 @@ describe("SessionRuntimeService", () => {
       resolveSessionFolderPath(sessionId) {
         return `F:/user-data/session-files/${sessionId}`;
       },
-      getSessionMemory() {
-        return createSessionMemory(staleSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -2365,12 +2326,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -2456,12 +2411,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn() {
         calls.push("createSessionTurn");
@@ -2611,12 +2560,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -2735,12 +2678,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -2977,12 +2914,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -3094,12 +3025,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -3200,12 +3125,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3337,12 +3256,6 @@ resolveComposer!({ attachments: [], errors: [] });
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3509,12 +3422,6 @@ resolveProvider!(createPartialResult());
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -3616,12 +3523,6 @@ resolveProvider!(createPartialResult());
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3779,12 +3680,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       },
       endProviderAgentRuntimeTurn(handle) {
         endedRuntimeTurnHandles.push(handle);
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       resolveConversationTimingContext(_session, observedAt) {
         timingResolutionCount += 1;
@@ -3954,12 +3849,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -4064,12 +3953,6 @@ releaseSecondAttempt!();
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(currentSession) {
-        return createSessionMemory(currentSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -4166,12 +4049,6 @@ releaseSecondAttempt!();
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -4272,12 +4149,6 @@ releaseSecondAttempt!();
         getProviderCodingAdapter() {
           return adapter;
         },
-        getSessionMemory(current) {
-          return createSessionMemory(current.id);
-        },
-        resolveProjectMemoryEntriesForPrompt() {
-          return [];
-        },
         createSessionTurn(input) {
           return createSessionTurnBase(input);
         },
@@ -4376,12 +4247,6 @@ releaseSecondAttempt!();
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);

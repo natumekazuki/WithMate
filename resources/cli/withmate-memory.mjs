@@ -25157,8 +25157,8 @@ var mutationToolOutputSchema = createToolOutputSchema(mutationOutputSchema.optio
 	"sourceVersion"
 ]);
 var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
-	"Use character_context.get only when injected turn context is missing, stale, too small for the current topic, or when the client cannot inject context.",
-	"At a topic start, switch, or resumption, consider focused recall when past context could help. Reuse memories already in context; there is no per-turn search quota.",
+	"Normal turns inject Character Affect state, not Memory. Use character_context.get to refresh missing, stale, or insufficient Affect context; its optional query explicitly retrieves Character Memory.",
+	"When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
 	"For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
 	"Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
 	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Normal-turn candidates need an explicit target, timestamp and idempotency key. Background Affect candidates instead supply sourceTurnId; the app supplies timestamp, identity and key, and linked episodes are unavailable.",
@@ -25174,7 +25174,7 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "character_context.get",
-		description: "Get a versioned, minimal Character context snapshot when injected context is unavailable or insufficient.",
+		description: "Get current Character Affect context and, with an explicit query, relevant Character Memory previews.",
 		annotations: {
 			readOnlyHint: true,
 			destructiveHint: false,
