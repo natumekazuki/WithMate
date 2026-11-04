@@ -13,6 +13,10 @@ import { registerBackgroundAffect } from "../../src-electron/character/backgroun
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { backgroundOperationFailure, classifyBackgroundFailure } from "../../src-electron/providers/background-failure.js";
 import { ProviderTurnError } from "../../src-electron/providers/provider-runtime.js";
+import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
+import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
+import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
 
 // @test-value v2
 // kind = "contract"
@@ -212,4 +216,108 @@ test("safe projection distinguishes candidate rejection and finite provider reas
     const failure = classifyBackgroundFailure(new ProviderTurnError("SECRET", { threadId: "", assistantText: "SECRET", usage: null }, false, reason), "agent");
     assert.equal(failure.code, `BACKGROUND_PROVIDER_${suffix}`); assert.equal(failure.reason.includes("SECRET"), false);
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliaryの有効背景bindingに対する実Memory/履歴CLIのoperation拒否は公開応答を維持し、Agent正常return後も失敗event一件とfailedへ届く"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#失敗の記録" }
+// fault = "operation grant拒否で実行への帰属も捨ててcompletedにする、拒否を許可へ変える、または別executionも失敗にする"
+// observable = "Agent外のCLI exit/code/effect、正常return到達、runOnce code、共通failure event一件、保存0件、他bindingのadmissionとfailure"
+// observation_boundary = "public-boundary"
+// scope = "bundled Memory CLI and session-history CLI through real HTTP into production failure reporting"
+// lifecycle = "permanent"
+// impact = "既知の用途外操作拒否が成功に見え専用失敗ログの原因を失うか、意図しない保存を許す"
+// distinction = "MCP hostのgrant検査とAgent例外testではHTTP operation resolveが拒否した配布CLIの正常return経路を検出できない"
+// @end-test-value
+test("CLI operation denials reach the background failure boundary without granting the operation", async () => {
+  const f = await backgroundHistoryFixture(undefined, { affect: registerBackgroundAffect });
+  const originalSessions = structuredClone([...f.sessions]);
+  try {
+    const other = f.started("other");
+    for (const sourceId of ["main", "aux"]) for (const mode of ["memory", "history"] as const) {
+      const events: BackgroundFailureEvent[] = [];
+      let response: { exit: number; value: { error?: { code: string; effect: string }; code?: string; effect?: string } } | undefined;
+      let returnedNormally = false;
+      const runtime = new BackgroundProductionRuntime({ executions: f.executions, onFailure: (event) => events.push(event),
+        getAppSettings: () => normalizeAppSettings({}), getModelCatalog: () => ({ providers: [] }),
+        captureSource: async () => null, resolveAuthority: () => null, sourceKinds: {},
+        runAgent: async (agent) => {
+          const binding = f.project({ binding: agent.binding, handle: agent.handle, signal: agent.signal, admission: { state: agent.handle.revocationState } });
+          const cli = mode === "memory" ? "withmate-memory.mjs" : "withmate-session-history.mjs";
+          const command = mode === "memory" ? "append" : "get-message";
+          const body = mode === "memory" ? { target: { kind: "user-global" }, kind: "note", title: "Denied", body: "Denied",
+            preview: "Denied", tags: [], idempotencyKey: `${sourceId}-denied` } : { seq: 0 };
+          response = await promisify(execFile)(process.execPath, [resolve("resources/cli", cli), command, "--json", JSON.stringify(body)],
+            { cwd: f.directory, env: f.cliEnv(binding), windowsHide: true, timeout: 15_000 })
+            .then(({ stdout }) => ({ exit: 0, value: JSON.parse(stdout) }), (error: unknown) => {
+              const child = error as { code: number; stdout: string };
+              if (typeof child.code !== "number" || typeof child.stdout !== "string") throw error;
+              return { exit: child.code, value: JSON.parse(child.stdout) };
+            });
+          returnedNormally = true;
+        } });
+      const grants = [...getSessionHistoryAgentRuntimeOperations(), ...getBackgroundMemoryReadOperations(), BACKGROUND_REGISTRATION_OPERATIONS.affect.operation]
+        .filter((operation) => mode !== "history" || operation !== "session_history.route.get_message");
+      const result = await runtime.calls.runOnce({ context: { session: f.sessions.get(sourceId)!, actorSessionId: sourceId,
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, scope: f.scope(sourceId), operationGrants: grants },
+        selection: { providerId: "claude", modelId: "test" }, userInput: "", onAdmitted() {} });
+      assert.equal(returnedNormally, true); assert.ok(response);
+      assert.equal(response.exit, mode === "memory" ? 3 : 1);
+      const code = mode === "memory" ? "MEMORY_FORBIDDEN" : "SESSION_BINDING_FORBIDDEN";
+      assert.equal(response.value.error?.code ?? response.value.code, code);
+      assert.equal(response.value.error?.effect ?? response.value.effect, "none");
+      assert.deepEqual(result, { kind: "failed", code });
+      assert.equal(events.length, 1);
+      assert.partialDeepStrictEqual(events[0], { code, stage: mode === "memory" ? "registration" : "history", purpose: "affect",
+        sourceKind: sourceId === "main" ? "main" : "auxiliary", sourceSessionId: sourceId });
+      assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM memory_entries_v6").get()!.n, 0);
+      assert.equal(other.admission.isCurrent!(), true); assert.equal(other.failure, undefined);
+      assert.equal(f.bindings.getActiveBindingCount(), 1);
+    }
+    assert.deepEqual([...f.sessions], originalSessions);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Memory/履歴HTTPの拒否は不明bindingや欠落・別実行のturn capabilityを有効な背景実行の失敗へ帰属させない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#失敗の記録" }
+// fault = "操作拒否を記録するためbinding referenceだけを信用し他実行の失敗を作る"
+// observable = "実HTTP拒否応答、Agent正常return後のcompletedとfailure件数0、他実行のadmissionとfailure"
+// observation_boundary = "public-boundary"
+// scope = "real HTTP Memory and history exchange with unknown reference or invalid background turn identity"
+// lifecycle = "permanent"
+// impact = "不正な呼出しが有効な背景処理へ誤った失敗記録を残す"
+// distinction = "CLI正常identityの拒否testでは診断帰属のturn照合漏れを検出できない"
+// @end-test-value
+test("HTTP denial attribution requires the matching active background binding and turn", async () => {
+  const f = await backgroundHistoryFixture();
+  try {
+    const other = f.started("other");
+    for (const mode of ["memory", "history"] as const) for (const invalid of ["reference", "missing-turn", "other-turn"] as const) {
+      const errors: unknown[] = [];
+      let response: { status: number; value: unknown } | undefined;
+      let returnedNormally = false;
+      const calls = new BackgroundCallService({ executions: f.executions, onFailure: (error) => errors.push(error), runAgent: async (agent) => {
+        response = await callWithMateMemoryRuntime(f.connection, { method: "POST", path: mode === "memory" ? "/v1/append" : "/v1/session-history/get-message",
+          body: mode === "memory" ? { target: { kind: "user-global" }, kind: "note", title: "Denied", body: "Denied", preview: "Denied", tags: [] } : { seq: 0 } },
+          { signal: agent.signal, ...(mode === "history" ? { exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } : {}),
+            bindingReference: invalid === "reference" ? "unknown-reference" : agent.binding.bindingReference,
+            turnCapability: invalid === "missing-turn" ? undefined : invalid === "other-turn" ? other.handle.capability : agent.handle.capability });
+        returnedNormally = true;
+      } });
+      const result = await calls.runOnce({ context: { session: f.sessions.get("main")!, actorSessionId: "main",
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, scope: f.scope(), operationGrants: [] },
+        selection: { providerId: "claude", modelId: "test" }, userInput: "", onAdmitted() {} });
+      assert.equal(returnedNormally, true); assert.ok(response);
+      assert.partialDeepStrictEqual(response, mode === "memory"
+        ? { status: 403, value: { error: { code: "MEMORY_FORBIDDEN", effect: "none" } } }
+        : { status: invalid === "reference" ? 401 : 403, value: { ok: false,
+          code: invalid === "reference" ? "SESSION_BINDING_INVALID" : "SESSION_BINDING_FORBIDDEN", effect: "none" } });
+      assert.deepEqual(result, { kind: "completed" }); assert.equal(errors.length, 0);
+      assert.equal(other.admission.isCurrent!(), true); assert.equal(other.failure, undefined);
+      assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM memory_entries_v6").get()!.n, 0);
+    }
+  } finally { await f.close(); }
 });

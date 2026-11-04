@@ -103,6 +103,8 @@ Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続し、既存の
 
 bound MCP／CLIの既知の操作失敗は既存の実行寿命へ最初の原因だけを保持し、Agentが通常returnしても`completed`にしない。元のtool応答と保存効果は保持し、応答配送を止めるための即時失効や、成功確認済みwriteの取消への上書きは行わない。実行終了時の失敗記録は呼出境界が一度だけ行い、用途controllerが再記録しない。独立した重複排除台帳・保存証明・復旧queueは持たない。
 
+HTTPのMemory／履歴操作では、有効なbinding identityと同じ背景turn capabilityから診断の帰属を確定し、operationの許可判定とは分離する。用途外・grant不足の拒否も該当実行へ報告するが、その操作を許可しない。不明・失効reference、欠落・別実行のturn capabilityは有効な実行へ帰属させない。
+
 Mainは`userData/logs/background-failures.jsonl`へ失敗だけを追記し、回転・切詰め・自動削除をしない。日時、用途、元会話kind／ID、段階、既知のcodeと短い原因、取得済みProvider／Modelと解決できた権限だけを記録する。本文・prompt・tool全文・credential・raw例外は入れない。書込み失敗は既存診断出力へ渡し、元の失敗や通常会話を変更しない。詳細は[App Log Base](app-log-base.md#background-failure-log-policy)を参照する。
 
 ## 共通設定と用途controllerへの通知

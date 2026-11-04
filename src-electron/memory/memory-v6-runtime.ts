@@ -112,7 +112,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   now?: () => Date;
   log?: (input: AppLogInput) => void;
   storageOperationDiagnosticSink?: StorageOperationDiagnosticSink;
-  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve"> & Partial<Pick<AgentRuntimeBindingRegistry, "subscribeChanges" | "resolveIdentity">>;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve" | "resolveIdentity"> & Partial<Pick<AgentRuntimeBindingRegistry, "subscribeChanges">>;
   providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit"> & Partial<Pick<ProviderAgentRuntimeTurnCoordinator, "end">>;
   resolveActorSession?: MemoryV6HttpServerOptions["resolveActorSession"];
   routeAgentRuntimeExtension?: (
