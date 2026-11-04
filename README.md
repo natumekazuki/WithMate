@@ -19,6 +19,8 @@ Codexが既定のproviderです。Claude AgentとOpenCodeはSettingsで有効化
 
 Model候補とDepthは各providerのSDK／native一覧から取得します。SessionのModelを開くと検索でき、候補更新は現在の選択や実行中の設定を変更しません。詳細は[Provider Model Discovery](docs/design/model-catalog.md)を参照してください。
 
+Settingsの各providerの`Models`でModelを無効化できます。OpenCodeはnativeサービス単位でも設定できます。無効なModelは候補から除外し、保存済みの選択でも新規要求の受付・実行開始前に拒否します。実行中turnと現在の選択値は変更しません。
+
 Homeからセッションの作成・再開やCharacterの管理を行い、Session Windowで作業します。画面構成と操作は[Desktop UI](docs/design/desktop-ui.md)、機能別の使い方は[Feature Guides](docs/features/README.md)を参照してください。
 
 ## 利用上の注意

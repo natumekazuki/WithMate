@@ -2093,6 +2093,7 @@ export default function AgentSessionWindowApp() {
       isPromptTemplateWorkspaceOpen,
       providerCatalog: selectedProviderCatalog,
       models: modelOptions,
+      modelAvailability: appSettings.modelAvailability,
       modelDiscoveryHasCache: Boolean(isSameModelCatalogWorkspace(modelCatalog?.workspacePath, renderedSession.workspacePath) && modelCatalog?.discovery?.[renderedSession.provider]?.fetchedAt),
       modelDiscoveryStatus: modelCatalog?.discovery?.[renderedSession.provider]?.status ?? (modelCatalogLoadStatus === "error" ? "error" : "loading"),
       modelDiscoveryError: modelCatalog?.discovery?.[renderedSession.provider]?.error ?? modelCatalogLoadError,

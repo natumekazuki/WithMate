@@ -10,8 +10,67 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { runMainRuntimeOptionOperation } from "../../src/chat/runtime/main-session-mutation-operations.js";
 import { runAuxiliaryModelChangeOperation } from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "../../src/chat/auxiliary-runtime-option-routing.js";
+import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// @test-value v2
+// kind = "contract"
+// claim = "開いている候補snapshotにも最新サービス無効化を適用し現在値を保持したまま選択を拒否する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-availability" }
+// fault = "古いsnapshotや現在値の補完から無効サービスのModelを再選択できる"
+// observable = "現在Modelのtrigger表示、option ID集合、Enterによるcallback件数"
+// observation_boundary = "component-behavior"
+// scope = "ModelPickerの選択snapshotと無効化通知"
+// lifecycle = "permanent"
+// impact = "無効化した接続先が候補に残り、選択を受け付けたように見える"
+// distinction = "共通判定testではsnapshot固定と現在値補完による再挿入を検出できない"
+// @end-test-value
+test("開いているModel候補にも無効化を適用し現在値を候補へ復活させない", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+  const globals = ["window", "document", "Node", "HTMLElement", "HTMLInputElement", "Event", "MouseEvent", "KeyboardEvent"] as const;
+  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const { createRoot } = await import("react-dom/client");
+  const { ModelPicker } = await import("../../src/chat/composer/model-picker.js");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const selected: string[] = [];
+  let availability: ModelAvailabilitySettings = {};
+  let models: ModelCatalogItem[] = [
+    { id: "openai/current", label: "Current Model", reasoningEfforts: [] },
+    { id: "openai/other", label: "Other Model", reasoningEfforts: [] },
+    { id: "other/allowed", label: "Allowed Model", reasoningEfforts: [] },
+  ];
+  const render = () => root.render(<ModelPicker providerId="opencode" modelAvailability={availability}
+    options={buildModelSelectOptions(models)} value="openai/current" fallbackLabel="Current Model"
+    discoveryStatus="ready" onChange={(model) => selected.push(model.id)} />);
+  try {
+    await act(async () => render());
+    const trigger = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
+    await act(async () => trigger.click());
+    const search = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 3);
+    models = [];
+    availability = { opencode: { disabledServiceIds: ["openai"], disabledModelIds: [] } };
+    await act(async () => render());
+    assert.equal(dom.window.document.activeElement, search);
+    assert.equal(trigger.querySelector("span")?.textContent, "Current Model");
+    assert.deepEqual([...dom.window.document.querySelectorAll('[role="option"]')].map((option) => option.textContent?.trim()), ["Allowed Model"]);
+    await act(async () => search.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    assert.deepEqual(selected, []);
+    await act(async () => trigger.click());
+    await act(async () => trigger.click());
+    assert.equal(dom.window.document.querySelectorAll('[role="option"]').length, 0);
+    assert.equal(trigger.querySelector("span")?.textContent, "Current Model");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const key of globals) {
+      if (previous[key]) Object.defineProperty(globalThis, key, previous[key]!);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"

@@ -3,6 +3,8 @@ import { normalizeSessionTurnClientRequestId, normalizeSessionTurnSubmitSource, 
 import { captureSessionExecutionOptions, validateSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
+import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { assertModelEnabled } from "../../src-shared/settings/model-availability.js";
 import type { ReorderQueuedSessionTurnsRequest, SessionTurnQueueOwner, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import type { SessionTurnQueueService } from "../session/session-turn-queue-service.js";
 
@@ -10,6 +12,7 @@ export type MainSessionTurnQueueFacadeDeps = {
   assertActive(): void;
   assertAccepting(): void;
   getSession(sessionId: string): Promise<Session | null>;
+  getAppSettings(): Promise<AppSettings>;
   validateWorkspace(session: Session): Promise<void>;
   validateProvider(session: Session): Promise<{ provider: ModelCatalogProvider }>;
   preview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -69,6 +72,8 @@ export class MainSessionTurnQueueFacade {
       if (getSessionIncarnationId(current) !== owner.incarnationId || current.provider !== session.provider || current.workspacePath !== session.workspacePath) {
         throw new Error("The Session identity changed during queue acceptance.");
       }
+      this.deps.assertAccepting();
+      assertModelEnabled((await this.deps.getAppSettings()).modelAvailability, session.provider, request.executionOptions.model);
       this.deps.assertAccepting();
     } catch (error) {
       // Canonical lookup proved absence while this Session's intake was locked.

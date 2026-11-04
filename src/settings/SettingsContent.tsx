@@ -1,4 +1,7 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
+import { ProviderModelSettings } from "./provider-model-settings.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import {
   GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
@@ -53,6 +56,8 @@ import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
+  modelDiscovery?: ModelCatalogSnapshot["discovery"];
+  onChangeModelAvailability: (availability: ModelAvailabilitySettings) => void;
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDraftLoaded: boolean;
   memoryV6DiagnosticsLoadStatus: "loading" | "loaded" | "error";
@@ -151,6 +156,8 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
 export function HomeSettingsContent({
   settingsDraft,
   providerSettingRows,
+  modelDiscovery,
+  onChangeModelAvailability,
   memoryV6Diagnostics,
   settingsDraftLoaded,
   memoryV6DiagnosticsLoadStatus,
@@ -201,6 +208,16 @@ export function HomeSettingsContent({
   const busyActionsRef = useRef(new Set<SettingsActionKey>());
   const [invalidPreviewWheelZoomStep, setInvalidPreviewWheelZoomStep] = useState<string | null>(null);
   const [cleaningSessionFiles, setCleaningSessionFiles] = useState(false);
+  const [modelProviderId, setModelProviderId] = useState<string | null>(null);
+  const modelsTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const restoreModelsFocusRef = useRef<string | null>(null);
+  const modelProvider = providerSettingRows.find((row) => row.provider.id === modelProviderId);
+  useLayoutEffect(() => {
+    if (modelProviderId === null && restoreModelsFocusRef.current) {
+      modelsTriggerRefs.current.get(restoreModelsFocusRef.current)?.focus();
+      restoreModelsFocusRef.current = null;
+    }
+  }, [modelProviderId]);
   const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
   const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
   const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
@@ -225,6 +242,22 @@ export function HomeSettingsContent({
     <>
       <div className="settings-panel settings-panel-window">
         <div className="settings-panel-window-scroll">
+          {modelProvider ? (
+            <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
+              <ProviderModelSettings
+                provider={modelProvider.provider}
+                availability={settingsDraft.modelAvailability}
+                providerEnabled={modelProvider.settings.enabled}
+                discovery={modelDiscovery?.[modelProvider.provider.id]}
+                onChange={onChangeModelAvailability}
+                onRetry={onRetryModelCatalog}
+                onBack={() => {
+                  restoreModelsFocusRef.current = modelProvider.provider.id;
+                  setModelProviderId(null);
+                }}
+              />
+            </fieldset>
+          ) : (
           <section className="settings-section">
           {!settingsDraftLoaded ? (
             <section className="settings-section-card">
@@ -384,6 +417,7 @@ export function HomeSettingsContent({
                 <div className="settings-provider-list">
                   {providerSettingRows.map(({ provider, settings }) => (
                     <section key={provider.id} className="settings-provider-card">
+                      <div className="settings-provider-model-entry">
                       <label className="settings-provider-toggle-row">
                         <span className="settings-provider-name">{provider.label}</span>
                         <input
@@ -392,6 +426,14 @@ export function HomeSettingsContent({
                           onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
                         />
                       </label>
+                      <button
+                        ref={(element) => { if (element) modelsTriggerRefs.current.set(provider.id, element); else modelsTriggerRefs.current.delete(provider.id); }}
+                        type="button"
+                        className="launch-toggle"
+                        aria-label={`Manage ${provider.label} Models`}
+                        onClick={() => setModelProviderId(provider.id)}
+                      >Models</button>
+                      </div>
                       {provider.id === "claude" ? (
                         <p className="settings-help">
                           Uses local Claude Code authentication and billing settings. Sign in with the official CLI before starting a session.
@@ -722,6 +764,7 @@ export function HomeSettingsContent({
           </fieldset> : null}
 
           </section>
+          )}
         </div>
       </div>
       <div className="launch-dialog-foot settings-dialog-foot">

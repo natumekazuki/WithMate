@@ -24,6 +24,18 @@ Sendはその時点のmodel、Depth、権限等を`executionOptions`へ捕捉し
 
 Depthはmodelがadvertiseする任意文字列の配列であり、固定enumに限定しない。空配列はDepthなしを表し、UIを隠す。候補がある場合は空文字の`Default`も表示し、nativeへのDepth未指定と表示を一致させる。明示的なmodel変更では、新modelで現在のDepthを使える場合は維持し、使えなければそのmodelのdefaultまたは未指定へ変更する。候補のbackground更新だけではDepthを変更しない。
 
+## Model Availability
+
+Modelとnativeサービスの無効設定は、SDK一覧と分離した`AppSettings.modelAvailability`へWithMate providerごとに保存する。`disabledModelIds`は完全なmodel ID、`disabledServiceIds`はnativeサービスIDを保持する。app共通設定であり、workspaceや認証contextには依存せず、未設定はすべて有効とする。明示された不正な保存値を既定値へ置き換えない。
+
+OpenCodeのサービスIDはmodel IDの最初の`/`より前とする。サービスの無効化は配下のModel全体に適用し、一覧へ新しく追加されたModelにも及ぶ。サービスを再有効化しても個別Modelの無効設定は保持する。他providerには仮のサービス階層を作らない。
+
+Settingsの管理画面は無効なModelも表示し、通常のModel選択肢は無効なサービス・Modelを除外する。保存済みの現在値とDepthは変更せず、現在値の表示は維持するが候補へ再挿入しない。開いているpickerにも無効設定の変更を適用し、SDK一覧のsnapshot固定とは分けて扱う。
+
+新規要求の受付とMain／Auxiliary共通の実行開始前に、最新の設定でModelを検査する。保存済み・選択中のIDも例外とせず、無効なら実行前に拒否する。queue待機中に無効化された要求は開始前に失敗とし、実行中turnは停止しない。同じrequest IDの既知receiptの再取得には新規送信の検査を課さない。新規Sessionが引き継ぐ選択値や既定Modelも検査し、無効なら別Modelへfallbackしない。
+
+検査はローカルの無効設定に対して行い、SDK一覧の再取得や掲載確認は要求しない。MCP経由の要求にも同じ受付・実行境界を使い、Model一覧・指定用のMCP API自体はこの設定機能に含めない。
+
 ## Model UI
 
 - 共通ComposerのModelは検索付きpopoverとし、Depthは独立した選択のままにする。providerやsortの追加UIは置かない。

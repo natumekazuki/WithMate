@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { searchModelPickerOptions } from "../../src/chat/composer/model-picker-options.js";
+import { searchModelPickerOptions } from "../../src/settings/model-search.js";
 
 // @test-value v2
 // kind = "contract"
