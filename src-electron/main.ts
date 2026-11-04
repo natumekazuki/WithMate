@@ -2436,6 +2436,7 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
         }
       },
       getSession: getQueueRuntimeSession,
+      getAppSettings: async () => owner.appSettingsStorage.getSettings(),
       validateWorkspace: assertSessionQueueWorkspaceAvailable,
       validateProvider: async (session) => {
         if (!getProviderAppSettings(await requireAppSettingsStorage().getSettings(), session.provider).enabled) {

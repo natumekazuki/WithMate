@@ -1862,6 +1862,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
     onChanged: (owner) => { notifications.push(() => listener?.(owner.sessionId)); } });
   const facade = new MainSessionTurnQueueFacade({
     assertActive() {}, assertAccepting() {}, getSession: async () => session,
+    getAppSettings: unexpected,
     validateWorkspace: unexpected, validateProvider: unexpected, preview: unexpected, store, service,
   });
   const api: ConversationMessageColumnApi = {

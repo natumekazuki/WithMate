@@ -14,6 +14,7 @@ import { MainSessionTurnQueueFacade } from "../../src-electron/app/main-session-
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 
 async function fixture() {
   const temporary = await mkdtemp(join(os.tmpdir(), "withmate-queue-edit-"));
@@ -108,6 +109,7 @@ test("編集失敗は停止を保持し取消と成功時だけ再開する", as
   } });
   const attachment = { id: "new", kind: "file" as const, source: "text" as const, absolutePath: "C:/workspace/new.txt", displayPath: "new.txt", workspaceRelativePath: "new.txt", isOutsideWorkspace: false };
   const facade = new MainSessionTurnQueueFacade({ assertActive() {}, assertAccepting() {}, getSession: async (id) => f.sessions.getSession(id),
+    getAppSettings: async () => createDefaultAppSettings(),
     validateWorkspace: async () => {}, validateProvider: async () => ({ provider: { id: "codex", label: "Codex", models: [], defaultModelId: "model", defaultReasoningEffort: "medium" } }),
     preview: async (_session, text) => { previewText = text; return { errors: previewFails ? ["attachment unavailable"] : [], attachments: [attachment] }; }, store: f.store, service });
   try {

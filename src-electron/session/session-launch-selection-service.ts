@@ -14,6 +14,7 @@ import {
   type ModelReasoningEffort,
 } from "../../src-shared/settings/model-catalog.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { assertModelEnabled } from "../../src-shared/settings/model-availability.js";
 import type { SessionSummary } from "../../src-shared/session/session-state.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
@@ -79,6 +80,7 @@ export class SessionLaunchSelectionService {
       latestSession?.model ?? provider.defaultModelId,
       latestSession?.reasoningEffort ?? provider.defaultReasoningEffort,
     );
+    assertModelEnabled((await this.deps.getAppSettings()).modelAvailability, provider.id, modelSelection.resolvedModel);
 
     return {
       provider: provider.id,

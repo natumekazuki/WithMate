@@ -18,6 +18,26 @@ import {
 describe("provider-settings-state", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "アプリ設定境界はmodel無効化の未設定だけを空へ補い、未知IDを保持して明示不正値を拒否する"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md" }
+  // fault = "アプリ設定の正規化でmodel無効化を脱落させるか不正値を空へ置換する"
+  // observable = "defaultとnormalizeAppSettingsのmodelAvailabilityおよび例外"
+  // observation_boundary = "public-boundary"
+  // scope = "app-settings-model-availability-validation"
+  // lifecycle = "permanent"
+  // impact = "IPC設定更新で無効化が解除される"
+  // distinction = "無効化helper単体では全アプリ設定の正規化経路での脱落を検出できない"
+  // @end-test-value
+  it("model無効化設定をアプリ設定として検証し保持する", () => {
+    assert.deepEqual(createDefaultAppSettings().modelAvailability, {});
+    assert.deepEqual(normalizeAppSettings({}).modelAvailability, {});
+    const modelAvailability = { future: { disabledServiceIds: ["unknown"], disabledModelIds: ["future/model"] } };
+    assert.deepEqual(normalizeAppSettings({ modelAvailability }).modelAvailability, modelAvailability);
+    assert.throws(() => normalizeAppSettings({ modelAvailability: null }), /Model availability/);
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "preview wheelの刻みは既定5、欠落時のみ5を補い、1〜100の整数以外は拒否する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
   // fault = "不正値を丸めるか既定値に置換し、意図しないzoom刻みを成功扱いする"

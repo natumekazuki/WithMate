@@ -64,6 +64,7 @@ import {
   resolveComposerSendabilityState,
 } from "./session-composer-feedback.js";
 import { buildRuntimeSelectionOptions } from "../../settings/runtime-selection-options.js";
+import type { ModelAvailabilitySettings } from "../../../src-shared/settings/model-availability.js";
 import {
   applyComposerDraftClearCommand,
   buildOnDraftCompositionHandlers,
@@ -104,6 +105,7 @@ export type SessionComposerFeatureBridge = {
     isPromptTemplateWorkspaceOpen: boolean;
     providerCatalog: ModelCatalogProvider | null | undefined;
     models: readonly ModelCatalogItem[];
+    modelAvailability?: ModelAvailabilitySettings;
     modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
     modelDiscoveryError?: string;
     modelDiscoveryHasCache?: boolean;
@@ -578,6 +580,7 @@ export function useSessionComposerFeature(input: {
       speedOptions: runtimeOptions.speedSelectOptions,
       selectedCodexSpeed: bridge.session.codexSpeed,
       modelOptions: runtimeOptions.modelSelectOptions,
+      modelAvailability: bridge.runtime.modelAvailability,
       modelDiscoveryStatus: bridge.runtime.modelDiscoveryStatus,
       modelDiscoveryError: bridge.runtime.modelDiscoveryError,
       modelDiscoveryHasCache: bridge.runtime.modelDiscoveryHasCache,

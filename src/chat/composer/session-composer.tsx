@@ -121,6 +121,7 @@ export type SessionComposerExpandedProps = {
   speedOptions: Array<{ value: CodexSpeed; label: string }>;
   selectedCodexSpeed: CodexSpeed;
   modelOptions: ModelSelectOption[];
+  modelAvailability?: import("../../../src-shared/settings/model-availability.js").ModelAvailabilitySettings;
   modelDiscoveryStatus?: "idle" | "loading" | "ready" | "error";
   modelDiscoveryError?: string;
   modelDiscoveryHasCache?: boolean;
@@ -225,6 +226,7 @@ export function SessionComposerExpanded({
   speedOptions = [],
   selectedCodexSpeed = "standard",
   modelOptions,
+  modelAvailability,
   modelDiscoveryStatus,
   modelDiscoveryError,
   modelDiscoveryHasCache,
@@ -752,6 +754,8 @@ export function SessionComposerExpanded({
           <ModelPicker
             key={errorOwnerKey}
             options={modelOptions}
+            modelAvailability={modelAvailability}
+            providerId={providerId}
             discoveryStatus={modelDiscoveryStatus}
             discoveryError={modelDiscoveryError}
             discoveryHasCache={modelDiscoveryHasCache}

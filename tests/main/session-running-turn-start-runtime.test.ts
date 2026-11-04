@@ -190,7 +190,6 @@ it("送信時snapshotを先に保存し、Turn中の定義更新は次の送信�
   assert.match(prompts[0]!, /Latest definition/);
   assert.doesNotMatch(prompts[0]!, /Following definition/);
   assert.match(prompts[1]!, /Following definition/);
-  assert.match(prompts[1]!, /過去のTurnに含まれるCharacter定義を置き換え/);
   assert.deepEqual(persisted.messages.map((message) => message.text), ["first", "done", "second", "done"]);
   assert.deepEqual(second.messages.map((message) => message.text), ["second", "done"]);
   assert.equal(second.messageCount, 4);

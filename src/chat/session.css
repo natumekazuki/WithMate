@@ -2252,7 +2252,7 @@
   font-size: 0.82rem;
 }
 
-.live-elicitation-field input,
+.live-elicitation-field input:where(:not([type="checkbox"])),
 .live-elicitation-field select,
 .live-elicitation-field textarea {
   width: 100%;
@@ -2265,7 +2265,7 @@
   font: inherit;
 }
 
-.session-page .live-elicitation-field input,
+.session-page .live-elicitation-field input:where(:not([type="checkbox"])),
 .session-page .live-elicitation-field select,
 .session-page .live-elicitation-field textarea {
   background: rgba(15, 23, 42, 0.58);
@@ -2330,7 +2330,6 @@
   gap: 8px;
 }
 
-.live-elicitation-options .live-elicitation-option input[type="checkbox"],
 .live-elicitation-options .live-elicitation-option input[type="radio"] {
   width: 16px;
   height: 16px;
