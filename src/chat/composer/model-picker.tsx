@@ -57,8 +57,8 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   function show() {
     if (disabled) return;
     awaitingFirstResult.current = !(discoveryHasCache ?? options.length > 0) && discoveryStatus !== "ready";
-    const next: PickerOption[] = options.filter((option) => !isExcluded(option.value)).map((option) => ({ ...structuredClone(option), disabled: !option.model }));
-    if (!next.some((option) => option.value === value) && value && !isExcluded(value)) {
+    const next: PickerOption[] = options.map((option) => ({ ...structuredClone(option), disabled: !option.model }));
+    if (!next.some((option) => option.value === value) && value) {
       next.push({ value, label: fallbackLabel ?? value, model: null, disabled: true });
     }
     const sorted = searchModelPickerOptions(next, "");
@@ -68,8 +68,9 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
       .map((property) => [property, style.getPropertyValue(property)])));
     setSnapshot(sorted);
     setQuery("");
-    const selectedIndex = sorted.findIndex((option) => option.value === value);
-    setActive(selectedIndex >= 0 ? selectedIndex : sorted.findIndex((option) => !option.disabled));
+    const nextVisible = sorted.filter((option) => !isExcluded(option.value));
+    const selectedIndex = nextVisible.findIndex((option) => option.value === value);
+    setActive(selectedIndex >= 0 ? selectedIndex : nextVisible.findIndex((option) => !option.disabled));
     setScrollTop(0);
     onOpen?.();
   }
@@ -77,9 +78,9 @@ export function ModelPicker({ options, value, fallbackLabel, onChange, onOpen, d
   useEffect(() => {
     if (!open || !awaitingFirstResult.current || discoveryStatus !== "ready") return;
     awaitingFirstResult.current = false;
-    const next: PickerOption[] = options.filter((option) => !isExcluded(option.value)).map((option) => ({ ...structuredClone(option), disabled: !option.model }));
-    if (value && !isExcluded(value) && !next.some((option) => option.value === value)) next.push({ value, label: fallbackLabel ?? value, model: null, disabled: true });
-    const nextVisible = searchModelPickerOptions(next, query);
+    const next: PickerOption[] = options.map((option) => ({ ...structuredClone(option), disabled: !option.model }));
+    if (value && !next.some((option) => option.value === value)) next.push({ value, label: fallbackLabel ?? value, model: null, disabled: true });
+    const nextVisible = searchModelPickerOptions(next.filter((option) => !isExcluded(option.value)), query);
     const previousActive = visible[active]?.value;
     const nextActive = nextVisible.findIndex((option) => option.value === (previousActive ?? value));
     setSnapshot(next);

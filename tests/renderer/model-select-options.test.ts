@@ -32,33 +32,6 @@ const providerCatalog: ModelCatalogProvider = {
 
 // @test-value v2
 // kind = "contract"
-// claim = "runtime選択肢はサービス/Model無効化を適用し現在値とDepthの表示を保持する"
-// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-availability" }
-// fault = "現在値補完で無効Modelを候補に戻すか無効化で現在選択の表示を変える"
-// observable = "runtime選択肢のModel ID集合、現在Model名とDepth候補"
-// observation_boundary = "public-boundary"
-// scope = "Composer共通runtime選択肢の投影"
-// lifecycle = "permanent"
-// impact = "MainとAuxiliaryで無効Modelの選択肢と表示が食い違う"
-// distinction = "shared判定はrendererの現在値補完とDepth投影を通らない"
-// @end-test-value
-test("runtime候補は無効化を適用し現在ModelとDepthの表示を保持する", () => {
-  const catalog = { id: "opencode", label: "OpenCode", defaultModelId: "openai/one", defaultReasoningEffort: "high", models: [
-    { id: "openai/one", label: "One", reasoningEfforts: ["high"] },
-    { id: "other/two", label: "Two", reasoningEfforts: [] },
-    { id: "other/three", label: "Three", reasoningEfforts: [] },
-  ] };
-  const options = buildRuntimeSelectionOptions({ providerId: catalog.id, providerCatalog: catalog, models: catalog.models,
-    selectedModel: "openai/one", selectedReasoningEffort: "high", reasoningEfforts: ["high"],
-    selectedApprovalMode: "on-request", selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard", selectedCodexReviewer: "user",
-    modelAvailability: { opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["other/two"] } } });
-  assert.deepEqual(options.modelSelectOptions.map((option) => option.value), ["other/three"]);
-  assert.equal(options.selectedModelFallbackLabel, "One");
-  assert.deepEqual(options.reasoningSelectOptions.map((option) => option.value), ["", "high"]);
-});
-
-// @test-value v2
-// kind = "contract"
 // claim = "モデル選択肢は表示用value/labelと選択確定用の元Model定義を対応付ける"
 // oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-ui" }
 // fault = "選択肢の表示と確定用Model定義が別候補になるか定義を失う"

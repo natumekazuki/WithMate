@@ -320,7 +320,6 @@ export function useSessionComposerFeature(input: {
       providerId: bridge.session.provider,
       providerCatalog: bridge.runtime.providerCatalog,
       models: bridge.runtime.models,
-      modelAvailability: bridge.runtime.modelAvailability,
       selectedModel: bridge.session.model,
       selectedReasoningEffort: bridge.session.reasoningEffort,
       reasoningEfforts: bridge.runtime.reasoningEfforts,

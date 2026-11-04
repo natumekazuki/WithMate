@@ -1,5 +1,4 @@
 import type { ModelCatalogItem, ModelCatalogProvider, ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
-import { getModelDisabledReason, type ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 import type { ApprovalMode } from "../../src-shared/settings/approval-mode.js";
 import type { CodexSandboxMode } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { getCodexSpeedOptions, type CodexSpeed } from "../../src-shared/settings/codex-speed.js";
@@ -39,7 +38,6 @@ export function buildRuntimeSelectionOptions({
   selectedCodexSandboxMode,
   selectedCodexSpeed,
   selectedCodexReviewer,
-  modelAvailability = {},
 }: {
   providerId: string | null | undefined;
   providerCatalog: ModelCatalogProvider | null | undefined;
@@ -51,7 +49,6 @@ export function buildRuntimeSelectionOptions({
   selectedCodexSandboxMode: CodexSandboxMode;
   selectedCodexSpeed: CodexSpeed;
   selectedCodexReviewer: CodexReviewer;
-  modelAvailability?: ModelAvailabilitySettings;
 }): RuntimeSelectionOptions {
   const approvalChoiceOptions = (() => {
     const options = getApprovalOptionsForProvider(providerId);
@@ -66,9 +63,7 @@ export function buildRuntimeSelectionOptions({
   })();
 
   const sandboxChoiceOptions = getSandboxOptionsForProviderSelection(providerId, selectedCodexSandboxMode);
-  const enabledModels = models.filter((model) => getModelDisabledReason(modelAvailability, providerId ?? "codex", model.id) === null);
-  const selectedModelEnabled = getModelDisabledReason(modelAvailability, providerId ?? "codex", selectedModel) === null;
-  const modelSelectOptions = buildModelSelectOptions(enabledModels, selectedModelEnabled ? selectedModel : "");
+  const modelSelectOptions = buildModelSelectOptions(models, selectedModel);
   const selectedModelFallbackLabel = resolveModelFallbackLabel(providerCatalog, selectedModel);
   const reasoningSelectOptions = buildReasoningEffortSelectOptions(reasoningEfforts);
   if (reasoningSelectOptions.length > 0 && !reasoningSelectOptions.some((option) => option.value === "")) {
