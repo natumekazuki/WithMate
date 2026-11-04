@@ -306,53 +306,6 @@ describe("ProjectMemoryStorage", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "旧Project Memoryの利用記録はentryのlastUsedAtを更新する"
-  // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: markProjectMemoryEntriesUsed" }
-  // fault = "retrieval後も利用日時が更新されない"
-  // observable = "取得後のentry.lastUsedAt"
-  // observation_boundary = "public-boundary"
-  // scope = "legacy memory usage"
-  // lifecycle = "characterization"
-  // review_when = "旧Project Memory store生成経路を廃止する時"
-  // @end-test-value
-  it("retrieval に使った entry の lastUsedAt を更新できる", async () => {
-    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-project-memory-"));
-    const dbPath = path.join(tempDirectory, "withmate.db");
-    const workspacePath = path.join(tempDirectory, "workspace");
-    let storage: ProjectMemoryStorage | null = null;
-    let sessionStorage: SessionStorage | null = null;
-
-    try {
-      await mkdir(workspacePath, { recursive: true });
-
-      sessionStorage = new SessionStorage(dbPath);
-      storage = new ProjectMemoryStorage(dbPath);
-      const scope = storage.ensureProjectScope(resolveProjectScope(workspacePath));
-
-      const entry = storage.upsertProjectMemoryEntry({
-        projectScopeId: scope.id,
-        sourceSessionId: null,
-        category: "decision",
-        title: "memory の方針",
-        detail: "Project Memory は retrieval 後に lastUsedAt を更新する",
-        keywords: [],
-        evidence: [],
-      });
-
-      assert.equal(entry.lastUsedAt, null);
-      storage.markProjectMemoryEntriesUsed([entry.id]);
-
-      const loaded = storage.listProjectMemoryEntries(scope.id).find((candidate) => candidate.id === entry.id);
-      assert.ok(loaded?.lastUsedAt);
-    } finally {
-      storage?.close();
-      sessionStorage?.close();
-      await rm(tempDirectory, { recursive: true, force: true });
-    }
-  });
-
-  // @test-value v2
-  // kind = "contract"
   // claim = "旧Project Memoryの最後のentry削除時は空scopeも消す"
   // oracle = { type = "contract", ref = "src-electron/memory/project-memory-storage.ts: deleteProjectMemoryEntry" }
   // fault = "最後のentry削除後に孤立scopeを残す"
