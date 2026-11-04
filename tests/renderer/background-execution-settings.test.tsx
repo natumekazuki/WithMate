@@ -5,6 +5,8 @@ import React, { act } from "react";
 import { BackgroundExecutionSettings } from "../../src/settings/BackgroundExecutionSettings.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { AFFECT_COMPOSITION_INSTRUCTIONS } from "../../src-shared/character-affect/affect-composition.js";
+import { MEMORY_REGISTRATION_PRESETS } from "../../src-shared/memory-recording/memory-registration-input.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -129,6 +131,66 @@ it("背景modelとDepthの選択を用途別に保ちcatalog更新では変更�
     assert.equal(select("Character Memory Model").disabled, true);
     assert.equal(changes, missingChangeCount);
     assert.deepEqual(settings.backgroundExecutionSettings, missingSnapshot);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const key of globals) {
+      const descriptor = previous[key];
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "三用途のUse Presetボタンは現在本文を用途presetの明示本文へ置換し、本文は未設定時も置換後も編集できる"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+// fault = "押下が別用途や権限を変更する、preset参照モードへ戻す、または本文を編集不能にする"
+// observable = "用途別button押下後のinstructionText・textarea値とreadOnly、他用途設定とselectionの保持"
+// observation_boundary = "component-behavior"
+// scope = "background registration instructions editing and preset replacement"
+// lifecycle = "permanent"
+// impact = "ユーザーが登録promptを置換・編集できないか、別用途の設定を意図せず失う"
+// distinction = "共有preset定数や保存schemaのtestではUI操作が正しい用途のdraft本文へ届くことを検出できない"
+// @end-test-value
+it("Use Presetで用途本文を置換し編集可能な状態を保つ", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const globals = ["window", "document", "Node", "HTMLElement", "Event"] as const;
+  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  let settings = createDefaultAppSettings();
+  let changes = 0;
+  const render = () => root.render(<BackgroundExecutionSettings settings={settings} catalog={null}
+    onChangePurpose={(purpose, value) => {
+      changes++;
+      settings = { ...settings, backgroundExecutionSettings: { ...settings.backgroundExecutionSettings, [purpose]: value } };
+      render();
+    }} onChangeFrequencies={() => assert.fail("Preset replacement must not change frequencies")} />);
+  try {
+    await act(async () => render());
+    for (const [purpose, label] of [["character-memory", "Character Memory"], ["target-memory", "Target Memory"], ["affect", "Character Affect"]] as const) {
+      const textarea = dom.window.document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${label} Registration Instructions"]`)!;
+      assert.equal(textarea.readOnly, false);
+      const preset = purpose === "affect" ? AFFECT_COMPOSITION_INSTRUCTIONS : MEMORY_REGISTRATION_PRESETS[purpose];
+      assert.equal(textarea.value, preset);
+      settings.backgroundExecutionSettings[purpose] = { instructionText: "Edited prompt", selection: {
+        providerId: "codex", modelId: "test", approvalMode: "on-request", codexSandboxMode: "read-only",
+      } };
+      await act(async () => render());
+      const before = structuredClone(settings.backgroundExecutionSettings);
+      const button = dom.window.document.querySelector<HTMLButtonElement>(`button[aria-label="${label} Use Preset"]`)!;
+      assert.equal(button.type, "button");
+      await act(async () => button.click());
+      assert.equal(changes, 1);
+      changes = 0;
+      assert.equal(settings.backgroundExecutionSettings[purpose].instructionText, preset);
+      assert.equal(textarea.value, preset);
+      assert.equal(textarea.readOnly, false);
+      assert.deepEqual(settings.backgroundExecutionSettings, { ...before, [purpose]: { ...before[purpose], instructionText: preset } });
+    }
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

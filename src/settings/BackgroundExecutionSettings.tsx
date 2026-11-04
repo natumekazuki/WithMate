@@ -183,22 +183,15 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
               ) : null}
               <div className="settings-background-instruction-head">
                 <span>Registration Instructions</span>
-                <label className="settings-background-preset-toggle">
-                  <input
-                    type="checkbox"
-                    checked={current.instructionText === undefined}
-                    onChange={(event) => onChangePurpose(purpose, {
-                      ...current,
-                      instructionText: event.target.checked ? undefined : preset,
-                    })}
-                  />
+                <button className="launch-toggle compact secondary" type="button"
+                  aria-label={`${labels[purpose]} Use Preset`}
+                  onClick={() => onChangePurpose(purpose, { ...current, instructionText: preset })}>
                   Use Preset
-                </label>
+                </button>
               </div>
               <textarea
                 aria-label={`${labels[purpose]} Registration Instructions`}
                 value={current.instructionText ?? preset}
-                readOnly={current.instructionText === undefined}
                 rows={5}
                 spellCheck={false}
                 onChange={(event) => onChangePurpose(purpose, { ...current, instructionText: event.target.value })}

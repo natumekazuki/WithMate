@@ -63,7 +63,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
   - `Background Execution`
     - `Character Memory` / `Target Memory` / `Character Affect`ごとの`Provider`→`Model`→`Depth`、対応する`Approval`／`Reviewer`／`Sandbox`と`Registration Instructions`
     - Memory二用途の`Every Turns`と`Idle Minutes`
-    - `Use Preset`の解除で本文を編集し、有効化でプリセットへ戻す
+    - 本文は直接編集でき、`Use Preset`ボタンの押下で現在の用途preset本文へ置換する
   - `Diagnostics`
     - `Open Logs` / `Open Crash Dumps`
     - Memory V6 read-only diagnostics
@@ -87,7 +87,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - 各用途のselectionは`reasoningEffort`を任意で保持し、未指定はProviderの既定を意味する。`Depth`候補は選択modelの`reasoningEfforts`を使い、候補なしなら非表示とする。明示的なmodel変更時だけ既存model選択helperでDepthを調整する。catalog更新・Provider無効化だけでは保存値やdraftを変更しない。現在の無効／利用不可Providerや一覧から消えたmodelも選択表示を保持し、有効なProviderへ明示変更できる。Provider未設定・無効・一覧未取得ではModelとDepthを編集できない。
 - 権限は同じ用途group内でProvider共通の候補・組合せ規則を使い、`Approval`は全対応Provider、`Reviewer`はCodex／Claude、`Sandbox`はCodexで編集する。欠落項目は選択Providerの既定値（ApprovalはCodex／CopilotがSafety Focused、Claude／OpenCodeがProvider Controlled、ReviewerはUser、SandboxはWorkspace Write）を使う。Provider変更時は対応する権限項目をそのProviderの既定値へ一括設定し、Model変更では権限を保持する。ClaudeのAuto Reviewで非対応のApprovalへ変えるときは、先にReviewerをUserへ明示変更する。Auto Run中のReviewerは編集しない。
 - 明示された非対応権限や組合せは保持して警告し、実行時も拒否する。非対応fieldは保存値と`Not Applicable`の修正先を表示し、対応値への変更またはProvider変更で回復できる。背景実行開始時に用途別選択を捕捉し、通常Main／Auxiliaryや別用途の権限は継承・変更しない。SpeedはStandard、custom agentは未指定で明示構築する。保存した変更は次の背景実行から適用する。
-- 登録本文は未設定なら用途presetを使う。`Use Preset`を解除すると現行presetを編集本文へコピーし、設定後は空文字列も含めその本文だけを使う。preset本文の正本は`memory-registration-input.ts`と`affect-composition.ts`とし、Settings側に複製しない。
+- 登録本文は未設定なら用途presetを表示し、そのまま編集できる。`Use Preset`ボタンは現在の用途presetを編集本文へコピーして置換し、以後も編集できる。置換はdraftへ反映し、通常の`Save Settings`で保存する。設定後は空文字列も含めその本文だけを使う。preset本文の正本は`memory-registration-input.ts`と`affect-composition.ts`とし、Settings側に複製しない。
 - `memoryRecordingFrequencies`はMemory二用途のTurn数・idle分を保持し、既定はそれぞれ5。Turn数は1以上の整数、idle分は0より大きい有限数とする。入力不正は入力欄に示して保存を止める。保存・読込境界も明示された不正値を拒否し、欠落だけを既定化する。既存`app_settings`のJSON値へ保存し、専用tableは持たない。
 
 - `App` の `Close Action Dock After Send` を含む表示設定の保存

@@ -99,23 +99,6 @@
   font-size: 0.86rem;
 }
 
-.settings-background-preset-toggle {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  color: var(--muted);
-}
-
-.settings-background-purpose textarea[readonly] {
-  color: var(--muted);
-}
-
-.settings-field .settings-background-preset-toggle input {
-  width: 16px;
-  height: 16px;
-  padding: 0;
-}
-
 .settings-background-warning {
   color: var(--danger, #f0aaa5);
   font-size: 0.82rem;
