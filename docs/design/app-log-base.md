@@ -106,6 +106,8 @@ storage Workerと排他coordinatorの診断は、Mainの`StorageOperationLogServ
 
 ## Provider Diagnostic Log Policy
 
+通常のProvider診断と背景の失敗専用ファイルは別の記録先とする。
+
 provider 実行ログは、通常運用では turn 単位の summary を残し、stream event 単位の詳細ログは出さない。
 
 Codex の通常ログに残す summary:
@@ -129,6 +131,16 @@ Codex stream の event-level 診断ログは通常運用では出さない。
 - `codex.run.stream.finished`
 
 上記 3 種は、provider stream の lifecycle や SDK event payload を調べる必要がある場合だけ、`WITHMATE_CODEX_STREAM_DEBUG=1` で再有効化する。
+
+## Background Failure Log Policy
+
+背景三用途の失敗だけを`userData/logs/background-failures.jsonl`へ1行1失敗のJSONLで同期追記する。既存`AppLogService`の書式・directory作成を使い、このinstanceだけ`rotation: false`にする。容量・日数による回転・削除・起動時切詰めをせず、再生成したloggerも既存ファイルへ追記する。通常`withmate.jsonl`の5MiB・5ファイルは変更せず、通常世代の整理は専用ファイルに触れない。
+
+共通項目に加え、用途、実sourceのkind／ID、失敗段階、既知のcodeと短い原因を記録し、取得済みProvider／Modelと解決できた権限を原因調査に必要な範囲で含める。未取得値を推測せず、Providerの例外本文やstack、会話本文・prompt・tool入出力全文・認証情報・token付きURL・環境変数全文を記録しない。文字列切詰めを秘匿化とは扱わず、共通背景failure projectionで既知codeから安全な原因文を作る。
+
+prepare、戻り値の`failed`、捕捉した例外、bound MCP／CLIで確定した操作失敗を対象とする。呼出しの終端を共通境界で一度記録し、用途controllerから同じ結果を再記録しない。開始・正常終了・正常な保存対象なし・未設定での正常な非実行・通常取消は記録しない。途中の確定済みMemory／Affectを後続失敗で巻き戻さず、失敗を保存対象なしへ置換しない。
+
+専用writeが失敗しても、元の失敗理由・保存効果・前景会話の成否を変更せず、既存の診断出力へ渡す。再送queue、無制限buffer、永続実行履歴DB、重複排除台帳は持たない。ログviewer・通知・保持設定を追加せず、利用者は既存のログフォルダを開く入口からファイルを確認する。
 
 ## Privacy And Redaction
 

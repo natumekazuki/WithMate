@@ -56,11 +56,14 @@ import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../..
 import { getSessionIncarnationId, isReadOnlySession } from "../../src-shared/session/session-state.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
+import { sessionHistoryRuntimeOperationByPath, sessionHistoryAgentRuntimeOperation } from "../../src-shared/session-history/session-history-contract.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
   characterContextService?: CharacterContextApplicationService;
   backgroundRegistration?: BackgroundRegistration;
+  onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
   apiSecret: string;
   operatorApiSecret: string;
   mcpApiSecret: string;
@@ -1073,6 +1076,26 @@ async function routeResolvedRequest(input: {
   bindingReference?: string;
   turnCapability?: string;
 }): Promise<unknown> {
+  const resolved = input.options.agentRuntimeBindingRegistry?.resolve(input.bindingReference, agentRuntimeOperationForMemoryRoute(input.route));
+  const background = resolved?.ok ? resolved.binding.backgroundScope : undefined;
+  const stage = background && BACKGROUND_REGISTRATION_OPERATIONS[background.purpose].operation === agentRuntimeOperationForMemoryRoute(input.route)
+    ? "registration" : "read";
+  try {
+    const result = await dispatchResolvedRequest(input);
+    const failure = backgroundOperationFailure(result, stage);
+    if (resolved?.ok && background && failure) input.options.onBackgroundOperationFailure?.(resolved.binding.bindingId, failure);
+    return result;
+  } catch (error) {
+    if (resolved?.ok && background) input.options.onBackgroundOperationFailure?.(resolved.binding.bindingId,
+      classifyBackgroundFailure(error, stage, "BACKGROUND_OPERATION_FAILED"));
+    throw error;
+  }
+}
+
+async function dispatchResolvedRequest(input: {
+  options: MemoryV6HttpServerOptions; route: MemoryV6Route; body: unknown; transport: CharacterContextTransport | null;
+  fallbackFrom?: "mcp"; bindingReference?: string; turnCapability?: string;
+}): Promise<unknown> {
   if (!input.transport || !canTransportInvokeRoute(input.transport, input.route)) {
     return createTransportAuthorityError(input.route);
   }
@@ -1939,6 +1962,12 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           turnCapability: payload.turnCapability,
           ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
         }) ?? null;
+        const historyOperation = sessionHistoryRuntimeOperationByPath.get(new URL(payload.operation.path, "http://127.0.0.1").pathname);
+        if (historyOperation) {
+          const binding = options.agentRuntimeBindingRegistry?.resolve(payload.bindingReference, sessionHistoryAgentRuntimeOperation(historyOperation));
+          const failure = backgroundOperationFailure(extensionResponse?.value, "history");
+          if (binding?.ok && binding.binding.backgroundScope && failure) options.onBackgroundOperationFailure?.(binding.binding.bindingId, failure);
+        }
         if (!extensionResponse) {
           writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Agent runtime extension route was not found."));
           return;

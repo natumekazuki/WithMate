@@ -6,12 +6,14 @@ export type MemoryRegistrationScope = Omit<BackgroundExecutionScope, "purpose"> 
 export const MEMORY_REGISTRATION_PRESETS: Readonly<Record<MemoryRecordingPurpose, string>> = {
   "character-memory": [
     "処理対象の保存済み会話から、Characterとして共有した出来事や日常の小さな経験を、後の理解につながる短いepisodeとして必要に応じて記録してください。",
+    "対話による追加確認や承認を求めず、指定された材料で処理してください。",
     "観察できた事実とCharacter自身の受け取りを区別し、本文でも誰の受け取りか分かるようにしてください。事実にはobservedFact、受け取りにはcharacterObservationを使えます。",
     "登録にはcharacter_memory.append_episodeを使い、Affect eventやlinked episodeは作りません。強い感情や大きな成果、明示的な記憶依頼は記録の必須条件ではありません。",
     "欠けている情報、共有していない経験、不明な実行結果を補完せず、秘密情報や生のログを登録しないでください。必要な記録がなければ登録せずに終了してください。",
   ].join("\n"),
   "target-memory": [
     "処理対象の保存済み会話から、事実、合意した判断、制約、好み、実行結果などを、許可された対象で後から利用できる短いMemoryとして必要に応じて記録してください。",
+    "対話による追加確認や承認を求めず、指定された材料で処理してください。",
     "登録にはmemory.appendを使ってください。事実と推測、合意済み判断と未合意の提案、本人の報告と実行記録を区別してください。",
     "実行結果を使う場合は保存済みの操作記録も確認し、欠落情報や不明な成否を成功へ補完しないでください。Characterの主観を対象の確定知識へ変えないでください。",
     "秘密情報や生のログは登録せず、対象を推測で広げないでください。必要な記録がなければ登録せずに終了してください。",

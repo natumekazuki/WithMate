@@ -12,6 +12,8 @@ import type { SessionBackgroundEvent } from "../session/session-background-event
 import { BackgroundCallService, type BackgroundAgentPort, type BackgroundCallInput } from "./background-call-service.js";
 import type { BackgroundExecutionService } from "./background-execution-service.js";
 import type { BackgroundRegistration } from "./background-registration.js";
+import { projectBackgroundFailure, type BackgroundFailureEvent, type BackgroundFailureInput } from "./background-failure.js";
+import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
 
 export type BackgroundRuntimeEvent =
   | (SessionBackgroundEvent & Readonly<{ source: BackgroundSourceRef }>)
@@ -61,8 +63,15 @@ export class BackgroundProductionRuntime {
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
     sourceKinds: BackgroundRegistration["sourceKinds"];
+    onFailure?: (event: BackgroundFailureEvent) => void;
   }) {
-    this.calls = new BackgroundCallService({ executions: deps.executions, runAgent: deps.runAgent });
+    this.calls = new BackgroundCallService({ executions: deps.executions, runAgent: deps.runAgent,
+      onFailure: (failure) => this.reportFailure(failure) });
+  }
+
+  reportFailure(input: BackgroundFailureInput): void {
+    try { this.deps.onFailure?.(projectBackgroundFailure(input)); }
+    catch { console.warn("Background failure diagnostic could not be written."); }
   }
 
   subscribe(listener: (event: BackgroundRuntimeEvent) => void | Promise<void>): () => void {
@@ -85,11 +94,28 @@ export class BackgroundProductionRuntime {
   }
 
   async prepare(input: PrepareBackgroundCallInput): Promise<PreparedBackgroundCall> {
+    let selection: BackgroundCallInput["selection"] | undefined;
+    let result: PreparedBackgroundCall;
+    try { result = await this.prepareCall(input, (value) => { selection = value; }); }
+    catch (error) {
+      this.reportFailure({ ...input, stage: "prepare", error, selection });
+      return { status: "failed", code: "BACKGROUND_PREPARE_FAILED", reason: "The background call could not be prepared." };
+    }
+    if (result.status !== "ready" && result.status !== "not_configured") {
+      this.reportFailure({ ...input, stage: "prepare", error: result, selection });
+    }
+    return result;
+  }
+
+  private async prepareCall(input: PrepareBackgroundCallInput, selected: (selection: BackgroundCallInput["selection"]) => void): Promise<PreparedBackgroundCall> {
     let settings: AppSettings;
     try { settings = await this.deps.getAppSettings(); }
     catch { return { status: "failed", code: "BACKGROUND_SETTINGS_UNAVAILABLE", reason: "Background settings could not be retrieved." }; }
     const configured = structuredClone(settings.backgroundExecutionSettings[input.purpose]);
     if (!configured.selection) return { status: "not_configured", code: "BACKGROUND_NOT_CONFIGURED", reason: "Select a provider and model for this purpose in Settings." };
+    selected(configured.selection);
+    try { resolveBackgroundExecutionOptions(configured.selection); }
+    catch { return { status: "failed", code: "BACKGROUND_EXECUTION_OPTIONS_INVALID", reason: "The background execution settings are invalid for the provider." }; }
     if (!settings.codingProviderSettings[configured.selection.providerId]?.enabled) {
       return { status: "unavailable", code: "BACKGROUND_PROVIDER_DISABLED", reason: "Enable the selected provider in Settings." };
     }

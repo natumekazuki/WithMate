@@ -27,6 +27,7 @@ export const backgroundAffectCandidateSchema = z.object({
 
 export const AFFECT_COMPOSITION_INSTRUCTIONS = [
   "取得時点のCharacter定義・保存済み会話・既存Affectから、必要な感情の変化だけをcharacter_affect.appraiseで登録する。変化がなければ登録しない。",
+  "対話による追加確認や承認を求めず、指定された材料で処理する。",
   "主会話Agentの非公開の内面を復元・診断したとは扱わない。",
   "会話を基本材料とし、作業結果の裏付けが必要な場合だけ操作の成否と必要な詳細を参照する。欠落した情報は補完しない。",
   "原因・感情の対象・sourceTurnIdを保ち、作業上の失敗を根拠なくユーザーへの敵意へ変換しない。",

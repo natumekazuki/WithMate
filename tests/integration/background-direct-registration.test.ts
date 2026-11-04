@@ -499,10 +499,10 @@ test("背景Affectの候補値と実sourceを保存前に検証する", async ()
 
 // @test-value v2
 // kind = "contract"
-// claim = "Affect用途入力は未設定時だけpresetを使い、編集本文・材料を同一runOnceのAgentへ渡し、登録なし・登録後失敗・取消を保存実態と区別する"
+// claim = "Affect用途入力は未設定時だけpresetを使い、編集本文・材料を同一runOnceのAgentへ渡し、既知の登録失敗は後続取消でも失敗として先行保存を保持する"
 // oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#登録指示のプリセットと本文編集" }
-// fault = "編集本文へpresetを重ねる、別実行で保存する、Agentの終了状態から登録成功を捏造するか確定済み保存を失う"
-// observable = "Agentが受ける本文とscope・材料、runOnce結果、MCP/CLI保存応答、通常contextと実DB件数"
+// fault = "編集本文へpresetを重ねる、別実行で保存する、既知の登録拒否を取消や正常終了へ潰すか確定済み保存を失う"
+// observable = "Agentが受ける本文とscope・材料、runOnce結果、MCP/CLI保存・拒否応答、後続失敗／取消への到達、通常contextと実DB件数"
 // observation_boundary = "public-boundary"
 // scope = "purpose input through real BackgroundCallService, MCP/CLI handler and normal context read"
 // lifecycle = "permanent"
@@ -537,6 +537,9 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
       assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
     }
     for (const ending of ["failure", "cancel"] as const) {
+      let rejectedExitCode: number | undefined;
+      let canceledExitCode: number | undefined;
+      let reachedEnding = false;
       const service = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
         const binding = { ...agent.binding, memoryRuntimeOwner: owner,
           managedMcp: f.host.issue({ ...agent.binding, memoryRuntimeOwner: owner }, agent.handle, agent.signal) };
@@ -545,13 +548,20 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
         const saved = await client.callTool({ name: op.tool, arguments: op.input });
         await assertSaved(f, "affect", saved.structuredContent!, ending);
         const invalid = { ...op, input: { candidates: [{ ...op.input.candidates[0], sourceTurnId: 999 }] } };
-        assert.notEqual((await cli(f, binding, invalid)).code, 0);
-        if (ending === "failure") throw new Error("Agent failed after confirmed registration");
+        rejectedExitCode = (await cli(f, binding, invalid)).code;
+        if (ending === "failure") {
+          reachedEnding = true;
+          throw new Error("Agent failed after confirmed registration");
+        }
         f.executions.cancel(agent.binding.bindingId);
-        assert.notEqual((await cli(f, binding, op)).code, 0);
+        reachedEnding = true;
+        canceledExitCode = (await cli(f, binding, op)).code;
       } });
       const result = await runBackgroundAffectCall(service, base);
-      assert.equal(result.kind, ending === "failure" ? "failed" : "canceled");
+      assert.equal(reachedEnding, true);
+      assert.ok(rejectedExitCode !== undefined); assert.notEqual(rejectedExitCode, 0);
+      if (ending === "cancel") { assert.ok(canceledExitCode !== undefined); assert.notEqual(canceledExitCode, 0); }
+      assert.deepEqual(result, { kind: "failed", code: "invalid_input" });
     }
     const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex",
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants: getMemoryV6AgentRuntimeOperations() });

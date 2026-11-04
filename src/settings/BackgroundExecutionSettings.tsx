@@ -1,7 +1,10 @@
 import type { BackgroundPurpose } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { AFFECT_COMPOSITION_INSTRUCTIONS } from "../../src-shared/character-affect/affect-composition.js";
 import { MEMORY_REGISTRATION_PRESETS } from "../../src-shared/memory-recording/memory-registration-input.js";
-import { BACKGROUND_PURPOSES, type BackgroundPurposeSettings } from "../../src-shared/settings/background-settings.js";
+import { BACKGROUND_PURPOSES, resolveBackgroundExecutionOptions, type BackgroundPurposeSettings } from "../../src-shared/settings/background-settings.js";
+import { getApprovalOptionsForProvider, getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { resolveBackgroundProviderAvailability } from "../../src-shared/settings/background-provider-support.js";
 import { resolveModelChangeSelection, type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { buildModelSelectOptions, buildReasoningEffortSelectOptions } from "./model-select-options.js";
@@ -39,6 +42,16 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
           const canEditModel = Boolean(provider && current.selection && !disabledProvider && provider.models.length > 0);
           const preset = purpose === "affect" ? AFFECT_COMPOSITION_INSTRUCTIONS : MEMORY_REGISTRATION_PRESETS[purpose];
           const frequency = purpose === "affect" ? null : settings.memoryRecordingFrequencies[purpose];
+          const approvalMode = current.selection?.approvalMode ?? getDefaultApprovalModeForProvider(current.selection?.providerId);
+          const reviewer = current.selection?.codexReviewer ?? DEFAULT_CODEX_REVIEWER;
+          const approvalOptions = getApprovalOptionsForProvider(current.selection?.providerId);
+          const reviewerOptions = getApprovalReviewerOptionsForProvider(current.selection?.providerId, approvalMode);
+          const sandboxOptions = getSandboxOptionsForProvider(current.selection?.providerId);
+          let permissionError = "";
+          if (current.selection) {
+            try { resolveBackgroundExecutionOptions(current.selection); }
+            catch (error) { permissionError = error instanceof Error ? error.message : "Invalid execution settings."; }
+          }
           return (
             <div className="settings-background-purpose" key={purpose}>
               <h3>{labels[purpose]}</h3>
@@ -57,6 +70,9 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
                       onChangePurpose(purpose, { ...current, selection: {
                         providerId: nextProvider.id, modelId: resolved.resolvedModel,
                         reasoningEffort: resolved.resolvedReasoningEffort || undefined,
+                        approvalMode: getDefaultApprovalModeForProvider(nextProvider.id),
+                        ...(getApprovalReviewerOptionsForProvider(nextProvider.id, getDefaultApprovalModeForProvider(nextProvider.id)).length > 0 ? { codexReviewer: DEFAULT_CODEX_REVIEWER } : {}),
+                        ...(getSandboxOptionsForProvider(nextProvider.id).length > 0 ? { codexSandboxMode: DEFAULT_CODEX_SANDBOX_MODE } : {}),
                       } });
                     }}>
                     <option value="">Not Configured</option>
@@ -73,7 +89,7 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
                     onChange={(event) => {
                       const resolved = resolveModelChangeSelection(provider!, event.target.value, current.selection?.reasoningEffort ?? "");
                       onChangePurpose(purpose, { ...current, selection: {
-                        providerId: provider!.id, modelId: resolved.resolvedModel,
+                        ...current.selection!, providerId: provider!.id, modelId: resolved.resolvedModel,
                         reasoningEffort: resolved.resolvedReasoningEffort || undefined,
                       } });
                     }}>
@@ -96,6 +112,42 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
                   </label>
                 ) : null}
               </div>
+              {current.selection ? (
+                <div className="settings-background-permissions">
+                  <label className="settings-provider-input">
+                    <span>Approval</span>
+                    <select aria-label={`${labels[purpose]} Approval`} value={approvalMode} disabled={!provider || Boolean(disabledProvider)}
+                      aria-invalid={!approvalOptions.some((option) => option.value === approvalMode)}
+                      onChange={(event) => onChangePurpose(purpose, { ...current, selection: { ...current.selection!, approvalMode: event.target.value as typeof approvalMode } })}>
+                      {!approvalOptions.some((option) => option.value === approvalMode) ? <option value={approvalMode} disabled>{approvalMode} (Unsupported)</option> : null}
+                      {approvalOptions.map((option) => <option key={option.value} value={option.value} disabled={reviewer === "auto-review" && getApprovalReviewerOptionsForProvider(current.selection!.providerId, option.value).some((entry) => entry.value === reviewer && entry.disabled)}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  {reviewerOptions.length > 0 || current.selection.codexReviewer !== undefined ? (
+                    <label className="settings-provider-input">
+                      <span>Reviewer</span>
+                      <select aria-label={`${labels[purpose]} Reviewer`} value={current.selection.codexReviewer ?? DEFAULT_CODEX_REVIEWER}
+                        disabled={!provider || Boolean(disabledProvider) || (reviewerOptions.length > 0 && approvalMode === "never")}
+                        aria-invalid={reviewerOptions.length === 0 || reviewerOptions.some((option) => option.value === reviewer && option.disabled)}
+                        onChange={(event) => onChangePurpose(purpose, { ...current, selection: { ...current.selection!, codexReviewer: event.target.value ? event.target.value as typeof reviewer : undefined } })}>
+                        {reviewerOptions.length === 0 ? <><option value={current.selection.codexReviewer} disabled>{current.selection.codexReviewer} (Unsupported)</option><option value="">Not Applicable</option></> : reviewerOptions.map((option) => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
+                  {sandboxOptions.length > 0 || current.selection.codexSandboxMode !== undefined ? (
+                    <label className="settings-provider-input">
+                      <span>Sandbox</span>
+                      <select aria-label={`${labels[purpose]} Sandbox`} value={current.selection.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE}
+                        disabled={!provider || Boolean(disabledProvider)} aria-invalid={sandboxOptions.length === 0}
+                        onChange={(event) => onChangePurpose(purpose, { ...current, selection: { ...current.selection!, codexSandboxMode: event.target.value ? event.target.value as typeof DEFAULT_CODEX_SANDBOX_MODE : undefined } })}>
+                        {sandboxOptions.length === 0 ? <><option value={current.selection.codexSandboxMode} disabled>{current.selection.codexSandboxMode} (Unsupported)</option><option value="">Not Applicable</option></> : sandboxOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
+              ) : null}
+              {permissionError ? <p className="settings-help settings-background-warning" role="status">{permissionError} Select a supported value or change Provider.</p> : null}
+              {current.selection?.providerId === "claude" && reviewer === "auto-review" && approvalMode !== "never" ? <p className="settings-help">To use another Approval mode, select User as Reviewer first.</p> : null}
               {disabledProvider ? <p className="settings-help settings-background-warning" role="status">Unavailable. Enable {provider?.label ?? current.selection!.providerId} in Coding Agent Providers.</p>
               : availability.status === "unavailable" || availability.status === "failed" ? (
                 <p className="settings-help settings-background-warning" role="status">

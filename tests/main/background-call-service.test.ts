@@ -208,26 +208,26 @@ test("cancellation rejects pending Agent writes while preserving prior effects",
 
 // @test-value v2
 // kind = "contract"
-// claim = "begin時の不正sourceと停止runtimeの例外を保持し、事前取消ではportを呼ばない"
+// claim = "begin時の不正sourceと停止runtimeを失敗として返し、事前取消ではportを呼ばない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#共通の単発呼出" }
 // fault = "begin例外を正常な終了へ変換するか事前取消でもAgentを呼ぶ"
-// observable = "runOnceのrejectと取消結果、port回数とbinding件数"
+// observable = "runOnceの失敗と取消結果、port回数とbinding件数"
 // observation_boundary = "consumer"
 // scope = "begin failures before acquiring a background execution"
 // lifecycle = "permanent"
 // impact = "認可失敗を隠すか取消済み要求へ生成を課金する"
-// distinction = "begin単体testはrunOnceによる例外の誤変換を検出しない"
+// distinction = "begin単体testはrunOnceによる失敗結果への変換を検出しない"
 // @end-test-value
 test("begin failures remain errors and pre-cancel does not start work", async () => {
   const f = fixture(); let ports = 0;
   const service = new BackgroundCallService({ executions: f.executions, runAgent: () => { ports += 1; } });
   const base = f.input(), input = { ...base, onAdmitted: () => { ports += 1; } };
   try {
-    await assert.rejects(service.runOnce({ ...input, context: { ...base.context, actorSessionId: "wrong" } }), /eligible source/);
+    assert.deepEqual(await service.runOnce({ ...input, context: { ...base.context, actorSessionId: "wrong" } }), { kind: "failed", code: "BACKGROUND_SETUP_FAILED" });
     const controller = new AbortController(); controller.abort();
     assert.deepEqual(await service.runOnce({ ...input, context: { ...base.context, signal: controller.signal } }),
       { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" });
-    f.executions.stop(); await assert.rejects(service.runOnce(input), /runtime is unavailable/);
+    f.executions.stop(); assert.deepEqual(await service.runOnce(input), { kind: "failed", code: "BACKGROUND_SETUP_FAILED" });
     assert.equal(ports, 0); assert.equal(f.bindings.getActiveBindingCount(), 0);
   } finally { f.executions.stop(); }
 });

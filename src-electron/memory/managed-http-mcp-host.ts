@@ -15,6 +15,7 @@ import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from 
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
 import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import { supportsBackgroundRegistration, type BackgroundRegistration } from "../providers/background-registration.js";
+import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
 
 type Endpoint = {
   server: McpServer;
@@ -49,6 +50,7 @@ export type ManagedHttpMcpHostOptions = {
   turns: Pick<ProviderAgentRuntimeTurnCoordinator, "admit" | "end">;
   sessionHistory?: SessionHistoryMcpRegistration;
   backgroundRegistration?: BackgroundRegistration;
+  onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
 };
 
 function reply(response: ServerResponse, status: number, message: string): void {
@@ -247,6 +249,21 @@ export class ManagedHttpMcpHost {
         if (context.endpoints.get(pathname)?.transport === transport) context.endpoints.delete(pathname);
       },
     });
+    if (context.binding.background) {
+      const send = transport.send.bind(transport);
+      transport.send = async (message, options) => {
+        await send(message, options);
+        const stage = pathname === "/mcp/session-history" ? "history" : "registration";
+        if ("result" in message && typeof message.result === "object" && message.result !== null && message.result.isError === true) {
+          const failure = backgroundOperationFailure(message.result.structuredContent, stage)
+            ?? classifyBackgroundFailure({ code: "BACKGROUND_OPERATION_FAILED" }, stage);
+          this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
+        } else if ("error" in message) {
+          this.#options.onBackgroundOperationFailure?.(context.binding.bindingId,
+            classifyBackgroundFailure({ code: "BACKGROUND_MCP_INVALID_REQUEST" }, stage));
+        }
+      };
+    }
     await server.connect(transport);
     return { server, transport, deliveries };
   }
@@ -296,7 +313,10 @@ export class ManagedHttpMcpHost {
             ? (pathname === "/mcp/session-history" ? this.#options.sessionHistory?.toolOperations
               : this.#backgroundMemoryOperations(context))?.[call.params.name] : undefined;
           if (!operation || !this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok) {
-            reply(response, 403, "Background operation is not granted or connected."); return;
+            reply(response, 403, "Background operation is not granted or connected.");
+            this.#options.onBackgroundOperationFailure?.(context.binding.bindingId,
+              classifyBackgroundFailure({ code: "SESSION_BINDING_FORBIDDEN" }, pathname === "/mcp/session-history" ? "history" : "registration"));
+            return;
           }
         }
       }

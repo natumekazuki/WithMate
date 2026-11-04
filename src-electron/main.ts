@@ -310,17 +310,24 @@ app.setAppUserModelId(resolveAppUserModelId({
 }));
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
+const appLogRuntimeInfo = {
+  appVersion: app.getVersion(),
+  electronVersion: process.versions.electron ?? "",
+  chromeVersion: process.versions.chrome ?? "",
+  nodeVersion: process.versions.node,
+  platform: process.platform,
+  arch: process.arch,
+  isPackaged: app.isPackaged,
+};
 const appLogService = new AppLogService({
   logsPath: appLogsPath,
-  runtimeInfo: {
-    appVersion: app.getVersion(),
-    electronVersion: process.versions.electron ?? "",
-    chromeVersion: process.versions.chrome ?? "",
-    nodeVersion: process.versions.node,
-    platform: process.platform,
-    arch: process.arch,
-    isPackaged: app.isPackaged,
-  },
+  runtimeInfo: appLogRuntimeInfo,
+});
+const backgroundFailureLogService = new AppLogService({
+  logsPath: appLogsPath,
+  fileName: "background-failures.jsonl",
+  rotation: false,
+  runtimeInfo: appLogRuntimeInfo,
 });
 const storageOperationLogService = new StorageOperationLogService(writeAppLog);
 const devServerUrl = process.env.VITE_DEV_SERVER_URL;
@@ -778,6 +785,12 @@ const backgroundRuntime = new BackgroundProductionRuntime({
     resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
   }),
   sourceKinds: backgroundSourceKinds,
+  onFailure: ({ timestamp, reason, ...data }) => {
+    try {
+      backgroundFailureLogService.write({ timestamp, level: "error", kind: "background.execution.failed",
+        process: "main", message: reason, data });
+    } catch (error) { console.warn("Background failure log write failed", error); }
+  },
 });
 
 const memoryRecordingController = new MemoryRecordingController({
@@ -790,8 +803,6 @@ const memoryRecordingController = new MemoryRecordingController({
   getSettings: () => requireAppSettingsStorage().getSettings(),
   resolveAuthority: (session) => buildProviderAgentRuntimeAuthoritySnapshot({ characterId: session.characterId,
     workspacePath: session.workspacePath, resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id }),
-  onError: (error) => writeAppLog({ level: "warn", kind: "memory-recording.failed", process: "main",
-    message: "Memory recording preparation failed", data: { errorName: error instanceof Error ? error.name : "UnknownError" } }),
 });
 const backgroundAffectController = new BackgroundAffectController({
   runtime: backgroundRuntime,
@@ -812,9 +823,6 @@ const backgroundAffectController = new BackgroundAffectController({
     });
     return { characterDefinition: snapshot.definitionMarkdown, currentAffect };
   },
-  onFailure: (source, error) => writeAppLog({ level: "warn", kind: "background.affect.failed", process: "main",
-    message: "Background Affect did not complete", data: { sourceKind: source.kind, sessionId: source.sessionId,
-      errorName: error instanceof Error ? error.name : "BackgroundUnavailable" } }),
 });
 
 async function publishBackgroundConversationEvent(event: SessionBackgroundEvent, kind: "main" | "auxiliary"): Promise<void> {
@@ -1027,6 +1035,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
           return generation.stores.session.readBackgroundSource(scope);
         },
       },
+      onBackgroundOperationFailure: (bindingId, failure) => backgroundExecutions.reportOperationFailure(bindingId, failure),
       routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,
     });

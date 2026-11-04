@@ -25,18 +25,19 @@ async function fixture(runAgent: (input: BackgroundAgentInput) => Promise<void>)
     backgroundExecutionSettings: { affect: { selection: { providerId: "claude", modelId: "test" }, instructionText: "edited" } } });
   const catalog: ModelCatalogSnapshot = { providers: [{ id: "claude", label: "Claude", defaultModelId: "test",
     defaultReasoningEffort: "", models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] };
+  const failures: unknown[] = [];
+  const failureObserver = { onFailure: (error: unknown) => { failures.push(error); } };
   const runtime = new BackgroundProductionRuntime({ executions: f.executions, runAgent, getAppSettings: () => settings,
+    onFailure: (failure) => failureObserver.onFailure(failure),
     getModelCatalog: () => catalog, captureSource: (source) => f.worker.stores.session.captureBackgroundSource(source),
     resolveAuthority: () => ({ userId: "local-user", characterId: "character", allowedProjectIds: [] }),
     sourceKinds: { affect: ["main", "auxiliary"] } });
-  const failures: unknown[] = [];
   const readMaterials: ConstructorParameters<typeof BackgroundAffectController>[0]["readMaterials"] = async () => ({
     characterDefinition: "definition", currentAffect: { schemaVersion: AFFECT_SCHEMA_VERSION, characterId: "character",
       userId: "local-user", sessionId: "main", evaluatedAt: time, layers: [], components: [] },
   });
   const deps = { runtime, captureSource: (source: Parameters<typeof f.worker.stores.session.captureBackgroundSource>[0]) =>
-    f.worker.stores.session.captureBackgroundSource(source), readMaterials,
-    onFailure: (_source: unknown, error: unknown) => { failures.push(error); } };
+    f.worker.stores.session.captureBackgroundSource(source), readMaterials };
   const controller = new BackgroundAffectController(deps);
   function event(id: number, phase: "completed" | "failed" | "canceled" = "completed"): Extract<BackgroundRuntimeEvent, { kind: "terminal_saved" }> {
     f.db.prepare(`INSERT INTO session_turns_v6(id,session_id,phase,assistant_message_seq,started_at,completed_at,updated_at)
@@ -44,7 +45,7 @@ async function fixture(runAgent: (input: BackgroundAgentInput) => Promise<void>)
     return { kind: "terminal_saved", session: f.sessions.get("main")!, source: { kind: "main", sessionId: "main", incarnationId: "inc-main" },
       terminal: { turnId: id, sessionId: "main", phase, assistantMessageSeq: 1, threadId: "", errorMessage: "", completedAt: time } };
   }
-  return { ...f, runtime, controller, deps, failures, settings, event };
+  return { ...f, runtime, controller, deps, failures, failureObserver, settings, event };
 }
 
 // @test-value v2
@@ -127,10 +128,10 @@ test("開始前失敗と停止を区別し再開始で最初の新規通知を�
     assert.equal(agents.length, 0);
     f.settings.backgroundExecutionSettings.affect.selection = { providerId: "claude", modelId: "test" };
     f.deps.readMaterials = async () => { throw new Error("definition unavailable"); };
-    f.deps.onFailure = (_source, error) => { f.failures.push(error); failed.resolve(); };
+    f.failureObserver.onFailure = (error) => { f.failures.push(error); failed.resolve(); };
     f.runtime.publish(f.event(4)); await failed.promise;
     assert.equal(agents.length, 0);
-    assert.match(String(f.failures[0]), /definition unavailable/);
+    assert.partialDeepStrictEqual(f.failures[0], { code: "BACKGROUND_MATERIALS_FAILED", stage: "materials" });
     f.deps.readMaterials = async () => ({ characterDefinition: "definition", currentAffect: { schemaVersion: AFFECT_SCHEMA_VERSION,
       characterId: "character", userId: "local-user", sessionId: "main", evaluatedAt: time, layers: [], components: [] } });
     f.runtime.publish(f.event(5)); await started.promise;

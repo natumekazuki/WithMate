@@ -13,10 +13,9 @@ export class BackgroundAffectController {
   #unsubscribe?: () => void;
 
   constructor(private readonly deps: {
-    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls">;
+    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure">;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     readMaterials(session: Session, source: CapturedBackgroundSource): Promise<Omit<AffectCompositionInput, "instructionBody">>;
-    onFailure(source: BackgroundSourceRef, error: unknown): void;
   }) {}
 
   start(): void {
@@ -24,7 +23,9 @@ export class BackgroundAffectController {
     const subscription = this.deps.runtime.subscribe((event) => {
       if (event.kind === "stopped") { this.stop(); return; }
       if (event.kind !== "terminal_saved") return;
-      return this.onTerminal(event, subscription).catch((error) => this.deps.onFailure(event.source, error));
+      return this.onTerminal(event, subscription).catch((error) => {
+        if (this.#unsubscribe === subscription) this.deps.runtime.reportFailure({ purpose: "affect", source: event.source, stage: "capture", error });
+      });
     });
     this.#unsubscribe = subscription;
   }
@@ -84,18 +85,21 @@ export class BackgroundAffectController {
       ] });
     if (!current()) return;
     if (prepared.status !== "ready") {
-      if (prepared.status !== "not_configured") this.deps.onFailure(event.source, prepared);
       return;
     }
     if (prepared.call.context.scope.history.source.ownerIdentity !== captured.snapshot.ownerIdentity) return;
-    const materials = await this.deps.readMaterials(event.session, captured);
+    let materials: Omit<AffectCompositionInput, "instructionBody">;
+    try { materials = await this.deps.readMaterials(event.session, captured); }
+    catch (error) {
+      if (current()) this.deps.runtime.reportFailure({ purpose: "affect", source: event.source, selection: prepared.call.selection, stage: "materials", error });
+      return;
+    }
     if (!current()) return;
-    const result = await runBackgroundAffectCall(this.deps.runtime.calls, { ...prepared.call, ...materials,
+    await runBackgroundAffectCall(this.deps.runtime.calls, { ...prepared.call, ...materials,
       instructionBody: prepared.instructionText,
       onAdmitted: () => {
         if (current()) position.afterTurnId = Math.max(position.afterTurnId ?? 0, throughTurnId);
       },
     });
-    if (result.kind !== "completed") this.deps.onFailure(event.source, result);
   }
 }

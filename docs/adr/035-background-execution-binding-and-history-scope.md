@@ -142,3 +142,13 @@ Auxiliary登録は既存のMemory／episodeサービスとWorkerを利用する�
 WithMateの履歴範囲・owner／保存先・入力・用途operation grantは行動制限ではなく、trusted sourceからのアクセス認可とデータ保護として維持する。独立binding、失効後の未確定write拒否、確定済み保存保持、同用途並行、主Cancel／Window closeからの独立も維持する。
 
 #909と#910の本番controller、Main／Auxiliary登録・contextを共存させた。Memory出典列追加とAffect owner schema再構成は既存行・ID・link・versionを保持する。通常Auxiliary手動Affect owner公開APIは拡張しない。実認証推論と統合先branchへの適用は、この担当branchの実装・fake transport検証とは区別する。現行契約は[Background Execution](../design/background-execution.md)に示す。
+
+## 用途別権限・非対話終了・失敗ログ
+
+2026-11-04に採用。背景のProvider固有実行設定は元Main／Auxiliaryから継承せず、用途別に選択したProviderの既存既定・候補・組合せ検証を使う。SettingsからApproval／Reviewer／Sandboxを対応する範囲で指定し、開始時に捕捉する。SpeedはStandard、custom agentは未指定で明示構築する。通常Providerの承認・sandbox・管理者policyは維持し、背景専用の全許可既定や実行中の権限拡大を行わない。
+
+アプリへ人の承認・追加回答要求が届いた背景だけを非対話で終了し、native cleanup後に理由を区別した失敗を返す。Provider内の自動審査は通常の処理として扱う。通常取消と正常な保存対象なしは失敗へ置換しない。既知の読取・登録失敗は共通呼出しへ伝え、Agentが終了した事実だけで保存成功や正常な対象なしへ読み替えない。確定済み保存は維持する。
+
+背景の失敗だけを`logs/background-failures.jsonl`へ追記し、回転・切詰め・自動削除は行わない。通常ログの5MiB・5ファイルは維持する。診断項目と安全な短い原因だけを残し、本文・credential・raw例外を保存しない。重複記録は既存呼出境界の責務で避け、台帳・DB・queue・viewerを追加しない。
+
+共通Provider実行時点のsource権限継承とcallback省略による拒否の扱いは本判断で置き換える。当時の本文は保持する。独立binding・元thread非再開・認可・データ保護と直接登録は維持する。現行実装は[用途別権限と非対話終了](../design/background-execution.md#用途別権限と非対話終了)と[失敗ログ](../design/app-log-base.md#background-failure-log-policy)に示す。

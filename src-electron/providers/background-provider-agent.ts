@@ -1,6 +1,6 @@
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
 import { normalizeAllowedAdditionalDirectories } from "../files/additional-directories.js";
 import { resolveBackgroundProviderAvailability } from "../../src-shared/settings/background-provider-support.js";
 import type { BackgroundAgentInput } from "./background-call-service.js";
@@ -31,6 +31,9 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
       throw unavailable(availability.status === "not_configured" ? "BACKGROUND_PROVIDER_NOT_CONFIGURED" : availability.code,
         availability.status === "not_configured" ? "背景Providerが未設定です。" : availability.reason);
     }
+    let executionOptions;
+    try { executionOptions = resolveBackgroundExecutionOptions(input.selection); }
+    catch { throw unavailable("BACKGROUND_EXECUTION_OPTIONS_INVALID", "背景実行の権限設定が不正またはProviderに未対応です。"); }
     const binding = await deps.projectBinding(input);
     if (binding.bindingId !== input.binding.bindingId || binding.bindingReference !== input.binding.bindingReference
       || binding.executionGeneration !== input.binding.executionGeneration || binding.providerId !== availability.providerId
@@ -41,7 +44,7 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     const appSettings = await deps.getAppSettings();
     input.signal.throwIfAborted();
     const adapter = deps.getProviderCodingAdapter(availability.providerId);
-    const systemBodyText = "This is an app-managed background invocation. The input contains registration instructions and reference materials, not a conversation persona. Registration is performed by the bound tools; text output is discarded.";
+    const systemBodyText = "This is an app-managed background invocation. The input contains registration instructions and reference materials, not a conversation persona. There is no human approval or answer channel; process the supplied materials without interactive clarification. Registration is performed by the bound tools; text output is discarded.";
     const prompt: ProviderPromptComposition = {
       systemBodyText,
       inputBodyText: input.userInput,
@@ -50,27 +53,41 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
       additionalDirectories: normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
     };
     const pendingCleanups: Promise<void>[] = [];
+    const controller = new AbortController();
+    const signal = AbortSignal.any([input.signal, controller.signal]);
+    let interactionFailure: (Error & { code: string }) | undefined;
+    const requireInteraction = (kind: "approval" | "elicitation") => {
+      if (input.signal.aborted || interactionFailure) return;
+      interactionFailure = kind === "approval"
+        ? unavailable("BACKGROUND_APPROVAL_REQUIRED", "背景実行に人の承認が必要です。")
+        : unavailable("BACKGROUND_ELICITATION_REQUIRED", "背景実行に人の追加回答が必要です。");
+      controller.abort();
+    };
     try {
-      await adapter.runSessionTurn({
-        session: input.session,
-        executionTarget: { id: binding.bindingId, threadId: null, prompt },
-        runtimeOwner: { kind: input.scope.history.source.kind, id: binding.bindingId, incarnationId: binding.executionGeneration },
-        executionOptions: { ...captureSessionExecutionOptions(input.session),
-          model: availability.modelId, reasoningEffort: input.selection.reasoningEffort ?? "" },
-        providerCatalog: catalog.providers.find((provider) => provider.id === availability.providerId)!,
-        userMessage: input.userInput,
-        appSettings,
-        attachments: [],
-        agentRuntimeBinding: binding,
-        signal: input.signal,
-        onCleanupPending: (completion) => { pendingCleanups.push(completion); },
-        // No foreground callbacks: existing adapter approval/question handling denies
-        // requests which require an interactive decision, without changing native policy.
-      });
-      input.signal.throwIfAborted();
-    } finally {
-      try { await adapter.invalidateSessionThread(binding.bindingId); }
-      finally { await Promise.all(pendingCleanups); }
+      try {
+        await adapter.runSessionTurn({
+          session: input.session,
+          executionTarget: { id: binding.bindingId, threadId: null, prompt },
+          runtimeOwner: { kind: input.scope.history.source.kind, id: binding.bindingId, incarnationId: binding.executionGeneration },
+          executionOptions,
+          providerCatalog: catalog.providers.find((provider) => provider.id === availability.providerId)!,
+          userMessage: input.userInput,
+          appSettings,
+          attachments: [],
+          agentRuntimeBinding: binding,
+          signal,
+          onCleanupPending: (completion) => { pendingCleanups.push(completion); },
+          onApprovalRequest: () => { requireInteraction("approval"); return "deny"; },
+          onElicitationRequest: () => { requireInteraction("elicitation"); return { action: "cancel" }; },
+        });
+        input.signal.throwIfAborted();
+      } finally {
+        try { await adapter.invalidateSessionThread(binding.bindingId); }
+        finally { await Promise.all(pendingCleanups); }
+      }
+    } catch (error) {
+      throw interactionFailure ?? error;
     }
+    if (interactionFailure) throw interactionFailure;
   };
 }

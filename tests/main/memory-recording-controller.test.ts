@@ -30,7 +30,7 @@ function setup() {
   let failAgent = false;
   const capture = async (source: BackgroundSourceRef) => structuredClone(sources.get(JSON.stringify([source.kind, source.sessionId])) ?? null);
   const authority = () => ({ userId: "local-user" as const, characterId: "character", allowedProjectIds: ["project"] });
-  const runtime = new BackgroundProductionRuntime({ executions, runAgent: async (input) => {
+  const runtime = new BackgroundProductionRuntime({ executions, onFailure: (failure) => errors.push(failure), runAgent: async (input) => {
     agents.push(input); if (failAgent) throw new Error("Agent failed"); await new Promise<void>((done) => releases.push(done));
   }, getAppSettings: () => settings, getModelCatalog: async () => {
     await catalogGate;
@@ -40,7 +40,7 @@ function setup() {
   }, captureSource: capture, resolveAuthority: authority,
     sourceKinds: { "character-memory": ["main", "auxiliary"], "target-memory": ["main", "auxiliary"] } });
   const controller = new MemoryRecordingController({ runtime, captureSource: capture, getSettings: () => settings,
-    resolveAuthority: authority, clock, onError: (error) => errors.push(error) });
+    resolveAuthority: authority, clock });
   runtime.start(); controller.start();
   function source(kind: "main" | "auxiliary", id: string) {
     const session = { ...buildNewSession({ taskTitle: id, workspaceLabel: "fixture", workspacePath: "C:/fixture", branch: "test",
@@ -165,6 +165,6 @@ test("開始前後の失敗と停止再開の位置を分け初回通知を保�
     f.runtime.start(); f.controller.start(); f.controller.start(); owner.terminal(200); await settle();
     assert.equal(f.agents.length, 4);
     for (const agent of f.agents.slice(2)) assert.deepEqual(agent.scope.processing, { afterTurnId: 100, throughTurnId: 200 });
-    assert.equal(f.errors.length, 2);
+    assert.equal(f.errors.length, 8);
   } finally { await f.close(); }
 });

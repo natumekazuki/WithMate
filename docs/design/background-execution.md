@@ -22,7 +22,7 @@ sourceは既存`isReadOnlySession`の対象とcharacter-authoringを除外する
 
 順序は`begin → onAdmitted → runAgent → finish`。Agent実行全体に同じ`RuntimeTurnAdmission`を適用する。完了・失敗・取消のいずれでもfinallyでfinishし、専用の保存phaseは設けない。実行中も通常turnを予約・終了せず、主会話を待機させない。
 
-beginのsource／authority不備と停止runtimeは既存例外を保持し、callbackを呼ばない。事前取消・実行中取消は`canceled`、AgentまたはonAdmittedの失敗は`failed`、正常終了は`completed`を返す。これらは実行の結果であり、保存成功・保存件数・全件未保存を意味しない。自然文の完了宣言も保存成功の証明にしない。
+beginのsource／authority不備と停止runtimeは`failed`を返し、開始callbackを呼ばず、setup失敗として報告する。事前取消・実行中取消は`canceled`、AgentまたはonAdmittedの失敗は`failed`、正常終了は`completed`を返す。既知の操作失敗がある場合は、後続の正常終了や取消より失敗を優先する。これらは実行の結果であり、保存成功・保存件数・全件未保存を意味しない。自然文の完了宣言も保存成功の証明にしない。
 
 ## 登録と保存効果
 
@@ -87,13 +87,27 @@ Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決�
 
 Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続し、既存のProvider解決からCodex／Copilot／Claude／OpenCodeの同じcoding adapterを使う。選択したcatalog実modelと任意の`reasoningEffort`を通常adapterのnative写像へ渡し、通常会話や別用途の選択へfallbackしない。開始準備で選択と本文をsnapshotし、設定変更は次の呼出しへ適用する。
 
-共通呼出層は実source Sessionを認可・workspace・通常承認設定の文脈に保ち、`executionTarget`に背景binding ID、新規thread、用途入力のpromptを渡す。adapterのnative cache・active turn・cleanupはこの実行IDを使い、元会話threadのresume・保存・結果適用を行わない。偽のSessionを永続化せず、threadの監視・比較・復元も持たない。通常会話のprogress／thread更新callbackを渡さず、出力は消費して破棄する。登録本文へCharacterのpersonaを二重注入しない。取消はnative processのcleanupまで待ち、Agent終端で共通寿命を閉じる。
+共通呼出層は実source Sessionを認可・workspace・許可材料の文脈に保ち、`executionTarget`に背景binding ID、新規thread、用途入力のpromptを渡す。adapterのnative cache・active turn・cleanupはこの実行IDを使い、元会話threadのresume・保存・結果適用を行わない。偽のSessionを永続化せず、threadの監視・比較・復元も持たない。通常会話のprogress／thread更新callbackを渡さず、出力は消費して破棄する。登録本文へCharacterのpersonaを二重注入しない。取消はnative processのcleanupまで待ち、Agent終端で共通寿命を閉じる。
 
-行動・tool使用方針は用途presetまたは編集本文へ集約し、固定promptは独立実行・材料・返却先の技術情報だけを示す。背景だけのenv allowlist、tool／skill／plugin／hook／native設定の一括無効化、managed／custom接続の一律拒否は設けない。自然言語の方針を技術的な使用不能保証とはしない。通常adapterのapproval／sandbox／管理者policyは維持し、背景だけの無条件許可を追加しない。対話承認・質問callbackを持たないため、既存policyで対話判断が必要な操作は拒否され、登録できず終了する場合もある。fake SDKによる接続検証と実認証の推論確認は区別する。
+行動・tool使用方針は用途presetまたは編集本文へ集約し、固定promptは独立実行・材料・返却先の技術情報だけを示す。背景だけのenv allowlist、tool／skill／plugin／hook／native設定の一括無効化、managed／custom接続の一律拒否は設けない。自然言語の方針を技術的な使用不能保証とはしない。通常adapterのapproval／sandbox／管理者policyは維持し、背景だけの無条件許可を追加しない。fake SDKによる接続検証と実認証の推論確認は区別する。
+
+## 用途別権限と非対話終了
+
+三用途のselectionは既存Provider定義による`approvalMode`・`codexReviewer`・`codexSandboxMode`を任意で保持する。欠落時のApprovalはCodex／Copilotが`untrusted`、Claude／OpenCodeが`on-request`。Reviewerは対応するCodex／Claudeで`user`、Sandboxは対応するCodexで`workspace-write`を使う。`resolveBackgroundExecutionOptions()`は既存の候補・組合せ検証を共用し、明示された非対応値を拒否する。Speedは`standard`、custom agentは空で明示構築し、元Main／Auxiliaryの設定をコピーしない。権限・Model・Depth・本文は開始準備で捕捉し、進行中に設定変更を適用しない。
+
+アプリへ届く既存のApproval／Elicitation要求は背景共通層で受け、承認・質問画面や回答待ちを作らない。当該呼出しだけを独立signalで止め、native cleanup後に`BACKGROUND_APPROVAL_REQUIRED`／`BACKGROUND_ELICITATION_REQUIRED`で失敗を返す。Provider内部の自動審査は通常policyに従い、アプリへ人の要求が来ない処理を失敗へ落とさない。通常取消は`canceled`を維持する。固定system本文は人の承認・回答channelがない接続条件と指定材料での非対話処理を伝え、用途presetにも同じ処理方針を示す。本文編集を機械的な権限変更へ変換せず、自然文の最終応答を解析して質問を検出する監視は持たない。
+
+## 失敗の記録
+
+準備・材料取得・起動・Agentの失敗は共通runtimeの`onFailure`へ安全な診断項目として渡す。未設定による正常な非実行、通常取消、正常な保存対象なしは失敗ログにしない。戻り値の`failed`も対象とし、例外だけを捕まえる経路にしない。
+
+bound MCP／CLIの既知の操作失敗は既存の実行寿命へ最初の原因だけを保持し、Agentが通常returnしても`completed`にしない。元のtool応答と保存効果は保持し、応答配送を止めるための即時失効や、成功確認済みwriteの取消への上書きは行わない。実行終了時の失敗記録は呼出境界が一度だけ行い、用途controllerが再記録しない。独立した重複排除台帳・保存証明・復旧queueは持たない。
+
+Mainは`userData/logs/background-failures.jsonl`へ失敗だけを追記し、回転・切詰め・自動削除をしない。日時、用途、元会話kind／ID、段階、既知のcodeと短い原因、取得済みProvider／Modelと解決できた権限だけを記録する。本文・prompt・tool全文・credential・raw例外は入れない。書込み失敗は既存診断出力へ渡し、元の失敗や通常会話を変更しない。詳細は[App Log Base](app-log-base.md#background-failure-log-policy)を参照する。
 
 ## 共通設定と用途controllerへの通知
 
-`AppSettings.backgroundExecutionSettings`は三用途別の`selection?: { providerId, modelId, reasoningEffort? }`と`instructionText?: string`を持つ。初期selectionは未設定で、既存Providerが有効かつ対応modelを取得できる用途だけ開始できる。本文未設定時だけ用途presetを使い、空文字列を含む編集本文はそのまま使う。別の追加指示レイヤーは持たない。`memoryRecordingFrequencies`は既存二用途の各5 Turn／idle 5分を既定とし、欠落時だけ初期化する。不正値は保存・読込境界で拒否する。既存AppSettings保存／変更通知とSettings編集へ接続し、通常会話の選択は変更しない。
+`AppSettings.backgroundExecutionSettings`は三用途別のProvider／Model／Depth・権限selectionと`instructionText?: string`を持つ。初期selectionは未設定で、既存Providerが有効かつ対応modelを取得できる用途だけ開始できる。本文未設定時だけ用途presetを使い、空文字列を含む編集本文はそのまま使う。別の追加指示レイヤーは持たない。`memoryRecordingFrequencies`は既存二用途の各5 Turn／idle 5分を既定とし、欠落時だけ初期化する。不正値は保存・読込境界で拒否する。既存AppSettings保存／変更通知とSettings編集へ接続し、通常会話の選択は変更しない。
 
 `SessionRuntimeService.onBackgroundEvent`は開始保存後の`run_state`と、終端保存成功後の`terminal_saved`を送る。completed／failed／canceledをすべて含み、保存失敗からterminal発火しない。Main／Auxiliaryのassemblyはこの接点を共通runtimeへ渡し、`subscribe()`の用途controllerへsource ref付きで公開する。設定変更とruntime停止も同じ接点で通知する。同期throw・非同期rejectを隔離し、subscriberのPromiseを通常turnの保存・終了待ちへ加えない。OS通知の設定やcanceled除外は発火の条件にしない。
 

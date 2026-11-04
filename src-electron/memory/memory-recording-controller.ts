@@ -27,11 +27,10 @@ export class MemoryRecordingController {
   private readonly clock: Clock;
 
   constructor(private readonly deps: {
-    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls">;
+    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure">;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     getSettings(): AppSettings | Promise<AppSettings>;
     resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
-    onError(error: unknown): void;
     clock?: Clock;
   }) {
     this.clock = deps.clock ?? { now: Date.now, setTimeout: (callback, delay) => setTimeout(callback, delay), clearTimeout: (timer) => clearTimeout(timer) };
@@ -112,7 +111,9 @@ export class MemoryRecordingController {
           if (!this.current(state)) return;
           await this.evaluate(state, purpose);
         }
-      } catch (error) { this.deps.onError(error); }
+      } catch (error) {
+        if (this.current(state)) this.deps.runtime.reportFailure({ purpose, source: state.source, stage: "capture", error });
+      }
       finally { position.checking = false; }
     })();
   }
@@ -148,7 +149,10 @@ export class MemoryRecordingController {
       return;
     }
     const authority = this.deps.resolveAuthority(state.session);
-    if (!authority) return;
+    if (!authority) {
+      this.deps.runtime.reportFailure({ purpose, source: state.source, stage: "prepare", error: { code: "BACKGROUND_AUTHORITY_UNAVAILABLE" } });
+      return;
+    }
     const character: MemoryTargetSelector = { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
     const memoryTargets: MemoryTargetSelector[] = purpose === "character-memory" ? [character]
       : [character, ...authority.allowedProjectIds.map((id): MemoryTargetSelector => ({ owner: "project", scope: "project", project: { type: "id", id } }))];
@@ -163,6 +167,8 @@ export class MemoryRecordingController {
       instructionText: prepared.instructionText,
       materials: "保存済み会話と必要な操作結果は、この実行に接続されたsession_history toolから固定history範囲内で取得できる。",
       onAdmitted: () => { position.after = throughTurnId; },
-    }).catch(this.deps.onError);
+    }).catch((error) => {
+      this.deps.runtime.reportFailure({ purpose, source: state.source, selection: prepared.call.selection, stage: "setup", error });
+    });
   }
 }

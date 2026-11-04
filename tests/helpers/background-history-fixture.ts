@@ -104,6 +104,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const runtime = createMemoryV6HttpServer({ ...owner, apiSecret: "api", mcpApiSecret: "mcp", operatorApiSecret: "operator",
     service: memory, characterContextService: characterContext, agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     backgroundRegistration,
+    onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath,
     resolveActorSession: (id, sourceKind) => {
@@ -126,6 +127,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     baseUrl: `http://127.0.0.1:${runtime.address()!.port}`, apiSecret: "api" }, credential: { adapter: "mcp" as const, adapterSecret: "mcp" } };
   const host = new ManagedHttpMcpHost({ connection,
     bindingRegistry: bindings, turns, fallbackAdmissionSecret: "fallback", backgroundRegistration,
+    onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
     sessionHistory: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer } });
   await host.start();
   const executions = new BackgroundExecutionService({ bindings, turns, closeConnection: (handle) => host.closeConnection(handle) });

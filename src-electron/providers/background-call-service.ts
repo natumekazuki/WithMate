@@ -1,5 +1,6 @@
 import type { Session } from "../../src-shared/session/session-state.js";
-import type { ModelReasoningEffort } from "../../src-shared/settings/model-catalog.js";
+import type { BackgroundExecutionSelection } from "../../src-shared/settings/background-settings.js";
+import { classifyBackgroundFailure, type BackgroundFailureInput } from "./background-failure.js";
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
@@ -10,7 +11,7 @@ export type BackgroundCallContext = Omit<
   Parameters<BackgroundExecutionService["begin"]>[0], "providerId" | "session"
 > & { session: Session };
 
-export type BackgroundSelection = Readonly<{ providerId: string; modelId: string; reasoningEffort?: ModelReasoningEffort }>;
+export type BackgroundSelection = Readonly<BackgroundExecutionSelection>;
 
 export type BackgroundAgentInput = Readonly<{
   session: Session;
@@ -36,19 +37,21 @@ export type BackgroundCallResult =
   | { kind: "failed" | "canceled"; code: string }
   | { kind: "completed" };
 
-function errorCode(error: unknown, fallback: string): string {
-  return error && typeof error === "object" && "code" in error && typeof error.code === "string"
-    ? error.code : fallback;
-}
-
 /** One invocation; execution ownership remains in BackgroundExecutionService. */
 export class BackgroundCallService {
   constructor(private readonly deps: {
     executions: BackgroundExecutionService;
     runAgent: BackgroundAgentPort;
+    onFailure?: (input: BackgroundFailureInput) => void;
   }) {}
 
   async runOnce(input: BackgroundCallInput): Promise<BackgroundCallResult> {
+    const failed = (error: unknown, stage: BackgroundFailureInput["stage"]): BackgroundCallResult => {
+      const failure = classifyBackgroundFailure(error, stage, stage === "admission" ? "BACKGROUND_ADMISSION_CALLBACK_FAILED" : stage === "setup" ? "BACKGROUND_SETUP_FAILED" : "BACKGROUND_AGENT_FAILED");
+      this.deps.onFailure?.({ purpose: input.context.scope.purpose, source: input.context.scope.history.source,
+        selection: input.selection, stage: failure.stage, error: failure });
+      return { kind: "failed", code: failure.code };
+    };
     let execution: BackgroundExecution;
     try {
       execution = this.deps.executions.begin({ ...input.context, providerId: input.selection.providerId });
@@ -56,14 +59,13 @@ export class BackgroundCallService {
       if (input.context.signal?.aborted && error === input.context.signal.reason) {
         return { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" };
       }
-      // Invalid authority/source and unavailable runtimes retain their existing begin failure.
-      throw error;
+      return failed(error, "setup");
     }
     try {
       try {
         input.onAdmitted();
       } catch (error) {
-        return { kind: "failed", code: errorCode(error, "BACKGROUND_ADMISSION_CALLBACK_FAILED") };
+        return failed(error, "admission");
       }
 
       try {
@@ -74,10 +76,12 @@ export class BackgroundCallService {
           binding: execution.binding, handle: execution.handle, signal: execution.signal,
         }));
       } catch (error) {
+        if (execution.failure) return failed(execution.failure, execution.failure.stage);
         return execution.signal.aborted
           ? { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" }
-          : { kind: "failed", code: errorCode(error, "BACKGROUND_AGENT_FAILED") };
+          : failed(error, "agent");
       }
+      if (execution.failure) return failed(execution.failure, execution.failure.stage);
       if (execution.signal.aborted) return { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" };
 
       return { kind: "completed" };

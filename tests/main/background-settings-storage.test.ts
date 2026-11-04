@@ -5,14 +5,14 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { it } from "node:test";
 import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
-import { createDefaultAppSettings, normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import { resolveBackgroundInstructionText } from "../../src-shared/settings/background-settings.js";
+import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { resolveBackgroundExecutionOptions, resolveBackgroundInstructionText } from "../../src-shared/settings/background-settings.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景三用途のProvider・Model・任意Depth・空本文・頻度はSQLite再open後も独立して保持され、未設定本文だけpresetを使う"
+// claim = "背景三用途のProvider・Model・Depth・権限・空本文・頻度はSQLite再open後も独立して保持され、未設定本文だけpresetを使う"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-// fault = "用途別選択や任意Depthを保存しないか、明示した空本文をpresetへ置換する"
+// fault = "用途別選択や権限を保存しないか、明示した空本文をpresetへ置換する"
 // observable = "getSettingsの再読込値と本文resolverの返却値"
 // observation_boundary = "public-boundary"
 // scope = "background-settings-persistence"
@@ -27,13 +27,13 @@ it("背景設定を保存して再読込し未設定と空本文を区別する"
     const initial = storage.getSettings();
     assert.deepEqual(initial.backgroundExecutionSettings, { "character-memory": {}, "target-memory": {}, affect: {} });
     assert.deepEqual(initial.memoryRecordingFrequencies, { "character-memory": { turnCount: 5, idleMinutes: 5 }, "target-memory": { turnCount: 5, idleMinutes: 5 } });
-    const next = {
+    const next: AppSettings = {
       ...initial,
       backgroundExecutionSettings: {
         ...initial.backgroundExecutionSettings,
-        "character-memory": { selection: { providerId: "codex", modelId: "real-model-id", reasoningEffort: "ultra" }, instructionText: "" },
-        "target-memory": { selection: { providerId: "copilot", modelId: "other-model-id" } },
-        affect: { selection: { providerId: "opencode", modelId: "native/model", reasoningEffort: "native-depth" }, instructionText: "Appraise this event." },
+        "character-memory": { selection: { providerId: "codex", modelId: "real-model-id", reasoningEffort: "ultra", approvalMode: "on-request", codexReviewer: "auto-review", codexSandboxMode: "read-only" }, instructionText: "" },
+        "target-memory": { selection: { providerId: "claude", modelId: "other-model-id", approvalMode: "accept-edits", codexReviewer: "user" } },
+        affect: { selection: { providerId: "opencode", modelId: "native/model", reasoningEffort: "native-depth", approvalMode: "never" }, instructionText: "Appraise this event." },
       },
       memoryRecordingFrequencies: { ...initial.memoryRecordingFrequencies, "target-memory": { turnCount: 8, idleMinutes: 2.5 } },
     };
@@ -50,6 +50,34 @@ it("背景設定を保存して再読込し未設定と空本文を区別する"
     storage.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景実行は選択Providerの既定値と用途別明示権限だけを使い、非対応権限・組合せは拒否する"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+// fault = "Claudeへuntrustedを既定化するか、明示された非対応権限を既定値へ救済する"
+// observable = "resolverの実行設定と不正選択のthrow"
+// observation_boundary = "public-boundary"
+// scope = "background-execution-permissions"
+// lifecycle = "permanent"
+// impact = "用途の権限が意図せず変わり背景処理が起動不能または過剰権限になる"
+// distinction = "型検査ではProvider別の実行設定構築と組合せ判定を検証できない"
+// @end-test-value
+it("背景権限をProvider別に解決し非対応値を拒否する", () => {
+  for (const providerId of ["codex", "copilot", "claude", "opencode"]) {
+    assert.deepEqual(resolveBackgroundExecutionOptions({ providerId, modelId: "purpose-model" }), {
+      model: "purpose-model", reasoningEffort: "", approvalMode: providerId === "claude" || providerId === "opencode" ? "on-request" : "untrusted",
+      codexReviewer: "user", codexSandboxMode: "workspace-write", codexSpeed: "standard", customAgentName: "",
+    });
+  }
+  assert.deepEqual(resolveBackgroundExecutionOptions({ providerId: "codex", modelId: "purpose-model", reasoningEffort: "high", approvalMode: "on-request", codexReviewer: "auto-review", codexSandboxMode: "read-only" }), {
+    model: "purpose-model", reasoningEffort: "high", approvalMode: "on-request", codexReviewer: "auto-review", codexSandboxMode: "read-only", codexSpeed: "standard", customAgentName: "",
+  });
+  assert.throws(() => resolveBackgroundExecutionOptions({ providerId: "claude", modelId: "m", approvalMode: "untrusted" }), /approval mode.*not supported/);
+  assert.throws(() => resolveBackgroundExecutionOptions({ providerId: "claude", modelId: "m", approvalMode: "accept-edits", codexReviewer: "auto-review" }), /reviewer.*not supported/);
+  assert.throws(() => resolveBackgroundExecutionOptions({ providerId: "opencode", modelId: "m", codexReviewer: "user" }), /reviewer.*not supported/);
+  assert.throws(() => resolveBackgroundExecutionOptions({ providerId: "copilot", modelId: "m", codexSandboxMode: "read-only" }), /sandbox.*not supported/);
 });
 
 // @test-value v2

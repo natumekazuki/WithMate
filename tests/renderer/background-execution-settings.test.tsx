@@ -10,10 +10,10 @@ import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catal
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景用途は有効ProviderからModel・Depthの順に選べ、無効化やcatalog更新では用途別draftを保持し無効ProviderのModel・Depth編集を止める"
+// claim = "背景用途は有効ProviderからModel・Depthと対応権限を選べ、Provider変更だけ権限を初期化し不正組合せを修正でき、catalog更新ではdraftを保持する"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-// fault = "無効Providerを新規選択可能にするか、無効化やcatalog更新で保存選択を書き換えるか、Providerと異なるModel候補や別用途のDepthを適用する"
-// observable = "Provider・Model・Depth selectの順序と値・候補・disabled状態、用途別設定とonChangePurpose呼出回数"
+// fault = "Provider変更で非対応権限を持ち越すか、Model変更で権限を捨てるか、保存済み不正組合せを隠すか、catalog更新でdraftを書き換える"
+// observable = "用途別selectの値・候補・disabled・aria-invalid状態、用途別設定とonChangePurpose呼出回数"
 // observation_boundary = "component-behavior"
 // scope = "background-settings-selection"
 // lifecycle = "permanent"
@@ -53,6 +53,7 @@ it("背景modelとDepthの選択を用途別に保ちcatalog更新では変更�
     assert.equal(select("Character Memory Provider").value, "");
     assert.equal(select("Character Memory Model").disabled, true);
     assert.equal(select("Character Memory Depth"), null);
+    assert.equal(select("Character Memory Approval"), null);
     assert.deepEqual(Array.from(select("Character Memory Provider").options, (option) => option.value), ["", "codex"]);
     for (const id of ["copilot", "claude", "opencode"]) settings.codingProviderSettings[id] = { ...settings.codingProviderSettings.codex, enabled: true };
     await act(async () => render());
@@ -82,11 +83,42 @@ it("背景modelとDepthの選択を用途別に保ちcatalog更新では変更�
     assert.deepEqual(settings.backgroundExecutionSettings, snapshot);
     assert.equal(select("Character Memory Depth").value, "native-depth");
     await choose("Character Memory Provider", "claude");
+    assert.equal(select("Character Memory Approval").value, "on-request");
+    assert.equal(select("Character Memory Sandbox"), null);
+    await choose("Character Memory Reviewer", "auto-review");
+    assert.equal(Array.from(select("Character Memory Approval").options).find((option) => option.value === "accept-edits")!.disabled, true);
+    await choose("Character Memory Reviewer", "user");
+    await choose("Character Memory Approval", "accept-edits");
     await choose("Character Memory Model", "claude-plain");
+    assert.equal(select("Character Memory Approval").value, "accept-edits");
     assert.equal(select("Character Memory Depth"), null);
     assert.equal(settings.backgroundExecutionSettings["character-memory"].selection?.reasoningEffort, undefined);
     assert.deepEqual(settings.backgroundExecutionSettings["target-memory"], snapshot["target-memory"]);
     assert.deepEqual(settings.backgroundExecutionSettings.affect, snapshot.affect);
+    settings.backgroundExecutionSettings["character-memory"].selection!.codexReviewer = "auto-review";
+    await act(async () => render());
+    assert.equal(select("Character Memory Reviewer").value, "auto-review");
+    assert.equal(select("Character Memory Reviewer").getAttribute("aria-invalid"), "true");
+    assert.match(dom.window.document.body.textContent!, /reviewer is not supported with this approval mode/);
+    await choose("Character Memory Reviewer", "user");
+    await choose("Character Memory Provider", "codex");
+    await choose("Character Memory Sandbox", "read-only");
+    await choose("Character Memory Provider", "opencode");
+    assert.equal(select("Character Memory Approval").value, "on-request");
+    assert.equal(select("Character Memory Reviewer"), null);
+    assert.equal(select("Character Memory Sandbox"), null);
+    assert.equal(settings.backgroundExecutionSettings["character-memory"].selection!.codexSandboxMode, undefined);
+    settings.backgroundExecutionSettings["character-memory"].selection!.approvalMode = "untrusted";
+    settings.backgroundExecutionSettings["character-memory"].selection!.codexSandboxMode = "read-only";
+    await act(async () => render());
+    assert.equal(select("Character Memory Approval").value, "untrusted");
+    assert.equal(select("Character Memory Approval").getAttribute("aria-invalid"), "true");
+    assert.equal(select("Character Memory Sandbox").value, "read-only");
+    await choose("Character Memory Sandbox", "");
+    await choose("Character Memory Approval", "on-request");
+    assert.equal(select("Character Memory Sandbox"), null);
+    await choose("Character Memory Provider", "claude");
+    await choose("Character Memory Model", "claude-plain");
     const missingSnapshot = structuredClone(settings.backgroundExecutionSettings);
     catalog = { providers: [] };
     const missingChangeCount = changes;

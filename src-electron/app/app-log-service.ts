@@ -18,6 +18,7 @@ export type AppLogServiceOptions = {
   fileName?: string;
   maxBytes?: number;
   maxFiles?: number;
+  rotation?: boolean;
   runtimeInfo: AppLogServiceRuntimeInfo;
 };
 
@@ -53,12 +54,17 @@ export class AppLogService {
   write(input: AppLogInput): AppLogEntry {
     const entry = this.buildEntry(input);
     const line = `${JSON.stringify(entry)}\n`;
-    const lineBytes = Buffer.byteLength(line, "utf8");
+    const rotation = this.options.rotation !== false;
+    const lineBytes = rotation ? Buffer.byteLength(line, "utf8") : 0;
     this.ensureLogDirectory();
-    this.ensureCurrentLogBytesLoaded();
-    this.rotateIfNeeded(lineBytes);
+    if (rotation) {
+      this.ensureCurrentLogBytesLoaded();
+      this.rotateIfNeeded(lineBytes);
+    }
     appendFileSync(this.logFilePath, line, "utf8");
-    this.currentLogBytes += lineBytes;
+    if (rotation) {
+      this.currentLogBytes += lineBytes;
+    }
     return entry;
   }
 

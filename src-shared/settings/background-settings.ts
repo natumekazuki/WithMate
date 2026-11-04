@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { APPROVAL_MODE_VALUES } from "./approval-mode.js";
+import { CODEX_REVIEWER_VALUES, DEFAULT_CODEX_REVIEWER } from "./codex-reviewer.js";
+import { CODEX_SANDBOX_MODE_VALUES, DEFAULT_CODEX_SANDBOX_MODE } from "./codex-sandbox-mode.js";
+import { DEFAULT_CODEX_SPEED } from "./codex-speed.js";
+import { getApprovalReviewerOptionsForProvider, getDefaultApprovalModeForProvider, getSandboxOptionsForProvider } from "./provider-runtime-options.js";
+import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../session/session-execution-options.js";
 import { isModelReasoningEffort, type ModelReasoningEffort } from "./model-catalog.js";
 import type { BackgroundPurpose } from "../agent-runtime/background-execution-scope.js";
 import {
@@ -13,6 +19,9 @@ const selectionSchema = z.object({
   providerId: z.string().min(1).refine((value) => value.trim() === value),
   modelId: z.string().min(1).refine((value) => value.trim() === value),
   reasoningEffort: z.custom<ModelReasoningEffort>(isModelReasoningEffort).optional(),
+  approvalMode: z.enum(APPROVAL_MODE_VALUES).optional(),
+  codexReviewer: z.enum(CODEX_REVIEWER_VALUES).optional(),
+  codexSandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES).optional(),
 }).strict();
 const purposeSettingsSchema = z.object({
   selection: selectionSchema.optional(),
@@ -46,4 +55,23 @@ export function parseMemoryRecordingFrequencies(value: unknown): MemoryRecording
 
 export function resolveBackgroundInstructionText(settings: BackgroundPurposeSettings, preset: string): string {
   return settings.instructionText ?? preset;
+}
+
+export function resolveBackgroundExecutionOptions(selection: BackgroundExecutionSelection): SessionExecutionOptions {
+  const approvalMode = selection.approvalMode ?? getDefaultApprovalModeForProvider(selection.providerId);
+  if (selection.codexReviewer !== undefined && getApprovalReviewerOptionsForProvider(selection.providerId, approvalMode).length === 0) {
+    throw new Error("The selected reviewer is not supported by this provider.");
+  }
+  if (selection.codexSandboxMode !== undefined && getSandboxOptionsForProvider(selection.providerId).length === 0) {
+    throw new Error("The selected sandbox mode is not supported by this provider.");
+  }
+  return validateSessionExecutionOptions({
+    model: selection.modelId,
+    reasoningEffort: selection.reasoningEffort ?? "",
+    approvalMode,
+    codexReviewer: selection.codexReviewer ?? DEFAULT_CODEX_REVIEWER,
+    codexSandboxMode: selection.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE,
+    codexSpeed: DEFAULT_CODEX_SPEED,
+    customAgentName: "",
+  }, { id: selection.providerId });
 }

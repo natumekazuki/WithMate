@@ -1,4 +1,5 @@
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
+import type { BackgroundFailure } from "./background-failure.js";
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
 import type { RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { AgentRuntimeBindingRegistry, IssueAgentRuntimeBindingInput, ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
@@ -9,9 +10,10 @@ export type BackgroundExecution = Readonly<{
   handle: ProviderAgentRuntimeTurnHandle;
   signal: AbortSignal;
   admission: RuntimeTurnAdmission;
+  readonly failure?: BackgroundFailure;
 }>;
 
-type ActiveExecution = { execution: BackgroundExecution; abort: AbortController; removeAbort?: () => void };
+type ActiveExecution = { execution: BackgroundExecution; abort: AbortController; failure?: BackgroundFailure; removeAbort?: () => void };
 
 /** In-memory invocation lifetime only; it does not enqueue work or advance processing checkpoints. */
 export class BackgroundExecutionService {
@@ -47,6 +49,7 @@ export class BackgroundExecutionService {
       providerId: binding.providerId, bindingId: binding.bindingId });
     const abort = new AbortController();
     const execution: BackgroundExecution = Object.freeze({ binding: { ...binding, turnCapability: handle.capability }, handle,
+      get failure() { return active.failure; },
       signal: abort.signal, admission: { state: handle.revocationState, isCurrent: () => {
         const current = this.deps.bindings.resolveIdentity(binding.bindingReference);
         return this.#active.get(binding.bindingId)?.execution === execution && current.ok
@@ -64,6 +67,12 @@ export class BackgroundExecutionService {
 
   finish(execution: BackgroundExecution): void {
     if (this.#active.get(execution.binding.bindingId)?.execution === execution) this.cancel(execution.binding.bindingId);
+  }
+
+  reportOperationFailure(bindingId: string, failure: BackgroundFailure): void {
+    const active = this.#active.get(bindingId);
+    if (!active || active.failure || active.execution.signal.aborted) return;
+    active.failure = failure;
   }
 
   cancel(bindingId: string): void {
