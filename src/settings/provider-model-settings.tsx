@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import { getModelServiceId, type ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
@@ -21,11 +21,14 @@ export function ProviderModelSettings({ provider, availability, providerEnabled,
   const [focusedModel, setFocusedModel] = useState<ModelSelectOption | null>(null);
   const [expandedServices, setExpandedServices] = useState<ReadonlySet<string>>(() => new Set());
   const [collapsedSearchServices, setCollapsedSearchServices] = useState<ReadonlySet<string>>(() => new Set());
+  const [undo, setUndo] = useState<{ providerId: string; before: ModelAvailabilitySettings; after: ModelAvailabilitySettings } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const headingId = useId();
   const disabledReasonId = useId();
   const current = availability[provider.id] ?? { disabledServiceIds: [], disabledModelIds: [] };
   const loading = discovery?.status === "loading" || discovery?.status === "idle" && providerEnabled;
   const searching = query.trim().length > 0;
+  const canUndo = undo !== null && undo.providerId === provider.id && undo.after === availability;
   const options = useMemo(() => {
     const result = buildModelSelectOptions(provider.models);
     const knownIds = new Set(result.map((option) => option.value));
@@ -59,6 +62,7 @@ export function ProviderModelSettings({ provider, availability, providerEnabled,
   }, [matching, current.disabledServiceIds, provider.id, query]);
 
   const changeEnabled = (field: "disabledServiceIds" | "disabledModelIds", id: string, enabled: boolean) => {
+    setUndo(null);
     onChange({
       ...availability,
       [provider.id]: {
@@ -68,13 +72,32 @@ export function ProviderModelSettings({ provider, availability, providerEnabled,
     });
   };
 
+  const changeModels = (models: ModelSelectOption[], serviceEnabled: boolean, enabled: boolean) => {
+    if (!providerEnabled || !serviceEnabled || models.length === 0) return;
+    const disabled = new Set(current.disabledModelIds);
+    if (models.every((model) => disabled.has(model.value) !== enabled)) return;
+    for (const model of models) {
+      if (enabled) disabled.delete(model.value); else disabled.add(model.value);
+    }
+    const next = { ...availability, [provider.id]: { ...current, disabledModelIds: [...disabled] } };
+    setUndo({ providerId: provider.id, before: availability, after: next });
+    onChange(next);
+    if (enabled && models.every((model) => model.model === null)) searchRef.current?.focus();
+  };
+
   return (
     <section className="provider-model-settings" aria-labelledby={headingId}>
       <header className="provider-model-settings-head">
         <button type="button" className="drawer-toggle compact secondary" onClick={onBack}>Back</button>
         <h2 id={headingId}>{provider.label} Models</h2>
+        <button type="button" className={`drawer-toggle compact secondary provider-model-undo${canUndo ? " is-available" : ""}`} disabled={!canUndo} aria-hidden={!canUndo} onClick={() => {
+          if (!canUndo) return;
+          onChange(undo.before);
+          setUndo(null);
+          searchRef.current?.focus();
+        }}>Undo</button>
       </header>
-      <input className="provider-model-search" type="search" aria-label="Search Models" autoFocus value={query} onChange={(event) => {
+      <input ref={searchRef} className="provider-model-search" type="search" aria-label="Search Models" autoFocus value={query} onChange={(event) => {
         setQuery(event.target.value);
         setCollapsedSearchServices(new Set());
       }} />
@@ -110,6 +133,10 @@ export function ProviderModelSettings({ provider, availability, providerEnabled,
                 </label>
               </div> : null}
               <div id={modelsId} hidden={!expanded} className={serviceId === null ? "provider-model-list" : "provider-model-list provider-model-list-nested"}>
+                <div className="provider-model-bulk-actions" role="group" aria-label={`${serviceId ?? provider.label} Model Actions`}>
+                  <button type="button" className="drawer-toggle compact secondary" disabled={!providerEnabled || !serviceEnabled || models.every((model) => !current.disabledModelIds.includes(model.value))} onClick={() => changeModels(models, serviceEnabled, true)}>Enable {searching ? "Matches" : "All"}</button>
+                  <button type="button" className="drawer-toggle compact secondary" disabled={!providerEnabled || !serviceEnabled || models.every((model) => current.disabledModelIds.includes(model.value))} onClick={() => changeModels(models, serviceEnabled, false)}>Disable {searching ? "Matches" : "All"}</button>
+                </div>
                 {models.map((model) => <label className="provider-model-row" key={model.value} title={model.value}>
                   <input type="checkbox" checked={!current.disabledModelIds.includes(model.value)} disabled={!providerEnabled || !serviceEnabled} aria-describedby={!providerEnabled ? disabledReasonId : undefined} onFocus={() => setFocusedModel(model)} onBlur={() => setFocusedModel(null)} onChange={(event) => changeEnabled("disabledModelIds", model.value, event.target.checked)} />
                   <span className="provider-model-name">{model.label}</span>

@@ -208,3 +208,156 @@ test("background discovery keeps focused rows and drafts while exposing loading 
     assert.deepEqual(changes, [{ codex: { disabledServiceIds: [], disabledModelIds: ["vendor/model2"] } }]);
   });
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "非階層Providerの一括変更は保存済み消失IDも含む全件を編集し、Undoで混在状態を復元するが後続編集や設定置換は巻き戻さない"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#model-management" }
+// fault = "一括変更で他Providerを変更する、Undoを逆操作で代用する、または古いUndoで新しい編集を上書きする"
+// observable = "onChangeの全Provider設定、buttonのdisabledとUndoの利用可否、Undo後のfocus"
+// observation_boundary = "component-behavior"
+// scope = "ProviderModelSettings 非階層Providerの一括編集と一段Undo"
+// lifecycle = "permanent"
+// impact = "大量Modelの混在した設定や後から行った編集を意図せず失う"
+// distinction = "個別checkboxのtestや型検査では保証できない一括対象範囲と取り消しの編集順序を検証する"
+// @end-test-value
+test("flat bulk edits restore mixed choices without reverting later edits or replacement settings", async () => {
+  await withSettings(async ({ document, render }) => {
+    const initial: ModelAvailabilitySettings = {
+      codex: { disabledServiceIds: [], disabledModelIds: ["vendor/model2", "missing"] },
+      opencode: { disabledServiceIds: ["other"], disabledModelIds: ["other/model"] },
+    };
+    let availability = initial;
+    let changes = 0;
+    let providerEnabled = true;
+    const props = () => ({ provider: provider("codex"), availability, providerEnabled, onChange: (next: ModelAvailabilitySettings) => { availability = next; changes++; }, onBack: () => {} });
+    const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === text)!;
+    const click = async (text: string) => { await act(async () => button(text).click()); await render(props()); };
+    const canUndo = () => button("Undo").getAttribute("aria-hidden") === "false";
+    await render(props());
+    await click("Disable All");
+    assert.deepEqual(new Set(availability.codex.disabledModelIds), new Set(["vendor/model2", "vendor/model10", "missing"]));
+    assert.deepEqual(availability.opencode, initial.opencode);
+    assert.equal(button("Disable All").disabled, true);
+    await click("Disable All");
+    assert.equal(changes, 1);
+    assert.equal(canUndo(), true);
+    await click("Undo");
+    assert.deepEqual(availability, initial);
+    assert.equal(document.activeElement, document.querySelector('[aria-label="Search Models"]'));
+    assert.equal(canUndo(), false);
+    await click("Enable All");
+    assert.deepEqual(availability.codex.disabledModelIds, []);
+    assert.deepEqual(availability.opencode, initial.opencode);
+    await act(async () => document.querySelector<HTMLInputElement>('label[title="vendor/model2"] input')!.click());
+    await render(props());
+    assert.equal(canUndo(), false);
+    assert.deepEqual(availability.codex.disabledModelIds, ["vendor/model2"]);
+    await click("Disable All");
+    assert.equal(canUndo(), true);
+    availability = structuredClone(availability);
+    await render(props());
+    assert.equal(canUndo(), false);
+    await click("Undo");
+    assert.deepEqual(new Set(availability.codex.disabledModelIds), new Set(["vendor/model2", "vendor/model10"]));
+    providerEnabled = false;
+    await render(props());
+    assert.equal(button("Enable All").disabled, true);
+    assert.equal(button("Disable All").disabled, true);
+    const before = changes;
+    await click("Enable All");
+    assert.equal(changes, before);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "OpenCodeの一括変更は接続先内の検索一致だけに限定され、接続先OFF中は個別設定を保持して一括操作を止める"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#model-management" }
+// fault = "検索外または別接続先のModelを一緒に変更するか、一括操作で接続先を自動ONにする"
+// observable = "検索中の操作label、onChangeの接続先・個別Model設定、buttonのdisabled、連続一括後のUndo値"
+// observation_boundary = "component-behavior"
+// scope = "ProviderModelSettings OpenCodeの検索対象一括編集"
+// lifecycle = "permanent"
+// impact = "目的外のModelを大量に無効化するか、意図して無効化した接続先を再有効化する"
+// distinction = "非階層の一括testと異なり検索・接続先・個別設定の範囲と優先関係を検証する"
+// @end-test-value
+test("service bulk actions affect only matching models and remain blocked by disabled services", async () => {
+  await withSettings(async ({ document, window, render }) => {
+    let availability: ModelAvailabilitySettings = { opencode: { disabledServiceIds: ["other"], disabledModelIds: ["vendor/model10", "other/model2"] } };
+    const catalog = { ...provider("opencode"), models: [...provider("opencode").models, { id: "other/model2", label: "Model 2", reasoningEfforts: [] }] };
+    const props = () => ({ provider: catalog, availability, providerEnabled: true, onChange: (next: ModelAvailabilitySettings) => { availability = next; }, onBack: () => {} });
+    const action = (service: string, text: string) => [...document.querySelectorAll<HTMLButtonElement>(`[role="group"][aria-label="${service} Model Actions"] button`)].find((element) => element.textContent === text)!;
+    const undo = () => [...document.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === "Undo")!;
+    await render(props());
+    const search = async (value: string) => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Search Models"]')!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new window.Event("input", { bubbles: true }));
+      });
+    };
+    await search("Model 2");
+    assert.equal(action("other", "Enable Matches").disabled, true);
+    assert.equal(action("other", "Disable Matches").disabled, true);
+    const before = structuredClone(availability);
+    await act(async () => action("other", "Enable Matches").click());
+    assert.deepEqual(availability, before);
+    await act(async () => action("vendor", "Disable Matches").click());
+    await render(props());
+    assert.deepEqual(availability.opencode.disabledServiceIds, ["other"]);
+    assert.deepEqual(new Set(availability.opencode.disabledModelIds), new Set(["vendor/model10", "other/model2", "vendor/model2"]));
+    const afterDisable = availability;
+    await act(async () => action("vendor", "Enable Matches").click());
+    await render(props());
+    assert.deepEqual(availability.opencode.disabledModelIds, ["vendor/model10", "other/model2"]);
+    await search("");
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="vendor Models"]')!.click());
+    await act(async () => undo().click());
+    await render(props());
+    assert.deepEqual(availability, afterDisable);
+    assert.equal(undo().disabled, true);
+    await act(async () => action("vendor", "Enable All").click());
+    await render(props());
+    assert.deepEqual(availability.opencode.disabledModelIds, ["other/model2"]);
+    await act(async () => document.querySelector<HTMLInputElement>('[aria-label="vendor Service"]')!.click());
+    await render(props());
+    assert.equal(undo().disabled, true);
+    assert.deepEqual(availability.opencode, { disabledServiceIds: ["other", "vendor"], disabledModelIds: ["other/model2"] });
+    assert.equal(action("vendor", "Enable All").disabled, true);
+    assert.equal(action("vendor", "Disable All").disabled, true);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "cacheにない保存済みModelだけの接続先を一括で再有効化して一覧が消えてもheaderのUndoで復元できる"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#model-management" }
+// fault = "Undoを消失する接続先の中へ置いて取り消せなくするか保存済みの無効IDを復元しない"
+// observable = "接続先一覧の消失と復元、headerのUndo操作、検索欄へのfocus、onChangeの保存済みID"
+// observation_boundary = "component-behavior"
+// scope = "ProviderModelSettings 保存済み消失Modelの一括再有効化"
+// lifecycle = "permanent"
+// impact = "一括再有効化の誤操作で元の無効IDを取り戻せない"
+// distinction = "通常のcatalog内Modelでは発生しない一括後の対象一覧消失を操作可能性と共に検証する"
+// @end-test-value
+test("header undo survives removal of a service containing only saved missing models", async () => {
+  await withSettings(async ({ document, render }) => {
+    let availability: ModelAvailabilitySettings = { opencode: { disabledServiceIds: [], disabledModelIds: ["missing/model"] } };
+    const initial = availability;
+    const props = () => ({ provider: provider("opencode"), availability, providerEnabled: true, onChange: (next: ModelAvailabilitySettings) => { availability = next; }, onBack: () => {} });
+    await render(props());
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="missing Models"]')!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="missing Model Actions"] button')!.click());
+    await render(props());
+    assert.equal(document.querySelector('[aria-label="missing Models"]'), null);
+    assert.deepEqual(availability.opencode.disabledModelIds, []);
+    assert.equal(document.activeElement, document.querySelector('[aria-label="Search Models"]'));
+    const undo = [...document.querySelectorAll<HTMLButtonElement>("header button")].find((element) => element.textContent === "Undo")!;
+    assert.equal(undo.disabled, false);
+    await act(async () => undo.click());
+    await render(props());
+    assert.deepEqual(availability, initial);
+    assert.ok(document.querySelector('[aria-label="missing Models"]'));
+  });
+});

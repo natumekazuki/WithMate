@@ -18,6 +18,28 @@
   font-size: 1rem;
 }
 
+.provider-model-settings-head .provider-model-undo {
+  flex: 0 0 auto;
+  width: auto;
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.provider-model-settings-head .provider-model-undo.is-available {
+  visibility: visible;
+}
+
+.provider-model-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 0;
+}
+
+.provider-model-bulk-actions .drawer-toggle {
+  width: auto;
+}
+
 .provider-model-search {
   width: 100%;
   min-width: 0;

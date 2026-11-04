@@ -83,6 +83,10 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 
 OpenCodeの接続先は、名前とModel件数を示す開閉buttonで配下一覧を折りたたむ。初期状態は閉とし、有効化checkboxは別の操作として配置する。開閉だけでは有効設定、draftのdirty状態、保存値を変更しない。検索中は一致する接続先を展開し、手動で閉じることもできる。検索語を変えると一致結果を再展開し、検索を解除すると通常時の開閉状態へ戻す。開閉状態は画面内だけで保持し、永続化しない。
 
+Model一覧の先頭に`Enable All`／`Disable All`を置く。OpenCodeでは展開した接続先ごと、非階層Providerでは検索欄の下に配置し、画面内の表示範囲だけでなく対象一覧の全Modelを一括変更する。検索中は`Enable Matches`／`Disable Matches`とし、その接続先またはProvider内の検索一致Modelだけを対象とする。接続先の有効設定は変更せず、Providerまたは接続先がOFFの間は個別checkboxと同様に一括操作も無効にする。全対象が変更済みの場合も対応するbuttonを無効にし、不要なdraft更新を行わない。
+
+一括変更の直後は管理画面headerに`Undo`を示し、直前の一括変更前の混在した個別設定へ戻せる。検索・折りたたみや対象一覧の消失では取り消せる状態を維持し、次の一括変更は取り消し対象を置き換える。個別Model／接続先の編集、保存などによる管理画面外からの無効化設定の置換、管理画面を離れる操作で取り消し対象を破棄する。一括変更も既存draftへ反映し、既存の`Save Settings`で確定する。
+
 現在のSDK cacheから一覧を作り、cacheから消えた保存済みの無効IDも再有効化できる形で表示する。検索・自然順は通常のModel pickerと共有し、管理画面のcheckbox操作とは分離する。cache更新で編集中draftや検索文字列、操作中の行のfocusを失わない。取得中・失敗は対象領域で表示する。
 
 `Back`はproviderの`Models`入口へfocusを戻し、編集内容を単一の`AppSettings draft`へ保持する。既存の`Save Settings` footerとdirty判定を共用し、独立した保存、Window、設定storeは追加しない。候補の除外と実行時の検査は[Model Availability](model-catalog.md#model-availability)に従う。
