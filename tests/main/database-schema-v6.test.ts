@@ -520,6 +520,18 @@ describe("database-schema-v6", () => {
     }
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "実V6 schemaはMemoryの出典・状態・冪等性・tag・保護objectの保存列と制約を備え、不正なuser ownerを拒否する"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md" }
+  // fault = "schema生成が保存列・参照先・一意制約を落とすか、user-globalへ別user ownerを保存できる"
+  // observable = "実SQLiteのtable_info・foreign_key_list・DDLと不正owner INSERTの失敗"
+  // observation_boundary = "component-behavior"
+  // scope = "V6 Memory storage schema contract"
+  // lifecycle = "permanent"
+  // impact = "公開済みMemoryの保存・出典参照・重複排除とowner境界が壊れる"
+  // distinction = "TypeScript型では実SQLiteの列とDB制約を検出できず、各操作testではschema全体の保存形を確認しない"
+  // @end-test-value
   it("V6 Memory tables は contract の state/idempotency/tag 境界を保持する", () => {
     const db = createV6Schema();
     try {
@@ -538,6 +550,7 @@ describe("database-schema-v6", () => {
         "source_type",
         "source_session_id",
         "source_app_message_id",
+        "source_auxiliary_session_id",
         "source_provider_message_id",
         "source_provider_id",
         "superseded_by_id",

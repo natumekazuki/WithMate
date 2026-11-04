@@ -21,6 +21,7 @@ export type BackgroundFailureInput = Readonly<{
 const causes: Record<string, string> = {
   BACKGROUND_SETTINGS_UNAVAILABLE: "Background settings could not be retrieved.",
   BACKGROUND_PROVIDER_DISABLED: "The selected background provider is disabled.",
+  BACKGROUND_MODEL_DISABLED: "The selected background model or service is disabled.",
   BACKGROUND_SOURCE_UNSUPPORTED: "The source conversation kind is unsupported.",
   BACKGROUND_CATALOG_UNAVAILABLE: "Background models could not be retrieved.",
   BACKGROUND_PROVIDER_UNSUPPORTED: "The selected background provider is unsupported.",

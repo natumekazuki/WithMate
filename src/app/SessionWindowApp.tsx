@@ -150,6 +150,8 @@ import { useSessionChatShellFeature } from "../chat/shell/session-chat-shell-fea
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { SessionTerminal, type SessionTerminalHandle } from "../terminal/session-terminal.js";
 import { ShortcutSettingsProvider } from "../settings/shortcut-settings-context.js";
+import { QueuedTurnEditContext, isQueuedTurnEditBusy, queuedTurnEditOwner, useQueuedTurnEdit } from "../chat/conversation/use-queued-turn-edit.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import { PreviewWheelZoomStepContext } from "../settings/preview-zoom-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "../file-explorer/open-path-result.js";
 import {
@@ -318,6 +320,7 @@ export default function AgentSessionWindowApp() {
     composerRegistryRef.current = new ComposerControllerRegistry();
   }
   const composerRegistry = composerRegistryRef.current;
+  const queueEditor = useQueuedTurnEdit(withmateApi, composerRegistry);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
   const sessionSummaryRead = useSessionSummaryRead(withmateApi, selectedId);
   const [executionOptionsFeedback, setExecutionOptionsFeedback] = useState<{
@@ -514,20 +517,25 @@ export default function AgentSessionWindowApp() {
     onError: (message) => window.alert(message),
   });
   const isActiveCancelRequested = pendingCancelSessionIds.has(activeRunSessionId ?? "");
-  const composerOwner = useMemo<ComposerOwner>(
+  const normalComposerOwner = useMemo<ComposerOwner>(
     () => ({
       kind: auxiliaryWorkspace.target === "auxiliary" ? "auxiliary" : "main",
       id: activeRunSessionId ?? "__none__",
     }),
     [activeRunSessionId, auxiliaryWorkspace.target],
   );
-  const composerDraft = auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession?.composerDraft ?? "" : "";
+  const activeQueuedTurnEdit = queueEditor.edits[activeRunSessionId ?? ""];
+  const composerOwner = useMemo<ComposerOwner>(() => activeQueuedTurnEdit
+    ? queuedTurnEditOwner(normalComposerOwner.id) : normalComposerOwner, [normalComposerOwner, !!activeQueuedTurnEdit]);
+  const composerDraft = activeQueuedTurnEdit?.receipt.captured.request.userMessage
+    ?? (auxiliaryWorkspace.target === "auxiliary" ? activeAuxiliarySession?.composerDraft ?? "" : "");
   const isAuxiliaryTargetUnavailable = auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession;
   const composerFeature = useSessionComposerFeature({
     api: withmateApi,
     composerRegistry,
     composerOwner,
     composerDraft,
+    canChangeDraft: composerOwner.kind === "queue-edit" ? () => queueEditor.canChangeDraft(composerOwner.id) : undefined,
     activeRunSessionId,
     selectedSessionId,
     sessionProvider: selectedSession?.provider ?? null,
@@ -561,6 +569,9 @@ export default function AgentSessionWindowApp() {
     setIsSkillPickerOpen,
     closeSkillPicker,
   } = composerFeature;
+  useEffect(() => {
+    if (activeQueuedTurnEdit?.phase === "editing" && actionDockMode === "prompt") composerTextareaRef.current?.focus();
+  }, [activeQueuedTurnEdit?.phase, activeRunSessionId]);
   const activeRunMessageCount = activeAuxiliarySession
     ? activeAuxiliarySession.messageCount ?? activeAuxiliarySession.messages.length
     : selectedSession?.messageCount ?? selectedSession?.messages.length ?? 0;
@@ -1022,7 +1033,7 @@ export default function AgentSessionWindowApp() {
     retryState,
     hasLastUserMessage: !!retrySource,
     composerBlocked: !!composerBlockedReason || composerRegistry.isFrozen
-      || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id),
+      || mainSessionRuntime.hasUncertainTurnFor(composerOwner.id) || !!activeQueuedTurnEdit,
     isReadOnly: isSelectedSessionReadOnly,
     runState: visibleSessionRunState,
   });
@@ -1031,6 +1042,17 @@ export default function AgentSessionWindowApp() {
     handleExpandActionDock,
     handleToggleActionDock,
   } = chatShellFeature;
+  const handleBeginQueuedTurnEdit = (receipt: SessionTurnQueueReceipt) => {
+    if (composerRegistry.isFrozen || isSelectedSessionReadOnly) return;
+    void queueEditor.begin(receipt);
+    if (receipt.sessionId === selectedId) auxiliaryWorkspace.setTarget("main");
+    else {
+      auxiliaryWorkspace.selectSession(receipt.sessionId);
+      auxiliaryWorkspace.setTarget("auxiliary");
+    }
+    handleExpandActionDock({ focusComposer: false });
+    requestAnimationFrame(() => composerTextareaRef.current?.focus());
+  };
   const dockContextRef = useRef({ activeRunSessionId, isAgentPickerOpen, isSkillPickerOpen, isRetryDraftReplacePending });
   if (dockContextRef.current.activeRunSessionId !== activeRunSessionId
     || dockContextRef.current.isAgentPickerOpen !== isAgentPickerOpen
@@ -1104,6 +1126,13 @@ export default function AgentSessionWindowApp() {
 
   const handleSend = async () => {
     if (composerRegistry.isFrozen) return;
+    if (activeQueuedTurnEdit) {
+      const id = activeQueuedTurnEdit.receipt.sessionId;
+      if (await queueEditor.submit(id)) requestAnimationFrame(() => {
+        if (composerOwnerRef.current === id) composerTextareaRef.current?.focus();
+      });
+      return;
+    }
     if (auxiliaryWorkspace.target === "auxiliary" && !activeAuxiliarySession) {
       triggerComposerBlockedFeedback();
       return;
@@ -1154,6 +1183,7 @@ export default function AgentSessionWindowApp() {
   };
 
   const handleSendInput = async () => {
+    if (activeQueuedTurnEdit) return;
     const selectionContext = dockContextRef.current;
     if (mainSessionRuntime.hasUncertainTurnFor(composerOwner.id)) return;
     const mainSession = getCurrentMainSession();
@@ -1185,7 +1215,12 @@ export default function AgentSessionWindowApp() {
     }), "main", runTurnId);
   };
 
-  const handleComposerSubmitShortcut = () => applyComposerSubmitCommand({
+  const handleComposerSubmitShortcut = () => {
+    if (activeQueuedTurnEdit) {
+      if (!composerRegistry.get(composerOwner).isImeComposing) void handleSend();
+      return;
+    }
+    return applyComposerSubmitCommand({
     isSubmitDisabled: () => {
       const current = composerRegistry.get(composerOwner);
       return composerRegistry.isFrozen
@@ -1217,7 +1252,8 @@ export default function AgentSessionWindowApp() {
     },
     notifySubmitBlocked: triggerComposerBlockedFeedback,
     submit: () => void handleSend(),
-  });
+    });
+  };
 
   useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
   useShortcutScope("composer");
@@ -1510,6 +1546,10 @@ export default function AgentSessionWindowApp() {
     const session = activeAuxiliarySession;
     if (!session || composerRegistry.isFrozen) return;
     setForceComposerBlockedFeedback(false);
+    if (activeQueuedTurnEdit) {
+      if (queueEditor.canChangeDraft(composerOwner.id)) composerRegistry.setDraft(composerOwner, value, { start: selectionStart, end: selectionStart });
+      return;
+    }
     await auxiliaryDraftPersistence.changeDraft(session, value, selectionStart);
   };
 
@@ -2070,17 +2110,17 @@ export default function AgentSessionWindowApp() {
     onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
   });
   const chatComposerFeature = composerFeature.buildSurface({
-    session: renderedSession,
+    session: activeQueuedTurnEdit ? { ...renderedSession, ...activeQueuedTurnEdit.receipt.captured.request.executionOptions } : renderedSession,
     directoryScopeLabel,
     canRemoveAdditionalDirectories: selectedSession.provider === "codex",
     isCharacterAuthoringSession: renderedSession.sessionKind === "character-authoring",
     target: auxiliaryWorkspace.target,
     runtime: {
       isRunning: renderedIsRunning,
-      canSendInput,
-      queueTurnBusy: pendingSubmitSessionId === renderedSession.id,
+      canSendInput: !activeQueuedTurnEdit && canSendInput,
+      queueTurnBusy: activeQueuedTurnEdit ? activeQueuedTurnEdit.phase === "beginning" || activeQueuedTurnEdit.phase === "saving" : pendingSubmitSessionId === renderedSession.id,
       hasUncertainTurn: mainSessionRuntime.hasUncertainTurnFor(renderedSession.id),
-      inputError: steeringError,
+      inputError: activeQueuedTurnEdit?.error || steeringError,
       isCanceling: !!activeCancellationState || isActiveCancelRequested,
       selectedRunState: selectedSessionRunState,
       auxiliaryRunState: activeAuxiliarySession?.runState ?? null,
@@ -2093,6 +2133,7 @@ export default function AgentSessionWindowApp() {
       isPromptTemplateWorkspaceOpen,
       providerCatalog: selectedProviderCatalog,
       models: modelOptions,
+      modelAvailability: appSettings.modelAvailability,
       modelDiscoveryHasCache: Boolean(isSameModelCatalogWorkspace(modelCatalog?.workspacePath, renderedSession.workspacePath) && modelCatalog?.discovery?.[renderedSession.provider]?.fetchedAt),
       modelDiscoveryStatus: modelCatalog?.discovery?.[renderedSession.provider]?.status ?? (modelCatalogLoadStatus === "error" ? "error" : "loading"),
       modelDiscoveryError: modelCatalog?.discovery?.[renderedSession.provider]?.error ?? modelCatalogLoadError,
@@ -2194,6 +2235,24 @@ export default function AgentSessionWindowApp() {
       retryComposerSave: handleRetryAuxiliaryDraftSave,
     },
   });
+  if (activeQueuedTurnEdit) {
+    const busy = isQueuedTurnEditBusy(activeQueuedTurnEdit);
+    chatComposerFeature.composer.isComposerDisabled ||= busy;
+    chatComposerFeature.composer.queuedTurnEdit = {
+      busy,
+      canceling: activeQueuedTurnEdit.phase === "canceling",
+      unavailable: activeQueuedTurnEdit.phase === "unavailable",
+      onSubmit: () => void handleSend(),
+      onCancel: () => {
+        const id = activeQueuedTurnEdit.receipt.sessionId;
+        void queueEditor.cancel(id).then((ended) => {
+          if (ended) requestAnimationFrame(() => {
+            if (composerOwnerRef.current === id) composerTextareaRef.current?.focus();
+          });
+        });
+      },
+    };
+  }
   const chatConversationFeature = conversationFeature.buildSurface({
     sessionId: renderedSession.id,
     character: selectedSessionCharacter,
@@ -2366,6 +2425,7 @@ export default function AgentSessionWindowApp() {
     : !loadedSession ? <LoadingIndicator label="Loading conversation" /> : null;
 
   return (
+    <QueuedTurnEditContext.Provider value={withmateApi?.beginQueuedSessionTurnEdit ? { edits: queueEditor.edits, begin: handleBeginQueuedTurnEdit } : null}>
     <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
       <PreviewWheelZoomStepContext.Provider value={isAppSettingsLoaded ? appSettings.previewWheelZoomStep : null}>
       <ChatWindow
@@ -2442,5 +2502,6 @@ export default function AgentSessionWindowApp() {
       />
       </PreviewWheelZoomStepContext.Provider>
     </ShortcutSettingsProvider>
+    </QueuedTurnEditContext.Provider>
   );
 }

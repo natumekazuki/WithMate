@@ -105,7 +105,19 @@ test("Markdown linkはmainの既存解決境界でfile resourceへ収束した�
   }
 });
 
-test("Markdown linkはroot外absolute-file preview resourceをcopy対象にしない", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "Markdown linkの実在fileはSession root外でも対象確認後にCopy Fileできる"
+// oracle = { type = "contract", ref = "docs/features/windows-file-object-copy.md" }
+// fault = "通常fileをroot外という理由でcopy候補から除外する、またはcopy時の対象確認を飛ばす"
+// observable = "解決されたabsolute resource、確認要求とnative writerの対象path"
+// observation_boundary = "public-boundary"
+// scope = "Markdown link resolution and explicit file copy service"
+// lifecycle = "permanent"
+// impact = "表示されたローカルfileをユーザーがコピーできなくなる"
+// distinction = "既存root内copyとabsolute Previewの直copyではリンク候補判定との接続を確認できない"
+// @end-test-value
+test("Markdown linkはroot外absolute-fileも対象確認後にcopyできる", async () => {
   const writes: string[] = [];
   const authorizationRequests: SessionFileResourceRequest[] = [];
   const service = new SessionFileObjectCopyService({
@@ -125,12 +137,15 @@ test("Markdown linkはroot外absolute-file preview resourceをcopy対象にし�
     },
   });
 
-  assert.equal(await service.resolveCopyableLinkResource({
+  const resource = await service.resolveCopyableLinkResource({
     sessionId: "session-1",
     target: "C:\\outside\\report.txt",
-  }), null);
-  assert.deepEqual(authorizationRequests, []);
-  assert.deepEqual(writes, []);
+  });
+  assert.deepEqual(resource, { sessionId: "session-1", absolutePath: "C:\\outside\\report.txt" });
+  assert.deepEqual(authorizationRequests, [resource]);
+  assert.equal((await service.copyResource(resource!)).status, "copied");
+  assert.deepEqual(authorizationRequests, [resource, resource]);
+  assert.deepEqual(writes, ["C:\\outside\\report.txt"]);
 });
 
 test("現在のabsolute-file preview resourceは明示Copy File操作でcopyできる", async () => {

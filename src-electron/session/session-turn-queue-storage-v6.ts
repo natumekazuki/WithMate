@@ -206,6 +206,18 @@ export class SessionTurnQueueStorageV6 {
     });
   }
 
+  updateQueued(owner: SessionTurnQueueOwner, id: string, input: { userMessage: string; attachments: SessionTurnQueueCapturedInput["attachments"] }): SessionTurnQueueReceipt {
+    if (typeof input.userMessage !== "string" || !input.userMessage.trim()) throw new Error("A queued message is required.");
+    return this.withOwner(owner, () => {
+      const receipt = this.required(owner, id);
+      if (receipt.state !== "queued") throw new Error("Only a queued receipt can be edited.");
+      const captured = { ...receipt.captured, request: { ...receipt.captured.request, userMessage: input.userMessage }, attachments: input.attachments };
+      this.db.prepare("UPDATE session_turn_queue_v6 SET captured_json = ?, updated_at = ? WHERE id = ? AND state = 'queued'")
+        .run(capturedJson(captured), new Date().toISOString(), id);
+      return this.required(owner, id);
+    });
+  }
+
   reorderQueued(owner: SessionTurnQueueOwner, expectedQueuedIds: string[], queuedIds: string[]): SessionTurnQueueReorderResult {
     if (!Array.isArray(expectedQueuedIds) || !Array.isArray(queuedIds)
       || expectedQueuedIds.some((id) => typeof id !== "string" || !id.trim())

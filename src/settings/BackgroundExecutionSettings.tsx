@@ -7,6 +7,7 @@ import { DEFAULT_CODEX_REVIEWER } from "../../src-shared/settings/codex-reviewer
 import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
 import { resolveBackgroundProviderAvailability } from "../../src-shared/settings/background-provider-support.js";
 import { resolveModelChangeSelection, type ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { getModelDisabledReason } from "../../src-shared/settings/model-availability.js";
 import { buildModelSelectOptions, buildReasoningEffortSelectOptions } from "./model-select-options.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { MemoryRecordingFrequencies } from "../../src-shared/memory-recording/memory-recording-frequency.js";
@@ -25,7 +26,9 @@ export type BackgroundExecutionSettingsProps = {
 };
 
 export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose, onChangeFrequencies }: BackgroundExecutionSettingsProps) {
-  const enabledProviders = (catalog?.providers ?? []).filter((provider) => getProviderAppSettings(settings, provider.id).enabled);
+  const enabledProviders = (catalog?.providers ?? [])
+    .filter((provider) => getProviderAppSettings(settings, provider.id).enabled)
+    .map((provider) => ({ ...provider, models: provider.models.filter((model) => !getModelDisabledReason(settings.modelAvailability, provider.id, model.id)) }));
   return (
     <section className="settings-section-card settings-background-section" aria-labelledby="background-execution-heading">
       <div className="settings-field">
@@ -34,12 +37,14 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
           const current = settings.backgroundExecutionSettings[purpose];
           const provider = catalog?.providers.find((entry) => entry.id === current.selection?.providerId);
           const model = provider?.models.find((entry) => entry.id === current.selection?.modelId);
-          const modelOptions = buildModelSelectOptions(provider?.models ?? [], current.selection?.modelId);
+          const enabledProvider = enabledProviders.find((entry) => entry.id === current.selection?.providerId);
+          const disabledModel = current.selection && getModelDisabledReason(settings.modelAvailability, current.selection.providerId, current.selection.modelId);
+          const modelOptions = buildModelSelectOptions(enabledProvider?.models ?? [], current.selection?.modelId);
           const depthOptions = buildReasoningEffortSelectOptions(model?.reasoningEfforts ?? []);
           const availability = resolveBackgroundProviderAvailability(current.selection, catalog);
           const unsupportedProvider = availability.status === "unavailable" && availability.code === "BACKGROUND_PROVIDER_UNSUPPORTED";
           const disabledProvider = current.selection && !unsupportedProvider && !getProviderAppSettings(settings, current.selection.providerId).enabled;
-          const canEditModel = Boolean(provider && current.selection && !disabledProvider && provider.models.length > 0);
+          const canEditModel = Boolean(current.selection && enabledProvider && enabledProvider.models.length > 0);
           const preset = purpose === "affect" ? AFFECT_COMPOSITION_INSTRUCTIONS : MEMORY_REGISTRATION_PRESETS[purpose];
           const frequency = purpose === "affect" ? null : settings.memoryRecordingFrequencies[purpose];
           const approvalMode = current.selection?.approvalMode ?? getDefaultApprovalModeForProvider(current.selection?.providerId);
@@ -87,20 +92,22 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
                   <span>Model</span>
                   <select aria-label={`${labels[purpose]} Model`} value={current.selection?.modelId ?? ""} disabled={!canEditModel}
                     onChange={(event) => {
-                      const resolved = resolveModelChangeSelection(provider!, event.target.value, current.selection?.reasoningEffort ?? "");
+                      const resolved = resolveModelChangeSelection(enabledProvider!, event.target.value, current.selection?.reasoningEffort ?? "");
                       onChangePurpose(purpose, { ...current, selection: {
                         ...current.selection!, providerId: provider!.id, modelId: resolved.resolvedModel,
                         reasoningEffort: resolved.resolvedReasoningEffort || undefined,
                       } });
                     }}>
                     {!current.selection ? <option value="">Not Configured</option> : null}
-                    {modelOptions.map((option) => <option key={option.value} value={option.value} disabled={!option.model}>{option.label}</option>)}
+                    {modelOptions.map((option) => <option key={option.value} value={option.value} disabled={!option.model}>
+                      {disabledModel && option.value === current.selection?.modelId ? `${model?.label ?? option.value} (Disabled)` : option.label}
+                    </option>)}
                   </select>
                 </label>
                 {depthOptions.length > 0 && current.selection ? (
                   <label className="settings-provider-input">
                     <span>Depth</span>
-                    <select aria-label={`${labels[purpose]} Depth`} value={current.selection.reasoningEffort ?? ""} disabled={!canEditModel}
+                    <select aria-label={`${labels[purpose]} Depth`} value={current.selection.reasoningEffort ?? ""} disabled={!canEditModel || Boolean(disabledModel)}
                       onChange={(event) => onChangePurpose(purpose, { ...current, selection: {
                         ...current.selection!, reasoningEffort: event.target.value || undefined,
                       } })}>
@@ -149,6 +156,7 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
               {permissionError ? <p className="settings-help settings-background-warning" role="status">{permissionError} Select a supported value or change Provider.</p> : null}
               {current.selection?.providerId === "claude" && reviewer === "auto-review" && approvalMode !== "never" ? <p className="settings-help">To use another Approval mode, select User as Reviewer first.</p> : null}
               {disabledProvider ? <p className="settings-help settings-background-warning" role="status">Unavailable. Enable {provider?.label ?? current.selection!.providerId} in Coding Agent Providers.</p>
+              : disabledModel ? <p className="settings-help settings-background-warning" role="status">Unavailable. Enable the selected model and its service in Models, or select another model.</p>
               : availability.status === "unavailable" || availability.status === "failed" ? (
                 <p className="settings-help settings-background-warning" role="status">
                   {availability.status === "failed" ? "Model Catalog Unavailable. " : "Unavailable. "}

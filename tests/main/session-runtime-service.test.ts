@@ -779,6 +779,44 @@ it("queued runtimeは無効になった捕捉入力を開始前にfailedで返�
 
 // @test-value v2
 // kind = "contract"
+// claim = "queue待ち後や開始準備の待機中にModelまたは接続先が無効なら捕捉IDを保持したまま開始前に失敗する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-availability" }
+// fault = "受付時の設定だけで実行し、後から無効化された接続先やModelを起動する"
+// observable = "queued実行のfailed理由、開始保存とProvider呼出し件数0、捕捉Model不変"
+// observation_boundary = "public-boundary"
+// scope = "共通Runtimeのqueued Model/サービス無効化"
+// lifecycle = "permanent"
+// impact = "無効化済みサービスへの課金と送信が発生する"
+// distinction = "受付testは待機後の設定変更を検出できない"
+// @end-test-value
+it("queue待ち後のModelとサービス無効化を開始前に拒否する", async () => {
+  for (const reason of ["model", "service"] as const) {
+    const session = createSession({ provider: "opencode", model: "openai/saved-model", incarnationId: "owner", approvalMode: "on-request" });
+    const receipt = queuedReceipt(session);
+    let starts = 0;
+    let providers = 0;
+    const settings = normalizeAppSettings({ codingProviderSettings: { opencode: { enabled: true } } });
+    const runtime = createProgressRuntime(session, async () => { providers++; return createPartialResult(); }, {
+      getAppSettings: () => structuredClone(settings),
+      resolveSessionCharacter: async () => {
+        settings.modelAvailability = { opencode: { disabledServiceIds: reason === "service" ? ["openai"] : [], disabledModelIds: reason === "model" ? [session.model] : [] } };
+        return null;
+      },
+      resolveProviderCatalog: () => { const provider = { ...createProviderCatalog("opencode"), models: [] }; return { snapshot: { providers: [provider] }, provider }; },
+      assertCapturedComposerAttachmentsAvailable: async () => {},
+      persistQueuedTurnStart: (next, _, __, turn) => { starts++; return { session: next, turn: { id: 1, ...turn } }; },
+    });
+    const result = await runtime.runQueuedSessionTurn(receipt, async () => assert.fail("Disabled Model cannot start"));
+    assert.equal(result.state, "failed");
+    assert.match(result.reason ?? "", /disabled/);
+    assert.equal(starts, 0);
+    assert.equal(providers, 0);
+    assert.equal(receipt.captured.request.executionOptions.model, session.model);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "atomic開始前に実終了したqueued取消だけcanceledへ収束し、setup生存中のtimeoutと開始保存の結果不明はthrowを維持する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md GUI Turn Queue / Session Run Cancel" }
 // fault = "確定した未開始取消をinterruptedへ変換するか、未終了setupや開始commit不明を既知canceledとして後続を許可する"

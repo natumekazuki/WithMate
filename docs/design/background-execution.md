@@ -87,6 +87,8 @@ Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決�
 
 Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続し、既存のProvider解決からCodex／Copilot／Claude／OpenCodeの同じcoding adapterを使う。選択したcatalog実modelと任意の`reasoningEffort`を通常adapterのnative写像へ渡し、通常会話や別用途の選択へfallbackしない。開始準備で選択と本文をsnapshotし、設定変更は次の呼出しへ適用する。
 
+開始準備ではapp共通の`modelAvailability`も検査する。ModelまたはOpenCodeサービスが無効なら、catalog取得・source captureへ進まず`BACKGROUND_MODEL_DISABLED`／`unavailable`を返す。保存選択を変更せず、再有効化は次の準備に反映する。設定変更による準備済み・実行中の呼出しの取消は行わない。
+
 共通呼出層は実source Sessionを認可・workspace・許可材料の文脈に保ち、`executionTarget`に背景binding ID、新規thread、用途入力のpromptを渡す。adapterのnative cache・active turn・cleanupはこの実行IDを使い、元会話threadのresume・保存・結果適用を行わない。偽のSessionを永続化せず、threadの監視・比較・復元も持たない。通常会話のprogress／thread更新callbackを渡さず、出力は消費して破棄する。登録本文へCharacterのpersonaを二重注入しない。取消はnative processのcleanupまで待ち、Agent終端で共通寿命を閉じる。
 
 行動・tool使用方針は用途presetまたは編集本文へ集約し、固定promptは独立実行・材料・返却先の技術情報だけを示す。背景だけのenv allowlist、tool／skill／plugin／hook／native設定の一括無効化、managed／custom接続の一律拒否は設けない。自然言語の方針を技術的な使用不能保証とはしない。通常adapterのapproval／sandbox／管理者policyは維持し、背景だけの無条件許可を追加しない。fake SDKによる接続検証と実認証の推論確認は区別する。

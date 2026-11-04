@@ -770,6 +770,7 @@ export default function HomeApp() {
     modelCatalog,
     settingsDraft,
     providerSettingRows,
+    modelDiscovery: modelCatalog?.discovery,
     memoryV6Diagnostics,
     settingsDraftLoaded,
     memoryV6DiagnosticsLoadStatus,

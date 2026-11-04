@@ -99,6 +99,8 @@ OpenCodeのnative DBはWithMateのSQLiteとは別にOpenCodeが所有し、通�
 
 DBの取り違え、owner不一致、未解消pending、active thread、移行・再開失敗では送信せず明示エラーにし、新規threadへfallbackしない。詳細は[Thread Management](provider-adapter.md#thread-management)を参照する。
 
+Modelの無効設定は`app_settings`の`model_availability_json`へprovider別の`disabledServiceIds`／`disabledModelIds`を保存する。SDK cacheとは独立したapp共通設定とし、専用tableは設けない。未設定・設定reset時は空の設定（すべて有効）とし、不正なJSONや型は明示エラーにする。適用条件は[Model Availability](model-catalog.md#model-availability)を参照する。
+
 SDK model一覧は`provider_model_cache`へproviderとcontext keyの組を主キーに保存する。`provider_json`と`fetched_at`を保持し、context keyやcredentialをrendererへ渡さない。更新契約は[Provider Model Discovery](model-catalog.md)を参照する。V6 schema更新では`model_catalog_models`、`model_catalog_providers`、`model_catalog_revisions`を削除する。公開済みSessionの`catalog_revision`列の保存値は保持するが、実行設定の検証には使わず、Session、会話、draft、最小turnをcatalog変更で移行しない。
 
 V6 schema更新は`character_affect_turn_settlements`を`DROP TABLE IF EXISTS`で削除する。旧queueのpending、評価候補、retry、実行中、quarantineは再開せず、本文・候補も除去する。旧storage constructorや中断回収を起動せず、再実行・再起動でも旧評価を送信しない。破棄を評価成功として扱わず、保存済みAffect event／関連episode／一般Memoryとversion・idempotency情報は保持する。一部保存済みや保存結果不明の候補も再適用しない。

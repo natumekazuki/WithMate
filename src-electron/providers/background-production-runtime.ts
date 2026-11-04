@@ -7,6 +7,7 @@ import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-sh
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import { getModelDisabledReason } from "../../src-shared/settings/model-availability.js";
 import { resolveBackgroundProviderAvailability } from "../../src-shared/settings/background-provider-support.js";
 import type { SessionBackgroundEvent } from "../session/session-background-events.js";
 import { BackgroundCallService, type BackgroundAgentPort, type BackgroundCallInput } from "./background-call-service.js";
@@ -118,6 +119,9 @@ export class BackgroundProductionRuntime {
     catch { return { status: "failed", code: "BACKGROUND_EXECUTION_OPTIONS_INVALID", reason: "The background execution settings are invalid for the provider." }; }
     if (!settings.codingProviderSettings[configured.selection.providerId]?.enabled) {
       return { status: "unavailable", code: "BACKGROUND_PROVIDER_DISABLED", reason: "Enable the selected provider in Settings." };
+    }
+    if (getModelDisabledReason(settings.modelAvailability, configured.selection.providerId, configured.selection.modelId)) {
+      return { status: "unavailable", code: "BACKGROUND_MODEL_DISABLED", reason: "Enable the selected model and its service in Settings > Models, or select another model." };
     }
     if (!this.deps.sourceKinds[input.purpose]?.includes(input.source.kind)) {
       return { status: "unavailable", code: "BACKGROUND_SOURCE_UNSUPPORTED", reason: "Registration for this purpose does not support this conversation kind." };

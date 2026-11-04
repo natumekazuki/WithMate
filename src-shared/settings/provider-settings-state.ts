@@ -23,6 +23,7 @@ import {
   normalizeKeyboardShortcutSettings,
   type KeyboardShortcutSettings,
 } from "./keyboard-shortcut-state.js";
+import { normalizeModelAvailability, type ModelAvailabilitySettings } from "./model-availability.js";
 
 export type AppSettings = {
   backgroundExecutionSettings: BackgroundExecutionSettings;
@@ -44,6 +45,7 @@ export type AppSettings = {
   memoryFileQuotaBytes: number;
   glossaryProactiveCreateLimit: number | null;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
+  modelAvailability: ModelAvailabilitySettings;
   codingProviderSettings: Record<string, ProviderAppSettings>;
   memoryExtractionProviderSettings: Record<string, MemoryExtractionProviderSettings>;
 };
@@ -147,6 +149,7 @@ export function createDefaultAppSettings(): AppSettings {
     keyboardShortcuts: createDefaultKeyboardShortcutSettings(),
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     glossaryProactiveCreateLimit: DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT,
+    modelAvailability: {},
     mateMemoryGenerationSettings: {
       ...DEFAULT_MATE_MEMORY_GENERATION_SETTINGS,
       priorityList: [{ ...DEFAULT_MATE_MEMORY_GENERATION_PROVIDER_SETTINGS }],
@@ -410,6 +413,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     backgroundExecutionSettings: parseBackgroundExecutionSettings(candidate.backgroundExecutionSettings),
     memoryRecordingFrequencies: parseMemoryRecordingFrequencies(candidate.memoryRecordingFrequencies),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),
+    modelAvailability: normalizeModelAvailability(candidate.modelAvailability),
     codingProviderSettings,
     memoryExtractionProviderSettings,
   };

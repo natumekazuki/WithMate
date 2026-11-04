@@ -55,6 +55,7 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
     - `Tool Call Presence`
   - `Coding Agent Providers`
     - provider 名を左、enable checkbox を右に置く
+    - providerごとの`Models`からModel管理を開く
     - OpenCodeの認証はOpenCode側で設定する
     - provider ごとの `Provider File Settings`
       - `Root Directory`
@@ -80,9 +81,24 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
 - `Save Settings`
 - 結果フィードバック
 
+## Model Management
+
+`Coding Agent Providers`の各providerに`Models`入口を置き、同じSettings Windowの本文を共通の管理画面へ切り替える。検索とModel単位のcheckboxは4 provider共通とし、OpenCodeだけnativeサービスごとのcheckboxと配下のModel一覧を持つ。サービスOFFは個別設定を上書きせず、サービスONで元の個別設定へ戻る。
+
+OpenCodeの接続先は、名前とModel件数を示す開閉buttonで配下一覧を折りたたむ。初期状態は閉とし、有効化checkboxは別の操作として配置する。開閉だけでは有効設定、draftのdirty状態、保存値を変更しない。検索中は一致する接続先を展開し、手動で閉じることもできる。検索語を変えると一致結果を再展開し、検索を解除すると通常時の開閉状態へ戻す。開閉状態は画面内だけで保持し、永続化しない。
+
+Model一覧の先頭に`Enable All`／`Disable All`を置く。OpenCodeでは展開した接続先ごと、非階層Providerでは検索欄の下に配置し、画面内の表示範囲だけでなく対象一覧の全Modelを一括変更する。検索中は`Enable Matches`／`Disable Matches`とし、その接続先またはProvider内の検索一致Modelだけを対象とする。接続先の有効設定は変更せず、Providerまたは接続先がOFFの間は個別checkboxと同様に一括操作も無効にする。全対象が変更済みの場合も対応するbuttonを無効にし、不要なdraft更新を行わない。
+
+一括変更の直後は管理画面headerに`Undo`を示し、直前の一括変更前の混在した個別設定へ戻せる。検索・折りたたみや対象一覧の消失では取り消せる状態を維持し、次の一括変更は取り消し対象を置き換える。個別Model／接続先の編集、保存などによる管理画面外からの無効化設定の置換、管理画面を離れる操作で取り消し対象を破棄する。一括変更も既存draftへ反映し、既存の`Save Settings`で確定する。
+
+現在のSDK cacheから一覧を作り、cacheから消えた保存済みの無効IDも再有効化できる形で表示する。検索・自然順は通常のModel pickerと共有し、管理画面のcheckbox操作とは分離する。cache更新で編集中draftや検索文字列、操作中の行のfocusを失わない。取得中・失敗は対象領域で表示する。
+
+`Back`はproviderの`Models`入口へfocusを戻し、編集内容を単一の`AppSettings draft`へ保持する。既存の`Save Settings` footerとdirty判定を共用し、独立した保存、Window、設定storeは追加しない。候補の除外と実行時の検査は[Model Availability](model-catalog.md#model-availability)に従う。
+
 ## Current Scope
 
 - 背景三用途は`AppSettings.backgroundExecutionSettings`に用途別の選択と本文を保存する。Provider／modelは初期未設定で、通常Sessionの選択や別用途のMemory生成設定を流用しない。catalogの実IDで選択し、未設定、利用不可、一覧取得失敗を区別する。利用不可でも保存値を保持し、対応する選択への修正先を示す。背景対応Providerの判定は共有`background-provider-support.ts`を使い、無効なProviderは`Coding Agent Providers`での有効化を案内する。
+- 背景Model候補はapp共通のModel／サービス無効設定を反映する。無効な現在値は`Disabled`として選択不能な表示だけを残し、Model／Depthの保存値を変えず`Models`での再有効化または別Modelの選択を案内する。有効ModelがないProviderは新規選択できない。
 - 背景実行はCodex／Copilot／Claude／OpenCodeの既存adapterを利用する。各用途は同じgroup内で`Provider`→`Model`→`Depth`の順に編集する。新たに選べるProviderは有効なものだけとし、model候補が未取得なら選択できない。Provider変更時はcatalogの既定model（候補にない場合は先頭model）と既定Depthを既存model選択helperで解決し、一括設定する。Model候補は選択Providerのものだけを表示する。
 - 各用途のselectionは`reasoningEffort`を任意で保持し、未指定はProviderの既定を意味する。`Depth`候補は選択modelの`reasoningEfforts`を使い、候補なしなら非表示とする。明示的なmodel変更時だけ既存model選択helperでDepthを調整する。catalog更新・Provider無効化だけでは保存値やdraftを変更しない。現在の無効／利用不可Providerや一覧から消えたmodelも選択表示を保持し、有効なProviderへ明示変更できる。Provider未設定・無効・一覧未取得ではModelとDepthを編集できない。
 - 権限は同じ用途group内でProvider共通の候補・組合せ規則を使い、`Approval`は全対応Provider、`Reviewer`はCodex／Claude、`Sandbox`はCodexで編集する。欠落項目は選択Providerの既定値（ApprovalはCodex／CopilotがSafety Focused、Claude／OpenCodeがProvider Controlled、ReviewerはUser、SandboxはWorkspace Write）を使う。Provider変更時は対応する権限項目をそのProviderの既定値へ一括設定し、Model変更では権限を保持する。ClaudeのAuto Reviewで非対応のApprovalへ変えるときは、先にReviewerをUserへ明示変更する。Auto Run中のReviewerは編集しない。

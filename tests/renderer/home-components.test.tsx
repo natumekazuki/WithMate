@@ -107,6 +107,7 @@ describe("HomeSettingsContent", () => {
       onChangeGlossaryProactiveCreateLimit={noOp}
       onChangeSessionCleanupCutoffDate={noOp}
       onChangeProviderEnabled={noOp}
+      onChangeModelAvailability={noOp}
       onChangeProviderSkillRootPath={noOp}
       onChangeProviderSkillRelativePath={noOp}
       onChangeProviderInstructionRelativePath={noOp}
@@ -124,6 +125,48 @@ describe("HomeSettingsContent", () => {
   );
 
   const renderSettings = (params?: RenderSettingsParams) => renderToStaticMarkup(buildSettingsContent(params));
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "ProviderのModels入口とBackで同じ設定draftを編集し既存Saveへ渡し、入口へfocusを戻す"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#model-management" }
+  // fault = "管理画面を別draftへ分離してBackで編集を失うか保存payloadへ含めない"
+  // observable = "Model checkbox、Unsaved Changes、Back後のfocus、Save callbackの設定"
+  // observation_boundary = "component-behavior"
+  // scope = "Settings内Model管理の入口から保存まで"
+  // lifecycle = "permanent"
+  // impact = "無効化が保存されたと思っても実行設定へ反映されない"
+  // distinction = "管理component単体ではSettingsの画面切替と既存Saveの結線を通らない"
+  // @end-test-value
+  it("Modelsの編集をBack後も保持して既存Saveへ渡す", async () => {
+    await withSettingsDom(async (container, root) => {
+      let saved: ReturnType<typeof createDefaultAppSettings> | undefined;
+      function View() {
+        const [draft, setDraft] = useState(createDefaultAppSettings());
+        return React.cloneElement(buildSettingsContent(), {
+          settingsDraft: draft,
+          providerSettingRows: buildHomeProviderSettingRows(modelCatalog, draft),
+          settingsDirty: JSON.stringify(draft) !== JSON.stringify(createDefaultAppSettings()),
+          onChangeModelAvailability: (modelAvailability: typeof draft.modelAvailability) => setDraft((current) => ({ ...current, modelAvailability })),
+          onSaveSettings: () => { saved = structuredClone(draft); },
+        });
+      }
+      await act(async () => root.render(<View />));
+      const entry = () => container.querySelector<HTMLButtonElement>('[aria-label="Manage Codex Models"]')!;
+      await act(async () => entry().click());
+      assert.equal(container.querySelector("h2")?.textContent, "Codex Models");
+      const model = container.querySelector<HTMLInputElement>('.provider-model-row[title="gpt-5.4"] input')!;
+      await act(async () => model.click());
+      assert.equal(model.checked, false);
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Back")!.click());
+      assert.equal(document.activeElement, entry());
+      assert.ok(container.textContent?.includes("Unsaved Changes"));
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!.click());
+      assert.deepEqual(saved?.modelAvailability.codex?.disabledModelIds, ["gpt-5.4"]);
+      await act(async () => entry().click());
+      assert.equal(container.querySelector<HTMLInputElement>('.provider-model-row[title="gpt-5.4"] input')!.checked, false);
+    });
+  });
 
   const shimDiagnostics: MemoryV6Diagnostics = {
     generatedAt: "2026-10-25T00:00:00.000Z",

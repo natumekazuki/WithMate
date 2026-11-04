@@ -71,6 +71,29 @@ function createLatestSessionSummary(
 describe("SessionLaunchSelectionService", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "新規会話は無効な継承Modelを別Modelへ自動変更せず作成前に拒否する"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-availability" }
+  // fault = "現在選択や保存済み直近値の無効化を無視するかSDK既定値へ置換する"
+  // observable = "launch選択のrejectと有効化後の同一Model解決"
+  // observation_boundary = "public-boundary"
+  // scope = "新規SessionのModel有効化境界"
+  // lifecycle = "permanent"
+  // impact = "無効なModelのSessionが作成されるか利用者が選ばないModelへ切り替わる"
+  // distinction = "runtimeの送信拒否では作成前の継承値検証を確認できない"
+  // @end-test-value
+  it("無効な直近Modelを自動切替せず拒否する", async () => {
+    const settings = normalizeAppSettings({ modelAvailability: { codex: { disabledServiceIds: [], disabledModelIds: ["saved-model"] } } });
+    const service = new SessionLaunchSelectionService({
+      getAppSettings: () => settings,
+      getModelCatalogSnapshot: createModelCatalogSnapshot,
+      getLatestSessionSummaryForProvider: () => createLatestSessionSummary({ provider: "codex", model: "saved-model" }),
+    });
+    await assert.rejects(service.resolve("codex"), /disabled/);
+    settings.modelAvailability = {};
+    assert.equal((await service.resolve("codex")).model, "saved-model");
+  });
+  // @test-value v2
+  // kind = "contract"
   // claim = "保存modelと作成開始時のSDK既定値を保持し、未選択の作成だけ対象workspaceとproviderのdiscoveryを待つ"
   // oracle = { type = "contract", ref = "accepted behavior: saved selections survive discovery changes; new selections use SDK defaults" }
   // fault = "保存選択を既定値へ置換するか、未選択の作成で別workspaceの候補を使う"

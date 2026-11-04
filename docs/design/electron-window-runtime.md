@@ -163,7 +163,7 @@ Window close時も個別タブと同じ判定で、実行中・起動中・判�
 
 - HTMLはDOM内の`webview`で実行し、mountごとに一意な非永続partitionと文書hostを発行する。main processがowner、partition、初回URLを照合してguestを受け入れ、`sandbox: true`、`contextIsolation: true`、`webSecurity: true`、Node integration無効、preloadなしを強制する。アプリ本体のpreloadや権限とは別のWeb環境である。
 - Web CSS／JavaScript、外部CDN、fetch／WebSocket等の通信、worker、iframe、Web storageは通常のブラウザー規則に従って利用する。CORS、mixed content、secure context、OS権限、Electronが対応するdevice API等の制約は緩めない。任意のWeb APIや機器の動作を保証せず、通信遮断やoffline実行の保証もしない。HTML内の情報や入力内容が通信で送られる可能性がある。
-- 元HTMLを書き換えず、復号した本文を`withmate-html-preview:`から配信する。local資源はHTMLのdirectory構造を保って配信し、CSSの入れ子の参照やmodule importも同じURL解決を使う。root付きresourceでは同じconfigured root内、absolute resourceではcanonicalな親directory内に限定し、open時にroot identityとrealpath containmentを確認する。任意の`file:`への直接読込は許可しない。Git resourceの資源は同じrepository／root／commitのregular blobだけを読み、symlinkや存在しない資源を現在の作業treeで補わない。外部CDNはブラウザーが取得し、local資源resolverで代理取得しない。
+- 元HTMLを書き換えず、復号した本文を`withmate-html-preview:`から配信する。local資源はHTMLのdirectory構造を保って配信し、CSSの入れ子の参照やmodule importも同じURL解決を使う。mount時に元fileが属するconfigured rootを資源範囲として確定し、該当rootがない場合はcanonicalな親directory内に限定する。mount後はSessionのroot登録状態ではなく、捕捉したfilesystem root identityとrealpath containmentをopen時に確認する。URLのpathは元fileのvolume root（POSIXではfilesystem root）からのdirectory構造を保つ。ブラウザーで正規化したpathを捕捉rootへ包含確認してから対応づけ、親参照やrootへの再進入を範囲内の別fileへ読み替えない。host直下を指定するroot-relative pathも同じvolume基準で解決し、捕捉root外なら拒否する。任意の`file:`への直接読込は許可しない。Git resourceの資源は同じrepository／root／commitのregular blobだけを読み、symlinkや存在しない資源を現在の作業treeで補わない。外部CDNはブラウザーが取得し、local資源resolverで代理取得しない。
 - プレビュー内の権限要求は要求元と対象・選択肢を信頼済みhost UIへ表示し、明示回答を得る。子Windowと外部protocolは明示確認し、downloadはElectronの保存dialogで保存先を選択する。子WindowにもNode／preloadを公開せず、同じ隔離と寿命の管理を適用する。OS側の権限やdevice制限は、アプリ内で許可しても別に適用される。
 - 画面共有は画面／Windowを明示選択し、システム音声はElectronのloopback対応範囲であるWindowsで別途確認する。USB／HIDは要求frameを表示する。Serial／Bluetoothの選択eventはElectronが要求frameを渡さないため、pageと埋込みoriginを併記し、特定frameからの要求と断定しない。USB／HIDのorigin単位のchooser可否確認は、mount内の有効なframeに存在するoriginだけを受け入れ、機器への実アクセスはElectronが保持する利用者選択済み機器の許可に従う。
 - 選択済み機器の許可は同一origin・同一mount内で維持する。Electronの機器許可には文書単位で取り消す公開APIがなく、通常の遷移やフォーム・子Windowの状態を維持するため、文書遷移で機器許可を失効させない。Reload、Source切替、画面外破棄、unmount、owner終了ではpartitionを非再利用とし、以前の機器許可へ到達できなくする。その他のアプリ内許可と回答待ちの要求は文書遷移・終了で失効し、子Window由来の確認もhost queueから取り消す。外部protocolは承認後の起動直前にも要求元の有効性を照合する。
@@ -174,7 +174,7 @@ Window close時も個別タブと同じ判定で、実行中・起動中・判�
 
 [Electron公式のwebview注意事項](https://www.electronjs.org/docs/latest/api/webview-tag#warning)は、Chromiumの変更が描画・navigation・event routingの安定性に影響するため代替方式の検討を勧めている。本機能では独立したguest sessionとブラウザー動作を管理しながら、既存のscroll clipとoverlayの重なりをDOMで維持する必要があるためwebviewを使用する。native `WebContentsView`はDOMのclip・重なりに直接参加せず、位置・clip・一時surfaceとの調整を別に持つ必要がある。webviewの配置・重なり・入力とguest lifecycleは、Electron更新時も実描画と操作で確認する。
 
-チャットのHTML読込は`readSessionHtmlPreview`専用IPCで既存local link resolverを利用する。所有Session／preview baseと送信main frameを読込前後で確認し、`.html`／`.htm`のtextとrevision固定chunkだけを読む。mountと資源取得でも出自の認可を確認し、汎用file readのroot認可を緩めず、Additional Directoryやprovider権限を追加しない。
+チャットのHTML読込は`readSessionHtmlPreview`専用IPCで既存local link resolverを利用する。所有Session／preview baseと送信main frameを読込前後で確認し、`.html`／`.htm`のtextとrevision固定chunkだけを読む。mountと資源取得でも出自の認可を確認し、detached Windowのfile所有境界を維持し、Additional Directoryやprovider権限を追加しない。
 
 ## URL Resolution
 
@@ -214,7 +214,7 @@ preload API / IPC の成立を優先し、現行実装は `sandbox: false` を�
 - main process 側では target を external URL / local path へ正規化するが、path allowlist の強制ガードは入れない
 - `AddDirectory` は prompt / workspace 操作で許可対象ディレクトリを広げる既存機能であり、`openPath` 自体の強制ガードではない
 - `openSessionTerminal` はsessionの`workspacePath`を外部Terminalで開く用途に限定し、組み込みTerminalのAPIとは分離する
-- detached file preview は `openPath` へ local file link を直接渡さず、Main process が root-scoped resource または user-activated absolute-file resourceへ解決する。absolute-file preview は Additional Directory や provider 権限を変更しない。詳細は ADR 034 を参照する
+- detached file preview は `openPath` へ local file link を直接渡さず、Main processが解決したfileを共通Previewで開く。owning Session rendererは通常fileのabsolute pathを使え、detached Previewはtokenに紐付いたfileのcanonical absolute pathだけを通常file操作・link baseに使える。既存Previewの通常file操作は作業root解除に依存しない。Git projectionは元のroot resourceと現在のSession作業範囲で検証し、他fileのprojectionやdirectory一覧は公開しない。Preview・Copy FileはAdditional Directoryやprovider権限を変更しない
 - `src-electron/files/session-file-explorer-runtime.ts` は Explorer と Git の認可境界を共有し、`SessionFilePreviewService` が resource / link / history-diff の操作、owner解決、title・payload・公開結果を所有する。IPCはsender認可を、Explorer / Git serviceはroot・resource検証を、既存Window serviceはidentity・再利用を所有する。`main.ts` はFiles操作への接続とfilesystem / Electron / Windowの公開操作を渡す
 - したがって local path operation の制約は一律 block ではなく、renderer 導線と main process 正規化の責務分離で扱う
 

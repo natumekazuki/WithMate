@@ -15,6 +15,52 @@ import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboar
 describe("AppSettingsStorage", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "model無効化設定を独立保存し未知IDも再openで保持し、破損JSONや不正値はエラーにしてresetで空に戻す"
+  // oracle = { type = "contract", ref = "docs/design/model-catalog.md" }
+  // fault = "無効化指定を永続化しないか読込エラーを空設定へ救済する"
+  // observable = "再open後のgetSettings、破損行読込の例外、resetSettingsの返値"
+  // observation_boundary = "public-boundary"
+  // scope = "model-availability-storage-lifecycle"
+  // lifecycle = "permanent"
+  // impact = "再起動で利用者が無効化したmodelへ送信できるようになる"
+  // distinction = "normalizer単体ではSQLite保存・再open・破損行の読込を検証できない"
+  // @end-test-value
+  it("model無効化設定を独立保存し読込失敗を空設定へ変えない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-model-availability-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    let storage: AppSettingsStorage | undefined;
+    try {
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().modelAvailability, {});
+      const modelAvailability = {
+        opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["openai/model"] },
+        future: { disabledServiceIds: [], disabledModelIds: ["unlisted"] },
+      };
+      const initial = storage.getSettings();
+      storage.updateSettings({ ...initial, modelAvailability });
+      storage.close();
+      storage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(storage.getSettings().modelAvailability, modelAvailability);
+      assert.deepEqual(storage.getSettings().codingProviderSettings, initial.codingProviderSettings);
+      const database = new DatabaseSync(dbPath);
+      try {
+        for (const invalid of ["{", "null", '{"opencode":{"disabledServiceIds":[],"disabledModelIds":false}}', ""]) {
+          database.prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+            .run(invalid, "model_availability_json");
+          assert.throws(() => storage!.getSettings());
+        }
+      } finally {
+        database.close();
+      }
+      assert.deepEqual(storage.resetSettings().modelAvailability, {});
+    } finally {
+      storage?.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "storage起動でOpenCode用credentialだけを除去し、他providerとfile設定を保持して再保存でもcredentialを復活させない"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
   // fault = "起動時にcredentialを保存したまま返さないだけにするか、他設定を失うか、古いsnapshotから再保存する"

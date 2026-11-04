@@ -3,6 +3,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { buildModelSelectOptions } from "../../src/settings/model-select-options.js";
+import { buildRuntimeSelectionOptions } from "../../src/settings/runtime-selection-options.js";
 import type { ModelCatalogItem, ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import { buildNewSession, type Session } from "../../src-shared/session/session-state.js";
 import { normalizeAuxiliarySession, type AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
@@ -10,8 +11,111 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { runMainRuntimeOptionOperation } from "../../src/chat/runtime/main-session-mutation-operations.js";
 import { runAuxiliaryModelChangeOperation } from "../../src/chat/auxiliary/auxiliary-runtime-option-operation.js";
 import { buildAuxiliaryAwareRuntimeOptionChangeHandler } from "../../src/chat/auxiliary-runtime-option-routing.js";
+import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// @test-value v2
+// kind = "contract"
+// claim = "runtime投影を通るpickerは開いた時点の無効Modelも再有効化で候補へ戻し、再無効化では隠し、現在値・DepthとSDK候補定義を保持する"
+// oracle = { type = "contract", ref = "docs/design/model-catalog.md#model-availability" }
+// fault = "open前の除外で再有効化した候補が戻らない、現在値を無効候補へ戻す、またはbackground更新後の別定義で選択を確定する"
+// observable = "現在Modelのtrigger表示、option ID集合、検索focus、Depth候補、選択callbackのModel定義"
+// observation_boundary = "component-behavior"
+// scope = "Composerのruntime投影からModelPickerへの候補snapshotとavailability通知"
+// lifecycle = "permanent"
+// impact = "設定を戻しても候補を選べないか、無効Modelの選択受付や意図しないDepth変更に見える"
+// distinction = "shared判定や投影単体ではsnapshot固定と呼出側の事前除外の組合せを検出できない"
+// @end-test-value
+test("開いているModel候補に再有効化と無効化を適用しSDK候補定義と現在値を保持する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>', { pretendToBeVisual: true });
+  const globals = ["window", "document", "Node", "HTMLElement", "HTMLInputElement", "Event", "MouseEvent", "KeyboardEvent"] as const;
+  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const { createRoot } = await import("react-dom/client");
+  const { ModelPicker } = await import("../../src/chat/composer/model-picker.js");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const selected: ModelCatalogItem[] = [];
+  let availability: ModelAvailabilitySettings = { opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["other/allowed"] } };
+  let models: ModelCatalogItem[] = [
+    { id: "openai/current", label: "Current Model", reasoningEfforts: [] },
+    { id: "openai/other", label: "Other Model", reasoningEfforts: ["snapshot-depth"] },
+    { id: "other/allowed", label: "Allowed Model", reasoningEfforts: [] },
+  ];
+  const initialModels = models;
+  let discoveryStatus: "loading" | "ready" = "ready";
+  let discoveryHasCache = true;
+  const render = () => {
+    const catalog = { id: "opencode", label: "OpenCode", defaultModelId: "openai/current", defaultReasoningEffort: "", models };
+    const options = buildRuntimeSelectionOptions({ providerId: catalog.id, providerCatalog: catalog, models,
+      selectedModel: "openai/current", selectedReasoningEffort: "saved-depth", reasoningEfforts: ["high"],
+      selectedApprovalMode: "on-request", selectedCodexSandboxMode: "workspace-write", selectedCodexSpeed: "standard", selectedCodexReviewer: "user" });
+    assert.deepEqual(options.reasoningSelectOptions.map((option) => option.value), ["saved-depth", "", "high"]);
+    root.render(<ModelPicker providerId="opencode" modelAvailability={availability}
+      options={options.modelSelectOptions} value="openai/current" fallbackLabel={options.selectedModelFallbackLabel}
+      discoveryStatus={discoveryStatus} discoveryHasCache={discoveryHasCache} onChange={(model) => selected.push(model)} />);
+  };
+  try {
+    await act(async () => render());
+    const trigger = dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Model"]')!;
+    await act(async () => trigger.click());
+    const search = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    const labels = () => [...dom.window.document.querySelectorAll('[role="option"]')].map((option) => option.textContent?.trim());
+    assert.deepEqual(labels(), []);
+    assert.equal(trigger.querySelector("span")?.textContent, "Current Model");
+    availability = { opencode: { disabledServiceIds: [], disabledModelIds: ["other/allowed"] } };
+    await act(async () => render());
+    assert.deepEqual(labels(), ["✓Current Model", "Other Model"]);
+    const snapshotOther = structuredClone(models[1]);
+    models = [{ id: "new/model", label: "New Model", reasoningEfforts: ["new-depth"] }];
+    availability = {};
+    await act(async () => render());
+    assert.deepEqual(labels(), ["Allowed Model", "✓Current Model", "Other Model"]);
+    assert.deepEqual(selected, []);
+    availability = { opencode: { disabledServiceIds: ["openai"], disabledModelIds: [] } };
+    await act(async () => render());
+    assert.equal(dom.window.document.activeElement, search);
+    assert.equal(trigger.querySelector("span")?.textContent, "Current Model");
+    assert.deepEqual([...dom.window.document.querySelectorAll('[role="option"]')].map((option) => option.textContent?.trim()), ["Allowed Model"]);
+    await act(async () => search.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    assert.deepEqual(selected, []);
+    availability = { opencode: { disabledServiceIds: [], disabledModelIds: ["openai/other"] } };
+    await act(async () => render());
+    assert.deepEqual(labels(), ["Allowed Model", "✓Current Model"]);
+    availability = {};
+    await act(async () => render());
+    assert.equal(dom.window.document.activeElement, search);
+    assert.deepEqual(labels(), ["Allowed Model", "✓Current Model", "Other Model"]);
+    await act(async () => [...dom.window.document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) => option.textContent === "Other Model")!.click());
+    assert.deepEqual(selected, [snapshotOther]);
+    await act(async () => trigger.click());
+    assert.deepEqual(labels(), ["New Model", "✓openai/current"]);
+    await act(async () => trigger.click());
+    models = [];
+    discoveryStatus = "loading";
+    discoveryHasCache = false;
+    availability = { opencode: { disabledServiceIds: ["openai"], disabledModelIds: ["other/allowed"] } };
+    await act(async () => render());
+    await act(async () => trigger.click());
+    const firstResultSearch = dom.window.document.querySelector<HTMLInputElement>('[role="combobox"]')!;
+    models = initialModels;
+    discoveryStatus = "ready";
+    discoveryHasCache = true;
+    await act(async () => render());
+    assert.deepEqual(labels(), []);
+    availability = {};
+    await act(async () => render());
+    assert.deepEqual(labels(), ["Allowed Model", "✓Current Model", "Other Model"]);
+    assert.equal(dom.window.document.activeElement, firstResultSearch);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const key of globals) {
+      if (previous[key]) Object.defineProperty(globalThis, key, previous[key]!);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
 
 // @test-value v2
 // kind = "contract"

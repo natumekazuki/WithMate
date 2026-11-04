@@ -25,6 +25,8 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
 };
 export type SessionTurnQueueReceiptPage = { receipts: SessionTurnQueueReceipt[]; nextCursor: number | null };
 export type ReorderQueuedSessionTurnsRequest = { incarnationId: string; expectedQueuedIds: string[]; queuedIds: string[] };
+export type QueuedSessionTurnEditRequest = { incarnationId: string; id: string };
+export type UpdateQueuedSessionTurnRequest = QueuedSessionTurnEditRequest & { userMessage: string };
 export type SessionTurnQueueReorderResult = { outcome: "reordered" | "conflict"; receipts: SessionTurnQueueReceipt[] };
 export type SessionTurnQueueAcceptanceResult = SessionTurnQueueReceipt | {
   state: "rejected";
@@ -42,6 +44,7 @@ export type SessionTurnQueueStore = {
   markStarted(owner: SessionTurnQueueOwner, id: string, input: { turnId: string; userMessageSeq: number }): Promise<SessionTurnQueueReceipt>;
   settle(owner: SessionTurnQueueOwner, id: string, state: Extract<SessionTurnQueueState, "completed" | "failed" | "canceled" | "interrupted">, reason?: string): Promise<SessionTurnQueueReceipt>;
   cancelQueued(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt>;
+  updateQueued(owner: SessionTurnQueueOwner, id: string, input: { userMessage: string; attachments: ComposerAttachment[] }): Promise<SessionTurnQueueReceipt>;
   reorderQueued(owner: SessionTurnQueueOwner, expectedQueuedIds: string[], queuedIds: string[]): Promise<SessionTurnQueueReorderResult>;
   recoverInterrupted(): Promise<number>;
   releaseInterrupted(owner: SessionTurnQueueOwner, id: string, options?: { runReleased: boolean }): Promise<SessionTurnQueueReceipt>;

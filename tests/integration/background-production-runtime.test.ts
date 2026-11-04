@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BackgroundProductionRuntime, buildBackgroundExecutionScope, type BackgroundRuntimeEvent, type PrepareBackgroundCallInput } from "../../src-electron/providers/background-production-runtime.js";
 import type { BackgroundAgentInput, BackgroundAgentPort } from "../../src-electron/providers/background-call-service.js";
+import type { BackgroundFailureEvent } from "../../src-electron/providers/background-failure.js";
 import { backgroundMemoryRegistrationHandlers, runBackgroundMemoryRegistration } from "../../src-electron/memory/background-memory-registration.js";
 import { registerBackgroundAffect } from "../../src-electron/character/background-affect-registration.js";
 import { runBackgroundAffectCall } from "../../src-electron/character/background-affect-call.js";
@@ -45,6 +46,71 @@ function gate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "三用途の開始準備は共通Model・サービス無効設定で停止し、再有効化で保存選択のまま再開できる"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#本番共通runtimeとprovider" }
+// fault = "背景だけ無効設定を無視する、別Modelへfallbackする、または準備済み呼出しまで停止する"
+// observable = "prepareのcode、catalog/capture回数、失敗診断、保存selectionと準備済み呼出しの完了"
+// observation_boundary = "consumer"
+// scope = "background shared model availability at preparation"
+// lifecycle = "permanent"
+// impact = "ユーザーが利用停止したModelへ背景の推論要求が送信される"
+// distinction = "通常Sessionの受付検査では独立した背景prepare経路と準備済みcallの境界を検出できない"
+// @end-test-value
+test("Modelとサービスの無効化は三用途の次の準備に適用する", async () => {
+  const f = await backgroundHistoryFixture();
+  try {
+    seed(f);
+    let calls = 0, catalogReads = 0, captures = 0;
+    const failures: BackgroundFailureEvent[] = [];
+    const { deps, settings, input } = setup(f, () => { calls++; });
+    settings.codingProviderSettings.opencode = { ...settings.codingProviderSettings.codex, enabled: true };
+    const runtime = new BackgroundProductionRuntime({ ...deps,
+      getModelCatalog: async () => { catalogReads++; return { providers: [...catalog.providers, {
+        id: "opencode", label: "OpenCode", defaultModelId: "service/test", defaultReasoningEffort: "",
+        models: [{ id: "service/test", label: "Test", reasoningEfforts: [] }],
+      }] }; },
+      captureSource: async (source) => { captures++; return deps.captureSource(source); },
+      onFailure: (event) => failures.push(event),
+    });
+    for (const providerId of ["claude", "opencode"] as const) {
+      const selection = { providerId, modelId: providerId === "claude" ? "test" : "service/test" };
+      for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
+        settings.backgroundExecutionSettings[purpose] = { selection: { ...selection } };
+      }
+      const prepared = await runtime.prepare(input);
+      assert.equal(prepared.status, "ready");
+      const beforeReads = [catalogReads, captures];
+      const beforeSettings = structuredClone(settings.backgroundExecutionSettings);
+      settings.modelAvailability = { [providerId]: {
+        disabledModelIds: providerId === "claude" ? ["test"] : [],
+        disabledServiceIds: providerId === "opencode" ? ["service"] : [],
+      } };
+      for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
+        const result = await runtime.prepare({ ...input, purpose });
+        assert.equal(result.status, "unavailable");
+        assert.equal(result.code, "BACKGROUND_MODEL_DISABLED");
+        assert.equal(failures.at(-1)!.code, "BACKGROUND_MODEL_DISABLED");
+        assert.equal(failures.at(-1)!.purpose, purpose);
+      }
+      assert.deepEqual([catalogReads, captures], beforeReads);
+      assert.deepEqual(settings.backgroundExecutionSettings, beforeSettings);
+      assert.deepEqual(await runBackgroundMemoryRegistration(runtime.calls, { ...prepared.call,
+        context: { ...prepared.call.context, scope: { ...prepared.call.context.scope, purpose: "target-memory" } },
+        materials: "saved answer", onAdmitted() {},
+      }), { kind: "completed" });
+      settings.modelAvailability = {};
+      const resumed = await runtime.prepare(input);
+      assert.equal(resumed.status, "ready");
+      assert.deepEqual(resumed.call.selection, selection);
+    }
+    assert.equal(calls, 2);
+    assert.equal(failures.length, 6);
+    assert.equal(f.bindings.getActiveBindingCount(), 0);
+  } finally { await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

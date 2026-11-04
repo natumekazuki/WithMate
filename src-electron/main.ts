@@ -1509,8 +1509,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 closeSessionFilePreviewWindows: (ownerSessionId) => { requireMainWindowFacade().closeFilePreviewWindowsForOwner(ownerSessionId); sessionGraphWindowService.closeOwner(ownerSessionId); },
                 isFilePreviewWindow: (window, sessionId) =>
                   requireMainWindowFacade().isFilePreviewWindow(window, sessionId),
-                getFilePreviewWindowResource: (window, sessionId) =>
-                  requireMainWindowFacade().getFilePreviewWindowResource(window, sessionId),
+                getFilePreviewWindowResource: (window, sessionId, representation) =>
+                  requireMainWindowFacade().getFilePreviewWindowResource(window, sessionId, representation),
                 isFilePreviewTokenWindow: (window, token) =>
                   requireMainWindowFacade().isFilePreviewTokenWindow(window, token),
                 pickDirectory: (targetWindow, initialPath) =>
@@ -1856,6 +1856,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   listSessionTurnQueue: (sessionId) => requireMainSessionTurnQueueFacade().listSessionTurnQueue(sessionId),
                   listSessionTurnQueueReceipts: (sessionId, options) => requireMainSessionTurnQueueFacade().listSessionTurnQueueReceipts(sessionId, options),
                   cancelQueuedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurn(sessionId, id),
+                  beginQueuedSessionTurnEdit: (sessionId, request) => requireMainSessionTurnQueueFacade().beginQueuedSessionTurnEdit(sessionId, request),
+                  updateQueuedSessionTurn: (sessionId, request) => requireMainSessionTurnQueueFacade().updateQueuedSessionTurn(sessionId, request),
+                  cancelQueuedSessionTurnEdit: (sessionId, request) => requireMainSessionTurnQueueFacade().cancelQueuedSessionTurnEdit(sessionId, request),
+                  releaseQueuedSessionTurnEdit: (sessionId) => sessionTurnQueueService?.releaseQueuedEdit(sessionId) ?? Promise.resolve(),
                   reorderQueuedSessionTurns: (sessionId, request) => requireMainSessionTurnQueueFacade().reorderQueuedSessionTurns(sessionId, request),
                   releaseInterruptedSessionTurn: (sessionId, id) => requireMainSessionTurnQueueFacade().releaseInterruptedSessionTurn(sessionId, id),
                 },
@@ -2569,6 +2573,7 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
         }
       },
       getSession: getQueueRuntimeSession,
+      getAppSettings: async () => owner.appSettingsStorage.getSettings(),
       validateWorkspace: assertSessionQueueWorkspaceAvailable,
       validateProvider: async (session) => {
         if (!getProviderAppSettings(await requireAppSettingsStorage().getSettings(), session.provider).enabled) {

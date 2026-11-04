@@ -845,10 +845,10 @@ it("Claude 長文でも全文と正常・cancel partialを保持する", async (
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Claudeの明示session再開は採用snapshotのiconを含む最新system appendを渡し、stream本文と確定本文を二重表示しない"
+// claim = "Claudeの明示session再開は最新Character定義・Affectをsystem appendへ渡し、user入力から分離してstream本文と確定本文を二重表示しない"
 // oracle = { type = "contract", ref = "docs/design/prompt-composition.md; Issue #751" }
-// fault = "resumeで旧promptやiconを使う、iconをuser入力へ混入する、またはstreamとassistant本文を連結して二重化する"
-// observable = "SDK query options、確定assistantText、進捗assistantText"
+// fault = "resumeで旧Character定義・Affectを使う、system contextをuser入力へ混入する、またはstreamとassistant本文を連結して二重化する"
+// observable = "SDK query optionsとuser入力、確定assistantText、進捗assistantText"
 // observation_boundary = "public-boundary"
 // scope = "claude-coding-turn"
 // lifecycle = "permanent"
@@ -893,10 +893,8 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
     assert.equal(system.snapshot, false);
     assert.match(system.append!, new RegExp(`Definition ${marker}`));
     assert.match(system.append!, new RegExp(`Affect ${marker}`));
-    assert.ok(system.append!.includes(`Icon: \` C:/Character Data/${marker}/icon.png \``));
     for (const old of ["FIRST", "SECOND", "EXPLICIT-RESUME"].filter((value) => value !== marker)) {
       assert.doesNotMatch(system.append!, new RegExp(`Definition ${old}|Affect ${old}`));
-      assert.ok(!system.append!.includes(`C:/Character Data/${old}/icon.png`));
     }
     const sent = seen[index].prompt as SDKUserMessage;
     assert.deepEqual(sent.message.content, [{ type: "text", text: adapter.composePrompt(request).inputBodyText }]);

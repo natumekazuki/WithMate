@@ -33,6 +33,9 @@ import {
   WITHMATE_LIST_SESSION_TURN_QUEUE_RECEIPTS_CHANNEL,
   WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL,
   WITHMATE_REORDER_QUEUED_SESSION_TURNS_CHANNEL,
+  WITHMATE_BEGIN_QUEUED_SESSION_TURN_EDIT_CHANNEL,
+  WITHMATE_UPDATE_QUEUED_SESSION_TURN_CHANNEL,
+  WITHMATE_CANCEL_QUEUED_SESSION_TURN_EDIT_CHANNEL,
   WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL,
   WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
@@ -97,6 +100,59 @@ export function registerSessionRuntimeHandlers(
     assertOwningSessionWindowSender(event, parentId, deps);
     return parentId;
   };
+  const editOwners = new WeakMap<import("electron").WebContents, Set<string>>();
+  const trackEditOwner = (sender: import("electron").WebContents, sessionId: string) => {
+    let sessions = editOwners.get(sender);
+    if (!sessions) {
+      sessions = new Set<string>();
+      editOwners.set(sender, sessions);
+      const release = () => {
+        const pending = [...sessions!];
+        sessions!.clear();
+        for (const id of pending) {
+          void queue().releaseQueuedSessionTurnEdit(id).catch((error) => console.error("Queued edit cleanup failed", error));
+        }
+      };
+      sender.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => { if (isMainFrame) release(); });
+      sender.on("render-process-gone", release);
+      sender.on("destroyed", release);
+    }
+    sessions.add(sessionId);
+  };
+  ipcMain.handle(WITHMATE_BEGIN_QUEUED_SESSION_TURN_EDIT_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").QueuedSessionTurnEditRequest) => {
+    let abandoned = false;
+    const abandon = () => { abandoned = true; };
+    const navigation = (_event: unknown, _url: string, _isInPlace: boolean, isMainFrame: boolean) => { if (isMainFrame) abandon(); };
+    event.sender.on("did-start-navigation", navigation);
+    event.sender.on("render-process-gone", abandon);
+    event.sender.on("destroyed", abandon);
+    try {
+      const parentId = await assertQueueSender(event, sessionId);
+      if (abandoned) throw new Error("The queued edit owner is no longer available.");
+      assertOwningSessionWindowSender(event, parentId, deps);
+      trackEditOwner(event.sender, sessionId);
+      const receipt = await queue().beginQueuedSessionTurnEdit(sessionId, request);
+      if (abandoned) throw new Error("The queued edit owner is no longer available.");
+      assertOwningSessionWindowSender(event, parentId, deps);
+      return receipt;
+    } finally {
+      event.sender.removeListener("did-start-navigation", navigation);
+      event.sender.removeListener("render-process-gone", abandon);
+      event.sender.removeListener("destroyed", abandon);
+    }
+  });
+  ipcMain.handle(WITHMATE_UPDATE_QUEUED_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").UpdateQueuedSessionTurnRequest) => {
+    const parentId = await assertQueueSender(event, sessionId);
+    const receipt = await queue().updateQueuedSessionTurn(sessionId, request);
+    editOwners.get(event.sender)?.delete(sessionId);
+    assertOwningSessionWindowSender(event, parentId, deps);
+    return receipt;
+  });
+  ipcMain.handle(WITHMATE_CANCEL_QUEUED_SESSION_TURN_EDIT_CHANNEL, async (event, sessionId: string, request: import("../../src-shared/session/session-turn-queue.js").QueuedSessionTurnEditRequest) => {
+    await assertQueueSender(event, sessionId);
+    await queue().cancelQueuedSessionTurnEdit(sessionId, request);
+    editOwners.get(event.sender)?.delete(sessionId);
+  });
   ipcMain.handle(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL, async (event, sessionId: string, request: RunSessionTurnRequest & { incarnationId: string }) => {
     const parentId = await assertQueueSender(event, sessionId);
     assertOwningSessionWindowSender(event, parentId, deps);

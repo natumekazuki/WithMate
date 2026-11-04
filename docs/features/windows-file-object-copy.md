@@ -2,7 +2,7 @@
 
 ## 概要
 
-Windowsでは、認可済みのregular fileをfile objectとしてclipboardへコピーできます。貼り付け先がfile dropを受け付ける場合、path文字列ではなく元のfileとして貼り付けられます。
+Windowsでは、ユーザーが指定した実在するregular fileをfile objectとしてclipboardへコピーできます。貼り付け先がfile dropを受け付ける場合、path文字列ではなく元のfileとして貼り付けられます。
 
 ## 操作できる場所
 
@@ -10,9 +10,9 @@ Windowsでは、認可済みのregular fileをfile objectとしてclipboardへ�
 
 - File Explorerのfile row
 - File Previewのheader
-- Workspace、Session Folder、Additional Directory内を指すMarkdown local-file link
+- チャット（送信待ちを含む）とFile Preview内のMarkdown local-file link
 
-directory、存在しないfile、認可root外のMarkdown linkには表示しません。
+directory、存在しないfile、外部URLには表示しません。Markdown linkと通常File Previewの明示的なコピーはSessionの作業root外も対象にし、Additional Directoryやエージェント権限を追加しません。File Explorerの表示範囲はSessionの作業rootを維持します。
 
 ## Copy Imageとの違い
 

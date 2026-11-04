@@ -323,6 +323,15 @@ export function createSessionApi(
     cancelQueuedSessionTurn(sessionId, id) {
       return ipcRenderer.invoke(channels.WITHMATE_CANCEL_QUEUED_SESSION_TURN_CHANNEL, sessionId, id);
     },
+    beginQueuedSessionTurnEdit(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_BEGIN_QUEUED_SESSION_TURN_EDIT_CHANNEL, sessionId, request);
+    },
+    updateQueuedSessionTurn(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_UPDATE_QUEUED_SESSION_TURN_CHANNEL, sessionId, request);
+    },
+    cancelQueuedSessionTurnEdit(sessionId, request) {
+      return ipcRenderer.invoke(channels.WITHMATE_CANCEL_QUEUED_SESSION_TURN_EDIT_CHANNEL, sessionId, request);
+    },
     reorderQueuedSessionTurns(sessionId, request) {
       return ipcRenderer.invoke(channels.WITHMATE_REORDER_QUEUED_SESSION_TURNS_CHANNEL, sessionId, request);
     },

@@ -12,6 +12,92 @@ import { MEMORY_REGISTRATION_PRESETS } from "../../src-shared/memory-recording/m
 
 // @test-value v2
 // kind = "contract"
+// claim = "背景候補は共通Model・サービス無効設定を反映し、保存値を保持したまま有効候補へ変更できる"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
+// fault = "無効Modelが選択できる、全Model無効のProviderを選べる、または無効化で保存選択を自動置換する"
+// observable = "selectの値と選択可能option、Disabled表示、Depth、変更callback、再有効化後のProvider選択結果"
+// observation_boundary = "component-behavior"
+// scope = "background model availability editing"
+// lifecycle = "permanent"
+// impact = "意図しない背景Modelへの切替や利用停止したModelの選択を誘発する"
+// distinction = "runtimeの拒否testでは候補の除外と保存選択を修正するUI操作を観測できない"
+// @end-test-value
+it("無効な背景Modelを保持し候補から除外して再有効化を反映する", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const globals = ["window", "document", "Node", "HTMLElement", "Event"] as const;
+  const previous = Object.fromEntries(globals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const key of globals) Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] });
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const settings = createDefaultAppSettings();
+  settings.codingProviderSettings.opencode = { ...settings.codingProviderSettings.codex, enabled: true };
+  settings.backgroundExecutionSettings["character-memory"] = { selection: { providerId: "codex", modelId: "deep", reasoningEffort: "high" } };
+  settings.backgroundExecutionSettings.affect = { selection: { providerId: "opencode", modelId: "service/deep", reasoningEffort: "high" } };
+  settings.modelAvailability = {
+    codex: { disabledModelIds: ["deep"], disabledServiceIds: [] },
+    opencode: { disabledModelIds: ["service/deep"], disabledServiceIds: ["service"] },
+  };
+  const catalog: ModelCatalogSnapshot = { providers: ["codex", "opencode"].map((id) => {
+    const prefix = id === "opencode" ? "service/" : "";
+    return { id, label: id, defaultModelId: `${prefix}deep`, defaultReasoningEffort: "high", models: [
+      { id: `${prefix}deep`, label: "Deep", reasoningEfforts: ["low", "high"] },
+      { id: `${prefix}plain`, label: "Plain", reasoningEfforts: [] },
+    ] };
+  }) };
+  let changes = 0;
+  const render = () => root.render(<BackgroundExecutionSettings settings={settings} catalog={catalog}
+    onChangePurpose={(purpose, value) => { changes++; settings.backgroundExecutionSettings[purpose] = value; render(); }} onChangeFrequencies={() => {}} />);
+  const select = (label: string) => dom.window.document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+  const enabledValues = (label: string) => Array.from(select(label).options).filter((option) => !option.disabled).map((option) => option.value);
+  const choose = async (label: string, value: string) => act(async () => {
+    select(label).value = value;
+    select(label).dispatchEvent(new dom.window.Event("change", { bubbles: true }));
+  });
+  try {
+    const before = structuredClone(settings.backgroundExecutionSettings);
+    await act(async () => render());
+    assert.deepEqual(enabledValues("Character Memory Model"), ["plain"]);
+    assert.equal(select("Character Memory Model").value, "deep");
+    assert.equal(select("Character Memory Model").disabled, false);
+    assert.match(select("Character Memory Model").selectedOptions[0]!.textContent!, /Disabled/);
+    assert.equal(select("Character Memory Depth").value, "high");
+    assert.equal(select("Character Memory Depth").disabled, true);
+    assert.deepEqual(enabledValues("Character Affect Model"), []);
+    assert.equal(select("Character Affect Model").value, "service/deep");
+    assert.equal(select("Character Affect Model").disabled, true);
+    assert.ok(!enabledValues("Target Memory Provider").includes("opencode"));
+    assert.match(dom.window.document.body.textContent!, /Enable the selected model and its service in Models/);
+    assert.deepEqual(settings.backgroundExecutionSettings, before);
+    assert.equal(changes, 0);
+    settings.modelAvailability.opencode.disabledServiceIds = [];
+    await act(async () => render());
+    assert.deepEqual(enabledValues("Character Affect Model"), ["service/plain"]);
+    assert.equal(changes, 0);
+    await choose("Target Memory Provider", "opencode");
+    assert.equal(select("Target Memory Model").value, "service/plain");
+    await choose("Character Memory Model", "plain");
+    assert.equal(settings.backgroundExecutionSettings["character-memory"].selection!.modelId, "plain");
+    assert.equal(select("Character Memory Depth"), null);
+    settings.modelAvailability = {};
+    await act(async () => render());
+    assert.deepEqual(enabledValues("Character Affect Model"), ["service/deep", "service/plain"]);
+    assert.equal(select("Character Affect Depth").value, "high");
+    assert.equal(select("Character Affect Depth").disabled, false);
+    assert.deepEqual(settings.backgroundExecutionSettings.affect, before.affect);
+    assert.equal(changes, 2);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const key of globals) {
+      const descriptor = previous[key];
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "背景用途は有効ProviderからModel・Depthと対応権限を選べ、Provider変更だけ権限を初期化し不正組合せを修正でき、catalog更新ではdraftを保持する"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
 // fault = "Provider変更で非対応権限を持ち越すか、Model変更で権限を捨てるか、保存済み不正組合せを隠すか、catalog更新でdraftを書き換える"

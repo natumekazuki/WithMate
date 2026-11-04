@@ -1285,14 +1285,14 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Copilotの共通Character promptとiconはsession systemMessageへ渡し、timingとuser入力・添付から分離する"
+  // claim = "Copilotの共通Character promptはsession systemMessageへ渡し、timingとuser入力・添付から分離する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
-  // fault = "共通snapshotのiconをsystemMessageで落とすか、input・画像添付へ混入する"
+  // fault = "共通Character promptをsystemMessageで落とすか、timing・user入力との境界を混同する"
   // observable = "Copilot adapterのcomposePrompt結果とsession configのsystemMessage"
   // observation_boundary = "consumer"
   // scope = "copilot-system-message"
   // lifecycle = "permanent"
-  // impact = "CopilotがCharacterの画像参照を受け取れないか、意図しない画像を送信する"
+  // impact = "CopilotがCharacterの現行定義を受け取れないか、可変contextの配置を誤る"
   // distinction = "composer単体ではなくCopilotのsession設定へ渡す値を実際のcompose経路から確認する"
   // @end-test-value
   it("character prompt だけをCopilot systemMessageへ変換し、可変timingはinput側に留める", () => {
@@ -1314,10 +1314,8 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       content: prompt.systemBodyText,
     });
     assert.match(config.systemMessage?.content ?? "", /あなたは頼れる相棒です。/);
-    assert.ok(config.systemMessage?.content.includes('Icon: ` C:/Character Data/キャラ/icon.png `'));
     assert.doesNotMatch(config.systemMessage?.content ?? "", /Conversation Timing|2026-08-04|# User Input/);
     assert.match(prompt.inputBodyText, /# Conversation Timing[\s\S]*# User Input\n\nhello/);
-    assert.doesNotMatch(prompt.inputBodyText, /^Icon:|icon\.png/m);
     assert.deepEqual(buildCopilotMessageAttachments(input.attachments), []);
     assert.deepEqual(prompt.imagePaths, []);
   });

@@ -141,6 +141,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
     await queue.start();
     let previews = 0;
     const facade = new MainSessionTurnQueueFacade({ assertActive() {}, assertAccepting() {}, getSession,
+      getAppSettings: async () => normalizeAppSettings({}),
       validateWorkspace: async () => {}, validateProvider: async () => ({ provider }),
       preview: async (session, text) => { previews += 1; return resolveComposerPreview(session, text); }, store: bundle.stores.queue, service: queue });
     const options = captureSessionExecutionOptions(saved);

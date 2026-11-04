@@ -40,25 +40,28 @@ function createHarness() {
 
 // @test-value v2
 // kind = "security"
-// claim = "HTML link IPCはMain/Auxの親owner windowとcurrent preview baseを許可するがgeneric absolute file read権限は広げない"
+// claim = "Main/Aux ownerはHTMLと通常fileを読み、detached Previewは現在のbaseだけを利用できる"
 // oracle = { type = "contract", ref = "src-electron/ipc/shared.ts: assertSessionFileLinkSender and assertSessionFileResourceSender" }
-// fault = "Auxのparent mappingを落とす、current previewを拒否する、またはHTML link権限で一般absolute fileを読む"
-// observable = "HTML IPCの返却値、generic readの拒否とservice呼出回数"
+// fault = "Auxのparent mappingを落とす、通常fileをroot外として拒否する、またはdetached Previewへ他fileの読込を許す"
+// observable = "ownerのHTMLと通常fileの応答、detached Previewの不一致file拒否とservice呼出回数"
 // observation_boundary = "public-boundary"
 // scope = "registered HTML link IPC and generic file read IPC"
 // lifecycle = "permanent"
-// impact = "意図したwindowからHTMLを表示しつつ一般fileへの読込権限拡大を防ぐ"
+// impact = "ユーザーのfile閲覧とdetached Previewの対象所有境界を維持する"
 // distinction = "reader testと型検査ではIPC sender認可とgeneric readとの差を確認できない"
 // @end-test-value
-test("HTML link IPC はMain/Aux ownerとcurrent previewのみ許可しgeneric readは広げない", async () => {
+test("HTMLと通常fileのIPCはownerと現在のPreview対象を区別する", async () => {
   const harness = createHarness();
   assert.deepEqual(await harness.read({ sessionId: "session-1", target: "/outside/preview.html" }), harness.result);
   assert.deepEqual(await harness.read(), harness.result);
+  assert.deepEqual(await harness.invoke(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, {
+    sessionId: "aux-1", absolutePath: "/outside/preview.html", offset: 0, length: 1, expectedRevision: "revision",
+  }), { data: new ArrayBuffer(1) });
+  assert.equal(harness.state.genericReads, 1);
+  harness.state.window = harness.previewWindow;
   await assert.rejects(harness.invoke(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, {
     sessionId: "aux-1", absolutePath: "/outside/preview.html", offset: 0, length: 1, expectedRevision: "revision",
   }), /current Preview resource/);
-  assert.equal(harness.state.genericReads, 0);
-  harness.state.window = harness.previewWindow;
   assert.deepEqual(await harness.read({ sessionId: "aux-1", target: "preview.html", baseResource: harness.baseResource }), harness.result);
   assert.equal(harness.state.reads, 3);
 });

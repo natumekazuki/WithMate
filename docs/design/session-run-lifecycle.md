@@ -71,6 +71,14 @@ atomic開始後に結果不明となった要求の明示解放では、実guard
 
 通常購読はactive receiptだけを取得する。running行は保存user seq／incarnationで通常messageへ対応付け、terminal通知が保存本文より先に届いても小さい表示bridgeを保持する。live応答は待機列より前に表示し、保存本文とqueue本文を本文一致で結合しない。予約・中断の状態と必要な操作は対象user bubbleに添え、確定した失敗は応答側の共通エラー欄へ集約する。通常履歴と別のreceipt一覧は表示しない。取得失敗で既存表示を空へ置換せずRetryを提供する。
 
+### Queue Editing
+
+Edit開始は既存のSession lockに入り、対象がqueuedであることを確認して、その会話のキュー全体の取り出しを止める。編集対象より前の予約も開始しないが、実行中Turnと他会話のキューは継続する。表示の再取得は止めない。開始済み項目を編集へ戻さない。
+
+Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確認した後に保留を解放して後続を起動する。Cancel Editは保存済み本文を変更せず解放する。Mainの保存失敗・storage応答不明では保留を保持し、mutationを自動再送しない。Main成功後のrendererへの返信だけが失われた場合は既に再開している可能性があるため、rendererは編集入力を保持し、保留中・未保存とは断定しない。Cancel Editは保存済み更新を巻き戻さない。編集対象のSteerや予約取消で未保存本文を送信・破棄しない。
+
+編集保留はowning Session Windowに属するMain内の一時状態であり、DBに編集状態を追加しない。Windowのnavigation、renderer消失、Window破棄では編集を取り消して保留を解放する。未Submitの編集入力は保存・復元せず、保存済み予約を保持する。
+
 ## Ownership
 
 ### Main Process

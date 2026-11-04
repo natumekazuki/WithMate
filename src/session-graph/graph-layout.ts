@@ -33,6 +33,7 @@ const COLUMN_STEP = 320;
 const ROW_STEP = 176;
 const PADDING = 24;
 const GAP = 12;
+const TOPIC_PADDING = 16;
 
 export function sessionGraphCapacity(width: number, height: number) {
   return Math.max(3, Math.max(1, Math.floor(width / COLUMN_STEP)) * Math.max(1, Math.floor(height / ROW_STEP)));
@@ -219,6 +220,7 @@ export function layoutSessionGraph(
     const slotRows = row + (column ? 1 : 0);
     if (lastTopic && (!expandedTopics || expandedTopics.has(lastTopic))) topicRows.at(-1)!.end = slotRows;
     const headerHeight = (index: number) => headerRows.has(index) ? 68 : 0;
+    const topicFooterHeight = topicRows.some(({ end }) => end === slotRows) ? TOPIC_PADDING : 0;
     // Removing a blocked straight candidate adds only that edge to the detour
     // lanes. Each retry removes at least one candidate and therefore terminates.
     let localPositions = new Map<string, Point>();
@@ -273,7 +275,7 @@ export function layoutSessionGraph(
         headerHeight(index) + (items.length ? GAP + items.reduce((sum, lane) => sum + lane.height, 0) : 0) + (nodeBands[index] - CARD_HEIGHT) / 2,
         old?.nodeOffsets[index] ?? 0));
       rowHeights = nodeOffsets.map((offset, index) => Math.max(
-        offset + CARD_HEIGHT + (nodeBands[index] - CARD_HEIGHT) / 2 + (index < slotRows - 1 ? rowGaps[index] : 0),
+        offset + CARD_HEIGHT + (nodeBands[index] - CARD_HEIGHT) / 2 + (index < slotRows - 1 ? rowGaps[index] : topicFooterHeight),
         old?.rowHeights[index] ?? 0));
       const rowTops = rowHeights.map((_, index) => rowHeights.slice(0, index).reduce((sum, height) => sum + height, 0));
       const nodeYs = nodeOffsets.map((offset, index) => rowTops[index] + offset);
@@ -287,7 +289,7 @@ export function layoutSessionGraph(
         route.label.y = bandTop + headerHeight(route.row) + lanes[route.row].slice(0, route.lane).reduce((sum, lane) => sum + lane.height, 0) + 12;
       }
       const labels = routed.map((route) => route.label);
-      const headers = [...headerRows.keys()].map((index) => ({ x: -10, y: rowTops[index], width: maxX - minX + 20, height: headerHeight(index) - GAP }));
+      const headers = [...headerRows.keys()].map((index) => ({ x: -TOPIC_PADDING, y: rowTops[index], width: maxX - minX + TOPIC_PADDING * 2, height: headerHeight(index) - GAP }));
       localRoutes = new Map<string, SessionGraphEdgeRoute>();
       for (const route of routed) {
         const from = localPositions.get(route.edge.fromId)!;
@@ -361,8 +363,8 @@ export function layoutSessionGraph(
     })[0]);
     components.push(component);
     for (const { start, end, topicId } of topicRows) {
-      topicGroups.push({ topicId, x: component.x - 10, y: component.y + rowHeights.slice(0, start).reduce((sum, height) => sum + height, 0),
-        width: component.width + 20, height: rowHeights.slice(start, end).reduce((sum, height) => sum + height, 0) - (end < slotRows ? 12 : 0) });
+      topicGroups.push({ topicId, x: component.x - TOPIC_PADDING, y: component.y + rowHeights.slice(0, start).reduce((sum, height) => sum + height, 0),
+        width: component.width + TOPIC_PADDING * 2, height: rowHeights.slice(start, end).reduce((sum, height) => sum + height, 0) - (end < slotRows ? GAP : 0) });
     }
     for (const [id, point] of localPositions) positions.set(id, { x: point.x + component.x - contentLeft, y: point.y + component.y });
     for (const [id, route] of localRoutes) {
