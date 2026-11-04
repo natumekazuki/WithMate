@@ -116,7 +116,6 @@ function buildMarkdownFence(content: string): string {
 
 export function buildCharacterRuntimePromptSection(
   snapshot: CharacterRuntimeSnapshot | null | undefined,
-  options?: { includeRuntimeBoundary?: boolean },
 ): string {
   const definitionMarkdown = stripCharacterDefinitionFrontmatter(snapshot?.definitionMarkdown ?? "");
   if (!definitionMarkdown) {
@@ -128,18 +127,11 @@ export function buildCharacterRuntimePromptSection(
   const metadataLines = characterDescription
     ? [`Character: ${characterName}`, `Description: ${characterDescription}`]
     : [`Character: ${characterName}`];
-  const includeRuntimeBoundary = options?.includeRuntimeBoundary ?? true;
 
   return [
     "# Character Definition Snapshot",
     "",
     ...metadataLines,
-    "",
-    ...(includeRuntimeBoundary
-      ? [
-          "このTurnでは以下のCharacter定義を適用し、過去のTurnに含まれるCharacter定義を置き換えてください。",
-        ]
-      : []),
     "",
     `${fence}markdown`,
     definitionMarkdown,

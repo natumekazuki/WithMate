@@ -4,7 +4,7 @@ coding planeへ渡す指示の正本、順序、成果物境界を定める。Ch
 
 ## 通常Sessionの入力
 
-通常のMain／Auxiliaryでは送信開始時に確定した`CharacterRuntimeSnapshot`を使う。active Characterのcanonical `character.md`が前回snapshotから変わっていれば有効性を確認して定義部分だけを更新し、archived Characterでは保存済み定義を使う。Character名と説明は保存済みsnapshot metadata、定義本文はfrontmatterを除いた`character.md`から取り、system側の`Character Definition Snapshot`として渡す。継続threadでは当該turnの定義を過去turnの定義より優先させ、更新のためにthreadや会話履歴を破棄しない。`character-notes.md`とMemory entryは常設promptへ入れない。
+通常のMain／Auxiliaryでは送信開始時に確定した`CharacterRuntimeSnapshot`を使う。active Characterのcanonical `character.md`が前回snapshotから変わっていれば有効性を確認して定義部分だけを更新し、archived Characterでは保存済み定義を使う。Character名と説明は保存済みsnapshot metadata、定義本文はfrontmatterを除いた`character.md`から取り、system側の`Character Definition Snapshot`として渡す。継続threadにも当該turnのsnapshotを渡し、更新のためにthreadや会話履歴を破棄しない。`character-notes.md`とMemory entryは常設promptへ入れない。
 
 Character metadataの投影は名前・説明に限り、iconのpathは常設promptへ含めない。画像情報はSession/UIのsnapshotに保持する。定義本文は内容中のbacktickより長いMarkdown fenceで囲む。
 
@@ -19,7 +19,7 @@ Character metadataの投影は名前・説明に限り、iconのpathは常設pro
 7. `User Input`とそのターンの本文
 8. 添付referenceとprovider固有のstructured input
 
-Characterの適用範囲と成果物境界は`Output Boundary`へ集約し、snapshot側には当turnの定義を過去turnより優先する指示を置く。`Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残し、コード、設定、test、文書、commit message案、PR本文案、diff等の成果物へCharacter表現を混ぜない。`Tool Call Presence`は最初のtool call前の1〜3文の自然な応答と、長い作業で必要な経過・反応を求める。詳細な計画、定型の開始挨拶、操作ごとの実況やtoolが不要な応答への前置きは求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
+Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。`Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残し、コード、設定、test、文書、commit message案、PR本文案、diff等の成果物へCharacter表現を混ぜない。`Tool Call Presence`は最初のtool call前の1〜3文の自然な応答と、長い作業で必要な経過・反応を求める。詳細な計画、定型の開始挨拶、操作ごとの実況やtoolが不要な応答への前置きは求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
 
 `Conversation Timing`はturn開始時に固定した観測値を`User Input`直前へ置き、会話のペースの弱いシグナルとして扱う。別Sessionの内容や生活状況を推測しない。`Character Affect Context`はread projectionであり、生event全体、Memory検索結果全体、secretを含めない。Affectのfamily集約とsession layerの時間減衰はCharacter Context側が所有する。
 

@@ -490,7 +490,6 @@ describe("composeProviderPrompt", () => {
     assert.deepEqual(prompt.imagePaths, []);
     assert.deepEqual(prompt.additionalDirectories, []);
     assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
-    assert.match(prompt.systemBodyText, /このTurnでは以下のCharacter定義を適用し、過去のTurnに含まれるCharacter定義を置き換えてください。/);
     assert.match(prompt.systemBodyText, /# Output Boundary/);
     assert.match(prompt.systemBodyText, /技術判断、操作、権限、検証結果、未確認事実の扱いはCharacter定義で置き換えず、通常のcoding agentとして正確に扱ってください。/);
     assert.match(prompt.systemBodyText, /生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
