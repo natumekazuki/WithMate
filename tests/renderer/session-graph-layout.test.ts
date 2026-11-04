@@ -231,14 +231,14 @@ test("live additions and reordered reads preserve established positions", () => 
 
 // @test-value v2
 // kind = "contract"
-// claim = "All Topicsの所属帯がrecordを包含し、Topicを跨ぐ保存済み関係の経路とlabelをcard・見出しに重ねない"
+// claim = "All Topicsの所属帯がrecordの左右・下に16px以上の余白を取り、Topicを跨ぐ保存済み関係の経路とlabelをcard・見出しに重ねない"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
-// fault = "異なるTopicのrecordを同じ帯へ混ぜるか、帯見出しの予約領域へ関係線・label・cardを配置する"
-// observable = "所属帯とrecordの包含、見出し矩形と関係経路の非交差、実寸labelの非交差"
+// fault = "異なるTopicのrecordを同じ帯へ混ぜるか、枠とcardを接触させるか、帯見出しの予約領域へ関係線・label・cardを配置する"
+// observable = "所属帯とrecordの余白、帯のcanvas内包含、見出し矩形と関係経路の非交差、実寸labelの非交差"
 // observation_boundary = "consumer"
-// scope = "Topic所属付きlayoutの広幅・狭幅・長label・Topic間edge"
+// scope = "Topic所属付きlayoutの広幅・狭幅・単一行・折返し・長label・Topic間edge・展開縮小混在"
 // lifecycle = "permanent"
-// impact = "Topicの所属と関係を誤読するか、見出し・関係labelが読めなくなる"
+// impact = "Topicの所属と関係を誤読するか、見出し・関係labelが読めなくなるか、枠と選択表示が重なる"
 // distinction = "既存の非group layout testはTopic見出しの領域と所属の包含を扱わない"
 // @end-test-value
 test("topic bands contain their records and reserve readable headings around cross-topic edges", () => {
@@ -251,13 +251,14 @@ test("topic bands contain their records and reserve readable headings around cro
     assertGeometry(layout);
     assert.deepEqual(layout.topicGroups?.map((group) => group.topicId), ["a", "b", "empty"]);
     for (const group of layout.topicGroups!) {
+      assert.ok(group.x >= 0 && group.y >= 0 && group.x + group.width <= layout.width && group.y + group.height <= layout.height);
       const heading = { ...group, height: 56 };
       for (const item of records) {
         const position = layout.positions.get(item.id)!;
         const node = { ...position, width: 240, height: 112 };
         if (membership.get(item.id) === group.topicId) {
-          assert.ok(node.x >= group.x && node.x + node.width <= group.x + group.width);
-          assert.ok(node.y >= group.y + 68 && node.y + node.height <= group.y + group.height);
+          assert.ok(node.x >= group.x + 16 && node.x + node.width + 16 <= group.x + group.width);
+          assert.ok(node.y >= group.y + 68 && node.y + node.height + 16 <= group.y + group.height);
         } else assert.equal(intersects(node, group), false);
         assert.equal(intersects(node, heading), false);
       }
@@ -267,10 +268,26 @@ test("topic bands contain their records and reserve readable headings around cro
       }
     }
   }
+  for (const width of [600, 1440]) {
+    const single = layoutSessionGraph(records.slice(0, 3), [], width, 800, new Map(), undefined, membership);
+    const group = single.topicGroups![0];
+    for (const point of single.positions.values()) {
+      assert.ok(point.x >= group.x + 16 && point.x + 240 + 16 <= group.x + group.width);
+      assert.ok(point.y >= group.y + 68 && point.y + 112 + 16 <= group.y + group.height);
+    }
+    assert.ok(group.x >= 0 && group.x + group.width <= single.width && group.y + group.height <= single.height);
+    assertGeometry(single);
+  }
   const mixedNodes = [...records.slice(0, 3), { id: "topic:b" }, { id: "topic:c" }];
   const mixedMembership = new Map(mixedNodes.map((item) => [item.id, item.id.startsWith("topic:") ? item.id.slice(6) : "a"]));
   const mixed = layoutSessionGraph(mixedNodes, [relation("mixed", "0", "topic:b")], 1440, 800, new Map([["mixed", { width: 90, height: 26 }]]), undefined, mixedMembership, new Set(["a"]));
   assert.deepEqual(mixed.topicGroups?.map((group) => group.topicId), ["a"]);
+  const band = mixed.topicGroups![0];
+  for (const item of records.slice(0, 3)) {
+    const point = mixed.positions.get(item.id)!;
+    assert.ok(point.x >= band.x + 16 && point.x + 240 + 16 <= band.x + band.width);
+    assert.ok(point.y + 112 + 16 <= band.y + band.height);
+  }
   assert.equal(mixed.positions.get("topic:b")!.y, mixed.positions.get("topic:c")!.y);
   assert.ok(mixed.positions.get("topic:b")!.y >= mixed.topicGroups![0].y + mixed.topicGroups![0].height);
   assertGeometry(mixed);
