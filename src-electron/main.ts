@@ -327,6 +327,7 @@ const backgroundFailureLogService = new AppLogService({
   logsPath: appLogsPath,
   fileName: "background-failures.jsonl",
   rotation: false,
+  backgroundFailureDiagnostics: true,
   runtimeInfo: appLogRuntimeInfo,
 });
 const storageOperationLogService = new StorageOperationLogService(writeAppLog);
@@ -803,6 +804,11 @@ const memoryRecordingController = new MemoryRecordingController({
   getSettings: () => requireAppSettingsStorage().getSettings(),
   resolveAuthority: (session) => buildProviderAgentRuntimeAuthoritySnapshot({ characterId: session.characterId,
     workspacePath: session.workspacePath, resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id }),
+  readCharacterDefinition: async (characterId) => {
+    const snapshot = await requireCharacterService().createRuntimeSnapshot(characterId);
+    if (!snapshot) throw new Error("Memory Character definition is unavailable.");
+    return snapshot.definitionMarkdown;
+  },
 });
 const backgroundAffectController = new BackgroundAffectController({
   runtime: backgroundRuntime,
@@ -1036,6 +1042,7 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
         },
       },
       onBackgroundOperationFailure: (bindingId, failure) => backgroundExecutions.reportOperationFailure(bindingId, failure),
+      onBackgroundOperation: (bindingId, observation) => backgroundExecutions.observeOperation(bindingId, observation),
       routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,
     });

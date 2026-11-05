@@ -1,4 +1,4 @@
-import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { reportRuntimeTurnOperationError, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 import {
   CHARACTER_AFFECT_FAMILIES,
   assertValidAffectEvent,
@@ -380,6 +380,7 @@ export class CharacterContextApplicationService {
           })).version;
         } catch (error) {
           if (error instanceof CharacterAffectEpisodePersistenceError) {
+            reportRuntimeTurnOperationError(error);
             if (error.eventCreated) {
               this.affectMetrics.savedByFamily[candidate.family] += 1;
             }
@@ -400,6 +401,7 @@ export class CharacterContextApplicationService {
             );
           }
           if (saved.length > 0) {
+            reportRuntimeTurnOperationError(error);
             return createCharacterContextError("partial_failure", "Some affect candidates were saved before the operation failed.", {
               retryable: true,
               conversationMayContinue: true,
@@ -787,6 +789,7 @@ export class CharacterContextApplicationService {
     operation: string,
     effect: "none" | "unknown",
   ): CharacterContextErrorResponse {
+    reportRuntimeTurnOperationError(error);
     if (error instanceof RuntimeTurnInactiveError) {
       return createCharacterContextError("authority_denied", error.message, {
         retryable: false, conversationMayContinue: true, effect: "none",

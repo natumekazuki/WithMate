@@ -13,7 +13,7 @@ import type { SessionBackgroundEvent } from "../session/session-background-event
 import { BackgroundCallService, type BackgroundAgentPort, type BackgroundCallInput } from "./background-call-service.js";
 import type { BackgroundExecutionService } from "./background-execution-service.js";
 import type { BackgroundRegistration } from "./background-registration.js";
-import { projectBackgroundFailure, type BackgroundFailureEvent, type BackgroundFailureInput } from "./background-failure.js";
+import { classifyBackgroundFailure, projectBackgroundFailure, type BackgroundFailureEvent, type BackgroundFailureInput } from "./background-failure.js";
 import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
 
 export type BackgroundRuntimeEvent =
@@ -100,7 +100,8 @@ export class BackgroundProductionRuntime {
     try { result = await this.prepareCall(input, (value) => { selection = value; }); }
     catch (error) {
       this.reportFailure({ ...input, stage: "prepare", error, selection });
-      return { status: "failed", code: "BACKGROUND_PREPARE_FAILED", reason: "The background call could not be prepared." };
+      const failure = classifyBackgroundFailure(error, "prepare", "BACKGROUND_PREPARE_FAILED");
+      return { status: "failed", code: failure.code, reason: failure.reason };
     }
     if (result.status !== "ready" && result.status !== "not_configured") {
       this.reportFailure({ ...input, stage: "prepare", error: result, selection });
@@ -111,12 +112,12 @@ export class BackgroundProductionRuntime {
   private async prepareCall(input: PrepareBackgroundCallInput, selected: (selection: BackgroundCallInput["selection"]) => void): Promise<PreparedBackgroundCall> {
     let settings: AppSettings;
     try { settings = await this.deps.getAppSettings(); }
-    catch { return { status: "failed", code: "BACKGROUND_SETTINGS_UNAVAILABLE", reason: "Background settings could not be retrieved." }; }
+    catch (cause) { throw Object.assign(new Error("Background settings could not be retrieved.", { cause }), { code: "BACKGROUND_SETTINGS_UNAVAILABLE" }); }
     const configured = structuredClone(settings.backgroundExecutionSettings[input.purpose]);
     if (!configured.selection) return { status: "not_configured", code: "BACKGROUND_NOT_CONFIGURED", reason: "Select a provider and model for this purpose in Settings." };
     selected(configured.selection);
     try { resolveBackgroundExecutionOptions(configured.selection); }
-    catch { return { status: "failed", code: "BACKGROUND_EXECUTION_OPTIONS_INVALID", reason: "The background execution settings are invalid for the provider." }; }
+    catch (cause) { throw Object.assign(new Error("The background execution settings are invalid for the provider.", { cause }), { code: "BACKGROUND_EXECUTION_OPTIONS_INVALID" }); }
     if (!settings.codingProviderSettings[configured.selection.providerId]?.enabled) {
       return { status: "unavailable", code: "BACKGROUND_PROVIDER_DISABLED", reason: "Enable the selected provider in Settings." };
     }
@@ -128,7 +129,7 @@ export class BackgroundProductionRuntime {
     }
     let catalog: ModelCatalogSnapshot;
     try { catalog = await this.deps.getModelCatalog(input.session, configured.selection.providerId); }
-    catch { return { status: "failed", code: "BACKGROUND_CATALOG_UNAVAILABLE", reason: "Background models could not be retrieved." }; }
+    catch (cause) { throw Object.assign(new Error("Background models could not be retrieved.", { cause }), { code: "BACKGROUND_CATALOG_UNAVAILABLE" }); }
     const availability = resolveBackgroundProviderAvailability(configured.selection, catalog);
     if (availability.status !== "available") {
       return availability.status === "not_configured"

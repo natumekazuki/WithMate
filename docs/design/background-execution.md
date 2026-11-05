@@ -89,7 +89,7 @@ Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続し、既存の
 
 開始準備ではapp共通の`modelAvailability`も検査する。ModelまたはOpenCodeサービスが無効なら、catalog取得・source captureへ進まず`BACKGROUND_MODEL_DISABLED`／`unavailable`を返す。保存選択を変更せず、再有効化は次の準備に反映する。設定変更による準備済み・実行中の呼出しの取消は行わない。
 
-共通呼出層は実source Sessionを認可・workspace・許可材料の文脈に保ち、`executionTarget`に背景binding ID、新規thread、用途入力のpromptを渡す。adapterのnative cache・active turn・cleanupはこの実行IDを使い、元会話threadのresume・保存・結果適用を行わない。偽のSessionを永続化せず、threadの監視・比較・復元も持たない。通常会話のprogress／thread更新callbackを渡さず、出力は消費して破棄する。登録本文へCharacterのpersonaを二重注入しない。取消はnative processのcleanupまで待ち、Agent終端で共通寿命を閉じる。
+共通呼出層は実source Sessionを認可・workspace・許可材料の文脈に保ち、`executionTarget`に背景binding ID、新規thread、用途入力のpromptを渡す。adapterのnative cache・active turn・cleanupはこの実行IDを使い、元会話threadのresume・保存・結果適用を行わない。偽のSessionを永続化せず、threadの監視・比較・復元も持たない。通常会話のprogress／thread更新callbackを渡さず、final出力は消費して破棄する。Character定義は用途入力の参照材料として渡し、通常会話用のpersonaを別途重ねない。共通systemは独立実行・非対話・toolによる登録とfinalの破棄を説明し、登録本文でのCharacter本人の語りを否定しない。取消はnative processのcleanupまで待ち、Agent終端で共通寿命を閉じる。
 
 行動・tool使用方針は用途presetまたは編集本文へ集約し、固定promptは独立実行・材料・返却先の技術情報だけを示す。背景だけのenv allowlist、tool／skill／plugin／hook／native設定の一括無効化、managed／custom接続の一律拒否は設けない。自然言語の方針を技術的な使用不能保証とはしない。通常adapterのapproval／sandbox／管理者policyは維持し、背景だけの無条件許可を追加しない。fake SDKによる接続検証と実認証の推論確認は区別する。
 
@@ -103,11 +103,15 @@ Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続し、既存の
 
 準備・材料取得・起動・Agentの失敗は共通runtimeの`onFailure`へ安全な診断項目として渡す。未設定による正常な非実行、通常取消、正常な保存対象なしは失敗ログにしない。戻り値の`failed`も対象とし、例外だけを捕まえる経路にしない。
 
-bound MCP／CLIの既知の操作失敗は既存の実行寿命へ最初の原因だけを保持し、Agentが通常returnしても`completed`にしない。元のtool応答と保存効果は保持し、応答配送を止めるための即時失効や、成功確認済みwriteの取消への上書きは行わない。実行終了時の失敗記録は呼出境界が一度だけ行い、用途controllerが再記録しない。独立した重複排除台帳・保存証明・復旧queueは持たない。
+bound MCP／CLIの既知の操作失敗は既存の実行寿命へ保持し、Agentが通常returnしても`completed`にしない。最初の失敗を全体結果の原因とし、操作列には後続の失敗と保存成功も残す。元のtool応答と保存効果は保持し、応答配送を止めるための即時失効や、成功確認済みwriteの取消への上書きは行わない。実行終了時の失敗記録は呼出境界が一度だけ行い、用途controllerが再記録しない。独立した重複排除台帳・保存証明・復旧queueは持たない。
 
 HTTPのMemory／履歴操作では、有効なbinding identityと同じ背景turn capabilityから診断の帰属を確定し、operationの許可判定とは分離する。用途外・grant不足の拒否も該当実行へ報告するが、その操作を許可しない。不明・失効reference、欠落・別実行のturn capabilityは有効な実行へ帰属させない。
 
-Mainは`userData/logs/background-failures.jsonl`へ失敗だけを追記し、回転・切詰め・自動削除をしない。日時、用途、元会話kind／ID、段階、既知のcodeと短い原因、取得済みProvider／Modelと解決できた権限だけを記録する。本文・prompt・tool全文・credential・raw例外は入れない。書込み失敗は既存診断出力へ渡し、元の失敗や通常会話を変更しない。詳細は[App Log Base](app-log-base.md#background-failure-log-policy)を参照する。
+実行中は既存のbinding IDを実行識別子として、開始時刻・固定scopeと操作の要求／応答を既存実行寿命へ保持する。操作には順序、要求ID、operation／tool名、transport、境界、時刻、成否、選別した原因と保存結果の識別情報を含める。MCP hostは`mcp`境界で要求IDと応答を対応付け、HTTP到達前のschema拒否も観測する。既存HTTP経路では`history`／`read`／`registration`境界の要求・応答を別に観測し、配布CLIも同じ経路を使う。両境界は同じ実行IDとcanonical operationを持ち、それぞれの要求IDで応答を対応付ける。transportは既存runtime adapter種別であり、履歴CLIが使う`mcp`種別も変更しない。
+
+Character／Affect applicationが保存例外を公開エラーへ変換する場合は、変換前の例外を現在の`RuntimeTurnAdmission.onOperationError`へ診断用途だけで報告する。HTTPは同じadmission内で受け取り、その操作の失敗原因へ選別・秘匿化して含める。公開応答へcauseを追加せず、診断callbackの失敗も保存効果・公開エラーを変更しない。
+
+Mainは`userData/logs/background-failures.jsonl`へ失敗だけを追記し、回転・切詰め・自動削除をしない。用途・元会話kind／ID・Provider／Model／Depth・解決できた権限に加え、開始済みなら実行識別子・scope・開始／終了時刻・失敗結果・操作列を残す。実エラーのcode／message、field・検証path／期待条件、cause／stackは診断用項目だけを選び、認証情報・接続secretを除く。登録応答から保存ID・owner／scope・effect等を選び、本文・prompt・tool引数や応答本文をdumpしない。準備・材料取得失敗には未発行の実行IDを捏造しない。正常実行の操作列は永続記録せず解放する。書込み失敗は既存診断出力へ渡し、元の失敗や通常会話を変更しない。詳細は[App Log Base](app-log-base.md#background-failure-log-policy)を参照する。
 
 ## 共通設定と用途controllerへの通知
 
@@ -127,7 +131,7 @@ Memory二用途とAffectのcontrollerはこの購読接点へ接続されてい�
 
 二用途ごとに未開始範囲の準備をまとめ、Agent終了は待たない。同じ用途の先行実行が遅くても新規範囲は別bindingで並行開始する。実行範囲・設定選択・本文は開始ごとに固定し、`runOnce.onAdmitted`の同期callbackだけで開始末尾を進める。準備・begin失敗で進めず、開始後の失敗・取消で戻さない。これは保存成功checkpointではなく、永続化・失敗待ちqueue・自動再送はない。
 
-controllerは既存authorityの実Character targetと、対象Memoryでは許可Project targetを明示captureする。user-globalは推測で追加しない。共通runtimeの`prepare`が固定historyと指定processingを分けて組み立て、`runBackgroundMemoryRegistration`へ編集本文を渡す。材料の取得方法は技術情報として本文と分離する。未設定・利用不可・取得失敗は開始成功へ変換せず、未開始分を保ったまま次の会話・設定イベントで再評価する。設定変更は開始済み実行を再構成しない。
+controllerは既存authorityの実Character targetと、対象Memoryでは許可Project targetを明示captureする。user-globalは推測で追加しない。共通runtimeの`prepare`が固定historyと指定processingを分けて組み立て、`runBackgroundMemoryRegistration`へ編集本文を渡す。Character Memoryは準備済みauthorityのCharacter IDから`CharacterService.createRuntimeSnapshot`で定義を取得し、別節の材料として渡す。Auxiliaryの定義を親Characterや表示名から推定せず、取得失敗は`materials`段階の失敗として未開始位置を保持する。対象Memoryでは定義を取得しない。材料の取得方法は技術情報として本文と分離する。未設定・利用不可・取得失敗は開始成功へ変換せず、未開始分を保ったまま次の会話・設定イベントで再評価する。設定変更は開始済み実行を再構成しない。
 
 ## Affectの自動発火と開始位置
 
@@ -141,9 +145,9 @@ Affectの`BackgroundAffectController`はMain runtimeの開始成功時に購読�
 
 ## Memoryの登録本文と直接登録
 
-`memory-registration-input.ts`の`MEMORY_REGISTRATION_PRESETS`は二用途の標準本文である。Character Memoryは観察事実とCharacterの受け取りを区別したepisode、対象Memoryは事実・合意・制約・好み・実行結果を許可対象へ登録する。欠落情報や不明な成否を補完せず、不要なら登録しない。
+`memory-registration-input.ts`の`MEMORY_REGISTRATION_PRESETS`は二用途の標準本文である。各本文は自身の目的・材料・判断・登録方法・終了条件を直接示す。Character Memoryは実Character定義の一人称・口調を使い、共有した出来事と本人の感情・関心・受け取りをepisodeへ残す。観察事実と本人の解釈は区別し、定義だけから会話にない経験・成果・感情を作らない。対象Memoryは対象に帰属する事実・合意・判断・制約・好み・成果を、許可targetと適用範囲に照合して登録する。実行結果に必要な操作記録は固定historyから確認し、欠落情報や不明な成否を補完しない。必要な内容の分量を自然言語で制限せず、不要なら登録しない。公開APIの入力制約はそのまま維持する。
 
-`buildMemoryRegistrationInput({ scope, materials, instructionText? })`は、`instructionText`が未設定なら用途のプリセット、設定済みなら空文字列も含めその本文だけを使う。固定プリセットとの合成や追加指示レイヤーはない。本文、アプリが確定したprocessing／history／許可Memory target、参照材料、既存MCP／CLIの利用説明を別の節へ組み立てる。本文の編集で実binding、保存先上限、権限は変わらない。
+`buildMemoryRegistrationInput({ scope, materials, characterDefinition?, instructionText? })`は、`instructionText`が未設定なら用途のプリセット、設定済みなら空文字列も含めその本文だけを使う。固定プリセットとの合成や追加指示レイヤーはない。本文、アプリが確定したprocessing／history／許可Memory target、参照材料、Character定義、既存MCP／CLIの利用説明を別の節へ組み立てる。本文の編集で実binding、保存先上限、権限は変わらない。保存済み編集本文はユーザーデータとして保持し、プリセット更新で置換しない。未設定本文は次の準備で新しいプリセットを使い、保存済み編集本文から切り替える場合はSettingsの該当用途の`Use Preset`で現在のプリセットを選ぶ。
 
 `src-electron/memory/background-memory-registration.ts`の`runBackgroundMemoryRegistration(calls, input)`は、編集本文と材料を受け取り、組み立てた入力を既存`BackgroundCallService.runOnce()`の`userInput`へ渡す入口である。同じAgent実行内で公開tool schemaの入力を使い、Character Memoryは`character_memory.append_episode`／CLI `character-memory-append-episode`、対象Memoryは`memory.append`／CLI `append`から登録する。設定・実Providerへの共通接点は本番runtimeを利用し、用途controllerから自動起動・未開始位置管理へ接続されている。
 
@@ -155,7 +159,7 @@ Affectの`BackgroundAffectController`はMain runtimeの開始成功時に購読�
 
 ## Affect登録入力と会話owner
 
-`affect-composition.ts`の`AFFECT_COMPOSITION_INSTRUCTIONS`は、取得時点のCharacter定義・保存済み会話・既存Affectから必要な変化だけを`character_affect.appraise`で登録し、変化なしなら登録しない自然言語プリセットである。会話を基本材料とし、必要な操作結果だけを参照する。非公開内面の復元・診断、欠落情報の補完や、作業失敗から根拠のないユーザーへの敵意を構成しない。
+`affect-composition.ts`の`AFFECT_COMPOSITION_INSTRUCTIONS`は、取得時点のCharacter定義・既存Affect・保存済み会話から、そのCharacterが今回の出来事をどう受け取ったかを判断する自然言語プリセットである。原因・対象・感情の種類・強さ・layerとreason／evidenceを選び、必要な変化だけを`character_affect.appraise`で登録する。必要な変化がなければ登録せず終了する。会話を基本材料とし、作業結果の裏付けに必要な操作結果だけを参照する。非公開内面の復元・診断、欠落情報の補完や、作業失敗から根拠のないユーザーへの敵意を構成しない。判断・登録に必要な内容の自然言語での分量制限は設けない。
 
 `buildAffectCompositionInput({ instructionBody?, characterDefinition, currentAffect }, scope)`は、本文未設定時だけプリセットを選ぶ。設定済み本文は空文字列も含め単独で使い、プリセットや追加の固定方針を重ねない。実行scope、Character定義、既存Affect、既存toolの技術的な利用説明は別節へ置く。本文を解釈する禁止文parserは持たず、権限は共通runtimeが制約する。`runBackgroundAffectCall(calls, input)`はこの入力を既存`BackgroundCallService.runOnce`の`userInput`へ渡し、同じAgent実行内のtoolで登録する。Affect controllerは開始時点のCharacter定義・該当ownerの既存Affectと、実Characterを明示したMemory read targetを渡す。取得失敗を空の正常材料へ置換せず、AuxiliaryのCharacterを親Characterで代用しない。設定・実Providerは本番runtimeの共通接点を利用する。
 

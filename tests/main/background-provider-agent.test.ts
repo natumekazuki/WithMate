@@ -7,6 +7,7 @@ import type { CopilotClient, SessionConfig, SessionEvent } from "@github/copilot
 import type { OpenCodeClient, OpenCodeEvent, SessionInfo, SessionPromptInput } from "@opencode/client";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { buildMemoryRegistrationInput } from "../../src-shared/memory-recording/memory-registration-input.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { createBackgroundProviderAgent, type BackgroundProviderAgentDependencies } from "../../src-electron/providers/background-provider-agent.js";
@@ -189,9 +190,9 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景共通dispatchは元Codex既定untrustedとSpeed/customAgentを継承せず、4 Providerのnative境界へ用途別設定と背景bindingを渡す"
+// claim = "背景共通dispatchは4 Providerのnative境界へ用途別設定・背景bindingと、編集した本人の語りの登録指示・実Character定義を渡す"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "source実行設定の混入、用途別権限の脱落、source thread再開、binding混同、通常runstateへの結果配送"
+// fault = "登録指示やCharacter材料の欠落、source実行設定の混入、用途別権限の脱落、source thread再開、binding混同、通常runstateへの結果配送"
 // observable = "実adapterからfake native SDK/transportへ出たModel・Depth・env・prompt・resume回数・権限・Speed・agentと実行後Session"
 // observation_boundary = "consumer"
 // scope = "background factory through existing four provider adapters"
@@ -204,19 +205,27 @@ test("background dispatch reaches all four real adapters with independent native
     const f = fixture(providerId, { approvalMode: providerId === "copilot" ? "never" : "on-request",
       ...(providerId === "codex" ? { codexReviewer: "auto-review", codexSandboxMode: "read-only" } : {}),
       ...(providerId === "claude" ? { codexReviewer: "auto-review" } : {}) }), before = structuredClone(f.input.session);
+    const instructionText = "共有した経験を私の口調で語り、私がどう受け取ったかをepisode本文へ残してください。";
+    const characterDefinition = "# Character Definition\n一人称は私。成果を一緒に喜び、出来事と自分の感想は区別する。";
+    const scope = { ...f.input.scope, purpose: "character-memory" as const, memoryTargets: [
+      { owner: "character", scope: "character", character: { type: "id", id: "character" } },
+    ] satisfies BackgroundAgentInput["scope"]["memoryTargets"] };
+    const agentInput = { ...f.input, scope, userInput: buildMemoryRegistrationInput({ scope,
+      instructionText, characterDefinition, materials: "保存済み会話は接続されたsession_historyから読む。" }) };
     assert.equal(f.input.session.approvalMode, "untrusted");
     const capture: NativeCapture = { resumed: 0, closed: 0, observerUpdates: [] };
     const adapters = realAdapters(capture);
     const run = createBackgroundProviderAgent({ ...f.deps,
       getProviderCodingAdapter: (id) => resolveProviderCodingAdapter({ providerId: id, ...adapters }),
     });
-    assert.equal(await run(f.input), undefined);
+    assert.equal(await run(agentInput), undefined);
     assert.equal(capture.model, f.input.selection.modelId, providerId);
     assert.equal(capture.depth, "high", providerId);
     assert.equal(capture.env!.WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE, "reference", providerId);
     assert.equal(capture.env!.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY, "capability", providerId);
     assert.ok(capture.binding, providerId);
-    assert.ok(capture.prompt?.includes("registration and Character reference material"), providerId);
+    assert.ok(capture.prompt?.includes(instructionText), providerId);
+    assert.ok(capture.prompt?.includes("一人称は私。成果を一緒に喜び、出来事と自分の感想は区別する。"), providerId);
     assert.match(`${capture.system ?? ""}\n${capture.prompt ?? ""}`, /no human approval or answer channel/, providerId);
     assert.equal(capture.resumed, 0, providerId);
     assert.ok(capture.closed > 0, providerId);

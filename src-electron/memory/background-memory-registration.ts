@@ -37,6 +37,7 @@ export const backgroundMemoryRegistrationHandlers: Required<Pick<BackgroundRegis
 export type BackgroundMemoryRegistrationInput = Omit<BackgroundCallInput, "userInput" | "context"> & Readonly<{
   context: BackgroundCallInput["context"] & { scope: MemoryRegistrationScope };
   materials: string;
+  characterDefinition?: string;
   instructionText?: string;
 }>;
 
@@ -44,6 +45,6 @@ export function runBackgroundMemoryRegistration(
   calls: Pick<BackgroundCallService, "runOnce">,
   input: BackgroundMemoryRegistrationInput,
 ): Promise<BackgroundCallResult> {
-  const { materials, instructionText, ...call } = input;
-  return calls.runOnce({ ...call, userInput: buildMemoryRegistrationInput({ scope: input.context.scope, materials, instructionText }) });
+  const { materials, characterDefinition, instructionText, ...call } = input;
+  return calls.runOnce({ ...call, userInput: buildMemoryRegistrationInput({ scope: input.context.scope, materials, characterDefinition, instructionText }) });
 }

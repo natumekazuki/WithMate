@@ -12,6 +12,8 @@ Accepted
 
 同日の[共通Provider実行とDepth](#共通provider実行とdepth)により、本番共通接続時点のClaude専用portと背景だけの機械的完全隔離は適用対象外とする。当時の本文は保持する。
 
+2026-11-05の[登録内容と失敗診断](#登録内容と失敗診断)により、失敗を既知codeと定型の短い原因だけへ限定する方針は適用対象外とする。失敗専用ファイル・通常成功を記録しない運用と、認可・保存済みデータ保護は維持する。
+
 ## Context
 
 Issue #888の三用途を通常Sessionのactor／Providerキーで実行すると、通常turnのbinding再利用・置換と競合する。#908の履歴readは元会話を参照するが、生成purposeやMemory記録の処理位置は読取能力そのものの条件ではない。Auxiliaryの再作成はcreatedAtだけでは区別できず、既存のconversation ownerIdentityに含まれるdraft incarnationも必要になる。
@@ -152,3 +154,9 @@ WithMateの履歴範囲・owner／保存先・入力・用途operation grantは�
 背景の失敗だけを`logs/background-failures.jsonl`へ追記し、回転・切詰め・自動削除は行わない。通常ログの5MiB・5ファイルは維持する。診断項目と安全な短い原因だけを残し、本文・credential・raw例外を保存しない。重複記録は既存呼出境界の責務で避け、台帳・DB・queue・viewerを追加しない。
 
 共通Provider実行時点のsource権限継承とcallback省略による拒否の扱いは本判断で置き換える。当時の本文は保持する。独立binding・元thread非再開・認可・データ保護と直接登録は維持する。現行実装は[用途別権限と非対話終了](../design/background-execution.md#用途別権限と非対話終了)と[失敗ログ](../design/app-log-base.md#background-failure-log-policy)に示す。
+
+## 登録内容と失敗診断
+
+三用途の登録本文は自身の目的・材料・判断・登録・終了条件から構成し、自然言語の分量制限を設けない。Character Memoryには実Characterの定義を参照材料として渡し、観察事実と本人の解釈を区別した本人の語りを保存する。共通Provider systemでその語りを否定しない。編集本文によるプリセット置換と、保存済み編集本文の保護を維持する。
+
+失敗の定型分類だけでは操作の拒否理由や、失敗と同じ実行で確認できた保存を追えないため、既存実行寿命に操作の要求・応答metadataと選別・秘匿化した原因を保持する。実行が失敗した時だけ既存の専用JSONLへ出し、正常な成功実行の恒久履歴や新規台帳・DB・再送queueは設けない。途中失敗後の保存成功は診断材料であり、全体の失敗を成功へ変えない。会話・prompt・tool引数や応答本文の無差別dumpは行わず、診断に必要な実code／message・検証箇所・期待条件・cause／stackと保存識別情報を選ぶ。認証情報を秘匿化し、原因情報を恣意的な短文化で落とさない。現行仕様は[Background Execution](../design/background-execution.md)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)に示す。

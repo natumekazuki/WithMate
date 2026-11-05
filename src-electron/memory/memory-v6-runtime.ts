@@ -98,6 +98,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   sessionHistoryMcp?: SessionHistoryMcpRegistration;
   backgroundRegistration?: BackgroundRegistration;
   onBackgroundOperationFailure?: MemoryV6HttpServerOptions["onBackgroundOperationFailure"];
+  onBackgroundOperation?: MemoryV6HttpServerOptions["onBackgroundOperation"];
   userDataPath: string;
   applicationInstanceId: string;
   buildChannel: RuntimeBuildChannel;
@@ -1461,6 +1462,7 @@ export async function startMemoryV6RuntimeApi(
       characterContextService,
       backgroundRegistration: options.backgroundRegistration,
       onBackgroundOperationFailure: options.onBackgroundOperationFailure,
+      onBackgroundOperation: options.onBackgroundOperation,
       apiSecret,
       operatorApiSecret,
       mcpApiSecret,
@@ -1500,6 +1502,7 @@ export async function startMemoryV6RuntimeApi(
         sessionHistory: options.sessionHistoryMcp,
         backgroundRegistration: options.backgroundRegistration,
         onBackgroundOperationFailure: options.onBackgroundOperationFailure,
+        onBackgroundOperation: options.onBackgroundOperation,
       });
       await managedMcp.start();
     }

@@ -5,18 +5,21 @@ export type MemoryRegistrationScope = Omit<BackgroundExecutionScope, "purpose"> 
 
 export const MEMORY_REGISTRATION_PRESETS: Readonly<Record<MemoryRecordingPurpose, string>> = {
   "character-memory": [
-    "処理対象の保存済み会話から、Characterとして共有した出来事や日常の小さな経験を、後の理解につながる短いepisodeとして必要に応じて記録してください。",
+    "Character定義と処理対象の保存済み会話を読み、共有した出来事や日常の小さな経験を、そのCharacter本人が後で思い出せるepisodeとして記録してください。",
+    "本文はCharacter定義の一人称・口調で語り、会話で表れた感情、関心、出来事の受け取りを本人の経験として残してください。強い感情や大きな成果、明示的な記憶依頼は記録の必須条件ではありません。",
     "対話による追加確認や承認を求めず、指定された材料で処理してください。",
-    "観察できた事実とCharacter自身の受け取りを区別し、本文でも誰の受け取りか分かるようにしてください。事実にはobservedFact、受け取りにはcharacterObservationを使えます。",
-    "登録にはcharacter_memory.append_episodeを使い、Affect eventやlinked episodeは作りません。強い感情や大きな成果、明示的な記憶依頼は記録の必須条件ではありません。",
-    "欠けている情報、共有していない経験、不明な実行結果を補完せず、秘密情報や生のログを登録しないでください。必要な記録がなければ登録せずに終了してください。",
+    "観察できた出来事と自分の解釈・感情を区別し、誰の受け取りか本文から分かるようにしてください。observedFactには観察できた事実、characterObservationにはCharacter自身の受け取りを入れられます。",
+    "実行結果に触れる場合は必要な保存済み操作結果を確認し、未確認の成否を確定しないでください。定義だけから感情や会話に存在しない経験・成果を作らず、秘密情報や生のログは登録しないでください。",
+    "character_memory.append_episodeで、実行範囲のCharacterに登録してください。各操作の応答で保存結果を確認してください。",
+    "必要な登録と保存結果の確認を終えたら終了してください。後で思い出す必要のある経験がなければ、登録せずに終了してください。",
   ].join("\n"),
   "target-memory": [
-    "処理対象の保存済み会話から、事実、合意した判断、制約、好み、実行結果などを、許可された対象で後から利用できる短いMemoryとして必要に応じて記録してください。",
+    "処理対象の保存済み会話と必要な操作結果から、対象に帰属する事実・合意・判断・制約・好み・成果を、後から利用できるMemoryとして記録してください。",
     "対話による追加確認や承認を求めず、指定された材料で処理してください。",
-    "登録にはmemory.appendを使ってください。事実と推測、合意済み判断と未合意の提案、本人の報告と実行記録を区別してください。",
-    "実行結果を使う場合は保存済みの操作記録も確認し、欠落情報や不明な成否を成功へ補完しないでください。Characterの主観を対象の確定知識へ変えないでください。",
-    "秘密情報や生のログは登録せず、対象を推測で広げないでください。必要な記録がなければ登録せずに終了してください。",
+    "内容の帰属先と適用範囲を確認し、アプリが確定した許可Memory targetと照合してください。事実と推測、合意済み判断と未合意の提案、本人の報告と実行記録を区別し、判断に必要な条件と根拠を残してください。",
+    "実行結果を使う場合は保存済みの操作記録も確認し、欠落情報や不明な成否を成功へ補完しないでください。解釈や感想を対象の確定事実へ変えないでください。",
+    "memory.appendで該当する許可targetへ登録し、各操作の応答で保存結果を確認してください。",
+    "秘密情報や生のログは登録せず、対象を推測で広げないでください。必要な登録と保存結果の確認を終えたら終了し、必要な記録がなければ登録せずに終了してください。",
   ].join("\n"),
 };
 
@@ -24,6 +27,7 @@ export const MEMORY_REGISTRATION_PRESETS: Readonly<Record<MemoryRecordingPurpose
 export function buildMemoryRegistrationInput(input: Readonly<{
   scope: MemoryRegistrationScope;
   materials: string;
+  characterDefinition?: string;
   instructionText?: string;
 }>): string {
   const tool = input.scope.purpose === "character-memory" ? "character_memory.append_episode" : "memory.append";
@@ -37,6 +41,7 @@ export function buildMemoryRegistrationInput(input: Readonly<{
       memoryTargets: input.scope.memoryTargets }),
     "# 参照材料",
     input.materials,
+    ...(input.characterDefinition === undefined ? [] : ["# Character定義（参照材料）", input.characterDefinition]),
     "# 接続済み操作の利用情報",
     `MCP: ${tool}。入力項目は公開tool schemaを参照。identityと登録先上限はruntime bindingから解決される。`,
     `CLI: withmate-memory ${command} --json '<toolと同じ公開入力JSON>'。接続方法は実行環境の既存CLI設定を使う。`,

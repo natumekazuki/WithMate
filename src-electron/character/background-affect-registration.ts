@@ -23,7 +23,11 @@ export const registerBackgroundAffect: BackgroundRegistrationHandler = async (in
   }
   const parsed = boundRequestSchema.safeParse(input.body);
   if (!parsed.success) {
-    return createCharacterContextError("invalid_input", "Invalid background affect candidates.", rejection);
+    return createCharacterContextError("invalid_input", "Invalid background affect candidates.", {
+      ...rejection, details: { issues: parsed.error.issues.map((issue) => ({ code: issue.code, path: issue.path, message: issue.message,
+        ...("expected" in issue ? { expected: issue.expected } : {}), ...("minimum" in issue ? { minimum: issue.minimum } : {}),
+        ...("maximum" in issue ? { maximum: issue.maximum } : {}) })) },
+    });
   }
   const request = parsed.data;
   const source = input.source;

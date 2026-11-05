@@ -46,13 +46,16 @@ export class BackgroundCallService {
   }) {}
 
   async runOnce(input: BackgroundCallInput): Promise<BackgroundCallResult> {
+    let execution: BackgroundExecution | undefined;
     const failed = (error: unknown, stage: BackgroundFailureInput["stage"]): BackgroundCallResult => {
       const failure = classifyBackgroundFailure(error, stage, stage === "admission" ? "BACKGROUND_ADMISSION_CALLBACK_FAILED" : stage === "setup" ? "BACKGROUND_SETUP_FAILED" : "BACKGROUND_AGENT_FAILED");
       this.deps.onFailure?.({ purpose: input.context.scope.purpose, source: input.context.scope.history.source,
-        selection: input.selection, stage: failure.stage, error: failure });
+        selection: input.selection, stage: failure.stage, error: failure,
+        ...(execution ? { execution: { executionId: execution.binding.bindingId, bindingId: execution.binding.bindingId,
+          startedAt: execution.startedAt, endedAt: new Date().toISOString(), outcome: "failed",
+          scope: input.context.scope, operations: [...execution.operations] } } : {}) });
       return { kind: "failed", code: failure.code };
     };
-    let execution: BackgroundExecution;
     try {
       execution = this.deps.executions.begin({ ...input.context, providerId: input.selection.providerId });
     } catch (error) {

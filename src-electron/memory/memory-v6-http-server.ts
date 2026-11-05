@@ -58,12 +58,14 @@ import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-
 import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
 import { sessionHistoryRuntimeOperationByPath } from "../../src-shared/session-history/session-history-contract.js";
+import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
   characterContextService?: CharacterContextApplicationService;
   backgroundRegistration?: BackgroundRegistration;
   onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
+  onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
   apiSecret: string;
   operatorApiSecret: string;
   mcpApiSecret: string;
@@ -1092,14 +1094,32 @@ async function routeResolvedRequest(input: {
   const binding = resolveBackgroundFailureBinding(input.options, input.bindingReference, input.turnCapability);
   const stage = Object.values(BACKGROUND_REGISTRATION_OPERATIONS).some(({ operation }) => operation === agentRuntimeOperationForMemoryRoute(input.route))
     ? "registration" : "read";
+  const metadata = { requestId: randomUUID(), operation: agentRuntimeOperationForMemoryRoute(input.route),
+    transport: input.fallbackFrom ? "agent_cli_fallback" : input.transport ?? "unknown", boundary: stage } as const;
+  const secrets = [input.options.apiSecret, input.options.operatorApiSecret, input.options.mcpApiSecret,
+    input.options.fallbackAdmissionApiSecret ?? "", input.bindingReference ?? "", input.turnCapability ?? ""];
+  let operationError: unknown;
+  const observe = (observation: Pick<BackgroundOperationObservation, "phase" | "outcome" | "result" | "failure">) => {
+    if (binding) input.options.onBackgroundOperation?.(binding.bindingId,
+      { ...metadata, ...observation, timestamp: new Date().toISOString() });
+  };
+  observe({ phase: "request" });
   try {
-    const result = await dispatchResolvedRequest(input);
-    const failure = backgroundOperationFailure(result, stage);
+    const result = await dispatchResolvedRequest({ ...input,
+      ...(binding ? { onOperationError: (error: unknown) => { operationError = error; } } : {}) });
+    let failure = backgroundOperationFailure(result, stage);
+    if (failure && operationError !== undefined) {
+      failure = { ...failure, diagnostic: backgroundErrorDiagnostic({ errors: failure.diagnostic, cause: operationError }, secrets) };
+    }
     if (binding && failure) input.options.onBackgroundOperationFailure?.(binding.bindingId, failure);
+    observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(result) });
     return result;
   } catch (error) {
-    if (binding) input.options.onBackgroundOperationFailure?.(binding.bindingId,
-      classifyBackgroundFailure(error, stage, "BACKGROUND_OPERATION_FAILED"));
+    const failure = classifyBackgroundFailure(error, stage, "BACKGROUND_OPERATION_FAILED");
+    const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
+      secrets) };
+    if (binding) input.options.onBackgroundOperationFailure?.(binding.bindingId, safeFailure);
+    observe({ phase: "response", outcome: "failure", failure: safeFailure });
     throw error;
   }
 }
@@ -1107,6 +1127,7 @@ async function routeResolvedRequest(input: {
 async function dispatchResolvedRequest(input: {
   options: MemoryV6HttpServerOptions; route: MemoryV6Route; body: unknown; transport: CharacterContextTransport | null;
   fallbackFrom?: "mcp"; bindingReference?: string; turnCapability?: string;
+  onOperationError?: (error: unknown) => void;
 }): Promise<unknown> {
   if (!input.transport || !canTransportInvokeRoute(input.transport, input.route)) {
     return createTransportAuthorityError(input.route);
@@ -1158,7 +1179,7 @@ async function dispatchResolvedRequest(input: {
           bindingResolution.body,
         ));
     const result = await (bindingResolution.turnAdmission
-      ? runWithRuntimeTurnAdmission(bindingResolution.turnAdmission, async () => {
+      ? runWithRuntimeTurnAdmission({ ...bindingResolution.turnAdmission, onOperationError: input.onOperationError }, async () => {
           const value = await dispatch();
           if (!bindingResolution.register && bindingResolution.principal?.type === "session_binding"
             && bindingResolution.principal.readTargets !== undefined) assertRuntimeTurnAdmission();
@@ -1967,18 +1988,35 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         }
         const historyOperation = sessionHistoryRuntimeOperationByPath.get(new URL(payload.operation.path, "http://127.0.0.1").pathname);
         const backgroundBinding = historyOperation ? resolveBackgroundFailureBinding(options, payload.bindingReference, payload.turnCapability) : undefined;
-        const extensionResponse = await options.routeAgentRuntimeExtension?.({
-          method: payload.operation.method,
-          path: payload.operation.path,
-          body: payload.operation.body,
-          transport: payload.adapter,
-          bindingReference: payload.bindingReference,
-          turnCapability: payload.turnCapability,
-          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
-        }) ?? null;
+        const metadata = { requestId: randomUUID(), operation: historyOperation ?? "unknown", transport: payload.adapter, boundary: "history" } as const;
+        const observe = (observation: Pick<BackgroundOperationObservation, "phase" | "outcome" | "failure" | "result">) => {
+          if (backgroundBinding) options.onBackgroundOperation?.(backgroundBinding.bindingId,
+            { ...metadata, ...observation, timestamp: new Date().toISOString() });
+        };
+        observe({ phase: "request" });
+        let extensionResponse;
+        try {
+          extensionResponse = await options.routeAgentRuntimeExtension?.({
+            method: payload.operation.method,
+            path: payload.operation.path,
+            body: payload.operation.body,
+            transport: payload.adapter,
+            bindingReference: payload.bindingReference,
+            turnCapability: payload.turnCapability,
+            ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
+          }) ?? null;
+        } catch (error) {
+          const failure = classifyBackgroundFailure(error, "history", "BACKGROUND_OPERATION_FAILED");
+          const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
+            [apiSecret, operatorApiSecret, mcpApiSecret, payload.bindingReference ?? "", payload.turnCapability ?? ""]) };
+          if (backgroundBinding) options.onBackgroundOperationFailure?.(backgroundBinding.bindingId, safeFailure);
+          observe({ phase: "response", outcome: "failure", failure: safeFailure });
+          throw error;
+        }
         if (historyOperation) {
           const failure = backgroundOperationFailure(extensionResponse?.value, "history");
           if (backgroundBinding && failure) options.onBackgroundOperationFailure?.(backgroundBinding.bindingId, failure);
+          observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(extensionResponse?.value) });
         }
         if (!extensionResponse) {
           writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Agent runtime extension route was not found."));

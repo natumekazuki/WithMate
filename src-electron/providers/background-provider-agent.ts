@@ -15,8 +15,8 @@ export type BackgroundProviderAgentDependencies = {
   projectBinding: (input: BackgroundAgentInput) => ProviderAgentRuntimeBindingProjection | Promise<ProviderAgentRuntimeBindingProjection>;
 };
 
-function unavailable(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+function unavailable(code: string, message: string, cause?: unknown): Error & { code: string } {
+  return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code });
 }
 
 /** Dispatches an independent execution through the same adapters as interactive turns. */
@@ -25,7 +25,7 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     input.signal.throwIfAborted();
     let catalog: ModelCatalogSnapshot;
     try { catalog = await deps.getModelCatalog(input); }
-    catch { throw unavailable("BACKGROUND_CATALOG_UNAVAILABLE", "背景実行のモデル一覧を取得できません。"); }
+    catch (error) { throw unavailable("BACKGROUND_CATALOG_UNAVAILABLE", "背景実行のモデル一覧を取得できません。", error); }
     const availability = resolveBackgroundProviderAvailability(input.selection, catalog);
     if (availability.status !== "available") {
       throw unavailable(availability.status === "not_configured" ? "BACKGROUND_PROVIDER_NOT_CONFIGURED" : availability.code,
@@ -33,7 +33,7 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     }
     let executionOptions;
     try { executionOptions = resolveBackgroundExecutionOptions(input.selection); }
-    catch { throw unavailable("BACKGROUND_EXECUTION_OPTIONS_INVALID", "背景実行の権限設定が不正またはProviderに未対応です。"); }
+    catch (error) { throw unavailable("BACKGROUND_EXECUTION_OPTIONS_INVALID", "背景実行の権限設定が不正またはProviderに未対応です。", error); }
     const binding = await deps.projectBinding(input);
     if (binding.bindingId !== input.binding.bindingId || binding.bindingReference !== input.binding.bindingReference
       || binding.executionGeneration !== input.binding.executionGeneration || binding.providerId !== availability.providerId
@@ -44,7 +44,7 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     const appSettings = await deps.getAppSettings();
     input.signal.throwIfAborted();
     const adapter = deps.getProviderCodingAdapter(availability.providerId);
-    const systemBodyText = "This is an app-managed background invocation. The input contains registration instructions and reference materials, not a conversation persona. There is no human approval or answer channel; process the supplied materials without interactive clarification. Registration is performed by the bound tools; text output is discarded.";
+    const systemBodyText = "This is an app-managed background invocation. Registration instructions and reference materials are supplied in the input. There is no human approval or answer channel; process the supplied materials without interactive clarification. Registration is performed by the bound tools; final text output is discarded.";
     const prompt: ProviderPromptComposition = {
       systemBodyText,
       inputBodyText: input.userInput,

@@ -67,9 +67,9 @@ function count(f: Fixture) { return f.db.prepare("SELECT COUNT(*) AS count FROM 
 
 // @test-value v2
 // kind = "contract"
-// claim = "二用途のpresetまたは編集本文を受け取った同一Agent実行からMCPと配布CLIで実Memoryを登録する"
+// claim = "presetと空文字列を含む編集本文とCharacter定義をAgentへ渡し、MCPと配布CLIの実登録で本人の語りを保持する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
-// fault = "用途入力がrunOnceへ届かないか、実用途handlerが公開登録からWorkerへ接続されていない"
+// fault = "編集本文にpresetを重ねるか定義を欠落させるか、公開登録から保存・取得の間で本人の語りを改変する"
 // observable = "Agentへ渡る指示本文、MCPとCLIの登録応答、Workerの本文と保存先、runOnceの終了結果"
 // observation_boundary = "public-boundary"
 // scope = "Memory purpose assembly through runOnce, production handlers, MCP, bundled CLI and Worker store"
@@ -80,35 +80,40 @@ test("Memory二用途の実handlerへ同一AgentからMCPと配布CLIで登録�
   const f = await fixture(undefined, backgroundMemoryRegistrationHandlers);
   try {
     seed(f);
-    for (const purpose of purposes) for (const instructionText of [undefined, "サブエージェントを使わない。必要な記録を登録する。"] as const) {
+    for (const purpose of purposes) for (const instructionText of [undefined, "サブエージェントを使わない。必要な記録を登録する。", ""] as const) {
       const ids: string[] = [];
       const calls = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
         const body = agent.userInput.split("# 登録指示本文\n\n")[1]!.split("\n\n# 実行情報")[0];
         assert.equal(body, instructionText ?? MEMORY_REGISTRATION_PRESETS[purpose]);
+        if (purpose === "character-memory") assert.ok(agent.userInput.includes("一人称はうち。親しい口調で話す。"));
         assert.ok(agent.userInput.includes("saved answer"));
         const binding = project(f, agent);
         const { client } = await f.connect(binding, "memoryUrl");
-        const mcpOp = operation(purpose, `${purpose}-${instructionText === undefined ? "preset" : "edited"}-mcp`);
+        const label = instructionText === undefined ? "preset" : instructionText === "" ? "empty" : "edited";
+        const mcpOp = operation(purpose, `${purpose}-${label}-mcp`);
+        if (purpose === "character-memory") mcpOp.input.episode.body = "うち、一緒に話せてうれしかった。この話、また思い出したいな。";
         const mcp = await client.callTool({ name: mcpOp.tool, arguments: mcpOp.input });
         assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
         const mcpValue = mcp.structuredContent as { entry: { id: string } };
         ids.push(mcpValue.entry.id);
-        const cliOp = operation(purpose, `${purpose}-${instructionText === undefined ? "preset" : "edited"}-cli`);
+        const cliOp = operation(purpose, `${purpose}-${label}-cli`);
+        if (purpose === "character-memory") cliOp.input.episode.body = "うち、一緒に話せてうれしかった。この話、また思い出したいな。";
         const child = await cli(f, binding, cliOp);
         assert.equal(child.code, 0, JSON.stringify(child.value));
         ids.push(child.value.entry.id);
         for (const [index, op] of [mcpOp, cliOp].entries()) {
           const saved = (await f.memoryWorker.storage.getEntry(ids[index]))!;
-          assert.equal(saved.body, `body ${op.input.idempotencyKey}`);
+          assert.equal(saved.body, purpose === "character-memory" ? op.input.episode.body : op.input.body);
           assert.equal(saved.owner.type, purpose === "character-memory" ? "character" : "user");
           assert.equal(saved.scope.type, purpose === "character-memory" ? "character" : "global");
         }
       } });
       assert.deepEqual(await runBackgroundMemoryRegistration(calls, { context: context(f, purpose),
-        selection: { providerId: "claude", modelId: "test" }, onAdmitted() {}, materials: "saved answer", instructionText }), { kind: "completed" });
+        selection: { providerId: "claude", modelId: "test" }, onAdmitted() {}, materials: "saved answer", instructionText,
+        ...(purpose === "character-memory" ? { characterDefinition: "一人称はうち。親しい口調で話す。" } : {}) }), { kind: "completed" });
       assert.equal(ids.length, 2);
     }
-    assert.equal(count(f), 8);
+    assert.equal(count(f), 12);
   } finally { await f.close(); }
 });
 

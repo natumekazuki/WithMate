@@ -3,21 +3,24 @@ import type { BackgroundSourceRef } from "../../src-shared/session/background-so
 import { resolveBackgroundExecutionOptions, type BackgroundExecutionSelection } from "../../src-shared/settings/background-settings.js";
 import { getApprovalReviewerOptionsForProvider, getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import { ProviderTurnError } from "./provider-runtime.js";
+import { backgroundErrorDiagnostic, type BackgroundOperationObservation } from "./background-diagnostics.js";
+import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 
 export type BackgroundFailureStage = "prepare" | "capture" | "materials" | "setup" | "admission" | "agent" | "registration" | "history" | "read";
-export type BackgroundFailure = Readonly<{ code: string; reason: string; stage: BackgroundFailureStage }>;
+export type BackgroundFailure = Readonly<{ code: string; reason: string; stage: BackgroundFailureStage; diagnostic?: unknown }>;
 export type BackgroundFailureEvent = BackgroundFailure & Readonly<{
   timestamp: string; purpose: BackgroundPurpose; sourceKind: BackgroundSourceRef["kind"]; sourceSessionId: string;
   providerId?: string; modelId?: string;
+  depth?: string; execution?: BackgroundFailureInput["execution"];
   permissions?: Readonly<{ approvalMode: string; codexReviewer?: string; codexSandboxMode?: string }>;
 }>;
 export type BackgroundFailureInput = Readonly<{
   purpose: BackgroundPurpose; source: BackgroundSourceRef; stage: BackgroundFailureStage;
   error: unknown; selection?: BackgroundExecutionSelection;
+  execution?: Readonly<{ executionId: string; bindingId: string; startedAt: string; endedAt: string; outcome: "failed";
+    scope: BackgroundExecutionScope; operations: readonly (BackgroundOperationObservation & { sequence: number })[] }>;
 }>;
 
-// Only app-owned codes and curated causes cross the diagnostic boundary. Native messages,
-// schema diagnostics, tool payloads and Error stacks are never diagnostic input.
 const causes: Record<string, string> = {
   BACKGROUND_SETTINGS_UNAVAILABLE: "Background settings could not be retrieved.",
   BACKGROUND_PROVIDER_DISABLED: "The selected background provider is disabled.",
@@ -63,7 +66,8 @@ export function backgroundOperationFailure(value: unknown, stage: BackgroundFail
   }
   if ("ok" in value && value.ok === false) return classifyBackgroundFailure(value, stage, "BACKGROUND_OPERATION_FAILED");
   if ("rejected" in value && Array.isArray(value.rejected) && value.rejected.length > 0) {
-    return classifyBackgroundFailure(value.rejected[0], stage, "BACKGROUND_OPERATION_FAILED");
+    return { ...classifyBackgroundFailure(value.rejected[0], stage, "BACKGROUND_OPERATION_FAILED"),
+      diagnostic: backgroundErrorDiagnostic({ errors: value.rejected }) };
   }
   return;
 }
@@ -73,11 +77,12 @@ export function classifyBackgroundFailure(error: unknown, stage: BackgroundFailu
     const providerCodes = { usage_limit: "BACKGROUND_PROVIDER_USAGE_LIMIT", auth: "BACKGROUND_PROVIDER_AUTH", network: "BACKGROUND_PROVIDER_NETWORK",
       provider_unavailable: "BACKGROUND_PROVIDER_UNAVAILABLE", canceled: "BACKGROUND_AGENT_FAILED", unknown: "BACKGROUND_AGENT_FAILED" } as const;
     const code = providerCodes[error.reason];
-    return { stage, code, reason: causes[code]! };
+    return { stage, code, reason: causes[code]!, diagnostic: backgroundErrorDiagnostic(error) };
   }
   const candidate = error && typeof error === "object" && "code" in error ? error.code : undefined;
   const code = typeof candidate === "string" && Object.hasOwn(causes, candidate) ? candidate : fallback;
-  return { stage, code, reason: causes[code] ?? causes.BACKGROUND_AGENT_FAILED! };
+  return { stage, code, reason: causes[code] ?? causes.BACKGROUND_AGENT_FAILED!,
+    diagnostic: backgroundErrorDiagnostic(error && typeof error === "object" && "diagnostic" in error ? error.diagnostic : error) };
 }
 
 export function projectBackgroundFailure(input: BackgroundFailureInput): BackgroundFailureEvent {
@@ -88,11 +93,12 @@ export function projectBackgroundFailure(input: BackgroundFailureInput): Backgro
     sourceKind: input.source.kind, sourceSessionId: input.source.sessionId,
     ...classifyBackgroundFailure(input.error, input.stage, fallback),
     ...(input.selection ? { providerId: input.selection.providerId, modelId: input.selection.modelId } : {}),
+    ...(input.execution ? { execution: input.execution } : {}),
   };
   if (!input.selection) return event;
   try {
     const options = resolveBackgroundExecutionOptions(input.selection);
-    return { ...event, permissions: { approvalMode: options.approvalMode,
+    return { ...event, depth: options.reasoningEffort, permissions: { approvalMode: options.approvalMode,
       ...(getApprovalReviewerOptionsForProvider(input.selection.providerId, options.approvalMode).length ? { codexReviewer: options.codexReviewer } : {}),
       ...(getSandboxOptionsForProvider(input.selection.providerId).length ? { codexSandboxMode: options.codexSandboxMode } : {}) } };
   } catch { return event; }

@@ -13,14 +13,16 @@ import { createWithMateGlossaryMcpServer } from "../platform/mcp/withmate-glossa
 import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-session-graph-mcp.js";
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
-import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import { backgroundMemoryToolOperations, BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { supportsBackgroundRegistration, type BackgroundRegistration } from "../providers/background-registration.js";
 import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
+import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
 
 type Endpoint = {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
   deliveries: Map<RequestId, Promise<void>>;
+  calls: Map<RequestId, { operation: string; toolName: string }>;
 };
 
 type TurnConnection = {
@@ -51,6 +53,7 @@ export type ManagedHttpMcpHostOptions = {
   sessionHistory?: SessionHistoryMcpRegistration;
   backgroundRegistration?: BackgroundRegistration;
   onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
+  onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
 };
 
 function reply(response: ServerResponse, status: number, message: string): void {
@@ -217,6 +220,7 @@ export class ManagedHttpMcpHost {
 
   async #createEndpoint(context: TurnConnection, pathname: string): Promise<Endpoint> {
     const deliveries = new Map<RequestId, Promise<void>>();
+    const calls: Endpoint["calls"] = new Map();
     const deps = {
       env: buildProviderAgentRuntimeBindingEnv(context.binding),
       connection: this.#options.connection,
@@ -252,20 +256,36 @@ export class ManagedHttpMcpHost {
     if (context.binding.background) {
       const send = transport.send.bind(transport);
       transport.send = async (message, options) => {
-        await send(message, options);
-        const stage = pathname === "/mcp/session-history" ? "history" : "registration";
+        const responseId = "id" in message && (typeof message.id === "string" || typeof message.id === "number") ? message.id : undefined;
+        const call = responseId !== undefined ? calls.get(responseId) : undefined;
+        const stage = pathname === "/mcp/session-history" ? "history" : Object.values(BACKGROUND_REGISTRATION_OPERATIONS)
+          .some(({ operation }) => operation === call?.operation) ? "registration" : "read";
+        let failure: BackgroundFailure | undefined;
         if ("result" in message && typeof message.result === "object" && message.result !== null && message.result.isError === true) {
-          const failure = backgroundOperationFailure(message.result.structuredContent, stage)
-            ?? classifyBackgroundFailure({ code: "BACKGROUND_OPERATION_FAILED" }, stage);
-          this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
+          failure = backgroundOperationFailure(message.result.structuredContent, stage)
+            ?? classifyBackgroundFailure({ code: "BACKGROUND_OPERATION_FAILED", message: Array.isArray(message.result.content)
+              ? message.result.content.filter((item: unknown): item is { type: "text"; text: string } => !!item && typeof item === "object"
+                && "type" in item && item.type === "text" && "text" in item && typeof item.text === "string").map((item) => item.text).join("\n") : undefined }, stage);
         } else if ("error" in message) {
-          this.#options.onBackgroundOperationFailure?.(context.binding.bindingId,
-            classifyBackgroundFailure({ code: "BACKGROUND_MCP_INVALID_REQUEST" }, stage));
+          failure = classifyBackgroundFailure(message.error, stage, "BACKGROUND_MCP_INVALID_REQUEST");
         }
+        if (failure) {
+          failure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
+            [context.token, context.binding.bindingReference, context.handle.capability, this.#options.connection.api.apiSecret,
+              this.#options.connection.credential.adapterSecret, this.#options.fallbackAdmissionSecret]) };
+          this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
+        }
+        if (call && responseId !== undefined) {
+          this.#options.onBackgroundOperation?.(context.binding.bindingId, { ...call, requestId: responseId, transport: "mcp",
+            boundary: "mcp", phase: "response", timestamp: new Date().toISOString(), outcome: failure ? "failure" : "success", failure,
+            ...("result" in message ? { result: backgroundOperationResult((message.result as { structuredContent?: unknown }).structuredContent) } : {}) });
+          calls.delete(responseId);
+        }
+        await send(message, options);
       };
     }
     await server.connect(transport);
-    return { server, transport, deliveries };
+    return { server, transport, deliveries, calls };
   }
 
   async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -307,15 +327,20 @@ export class ManagedHttpMcpHost {
       if (!this.#isCurrent(context)) { reply(response, 401, "MCP turn credential is inactive."); return; }
       if ((pathname === "/mcp/session-history" || pathname === "/mcp/memory" && context.binding.background)
         && body && typeof body === "object" && !Array.isArray(body)) {
-        const call = body as { method?: unknown; params?: { name?: unknown } };
+        const call = body as { id?: unknown; method?: unknown; params?: { name?: unknown } };
         if (call.method === "tools/call") {
           const operation = typeof call.params?.name === "string"
             ? (pathname === "/mcp/session-history" ? this.#options.sessionHistory?.toolOperations
               : this.#backgroundMemoryOperations(context))?.[call.params.name] : undefined;
           if (!operation || !this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok) {
             reply(response, 403, "Background operation is not granted or connected.");
-            this.#options.onBackgroundOperationFailure?.(context.binding.bindingId,
-              classifyBackgroundFailure({ code: "SESSION_BINDING_FORBIDDEN" }, pathname === "/mcp/session-history" ? "history" : "registration"));
+            const failure = classifyBackgroundFailure({ code: "SESSION_BINDING_FORBIDDEN", message: "Background operation is not granted or connected." }, pathname === "/mcp/session-history" ? "history" : "registration");
+            this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
+            const metadata = { requestId: typeof call.id === "string" || typeof call.id === "number" ? call.id : "invalid-id",
+              operation: operation ?? "unknown", toolName: typeof call.params?.name === "string" ? call.params.name : "unknown",
+              transport: "mcp", boundary: "mcp" as const, timestamp: new Date().toISOString() };
+            this.#options.onBackgroundOperation?.(context.binding.bindingId, { ...metadata, phase: "request" });
+            this.#options.onBackgroundOperation?.(context.binding.bindingId, { ...metadata, phase: "response", outcome: "failure", failure });
             return;
           }
         }
@@ -343,6 +368,17 @@ export class ManagedHttpMcpHost {
         }
         context.endpoints.set(pathname, endpoint);
       } else { reply(response, 400, "MCP initialization is required."); return; }
+      if (context.binding.background && body && typeof body === "object" && !Array.isArray(body)) {
+        const call = body as { id?: unknown; method?: unknown; params?: { name?: unknown } };
+        if (call.method === "tools/call" && (typeof call.id === "string" || typeof call.id === "number") && typeof call.params?.name === "string") {
+          const toolName = call.params.name;
+          const operation = (pathname === "/mcp/session-history" ? this.#options.sessionHistory?.toolOperations : this.#backgroundMemoryOperations(context))?.[toolName] ?? toolName;
+          endpoint.calls.set(call.id, { operation, toolName });
+          this.#options.onBackgroundOperation?.(context.binding.bindingId, { requestId: call.id, operation, toolName,
+            transport: "mcp", boundary: "mcp",
+            phase: "request", timestamp: new Date().toISOString() });
+        }
+      }
       if (body && typeof body === "object" && !Array.isArray(body)
         && (body as { method?: unknown }).method === "tools/list") {
         const id = (body as { id?: unknown }).id;

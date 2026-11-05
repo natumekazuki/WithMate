@@ -105,6 +105,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     service: memory, characterContextService: characterContext, agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     backgroundRegistration,
     onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
+    onBackgroundOperation: (id, observation) => executions.observeOperation(id, observation),
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath,
     resolveActorSession: (id, sourceKind) => {
@@ -128,6 +129,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const host = new ManagedHttpMcpHost({ connection,
     bindingRegistry: bindings, turns, fallbackAdmissionSecret: "fallback", backgroundRegistration,
     onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
+    onBackgroundOperation: (id, observation) => executions.observeOperation(id, observation),
     sessionHistory: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer } });
   await host.start();
   const executions = new BackgroundExecutionService({ bindings, turns, closeConnection: (handle) => host.closeConnection(handle) });
@@ -151,7 +153,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: options.allowedProjectIds ?? [],
         ...options.authoritySnapshot }, operationGrants, signal });
   }
-  function project(execution: BackgroundExecution): ProviderAgentRuntimeBindingProjection {
+  function project(execution: Pick<BackgroundExecution, "binding" | "handle" | "signal" | "admission">): ProviderAgentRuntimeBindingProjection {
     const binding = { ...execution.binding, memoryRuntimeOwner: owner };
     return { ...binding, managedMcp: host.issue(binding, execution.handle, execution.signal) };
   }

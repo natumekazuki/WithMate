@@ -1,5 +1,6 @@
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import type { BackgroundFailure } from "./background-failure.js";
+import type { BackgroundOperationObservation } from "./background-diagnostics.js";
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
 import type { RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { AgentRuntimeBindingRegistry, IssueAgentRuntimeBindingInput, ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
@@ -11,9 +12,12 @@ export type BackgroundExecution = Readonly<{
   signal: AbortSignal;
   admission: RuntimeTurnAdmission;
   readonly failure?: BackgroundFailure;
+  startedAt: string;
+  operations: readonly (BackgroundOperationObservation & { sequence: number })[];
 }>;
 
-type ActiveExecution = { execution: BackgroundExecution; abort: AbortController; failure?: BackgroundFailure; removeAbort?: () => void };
+type ActiveExecution = { execution: BackgroundExecution; abort: AbortController; failure?: BackgroundFailure; removeAbort?: () => void;
+  operations: (BackgroundOperationObservation & { sequence: number })[] };
 
 /** In-memory invocation lifetime only; it does not enqueue work or advance processing checkpoints. */
 export class BackgroundExecutionService {
@@ -50,12 +54,13 @@ export class BackgroundExecutionService {
     const abort = new AbortController();
     const execution: BackgroundExecution = Object.freeze({ binding: { ...binding, turnCapability: handle.capability }, handle,
       get failure() { return active.failure; },
+      startedAt: new Date().toISOString(), get operations() { return active.operations; },
       signal: abort.signal, admission: { state: handle.revocationState, isCurrent: () => {
         const current = this.deps.bindings.resolveIdentity(binding.bindingReference);
         return this.#active.get(binding.bindingId)?.execution === execution && current.ok
           && current.binding.bindingId === binding.bindingId && current.binding.executionGeneration === binding.executionGeneration;
       } } });
-    const active: ActiveExecution = { execution, abort };
+    const active: ActiveExecution = { execution, abort, operations: [] };
     this.#active.set(binding.bindingId, active);
     if (input.signal) {
       const cancel = () => this.cancel(binding.bindingId);
@@ -73,6 +78,13 @@ export class BackgroundExecutionService {
     const active = this.#active.get(bindingId);
     if (!active || active.failure || active.execution.signal.aborted) return;
     active.failure = failure;
+  }
+
+  observeOperation(bindingId: string, observation: BackgroundOperationObservation): void {
+    const active = this.#active.get(bindingId);
+    if (!active || active.execution.signal.aborted) return;
+    active.operations.push({ ...observation, sequence: active.operations.length + 1 });
+    if (observation.failure) this.reportOperationFailure(bindingId, observation.failure);
   }
 
   cancel(bindingId: string): void {
