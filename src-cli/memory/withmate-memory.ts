@@ -233,6 +233,13 @@ Connection options:
 Validation:
   validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
 
+Registration inputs:
+  append accepts a target and either the single-entry fields or entries[]. Each entry has its own idempotencyKey.
+  character-memory-append-episode accepts either episode/idempotencyKey or episodes[] of those pairs.
+  Registration arrays have no fixed item-count maximum; per-item text and attachment limits still apply.
+  Batch results use input index, saved/failed/unknown/not_run and the existing single-item result.
+  Processing stops at the first failure; confirmed items remain saved. Do not automatically retry a whole batch.
+
 Examples:
   withmate-memory instances
   withmate-memory status --all

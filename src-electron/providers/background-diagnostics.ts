@@ -34,7 +34,7 @@ export function backgroundErrorDiagnostic(value: unknown, secrets: readonly stri
   return selected;
 }
 
-const resultKeys = new Set(["ok", "status", "id", "entryId", "objectId", "bytesWritten", "files", "memoryEntryId", "eventId", "episodeId", "characterId", "sessionId", "scope", "owner", "project", "character", "target", "targetId", "targetType", "type", "kind", "effect", "version", "saved", "accepted", "rejected", "results", "items", "events", "episode", "entry", "memory", "appraisal", "duplicate", "replayed", "created", "updated", "count", "savedCount", "candidateIndex", "error", "details"]);
+const resultKeys = new Set(["ok", "status", "index", "result", "id", "entryId", "objectId", "bytesWritten", "files", "memoryEntryId", "eventId", "episodeId", "characterId", "sessionId", "scope", "owner", "project", "character", "target", "targetId", "targetType", "type", "kind", "effect", "version", "saved", "accepted", "rejected", "results", "items", "events", "episode", "entry", "memory", "appraisal", "duplicate", "replayed", "created", "updated", "count", "savedCount", "candidateIndex", "error", "details"]);
 
 /** Registration receipts identify effects without retaining memory bodies or history messages. */
 export function backgroundOperationResult(value: unknown): unknown {

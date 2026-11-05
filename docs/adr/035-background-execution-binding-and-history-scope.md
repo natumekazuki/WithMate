@@ -6,6 +6,8 @@ Accepted
 
 背景のfile／exportを許可しない従前の範囲は、[背景Memoryの添付と必要時復元](#背景memoryの添付と必要時復元)の後継判断で置き換える。Memory target認可と呼出ごとのfile認可は維持・分離する。
 
+登録を一件の公開入力へ限定する範囲とAffectの候補件数上限は、[一括登録と件数上限](#一括登録と件数上限)の後継判断で置き換える。既存項目単位の保存・認可・原子性は維持する。
+
 三用途に共通するcheckpointと保存確定・復旧の判断は、[適用範囲](#適用範囲)の後継判断で置き換える。#909のCharacter Memory・対象Memoryに固有の開始位置と保存停止の扱いは[#909後継判断](#909-memory記録の後継判断)に定める。共通binding／履歴read／admissionと既存データ保護の判断は維持する。
 
 2026-11-03に、三用途の専用構造化finalとnative完了後の保存phaseを[背景実行内の直接登録](#背景実行内のmcpcli直接登録)へ置き換える判断を採用した。現在の適用範囲は末尾の[共通基盤への適用](#共通基盤への適用)に示す。以下の従前判断の本文は保持する。
@@ -180,3 +182,9 @@ native文脈と呼出ごとのbinding／credential／scopeの寿命を分ける�
 Memory targetの許可だけではElectron側のfile I/O権限を証明しないため、毎呼出のbindingへfile scopeを捕捉する。取込はsource Workspace・許可Additional Directory・既存SessionFolder、復元はそのSessionFolder内memory-exportsだけに限定する。AuxiliaryのSessionFolderは既存の親Main共有を用いる。書込不可の用途設定では復元を拒否し、全FS設定でもtool上限は拡大しない。実体pathと現在admissionをI/O境界で確認し、root外のsymlink／junction、既存出力の上書きを拒否する。
 
 添付選択・必要時復元はAIの判断とし、本文は添付なしでも主題・保持理由を理解できる形を保つ。継続threadの過去応答や失敗事実を機械的な再添付・再exportの根拠とせず、確定済み保存を維持する。復元の応答喪失を未実行扱いで自動retryしない。現行仕様は[Background Execution](../design/background-execution.md#背景memoryの添付と必要時復元)を正本とする。
+
+## 一括登録と件数上限
+
+2026-11-06の追加要求により採用。通常MemoryとCharacter Memoryは同じ既存公開操作へ非空のentry／episode配列を渡せるようにし、Affect候補の最大10件を撤廃する。登録件数・呼出回数に別の固定上限を設けず、記録の粒度と必要件数はAIが判断する。本文・添付等の項目単位制約と通信・Provider・認可の制限は維持する。
+
+公開tagで成立している単件入力／応答は保持し、同じ操作の代替配列形式として追加する。項目入力を事前検証し、入力順に既存単件保存を利用する。失敗・結果不明・共通実行条件喪失で停止し、indexごとに確定済・失敗・未実行・結果不明を返す。既存item idempotencyとentry添付原子性を維持し、先行確定分を巻き戻さず、新batch DB・台帳・永続queue・全件transaction・即時全体再送を設けない。現行契約は[Background Execution](../design/background-execution.md#一括登録と項目別結果)を正本とする。

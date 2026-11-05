@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { BackgroundMemoryFileAccess } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { BackgroundMemoryFileAccessError } from "./background-memory-file-access.js";
-import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, reportRuntimeTurnOperationError, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
   createMemoryAppendResponse,
@@ -19,6 +19,7 @@ import {
   createMemoryMoveEntryResponse,
   createMemorySearchResponse,
   type MemoryAppendResponse,
+  type MemoryAppendEntriesResponse,
   type MemoryAuditResponse,
   type MemoryErrorResponse,
   type MemoryExportFilesResponse,
@@ -39,6 +40,7 @@ import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError, MemoryFor
 import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../../src-shared/settings/provider-settings-state.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryAppendEntriesRequest,
   validateMemoryAuditRequest,
   validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
@@ -777,6 +779,45 @@ export class MemoryV6Service {
       cursor: validated.value.cursor,
     });
     return createMemoryListTagsResponse(page.items, page.nextCursor);
+  }
+
+  async appendEntries(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryAppendEntriesResponse>> {
+    const permissionError = requirePrincipalPermission(principal, "memory.append");
+    if (permissionError) return permissionError;
+    if (!principal) throw new Error("Memory principal permission check failed.");
+    const validated = validateMemoryAppendEntriesRequest(request);
+    if (!validated.ok) return toMemoryErrorResponse({ ...validated.error, effect: "none" });
+    const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    if (!resolved.ok) return toMemoryErrorResponse(resolved.error);
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !principal.writeTargets?.some((target) => sameTarget(target, resolved.target))) return toMemoryErrorResponse(memoryForbiddenError());
+    const results: MemoryAppendEntriesResponse["results"] = [];
+    let failure: MemoryError | undefined;
+    for (const [index, entry] of validated.value.entries.entries()) {
+      if (failure) { results.push({ index, status: "not_run" }); continue; }
+      try { assertRuntimeTurnAdmission(); }
+      catch (error) {
+        if (!(error instanceof RuntimeTurnInactiveError)) throw error;
+        failure = { code: "MEMORY_FORBIDDEN", message: "The captured runtime turn is no longer active.", effect: "none" };
+        results.push({ index, status: "not_run" });
+        continue;
+      }
+      let result: MemoryV6ServiceResult<MemoryAppendResponse>;
+      try { result = await this.append(principal, { ...entry, tags: entry.tags.map(({ type, value }) => ({ type, value })),
+        schemaVersion: validated.value.schemaVersion, target: validated.value.target }); }
+      catch (error) {
+        reportRuntimeTurnOperationError(error);
+        result = toMemoryErrorResponse(error instanceof RuntimeTurnInactiveError
+          ? { code: "MEMORY_FORBIDDEN", message: "The captured runtime turn is no longer active.", effect: "none" }
+          : { code: "MEMORY_STORAGE_UNAVAILABLE", message: "Memory entry save outcome could not be confirmed.", retryable: false, effect: "unknown" });
+      }
+      if ("error" in result) {
+        failure = { ...result.error, effect: result.error.effect ?? "none" };
+        results.push({ index, status: failure.effect === "unknown" ? "unknown" : "failed", result: toMemoryErrorResponse(failure) });
+      } else results.push({ index, status: "saved", result });
+    }
+    return { schemaVersion: validated.value.schemaVersion, results,
+      ...(failure ? { error: { ...failure, effect: results.some((item) => item.status === "saved") ? "partial" : failure.effect } } : {}) };
   }
 
   async append(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryAppendResponse>> {

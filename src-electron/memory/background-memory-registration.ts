@@ -23,13 +23,18 @@ export const backgroundMemoryRegistrationHandlers: Required<Pick<BackgroundRegis
     if (!services.character) return createCharacterContextError("storage_unavailable", "Character registration is unavailable.", {
       retryable: false, conversationMayContinue: true, effect: "none",
     });
-    return services.character.appendEpisode(input.body, input.transport,
-      { ...input.principal, sourceKind: input.scope.history.source.kind });
+    const principal = { ...input.principal, sourceKind: input.scope.history.source.kind };
+    return input.body && typeof input.body === "object" && "episodes" in input.body
+      ? services.character.appendEpisodes(input.body, input.transport, principal)
+      : services.character.appendEpisode(input.body, input.transport, principal);
   },
   "target-memory": (input, services) => {
     if (!hasSavedTerminalEvidence(input)) return createMemoryErrorResponse({ code: "MEMORY_INVALID_REQUEST",
       message: "No saved terminal Turn belongs to the authorized history.", field: "history", effect: "none" });
-    return services.memory.append({ ...input.principal, sourceKind: input.scope.history.source.kind }, input.body);
+    const principal = { ...input.principal, sourceKind: input.scope.history.source.kind };
+    return input.body && typeof input.body === "object" && "entries" in input.body
+      ? services.memory.appendEntries(principal, input.body)
+      : services.memory.append(principal, input.body);
   },
 };
 

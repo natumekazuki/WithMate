@@ -214,6 +214,8 @@ usage は少なくとも次を区別できるようにする。
 
 既存 `memory.append` の request body に `files` を追加する。file 付き append は `--stdin` / `--file` による structured request を正本にし、複雑な request を CLI flags へすべて展開しない。
 
+一括入力の`entries`でもfilesは各entryに指定し、添付10件の上限をentryごとに判定する。異なるentryの添付を合算して一entryの上限にしない。保存・quota・idempotencyは既存entry単位で扱い、失敗entryを本文だけの成功へ変換せず、先行確定entryとその添付を保持する。
+
 ```ts
 type MemoryAppendFileInput = {
   path: string;

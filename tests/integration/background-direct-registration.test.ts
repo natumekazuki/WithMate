@@ -478,9 +478,7 @@ test("背景Affectの候補値と実sourceを保存前に検証する", async ()
       assert.ok(((await direct(f, binding, op)).value as Record<string, unknown>).error);
     }
     assert.notEqual((await cli(f, binding, { ...original, input: { candidates: [invalid[0]] } })).code, 0);
-    for (const candidates of [[], Array.from({ length: 11 }, () => candidate)]) {
-      assert.ok(((await direct(f, binding, { ...original, input: { candidates } })).value as Record<string, unknown>).error);
-    }
+    assert.ok(((await direct(f, binding, { ...original, input: { candidates: [] } })).value as Record<string, unknown>).error);
     assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
     for (const phase of ["failed", "canceled"]) {
       f.db.prepare("UPDATE session_turns_v6 SET phase = ? WHERE id = 1").run(phase);

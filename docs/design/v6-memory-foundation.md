@@ -459,6 +459,12 @@ type MemoryAppendResponse = {
 
 `created`は元のidempotent append operationが新entryを作成したかを表す。
 
+同じ公開操作は、共通targetと`entries: [{ kind, title, body, preview, idempotencyKey, ... }]`による一括入力も受ける。各itemは独立したentryとして既存単件appendへ保存し、本文や添付を合併しない。配列は非空・件数上限なしで、単件fieldとの混在を拒否する。各itemのkeyは必須とし、本文8,000文字、一entryの添付10件等の既存項目制約を維持する。
+
+一括応答は`results`の各indexに`status: saved | failed | unknown | not_run`と、実行した項目の既存単件`result`を返す。失敗時はtop errorも返し、確認済保存prefixがあれば全体effect partial、結果不明のitemはeffect unknownを維持する。入力全体を事前検証し、保存開始後は最初の失敗・取消・実行条件喪失で停止する。単件input／response、項目単位idempotency、entry＋添付の原子性は維持する。実行基盤と正常／背景の共通契約は[Background Execution](background-execution.md#一括登録と項目別結果)を参照する。
+
+`character_memory.append_episode`も単件に加え`episodes: [{ episode, idempotencyKey }]`を受け、同じindex／status／既存単件resultで独立episodeを返す。Characterとsourceは現在bindingで共通に確定し、itemごとの指定で範囲を広げない。Affectの候補配列には固定件数上限を設けず、候補単位の既存保存・拒否・部分失敗を維持する。
+
 入力の`tags`省略は空配列と同じ正規化値になり、タグを自動生成しない。`title`と`preview`は検索・一覧用の明示入力を必須とし、本文から自動補完しない。正規化後の`MemoryAppendRequest`と保存entryには常に`tags`配列がある。
 
 省略と明示的な空配列は、同じidempotency keyで再送しても同一requestとして扱う。既存の全項目明示入力と保存形式は維持する。idempotent replayでは現在のpermission、entry state、owner / scope accessを再検証し、現在のentryからsummaryを再構築する。idempotency storageには旧title / preview / tagsを含むresponse JSONを保存しない。

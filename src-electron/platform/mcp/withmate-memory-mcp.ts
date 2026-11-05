@@ -695,6 +695,44 @@ const mutationToolOutputSchema = createToolOutputSchema(
   ["schemaVersion", "characterId", "operation", "entry", "readBack", "sourceVersion"],
 );
 
+const appendEpisodesOutputSchema = z.object({
+  schemaVersion: z.literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
+  results: z.array(z.union([
+    z.object({ index: z.number().int().nonnegative(), status: z.literal("saved"), result: mutationOutputSchema.options[0] }).strict(),
+    z.object({ index: z.number().int().nonnegative(), status: z.enum(["failed", "unknown"]), result: characterErrorSchema }).strict(),
+    z.object({ index: z.number().int().nonnegative(), status: z.literal("not_run") }).strict(),
+  ])),
+  error: characterErrorSchema.shape.error.optional(),
+}).strict();
+
+const appendEpisodeToolOutputSchema = mutationOutputSchema.options[0].partial().extend({
+  schemaVersion: z.literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
+  results: appendEpisodesOutputSchema.shape.results.optional(),
+  error: characterErrorSchema.shape.error.optional(),
+}).strict().superRefine((value, context) => {
+  if (!mutationOutputSchema.safeParse(value).success && !appendEpisodesOutputSchema.safeParse(value).success) {
+    context.addIssue({ code: "custom", message: "Result must match a single episode result, batch results or Character error." });
+  }
+}).meta({ oneOf: [
+  { required: ["characterId", "operation", "entry", "readBack", "sourceVersion"], not: { anyOf: [{ required: ["results"] }, { required: ["error"] }] } },
+  { required: ["results"], not: { required: ["characterId"] } },
+  { required: ["error"], not: { anyOf: [{ required: ["results"] }, { required: ["characterId"] }] } },
+] });
+
+const appendEpisodeInputSchema = z.object({
+  idempotencyKey: z.string().min(1).optional(),
+  episode: episodeSchema.optional(),
+  episodes: z.array(z.object({ idempotencyKey: z.string().min(1), episode: episodeSchema }).strict()).min(1).optional(),
+}).strict().superRefine((value, context) => {
+  const batch = value.episodes !== undefined;
+  if (batch ? value.idempotencyKey !== undefined || value.episode !== undefined : value.idempotencyKey === undefined || value.episode === undefined) {
+    context.addIssue({ code: "custom", message: "Provide either idempotencyKey and episode, or episodes, without mixing them." });
+  }
+}).meta({ oneOf: [
+  { required: ["idempotencyKey", "episode"], not: { required: ["episodes"] } },
+  { required: ["episodes"], not: { anyOf: [{ required: ["idempotencyKey"] }, { required: ["episode"] }] } },
+] });
+
 export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
   "Normal turns inject Character Affect state, not Memory. Use character_context.get to refresh missing, stale, or insufficient Affect context; its optional query explicitly retrieves Character Memory.",
   "When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
@@ -719,7 +757,7 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_affect.appraise",
-    description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. In normal turns, an episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry. Background Affect instead accepts domain values and sourceTurnId only; the app supplies timestamp, identity and a new key for each call. Background calls cannot include memoryEpisode or expectedVersion and are not idempotent retries.",
+    description: "Validate and record one or multiple candidates for the Character's own affect; this does not diagnose the user. In normal turns, an episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry. Background Affect instead accepts domain values and sourceTurnId only; the app supplies timestamp, identity and a new key for each call. Background calls cannot include memoryEpisode or expectedVersion and are not idempotent retries.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
@@ -729,7 +767,7 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_memory.append_episode",
-    description: "Append one standalone shared Character episode for the current background Memory task or an explicit normal-turn remember request. Episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Do not also save the same episode through general Memory. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
+    description: "Append one or multiple independent standalone shared Character episodes for the current background Memory task or an explicit normal-turn remember request. Use episode with idempotencyKey, or episodes with a key for each item. Batch results retain input indices and stop after the first failure or unknown outcome; remaining items are not_run. Episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Do not also save the same episode through general Memory. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -1045,7 +1083,7 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
     ...definitions.get("character_affect.appraise")!,
     inputSchema: z.object({
       expectedVersion: z.string().min(1).optional(),
-      candidates: z.array(z.union([affectCandidateSchema, backgroundAffectCandidateSchema])).min(1).max(10),
+      candidates: z.array(z.union([affectCandidateSchema, backgroundAffectCandidateSchema])).min(1),
     }).strict(),
     outputSchema: appraisalToolOutputSchema,
   }, async (input) => toolResult(await callRuntime(
@@ -1075,11 +1113,8 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
 
   server.registerTool("character_memory.append_episode", {
     ...definitions.get("character_memory.append_episode")!,
-    inputSchema: z.object({
-      idempotencyKey: z.string().min(1),
-      episode: episodeSchema,
-    }).strict(),
-    outputSchema: mutationToolOutputSchema,
+    inputSchema: appendEpisodeInputSchema,
+    outputSchema: appendEpisodeToolOutputSchema,
   }, async (input) => toolResult(await callRuntime(
     "/v1/character_memory/append_episode",
     buildWithMateMemoryMcpRuntimeBody("character_memory_append_episode", input),

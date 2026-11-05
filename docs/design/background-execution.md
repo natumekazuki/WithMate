@@ -83,6 +83,18 @@ Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決�
 
 登録は同じadmission内で用途handlerから既存application／Worker mutationへ進む。write結果へread用の返却前失効assertを適用せず、commit確認後の取消で成功応答を効果なしへ上書きしない。未確定writeの失効は既存保存境界が担う。Handler接続だけで本番生成・起動や用途検証の完成を意味しない。
 
+## 一括登録と項目別結果
+
+通常会話・背景とも同じ既存操作を使う。`memory.append`／CLI `append`は共通`target`と`entries`、`character_memory.append_episode`／CLI `character-memory-append-episode`は`episodes`で、独立した複数記録を一呼出に渡せる。配列内の各項目に既存の単件内容とidempotency keyを指定し、本文を一記録へ連結しない。公開済みの単件入力・単件応答も維持し、単件fieldと配列の混在は拒否する。入力の正本はMCP schema／CLI helpであり、用途指示へ仕様を重複記載しない。
+
+配列は非空とするが、登録件数の固定上限はない。Affectの既存candidates配列にも固定件数上限を設けず、MCP schema・背景handler・application validatorを揃える。同じ実行内の登録呼出回数、元Turnや背景実行全体の合計登録件数にも独自上限を設けない。本文8,000文字、一entryの添付10件、title／preview／tags等の既存項目制約、fileサイズ・quota、通信／Provider実制限、検索件数・履歴page上限は維持する。複数entryの添付数を合算して一entry上限へ適用しない。
+
+共通条件と配列内の全項目入力を保存開始前に検証する。不正入力による要求全体の拒否はeffect noneであり、処理開始後の部分保存とは区別する。処理は入力順に既存単件applicationを呼び、現在のprincipal・binding／admission・source／target・file認可を各項目へ適用する。別batch用DB、永続queue、全件transaction、保存件数台帳は持たない。
+
+一括Memory／episode応答の`results`は入力順の`index`と`status`を持つ。`saved`は既存単件成功を`result`に、`failed`／`unknown`は既存単件errorを`result`に保持し、`not_run`は未実行を表す。一項目の失敗・結果不明または共通実行条件喪失で停止し、残りをnot_runにする。開始前から失効している項目は保存を試さない。途中失敗ではtop-level errorも返し、確定済prefixがある場合は全体effect partialとする。結果不明の項目のeffect unknownはその項目に残す。Affectは既存の候補単位saved／rejected／partial failure契約を使う。
+
+先行確定項目は巻き戻さず、一entryと添付の原子性は既存Protected Object契約に従う。応答喪失後は各項目の既存keyと変更のない入力で照合でき、確定済entry・添付を重複作成しない。batch全体の即時自動再送は行わない。次TurnではAIが各結果と現在の保存状態から必要な再検討対象を選び、結果不明を全件未保存とは扱わない。Affectの新しい候補登録を既存eventの自動replayとみなさない。
+
 ## 背景Memoryの添付と必要時復元
 
 `target-memory`は既存`memory.append.files`で、許可targetへ本文とProtected Objectを登録できる。Character MemoryのepisodeとAffect候補には添付入力を追加しない。三用途とも既存Memory読取対象に限り、metadataで判断して必要な場合だけ`memory.get_file`／`memory.export_files`を利用できる。復元はローカルへのwriteであり、read permissionだけでは許可しない。登録handlerの接続有無とは独立するが、既存source読取portとその用途の対応source kindは必須とする。

@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 
 import { createMemoryErrorResponse, type MemoryAuditResponse, type MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
+import { validateMemoryAppendEntriesRequest } from "../../src-shared/memory/memory-validation.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import {
   LOCAL_USER_MEMORY_PERMISSIONS,
@@ -415,6 +416,7 @@ async function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6
     return service.listTags(principal, body);
   }
   if (route === "append") {
+    if (body && typeof body === "object" && "entries" in body) return service.appendEntries(principal, body);
     return service.append(principal, body);
   }
   if (route === "forget") {
@@ -494,7 +496,9 @@ async function routeCharacterContextRequest(
     return service.searchMemory(body, transport, principal);
   }
   if (route === "character_memory_append_episode") {
-    return service.appendEpisode(authorizedBody, transport, principal);
+    return authorizedBody && typeof authorizedBody === "object" && "episodes" in authorizedBody
+      ? service.appendEpisodes(authorizedBody, transport, principal)
+      : service.appendEpisode(authorizedBody, transport, principal);
   }
   if (route === "character_memory_correct") {
     return service.correctMemory(authorizedBody, transport, principal);
@@ -958,7 +962,8 @@ function projectAgentBoundResponse(
   result: unknown,
   authority: ProviderAgentRuntimeAuthoritySnapshot | null,
 ): unknown {
-  if (isMemoryErrorResponse(result) || isCharacterContextError(result) || route.startsWith("character_")) {
+  if (route.startsWith("character_") || (isMemoryErrorResponse(result)
+    && !(route === "append" && "results" in result && Array.isArray(result.results)))) {
     return result;
   }
   const targetForSelector = (value: unknown): Record<string, unknown> | null => {
@@ -1531,6 +1536,10 @@ function validateMcpGeneralMutationPolicy(
       })
   );
   if (route === "append") {
+    if ("entries" in request) {
+      const validated = validateMemoryAppendEntriesRequest(request);
+      return validated.ok ? null : createMemoryErrorResponse({ ...validated.error, effect: "none" });
+    }
     return requireText("idempotencyKey");
   }
   if (route === "move_entry") {

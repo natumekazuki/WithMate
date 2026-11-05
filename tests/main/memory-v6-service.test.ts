@@ -2177,3 +2177,66 @@ describe("MemoryV6Service", () => {
     });
   });
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "一括Memoryは保存後の結果不明と保存前拒否の効果を区別し、項目keyの再送で確定済みentryを重複作成しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#一括登録と項目別結果" }
+// fault = "throwを全件未保存と扱う、後続を実行する、または同一要求の再送でentryを重複作成する"
+// observable = "index別status/effect、保存後に注入した例外より後の呼出回数、再送したentry IDと保存件数、保存前domain拒否の明示effect none"
+// observation_boundary = "consumer"
+// scope = "MemoryV6Service batch orchestration using real item persistence with a post-commit response-loss fault"
+// lifecycle = "permanent"
+// distinction = "正常応答と既知のimport失敗の統合testでは、保存後に結果を失った項目の保守的分類とreplayを再現できない"
+// @end-test-value
+it("一括Memoryの途中結果不明は保存済みを保持し項目keyで再送できる", async () => {
+  await withService(async ({ service, storage, dbPath }) => {
+    const original = service.append.bind(service);
+    let calls = 0;
+    service.append = async (principal, request) => {
+      calls++;
+      const result = await original(principal, request);
+      if (calls === 2) throw new Error("Injected response loss after item commit");
+      return result;
+    };
+    const { schemaVersion, target, ...content } = appendRequest();
+    const request = { schemaVersion, target, entries: ["first", "uncertain", "remaining"].map((key) => ({
+      ...content, title: key, idempotencyKey: `batch-${key}`,
+    })) };
+    const result = await service.appendEntries(createLocalUserMemoryPrincipal(), request);
+    assert.ok("results" in result);
+    assert.deepEqual(result.results.map((item) => item.status), ["saved", "unknown", "not_run"]);
+    assert.equal(result.error?.effect, "partial");
+    assert.equal(calls, 2);
+    const first = result.results[0]!;
+    assert.equal(first.status, "saved");
+    assert.equal(storage.getEntry(first.result.entry.id)?.body, content.body);
+    const uncertain = result.results[1]!;
+    assert.equal(uncertain.status, "unknown");
+    assert.equal(uncertain.result.error.effect, "unknown");
+    const db = new DatabaseSync(dbPath);
+    try {
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 2);
+      service.append = original;
+      const replay = await service.appendEntries(createLocalUserMemoryPrincipal(), request);
+      assert.ok("results" in replay);
+      assert.equal(replay.error, undefined);
+      assert.deepEqual(replay.results.map((item) => item.status), ["saved", "saved", "saved"]);
+      const replayed = replay.results[0]!;
+      assert.equal(replayed.status, "saved");
+      assert.equal(replayed.result.entry.id, first.result.entry.id);
+      assert.equal(replayed.result.replayed, true);
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 3);
+      service.append = async () => ({ schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        error: { code: "MEMORY_TARGET_NOT_FOUND", message: "Target removed before item dispatch." } });
+      const denied = await service.appendEntries(createLocalUserMemoryPrincipal(), request);
+      assert.ok("results" in denied);
+      assert.equal(denied.error?.effect, "none");
+      assert.deepEqual(denied.results.map((item) => item.status), ["failed", "not_run", "not_run"]);
+      const rejection = denied.results[0]!;
+      assert.equal(rejection.status, "failed");
+      assert.equal(rejection.result.error.effect, "none");
+      assert.equal(db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 3);
+    } finally { db.close(); }
+  });
+});
