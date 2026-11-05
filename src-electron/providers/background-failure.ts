@@ -6,7 +6,7 @@ import { ProviderTurnError } from "./provider-runtime.js";
 import { backgroundErrorDiagnostic, type BackgroundOperationObservation } from "./background-diagnostics.js";
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 
-export type BackgroundFailureStage = "prepare" | "capture" | "materials" | "setup" | "admission" | "agent" | "registration" | "history" | "read";
+export type BackgroundFailureStage = "prepare" | "capture" | "materials" | "setup" | "admission" | "agent" | "registration" | "history" | "read" | "file";
 export type BackgroundFailure = Readonly<{ code: string; reason: string; stage: BackgroundFailureStage; diagnostic?: unknown }>;
 export type BackgroundFailureEvent = BackgroundFailure & Readonly<{
   timestamp: string; purpose: BackgroundPurpose; sourceKind: BackgroundSourceRef["kind"]; sourceSessionId: string;
@@ -93,7 +93,8 @@ export function projectBackgroundFailure(input: BackgroundFailureInput): Backgro
     sourceKind: input.source.kind, sourceSessionId: input.source.sessionId,
     ...classifyBackgroundFailure(input.error, input.stage, fallback),
     ...(input.selection ? { providerId: input.selection.providerId, modelId: input.selection.modelId } : {}),
-    ...(input.execution ? { execution: input.execution } : {}),
+    ...(input.execution ? { execution: { ...input.execution, scope: { purpose: input.execution.scope.purpose,
+      history: input.execution.scope.history, memoryTargets: input.execution.scope.memoryTargets } } } : {}),
   };
   if (!input.selection) return event;
   try {

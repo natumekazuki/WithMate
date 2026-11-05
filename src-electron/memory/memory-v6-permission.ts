@@ -1,5 +1,6 @@
 import type { MemoryError, MemoryPermission } from "../../src-shared/memory/memory-contract.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
+import type { BackgroundMemoryFileAccess } from "../../src-shared/agent-runtime/background-execution-scope.js";
 
 export type MemoryV6LocalUserPrincipal = {
   type: "local_user";
@@ -19,6 +20,7 @@ export type MemoryV6SessionBindingPrincipal = {
   allowedProjectIds?: readonly string[];
   /** Present only for captured background reads; an empty set permits no target. */
   readTargets?: readonly MemoryV6ResolvedTarget[];
+  fileAccess?: BackgroundMemoryFileAccess;
   /** Captured registration targets, present only after purpose/source/handler authorization. */
   writeTargets?: readonly MemoryV6ResolvedTarget[];
   permissions: readonly MemoryPermission[];

@@ -4,6 +4,8 @@
 
 Accepted
 
+背景のfile／exportを許可しない従前の範囲は、[背景Memoryの添付と必要時復元](#背景memoryの添付と必要時復元)の後継判断で置き換える。Memory target認可と呼出ごとのfile認可は維持・分離する。
+
 三用途に共通するcheckpointと保存確定・復旧の判断は、[適用範囲](#適用範囲)の後継判断で置き換える。#909のCharacter Memory・対象Memoryに固有の開始位置と保存停止の扱いは[#909後継判断](#909-memory記録の後継判断)に定める。共通binding／履歴read／admissionと既存データ保護の判断は維持する。
 
 2026-11-03に、三用途の専用構造化finalとnative完了後の保存phaseを[背景実行内の直接登録](#背景実行内のmcpcli直接登録)へ置き換える判断を採用した。現在の適用範囲は末尾の[共通基盤への適用](#共通基盤への適用)に示す。以下の従前判断の本文は保持する。
@@ -170,3 +172,11 @@ WithMateの履歴範囲・owner／保存先・入力・用途operation grantは�
 native文脈と呼出ごとのbinding／credential／scopeの寿命を分ける。resumeには現在の接続情報を渡し、各呼出終了で認可を失効させる。native履歴は文脈として利用できるが、現在の保存状態・権限の正本とはしない。失敗しても利用可能なthreadは保持し、次の会話Turnによる用途発火へ失敗事実と新しい材料を渡す。即時の自動retryや、失敗を全件未保存とする補償は行わない。
 
 発火頻度の位置はAIの処理済み範囲と分離し、生成・登録対象をアプリのprocessing区間へ固定しない。AIは認可された保存済みhistory内で必要な会話・操作結果・既存記録・過去Turnの再検討を選ぶ。実source・owner・Character・許可target・terminal Turn・履歴末尾windowと失効write拒否は維持する。再起動後は継続状態を復元せず、新しい会話Turnから新threadを開始する。既存Memory／Affectを削除・再生成せず、独自の完了台帳・hash・再送DBは設けない。現行仕様は[Background Execution](../design/background-execution.md#native文脈の継続と失敗情報)に示す。
+
+## 背景Memoryの添付と必要時復元
+
+2026-11-06、ユーザー承認により採用。背景target-memoryの既存append.filesと、三用途の許可されたMemory参照に必要な既存get_file／export_filesを接続する。従前のfile／export一律除外はこの範囲で適用対象外とし、当時の本文は保持する。新しいstore・復元API・台帳は設けず、既存Protected Objectの検証・暗号化・quota・原子保存・idempotencyを利用する。
+
+Memory targetの許可だけではElectron側のfile I/O権限を証明しないため、毎呼出のbindingへfile scopeを捕捉する。取込はsource Workspace・許可Additional Directory・既存SessionFolder、復元はそのSessionFolder内memory-exportsだけに限定する。AuxiliaryのSessionFolderは既存の親Main共有を用いる。書込不可の用途設定では復元を拒否し、全FS設定でもtool上限は拡大しない。実体pathと現在admissionをI/O境界で確認し、root外のsymlink／junction、既存出力の上書きを拒否する。
+
+添付選択・必要時復元はAIの判断とし、本文は添付なしでも主題・保持理由を理解できる形を保つ。継続threadの過去応答や失敗事実を機械的な再添付・再exportの根拠とせず、確定済み保存を維持する。復元の応答喪失を未実行扱いで自動retryしない。現行仕様は[Background Execution](../design/background-execution.md#背景memoryの添付と必要時復元)を正本とする。

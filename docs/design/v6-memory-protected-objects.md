@@ -334,6 +334,12 @@ withmate-memory file-usage
 }
 ```
 
+## 背景Memoryのfile認可
+
+背景の添付appendは`target-memory`だけが利用し、許可されたMemory targetに限定する。三用途の既存Memory参照では、必要時に既存get-file／export-filesを利用できる。Memory target認可とfile read／write認可は分け、現在bindingの`fileAccess`を既存serviceからimporter／exporterへ渡す。
+
+取込は準備時に実体解決したsourceのWorkspace・許可Additional Directory・SessionFolder内、復元はそのSessionFolder内`memory-exports/`だけを許可する。Auxiliaryは親MainのSessionFolderを共有する。file scope欠落、Codex read-only／対応Providerのplanによる復元不可、失効binding、root外の実体を拒否する。Providerの全FS権限やElectronのOS権限からtoolの許可範囲を拡大しない。symlink／junctionと未作成子pathも実体包含を確認し、既存fileの上書き禁止・復元の非冪等性を維持する。詳細は[Background Execution](background-execution.md#背景memoryの添付と必要時復元)を正本とする。
+
 ## CLI Policy
 
 CLI は thin client とする。

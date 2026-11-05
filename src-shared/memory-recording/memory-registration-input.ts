@@ -23,6 +23,7 @@ export const MEMORY_REGISTRATION_PRESETS: Readonly<Record<MemoryRecordingPurpose
     "内容の帰属先と適用範囲を確認し、アプリが確定した許可Memory targetと照合してください。事実と推測、合意済み判断と未合意の提案、本人の報告と実行記録を区別し、判断に必要な条件と根拠を残してください。",
     "実行結果を使う場合は保存済みの操作記録も確認し、欠落情報や不明な成否を成功へ補完しないでください。解釈や感想を対象の確定事実へ変えないでください。",
     "memory.appendで該当する許可targetへ登録し、各操作の応答で保存結果を確認してください。",
+    "補助資料の保持が必要な場合だけ許可されたファイルを選び、添付を開かなくても主題と保持理由が分かる本文を残してください。既存添付も判断に必要な場合だけ復元し、会話・作業ファイルを一括保存する必要はありません。",
     "秘密情報や生のログは登録せず、対象を推測で広げないでください。必要な登録と保存結果の確認を終えたら終了し、必要な記録がなければ登録せずに終了してください。",
   ].join("\n"),
 };
@@ -42,7 +43,7 @@ export function buildMemoryRegistrationInput(input: Readonly<{
     "# 実行情報（アプリが確定した読取・登録範囲）",
     JSON.stringify({ purpose: input.scope.purpose,
       history: { fromMessageSeq: input.scope.history.fromMessageSeq, throughMessageSeq: input.scope.history.throughMessageSeq },
-      memoryTargets: input.scope.memoryTargets }),
+      memoryTargets: input.scope.memoryTargets, fileAccess: input.scope.fileAccess }),
     "# 参照材料",
     input.materials,
     ...(input.characterDefinition === undefined ? [] : ["# Character定義（参照材料）", input.characterDefinition]),

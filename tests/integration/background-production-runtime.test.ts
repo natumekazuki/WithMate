@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { resolve } from "node:path";
+import { mkdir, realpath } from "node:fs/promises";
 import { BackgroundProductionRuntime, buildBackgroundExecutionScope, type BackgroundRuntimeEvent, type PrepareBackgroundCallInput } from "../../src-electron/providers/background-production-runtime.js";
 import type { BackgroundAgentInput, BackgroundAgentPort } from "../../src-electron/providers/background-call-service.js";
 import type { BackgroundFailureEvent } from "../../src-electron/providers/background-failure.js";
@@ -14,6 +15,8 @@ import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catal
 import { currentRuntimeTurnAdmissionState, assertRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
 import { MEMORY_REGISTRATION_PRESETS } from "../../src-shared/memory-recording/memory-registration-input.js";
 import { backgroundHistoryFixture, owner } from "../helpers/background-history-fixture.js";
+import { getBackgroundMemoryFileOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import type { BackgroundExecutionSelection } from "../../src-shared/settings/background-settings.js";
 
 type Fixture = Awaited<ReturnType<typeof backgroundHistoryFixture>>;
 const sourceKinds = { "character-memory": ["main"], "target-memory": ["main"], affect: ["main"] } as const;
@@ -49,6 +52,70 @@ function gate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景prepareは現在rootと用途設定のfile scopeを捕捉し、read-only・planで復元を許可せず、失敗診断へrootを保存しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memoryの添付と必要時復元" }
+// fault = "元会話の書込設定や全FS権限を流用する、後続の設定変更で準備済みscopeを拡大する、または診断へfile rootを保存する"
+// observable = "prepareのcanonical root・export先・operation grants、開始bindingのfile認可結果と失敗診断のscope"
+// observation_boundary = "consumer"
+// scope = "production preparation with background Settings and real filesystem roots, then per-call binding authorization"
+// lifecycle = "permanent"
+// impact = "背景toolが許可されていないdirectoryへ復元する"
+// distinction = "importer単体は用途設定からのscope捕捉・grant発行・設定snapshotの独立性を検証できない"
+// @end-test-value
+test("背景file scopeは現在rootと用途の書込設定を呼出ごとに固定する", async () => {
+  const f = await backgroundHistoryFixture();
+  try {
+    seed(f);
+    const sessionFolder = resolve(f.directory, "session-folder");
+    const extra = resolve(f.directory, "additional");
+    await mkdir(sessionFolder);
+    await mkdir(extra);
+    const { deps, settings, input } = setup(f, () => {});
+    const failures: BackgroundFailureEvent[] = [];
+    const runtime = new BackgroundProductionRuntime({ ...deps,
+      resolveSessionFolderPath: () => sessionFolder,
+      runAgent: async () => { throw new Error("fixture agent failure"); },
+      onFailure: (event) => { failures.push(event); },
+      getModelCatalog: async () => ({ providers: [...catalog.providers,
+        { ...catalog.providers[0]!, id: "codex", label: "Codex" }] }),
+    });
+    input.session.allowedAdditionalDirectories = [extra];
+    const selections: BackgroundExecutionSelection[] = [
+      { providerId: "claude", modelId: "test", approvalMode: "plan" },
+      { providerId: "codex", modelId: "test", codexSandboxMode: "read-only" },
+      { providerId: "codex", modelId: "test", codexSandboxMode: "danger-full-access" },
+      { providerId: "claude", modelId: "test" },
+    ];
+    for (const selection of selections) {
+      settings.backgroundExecutionSettings["target-memory"] = { selection };
+      const prepared = await runtime.prepare(input);
+      assert.equal(prepared.status, "ready");
+      const access = prepared.call.context.scope.fileAccess!;
+      assert.ok(access.readRoots.includes(await realpath(input.session.workspacePath)));
+      assert.ok(access.readRoots.includes(await realpath(extra)));
+      const writable = selection.approvalMode !== "plan" && selection.codexSandboxMode !== "read-only";
+      assert.equal(access.exportRoot, writable ? resolve(await realpath(sessionFolder), "memory-exports") : null);
+      for (const operation of getBackgroundMemoryFileOperations()) {
+        assert.equal(prepared.call.context.operationGrants.includes(operation), writable);
+      }
+      settings.backgroundExecutionSettings["target-memory"] = { selection: { providerId: "claude", modelId: "test" } };
+      const execution = f.executions.begin({ ...prepared.call.context, providerId: selection.providerId });
+      for (const operation of getBackgroundMemoryFileOperations()) {
+        assert.equal(f.bindings.resolve(execution.binding.bindingReference, operation).ok, writable);
+      }
+      f.executions.finish(execution);
+      assert.equal((await runtime.calls.runOnce({ ...prepared.call, userInput: "fixture", onAdmitted() {} })).kind, "failed");
+      assert.equal(failures.at(-1)!.stage, "agent");
+      assert.deepEqual(failures.at(-1)!.execution!.scope, { purpose: input.purpose,
+        history: prepared.call.context.scope.history, memoryTargets: input.memoryTargets });
+      assert.ok(!JSON.stringify(failures.at(-1)).includes(sessionFolder));
+      assert.equal(access.exportRoot, writable ? resolve(await realpath(sessionFolder), "memory-exports") : null);
+    }
+  } finally { await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

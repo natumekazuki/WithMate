@@ -1,6 +1,6 @@
 import type { BackgroundExecutionScope, BackgroundPurpose } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { BACKGROUND_REGISTRATION_OPERATIONS, getBackgroundMemoryFileOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
@@ -15,6 +15,7 @@ import type { BackgroundExecutionService } from "./background-execution-service.
 import type { BackgroundRegistration } from "./background-registration.js";
 import { classifyBackgroundFailure, projectBackgroundFailure, type BackgroundFailureEvent, type BackgroundFailureInput } from "./background-failure.js";
 import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
+import { captureBackgroundMemoryFileAccess } from "../memory/background-memory-file-access.js";
 
 export type BackgroundRuntimeEvent =
   | (SessionBackgroundEvent & Readonly<{ source: BackgroundSourceRef }>)
@@ -59,6 +60,7 @@ export class BackgroundProductionRuntime {
     getModelCatalog(session: Session, providerId: string): ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
+    resolveSessionFolderPath?(source: BackgroundSourceRef): string;
     sourceKinds: BackgroundRegistration["sourceKinds"];
     onFailure?: (event: BackgroundFailureEvent) => void;
   }) {
@@ -121,7 +123,8 @@ export class BackgroundProductionRuntime {
     const configured = structuredClone(settings.backgroundExecutionSettings[input.purpose]);
     if (!configured.selection) return { status: "not_configured", code: "BACKGROUND_NOT_CONFIGURED", reason: "Select a provider and model for this purpose in Settings." };
     selected(configured.selection);
-    try { resolveBackgroundExecutionOptions(configured.selection); }
+    let executionOptions;
+    try { executionOptions = resolveBackgroundExecutionOptions(configured.selection); }
     catch (cause) { throw Object.assign(new Error("The background execution settings are invalid for the provider.", { cause }), { code: "BACKGROUND_EXECUTION_OPTIONS_INVALID" }); }
     if (!settings.codingProviderSettings[configured.selection.providerId]?.enabled) {
       return { status: "unavailable", code: "BACKGROUND_PROVIDER_DISABLED", reason: "Enable the selected provider in Settings." };
@@ -150,10 +153,17 @@ export class BackgroundProductionRuntime {
     }
     const authoritySnapshot = this.deps.resolveAuthority(session);
     if (!authoritySnapshot) return { status: "unavailable", code: "BACKGROUND_AUTHORITY_UNAVAILABLE", reason: "The source Character authority is unavailable." };
-    const scope = buildBackgroundExecutionScope(captured, input);
+    const sessionFolderPath = this.deps.resolveSessionFolderPath?.(input.source);
+    const fileAccess = sessionFolderPath === undefined ? undefined : await captureBackgroundMemoryFileAccess({
+      readRoots: [session.workspacePath, ...session.allowedAdditionalDirectories, sessionFolderPath], sessionFolderPath,
+      writable: executionOptions.approvalMode !== "plan"
+        && (configured.selection.providerId !== "codex" || executionOptions.codexSandboxMode !== "read-only"),
+    });
+    const scope = { ...buildBackgroundExecutionScope(captured, input), ...(fileAccess ? { fileAccess } : {}) };
     return { status: "ready", instructionText: configured.instructionText, call: {
       context: { session, actorSessionId: session.id, authoritySnapshot, scope,
         operationGrants: [...getSessionHistoryAgentRuntimeOperations(), ...getBackgroundMemoryReadOperations(),
+          ...(fileAccess?.exportRoot ? getBackgroundMemoryFileOperations() : []),
           BACKGROUND_REGISTRATION_OPERATIONS[input.purpose].operation] },
       selection: { ...configured.selection },
     } };

@@ -65,7 +65,7 @@ Agent実行終了時の`finish()`は、既存実行管理からbinding・handle�
 
 ## 背景Memory read
 
-read toolと操作grantの対応は`src-shared/agent-runtime/background-memory-read.ts`を正本とする。`memory.search`、`memory.list_entries`、`memory.get_entry`、`memory.list_tags`、`character_memory.search`と履歴4操作を維持し、MCPの直接tools/callと配布bound CLIも同じ認可へ通す。登録以外のwrite・移動・忘却・file取得／export・横断一覧・fallback・Graph／Glossaryは許可しない。
+read toolと操作grantの対応は`src-shared/agent-runtime/background-memory-read.ts`を正本とする。`memory.search`、`memory.list_entries`、`memory.get_entry`、`memory.list_tags`、`character_memory.search`と履歴4操作を維持し、MCPの直接tools/callと配布bound CLIも同じ認可へ通す。file復元は以下の独立したfile認可を必要とし、通常readとは区別する。移動・忘却・横断一覧・fallback・Graph／Glossaryは許可しない。
 
 背景では実binding IDに結び付いたcurrent handle／capabilityを必須とし、元会話の実Characterとauthority snapshotを照合する。背景Providerは元会話と異なってよい。通常bindingのProvider一致条件は維持する。scopeの`memoryTargets`は実Characterと許可Projectからcanonical targetへ解決し、principalの`readTargets`で要求targetと照合する。空集合を全targetへ拡大せず、user-globalも明示captureされた場合だけ許可する。
 
@@ -79,9 +79,19 @@ read toolと操作grantの対応は`src-shared/agent-runtime/background-memory-r
 
 HTTP認可は実binding・元会話のCharacter・current handle／capabilityに加え、実sourceのownerIdentity／incarnation／metadataを読取境界で照合する。source不存在、read-only、character-authoring、用途が未対応の会話kindを拒否する。用途handlerにはcanonical body、scope、実source、principal、同じadmission、transportと既存Memory／Character serviceを渡す。用途側は必要な入力・保存済みterminal Turnの実source所属とhistory境界を検証する。
 
-Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決し、readTargetsとは別の`writeTargets`と`memory.append` permissionを、用途登録の認可後に設定する。Character Memoryは当該Character＋character scopeへ限定する。`MemoryV6Service.append`もwriteTargetsを照合し、read制限だけではwriteを許可しない。AffectはMemory append permissionを持たず、linked episodeを拒否する。対象Memoryのfile appendも拒否する。
+Memory登録の保存先上限はcaptureした`scope.memoryTargets`から解決し、readTargetsとは別の`writeTargets`と`memory.append` permissionを、用途登録の認可後に設定する。Character Memoryは当該Character＋character scopeへ限定する。`MemoryV6Service.append`もwriteTargetsを照合し、read制限だけではwriteを許可しない。AffectはMemory append permissionを持たず、linked episodeを拒否する。対象Memoryのfile appendは以下の取込認可を追加で必要とする。
 
 登録は同じadmission内で用途handlerから既存application／Worker mutationへ進む。write結果へread用の返却前失効assertを適用せず、commit確認後の取消で成功応答を効果なしへ上書きしない。未確定writeの失効は既存保存境界が担う。Handler接続だけで本番生成・起動や用途検証の完成を意味しない。
+
+## 背景Memoryの添付と必要時復元
+
+`target-memory`は既存`memory.append.files`で、許可targetへ本文とProtected Objectを登録できる。Character MemoryのepisodeとAffect候補には添付入力を追加しない。三用途とも既存Memory読取対象に限り、metadataで判断して必要な場合だけ`memory.get_file`／`memory.export_files`を利用できる。復元はローカルへのwriteであり、read permissionだけでは許可しない。登録handlerの接続有無とは独立するが、既存source読取portとその用途の対応source kindは必須とする。
+
+準備時の`scope.fileAccess`は、sourceのWorkspace、許可Additional Directory、既存SessionFolderをrealpathで解決したread rootと、SessionFolder内`memory-exports/`だけのexport rootを捕捉する。Auxiliaryは既存契約どおり親MainのSessionFolderを使う。Codexの`read-only`、および対応Providerの`plan`ではexport rootと復元grantを持たせない。`danger-full-access`でもこのtool上限を拡大しない。存在・読取を確認できないrootは許可せず、file scopeのない背景呼出は添付取込・復元を拒否する。本文だけの登録は維持する。
+
+MCP公開・operation grantの復元対応は`background-operations.ts`を正本とし、HTTP／CLIは同じbinding・capability・source／owner／Character照合から同じprincipalへ進む。Memory target／entry／objectの所属とfile pathの権限は別々に確認する。scopeは呼出ごとに新規発行し、継続threadの古いcredentialを再利用しない。Memory入力へアプリ確定のfile scopeを参照材料として渡すが、編集本文を変更・上書きせず、schemaや操作手順を指示本文へ重複記載しない。
+
+既存serviceからimporter／exporterへfile scopeを渡し、実I/Oの境界でcanonical pathの包含を検証する。復元の未作成子directoryは最寄りの既存祖先を解決し、symlink／junctionでroot外へ出る取込・復元を拒否する。既存出力を上書きしない。復元操作の応答喪失は結果不明であり、自動retry・fallbackしない。appendの完了済み同一要求は既存idempotency preflightで返し、元fileの再取込を必要としない。サイズ・quota・暗号化・原子保存・部分効果の契約は[Protected Objects](v6-memory-protected-objects.md)を再利用する。正常search／get-entryで実体を展開せず、path・file内容・鍵を永続scopeや診断へdumpしない。
 
 ## 内部Background source read
 

@@ -786,6 +786,8 @@ const backgroundRuntime = new BackgroundProductionRuntime({
     resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
   }),
   sourceKinds: backgroundSourceKinds,
+  resolveSessionFolderPath: (source) => resolveSessionFilesDirectory(app.getPath("userData"),
+    source.kind === "auxiliary" ? source.parent.sessionId : source.sessionId),
   onFailure: ({ timestamp, reason, ...data }) => {
     try {
       backgroundFailureLogService.write({ timestamp, level: "error", kind: "background.execution.failed",

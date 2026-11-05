@@ -215,7 +215,7 @@ export class ManagedHttpMcpHost {
     const resolved = this.#options.bindingRegistry.resolveIdentity(context.binding.bindingReference);
     const scope = resolved.ok ? resolved.binding.backgroundScope : undefined;
     return scope ? backgroundMemoryToolOperations(scope.purpose,
-      supportsBackgroundRegistration(this.#options.backgroundRegistration, scope.purpose, scope.history.source.kind)) : {};
+      supportsBackgroundRegistration(this.#options.backgroundRegistration, scope.purpose, scope.history.source.kind), scope.fileAccess) : {};
   }
 
   async #createEndpoint(context: TurnConnection, pathname: string): Promise<Endpoint> {

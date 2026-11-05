@@ -50,7 +50,7 @@ import {
 } from "../platform/memory/memory-runtime-exchange.js";
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
 import { resolveMemoryV6Target } from "./memory-v6-context-resolver.js";
-import { supportsBackgroundRegistration, type BackgroundRegistration } from "../providers/background-registration.js";
+import type { BackgroundRegistration } from "../providers/background-registration.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { getSessionIncarnationId, isReadOnlySession } from "../../src-shared/session/session-state.js";
@@ -1092,8 +1092,9 @@ async function routeResolvedRequest(input: {
   turnCapability?: string;
 }): Promise<unknown> {
   const binding = resolveBackgroundFailureBinding(input.options, input.bindingReference, input.turnCapability);
-  const stage = Object.values(BACKGROUND_REGISTRATION_OPERATIONS).some(({ operation }) => operation === agentRuntimeOperationForMemoryRoute(input.route))
-    ? "registration" : "read";
+  const stage = input.route === "get_file" || input.route === "export_files" ? "file"
+    : Object.values(BACKGROUND_REGISTRATION_OPERATIONS).some(({ operation }) => operation === agentRuntimeOperationForMemoryRoute(input.route))
+      ? "registration" : "read";
   const metadata = { requestId: randomUUID(), operation: agentRuntimeOperationForMemoryRoute(input.route),
     transport: input.fallbackFrom ? "agent_cli_fallback" : input.transport ?? "unknown", boundary: stage } as const;
   const secrets = [input.options.apiSecret, input.options.operatorApiSecret, input.options.mcpApiSecret,
@@ -1182,7 +1183,8 @@ async function dispatchResolvedRequest(input: {
       ? runWithRuntimeTurnAdmission({ ...bindingResolution.turnAdmission, onOperationError: input.onOperationError }, async () => {
           const value = await dispatch();
           if (!bindingResolution.register && bindingResolution.principal?.type === "session_binding"
-            && bindingResolution.principal.readTargets !== undefined) assertRuntimeTurnAdmission();
+            && bindingResolution.principal.readTargets !== undefined
+            && input.route !== "get_file" && input.route !== "export_files") assertRuntimeTurnAdmission();
           return value;
         })
       : dispatch());
@@ -1432,8 +1434,11 @@ async function resolveRouteAgentRuntimeBinding(input: {
       readTargets.push(target.target);
     }
     principal.readTargets = readTargets;
-    principal.permissions = ["memory.search", "memory.list_entries", "memory.get_entry", "memory.list_tags"];
-    if (BACKGROUND_REGISTRATION_OPERATIONS[background.purpose].operation === agentRuntimeOperationForMemoryRoute(input.route)) {
+    principal.fileAccess = background.fileAccess;
+    principal.permissions = ["memory.search", "memory.list_entries", "memory.get_entry", "memory.list_tags",
+      ...(background.fileAccess?.exportRoot ? ["memory.get_file", "memory.export_files"] as const : [])];
+    const restoresFiles = input.route === "get_file" || input.route === "export_files";
+    if (restoresFiles || BACKGROUND_REGISTRATION_OPERATIONS[background.purpose].operation === agentRuntimeOperationForMemoryRoute(input.route)) {
       const registration = input.options.backgroundRegistration;
       const handler = registration?.handlers[background.purpose];
       const denied = (reason: string) => ({ ok: false as const, error: input.route.startsWith("character_")
@@ -1442,8 +1447,8 @@ async function resolveRouteAgentRuntimeBinding(input: {
           })
         : createMemoryErrorResponse({ code: "MEMORY_FORBIDDEN", message: `Background registration is unavailable: ${reason}.`,
             retryable: false, conversationMayContinue: true, effect: "none", details: { backgroundRegistration: reason } }) });
-      if (!registration || !handler) return denied("not_connected");
-      if (!supportsBackgroundRegistration(registration, background.purpose, background.history.source.kind)) return denied("unsupported_source");
+      if (!registration || (!restoresFiles && !handler)) return denied("not_connected");
+      if (!registration.sourceKinds[background.purpose]?.includes(background.history.source.kind)) return denied("unsupported_source");
       // Domain adapters must also validate their source references and construct trusted save inputs.
       let source;
       try {
@@ -1458,23 +1463,24 @@ async function resolveRouteAgentRuntimeBinding(input: {
         || !matchesSessionHistorySource(background.history.source, {
           incarnationId: getSessionIncarnationId(source.session), ownerIdentity: source.ownerIdentity,
         })) return denied("source_denied");
-      const request = body.value as Record<string, unknown>;
-      if (input.route === "append" && Array.isArray(request.files) && request.files.length > 0) return denied("files_forbidden");
-      if (input.route === "character_affect_appraise" && Array.isArray(request.candidates)
-        && request.candidates.some((candidate) => candidate && typeof candidate === "object" && "memoryEpisode" in candidate)) {
-        return denied("linked_episode_forbidden");
+      if (!restoresFiles && handler) {
+        const request = body.value as Record<string, unknown>;
+        if (input.route === "character_affect_appraise" && Array.isArray(request.candidates)
+          && request.candidates.some((candidate) => candidate && typeof candidate === "object" && "memoryEpisode" in candidate)) {
+          return denied("linked_episode_forbidden");
+        }
+        principal.writeTargets = background.purpose === "affect" ? undefined : background.purpose === "character-memory"
+          ? readTargets.filter((target) => target.owner.type === "character" && target.owner.id === authority.characterId
+            && target.scope.type === "character") : readTargets;
+        principal.permissions = background.purpose === "affect" ? [] : ["memory.append"];
+        const registrationBody = input.route.startsWith("character_")
+          ? resolveTransportAuthority(body.value, input.route, input.transport) : body.value;
+        register = async () => {
+          assertRuntimeTurnAdmission();
+          return handler({ body: registrationBody, scope: background, source, principal, admission: turnAdmission!, transport: input.transport },
+            { memory: input.options.service, character: input.options.characterContextService });
+        };
       }
-      principal.writeTargets = background.purpose === "affect" ? undefined : background.purpose === "character-memory"
-        ? readTargets.filter((target) => target.owner.type === "character" && target.owner.id === authority.characterId
-          && target.scope.type === "character") : readTargets;
-      principal.permissions = background.purpose === "affect" ? [] : ["memory.append"];
-      const registrationBody = input.route.startsWith("character_")
-        ? resolveTransportAuthority(body.value, input.route, input.transport) : body.value;
-      register = async () => {
-        assertRuntimeTurnAdmission();
-        return handler({ body: registrationBody, scope: background, source, principal, admission: turnAdmission!, transport: input.transport },
-          { memory: input.options.service, character: input.options.characterContextService });
-      };
     }
   }
   return {
