@@ -270,20 +270,20 @@ export function HomeSettingsContent({
           ) : (
           <section className="settings-section">
           {!settingsDraftLoaded ? (
-            <section className="settings-section-card">
+            <details className="settings-section-card" open>
+              <summary>App</summary>
               <div className="settings-field">
-                <strong>App</strong>
                 {appSettingsLoadStatus === "loading" ? <LoadingIndicator label="Loading app settings" /> : null}
                 {appSettingsLoadStatus === "error" ? (
                   <LoadError message={appSettingsLoadError || "Could not load app settings."} onRetry={onRetryAppSettings} />
                 ) : null}
               </div>
-            </section>
+            </details>
           ) : null}
           {!settingsDraftLoaded ? (
-            <section className="settings-section-card">
+            <details className="settings-section-card" open>
+              <summary>Coding Agent Providers</summary>
               <div className="settings-field">
-                <strong>Coding Agent Providers</strong>
                 {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
                 {modelCatalogLoadStatus === "error" ? (
                   <LoadError
@@ -292,13 +292,13 @@ export function HomeSettingsContent({
                   />
                 ) : null}
               </div>
-            </section>
+            </details>
           ) : null}
           <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
           {settingsDraftLoaded ? <>
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>App</summary>
             <div className="settings-field">
-              <strong>App</strong>
               <label className="settings-provider-toggle-row settings-section-toggle">
                 <span className="settings-provider-name">{SETTINGS_LAUNCH_AT_LOGIN_LABEL}</span>
                 <input
@@ -381,11 +381,11 @@ export function HomeSettingsContent({
                 </p> : null}
               </div>
             </div>
-          </section>
+          </details>
 
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Prompt Context</summary>
             <div className="settings-field">
-              <strong>Prompt Context</strong>
               <PromptContextToggle
                 id="settings-prompt-context-character-definition"
                 label={SETTINGS_CHARACTER_DEFINITION_LABEL}
@@ -411,11 +411,11 @@ export function HomeSettingsContent({
                 onChange={onChangeToolCallPresenceEnabled}
               />
             </div>
-          </section>
+          </details>
 
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Coding Agent Providers</summary>
             <div className="settings-field">
-              <strong>Coding Agent Providers</strong>
               {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
               {modelCatalogLoadStatus === "error" ? (
                 <LoadError
@@ -556,7 +556,7 @@ export function HomeSettingsContent({
                 </div>
               ) : null}
             </div>
-          </section>
+          </details>
           </> : null}
           </fieldset>
 
@@ -564,9 +564,9 @@ export function HomeSettingsContent({
             <BackgroundExecutionSettings settings={settingsDraft} catalog={modelCatalog}
               onChangePurpose={onChangeBackgroundPurpose} onChangeFrequencies={onChangeMemoryRecordingFrequencies} />
           </fieldset> : null}
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>{SETTINGS_DIAGNOSTICS_LABEL}</summary>
             <div className="settings-field">
-              <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
               {memoryV6Diagnostics ? (
                 <>
                 <div className="settings-diagnostics-grid">
@@ -696,12 +696,12 @@ export function HomeSettingsContent({
                 </SettingsActionButton>
               </div>
             </div>
-          </section>
+          </details>
 
           {settingsDraftLoaded ? <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Repository Glossary</summary>
             <div className="settings-field">
-              <strong>Repository Glossary</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -718,11 +718,11 @@ export function HomeSettingsContent({
                 <p className="settings-help">{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP}</p>
               </label>
             </div>
-          </section>
+          </details>
 
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Storage Maintenance</summary>
             <div className="settings-field">
-              <strong>Storage Maintenance</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_MEMORY_FILE_QUOTA_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -769,7 +769,7 @@ export function HomeSettingsContent({
               </label>
               <SessionFolderCleanup disabled={deletingOldSessions || actionIsBusy("delete-sessions")} onBusyChange={setCleaningSessionFiles} />
             </div>
-          </section>
+          </details>
 
           <KeyboardShortcutsHelpSection
             settings={settingsDraft.keyboardShortcuts}

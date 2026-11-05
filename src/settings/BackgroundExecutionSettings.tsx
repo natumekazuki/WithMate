@@ -30,9 +30,9 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
     .filter((provider) => getProviderAppSettings(settings, provider.id).enabled)
     .map((provider) => ({ ...provider, models: provider.models.filter((model) => !getModelDisabledReason(settings.modelAvailability, provider.id, model.id)) }));
   return (
-    <section className="settings-section-card settings-background-section" aria-labelledby="background-execution-heading">
+    <details className="settings-section-card settings-background-section" open>
+      <summary id="background-execution-heading">Background Execution</summary>
       <div className="settings-field">
-        <strong id="background-execution-heading">Background Execution</strong>
         {BACKGROUND_PURPOSES.map((purpose) => {
           const current = settings.backgroundExecutionSettings[purpose];
           const provider = catalog?.providers.find((entry) => entry.id === current.selection?.providerId);
@@ -208,6 +208,6 @@ export function BackgroundExecutionSettings({ settings, catalog, onChangePurpose
           );
         })}
       </div>
-    </section>
+    </details>
   );
 }
