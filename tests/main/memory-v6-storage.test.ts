@@ -847,6 +847,17 @@ describe("MemoryV6Storage", () => {
     });
   });
 
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Review検索は対象を横断してactive entryを返し、forget後は一覧から除外する"
+  // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memory-review" }
+  // fault = "Review検索がCharacter対象を落とすか、忘却後のentryを通常の一覧へ返す"
+  // observable = "Review検索のentry ID一覧と取得本文、forget応答と保存state"
+  // observation_boundary = "component-behavior"
+  // scope = "Memory Review storage search and forget"
+  // lifecycle = "permanent"
+  // distinction = "公開searchのtarget制限testとは異なりReview専用横断検索とforget後の一覧を実SQLiteで確認する"
+  // @end-test-value
   it("review search / get / forget はactive entryの閲覧とforgetに限定する", async () => {
     await withStorage(({ storage }) => {
       storage.appendEntry(baseAppend({
@@ -873,8 +884,6 @@ describe("MemoryV6Storage", () => {
 
       const search = storage.searchEntriesForReview({ query: "memory", limit: 10 });
       assert.deepEqual(search.items.map((item) => item.id).sort(), ["mem-review-a", "mem-review-other"]);
-      assert.equal(search.items.find((item) => item.id === "mem-review-a")?.sourceSessionId, null);
-      assert.equal(search.items.find((item) => item.id === "mem-review-a")?.sourceProviderId, "codex");
 
       const entry = storage.getEntry("mem-review-a");
       assert.equal(entry?.body, "Memory Review UIから確認する本文。");

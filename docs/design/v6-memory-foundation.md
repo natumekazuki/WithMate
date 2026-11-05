@@ -865,7 +865,7 @@ Settings Diagnosticsから`Memory Review` windowを開ける。active entryの�
 
 Review専用readは保存済みowner / scopeを維持し、`characters`と`project_scopes_v6`の登録metadataから対象の名前・Character icon・同名の補足を投影する。登録先が失われた場合もMemoryを除外せず、保存された対象IDと欠落状態を返す。icon pathは既存Character storageと同じuser data基準でmaterializeする。対象候補、検索hit、detailは同じ表示用型を使い、表示専用のstoreや分類tableは持たない。
 
-Reviewの検索は対象名を既存の本文・title・preview・tag検索へ加え、`characterId`と`projectId`のAND filterおよびKindを適用した後にcursor pageを取得する。対象候補の取得は独立したReview IPCで行い、失敗は空配列へ変換しない。出典の表示は保存されたMain / Auxiliaryの参照から会話名・role・Providerを投影し、Memory対象のCharacterを記録者として代用しない。これらの表示用契約は公開MCP / CLIのrequest・responseを変更しない。
+Reviewの検索は対象名を既存の本文・title・preview・tag検索へ加え、`characterId`と`projectId`のAND filterおよびKindを適用した後にcursor pageを取得する。対象候補の取得は独立したReview IPCで行い、失敗は空配列へ変換しない。Reviewは本文と対象を中心に表示し、出典の会話名・role・Providerを表示用に取得しない。保存sourceと公開MCP / CLIのrequest・responseは変更しない。画面の情報配分とファイル保守の表示は[Settings UI](settings-ui.md#interaction)に従う。
 
 Review UIはruntime API secret、discovery documentのsecret値をrendererへ渡さない。main process側のReview serviceからV6 Memory storageを扱う。manual correctionはappend + supersedesによる訂正方針を維持する。
 

@@ -33,7 +33,13 @@
 
 Memory Review は検索・pagination・detail取得の応答順を識別し、古い応答で現在の一覧やdetailを上書きしない。detail切替中は旧detailのForget / Export操作を表示せず、Forget / GCの対象と削除影響を確認できる表示を維持する。
 
-Memory Review の一覧・detail・Forget確認は、保存済みowner / scopeからユーザー共通、プロジェクト、Character、Character＋プロジェクトを表示する。Characterは登録名とicon、プロジェクトは登録表示名を使い、同名はIDやworkspace pathの補足で区別する。登録情報や名前・画像が失われても別のCharacterへ置き換えず、対象の識別情報を保持する。記憶の対象と記録元は別に表示し、`Recorded From`は実Main / Auxiliaryの会話名とProviderを使う。
+Memory Review の一覧・detail・Forget確認は、保存済みowner / scopeからユーザー共通、プロジェクト、Character、Character＋プロジェクトを表示する。Characterは登録名とicon、プロジェクトは登録表示名を使い、同名はIDやworkspace pathの補足で区別する。登録情報や名前・画像が失われても別のCharacterへ置き換えず、対象の識別情報を保持する。補足は名称より弱く表示する。
+
+一覧はtitle・対象・previewを表示し、Kindとtagsは詳細へ集約する。詳細はtitle・対象、補足のKindとローカル時刻の更新日時、保存本文、tag値、添付fileの順とする。本文は原文のread-only表示を維持する。添付は名前・summary・sizeとExportを表示し、出典の会話名やProvider、fileの内部role等を常設しない。保存された出典・tag・file metadataは変更しない。
+
+`Forget Entry`は現在の対象から確認dialogを開く。理由はdialog内で選び、新たに開くときは`User Request`を選択する。確認ではtitle・対象・理由とprivacy時の保存本文等への影響を示し、Cancelとfocus管理を維持する。
+
+下部の`File Storage`は使用量 / 上限を要約し、native disclosureを開くと全Memoryを対象に削除待ち・Largest Attachments・`Preview Cleanup` / `Clean Up Files`を表示する。後者の永久削除確認は維持し、操作後は対象数または削除数を表示する。取得・操作の失敗、部分失敗、参照中fileの欠落は、disclosureを閉じても確認できる。
 
 `Search`は本文・title・preview・tag・対象名を検索し、`Kind`、`Character`、`Project`を組み合わせて絞り込める。CharacterとProjectは名前で選択し、両方指定した場合は同じentryが両条件を満たすものに限定する。検索条件の変更ではcursor・選択detail・Forget確認を解除する。対象候補の取得は検索と独立したloading / error / Retryを持ち、取得失敗を正常0件に置き換えない。
 

@@ -31,22 +31,8 @@ export type MemoryV6ReviewTarget = {
   project?: MemoryV6ReviewProject;
 };
 
-export type MemoryV6ReviewSourceDisplay = {
-  type: "agent" | "manual" | "migration";
-  session?: {
-    id: string;
-    title: string | null;
-    role: "main" | "auxiliary";
-    state: "available" | "missing";
-  };
-  providerId: string | null;
-};
-
 export type MemoryV6ReviewSearchHit = Omit<MemorySearchHit, "files"> & {
   target: MemoryV6ReviewTarget;
-  sourceDisplay: MemoryV6ReviewSourceDisplay;
-  sourceSessionId: string | null;
-  sourceProviderId: string | null;
   files?: MemoryV6ReviewFileSummary[];
 };
 
@@ -57,7 +43,6 @@ export type MemoryV6ReviewSearchResult = {
 
 export type MemoryV6ReviewEntryDetail = Omit<MemoryEntryDetail, "files"> & {
   target: MemoryV6ReviewTarget;
-  sourceDisplay: MemoryV6ReviewSourceDisplay;
   files?: MemoryV6ReviewFileSummary[];
 };
 

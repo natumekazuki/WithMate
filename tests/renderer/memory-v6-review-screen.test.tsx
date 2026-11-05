@@ -25,10 +25,7 @@ function createHit(id: string, title: string): MemoryV6ReviewSearchHit {
     owner: { type: "project", id: "WithMate" },
     scope: { type: "project", id: "WithMate" },
     target: { kind: "project", project: { id: "WithMate", name: "WithMate", path: null, state: "available" } },
-    sourceDisplay: { type: "agent", providerId: "codex" },
     tags: [],
-    sourceSessionId: null,
-    sourceProviderId: "codex",
     createdAt: "2026-06-27T00:00:00.000Z",
     updatedAt: "2026-06-27T00:00:00.000Z",
   };
@@ -101,10 +98,10 @@ async function openErrorDetails(dom: JSDOM, name: string, message: string) {
 
 // @test-value v2
 // kind = "contract"
-// claim = "登録対象の4種・同名補足・欠落対象を一覧と詳細と忘却確認に同じ意味で示し、忘却は選択entryへ送る"
-// oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memory-review" }
-// fault = "対象名やiconを別Characterで代用する、projectを落とす、sourceを対象と混ぜる、または別entryを忘却する"
-// observable = "一覧・詳細・確認dialogの対象文字列と画像src、source会話名、forget APIのentry ID"
+// claim = "4種・同名・欠落対象を同じ意味で示し、忘却確認の理由とprivacy影響を確認でき、Cancel後は初期理由で再開して選択entryと理由を送る"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
+// fault = "対象を代用・取り違える、privacy影響を隠す、取消した理由を次の確認へ残す、または確認と異なるentryや理由を送る"
+// observable = "一覧・詳細・確認dialogの対象文字列と画像src、理由select、privacy説明、Cancel後のfocus、forget APIのentry IDと理由"
 // observation_boundary = "component-behavior"
 // scope = "memory-review-target-identity"
 // lifecycle = "permanent"
@@ -129,15 +126,15 @@ test("MemoryV6ReviewScreen は対象4種を表示して選択した対象を忘�
     { ...createHit("both", "Both"), owner: { type: "character", id: character.id }, target: { kind: "character-project", character, project } },
     { ...createHit("missing", "Missing"), owner: { type: "character", id: missing.id }, target: { kind: "character-project", character: missing, project } },
   ];
-  const forgotten: string[] = [];
+  const forgotten: Array<{ id: string; reason: string | undefined }> = [];
   const api: MemoryV6ReviewApi = {
     async listMemoryV6ReviewTargets() { return { characters: [character, { ...character, id: "char-two", disambiguation: "char-two" }, missing], projects: [project, { ...project, id: "project-two", disambiguation: "/repo/two" }] }; },
-    async searchMemoryV6Entries() { return { items: hits.filter((hit) => !forgotten.includes(hit.id)) }; },
-    async getMemoryV6Entry(id) { return { ...createDetail(id, id), ...hits.find((hit) => hit.id === id)!, sourceDisplay: { type: "agent", providerId: "codex", session: { id: "session-one", title: "Design Discussion", role: "auxiliary", state: "available" } } }; },
+    async searchMemoryV6Entries() { return { items: hits.filter((hit) => !forgotten.some((entry) => entry.id === hit.id)) }; },
+    async getMemoryV6Entry(id) { return { ...createDetail(id, id), ...hits.find((hit) => hit.id === id)! }; },
     async getMemoryV6FileUsage() { return createUsage(); },
     async exportMemoryV6EntryFiles() { return null; },
     async runMemoryV6ProtectedObjectGc() { throw new Error("unused"); },
-    async forgetMemoryV6Entry(id) { forgotten.push(id); return { entryId: id, status: "forgotten", reason: "user_request" }; },
+    async forgetMemoryV6Entry(id, reason) { forgotten.push({ id, reason }); return { entryId: id, status: "forgotten", reason: reason ?? "user_request" }; },
   };
   const click = async (selector: string) => { const button = rootElement.querySelector<HTMLButtonElement>(selector); assert.ok(button); await act(async () => { button.click(); }); };
   try {
@@ -156,11 +153,26 @@ test("MemoryV6ReviewScreen は対象4種を表示して選択した対象を忘�
     await click(".memory-review-item:nth-of-type(4)");
     const targetText = rootElement.querySelector(".memory-review-detail .memory-review-target")?.textContent;
     assert.equal(targetText, rows[3]?.querySelector(".memory-review-target")?.textContent);
-    assert.match(rootElement.querySelector(".memory-review-meta")?.textContent ?? "", /Recorded FromDesign Discussion · Auxiliary \/ codex/);
+    const forgetTrigger = rootElement.querySelector<HTMLButtonElement>('button[aria-label="Forget Memory entry"]')!;
+    forgetTrigger.focus();
     await click('button[aria-label="Forget Memory entry"]');
     assert.equal(rootElement.querySelector('[aria-modal="true"] .memory-review-target')?.textContent, targetText);
+    const choosePrivacy = async () => {
+      const reason = rootElement.querySelector<HTMLSelectElement>('[aria-modal="true"] select')!;
+      assert.equal(reason.value, "user_request");
+      assert.match(reason.closest("label")?.textContent ?? "", /Forget Reason/);
+      await act(async () => { reason.value = "privacy"; reason.dispatchEvent(new dom.window.Event("change", { bubbles: true })); });
+      assert.match(rootElement.querySelector('[aria-modal="true"]')?.textContent ?? "", /title, body, preview, and tags are also deleted/);
+    };
+    await choosePrivacy();
+    const cancel = Array.from(rootElement.querySelectorAll<HTMLButtonElement>('[aria-modal="true"] button')).find((button) => button.textContent?.trim() === "Cancel")!;
+    await act(async () => { cancel.click(); });
+    assert.deepEqual(forgotten, []);
+    assert.equal(dom.window.document.activeElement, forgetTrigger);
+    await click('button[aria-label="Forget Memory entry"]');
+    await choosePrivacy();
     await click('[aria-modal="true"] button.danger-button');
-    assert.deepEqual(forgotten, ["both"]);
+    assert.deepEqual(forgotten, [{ id: "both", reason: "privacy" }]);
   } finally {
     await act(async () => { root?.unmount(); });
     for (const [key, value] of Object.entries(previous)) Object.defineProperty(globalThis, key, { value, configurable: true });
@@ -470,10 +482,10 @@ test("MemoryV6ReviewScreen は失敗したappend cursorをRetryで再利用す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "export・GC・forgetの診断原文を詳細から参照でき、forget詳細のEscapeは親の確認dialogを閉じず、再実行で回復できる"
+// claim = "export・cleanup・forgetの診断原文を参照でき、保守を閉じてもcleanup失敗が残り、forget診断のEscapeは確認dialogを閉じず再実行で回復できる"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
-// fault = "操作診断を参照できない、forget診断が親modalの外へportalされる、または詳細のEscapeが削除確認まで閉じる"
-// observable = "各操作の診断popover原文、親dialog内のpopover、Escape後の親dialogとfocus、再実行後のforget結果"
+// fault = "操作診断を参照できない、cleanup失敗を閉じた保守へ隠す、forget診断が親modalの外へportalされる、またはEscapeが削除確認まで閉じる"
+// observable = "各操作の診断popover原文、保守を閉じた後のerror入口、親dialog内のpopover、Escape後の親dialogとfocus、再実行後のforget結果"
 // observation_boundary = "component-behavior"
 // scope = "memory-review-operation-error-details"
 // lifecycle = "permanent"
@@ -519,11 +531,16 @@ test("MemoryV6ReviewScreen は操作エラーの詳細を開きForget確認を�
     const exported = await openErrorDetails(dom, "Memory File Export Error", "Export destination unavailable");
     assert.equal(rootElement.contains(exported.dialog), false);
     await click(exported.dialog, 'button[aria-label="Close Error Details"]');
-    const gcButton = Array.from(rootElement.querySelectorAll("button")).find((button) => button.textContent?.trim() === "GC Dry Run");
+    const storage = rootElement.querySelector<HTMLDetailsElement>("details.memory-review-storage-details");
+    assert.ok(storage);
+    await act(async () => { storage.open = true; storage.dispatchEvent(new dom.window.Event("toggle")); });
+    const gcButton = Array.from(rootElement.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Preview Cleanup");
     assert.ok(gcButton);
     await act(async () => { gcButton.click(); });
     const gc = await openErrorDetails(dom, "Memory File GC Error", "GC storage unavailable");
     await click(gc.dialog, 'button[aria-label="Close Error Details"]');
+    await act(async () => { storage.open = false; storage.dispatchEvent(new dom.window.Event("toggle")); });
+    assert.ok(rootElement.querySelector('button[aria-label="Show Memory File GC Error"]'));
     await click(rootElement, 'button[aria-label="Forget Memory entry"]');
     const confirm = dom.window.document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
     assert.ok(confirm);
@@ -537,7 +554,7 @@ test("MemoryV6ReviewScreen は操作エラーの詳細を開きForget確認を�
     await click(confirm, 'button[aria-label="Forget Memory entry"]');
     assert.deepEqual(forgetRequests, ["entry-a", "entry-a"]);
     assert.equal(confirm.isConnected, false);
-    assert.match(rootElement.textContent ?? "", /Forget result: forgotten/);
+    assert.match(rootElement.textContent ?? "", /Memory forgotten\./);
   } finally {
     await act(async () => { root?.unmount(); });
     Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
@@ -739,10 +756,10 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Memory Reviewのentry detailはprotected fileのdisplay name、role、media kind、容量、summaryを表示する"
-// oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#ui-policy" }
+// claim = "Memory Reviewのentry detailは保存本文の後にtag値と添付fileの名前・容量・summaryを表示する"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
 // fault = "protected fileの表示情報を欠落させ、entryの添付内容を判断できなくする"
-// observable = "detailのtextContentに含まれるdisplay name、role、media kind、容量、summary"
+// observable = "detailの保存本文・tag値・file名・容量・summaryとDOM上の表示順"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-file-summary"
 // lifecycle = "permanent"
@@ -764,6 +781,8 @@ test("MemoryV6ReviewScreen はentry detailのprotected file summaryを表示す�
   assert.ok(rootElement);
   let root: Root | null = null;
   const detail = createDetail("entry-with-file", "Entry with file", {
+    body: "Preserved Memory Body",
+    tags: [{ type: "topic", value: "Visual Evidence" }],
     files: [{
       role: "evidence",
       mediaKind: "image",
@@ -814,10 +833,12 @@ test("MemoryV6ReviewScreen はentry detailのprotected file summaryを表示す�
     await flushEffects();
 
     const text = rootElement.textContent ?? "";
-    assert.match(text, /Protected Files/);
+    assert.match(text, /Attachments/);
     assert.match(text, /dialog\.png/);
-    assert.match(text, /evidence \/ image \/ 1\.5 KB/);
+    assert.match(text, /1\.5 KB/);
     assert.match(text, /エラー状態を確認できるスクリーンショット。/);
+    const detailText = rootElement.querySelector(".memory-review-detail-content")?.textContent ?? "";
+    assert.match(detailText, /Preserved Memory Body[\s\S]*Visual Evidence[\s\S]*dialog\.png/);
   } finally {
     await act(async () => {
       root?.unmount();
@@ -830,10 +851,10 @@ test("MemoryV6ReviewScreen はentry detailのprotected file summaryを表示す�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Memory Reviewのfile usageとlargest entry候補は表示され、候補clickは対応するentry detailを開く"
-// oracle = { type = "contract", ref = "src/memory-v6/MemoryV6ReviewScreen.tsx: fileUsage and selectEntry" }
+// claim = "File Storageの使用量と上限を確認でき、保守を開くと全Memoryのlargest entry候補から対応entry detailを開ける"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
 // fault = "usage summaryまたはlargest entry候補が欠落する、または候補clickが別entryを選択する"
-// observable = "usageのtextContent、largest entry title、getMemoryV6Entryへ渡したentry ID"
+// observable = "File Storage summaryの容量、native detailsの開閉、largest entry title、getMemoryV6Entryへ渡したentry ID"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-file-usage"
 // lifecycle = "permanent"
@@ -894,12 +915,14 @@ test("MemoryV6ReviewScreen はfile usageとlargest entriesを表示し、候補c
     });
     await flushEffects();
 
-    let text = rootElement.textContent ?? "";
-    assert.match(text, /Used/);
-    assert.match(text, /1\.5 KB/);
-    assert.match(text, /38% of 4\.0 KB/);
-    assert.match(text, /Pending Delete/);
-    assert.match(text, /Largest Entries/);
+    const storage = rootElement.querySelector<HTMLDetailsElement>("details");
+    assert.ok(storage);
+    assert.equal(storage.open, false);
+    assert.match(storage.querySelector("summary")?.textContent ?? "", /File Storage[\s\S]*1\.5 KB[\s\S]*4\.0 KB/);
+    await act(async () => { storage.open = true; storage.dispatchEvent(new dom.window.Event("toggle")); });
+    let text = storage.textContent ?? "";
+    assert.match(text, /Pending Deletion/);
+    assert.match(text, /Largest Attachments — All Memories/);
     assert.match(text, /Large memory/);
 
     const largestButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
@@ -1148,14 +1171,14 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
 
 // @test-value v2
 // kind = "security"
-// claim = "Memory ReviewのGC Dry Run操作はdryRun要求を送り、pending・orphan・missing activeの件数をvisible reportで示す"
+// claim = "Preview CleanupはdryRunを送り、実削除は確認承認後だけ実行し、結果・削除失敗・参照中file欠落を保守を閉じた後も確認できる"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md" }
-// fault = "GC Dry RunからdryRun=falseを要求するか、操作の対象件数とmissing状態を隠す"
-// observable = "GC requestのdryRun、visible report labels/counts"
+// fault = "previewで削除を要求する、確認取消でもcleanupを呼ぶ、結果件数を誤る、または参照中file欠落を閉じた保守内へ隠す"
+// observable = "GC requestのdryRun、window.confirmの呼出と文言、report件数、details外の欠落警告と失敗診断popover"
 // observation_boundary = "component-behavior"
 // scope = "memory-v6-review-protected-object-gc"
 // lifecycle = "permanent"
-// distinction = "Main review service testが実削除の不在を担い、このtestはdry-run選択とsummary report表示を確認する"
+// distinction = "Main review service testが実削除の範囲を担い、このtestはpreview/cleanup選択・利用者の確認・結果の可視性を確認する"
 // @end-test-value
 test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -1173,6 +1196,9 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
   assert.ok(rootElement);
   let root: Root | null = null;
   const gcRequests: Array<{ dryRun: boolean }> = [];
+  const confirmations: string[] = [];
+  let approveCleanup = false;
+  dom.window.confirm = (message) => { confirmations.push(message ?? ""); return approveCleanup; };
 
   const api: MemoryV6ReviewApi = {
     async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
@@ -1187,12 +1213,12 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
       return {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         dryRun: request.dryRun,
-        deletePending: { candidates: 2, bytes: 640, deleted: 0, missing: 1, failed: 0 },
-        orphanFiles: { candidates: 1, bytes: 128, deleted: 0, failed: 0 },
-        stagingFiles: { candidates: 1, deleted: 0, failed: 0 },
+        deletePending: { candidates: 2, bytes: 640, deleted: request.dryRun ? 0 : 1, missing: 1, failed: 0 },
+        orphanFiles: { candidates: 1, bytes: 128, deleted: 0, failed: request.dryRun ? 0 : 1 },
+        stagingFiles: { candidates: 1, deleted: request.dryRun ? 0 : 1, failed: 0 },
         missingActiveObjects: 1,
         fileUsage: createUsage(),
-        warnings: [],
+        warnings: request.dryRun ? [] : ["Cleanup could not remove locked attachment."],
       };
     },
     async searchMemoryV6Entries() {
@@ -1213,8 +1239,11 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
     });
     await flushEffects();
 
+    const storage = rootElement.querySelector<HTMLDetailsElement>("details");
+    assert.ok(storage);
+    await act(async () => { storage.open = true; storage.dispatchEvent(new dom.window.Event("toggle")); });
     const dryRunButton = Array.from(rootElement.querySelectorAll("button")).find((button) =>
-      button.textContent?.trim() === "GC Dry Run"
+      button.textContent?.trim() === "Preview Cleanup"
     );
     assert.ok(dryRunButton);
 
@@ -1225,11 +1254,28 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
 
     assert.equal(gcRequests.length, 1);
     assert.equal(gcRequests[0]?.dryRun, true);
-    const text = rootElement.textContent ?? "";
-    assert.match(text, /Memory file GC dry-run completed\./);
-    assert.match(text, /Pending 2 \/ deleted 0 \/ missing 1 \/ failed 0/);
-    assert.match(text, /Orphan 1 \/ deleted 0 \/ failed 0/);
-    assert.match(text, /Missing active 1/);
+    assert.deepEqual(confirmations, []);
+    const report = rootElement.querySelector('[aria-label="Memory file cleanup report"]');
+    assert.ok(report);
+    assert.match(report.textContent ?? "", /Cleanup Preview: 4 items eligible for removal\./);
+    const cleanupButton = Array.from(rootElement.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Clean Up Files");
+    assert.ok(cleanupButton);
+    await act(async () => { cleanupButton.click(); });
+    assert.equal(gcRequests.length, 1);
+    assert.match(confirmations[0] ?? "", /permanently/i);
+    approveCleanup = true;
+    await act(async () => { cleanupButton.click(); });
+    assert.deepEqual(gcRequests.map((request) => request.dryRun), [true, false]);
+    assert.match(report.textContent ?? "", /Cleanup: 2 items removed\. 1 items were already missing\./);
+    await act(async () => { storage.open = false; storage.dispatchEvent(new dom.window.Event("toggle")); });
+    const warning = rootElement.querySelector('[role="alert"].memory-review-file-warning');
+    assert.ok(warning);
+    assert.equal(storage.contains(warning), false);
+    assert.match(warning.textContent ?? "", /1 files attached to active memories are missing\./);
+    const failed = rootElement.querySelector('button[aria-label="Show Memory File Cleanup Warning"]');
+    assert.ok(failed);
+    assert.equal(storage.contains(failed), false);
+    await openErrorDetails(dom, "Memory File Cleanup Warning", "Cleanup could not remove locked attachment.");
   } finally {
     await act(async () => {
       root?.unmount();

@@ -18,7 +18,6 @@ import type {
   MemoryV6ReviewEntryDetail,
   MemoryV6ReviewTargets,
   MemoryV6ReviewTarget,
-  MemoryV6ReviewSourceDisplay,
   MemoryV6ReviewForgetResult,
   MemoryV6ReviewSearchHit,
   MemoryV6ReviewSearchResult,
@@ -1173,8 +1172,13 @@ export class MemoryV6Storage {
     `).all() as Array<{ id: string; display_name: string | null; workspace_path: string | null }>;
     const characterNames = new Map<string, number>();
     const projectNames = new Map<string, number>();
+    const projectLocations = new Map<string, number>();
     for (const row of characters) if (row.name?.trim()) characterNames.set(row.name.trim(), (characterNames.get(row.name.trim()) ?? 0) + 1);
     for (const row of projects) if (row.display_name?.trim()) projectNames.set(row.display_name.trim(), (projectNames.get(row.display_name.trim()) ?? 0) + 1);
+    for (const row of projects) {
+      const location = JSON.stringify([row.display_name?.trim(), row.workspace_path]);
+      projectLocations.set(location, (projectLocations.get(location) ?? 0) + 1);
+    }
     return {
       characters: characters.map((row) => ({
         id: row.id,
@@ -1188,41 +1192,28 @@ export class MemoryV6Storage {
         name: row.display_name?.trim() || null,
         path: row.workspace_path || null,
         state: row.display_name === null ? "missing" : "available",
-        ...((projectNames.get(row.display_name?.trim() ?? "") ?? 0) > 1 ? { disambiguation: `${row.workspace_path || row.id} · ${row.id}` } : {}),
+        ...((projectNames.get(row.display_name?.trim() ?? "") ?? 0) > 1 ? {
+          disambiguation: row.workspace_path
+            ? projectLocations.get(JSON.stringify([row.display_name?.trim(), row.workspace_path])) === 1 ? row.workspace_path : `${row.workspace_path} · ${row.id}`
+            : row.id,
+        } : {}),
       })),
     };
   }
 
-  private reviewProjection(entry: MemoryEntryDetail, targets: MemoryV6ReviewTargets): {
-    target: MemoryV6ReviewTarget;
-    sourceDisplay: MemoryV6ReviewSourceDisplay;
-  } {
+  private reviewTarget(entry: MemoryEntryDetail, targets: MemoryV6ReviewTargets): MemoryV6ReviewTarget {
     const character = entry.owner.type === "character" ? targets.characters.find((item) => item.id === entry.owner.id) : undefined;
     const project = entry.scope.type === "project" ? targets.projects.find((item) => item.id === entry.scope.id) : undefined;
-    const target: MemoryV6ReviewTarget = {
+    return {
       kind: entry.owner.type === "user" ? "user-global" : entry.owner.type === "project" ? "project" : entry.scope.type === "project" ? "character-project" : "character",
       ...(character ? { character } : {}),
       ...(project ? { project } : {}),
-    };
-    const source = entry.source;
-    const sourceId = source.auxiliarySessionId ?? source.sessionId;
-    const role = source.auxiliarySessionId ? "auxiliary" : "main";
-    const session = sourceId ? this.db.prepare(role === "auxiliary"
-      ? "SELECT title FROM auxiliary_sessions WHERE id = ?"
-      : "SELECT title FROM sessions_v6 WHERE id = ?").get(sourceId) as { title: string } | undefined : undefined;
-    return {
-      target,
-      sourceDisplay: {
-        type: source.type,
-        providerId: source.providerId,
-        ...(sourceId ? { session: { id: sourceId, title: session?.title?.trim() || null, role, state: session ? "available" : "missing" } } : {}),
-      },
     };
   }
 
   getEntryForReview(entryId: string): MemoryV6ReviewEntryDetail | null {
     const entry = this.getEntry(entryId);
-    return entry?.state === "active" ? { ...entry, ...this.reviewProjection(entry, this.listReviewTargets()) } : null;
+    return entry?.state === "active" ? { ...entry, target: this.reviewTarget(entry, this.listReviewTargets()) } : null;
   }
 
   searchEntriesForReview(input: MemoryV6ReviewSearchInput): MemoryV6ReviewSearchResult {
@@ -1296,9 +1287,7 @@ export class MemoryV6Storage {
         const hit = toMemorySearchHit(entry);
         return {
           ...hit,
-          ...this.reviewProjection(entry, targets),
-          sourceSessionId: entry.source.sessionId,
-          sourceProviderId: entry.source.providerId,
+          target: this.reviewTarget(entry, targets),
         } satisfies MemoryV6ReviewSearchHit;
       }),
       ...(validRows.length > limit && lastRow ? { nextCursor: encodeCursor({ updatedAt: lastRow.updated_at, id: lastRow.id }) } : {}),

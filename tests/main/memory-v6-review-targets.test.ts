@@ -29,10 +29,6 @@ async function withReviewWorker(runner: (input: {
         INSERT INTO project_scopes_v6 (id, project_type, project_key, display_name, workspace_path, created_at, updated_at) VALUES
           ('project-a', 'directory', 'a', 'WithMate', 'C:/repo/a', '2026-11-05', '2026-11-05'),
           ('project-b', 'directory', 'b', ' WithMate ', 'C:/repo/b', '2026-11-05', '2026-11-05');
-        INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode, created_at, updated_at, last_active_at)
-          VALUES ('same-id', 'Mainの会話', 'active', 'codex', 1, 'model', 'on-request', '2026-11-05', '2026-11-05', '2026-11-05');
-        INSERT INTO auxiliary_sessions (id, parent_session_id, status, title, provider_id, created_at, updated_at)
-          VALUES ('same-id', 'same-id', 'active', 'Auxの調査', 'claude', '2026-11-05', '2026-11-05');
       `);
     } finally { db.close(); }
     worker = new MemoryV6WorkerClient({ dbPath, workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url) });
@@ -44,13 +40,11 @@ async function withReviewWorker(runner: (input: {
   }
 }
 
-async function append(worker: MemoryV6WorkerClient, id: string, target: MemoryV6ResolvedTarget, auxiliary = false): Promise<void> {
+async function append(worker: MemoryV6WorkerClient, id: string, target: MemoryV6ResolvedTarget): Promise<void> {
   await worker.storage.appendEntry({
     id, target, kind: "note", title: "保存した内容", body: `本文 ${id}`, preview: "短い本文",
     tags: [{ type: "topic", value: "review", canonicalType: "topic", canonicalValue: "review" }],
-    source: auxiliary
-      ? { type: "agent", sessionId: null, auxiliarySessionId: "same-id", messageId: null, providerId: "claude" }
-      : { type: "agent", sessionId: "same-id", messageId: null, providerId: "codex" },
+    source: { type: "manual", sessionId: null, messageId: null, providerId: null },
     now: "2026-11-05T00:00:00.000Z",
   });
 }
@@ -59,20 +53,20 @@ async function append(worker: MemoryV6WorkerClient, id: string, target: MemoryV6
 // kind = "contract"
 // claim = "Reviewは4種targetの登録名と同名補足を一覧・詳細に同じ形で返し、名前検索とCharacter/ProjectのAND filterをSQLページングへ適用する"
 // oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md; docs/design/settings-ui.md" }
-// fault = "target名を本文に依存させる、ANDをORへ変える、pagination後に名前filterする、またはMain/Auxの同名IDを混同する"
+// fault = "target名を本文に依存させる、ANDをORへ変える、またはpagination後に名前filterする"
 // observable = "実Workerを通ったReview serviceの候補・hit・詳細・cursor・forget後の結果と保存本文"
 // observation_boundary = "component-behavior"
 // scope = "Memory Review target identity and SQL search"
 // lifecycle = "permanent"
 // impact = "利用者が対象を取り違えて閲覧・忘却する"
-// distinction = "型検査やUI fixtureではSQL filter、Worker配線、実会話参照、catalog相対iconの解決を検証できない"
+// distinction = "型検査やUI fixtureではSQL filter、Worker配線、catalog相対iconの解決を検証できない"
 // @end-test-value
-test("Review targets and AND filters survive the real Worker and preserve source identity", async () => {
+test("Review targets and AND filters survive the real Worker", async () => {
   await withReviewWorker(async ({ service, worker, directory }) => {
     await append(worker, "user", { owner: { type: "user", id: "local-user" }, scope: { type: "global", id: "global" } });
     await append(worker, "project", { owner: { type: "project", id: "project-a" }, scope: { type: "project", id: "project-a" } });
     await append(worker, "character", { owner: { type: "character", id: "character-a" }, scope: { type: "character", id: "character-a" } });
-    await append(worker, "character-project-a", { owner: { type: "character", id: "character-a" }, scope: { type: "project", id: "project-a" } }, true);
+    await append(worker, "character-project-a", { owner: { type: "character", id: "character-a" }, scope: { type: "project", id: "project-a" } });
     await append(worker, "character-project-b", { owner: { type: "character", id: "character-a" }, scope: { type: "project", id: "project-b" } });
     await append(worker, "other-character", { owner: { type: "character", id: "character-b" }, scope: { type: "project", id: "project-a" } });
 
@@ -91,12 +85,7 @@ test("Review targets and AND filters survive the real Worker and preserve source
       const detail = (await service.getEntry(id!))!;
       assert.equal(hit.target.kind, kind);
       assert.deepEqual(detail.target, hit.target);
-      assert.deepEqual(detail.sourceDisplay, hit.sourceDisplay);
     }
-    assert.deepEqual((await service.getEntry("character-project-a"))?.sourceDisplay, {
-      type: "agent", providerId: "claude", session: { id: "same-id", title: "Auxの調査", role: "auxiliary", state: "available" },
-    });
-    assert.equal((await service.getEntry("project"))?.sourceDisplay.session?.title, "Mainの会話");
 
     const filter = { query: "WithMate", characterId: "character-a", projectId: "project-a", kinds: ["note" as const], limit: 1 };
     assert.deepEqual((await service.searchEntries(filter)).items.map((item) => item.id), ["character-project-a"]);
