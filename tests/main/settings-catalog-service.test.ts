@@ -305,7 +305,7 @@ describe("SettingsCatalogService", () => {
           authoritySnapshot: { characterId: session.characterId }, operationGrants: ["session_history.route.read_messages"],
           scope: { purpose, history: { source: { kind: "main", sessionId: session.id,
             incarnationId: getSessionIncarnationId(session), ownerIdentity: "fixture-owner" }, fromMessageSeq: 0, throughMessageSeq: 0 },
-          processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] },
+          memoryTargets: [] },
         });
       };
       try {

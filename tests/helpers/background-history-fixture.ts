@@ -144,7 +144,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
         parent: { sessionId: "main", incarnationId: readConversationQuerySnapshot(db, "session_messages_v6", "main")!.incarnationId } }
       : { kind, sessionId: id, incarnationId: snapshot.incarnationId, ownerIdentity: snapshot.ownerIdentity };
     return { purpose, history: { source, fromMessageSeq: 0, throughMessageSeq: id === "main" ? 1 : 0 },
-      processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] };
+      memoryTargets: [] };
   }
   type ReadOptions = { memoryTargets?: BackgroundExecutionScope["memoryTargets"]; allowedProjectIds?: string[]; authoritySnapshot?: Record<string, unknown> };
   function started(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations(), options: ReadOptions = {}) {

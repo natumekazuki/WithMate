@@ -24,7 +24,7 @@ function fixture(read?: (input: SessionHistoryReadInput) => Promise<SessionHisto
   });
   const issue = (history: SessionHistoryReadScope | null, operationGrants = getSessionHistoryAgentRuntimeOperations()) =>
     history ? registry.issueBackground({ actorSessionId: "source", providerId: "codex", operationGrants,
-      scope: { purpose: "affect", history, processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] } })
+      scope: { purpose: "affect", history, memoryTargets: [] } })
       : registry.issueOrReuse({ actorSessionId: "source", providerId: "codex", operationGrants });
   const begin = (binding: ReturnType<typeof issue>) => binding.background
     ? turns.beginBackground({ actorSessionId: "source", providerId: "codex", bindingId: binding.bindingId })

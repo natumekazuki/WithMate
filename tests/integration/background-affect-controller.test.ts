@@ -49,40 +49,88 @@ async function fixture(runAgent: (input: BackgroundAgentInput) => Promise<void>)
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存済み終端通知ごとに独立Affect実行を開始し、初回の新規Turnを捨てず過去を生成せず、実行中の設定・scopeを固定する"
+// claim = "同sourceの終端通知を実行完了後の最新prepareへ集約し、初回通知を捨てず、実行中の設定・scopeを固定する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "Mainの通知元を背景終了待ちにする、同用途を直列化する、初通知を初期化で消費する、または後続設定で実行中入力が変わる"
-// observable = "実Workerのcaptureを通したAgentの処理範囲・選択・本文、通知直後の返却、並行Agent数"
+// fault = "通知元を背景終了待ちにする、同threadを重複実行する、後続通知を捨てる、または次prepareへ最新材料を反映しない"
+// observable = "実Worker captureを通したAgent開始数・選択・本文・材料取得回数と通知直後の返却"
 // observation_boundary = "consumer"
 // scope = "real production runtime and BackgroundCallService with saved Main terminal events and fake Agent"
 // lifecycle = "permanent"
-// distinction = "共通runtimeのprepare単体では用途controllerの初期位置と通知非待機・同用途並行を確認できない"
+// distinction = "共通runtime単体ではcontrollerが先に固定した古い材料を待機させる欠陥や通知集約を検出できない"
 // @end-test-value
-test("保存済み終端から同用途を並行開始し入力を固定する", async () => {
-  const entered = gate(), release = gate();
+test("保存済み終端を同source内で直列集約し次回の最新材料を取得する", async () => {
+  const entered = gate(), next = gate(), release = gate();
   const agents: BackgroundAgentInput[] = [];
   const f = await fixture(async (agent) => {
     agents.push(agent);
-    if (agents.length === 3) entered.resolve();
+    if (agents.length === 1) entered.resolve();
+    if (agents.length === 2) next.resolve();
     await release.promise;
   });
   try {
     f.event(1);
     f.controller.start(); f.controller.start();
-    for (const [id, phase] of [[2, "completed"], [3, "failed"], [4, "canceled"]] as const) {
-      assert.equal(f.runtime.publish(f.event(id, phase)), undefined);
-    }
+    assert.equal(f.runtime.publish(f.event(2)), undefined);
     await entered.promise;
-    assert.equal(agents.length, 3);
-    assert.equal(agents.find((agent) => agent.scope.processing.throughTurnId === 2)!.scope.processing.afterTurnId, 1);
-    assert.ok(agents.every((agent) => (agent.scope.processing.afterTurnId ?? 0) >= 1
-      && (agent.scope.processing.afterTurnId ?? 0) < agent.scope.processing.throughTurnId));
-    assert.deepEqual(agents.map((agent) => agent.scope.processing.throughTurnId).sort(), [2, 3, 4]);
-    assert.equal(new Set(agents.map((agent) => agent.binding.bindingId)).size, 3);
-    f.settings.backgroundExecutionSettings.affect = { selection: { providerId: "claude", modelId: "changed" }, instructionText: "changed" };
+    const original = structuredClone(agents[0]!.scope);
+    for (const [id, phase] of [[3, "failed"], [4, "canceled"]] as const) assert.equal(f.runtime.publish(f.event(id, phase)), undefined);
+    f.settings.backgroundExecutionSettings.affect.instructionText = "changed";
     f.runtime.publish({ kind: "settings_changed", settings: f.settings });
-    assert.ok(agents.every((agent) => agent.selection.modelId === "test" && agent.userInput.includes("edited") && !agent.userInput.includes("changed")));
+    const materials = f.deps.readMaterials;
+    let reads = 0;
+    f.deps.readMaterials = async (session, source) => { reads++; return { ...await materials(session, source), characterDefinition: "latest definition" }; };
+    assert.equal(agents.length, 1);
+    assert.ok(agents[0]!.userInput.includes("edited") && !agents[0]!.userInput.includes("changed"));
+    release.resolve(); await next.promise;
+    assert.equal(agents.length, 2);
+    assert.equal(reads, 1);
+    assert.ok(agents[1]!.userInput.includes("changed") && agents[1]!.userInput.includes("latest definition"));
+    assert.deepEqual(agents[0]!.scope, original);
+    assert.notEqual(agents[0]!.binding.bindingId, agents[1]!.binding.bindingId);
     assert.equal(f.failures.length, 0);
+  } finally { release.resolve(); f.runtime.stop(); await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Affect失敗は即時再送せず次の新Turnで同native文脈と失敗材料を渡し、runtime停止再開では待機Turnを復元しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "失敗でnative文脈を捨てるか即時retryし、または停止中の待機通知を新しいruntimeへ再送する"
+// observable = "Agent開始数・continuation ID/threadId・失敗材料と停止再開後の開始タイミング"
+// observation_boundary = "consumer"
+// scope = "Affect controller through production runtime with saved terminals, failing Agent and blocked cleanup"
+// lifecycle = "permanent"
+// impact = "失敗までの背景文脈を利用しつつ新しい会話を取り込み、停止前の要求を意図せず再送しない"
+// distinction = "共通call serviceの直接呼出ではcontrollerが新Turnを発火しpendingを停止で破棄する接続を確認できない"
+// @end-test-value
+test("失敗後の新Turnは文脈を継続し停止再開は待機通知を復元しない", { timeout: 10000 }, async () => {
+  const failed = gate(), second = gate(), third = gate(), release = gate();
+  const agents: BackgroundAgentInput[] = [];
+  const f = await fixture(async (agent) => {
+    agents.push(agent);
+    if (agents.length === 1) { agent.continuation.onThreadId("affect-thread"); throw new Error("appraisal interrupted"); }
+    if (agents.length === 2) { second.resolve(); await release.promise; }
+    if (agents.length === 3) third.resolve();
+  });
+  f.failureObserver.onFailure = (failure) => { f.failures.push(failure); failed.resolve(); };
+  try {
+    f.controller.start(); f.runtime.publish(f.event(1)); await failed.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    f.runtime.publish({ kind: "settings_changed", settings: f.settings });
+    assert.equal(agents.length, 1);
+    f.runtime.publish(f.event(2)); await second.promise;
+    assert.equal(agents[1]!.continuation.id, agents[0]!.continuation.id);
+    assert.equal(agents[1]!.continuation.threadId, "affect-thread");
+    assert.ok(agents[1]!.userInput.includes("appraisal interrupted"));
+    f.runtime.publish(f.event(3));
+    f.runtime.stop(); release.resolve();
+    f.runtime.start(); f.controller.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(agents.length, 2);
+    f.runtime.publish(f.event(4)); await third.promise;
+    assert.equal(agents.length, 3);
+    assert.notEqual(agents[2]!.continuation.id, agents[0]!.continuation.id);
+    assert.equal(agents[2]!.continuation.threadId, null);
   } finally { release.resolve(); f.runtime.stop(); await f.close(); }
 });
 
@@ -91,7 +139,7 @@ test("保存済み終端から同用途を並行開始し入力を固定する",
 // claim = "未設定・材料失敗は開始位置を進めず、source解放は遅延読取を無効にし、停止再購読後は最新の新規通知を処理する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
 // fault = "空Affectで失敗を救済する、not_configuredで位置を進める、source解放後の遅延読取から実行する、または停止再購読が重複・欠落する"
-// observable = "Agent開始件数、onFailure、再購読後のprocessing範囲、source解放後の未実行"
+// observable = "Agent開始件数、onFailure、再購読後のhistory source、source解放後の未実行"
 // observation_boundary = "consumer"
 // scope = "controller material/prepare failures and subscription/source lifetime using real capture and runtime"
 // lifecycle = "permanent"
@@ -134,7 +182,7 @@ test("開始前失敗と停止を区別し再開始で最初の新規通知を�
     f.deps.readMaterials = async () => ({ characterDefinition: "definition", currentAffect: { schemaVersion: AFFECT_SCHEMA_VERSION,
       characterId: "character", userId: "local-user", sessionId: "main", evaluatedAt: time, layers: [], components: [] } });
     f.runtime.publish(f.event(5)); await started.promise;
-    assert.deepEqual(agents[0]!.scope.processing, { afterTurnId: 2, throughTurnId: 5 });
+    assert.equal(agents[0]!.scope.history.source.sessionId, "main");
     assert.equal(agents.length, 1);
   } finally { release.resolve(); f.runtime.stop(); await f.close(); }
 });
@@ -144,16 +192,16 @@ test("開始前失敗と停止を区別し再開始で最初の新規通知を�
 // claim = "実会話runtimeの保存済み終端だけがAffect実行へ届き、背景実行中でも通常turnは完了し保存拒否は発火しない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
 // fault = "終端保存と用途controllerの接続を欠落するか、背景完了を待つか、保存失敗を正常な終端通知として扱う"
-// observable = "real Workerの保存phase、Agent処理throughTurnId、背景gate未解放時の主会話返却、保存拒否後のAgent件数"
+// observable = "real Workerの保存phase、Agent固定history末尾、背景gate未解放時の主会話返却、保存拒否後のAgent件数"
 // observation_boundary = "consumer"
 // scope = "SessionRuntimeService terminal persistence through production runtime/controller/prepare/runOnce with fake foreground adapter and background Agent"
 // lifecycle = "permanent"
 // distinction = "Session通知単体とcontroller手動publish単体の間にある接続を、一時DBの保存事実をoracleとして検証する"
 // @end-test-value
 test("実会話の終端保存からAffectを開始し主会話と保存失敗を分離する", { timeout: 10000 }, async () => {
-  const release = gate(), entered = gate();
+  const release = gate(), entered = gate(), next = gate();
   const agents: BackgroundAgentInput[] = [];
-  const f = await fixture(async (agent) => { agents.push(agent); if (agents.length === 3) entered.resolve(); await release.promise; });
+  const f = await fixture(async (agent) => { agents.push(agent); entered.resolve(); if (agents.length === 2) next.resolve(); await release.promise; });
   let phase: "completed" | "failed" | "canceled" = "completed";
   let rejectSave = false;
   const adapter: ProviderCodingAdapter = {
@@ -192,16 +240,21 @@ test("実会話の終端保存からAffectを開始し主会話と保存失敗�
       const session = (await f.worker.stores.session.getSession("main"))!;
       await foreground.runSessionTurn("main", { userMessage: "please", executionOptions: captureSessionExecutionOptions(session) });
       await foreground.waitForPendingRuns();
+      if (phase === "completed") await entered.promise;
     }
     await entered.promise;
     const saved = f.db.prepare("SELECT id, phase FROM session_turns_v6 ORDER BY id").all();
     assert.deepEqual(saved.map((turn) => turn.phase), ["completed", "failed", "canceled"]);
-    assert.deepEqual(agents.map((agent) => agent.scope.processing.throughTurnId).sort(), saved.map((turn) => turn.id));
+    assert.equal(agents.length, 1);
     rejectSave = true; phase = "completed";
     const session = (await f.worker.stores.session.getSession("main"))!;
     await assert.rejects(foreground.runSessionTurn("main", { userMessage: "reject", executionOptions: captureSessionExecutionOptions(session) }), /terminal save rejected/);
     await foreground.waitForPendingRuns();
-    assert.equal(agents.length, 3);
+    assert.equal(agents.length, 1);
+    release.resolve(); await next.promise;
+    assert.equal(agents.length, 2);
+    const lastSaved = f.db.prepare("SELECT MAX(assistant_message_seq) AS seq FROM session_turns_v6 WHERE completed_at IS NOT NULL").get()!;
+    assert.ok(agents[1]!.scope.history.throughMessageSeq >= Number(lastSaved.seq));
   } finally { release.resolve(); f.runtime.stop(); await foreground.waitForPendingRuns(); await f.close(); }
 });
 
@@ -210,7 +263,7 @@ test("実会話の終端保存からAffectを開始し主会話と保存失敗�
 // claim = "同名Main/Auxiliaryの終端通知は各実sourceの初期位置・材料取得source・bindingで独立してAffectを開始する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#affect登録入力と会話owner" }
 // fault = "controllerの位置をliteral IDだけで共有するか、Auxiliaryの材料取得へMain sourceを渡す"
-// observable = "実Worker captureからprepareした二Agentのkind・ownerIdentity・processing位置と材料取得source、別binding"
+// observable = "実Worker captureからprepareした二Agentのkind・ownerIdentityと材料取得source、別binding"
 // observation_boundary = "consumer"
 // scope = "同名Main/Auxiliaryの用途controllerとproduction prepare/runOnce（材料とAgentはfake）"
 // lifecycle = "permanent"
@@ -247,8 +300,8 @@ test("同名MainとAuxiliaryのcontroller位置と実行を独立させる", { t
     await entered.promise;
     const main = agents.find((agent) => agent.scope.history.source.kind === "main")!;
     const auxiliary = agents.find((agent) => agent.scope.history.source.kind === "auxiliary")!;
-    assert.deepEqual(main.scope.processing, { afterTurnId: 1, throughTurnId: 3 });
-    assert.deepEqual(auxiliary.scope.processing, { afterTurnId: 2, throughTurnId: 4 });
+    assert.equal(main.scope.history.source.sessionId, "aux");
+    assert.equal(auxiliary.scope.history.source.sessionId, "aux");
     assert.notEqual(main.scope.history.source.ownerIdentity, auxiliary.scope.history.source.ownerIdentity);
     assert.notEqual(main.binding.bindingId, auxiliary.binding.bindingId);
     assert.deepEqual(materials.sort(), ["auxiliary", "main"]);

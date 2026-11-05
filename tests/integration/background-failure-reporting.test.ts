@@ -55,7 +55,7 @@ test("all background purposes and source kinds retain causal diagnostics without
   try {
     for (const id of ["main", "aux"]) for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
       settings.backgroundExecutionSettings[purpose] = { selection: { providerId: "claude", modelId: "test", approvalMode: "on-request" } };
-      const input = { purpose, source: f.scope(id, purpose).history.source, session: f.sessions.get(id)!, processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] };
+      const input = { purpose, source: f.scope(id, purpose).history.source, session: f.sessions.get(id)!, memoryTargets: [] };
       const before = events.length;
       failCatalog = true;
       assert.equal((await runtime.prepare(input)).status, "failed");
@@ -237,7 +237,7 @@ test("registration failures preserve earlier saved Memory and Affect for both so
       const initial = f.scope(id, purpose);
       const result = await service.runOnce({ context: { session: f.sessions.get(id)!, actorSessionId: id,
         authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
-        scope: { ...initial, history: { ...initial.history, throughMessageSeq: 1 }, processing: { afterTurnId: null, throughTurnId: id === "main" ? 1 : 2 },
+        scope: { ...initial, history: { ...initial.history, throughMessageSeq: 1 },
           memoryTargets: [{ owner: "user", scope: "global" }, { owner: "character", scope: "character", character: { type: "id", id: "character" } }] },
         operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS[purpose].operation] }, selection: { providerId: "claude", modelId: "test" }, userInput: "", onAdmitted() {} });
       assert.equal(returnedNormally, true);

@@ -14,6 +14,8 @@ Accepted
 
 2026-11-05の[登録内容と失敗診断](#登録内容と失敗診断)により、失敗を既知codeと定型の短い原因だけへ限定する方針は適用対象外とする。失敗専用ファイル・通常成功を記録しない運用と、認可・保存済みデータ保護は維持する。
 
+2026-11-06の[背景native threadの継続](#背景native-threadの継続)により、呼出しごとのnative thread破棄、同source・用途の並行送信、生成・登録対象をprocessing区間で固定する条項は適用対象外とする。当時の本文を保持し、呼出しごとのbinding／認可／失効と保存済みデータ保護は維持する。
+
 ## Context
 
 Issue #888の三用途を通常Sessionのactor／Providerキーで実行すると、通常turnのbinding再利用・置換と競合する。#908の履歴readは元会話を参照するが、生成purposeやMemory記録の処理位置は読取能力そのものの条件ではない。Auxiliaryの再作成はcreatedAtだけでは区別できず、既存のconversation ownerIdentityに含まれるdraft incarnationも必要になる。
@@ -160,3 +162,11 @@ WithMateの履歴範囲・owner／保存先・入力・用途operation grantは�
 三用途の登録本文は自身の目的・材料・判断・登録・終了条件から構成し、自然言語の分量制限を設けない。Character Memoryには実Characterの定義を参照材料として渡し、観察事実と本人の解釈を区別した本人の語りを保存する。共通Provider systemでその語りを否定しない。編集本文によるプリセット置換と、保存済み編集本文の保護を維持する。
 
 失敗の定型分類だけでは操作の拒否理由や、失敗と同じ実行で確認できた保存を追えないため、既存実行寿命に操作の要求・応答metadataと選別・秘匿化した原因を保持する。実行が失敗した時だけ既存の専用JSONLへ出し、正常な成功実行の恒久履歴や新規台帳・DB・再送queueは設けない。途中失敗後の保存成功は診断材料であり、全体の失敗を成功へ変えない。会話・prompt・tool引数や応答本文の無差別dumpは行わず、診断に必要な実code／message・検証箇所・期待条件・cause／stackと保存識別情報を選ぶ。認証情報を秘匿化し、原因情報を恣意的な短文化で落とさない。現行仕様は[Background Execution](../design/background-execution.md)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)に示す。
+
+## 背景native threadの継続
+
+元会話Sessionの実identityと用途ごとに、現在のアプリruntime内だけでProvider native threadを継続する。同じthreadへの送信は直列化し、実行中の新しい発火を次回へ残す。別source・用途を全体で直列化せず、永続queueや全体同時上限を追加しない。Provider選択の変更は旧実行を取消し、新Providerの新threadへ切り替える。遅延した旧完了・旧設定snapshotで新状態を上書きしない。
+
+native文脈と呼出ごとのbinding／credential／scopeの寿命を分ける。resumeには現在の接続情報を渡し、各呼出終了で認可を失効させる。native履歴は文脈として利用できるが、現在の保存状態・権限の正本とはしない。失敗しても利用可能なthreadは保持し、次の会話Turnによる用途発火へ失敗事実と新しい材料を渡す。即時の自動retryや、失敗を全件未保存とする補償は行わない。
+
+発火頻度の位置はAIの処理済み範囲と分離し、生成・登録対象をアプリのprocessing区間へ固定しない。AIは認可された保存済みhistory内で必要な会話・操作結果・既存記録・過去Turnの再検討を選ぶ。実source・owner・Character・許可target・terminal Turn・履歴末尾windowと失効write拒否は維持する。再起動後は継続状態を復元せず、新しい会話Turnから新threadを開始する。既存Memory／Affectを削除・再生成せず、独自の完了台帳・hash・再送DBは設けない。現行仕様は[Background Execution](../design/background-execution.md#native文脈の継続と失敗情報)に示す。

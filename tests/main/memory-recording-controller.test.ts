@@ -72,6 +72,7 @@ function setup() {
       terminal(id: number, phase?: "completed" | "failed" | "canceled") { runtime.publish(add(id, phase)); } };
   }
   return { settings, runtime, controller, executions, source, agents, errors, timers, definitionReads,
+    releaseAgents() { for (const release of releases.splice(0)) release(); },
     setFailDefinition(value: boolean) { failDefinition = value; },
     setFailAgent(value: boolean) { failAgent = value; }, setFailCatalog(value: boolean) { failCatalog = value; },
     blockCatalog() { let release!: () => void; catalogGate = new Promise<void>((done) => { release = done; }); return () => { catalogGate = undefined; release(); }; },
@@ -84,7 +85,7 @@ function setup() {
 // claim = "Character Memoryは実Main/AuxiliaryのCharacter定義を開始入力へ渡し、取得失敗時は開始せず未開始範囲を保持する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
 // fault = "親Characterの定義をAuxiliaryへ渡すか、取得失敗を空材料へ救済し範囲を消費する"
-// observable = "AgentのCharacter定義・target・processing、定義取得ID、materials段階の失敗"
+// observable = "AgentのCharacter定義・target・history、定義取得ID、materials段階の失敗"
 // observation_boundary = "consumer"
 // scope = "Memory controller through real background runtime with distinct Main/Auxiliary Characters"
 // lifecycle = "permanent"
@@ -112,7 +113,7 @@ test("実Characterの定義を渡し取得失敗では開始位置を進めな�
       const characterId = isMain ? "main-character" : "aux-character";
       assert.ok(agent.userInput.includes(`Definition of ${characterId}: 一人称はうち。`));
       assert.deepEqual(agent.scope.memoryTargets, [{ owner: "character", scope: "character", character: { type: "id", id: characterId } }]);
-      assert.deepEqual(agent.scope.processing, { afterTurnId: 0, throughTurnId: isMain ? 10 : 20 });
+      assert.equal(agent.scope.history.source.sessionId, isMain ? "parent" : "aux");
     }
     assert.deepEqual(f.definitionReads.sort(), ["aux-character", "aux-character", "main-character", "main-character"]);
   } finally { await f.close(); }
@@ -120,15 +121,15 @@ test("実Characterの定義を渡し取得失敗では開始位置を進めな�
 
 // @test-value v2
 // kind = "contract"
-// claim = "実保存Turnの件数で発火し、同名Mainと各Auxiliary・二用途の位置と並行bindingと固定範囲を分離する"
+// claim = "実保存Turnの件数で発火し、同じsourceと用途は実行終了後に新Turnを集約し、別sourceと用途は独立する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
-// fault = "ID差を件数にするか、用途や会話を混ぜるか、先行Agent完了まで次範囲を待たせる"
-// observable = "共通prepare/runOnceを経たAgentの件数・processing/history・binding ID"
+// fault = "ID差を件数にするか、同threadを重複実行するか、実行中の新Turnを捨てるか、別sourceまで待たせる"
+// observable = "共通prepare/runOnceを経たAgent件数・history末尾・binding IDと最新本文"
 // observation_boundary = "consumer"
 // scope = "Memory controller with real production runtime and execution service, fake source and Agent"
 // lifecycle = "permanent"
 // @end-test-value
-test("実件数で発火しownerと用途を分離して先行Agentと並行開始する", async () => {
+test("実件数で発火し同source用途の次回を集約し別source用途は並行する", async () => {
   const f = setup();
   try {
     f.settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 3, idleMinutes: 5 }, "target-memory": { turnCount: 3, idleMinutes: 5 } };
@@ -141,13 +142,19 @@ test("実件数で発火しownerと用途を分離して先行Agentと並行開�
     await settle(); assert.equal(f.agents.length, 6);
     const fixed = f.agents.map((agent) => structuredClone(agent.scope));
     for (const owner of owners) { owner.terminal(200); owner.terminal(800); owner.terminal(900); }
-    await settle(); assert.equal(f.agents.length, 12);
-    assert.equal(new Set(f.agents.map((agent) => agent.binding.bindingId)).size, 12);
+    await settle(); assert.equal(f.agents.length, 6);
+    const independent = f.source("main", "independent");
+    independent.terminal(10); independent.terminal(70); independent.terminal(100);
+    await settle(); assert.equal(f.agents.length, 8);
+    f.settings.backgroundExecutionSettings["target-memory"].instructionText = "latest body";
+    f.releaseAgents(); await settle();
+    assert.equal(f.agents.length, 14);
+    assert.equal(new Set(f.agents.map((agent) => agent.binding.bindingId)).size, 14);
     assert.deepEqual(f.agents.slice(0, 6).map((agent) => agent.scope), fixed);
-    for (const agent of f.agents.slice(6)) {
-      assert.deepEqual(agent.scope.processing, { afterTurnId: 100, throughTurnId: 900 });
+    for (const agent of f.agents.slice(8)) {
+      assert.equal(agent.scope.history.throughMessageSeq, 13);
       assert.equal(agent.scope.memoryTargets.some((target) => target.owner === "user"), false);
-      assert.ok(agent.userInput.includes("edited"));
+      assert.ok(agent.userInput.includes(agent.scope.purpose === "target-memory" ? "latest body" : "edited"));
     }
     assert.deepEqual(f.errors, []);
   } finally { await f.close(); }
@@ -158,7 +165,7 @@ test("実件数で発火しownerと用途を分離して先行Agentと並行開�
 // claim = "端数の連続idleを会話再開で解除し、設定変更で未開始条件だけを再評価する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
 // fault = "会話再開前のidle時間を流用するか、設定変更で開始済み範囲を再送する"
-// observable = "fake clockでのAgent開始数・タイマー数・processing範囲"
+// observable = "fake clockでのAgent開始数・タイマー数・固定history末尾と本文"
 // observation_boundary = "consumer"
 // scope = "controller one-shot idle scheduling and settings events"
 // lifecycle = "permanent"
@@ -177,8 +184,10 @@ test("連続idleと再開・設定変更を再評価し設定済み本文を固�
     f.settings.memoryRecordingFrequencies = { ...f.settings.memoryRecordingFrequencies, "target-memory": { turnCount: 1, idleMinutes: 5 } };
     f.settings.backgroundExecutionSettings["target-memory"].instructionText = "new body";
     f.runtime.publish({ kind: "settings_changed", settings: f.settings }); await settle();
+    assert.equal(f.agents.length, 2);
+    f.releaseAgents(); await settle();
     assert.equal(f.agents.length, 3);
-    assert.deepEqual(f.agents[2].scope.processing, { afterTurnId: 10, throughTurnId: 80 });
+    assert.equal(f.agents[2].scope.history.throughMessageSeq, 5);
     assert.ok(f.agents[2].userInput.includes("new body"));
     assert.ok(f.agents[0].userInput.includes("edited"));
     f.controller.forget("main", "idle"); assert.equal(f.timers.size, 0);
@@ -187,10 +196,10 @@ test("連続idleと再開・設定変更を再評価し設定済み本文を固�
 
 // @test-value v2
 // kind = "contract"
-// claim = "prepareとbeginの失敗で位置を進めず、Agent失敗後は戻さず、停止再開で過去と初回通知を区別する"
+// claim = "prepareとbegin失敗で頻度境界を進めず、Agent失敗後の新Turnで再発火し、停止再開で過去と初回通知を区別する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
-// fault = "準備時に位置を進めるか、Agent失敗を再送するか、再起動時に過去を処理し最初の通知を捨てる"
-// observable = "失敗後と再起動後のAgent開始件数・processing位置・timer解放"
+// fault = "準備時に頻度境界を進めるか、失敗だけで再送するか、新Turnを捨てるか、再起動時に過去を処理する"
+// observable = "失敗後と再起動後のAgent開始件数・history末尾・timer解放"
 // observation_boundary = "consumer"
 // scope = "controller start position, preparation failures and subscription lifetime"
 // lifecycle = "permanent"
@@ -205,12 +214,14 @@ test("開始前後の失敗と停止再開の位置を分け初回通知を保�
     f.runtime.publish({ kind: "settings_changed", settings: f.settings }); await settle(); assert.equal(f.agents.length, 0);
     f.executions.start(); f.setFailAgent(true);
     f.runtime.publish({ kind: "settings_changed", settings: f.settings }); await settle(); assert.equal(f.agents.length, 2);
-    for (const agent of f.agents) assert.deepEqual(agent.scope.processing, { afterTurnId: 5, throughTurnId: 50 });
+    for (const agent of f.agents) assert.equal(agent.scope.history.throughMessageSeq, 5);
     f.runtime.publish({ kind: "settings_changed", settings: f.settings }); await settle(); assert.equal(f.agents.length, 2);
+    owner.terminal(80); await settle(); assert.equal(f.agents.length, 4);
+    for (const agent of f.agents.slice(2)) assert.equal(agent.scope.history.throughMessageSeq, 7);
     f.runtime.stop(); assert.equal(f.timers.size, 0); owner.add(100);
     f.runtime.start(); f.controller.start(); f.controller.start(); owner.terminal(200); await settle();
-    assert.equal(f.agents.length, 4);
-    for (const agent of f.agents.slice(2)) assert.deepEqual(agent.scope.processing, { afterTurnId: 100, throughTurnId: 200 });
-    assert.equal(f.errors.length, 8);
+    assert.equal(f.agents.length, 6);
+    for (const agent of f.agents.slice(4)) assert.equal(agent.scope.history.throughMessageSeq, 11);
+    assert.equal(f.errors.length, 10);
   } finally { await f.close(); }
 });

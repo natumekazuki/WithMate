@@ -9,7 +9,7 @@ import type { BackgroundProductionRuntime, BackgroundRuntimeEvent } from "../pro
 import { runBackgroundMemoryRegistration } from "./background-memory-registration.js";
 
 const purposes = ["character-memory", "target-memory"] as const;
-type Position = { after: number | null; checking: boolean; dirty: boolean; timer?: ReturnType<typeof setTimeout> };
+type Position = { lastStarted: number | null; checking: boolean; dirty: boolean; timer?: ReturnType<typeof setTimeout> };
 type Clock = { now(): number; setTimeout(callback: () => void, delay: number): ReturnType<typeof setTimeout>; clearTimeout(timer: ReturnType<typeof setTimeout>): void };
 type SourceState = {
   source: BackgroundSourceRef; session: Session; running: boolean; idleSince: number | null;
@@ -20,14 +20,14 @@ const key = (source: Pick<BackgroundSourceRef, "kind" | "sessionId">) => JSON.st
 const sameSource = (a: BackgroundSourceRef, b: BackgroundSourceRef) => a.incarnationId === b.incarnationId
   && (a.kind !== "auxiliary" || (b.kind === "auxiliary" && a.parent.sessionId === b.parent.sessionId && a.parent.incarnationId === b.parent.incarnationId));
 
-/** In-memory start positions only; Agent lifetime and registration remain owned by the shared runtime. */
+/** Frequency boundaries and coalesced triggers only; execution and registration remain shared. */
 export class MemoryRecordingController {
   private readonly sources = new Map<string, SourceState>();
   private unsubscribe?: () => void;
   private readonly clock: Clock;
 
   constructor(private readonly deps: {
-    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure">;
+    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure" | "forgetSource">;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     getSettings(): AppSettings | Promise<AppSettings>;
     resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
@@ -48,6 +48,7 @@ export class MemoryRecordingController {
   }
 
   forget(kind: "main" | "auxiliary", sessionId: string): void {
+    this.deps.runtime.forgetSource(kind, sessionId);
     for (const [id, state] of this.sources) {
       if ((state.source.kind === kind && state.source.sessionId === sessionId)
         || (kind === "main" && state.source.kind === "auxiliary" && state.source.parent.sessionId === sessionId)) {
@@ -80,11 +81,11 @@ export class MemoryRecordingController {
         running: event.kind === "run_state" ? event.running : false,
         idleSince: event.kind === "terminal_saved" ? this.clock.now() : null,
         // The saved start contains the new user message, never its future assistant reply.
-        // A first terminal notification is excluded from the initial cursor, not discarded.
+        // A first terminal notification is excluded from the initial frequency boundary, not discarded.
         initial: event.kind === "terminal_saved" ? { turn: event.terminal.turnId }
           : { seq: (event.session.messageCount ?? event.session.messages.length) - 1 },
-        positions: { "character-memory": { after: null, checking: false, dirty: false },
-          "target-memory": { after: null, checking: false, dirty: false } } };
+        positions: { "character-memory": { lastStarted: null, checking: false, dirty: false },
+          "target-memory": { lastStarted: null, checking: false, dirty: false } } };
       this.sources.set(key(event.source), state);
     }
     state.session = event.session;
@@ -105,15 +106,17 @@ export class MemoryRecordingController {
       try {
         while (position.dirty && this.current(state)) {
           position.dirty = false;
-          if (position.after === null) {
-            state.initializing ??= this.initialize(state).finally(() => { state.initializing = undefined; });
-            await state.initializing;
+          try {
+            if (position.lastStarted === null) {
+              state.initializing ??= this.initialize(state).finally(() => { state.initializing = undefined; });
+              await state.initializing;
+            }
+            if (!this.current(state)) return;
+            await this.evaluate(state, purpose);
+          } catch (error) {
+            if (this.current(state)) this.deps.runtime.reportFailure({ purpose, source: state.source, stage: "capture", error });
           }
-          if (!this.current(state)) return;
-          await this.evaluate(state, purpose);
         }
-      } catch (error) {
-        if (this.current(state)) this.deps.runtime.reportFailure({ purpose, source: state.source, stage: "capture", error });
       }
       finally { position.checking = false; }
     })();
@@ -126,8 +129,8 @@ export class MemoryRecordingController {
     const before = captured.snapshot.turns.filter((turn) => turn.phase !== "running" && turn.completedAt
       && turn.assistantMessageSeq !== undefined && ("turn" in state.initial
         ? turn.id < state.initial.turn : turn.assistantMessageSeq <= state.initial.seq));
-    const after = before.reduce((latest, turn) => Math.max(latest, turn.id), 0);
-    for (const position of Object.values(state.positions)) position.after = after;
+    const lastStarted = before.reduce((latest, turn) => Math.max(latest, turn.id), 0);
+    for (const position of Object.values(state.positions)) position.lastStarted = lastStarted;
   }
 
   private async evaluate(state: SourceState, purpose: MemoryRecordingPurpose): Promise<void> {
@@ -137,7 +140,7 @@ export class MemoryRecordingController {
     const [captured, settings] = await Promise.all([this.deps.captureSource(state.source), this.deps.getSettings()]);
     if (!this.current(state)) return;
     if (!captured) { this.forget(state.source.kind, state.source.sessionId); return; }
-    const pending = captured.snapshot.turns.filter((turn) => turn.id > position.after!
+    const pending = captured.snapshot.turns.filter((turn) => turn.id > position.lastStarted!
       && turn.phase !== "running" && turn.completedAt && turn.assistantMessageSeq !== undefined);
     const frequency = settings.memoryRecordingFrequencies[purpose];
     const trigger = getMemoryRecordingTrigger({ pendingTurnCount: pending.length, frequency,
@@ -157,9 +160,9 @@ export class MemoryRecordingController {
     const character: MemoryTargetSelector = { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
     const memoryTargets: MemoryTargetSelector[] = purpose === "character-memory" ? [character]
       : [character, ...authority.allowedProjectIds.map((id): MemoryTargetSelector => ({ owner: "project", scope: "project", project: { type: "id", id } }))];
-    const throughTurnId = pending.reduce((latest, turn) => Math.max(latest, turn.id), 0);
+    const lastTerminalId = pending.reduce((latest, turn) => Math.max(latest, turn.id), 0);
     const prepared = await this.deps.runtime.prepare({ purpose, source: state.source, session: state.session,
-      processing: { afterTurnId: position.after, throughTurnId }, memoryTargets });
+      memoryTargets });
     if (!this.current(state) || position.dirty || prepared.status !== "ready") return;
     const { scope } = prepared.call.context;
     if (scope.purpose !== "character-memory" && scope.purpose !== "target-memory") throw new Error("Memory purpose preparation returned another purpose.");
@@ -172,12 +175,12 @@ export class MemoryRecordingController {
       }
       if (!this.current(state) || position.dirty) return;
     }
-    void runBackgroundMemoryRegistration(this.deps.runtime.calls, { ...prepared.call,
+    await runBackgroundMemoryRegistration(this.deps.runtime.calls, { ...prepared.call,
       context: { ...prepared.call.context, scope: { ...scope, purpose: scope.purpose } },
       instructionText: prepared.instructionText,
       characterDefinition,
       materials: "保存済み会話と必要な操作結果は、この実行に接続されたsession_history toolから固定history範囲内で取得できる。",
-      onAdmitted: () => { position.after = throughTurnId; },
+      onAdmitted: () => { if (this.current(state)) position.lastStarted = lastTerminalId; },
     }).catch((error) => {
       this.deps.runtime.reportFailure({ purpose, source: state.source, selection: prepared.call.selection, stage: "setup", error });
     });

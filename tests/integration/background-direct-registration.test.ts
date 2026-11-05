@@ -423,14 +423,14 @@ test("受付済み登録の取消をapplicationからWorkerへの保存境界で
 // @test-value v2
 // kind = "security"
 // claim = "背景Affectは候補全体の値と実Main Turnの範囲・終端・時刻を検証し、偽造値や不正sourceで一件も保存しない"
-// oracle = { type = "contract", ref = "docs/design/background-execution.md#affect登録入力とmain保存" }
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#affect登録入力と会話owner" }
 // fault = "public schemaを迂回した余剰fieldや別会話・範囲外・未完了Turnを受理する"
 // observable = "MCPのisError、配布CLIの非zero、直接runtimeのerror、実DBのAffectとMemory件数"
 // observation_boundary = "public-boundary"
 // scope = "production Affect handler, real Main source Worker and MCP/CLI/runtime input boundaries"
 // lifecycle = "permanent"
 // impact = "背景モデルが保存ownerや時刻を偽造し、許可外会話の感情を保存する"
-// distinction = "schemaだけでは実DBにあるTurnのowner・処理範囲・終端時刻を確認できず、公開入力だけではruntime迂回を検出できない"
+// distinction = "schemaだけでは実DBにあるTurnのowner・履歴境界・終端時刻を確認できず、公開入力だけではruntime迂回を検出できない"
 // risk_tags = ["authorization"]
 // @end-test-value
 test("背景Affectの候補値と実sourceを保存前に検証する", async () => {
@@ -441,59 +441,96 @@ test("背景Affectの候補値と実sourceを保存前に検証する", async ()
     for (const [id, sessionId, phase, seq, time] of [
       [2, "other", "completed", 0, completedAt], [3, "main", "running", 1, completedAt],
       [4, "main", "completed", 1, null], [5, "main", "completed", 1, "2026-11-01T01:00:00+00:00"],
-      [6, "main", "completed", 2, completedAt], [7, "main", "completed", 1, completedAt],
+      [6, "main", "completed", 2, completedAt],
     ] as const) {
       f.db.prepare(`INSERT INTO session_turns_v6(id,session_id,phase,assistant_message_seq,started_at,completed_at,updated_at)
         VALUES (?,?,?,?,?,?,?)`).run(id, sessionId, phase, seq, completedAt, time, completedAt);
     }
-    for (const afterTurnId of [null, 1]) {
-      const begun = f.executions.begin({ actorSessionId: "main", providerId: "claude", session: f.sessions.get("main")!,
-        scope: { ...f.scope(), processing: { afterTurnId, throughTurnId: 6 } },
-        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
-        operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
-      const binding = f.project(begun);
-      const { client } = await f.connect(binding, "memoryUrl");
-      for (const sourceTurnId of afterTurnId ? [1] : [999, 2, 3, 4, 5, 6, 7]) {
-        const op = operation("affect", "invalid-source");
-        op.input.candidates[0].sourceTurnId = sourceTurnId;
-        const mcp = await client.callTool({ name: op.tool, arguments: op.input });
-        assert.equal(mcp.isError, true, String(sourceTurnId));
-        assert.partialDeepStrictEqual(mcp.structuredContent, { error: { code: "invalid_input", effect: "none" } });
-        const child = await cli(f, binding, op);
-        assert.notEqual(child.code, 0, String(sourceTurnId));
-        assert.partialDeepStrictEqual(child.value, { error: { code: "invalid_input", effect: "none" } });
-      }
-      if (!afterTurnId) {
-        const original = operation("affect", "invalid-values");
-        const candidate = original.input.candidates[0];
-        const invalid = [
-          { ...candidate, occurredAt: completedAt }, { ...candidate, idempotencyKey: "caller-key" },
-          { ...candidate, characterId: "other-character" }, { ...candidate, authority: { kind: "operator" } },
-          { ...candidate, value: { ...candidate.value, extra: true } }, { ...candidate, reason: " " },
-          { ...candidate, layer: "bad" }, { ...candidate, targetType: "bad" }, { ...candidate, family: "bad" },
-          { ...candidate, value: { label: "bad", valence: 2 } }, { ...candidate, intensity: -1 },
-          { ...candidate, sourceTurnId: 1.5 }, { ...candidate, layer: "relationship", targetType: "bug" },
-        ];
-        for (const bad of invalid) {
-          const op = { ...original, input: { candidates: [candidate, bad] } };
-          assert.equal((await client.callTool({ name: op.tool, arguments: op.input })).isError, true);
-          assert.ok(((await direct(f, binding, op)).value as Record<string, unknown>).error);
-        }
-        assert.notEqual((await cli(f, binding, { ...original, input: { candidates: [invalid[0]] } })).code, 0);
-        for (const candidates of [[], Array.from({ length: 11 }, () => candidate)]) {
-          assert.ok(((await direct(f, binding, { ...original, input: { candidates } })).value as Record<string, unknown>).error);
-        }
-        assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
-        for (const phase of ["failed", "canceled"]) {
-          f.db.prepare("UPDATE session_turns_v6 SET phase = ? WHERE id = 1").run(phase);
-          const saved = await cli(f, binding, original);
-          assert.equal(saved.code, 0, JSON.stringify(saved.value));
-        }
-      }
-      f.executions.finish(begun);
+    const begun = f.executions.begin({ actorSessionId: "main", providerId: "claude", session: f.sessions.get("main")!,
+      scope: f.scope(),
+      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+      operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
+    const binding = f.project(begun);
+    const { client } = await f.connect(binding, "memoryUrl");
+    for (const sourceTurnId of [999, 2, 3, 4, 5, 6]) {
+      const op = operation("affect", "invalid-source");
+      op.input.candidates[0].sourceTurnId = sourceTurnId;
+      const mcp = await client.callTool({ name: op.tool, arguments: op.input });
+      assert.equal(mcp.isError, true, String(sourceTurnId));
+      assert.partialDeepStrictEqual(mcp.structuredContent, { error: { code: "invalid_input", effect: "none" } });
+      const child = await cli(f, binding, op);
+      assert.notEqual(child.code, 0, String(sourceTurnId));
+      assert.partialDeepStrictEqual(child.value, { error: { code: "invalid_input", effect: "none" } });
     }
+    const original = operation("affect", "invalid-values");
+    const candidate = original.input.candidates[0];
+    const invalid = [
+      { ...candidate, occurredAt: completedAt }, { ...candidate, idempotencyKey: "caller-key" },
+      { ...candidate, characterId: "other-character" }, { ...candidate, authority: { kind: "operator" } },
+      { ...candidate, value: { ...candidate.value, extra: true } }, { ...candidate, reason: " " },
+      { ...candidate, layer: "bad" }, { ...candidate, targetType: "bad" }, { ...candidate, family: "bad" },
+      { ...candidate, value: { label: "bad", valence: 2 } }, { ...candidate, intensity: -1 },
+      { ...candidate, sourceTurnId: 1.5 }, { ...candidate, layer: "relationship", targetType: "bug" },
+    ];
+    for (const bad of invalid) {
+      const op = { ...original, input: { candidates: [candidate, bad] } };
+      assert.equal((await client.callTool({ name: op.tool, arguments: op.input })).isError, true);
+      assert.ok(((await direct(f, binding, op)).value as Record<string, unknown>).error);
+    }
+    assert.notEqual((await cli(f, binding, { ...original, input: { candidates: [invalid[0]] } })).code, 0);
+    for (const candidates of [[], Array.from({ length: 11 }, () => candidate)]) {
+      assert.ok(((await direct(f, binding, { ...original, input: { candidates } })).value as Record<string, unknown>).error);
+    }
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
+    for (const phase of ["failed", "canceled"]) {
+      f.db.prepare("UPDATE session_turns_v6 SET phase = ? WHERE id = 1").run(phase);
+      const saved = await cli(f, binding, original);
+      assert.equal(saved.code, 0, JSON.stringify(saved.value));
+    }
+    f.executions.finish(begun);
     assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 2);
     assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景Affectは現在の履歴window内の過去terminal TurnをMCPとCLIから選んで登録でき、後続の未保存Turn拒否で先行保存を戻さない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#affect登録入力と会話owner" }
+// fault = "最新Turnだけを登録可能に制限するか、後続の不正Turn拒否で確定済みeventを取り消す"
+// observable = "MCPとCLIの保存応答、未保存Turnの拒否、終了後の実DB event件数と保存時刻"
+// observation_boundary = "public-boundary"
+// scope = "production Affect registration over Main history with multiple saved terminal Turns"
+// lifecycle = "permanent"
+// distinction = "schemaや型では実履歴を用いた過去Turnの選択とtool保存効果の維持を確認できない"
+// @end-test-value
+test("新しいTurnがあっても過去terminal Turnを選び保存できる", async () => {
+  const f = await fixture(undefined, handlers);
+  try {
+    seed(f);
+    const newerAt = "2026-11-02T01:00:00.000Z";
+    f.db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,created_at) VALUES ('main',2,'assistant','{}','now')").run();
+    f.db.prepare(`INSERT INTO session_turns_v6(id,session_id,phase,assistant_message_seq,started_at,completed_at,updated_at)
+      VALUES (20,'main','completed',2,?,?,?)`).run(newerAt, newerAt, newerAt);
+    const initial = f.scope();
+    const execution = f.executions.begin({ actorSessionId: "main", providerId: "claude", session: f.sessions.get("main")!,
+      scope: { ...initial, history: { ...initial.history, throughMessageSeq: 2 } },
+      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+      operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
+    const binding = f.project(execution);
+    const { client } = await f.connect(binding, "memoryUrl");
+    const op = operation("affect", "past-terminal");
+    op.input.candidates[0].sourceTurnId = 1;
+    const mcp = await client.callTool({ name: op.tool, arguments: op.input });
+    assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+    const child = await cli(f, binding, op);
+    assert.equal(child.code, 0, JSON.stringify(child));
+    const unsaved = { ...op, input: { candidates: [{ ...op.input.candidates[0], sourceTurnId: 999 }] } };
+    assert.equal((await client.callTool({ name: op.tool, arguments: unsaved.input })).isError, true);
+    assert.notEqual((await cli(f, binding, unsaved)).code, 0);
+    f.executions.finish(execution);
+    assert.deepEqual(f.db.prepare("SELECT occurred_at FROM character_affect_events_v6 ORDER BY id").all().map((row) => row.occurred_at),
+      [completedAt, completedAt]);
   } finally { await f.close(); }
 });
 

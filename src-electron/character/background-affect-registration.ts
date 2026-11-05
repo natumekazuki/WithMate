@@ -42,8 +42,7 @@ export const registerBackgroundAffect: BackgroundRegistrationHandler = async (in
       ? turn?.sessionId === source.session.id && turn.auxiliarySessionId === undefined
       : turn?.sessionId === null && turn.auxiliarySessionId === source.session.id;
     if (!turn || !belongsToSource || !["completed", "failed", "canceled"].includes(turn.phase)
-      || !turn.completedAt || sourceTurnId <= (input.scope.processing.afterTurnId ?? 0)
-      || sourceTurnId > input.scope.processing.throughTurnId || turn.assistantMessageSeq === undefined
+      || !turn.completedAt || turn.assistantMessageSeq === undefined
       || turn.assistantMessageSeq < input.scope.history.fromMessageSeq || turn.assistantMessageSeq > input.scope.history.throughMessageSeq) {
       return createCharacterContextError("invalid_input", "sourceTurnId must identify a terminal Turn within the execution scope.", {
         ...rejection, details: { candidateIndex },

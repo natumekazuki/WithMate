@@ -25,7 +25,6 @@ export type PrepareBackgroundCallInput = Readonly<{
   purpose: BackgroundPurpose;
   source: BackgroundSourceRef;
   session: Session;
-  processing: BackgroundExecutionScope["processing"];
   memoryTargets: BackgroundExecutionScope["memoryTargets"];
 }>;
 
@@ -33,22 +32,19 @@ export type PreparedBackgroundCall =
   | { status: "ready"; call: Omit<BackgroundCallInput, "userInput" | "onAdmitted">; instructionText?: string }
   | { status: "not_configured" | "unavailable" | "failed"; code: string; reason: string };
 
-/** Purpose controllers choose processing positions; the shared builder only fixes and validates their scope. */
+/** History is an authority window, not an AI processing-progress interval. */
 export function buildBackgroundExecutionScope(
   captured: CapturedBackgroundSource,
-  input: Pick<PrepareBackgroundCallInput, "purpose" | "processing" | "memoryTargets">,
+  input: Pick<PrepareBackgroundCallInput, "purpose" | "memoryTargets">,
 ): BackgroundExecutionScope {
-  const { afterTurnId, throughTurnId } = input.processing;
-  if ((afterTurnId !== null && (!Number.isSafeInteger(afterTurnId) || afterTurnId < 0))
-    || !Number.isSafeInteger(throughTurnId) || throughTurnId <= (afterTurnId ?? 0)
-    || !captured.snapshot.turns.some((turn) => turn.id === throughTurnId
-      && turn.phase !== "running" && turn.completedAt && turn.assistantMessageSeq !== undefined
+  if (!captured.snapshot.turns.some((turn) => ["completed", "failed", "canceled"].includes(turn.phase)
+      && turn.completedAt && turn.assistantMessageSeq !== undefined
       && turn.assistantMessageSeq >= captured.history.fromMessageSeq
       && turn.assistantMessageSeq <= captured.history.throughMessageSeq)) {
-    throw new Error("Background processing requires a saved terminal Turn within the captured history.");
+    throw new Error("Background registration requires a saved terminal Turn within the captured history.");
   }
   return structuredClone({ purpose: input.purpose, history: captured.history,
-    processing: input.processing, memoryTargets: input.memoryTargets });
+    memoryTargets: input.memoryTargets });
 }
 
 /** Shared production seam; scheduling and storage policy belong to purpose controllers. */
@@ -67,10 +63,11 @@ export class BackgroundProductionRuntime {
     onFailure?: (event: BackgroundFailureEvent) => void;
   }) {
     this.calls = new BackgroundCallService({ executions: deps.executions, runAgent: deps.runAgent,
-      onFailure: (failure) => this.reportFailure(failure) });
+      onFailure: (failure) => this.reportFailure(failure, false) });
   }
 
-  reportFailure(input: BackgroundFailureInput): void {
+  reportFailure(input: BackgroundFailureInput, remember = true): void {
+    if (remember) this.calls.rememberFailure(input);
     try { this.deps.onFailure?.(projectBackgroundFailure(input)); }
     catch { console.warn("Background failure diagnostic could not be written."); }
   }
@@ -81,6 +78,11 @@ export class BackgroundProductionRuntime {
   }
 
   publish(event: BackgroundRuntimeEvent): void {
+    if (event.kind === "settings_changed") {
+      for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
+        this.calls.setProvider(purpose, event.settings.backgroundExecutionSettings[purpose].selection?.providerId);
+      }
+    }
     for (const listener of this.#listeners) {
       try {
         void Promise.resolve(listener(event)).catch((error) => console.warn("Background controller callback failed", error));
@@ -90,9 +92,12 @@ export class BackgroundProductionRuntime {
 
   start(): void { this.deps.executions.start(); }
   stop(): void {
+    this.calls.stop();
     this.deps.executions.stop();
     this.publish({ kind: "stopped" });
   }
+
+  forgetSource(kind: BackgroundSourceRef["kind"], sessionId: string): void { this.calls.forgetSource(kind, sessionId); }
 
   async prepare(input: PrepareBackgroundCallInput): Promise<PreparedBackgroundCall> {
     let selection: BackgroundCallInput["selection"] | undefined;

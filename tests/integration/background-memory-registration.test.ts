@@ -119,25 +119,25 @@ test("Memory二用途の実handlerへ同一AgentからMCPと配布CLIで登録�
 
 // @test-value v2
 // kind = "contract"
-// claim = "用途handlerは保存済み終端Turnがhistoryとprocessingに属さない場合および通常入力不正をMCPとCLIで拒否する"
+// claim = "用途handlerは許可historyに保存済み終端Turnがない場合および通常入力不正をMCPとCLIで拒否する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
-// fault = "未保存・未完了・processing外のsourceを許容するか、既存append validatorを迂回する"
+// fault = "未保存・未完了・完了時刻欠落・他owner・history外のsourceを許容するか、既存append validatorを迂回する"
 // observable = "実MCPのisErrorとCLI非zeroおよび保存件数0"
 // observation_boundary = "public-boundary"
 // scope = "production Memory registration handlers over real source reader and ordinary validators"
 // lifecycle = "permanent"
-// distinction = "共通認可testは用途handler固有のprocessing所属と通常validatorへの委譲を検査しない"
+// distinction = "共通認可testは用途handler固有の保存済み終端証拠と通常validatorへの委譲を検査しない"
 // @end-test-value
 test("Memoryの根拠範囲と不正入力をMCPと配布CLIで拒否する", async () => {
   const f = await fixture(undefined, backgroundMemoryRegistrationHandlers);
   try {
     seed(f);
-    for (const purpose of purposes) for (const invalid of ["missing", "running", "processing", "history", "input", "target"] as const) {
-      f.db.prepare("UPDATE session_turns_v6 SET phase = ?, assistant_message_seq = ? WHERE id = 1")
-        .run(invalid === "running" ? "running" : "completed", invalid === "history" ? 0 : 1);
+    for (const purpose of purposes) for (const invalid of ["missing", "running", "unfinished", "owner", "history", "input", "target"] as const) {
+      f.db.prepare("UPDATE session_turns_v6 SET phase = ?, assistant_message_seq = ?, completed_at = ?, session_id = ? WHERE id = 1")
+        .run(invalid === "running" ? "running" : "completed", invalid === "history" ? 0 : 1,
+          invalid === "unfinished" ? null : completedAt, invalid === "owner" ? "other" : "main");
       const ctx = context(f, purpose);
       if (invalid === "missing") f.db.prepare("DELETE FROM session_turns_v6 WHERE id = 1").run();
-      if (invalid === "processing") ctx.scope = { ...ctx.scope, processing: { afterTurnId: 1, throughTurnId: 2 } };
       if (invalid === "history") ctx.scope = { ...ctx.scope, history: { ...ctx.scope.history, fromMessageSeq: 1 } };
       if (invalid === "target") ctx.scope = { ...ctx.scope, memoryTargets: [] };
       const execution = f.executions.begin({ ...ctx, providerId: "claude" });
@@ -226,7 +226,7 @@ test("Auxiliaryの二用途を実storeへ登録し同名Mainと区別する", as
     for (const purpose of purposes) {
       const base = context(f, purpose);
       const scope = { ...f.scope("aux", purpose), history: { ...f.scope("aux", purpose).history, throughMessageSeq: 1 },
-        processing: { afterTurnId: null, throughTurnId: 50 }, memoryTargets: targets };
+        memoryTargets: targets };
       const execution = f.executions.begin({ ...base, session: f.sessions.get("aux")!, actorSessionId: "aux", providerId: "claude", scope });
       const binding = f.project(execution);
       const { client } = await f.connect(binding, "memoryUrl");

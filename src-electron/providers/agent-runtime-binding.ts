@@ -223,11 +223,6 @@ export class AgentRuntimeBindingRegistry {
       || !providerId || getProviderAgentRuntimeBindingCapability(providerId).transport !== "env") {
       throw new Error("Background binding requires its real source Session and a supported provider.");
     }
-    const { afterTurnId, throughTurnId } = input.scope.processing;
-    if (!Number.isSafeInteger(throughTurnId) || throughTurnId < 1
-      || (afterTurnId !== null && (!Number.isSafeInteger(afterTurnId) || afterTurnId < 0 || afterTurnId >= throughTurnId))) {
-      throw new Error("Background processing range is invalid.");
-    }
     const reference = randomBytes(32).toString("base64url");
     const record: AgentRuntimeBindingRecord = {
       bindingId: randomUUID(), bindingReferenceHash: hashBindingReference(reference),

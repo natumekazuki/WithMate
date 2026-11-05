@@ -6,6 +6,5 @@ export type BackgroundPurpose = "character-memory" | "target-memory" | "affect";
 export type BackgroundExecutionScope = Readonly<{
   purpose: BackgroundPurpose;
   history: SessionHistoryReadScope;
-  processing: Readonly<{ afterTurnId: number | null; throughTurnId: number }>;
   memoryTargets: readonly MemoryTargetSelector[];
 }>;

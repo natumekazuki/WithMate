@@ -20,6 +20,7 @@ import { CopilotAdapter } from "../../src-electron/providers/copilot/copilot-ada
 import { OpenCodeAdapter } from "../../src-electron/providers/opencode/opencode-adapter.js";
 import type { CodexProtocolEvent } from "../../src-electron/providers/codex/app-server-transport.js";
 import type { OpenCodeTransportOptions } from "../../src-electron/providers/opencode/opencode-transport.js";
+import { ProviderTurnError, type ProviderCodingAdapter } from "../../src-electron/providers/provider-runtime.js";
 
 function fixture(providerId = "claude", selection: Partial<BackgroundAgentInput["selection"]> = {}) {
   const session = { ...buildNewSession({ taskTitle: "Source", workspaceLabel: "fixture", workspacePath: process.cwd(),
@@ -28,12 +29,15 @@ function fixture(providerId = "claude", selection: Partial<BackgroundAgentInput[
     id: "source-main", incarnationId: "inc-main", threadId: "foreground-thread",
     codexSpeed: "fast" as const, customAgentName: "source-only-agent" };
   const modelId = providerId === "opencode" ? "native/catalog-model" : "catalog-model";
+  const continuation = { id: "background-continuation", threadId: null as string | null,
+    onThreadId: (threadId: string | null) => { continuation.threadId = threadId; } };
   const input: BackgroundAgentInput = {
     session, selection: { providerId, modelId, reasoningEffort: "high", ...selection },
     userInput: "/untrusted @private-path\nregistration and Character reference material",
     scope: { purpose: "affect", history: { source: { kind: "main", sessionId: session.id, incarnationId: session.incarnationId,
       ownerIdentity: '["main","source-main","inc-main"]' }, fromMessageSeq: 0, throughMessageSeq: 1 },
-      processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] },
+      memoryTargets: [] },
+    continuation,
     binding: { bindingId: "background-binding", bindingReference: "reference", providerId, executionGeneration: "generation",
       transport: "env", expiresAt: null, background: true },
     handle: { actorSessionId: session.id, providerId, bindingId: "background-binding", capability: "capability",
@@ -46,15 +50,15 @@ function fixture(providerId = "claude", selection: Partial<BackgroundAgentInput[
     getAppSettings: () => createDefaultAppSettings(),
     projectBinding: (input: BackgroundAgentInput) => ({ ...input.binding, turnCapability: input.handle.capability,
       memoryRuntimeOwner: { applicationInstanceId: "application", runtimeGenerationId: "runtime" },
-      managedMcp: { memoryUrl: "http://localhost/memory", sessionHistoryUrl: "http://localhost/history",
-        glossaryUrl: "http://localhost/glossary", sessionGraphUrl: "http://localhost/graph", token: "token" } }),
+      managedMcp: { memoryUrl: `http://localhost/${input.binding.bindingId}/memory`, sessionHistoryUrl: `http://localhost/${input.binding.bindingId}/history`,
+        glossaryUrl: "http://localhost/glossary", sessionGraphUrl: "http://localhost/graph", token: input.binding.bindingReference } }),
   };
   return { input, deps, catalog };
 }
 
 type NativeCapture = {
   model?: unknown; depth?: unknown; prompt?: string; system?: string; env?: NodeJS.ProcessEnv;
-  resumed: number; closed: number; approval?: unknown; binding?: unknown; observerUpdates: string[];
+  resumed: number; resumedIds?: string[]; resumeError?: boolean; closed: number; approval?: unknown; binding?: unknown; observerUpdates: string[];
   permissionReply?: unknown; sandbox?: unknown; reviewer?: unknown; serviceTier?: unknown; customAgent?: unknown;
 };
 
@@ -71,13 +75,14 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
   ];
   if (!interaction) { events.shift(); permissionAnswered(); }
   const codexAdapter = new CodexAdapter(undefined, { createTransport: (options) => {
+    const turnEvents = [...events];
     capture.env = options.env;
     return {
       start: async () => {},
       request: async <T>(method: string, params?: unknown): Promise<T> => {
         const value = params as Record<string, unknown>;
         if (method === "config/read") return { config: {} } as T;
-        if (method === "thread/resume") capture.resumed++;
+        if (method === "thread/resume") { capture.resumed++; (capture.resumedIds ??= []).push(String(value.threadId)); if (capture.resumeError) throw new Error("native resume failed"); }
         if (method === "thread/start" || method === "thread/resume") {
           capture.model = value.model; capture.approval = value.approvalPolicy;
           capture.sandbox = value.sandbox; capture.reviewer = value.approvalsReviewer; capture.serviceTier = value.serviceTier;
@@ -92,7 +97,7 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
         }
         return {} as T;
       },
-      nextEvent: async () => { const event = events.shift(); assert.ok(event); if (event.kind === "notification") await permissionDone; return event; },
+      nextEvent: async () => { const event = turnEvents.shift(); assert.ok(event); if (event.kind === "notification") await permissionDone; return event; },
       close: async () => { capture.closed++; permissionAnswered(); },
       whenClosed: async () => {},
     };
@@ -102,11 +107,12 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
     capture.system = JSON.stringify(options.systemPrompt); capture.binding = options.mcpServers;
     capture.approval = options.permissionMode;
     capture.serviceTier = (options.settings as { fastMode?: boolean }).fastMode;
-    if (options.resume) capture.resumed++;
+    if (options.resume) { capture.resumed++; (capture.resumedIds ??= []).push(options.resume); }
     const stream = (async function* () {
       const submitted = (await prompt[Symbol.asyncIterator]().next()).value as SDKUserMessage;
       capture.prompt = JSON.stringify(submitted.message.content);
       try {
+        if (options.resume && capture.resumeError) throw new Error("native resume failed");
         if (interaction) capture.permissionReply = await options.canUseTool!(interaction === "elicitation" ? "AskUserQuestion" : "mcp__withmate-memory__character_affect_appraise", interaction === "elicitation" ? { questions: [{ question: "private question", header: "Choose", options: [{ label: "Yes", description: "yes" }] }] } : {}, { signal: new AbortController().signal, toolUseID: "registration", requestId: "registration" });
         yield { type: "system", subtype: "session_state_changed", state: "idle" } as SDKMessage;
         yield { type: "result", subtype: "success", is_error: false, result: "discarded",
@@ -143,7 +149,7 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
         return copilotSession;
       };
       return { start: async () => {}, stop: async () => [], createSession: create,
-        resumeSession: async (_id: string, config: SessionConfig) => { capture.resumed++; return create(config); },
+        resumeSession: async (id: string, config: SessionConfig) => { capture.resumed++; (capture.resumedIds ??= []).push(id); if (capture.resumeError) throw new Error("SessionNotFound: native resume failed"); return create(config); },
       } as unknown as CopilotClient;
     },
   });
@@ -157,7 +163,7 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
         variants: [{ id: "high" }], capabilities: { input: ["text"] }, limit: { context: 0 } }] }) },
       session: {
         create: async (value: SessionInfo) => { root = { ...value, id: "new-opencode-thread" }; return root; },
-        get: async () => { capture.resumed++; return root; },
+        get: async (value: { sessionID: string }) => { capture.resumed++; (capture.resumedIds ??= []).push(value.sessionID); if (capture.resumeError) throw new Error("native resume failed"); return root; },
         inbox: { list: async () => [] },
         switchModel: async (value: { model: { providerID: string; id: string; variant?: string } }) => {
           capture.model = value.model.providerID + "/" + value.model.id; capture.depth = value.model.variant;
@@ -167,7 +173,7 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
         form: { cancel: async () => { permissionAnswered(); } },
         prompt: async (value: SessionPromptInput) => { request = value; capture.prompt = value.text; return { id: value.id, sessionID: root.id }; },
       },
-      mcp: { add: async (value: { server: string }) => { registrations.push({ name: value.server }); capture.binding = registrations; },
+      mcp: { add: async (value: { server: string }) => { registrations.push({ name: value.server }); capture.binding = value; },
         list: async () => ({ data: registrations.map((value) => ({ ...value, status: { status: "connected" } })) }) },
       permission: { reply: async (value: unknown) => { capture.permissionReply = value; permissionAnswered(); } },
       event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {
@@ -190,17 +196,17 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景共通dispatchは4 Providerのnative境界へ用途別設定・背景bindingと、編集した本人の語りの登録指示・実Character定義を渡す"
+// claim = "背景共通dispatchは4 Providerのnative threadを継続し、呼出ごとの現在binding・用途設定・本人の語りの登録指示を渡す"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
 // fault = "登録指示やCharacter材料の欠落、source実行設定の混入、用途別権限の脱落、source thread再開、binding混同、通常runstateへの結果配送"
-// observable = "実adapterからfake native SDK/transportへ出たModel・Depth・env・prompt・resume回数・権限・Speed・agentと実行後Session"
+// observable = "実adapterのModel・Depth・env・MCP・prompt・resume ID・権限・Speed・agentと実行後Session"
 // observation_boundary = "consumer"
 // scope = "background factory through existing four provider adapters"
 // lifecycle = "permanent"
 // impact = "用途別設定とは異なる推論や元会話の書換え、保存先権限の混同を防ぐ"
 // distinction = "共通port全stubや型検査ではnative接続・thread選択とDepth写像を検出できない"
 // @end-test-value
-test("background dispatch reaches all four real adapters with independent native targets", async () => {
+test("background dispatch resumes all four real adapters with current binding credentials", async () => {
   for (const providerId of ["codex", "copilot", "claude", "opencode"]) {
     const f = fixture(providerId, { approvalMode: providerId === "copilot" ? "never" : "on-request",
       ...(providerId === "codex" ? { codexReviewer: "auto-review", codexSandboxMode: "read-only" } : {}),
@@ -231,10 +237,87 @@ test("background dispatch reaches all four real adapters with independent native
     assert.ok(capture.closed > 0, providerId);
     assert.deepEqual(capture.observerUpdates, [], providerId);
     assert.deepEqual(f.input.session, before, providerId);
+    const nativeThread = f.input.continuation.threadId;
+    assert.ok(nativeThread, providerId);
+    assert.notEqual(nativeThread, f.input.session.threadId, providerId);
+    const second = { ...agentInput, binding: { ...agentInput.binding, bindingId: "next-binding", bindingReference: "next-reference", executionGeneration: "next-generation" },
+      handle: { ...agentInput.handle, bindingId: "next-binding", capability: "next-capability" } };
+    await run(second);
+    assert.equal(capture.resumed, 1, providerId);
+    assert.deepEqual(capture.resumedIds, [providerId === "opencode" ? "new-opencode-thread" : nativeThread], providerId);
+    assert.equal(f.input.continuation.threadId, nativeThread, providerId);
+    assert.equal(capture.env!.WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE, "next-reference", providerId);
+    assert.equal(capture.env!.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY, "next-capability", providerId);
+    if (providerId === "codex") assert.equal(capture.env!.WITHMATE_MANAGED_MCP_TOKEN, "next-reference", providerId);
+    assert.ok(JSON.stringify(capture.binding).includes("next-binding"), providerId);
+    if (providerId !== "codex") assert.ok(JSON.stringify(capture.binding).includes("next-reference"), providerId);
+    assert.deepEqual(capture.observerUpdates, [], providerId);
+    assert.deepEqual(f.input.session, before, providerId);
     if (providerId === "codex") { assert.equal(capture.approval, "on-request"); assert.equal(capture.reviewer, "auto_review"); assert.equal(capture.sandbox, "read-only"); assert.equal(capture.serviceTier, "default"); }
     if (providerId === "claude") { assert.equal(capture.approval, "auto"); assert.equal(capture.serviceTier, false); }
     if (providerId === "copilot") { assert.equal(capture.customAgent, undefined); assert.deepEqual(capture.permissionReply, { kind: "approve-once" }); }
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "4 Providerの背景resume失敗はnative threadを保持して診断可能な失敗を返し、新thread成功へ置換しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "resume拒否後に新規threadへfallbackするか保持threadをnullへ消去する"
+// observable = "2回目のProviderTurnError原因・partial threadと継続thread、native resume回数"
+// observation_boundary = "consumer"
+// scope = "background dispatch through four real adapter resume failures"
+// lifecycle = "permanent"
+// impact = "失敗の文脈を失い、背景処理が成功に見える"
+// distinction = "成功経路や型検査ではnativeのresume拒否時のfallbackを検出できない"
+// @end-test-value
+test("background native resume failures preserve thread and fail without a new-thread fallback", async () => {
+  for (const providerId of ["codex", "copilot", "claude", "opencode"]) {
+    const f = fixture(providerId, { approvalMode: "never" });
+    const capture: NativeCapture = { resumed: 0, closed: 0, observerUpdates: [] };
+    const adapters = realAdapters(capture);
+    const run = createBackgroundProviderAgent({ ...f.deps, getProviderCodingAdapter: (id) => resolveProviderCodingAdapter({ providerId: id, ...adapters }) });
+    await run(f.input);
+    const threadId = f.input.continuation.threadId;
+    capture.resumeError = true;
+    await assert.rejects(run(f.input), (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError, providerId);
+      assert.match(error.message, /native resume failed/, providerId);
+      assert.equal(error.partialResult.threadId, threadId, providerId);
+      return true;
+    });
+    assert.equal(f.input.continuation.threadId, threadId, providerId);
+    assert.equal(capture.resumed, 1, providerId);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景Providerの途中失敗で取得できたthreadを次回へ渡し、空partialは既存threadを消さない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "失敗時のpartial threadを捨てるかnull partialで保持threadを上書きする"
+// observable = "各runでadapterへ渡るexecutionTargetとcleanup ID、継続callback後のthread"
+// observation_boundary = "component-behavior"
+// scope = "background provider agent partial failure lifecycle"
+// lifecycle = "permanent"
+// @end-test-value
+test("background partial failures retain acquired native thread for the next invocation", async () => {
+  const f = fixture();
+  const targets: unknown[] = [], cleanups: string[] = [];
+  let attempt = 0;
+  const adapter: ProviderCodingAdapter = new ClaudeAdapter();
+  adapter.runSessionTurn = async (input) => {
+    targets.push({ id: input.executionTarget!.id, threadId: input.executionTarget!.threadId });
+    throw new ProviderTurnError("partial failure", { threadId: attempt++ === 0 ? "partial-thread" : null, assistantText: "", usage: null }, false);
+  };
+  adapter.invalidateSessionThread = async (id: string) => { cleanups.push(id); };
+  const run = createBackgroundProviderAgent({ ...f.deps, getProviderCodingAdapter: () => adapter });
+  await assert.rejects(run(f.input), /partial failure/);
+  assert.equal(f.input.continuation.threadId, "partial-thread");
+  await assert.rejects(run(f.input), /partial failure/);
+  assert.equal(f.input.continuation.threadId, "partial-thread");
+  assert.deepEqual(targets, [{ id: "background-continuation", threadId: null }, { id: "background-continuation", threadId: "partial-thread" }]);
+  assert.deepEqual(cleanups, ["background-continuation", "background-continuation"]);
 });
 
 // @test-value v2
@@ -339,6 +422,7 @@ test("foreground and concurrent background calls use independent adapter cache i
   const run = createBackgroundProviderAgent({ ...f.deps, getProviderCodingAdapter: () => adapter });
   const first = run(f.input);
   const second = run({ ...f.input, binding: { ...f.input.binding, bindingId: "second-binding", executionGeneration: "second-generation" },
+    continuation: { ...f.input.continuation, id: "different-purpose-continuation" },
     handle: { ...f.input.handle, bindingId: "second-binding" } });
   await started;
   assert.deepEqual(resumed, ["foreground-thread"]);

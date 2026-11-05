@@ -4,16 +4,19 @@ import type { Session } from "../../src-shared/session/session-state.js";
 import type { BackgroundProductionRuntime, BackgroundRuntimeEvent } from "../providers/background-production-runtime.js";
 import { runBackgroundAffectCall } from "./background-affect-call.js";
 
-type SourcePosition = { source: BackgroundSourceRef; ownerIdentity?: string; afterTurnId?: number | null };
 type TerminalEvent = Extract<BackgroundRuntimeEvent, { kind: "terminal_saved" }>;
+type SourcePosition = {
+  source: BackgroundSourceRef; ownerIdentity?: string; lastStarted?: number;
+  pending?: TerminalEvent; draining: boolean;
+};
 
-/** In-memory start positions only; registration and execution ownership remain shared. */
+/** Coalesced terminal triggers only; registration and execution ownership remain shared. */
 export class BackgroundAffectController {
   readonly #positions = new Map<string, SourcePosition>();
   #unsubscribe?: () => void;
 
   constructor(private readonly deps: {
-    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure">;
+    runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure" | "forgetSource">;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     readMaterials(session: Session, source: CapturedBackgroundSource): Promise<Omit<AffectCompositionInput, "instructionBody">>;
   }) {}
@@ -23,9 +26,7 @@ export class BackgroundAffectController {
     const subscription = this.deps.runtime.subscribe((event) => {
       if (event.kind === "stopped") { this.stop(); return; }
       if (event.kind !== "terminal_saved") return;
-      return this.onTerminal(event, subscription).catch((error) => {
-        if (this.#unsubscribe === subscription) this.deps.runtime.reportFailure({ purpose: "affect", source: event.source, stage: "capture", error });
-      });
+      this.onTerminal(event, subscription);
     });
     this.#unsubscribe = subscription;
   }
@@ -37,6 +38,7 @@ export class BackgroundAffectController {
   }
 
   forgetSource(kind: BackgroundSourceRef["kind"], sessionId: string): void {
+    this.deps.runtime.forgetSource(kind, sessionId);
     for (const [key, position] of this.#positions) {
       const source = position.source;
       if ((source.kind === kind && source.sessionId === sessionId)
@@ -46,7 +48,7 @@ export class BackgroundAffectController {
     }
   }
 
-  private async onTerminal(event: TerminalEvent, subscription: () => void): Promise<void> {
+  private onTerminal(event: TerminalEvent, subscription: () => void): void {
     const source = event.source;
     const key = JSON.stringify([source.kind, source.sessionId, source.incarnationId,
       ...(source.kind === "auxiliary" ? [source.parent.sessionId, source.parent.incarnationId] : [])]);
@@ -55,35 +57,48 @@ export class BackgroundAffectController {
         || (source.kind === "main" && previous.source.kind === "auxiliary"
           && previous.source.parent.sessionId === source.sessionId && previous.source.parent.incarnationId !== source.incarnationId)) {
         this.#positions.delete(previousKey);
+        this.deps.runtime.forgetSource(previous.source.kind, previous.source.sessionId);
       }
     }
     let position = this.#positions.get(key);
     if (!position) {
-      position = { source: event.source };
+      position = { source: event.source, draining: false };
       this.#positions.set(key, position);
     }
+    if (event.terminal.turnId <= (position.lastStarted ?? 0)) return;
+    if (!position.pending || event.terminal.turnId >= position.pending.terminal.turnId) position.pending = event;
+    if (position.draining) return;
+    position.draining = true;
     const current = () => this.#unsubscribe === subscription && this.#positions.get(key) === position;
+    void (async () => {
+      try {
+        while (current() && position.pending) {
+          const pending = position.pending;
+          position.pending = undefined;
+          try { await this.evaluate(pending, position, current); }
+          catch (error) {
+            if (current()) this.deps.runtime.reportFailure({ purpose: "affect", source, stage: "capture", error });
+          }
+        }
+      } finally { position.draining = false; }
+    })();
+  }
+
+  private async evaluate(event: TerminalEvent, position: SourcePosition, current: () => boolean): Promise<void> {
     const captured = await this.deps.captureSource(event.source);
     if (!current()) return;
-    if (!captured) { this.#positions.delete(key); return; }
+    if (!captured) { this.forgetSource(event.source.kind, event.source.sessionId); return; }
     if (position.ownerIdentity !== undefined && position.ownerIdentity !== captured.snapshot.ownerIdentity) {
-      position = { source, ownerIdentity: captured.snapshot.ownerIdentity };
-      this.#positions.set(key, position);
+      this.deps.runtime.forgetSource(event.source.kind, event.source.sessionId);
+      position.lastStarted = undefined;
     }
     position.ownerIdentity = captured.snapshot.ownerIdentity;
-    const throughTurnId = event.terminal.turnId;
-    if (position.afterTurnId === undefined) {
-      position.afterTurnId = captured.snapshot.turns.reduce<number | null>((last, turn) =>
-        turn.id < throughTurnId && turn.phase !== "running" && turn.completedAt
-          ? Math.max(last ?? 0, turn.id) : last, null);
-    }
-    const afterTurnId = position.afterTurnId;
-    if (throughTurnId <= (afterTurnId ?? 0)) return;
+    if (position.pending || event.terminal.turnId <= (position.lastStarted ?? 0)) return;
     const prepared = await this.deps.runtime.prepare({ purpose: "affect", source: event.source,
-      session: event.session, processing: { afterTurnId, throughTurnId }, memoryTargets: [
+      session: event.session, memoryTargets: [
         { owner: "character", scope: "character", character: { type: "id", id: captured.snapshot.session.characterId } },
       ] });
-    if (!current()) return;
+    if (!current() || position.pending) return;
     if (prepared.status !== "ready") {
       return;
     }
@@ -94,11 +109,11 @@ export class BackgroundAffectController {
       if (current()) this.deps.runtime.reportFailure({ purpose: "affect", source: event.source, selection: prepared.call.selection, stage: "materials", error });
       return;
     }
-    if (!current()) return;
+    if (!current() || position.pending) return;
     await runBackgroundAffectCall(this.deps.runtime.calls, { ...prepared.call, ...materials,
       instructionBody: prepared.instructionText,
       onAdmitted: () => {
-        if (current()) position.afterTurnId = Math.max(position.afterTurnId ?? 0, throughTurnId);
+        if (current()) position.lastStarted = event.terminal.turnId;
       },
     });
   }

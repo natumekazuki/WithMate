@@ -6,6 +6,7 @@ import { resolveBackgroundProviderAvailability } from "../../src-shared/settings
 import type { BackgroundAgentInput } from "./background-call-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ProviderCodingAdapter, ProviderPromptComposition } from "./provider-runtime.js";
+import { ProviderTurnError } from "./provider-runtime.js";
 
 export type BackgroundProviderAgentDependencies = {
   getModelCatalog: (input: BackgroundAgentInput) => ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
@@ -65,10 +66,10 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     };
     try {
       try {
-        await adapter.runSessionTurn({
+        const result = await adapter.runSessionTurn({
           session: input.session,
-          executionTarget: { id: binding.bindingId, threadId: null, prompt },
-          runtimeOwner: { kind: input.scope.history.source.kind, id: binding.bindingId, incarnationId: binding.executionGeneration },
+          executionTarget: { id: input.continuation.id, threadId: input.continuation.threadId, prompt },
+          runtimeOwner: { kind: input.scope.history.source.kind, id: input.continuation.id, incarnationId: input.scope.history.source.incarnationId },
           executionOptions,
           providerCatalog: catalog.providers.find((provider) => provider.id === availability.providerId)!,
           userMessage: input.userInput,
@@ -79,10 +80,16 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
           onCleanupPending: (completion) => { pendingCleanups.push(completion); },
           onApprovalRequest: () => { requireInteraction("approval"); return "deny"; },
           onElicitationRequest: () => { requireInteraction("elicitation"); return { action: "cancel" }; },
-        });
+        }, (state) => { if (state.threadId) input.continuation.onThreadId(state.threadId); });
+        if (result.threadId) input.continuation.onThreadId(result.threadId);
         input.signal.throwIfAborted();
+      } catch (error) {
+        if (error instanceof ProviderTurnError && error.partialResult.threadId) {
+          input.continuation.onThreadId(error.partialResult.threadId);
+        }
+        throw error;
       } finally {
-        try { await adapter.invalidateSessionThread(binding.bindingId); }
+        try { await adapter.invalidateSessionThread(input.continuation.id); }
         finally { await Promise.all(pendingCleanups); }
       }
     } catch (error) {
