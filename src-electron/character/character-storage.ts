@@ -127,7 +127,7 @@ function normalizeDbRelativePath(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
-function materializeCharacterIconFilePath(userDataPath: string, filePath: string): string {
+export function materializeCharacterIconFilePath(userDataPath: string, filePath: string): string {
   const trimmed = filePath.trim();
   if (!trimmed || path.isAbsolute(trimmed) || hasCharacterIconPathScheme(trimmed)) {
     return trimmed;

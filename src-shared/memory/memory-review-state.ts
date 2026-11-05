@@ -4,7 +4,47 @@ import type { MemoryFileUsageResponse } from "./memory-response-contract.js";
 
 export type MemoryV6ReviewFileSummary = Omit<MemoryFileSummary, "objectId">;
 
+export type MemoryV6ReviewCharacter = {
+  id: string;
+  name: string | null;
+  iconFilePath: string | null;
+  state: "active" | "archived" | "missing";
+  disambiguation?: string;
+};
+
+export type MemoryV6ReviewProject = {
+  id: string;
+  name: string | null;
+  path: string | null;
+  state: "available" | "missing";
+  disambiguation?: string;
+};
+
+export type MemoryV6ReviewTargets = {
+  characters: MemoryV6ReviewCharacter[];
+  projects: MemoryV6ReviewProject[];
+};
+
+export type MemoryV6ReviewTarget = {
+  kind: "user-global" | "project" | "character" | "character-project";
+  character?: MemoryV6ReviewCharacter;
+  project?: MemoryV6ReviewProject;
+};
+
+export type MemoryV6ReviewSourceDisplay = {
+  type: "agent" | "manual" | "migration";
+  session?: {
+    id: string;
+    title: string | null;
+    role: "main" | "auxiliary";
+    state: "available" | "missing";
+  };
+  providerId: string | null;
+};
+
 export type MemoryV6ReviewSearchHit = Omit<MemorySearchHit, "files"> & {
+  target: MemoryV6ReviewTarget;
+  sourceDisplay: MemoryV6ReviewSourceDisplay;
   sourceSessionId: string | null;
   sourceProviderId: string | null;
   files?: MemoryV6ReviewFileSummary[];
@@ -16,6 +56,8 @@ export type MemoryV6ReviewSearchResult = {
 };
 
 export type MemoryV6ReviewEntryDetail = Omit<MemoryEntryDetail, "files"> & {
+  target: MemoryV6ReviewTarget;
+  sourceDisplay: MemoryV6ReviewSourceDisplay;
   files?: MemoryV6ReviewFileSummary[];
 };
 
@@ -56,6 +98,7 @@ export type MemoryV6ProtectedObjectGcResponse = {
 };
 
 export type MemoryV6ReviewApi = {
+  listMemoryV6ReviewTargets(): Promise<MemoryV6ReviewTargets>;
   getMemoryV6FileUsage(): Promise<MemoryFileUsageResponse>;
   exportMemoryV6EntryFiles(entryId: string): Promise<MemoryV6ReviewExportFilesResult | null>;
   runMemoryV6ProtectedObjectGc(request: MemoryV6ProtectedObjectGcRequest): Promise<MemoryV6ProtectedObjectGcResponse>;

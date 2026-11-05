@@ -15,6 +15,8 @@ export type MemoryV6WorkerCommand =
   | { operation: "memory.appendEntry"; input: Parameters<MemoryV6Storage["appendEntry"]>[0] }
   | { operation: "memory.resolveAppendIdempotencyReplay"; input: Parameters<MemoryV6Storage["resolveAppendIdempotencyReplay"]>[0] }
   | { operation: "memory.getEntry"; input: { entryId: string } }
+  | { operation: "memory.getEntryForReview"; input: { entryId: string } }
+  | { operation: "memory.listReviewTargets"; input: undefined }
   | { operation: "memory.listTargets"; input: Parameters<MemoryV6Storage["listTargets"]>[0] }
   | { operation: "memory.listEntries"; input: Parameters<MemoryV6Storage["listEntries"]>[0] }
   | { operation: "memory.searchEntries"; input: Parameters<MemoryV6Storage["searchEntries"]>[0] }

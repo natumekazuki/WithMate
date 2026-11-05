@@ -13,6 +13,7 @@ import type {
   MemoryV6ReviewSearchResult,
   MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewEntryDetail,
+  MemoryV6ReviewTargets,
 } from "../../src-shared/memory/memory-review-state.js";
 import type { MemoryFileUsageResponse } from "../../src-shared/memory/memory-response-contract.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
@@ -89,6 +90,10 @@ export class MemoryV6MainAssembly {
     return this.createReviewService().runProtectedObjectGc(request);
   }
 
+  listReviewTargets(): Promise<MemoryV6ReviewTargets> {
+    return this.createReviewService().listTargets();
+  }
+
   searchEntries(
     request: MemoryV6ReviewSearchRequest | null | undefined,
   ): Promise<MemoryV6ReviewSearchResult> {
@@ -117,6 +122,7 @@ export class MemoryV6MainAssembly {
       this.deps.protectedObjectKeyProtector,
     );
     return new MemoryV6ReviewService({
+      userDataPath: this.deps.userDataPath,
       resolveDbPath: () => runtime.dbPath,
       storage: runtime.memoryStorage,
       getMemoryFileQuotaBytes: () => this.deps.getMemoryFileQuotaBytes(),

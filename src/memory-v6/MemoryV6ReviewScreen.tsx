@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useDialogA11y } from "../ui/a11y.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
 import { MemoryReviewError, type MemoryReviewFailure } from "./MemoryReviewError.js";
 import type { MemoryEntryKind, MemoryForgetReason } from "../../src-shared/memory/memory-contract.js";
 import type {
@@ -64,8 +65,23 @@ const FORGET_REASON_LABELS: Record<MemoryForgetReason, string> = {
   other: "Other",
 };
 
-function ownerLabel(entry: Pick<MemoryV6ReviewSearchHit, "owner" | "scope">): string {
-  return `${entry.owner.type}:${entry.owner.id} / ${entry.scope.type}:${entry.scope.id}`;
+function targetName(target: { id: string; name: string | null; state: string; disambiguation?: string }, kind: "Character" | "Project"): string {
+  const name = target.name || (target.state === "missing" ? `Deleted ${kind}` : `Unnamed ${kind}`);
+  const supplement = target.disambiguation || (!target.name || target.state === "missing" ? target.id : "");
+  return `${name}${target.state === "archived" ? " (Archived)" : ""}${supplement ? ` · ${supplement}` : ""}`;
+}
+
+function MemoryTarget({ target }: { target: MemoryV6ReviewSearchHit["target"] }) {
+  return (
+    <span className="memory-review-target">
+      {target.character ? <span className="memory-review-target-character">
+        <CharacterAvatar key={`${target.character.id}:${target.character.iconFilePath}`} size="tiny" character={{ name: target.character.name || "?", iconPath: target.character.iconFilePath || "" }} />
+        <span>{targetName(target.character, "Character")}</span>
+      </span> : null}
+      {target.project ? <span className="memory-review-target-project">{target.character ? " / " : ""}{targetName(target.project, "Project")}</span> : null}
+      {target.kind === "user-global" ? <span>User Common</span> : null}
+    </span>
+  );
 }
 
 function formatTags(entry: Pick<MemoryV6ReviewSearchHit, "tags">): string {
@@ -97,6 +113,11 @@ function formatPercent(usedBytes: number, quotaBytes: number): string {
 export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6ReviewScreenProps) {
   const [query, setQuery] = useState("");
   const [selectedKind, setSelectedKind] = useState<MemoryEntryKind | "">("");
+  const [selectedCharacter, setSelectedCharacter] = useState("");
+  const [selectedProject, setSelectedProject] = useState("");
+  const [targets, setTargets] = useState<Awaited<ReturnType<MemoryV6ReviewApi["listMemoryV6ReviewTargets"]>> | null>(null);
+  const [targetsLoading, setTargetsLoading] = useState(true);
+  const [targetsError, setTargetsError] = useState<MemoryReviewFailure | null>(null);
   const [items, setItems] = useState<MemoryV6ReviewSearchHit[]>([]);
   const [fileUsage, setFileUsage] = useState<MemoryFileUsageResponse | null>(null);
   const [gcReport, setGcReport] = useState<MemoryV6ProtectedObjectGcResponse | null>(null);
@@ -127,6 +148,22 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const searchRequestIdRef = useRef(0);
   const refreshRequestIdRef = useRef(0);
   const usageRequestIdRef = useRef(0);
+  const targetsRequestIdRef = useRef(0);
+
+  const changeFilters = (change: () => void) => {
+    ++searchRequestIdRef.current;
+    ++entryRequestIdRef.current;
+    setItems([]);
+    setNextCursor("");
+    setSelectedEntry(null);
+    setSelectedEntryId("");
+    setEntryLoading(false);
+    setEntryError(null);
+    setEntryFeedback(null);
+    setConfirmForgetOpen(false);
+    setSearchError(null);
+    change();
+  };
 
   const closeForgetConfirm = () => {
     if (!forgetting) {
@@ -146,11 +183,14 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const searchRequest = useMemo(() => ({
     query,
     ...(selectedKind ? { kinds: [selectedKind] } : {}),
+    ...(selectedCharacter ? { characterId: selectedCharacter } : {}),
+    ...(selectedProject ? { projectId: selectedProject } : {}),
     limit: 50,
-  }), [query, selectedKind]);
+  }), [query, selectedKind, selectedCharacter, selectedProject]);
 
   const runSearch = async (options?: SearchOptions) => {
     const requestId = ++searchRequestIdRef.current;
+    const entryRequestId = entryRequestIdRef.current;
     const api = getApi();
     if (!api) {
       setSearchError({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE, options });
@@ -181,7 +221,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setItems((currentItems) => append ? [...currentItems, ...result.items] : result.items);
       setNextCursor(result.nextCursor ?? "");
       setSearchError(null);
-      if (!append && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
+      if (!append && entryRequestId === entryRequestIdRef.current && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
         ++entryRequestIdRef.current;
         setEntryLoading(false);
         setSelectedEntry(null);
@@ -230,11 +270,35 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     }
   };
 
+  const loadTargets = async () => {
+    const requestId = ++targetsRequestIdRef.current;
+    setTargetsLoading(true);
+    const api = getApi();
+    if (!api) {
+      setTargetsError({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE });
+      setTargetsLoading(false);
+      return;
+    }
+    try {
+      const result = await api.listMemoryV6ReviewTargets();
+      if (requestId === targetsRequestIdRef.current) {
+        setTargets(result);
+        setTargetsError(null);
+      }
+    } catch (error) {
+      if (requestId === targetsRequestIdRef.current) {
+        setTargetsError({ message: error instanceof Error ? error.message : "Could not load Memory targets." });
+      }
+    } finally {
+      if (requestId === targetsRequestIdRef.current) setTargetsLoading(false);
+    }
+  };
+
   const refreshReview = async () => {
     const requestId = ++refreshRequestIdRef.current;
     setRefreshing(true);
     try {
-      await Promise.all([runSearch(), loadFileUsage()]);
+      await Promise.all([runSearch(), loadFileUsage(), loadTargets()]);
     } finally {
       if (requestId === refreshRequestIdRef.current) {
         setRefreshing(false);
@@ -248,6 +312,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
 
   useEffect(() => {
     void loadFileUsage();
+    void loadTargets();
     document.title = "Memory Review";
   }, []);
 
@@ -329,11 +394,12 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     }
     setExporting(true);
     setEntryFeedback(null);
+    const entryRequestId = entryRequestIdRef.current;
     try {
       const result = await api.exportMemoryV6EntryFiles(selectedEntryId);
-      setEntryFeedback({ message: result ? `${result.exportedCount} files exported.` : "Memory file export canceled." });
+      if (entryRequestId === entryRequestIdRef.current) setEntryFeedback({ message: result ? `${result.exportedCount} files exported.` : "Memory file export canceled." });
     } catch (error) {
-      setEntryFeedback({ message: error instanceof Error ? error.message : "Could not export Memory files.", notice: "File Export Failed", error: true, label: "Memory File Export Error" });
+      if (entryRequestId === entryRequestIdRef.current) setEntryFeedback({ message: error instanceof Error ? error.message : "Could not export Memory files.", notice: "File Export Failed", error: true, label: "Memory File Export Error" });
     } finally {
       setExporting(false);
     }
@@ -382,7 +448,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               className="launch-toggle"
               type="button"
               onClick={() => void refreshReview()}
-              disabled={refreshing || loading || loadingMore}
+              disabled={refreshing || loading || loadingMore || forgetting}
               aria-busy={refreshing}
               aria-label={refreshing ? "Refreshing Memory review" : "Refresh Memory review"}
             >
@@ -398,16 +464,38 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               <input
                 type="search"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                disabled={forgetting}
+                onChange={(event) => changeFilters(() => setQuery(event.target.value))}
               />
             </label>
             <label className="settings-provider-input">
               <span>Kind</span>
-              <select value={selectedKind} onChange={(event) => setSelectedKind(event.target.value as MemoryEntryKind | "")}>
+              <select disabled={forgetting} value={selectedKind} onChange={(event) => changeFilters(() => setSelectedKind(event.target.value as MemoryEntryKind | ""))}>
                 <option value="">All Kinds</option>
                 {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind]}</option>)}
               </select>
             </label>
+            <label className="settings-provider-input">
+              <span>Character</span>
+              <select disabled={forgetting || !targets} value={selectedCharacter} onChange={(event) => changeFilters(() => setSelectedCharacter(event.target.value))}>
+                <option value="">All Characters</option>
+                {targets?.characters.map((character) => <option key={character.id} value={character.id}>{targetName(character, "Character")}</option>)}
+              </select>
+            </label>
+            <label className="settings-provider-input">
+              <span>Project</span>
+              <select disabled={forgetting || !targets} value={selectedProject} onChange={(event) => changeFilters(() => setSelectedProject(event.target.value))}>
+                <option value="">All Projects</option>
+                {targets?.projects.map((project) => <option key={project.id} value={project.id}>{targetName(project, "Project")}</option>)}
+              </select>
+            </label>
+            <div className="memory-review-target-status" aria-busy={targetsLoading}>
+              {targetsError ? <MemoryReviewError label="Memory Targets Error" {...targetsError}>
+                <button type="button" className="launch-toggle" aria-label="Retry Memory targets" disabled={targetsLoading} onClick={() => void loadTargets()}>
+                  <ButtonContent busy={targetsLoading} busyLabel="Loading Memory targets.">Retry</ButtonContent>
+                </button>
+              </MemoryReviewError> : targetsLoading ? <LoadingIndicator inline label="Loading Memory targets" /> : null}
+            </div>
           </div>
 
           <div className="memory-review-grid">
@@ -427,11 +515,13 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   className={`memory-review-item ${selectedEntryId === item.id ? "active" : ""}`.trim()}
                   type="button"
                   aria-pressed={selectedEntryId === item.id}
+                  disabled={forgetting}
                   onClick={() => void selectEntry(item.id)}
                 >
                   <span className="memory-review-item-title">{item.title || "(untitled)"}</span>
+                  <MemoryTarget target={item.target} />
                   <span className="memory-review-item-preview">{item.preview}</span>
-                  <span className="memory-review-item-meta">{item.kind} / {ownerLabel(item)}</span>
+                  <span className="memory-review-item-meta">{MEMORY_KIND_LABELS[item.kind]}</span>
                   {item.tags.length > 0 ? <span className="memory-review-item-meta">{formatTags(item)}</span> : null}
                 </button>
               ))}
@@ -465,14 +555,18 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                     <div className="memory-review-detail-head">
                       <div>
                         <h2>{selectedEntry.title || "(untitled)"}</h2>
-                        <p>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</p>
+                        <MemoryTarget target={selectedEntry.target} />
+                        <p>{MEMORY_KIND_LABELS[selectedEntry.kind]}</p>
                       </div>
                       <span>{selectedEntry.updatedAt}</span>
                     </div>
                     <dl className="memory-review-meta">
                       <div>
-                        <dt>Source</dt>
-                        <dd>{selectedEntry.source.sessionId ?? "none"} / {selectedEntry.source.providerId ?? "none"}</dd>
+                        <dt>Recorded From</dt>
+                        <dd>{selectedEntry.sourceDisplay.session
+                          ? `${selectedEntry.sourceDisplay.session.title || (selectedEntry.sourceDisplay.session.state === "missing" ? "Deleted Conversation" : "Untitled Conversation")} · ${selectedEntry.sourceDisplay.session.role === "auxiliary" ? "Auxiliary" : "Main"}${!selectedEntry.sourceDisplay.session.title ? ` · ${selectedEntry.sourceDisplay.session.id}` : ""}`
+                          : selectedEntry.sourceDisplay.type === "manual" ? "Manual" : selectedEntry.sourceDisplay.type === "migration" ? "Migration" : "Agent"}
+                          {selectedEntry.sourceDisplay.providerId ? ` / ${selectedEntry.sourceDisplay.providerId}` : ""}</dd>
                       </div>
                       {selectedEntry.tags.length > 0 ? (
                         <div>
@@ -579,7 +673,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                     <span>Largest Entries</span>
                     <div>
                       {fileUsage.largestEntries.map((entry) => (
-                        <button key={entry.entryId} type="button" onClick={() => void selectEntry(entry.entryId)}>
+                        <button key={entry.entryId} type="button" disabled={forgetting} onClick={() => void selectEntry(entry.entryId)}>
                           <strong>{entry.title || "(untitled)"}</strong>
                           <small>{formatBytes(entry.totalFileBytes)} / {entry.fileCount} files</small>
                         </button>
@@ -591,7 +685,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   <button
                     type="button"
                     onClick={() => void runProtectedObjectGc(true)}
-                    disabled={runningGc !== null || refreshing}
+                    disabled={runningGc !== null || refreshing || forgetting}
                     aria-busy={runningGc === "dry-run"}
                     aria-label={runningGc === "dry-run" ? "Running Memory file GC dry run" : "Run Memory file GC dry run"}
                   >
@@ -602,7 +696,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   <button
                     type="button"
                     onClick={() => void runProtectedObjectGc(false)}
-                    disabled={runningGc !== null || refreshing}
+                    disabled={runningGc !== null || refreshing || forgetting}
                     aria-busy={runningGc === "cleanup"}
                     aria-label={runningGc === "cleanup" ? "Running Memory file GC cleanup" : "Run Memory file GC cleanup"}
                   >
@@ -660,9 +754,10 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             </header>
             <div className="memory-review-modal-body">
               <p>Remove this Memory entry from search?</p>
-              <strong>{selectedEntry.title || selectedEntry.id}</strong>
-              <span>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</span>
-              <span>Reason: {forgetReason}</span>
+              <strong>{selectedEntry.title || "(untitled)"}</strong>
+              <MemoryTarget target={selectedEntry.target} />
+              <span>{MEMORY_KIND_LABELS[selectedEntry.kind]}</span>
+              <span>Reason: {FORGET_REASON_LABELS[forgetReason]}</span>
               {forgetReason === "privacy" ? (
                 <span>For privacy requests, the title, body, preview, and tags are also deleted.</span>
               ) : null}

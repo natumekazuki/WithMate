@@ -15,6 +15,10 @@ import {
   type MemoryListTagsCursor,
 } from "../../src-shared/memory/memory-validation.js";
 import type {
+  MemoryV6ReviewEntryDetail,
+  MemoryV6ReviewTargets,
+  MemoryV6ReviewTarget,
+  MemoryV6ReviewSourceDisplay,
   MemoryV6ReviewForgetResult,
   MemoryV6ReviewSearchHit,
   MemoryV6ReviewSearchResult,
@@ -182,6 +186,8 @@ export type MemoryV6MoveEntryResult = {
 
 export type MemoryV6ReviewSearchInput = {
   query: string;
+  characterId?: string;
+  projectId?: string;
   kinds?: readonly MemoryEntryKind[];
   limit?: number;
   cursor?: string;
@@ -1148,6 +1154,77 @@ export class MemoryV6Storage {
     };
   }
 
+  listReviewTargets(): MemoryV6ReviewTargets {
+    const characters = this.db.prepare(`
+      SELECT ids.id, c.name, c.icon_file_path, c.state
+      FROM (
+        SELECT id FROM characters
+        UNION SELECT owner_id FROM memory_entries_v6 WHERE state = 'active' AND owner_type = 'character'
+      ) AS ids LEFT JOIN characters AS c ON c.id = ids.id
+      ORDER BY c.name COLLATE NOCASE, ids.id
+    `).all() as Array<{ id: string; name: string | null; icon_file_path: string | null; state: "active" | "archived" | null }>;
+    const projects = this.db.prepare(`
+      SELECT ids.id, p.display_name, p.workspace_path
+      FROM (
+        SELECT id FROM project_scopes_v6
+        UNION SELECT scope_id FROM memory_entries_v6 WHERE state = 'active' AND scope_type = 'project'
+      ) AS ids LEFT JOIN project_scopes_v6 AS p ON p.id = ids.id
+      ORDER BY p.display_name COLLATE NOCASE, ids.id
+    `).all() as Array<{ id: string; display_name: string | null; workspace_path: string | null }>;
+    const characterNames = new Map<string, number>();
+    const projectNames = new Map<string, number>();
+    for (const row of characters) if (row.name?.trim()) characterNames.set(row.name.trim(), (characterNames.get(row.name.trim()) ?? 0) + 1);
+    for (const row of projects) if (row.display_name?.trim()) projectNames.set(row.display_name.trim(), (projectNames.get(row.display_name.trim()) ?? 0) + 1);
+    return {
+      characters: characters.map((row) => ({
+        id: row.id,
+        name: row.name?.trim() || null,
+        iconFilePath: row.icon_file_path?.trim() || null,
+        state: row.state ?? "missing",
+        ...((characterNames.get(row.name?.trim() ?? "") ?? 0) > 1 ? { disambiguation: row.id } : {}),
+      })),
+      projects: projects.map((row) => ({
+        id: row.id,
+        name: row.display_name?.trim() || null,
+        path: row.workspace_path || null,
+        state: row.display_name === null ? "missing" : "available",
+        ...((projectNames.get(row.display_name?.trim() ?? "") ?? 0) > 1 ? { disambiguation: `${row.workspace_path || row.id} · ${row.id}` } : {}),
+      })),
+    };
+  }
+
+  private reviewProjection(entry: MemoryEntryDetail, targets: MemoryV6ReviewTargets): {
+    target: MemoryV6ReviewTarget;
+    sourceDisplay: MemoryV6ReviewSourceDisplay;
+  } {
+    const character = entry.owner.type === "character" ? targets.characters.find((item) => item.id === entry.owner.id) : undefined;
+    const project = entry.scope.type === "project" ? targets.projects.find((item) => item.id === entry.scope.id) : undefined;
+    const target: MemoryV6ReviewTarget = {
+      kind: entry.owner.type === "user" ? "user-global" : entry.owner.type === "project" ? "project" : entry.scope.type === "project" ? "character-project" : "character",
+      ...(character ? { character } : {}),
+      ...(project ? { project } : {}),
+    };
+    const source = entry.source;
+    const sourceId = source.auxiliarySessionId ?? source.sessionId;
+    const role = source.auxiliarySessionId ? "auxiliary" : "main";
+    const session = sourceId ? this.db.prepare(role === "auxiliary"
+      ? "SELECT title FROM auxiliary_sessions WHERE id = ?"
+      : "SELECT title FROM sessions_v6 WHERE id = ?").get(sourceId) as { title: string } | undefined : undefined;
+    return {
+      target,
+      sourceDisplay: {
+        type: source.type,
+        providerId: source.providerId,
+        ...(sourceId ? { session: { id: sourceId, title: session?.title?.trim() || null, role, state: session ? "available" : "missing" } } : {}),
+      },
+    };
+  }
+
+  getEntryForReview(entryId: string): MemoryV6ReviewEntryDetail | null {
+    const entry = this.getEntry(entryId);
+    return entry?.state === "active" ? { ...entry, ...this.reviewProjection(entry, this.listReviewTargets()) } : null;
+  }
+
   searchEntriesForReview(input: MemoryV6ReviewSearchInput): MemoryV6ReviewSearchResult {
     const limit = normalizeLimit(input.limit);
     const cursor = decodeCursor(input.cursor);
@@ -1163,6 +1240,8 @@ export class MemoryV6Storage {
           OR instr(lower(e.body), ?) > 0
           OR instr(lower(e.owner_id), ?) > 0
           OR instr(lower(e.scope_id), ?) > 0
+          OR EXISTS (SELECT 1 FROM characters AS c WHERE e.owner_type = 'character' AND c.id = e.owner_id AND instr(lower(c.name), ?) > 0)
+          OR EXISTS (SELECT 1 FROM project_scopes_v6 AS p WHERE e.scope_type = 'project' AND p.id = e.scope_id AND instr(lower(p.display_name), ?) > 0)
           OR EXISTS (
             SELECT 1
             FROM memory_entry_tags_v6 AS t
@@ -1174,7 +1253,16 @@ export class MemoryV6Storage {
           )
         )
       `);
-      params.push(query, query, query, query, query, query, query);
+      params.push(query, query, query, query, query, query, query, query, query);
+    }
+
+    if (input.characterId) {
+      clauses.push("e.owner_type = 'character' AND e.owner_id = ?");
+      params.push(input.characterId);
+    }
+    if (input.projectId) {
+      clauses.push("e.scope_type = 'project' AND e.scope_id = ?");
+      params.push(input.projectId);
     }
 
     if (input.kinds && input.kinds.length > 0) {
@@ -1198,6 +1286,7 @@ export class MemoryV6Storage {
     const validRows = rows.filter((row) => hasValidTargetInvariant(row));
     const pageRows = validRows.slice(0, limit);
     const lastRow = pageRows[pageRows.length - 1];
+    const targets = this.listReviewTargets();
     return {
       items: pageRows.map((row) => {
         const entry = this.rowToEntry(row);
@@ -1207,6 +1296,7 @@ export class MemoryV6Storage {
         const hit = toMemorySearchHit(entry);
         return {
           ...hit,
+          ...this.reviewProjection(entry, targets),
           sourceSessionId: entry.source.sessionId,
           sourceProviderId: entry.source.providerId,
         } satisfies MemoryV6ReviewSearchHit;

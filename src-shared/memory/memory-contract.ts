@@ -198,6 +198,8 @@ export type MemoryMoveEntryRequest = {
 
 export type MemoryV6ReviewSearchRequest = {
   query: string;
+  characterId?: string;
+  projectId?: string;
   kinds?: MemoryEntryKind[];
   limit?: number;
   cursor?: string;

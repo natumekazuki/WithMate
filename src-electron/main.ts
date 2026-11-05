@@ -709,6 +709,10 @@ function searchMemoryV6Entries(request: MemoryV6ReviewSearchRequest | null | und
   return memoryV6MainAssembly.searchEntries(request);
 }
 
+function listMemoryV6ReviewTargets() {
+  return memoryV6MainAssembly.listReviewTargets();
+}
+
 function getMemoryV6Entry(entryId: string) {
   return memoryV6MainAssembly.getEntry(entryId);
 }
@@ -1586,6 +1590,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 exportMemoryV6EntryFiles,
                 runMemoryV6ProtectedObjectGc,
                 searchMemoryV6Entries,
+                listMemoryV6ReviewTargets,
                 getMemoryV6Entry,
                 forgetMemoryV6Entry,
                 resetAppDatabase: async (request) => {

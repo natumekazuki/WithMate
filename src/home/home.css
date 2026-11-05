@@ -2215,7 +2215,54 @@ div.launch-provider-error { display: flex; align-items: center; align-self: cent
 
 .memory-review-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(180px, 240px);
+  grid-template-columns: minmax(180px, 1.5fr) minmax(110px, .7fr) minmax(140px, 1fr) minmax(140px, 1fr);
+}
+
+.memory-review-toolbar .settings-provider-input {
+  min-width: 0;
+}
+
+.memory-review-target-status {
+  grid-column: 1 / -1;
+}
+
+.memory-review-target-status:empty {
+  display: none;
+}
+
+.memory-review-target,
+.memory-review-target-character {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-review-target {
+  flex-wrap: wrap;
+  color: #d6e1ee;
+  font-size: .85rem;
+  line-height: 1.45;
+}
+
+.memory-review-target-character > span,
+.memory-review-target-project {
+  min-width: 0;
+}
+
+.memory-review-target .character-avatar {
+  flex-shrink: 0;
+}
+
+.memory-review-detail-head .memory-review-target {
+  margin-top: 8px;
+}
+
+@media (max-width: 850px) {
+  .memory-review-toolbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }
 
 .home-page-memory-review .settings-provider-input span {
@@ -2273,9 +2320,9 @@ div.launch-provider-error { display: flex; align-items: center; align-self: cent
   gap: 7px;
   width: 100%;
   text-align: left;
-  border: 1px solid rgba(203, 213, 225, 0.1);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
   color: #edf3fb;
   padding: 12px;
   font: inherit;
@@ -2284,7 +2331,8 @@ div.launch-provider-error { display: flex; align-items: center; align-self: cent
 }
 
 .memory-review-item + .memory-review-item {
-  margin-top: 10px;
+  border-top-color: rgba(203, 213, 225, 0.1);
+  margin-top: 2px;
 }
 
 .memory-review-load-more {

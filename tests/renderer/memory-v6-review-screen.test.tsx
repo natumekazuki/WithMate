@@ -24,6 +24,8 @@ function createHit(id: string, title: string): MemoryV6ReviewSearchHit {
     preview: `${title} preview`,
     owner: { type: "project", id: "WithMate" },
     scope: { type: "project", id: "WithMate" },
+    target: { kind: "project", project: { id: "WithMate", name: "WithMate", path: null, state: "available" } },
+    sourceDisplay: { type: "agent", providerId: "codex" },
     tags: [],
     sourceSessionId: null,
     sourceProviderId: "codex",
@@ -99,6 +101,149 @@ async function openErrorDetails(dom: JSDOM, name: string, message: string) {
 
 // @test-value v2
 // kind = "contract"
+// claim = "登録対象の4種・同名補足・欠落対象を一覧と詳細と忘却確認に同じ意味で示し、忘却は選択entryへ送る"
+// oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memory-review" }
+// fault = "対象名やiconを別Characterで代用する、projectを落とす、sourceを対象と混ぜる、または別entryを忘却する"
+// observable = "一覧・詳細・確認dialogの対象文字列と画像src、source会話名、forget APIのentry ID"
+// observation_boundary = "component-behavior"
+// scope = "memory-review-target-identity"
+// lifecycle = "permanent"
+// impact = "利用者が記憶の所属を誤認したまま閲覧・忘却することを防ぐ"
+// distinction = "service投影のtestでは検出できないproduction componentの表示と操作対象の対応を確認する"
+// @end-test-value
+test("MemoryV6ReviewScreen は対象4種を表示して選択した対象を忘却確認する", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "https://withmate.local/" });
+  const previous = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement };
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  const rootElement = dom.window.document.getElementById("root")!;
+  let root: Root | null = null;
+  const character = { id: "char-one", name: "Alice", iconFilePath: "data:image/png;base64,AA", state: "active" as const, disambiguation: "char-one" };
+  const missing = { id: "char-lost", name: null, iconFilePath: null, state: "missing" as const };
+  const project = { id: "project-one", name: "WithMate", path: "/repo/one", state: "available" as const, disambiguation: "/repo/one" };
+  const hits: MemoryV6ReviewSearchHit[] = [
+    { ...createHit("common", "Common"), owner: { type: "user", id: "local-user" }, scope: { type: "global", id: "global" }, target: { kind: "user-global" } },
+    { ...createHit("project", "Project"), target: { kind: "project", project } },
+    { ...createHit("character", "Character"), owner: { type: "character", id: character.id }, scope: { type: "character", id: character.id }, target: { kind: "character", character } },
+    { ...createHit("both", "Both"), owner: { type: "character", id: character.id }, target: { kind: "character-project", character, project } },
+    { ...createHit("missing", "Missing"), owner: { type: "character", id: missing.id }, target: { kind: "character-project", character: missing, project } },
+  ];
+  const forgotten: string[] = [];
+  const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [character, { ...character, id: "char-two", disambiguation: "char-two" }, missing], projects: [project, { ...project, id: "project-two", disambiguation: "/repo/two" }] }; },
+    async searchMemoryV6Entries() { return { items: hits.filter((hit) => !forgotten.includes(hit.id)) }; },
+    async getMemoryV6Entry(id) { return { ...createDetail(id, id), ...hits.find((hit) => hit.id === id)!, sourceDisplay: { type: "agent", providerId: "codex", session: { id: "session-one", title: "Design Discussion", role: "auxiliary", state: "available" } } }; },
+    async getMemoryV6FileUsage() { return createUsage(); },
+    async exportMemoryV6EntryFiles() { return null; },
+    async runMemoryV6ProtectedObjectGc() { throw new Error("unused"); },
+    async forgetMemoryV6Entry(id) { forgotten.push(id); return { entryId: id, status: "forgotten", reason: "user_request" }; },
+  };
+  const click = async (selector: string) => { const button = rootElement.querySelector<HTMLButtonElement>(selector); assert.ok(button); await act(async () => { button.click(); }); };
+  try {
+    await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
+    const rows = rootElement.querySelectorAll(".memory-review-item");
+    assert.equal(rows.length, 5);
+    assert.equal(rows[0]?.querySelector(".memory-review-target")?.textContent, "User Common");
+    assert.equal(rows[1]?.querySelector(".memory-review-target")?.textContent, "WithMate · /repo/one");
+    assert.match(rows[2]?.querySelector(".memory-review-target")?.textContent ?? "", /Alice · char-one/);
+    assert.match(rows[3]?.querySelector(".memory-review-target")?.textContent ?? "", /Alice · char-one.*WithMate · \/repo\/one/);
+    assert.match(rows[4]?.querySelector(".memory-review-target")?.textContent ?? "", /Deleted Character · char-lost/);
+    assert.equal(rows[3]?.querySelector("img")?.getAttribute("src"), character.iconFilePath);
+    assert.equal(rows[4]?.querySelector("img"), null);
+    assert.match(rootElement.querySelectorAll("select")[1]?.textContent ?? "", /Alice · char-oneAlice · char-two/);
+    assert.match(rootElement.querySelectorAll("select")[2]?.textContent ?? "", /WithMate · \/repo\/oneWithMate · \/repo\/two/);
+    await click(".memory-review-item:nth-of-type(4)");
+    const targetText = rootElement.querySelector(".memory-review-detail .memory-review-target")?.textContent;
+    assert.equal(targetText, rows[3]?.querySelector(".memory-review-target")?.textContent);
+    assert.match(rootElement.querySelector(".memory-review-meta")?.textContent ?? "", /Recorded FromDesign Discussion · Auxiliary \/ codex/);
+    await click('button[aria-label="Forget Memory entry"]');
+    assert.equal(rootElement.querySelector('[aria-modal="true"] .memory-review-target')?.textContent, targetText);
+    await click('[aria-modal="true"] button.danger-button');
+    assert.deepEqual(forgotten, ["both"]);
+  } finally {
+    await act(async () => { root?.unmount(); });
+    for (const [key, value] of Object.entries(previous)) Object.defineProperty(globalThis, key, { value, configurable: true });
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "対象取得失敗は検索結果と独立して再試行でき、Characterとproject条件変更はcursor・選択・確認dialogを失効させ先行page/detail応答を採用しない"
+// oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memory-review" }
+// fault = "対象取得失敗を0件へ変換する、filterへ対象IDを渡さない、または旧検索条件のpage/detailが新条件の画面を上書きする"
+// observable = "対象Retry、表示済み一覧、search requestのcharacterId/projectId/cursor、詳細本文・確認dialog・選択状態"
+// observation_boundary = "component-behavior"
+// scope = "memory-review-target-filter-request-isolation"
+// lifecycle = "permanent"
+// impact = "異なる対象の記憶を混在表示したまま忘却することと取得失敗の隠蔽を防ぐ"
+// distinction = "型検査とstorage testでは保証できない非同期API応答とrenderer状態の対応を確認する"
+// @end-test-value
+test("MemoryV6ReviewScreen は対象取得を再試行し条件変更で旧pageとdetailを失効させる", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: "https://withmate.local/" });
+  const previous = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement };
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  const rootElement = dom.window.document.getElementById("root")!;
+  let root: Root | null = null;
+  const oldPage = deferred<MemoryV6ReviewSearchResult>();
+  const oldDetail = deferred<MemoryV6ReviewEntryDetail>();
+  const requests: MemoryV6ReviewSearchRequest[] = [];
+  let targetCalls = 0;
+  let detailCalls = 0;
+  const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() {
+      if (++targetCalls === 1) throw new Error("Target names unavailable");
+      return { characters: [{ id: "alice", name: "Alice", iconFilePath: null, state: "active" }], projects: [{ id: "repo", name: "Repository", path: null, state: "available" }] };
+    },
+    searchMemoryV6Entries(request) { requests.push(request); return request.cursor ? oldPage.promise : Promise.resolve({ items: [createHit(request.characterId ? "new" : "old", request.characterId ? "New Match" : "Old Match")], nextCursor: "page-two" }); },
+    getMemoryV6Entry(id) { return ++detailCalls === 1 ? Promise.resolve(createDetail(id, "Old Match")) : oldDetail.promise; },
+    async getMemoryV6FileUsage() { return createUsage(); },
+    async exportMemoryV6EntryFiles() { return null; },
+    async runMemoryV6ProtectedObjectGc() { throw new Error("unused"); },
+    async forgetMemoryV6Entry(id) { return { entryId: id, status: "forgotten", reason: "user_request" }; },
+  };
+  const click = async (selector: string) => { const button = rootElement.querySelector<HTMLButtonElement>(selector); assert.ok(button); await act(async () => { button.click(); }); };
+  const select = async (index: number, value: string) => { const control = rootElement.querySelectorAll("select")[index]!; await act(async () => { control.value = value; control.dispatchEvent(new dom.window.Event("change", { bubbles: true })); }); };
+  try {
+    await act(async () => { root = createRoot(rootElement); root.render(<MemoryV6ReviewScreen homePageClassName="home-page" getApi={() => api} />); });
+    assert.match(rootElement.querySelector(".memory-review-list")?.textContent ?? "", /Old Match/);
+    await openErrorDetails(dom, "Memory Targets Error", "Target names unavailable");
+    await click('button[aria-label="Retry Memory targets"]');
+    assert.equal(requests.length, 1);
+    await click(".memory-review-item");
+    await click('button[aria-label="Forget Memory entry"]');
+    assert.ok(rootElement.querySelector('[aria-modal="true"]'));
+    // Native change dispatch also covers a condition update while confirmation is open.
+    await select(1, "alice");
+    assert.equal(rootElement.querySelector('[aria-modal="true"]'), null);
+    assert.equal(rootElement.querySelector(".memory-review-body"), null);
+    assert.equal(rootElement.querySelector('.memory-review-item[aria-pressed="true"]'), null);
+    assert.equal(requests.at(-1)?.characterId, "alice");
+    assert.equal(requests.at(-1)?.cursor, undefined);
+    await click(".memory-review-item");
+    await click(".memory-review-load-more");
+    await select(2, "repo");
+    assert.equal(requests.at(-1)?.characterId, "alice");
+    assert.equal(requests.at(-1)?.projectId, "repo");
+    assert.equal(requests.at(-1)?.cursor, undefined);
+    await act(async () => { oldPage.resolve({ items: [createHit("stale", "Stale Page")] }); oldDetail.resolve(createDetail("new", "Stale Detail")); });
+    assert.match(rootElement.querySelector(".memory-review-list")?.textContent ?? "", /New Match/);
+    assert.equal(rootElement.querySelectorAll(".memory-review-item").length, 1);
+    assert.equal(rootElement.querySelector(".memory-review-body"), null);
+    assert.equal(rootElement.querySelector('.memory-review-item[aria-pressed="true"]'), null);
+    assert.equal(rootElement.querySelector(".memory-review-load-more")?.getAttribute("aria-busy"), null);
+  } finally {
+    await act(async () => { root?.unmount(); });
+    for (const [key, value] of Object.entries(previous)) Object.defineProperty(globalThis, key, { value, configurable: true });
+    dom.window.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "usage失敗の原文へaccessibleな詳細入口から到達でき、詳細を閉じても失敗は独立して残り、対象Retryと再取得失敗でも取得済み容量を保持する"
 // oracle = { type = "contract", ref = "docs/design/ui-design-guidelines.md#読込・空・失敗" }
 // fault = "検索/detail成功がusage errorを消す、Retryが別APIを呼ぶ、またはusage再取得で容量を消す"
@@ -123,6 +268,7 @@ test("MemoryV6ReviewScreen はusage失敗を独立して保持し対象だけRet
   const usages = [deferred<MemoryFileUsageResponse>(), deferred<MemoryFileUsageResponse>(), deferred<MemoryFileUsageResponse>()];
   const calls = { search: 0, usage: 0, detail: 0 };
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     searchMemoryV6Entries() { calls.search += 1; return search.promise; },
     getMemoryV6FileUsage() { return usages[calls.usage++]!.promise; },
     async getMemoryV6Entry() { calls.detail += 1; return createDetail("entry-a", "Entry A"); },
@@ -206,6 +352,7 @@ test("MemoryV6ReviewScreen は検索と同一entryの失敗を対象別にRetry�
   const detailRefresh = deferred<MemoryV6ReviewEntryDetail>();
   const calls = { search: 0, usage: 0, detail: [] as string[] };
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     searchMemoryV6Entries() { calls.search += 1; return calls.search === 1 ? search.promise : Promise.resolve({ items: [createHit("entry-a", "Entry A")] }); },
     getMemoryV6FileUsage() { calls.usage += 1; return usage.promise; },
     getMemoryV6Entry(entryId) {
@@ -279,6 +426,7 @@ test("MemoryV6ReviewScreen は失敗したappend cursorをRetryで再利用す�
   let usageCalls = 0;
   let detailCalls = 0;
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     searchMemoryV6Entries(request) {
       requests.push(request);
       if (requests.length === 1) return Promise.resolve({ items: [createHit("entry-a", "Entry A")], nextCursor: "cursor-a" });
@@ -347,6 +495,7 @@ test("MemoryV6ReviewScreen は操作エラーの詳細を開きForget確認を�
     files: [{ role: "artifact", mediaKind: "text", contentType: "text/plain", displayName: "note.txt", summary: "File", originalBytes: 12 }],
   });
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async searchMemoryV6Entries() { return { items: [createHit("entry-a", "Entry A")] }; },
     async getMemoryV6FileUsage() { return createUsage(); },
     async getMemoryV6Entry() { return detail; },
@@ -429,6 +578,7 @@ test("MemoryV6ReviewScreen は nextCursor がある場合に LoadMore で次 pag
   ];
 
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async getMemoryV6FileUsage() {
       return createUsage();
     },
@@ -517,6 +667,7 @@ test("MemoryV6ReviewScreen はfilter変更時に古いpagination busyを解除�
   const requests: MemoryV6ReviewSearchRequest[] = [];
 
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async getMemoryV6FileUsage() {
       return createUsage();
     },
@@ -624,6 +775,7 @@ test("MemoryV6ReviewScreen はentry detailのprotected file summaryを表示す�
   });
 
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async getMemoryV6FileUsage() {
       return createUsage();
     },
@@ -704,6 +856,7 @@ test("MemoryV6ReviewScreen はfile usageとlargest entriesを表示し、候補c
   const selectedEntryIds: string[] = [];
 
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async getMemoryV6FileUsage() {
       return createUsage({
         largestEntries: [{
@@ -811,6 +964,7 @@ test("MemoryV6ReviewScreen はentry detailからprotected filesをexportでき�
   });
 
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async getMemoryV6FileUsage() {
       return createUsage();
     },
@@ -913,6 +1067,7 @@ test("MemoryV6ReviewScreen は遅延または失敗したdetail選択で旧entry
   });
 
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async getMemoryV6FileUsage() {
       return createUsage();
     },
@@ -1020,6 +1175,7 @@ test("MemoryV6ReviewScreen はprotected object GC dry-run reportを表示する"
   const gcRequests: Array<{ dryRun: boolean }> = [];
 
   const api: MemoryV6ReviewApi = {
+    async listMemoryV6ReviewTargets() { return { characters: [], projects: [] }; },
     async getMemoryV6FileUsage() {
       return createUsage();
     },
