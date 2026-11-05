@@ -14,6 +14,7 @@
 - current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Background Execution`、`Diagnostics`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
 - Settings のsectionとprovider rowは意味上のgroupを保つが、入れ子の装飾card、重複するsection見出し、説明だけの空行は置かない
 - Settings本文のApp、Prompt Context、Coding Agent Providers、Background Execution、Diagnostics、Repository Glossary、Storage Maintenance、Helpは、native disclosureで個別に開閉する。初期状態は開き、複数sectionを同時に開ける。閉じても子の編集面をunmountせず、draft・入力途中の値・既存の失敗情報を保持する。開閉だけでは設定を保存せず、開閉状態の永続化は行わない。Save Settingsと保存結果はsectionの外へ置く
+- section内部も、AppのNotifications、Providerごとの設定とProvider File Settings、背景三用途と各Registration Instructions、DiagnosticsのMemory / Application Logs、Storage MaintenanceのDelete Old Sessions / Clean Session Filesを独立したnative disclosureとする。単一fieldごとの開閉は増やさず、Prompt Context / Repository Glossary / Help等の単純なgroupは追加分割しない。親を閉じても子の開閉・入力途中・処理結果を保持する。Clean Session Filesの確認dialogはすべてのdisclosureの外（document.body）へ表示し、取消後は表示可能な操作元または閉じた親のsummaryへfocusを戻す
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` はfieldsetの内外でsection間の余白を24pxに揃え、直前の入力欄やfocus枠と区切り線を離す。内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - `Session Turn Notification`はturn完了・失敗とCodexの構造化質問通知に共通で適用する。`Notification Response Preview`は成功したturnの完了通知だけを対象とし、質問文や入力値は表示しない。通知の条件と復帰先は[Desktop UI](desktop-ui.md#windows-session-notifications)を参照する
@@ -65,7 +66,7 @@ Memory Review の一覧・detail・Forget確認は、保存済みowner / scope�
     - `Conversation Timing`
     - `Tool Call Presence`
   - `Coding Agent Providers`
-    - provider 名を左、enable checkbox を右に置く
+    - providerごとの開閉見出しに名前とEnabled / Disabledを表示し、展開内のEnabled checkboxで有効化を編集する
     - providerごとの`Models`からModel管理を開く
     - OpenCodeの認証はOpenCode側で設定する
     - provider ごとの `Provider File Settings`

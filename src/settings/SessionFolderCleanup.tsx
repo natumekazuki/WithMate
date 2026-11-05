@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import type {
   SessionFolderCleanupRequest,
@@ -34,8 +35,9 @@ function periodLabel(request: SessionFolderCleanupRequest): string {
   return `${request.fromDate} – ${request.toDate}`;
 }
 
-function CleanupConfirmation({ scan, onCancel, onConfirm, onRestoreFocus }: {
+function CleanupConfirmation({ scan, themeSource, onCancel, onConfirm, onRestoreFocus }: {
   scan: SessionFolderCleanupScan;
+  themeSource: HTMLElement;
   onCancel(): void;
   onConfirm(): void;
   onRestoreFocus(): void;
@@ -44,10 +46,14 @@ function CleanupConfirmation({ scan, onCancel, onConfirm, onRestoreFocus }: {
   const titleId = useId();
   useEffect(() => {
     const element = dialog.current!;
+    const theme = window.getComputedStyle(themeSource);
+    for (const property of ["--ink", "--muted", "--line", "--surface-strong", "--shadow"]) {
+      element.style.setProperty(property, theme.getPropertyValue(property));
+    }
     element.showModal();
     return () => { element.close(); onRestoreFocus(); };
   }, []);
-  return (
+  return createPortal(
     <dialog ref={dialog} className="session-folder-cleanup-confirm" aria-labelledby={titleId}
       onKeyDown={handleDialogKeyDown}
       onCancel={(event) => { event.preventDefault(); onCancel(); }}>
@@ -62,7 +68,7 @@ function CleanupConfirmation({ scan, onCancel, onConfirm, onRestoreFocus }: {
         <button className="launch-toggle secondary" type="button" autoFocus onClick={onCancel}>Cancel</button>
         <button className="launch-toggle session-folder-cleanup-delete" type="button" onClick={onConfirm}>Permanently Delete</button>
       </footer>
-    </dialog>
+    </dialog>, document.body
   );
 }
 
@@ -167,68 +173,80 @@ export function SessionFolderCleanup({ api = getWithMateApi(), disabled = false,
 
   return (
     <div className="session-folder-cleanup" aria-labelledby={`${id}-title`} aria-busy={busy}>
-      <h3 id={`${id}-title`}>Clean Session Files</h3>
-      <fieldset disabled={busy || disabled || !api} className="session-folder-cleanup-fields">
-        <legend>Last Active</legend>
-        <div className="session-folder-cleanup-dates">
-          <label className="settings-provider-input" htmlFor={`${id}-from`}>
-            <span>From</span>
-            <input id={`${id}-from`} type="date" value={fromDate} disabled={allDates}
-              onChange={(event) => edit(() => setFromDate(event.target.value))} />
-          </label>
-          <label className="settings-provider-input" htmlFor={`${id}-through`}>
-            <span>Through</span>
-            <input id={`${id}-through`} type="date" value={toDate} disabled={allDates}
-              onChange={(event) => edit(() => setToDate(event.target.value))} />
-          </label>
-          <label className="session-folder-cleanup-all-dates">
-            <input type="checkbox" checked={allDates} onChange={(event) => edit(() => setAllDates(event.target.checked))} />
-            <span>All Dates</span>
-          </label>
+      <details className="settings-subsection" open>
+        <summary id={`${id}-title`}>Clean Session Files</summary>
+        <div className="settings-subsection-body">
+          <fieldset disabled={busy || disabled || !api} className="session-folder-cleanup-fields">
+            <legend>Last Active</legend>
+            <div className="session-folder-cleanup-dates">
+              <label className="settings-provider-input" htmlFor={`${id}-from`}>
+                <span>From</span>
+                <input id={`${id}-from`} type="date" value={fromDate} disabled={allDates}
+                  onChange={(event) => edit(() => setFromDate(event.target.value))} />
+              </label>
+              <label className="settings-provider-input" htmlFor={`${id}-through`}>
+                <span>Through</span>
+                <input id={`${id}-through`} type="date" value={toDate} disabled={allDates}
+                  onChange={(event) => edit(() => setToDate(event.target.value))} />
+              </label>
+              <label className="session-folder-cleanup-all-dates">
+                <input type="checkbox" checked={allDates} onChange={(event) => edit(() => setAllDates(event.target.checked))} />
+                <span>All Dates</span>
+              </label>
+            </div>
+            <div className="session-folder-cleanup-size-row">
+              <label className="settings-provider-input" htmlFor={`${id}-minimum`}>
+                <span>Min File Size (MiB)</span>
+                <input id={`${id}-minimum`} type="number" min="0" step="any" value={minimumSize}
+                  onChange={(event) => edit(() => setMinimumSize(event.target.value))} />
+              </label>
+              <SettingsActionButton actionLabel="Calculate Session File Usage" failure={scanError || (scan ? issueText(scan.issues) : "")}
+                className="launch-toggle secondary" type="button" onClick={() => void calculate()}
+                disabled={busy || disabled || !api} aria-busy={phase === "scanning"}>
+                <ButtonContent busy={phase === "scanning"} busyLabel="Calculating session file usage.">Calculate</ButtonContent>
+              </SettingsActionButton>
+            </div>
+          </fieldset>
+          <div className="session-folder-cleanup-feedback" aria-live="polite" aria-atomic="true">
+            {validation ? <p className="session-folder-cleanup-error" role="alert">{validation}</p> : null}
+            {scan ? <>
+              <dl className="session-folder-cleanup-summary">
+                <div><dt>Session Folders</dt><dd>{numberFormat.format(scan.sessionCount)}</dd></div>
+                <div><dt>Total Size</dt><dd>{formatCleanupBytes(scan.totalBytes)}</dd></div>
+                <div className="session-folder-cleanup-target"><dt>To Delete</dt><dd>{formatCleanupBytes(scan.matchedBytes)} <small>· {numberFormat.format(scan.matchedFileCount)} Files</small></dd></div>
+              </dl>
+              {skippedSessions.length ? <p className="session-folder-cleanup-secondary">Skipped: {skippedSessions.join(" · ")}</p> : null}
+              {scan.issues.length ? <p className="session-folder-cleanup-error">Some Files Could Not Be Read</p> : null}
+            </> : null}
+            {result ? <>
+              <p>{numberFormat.format(result.deletedFileCount)} Files Deleted · {formatCleanupBytes(result.deletedBytes)}</p>
+              {result.skippedFileCount ? <p className="session-folder-cleanup-secondary">{numberFormat.format(result.skippedFileCount)} Files Skipped</p> : null}
+              {result.failedFileCount ? <p className="session-folder-cleanup-error">{numberFormat.format(result.failedFileCount)} Files Failed</p> : null}
+            </> : null}
+          </div>
+          <div ref={deleteButton} className="session-folder-cleanup-actions">
+            <SettingsActionButton actionLabel="Delete Session Files" failure={deleteFailure}
+              className="launch-toggle session-folder-cleanup-delete" type="button"
+              disabled={busy || disabled || !api || (!scan && !deleteFailure) || scan?.matchedFileCount === 0}
+              aria-busy={preparingDeletion || phase === "deleting"}
+              onClick={() => { if (scan) setConfirming(true); else void calculate(true); }}>
+              <ButtonContent busy={preparingDeletion || phase === "deleting"}
+                busyLabel={preparingDeletion ? "Recalculating session files for deletion." : "Deleting session files."}>Delete Files…</ButtonContent>
+            </SettingsActionButton>
+          </div>
         </div>
-        <div className="session-folder-cleanup-size-row">
-          <label className="settings-provider-input" htmlFor={`${id}-minimum`}>
-            <span>Min File Size (MiB)</span>
-            <input id={`${id}-minimum`} type="number" min="0" step="any" value={minimumSize}
-              onChange={(event) => edit(() => setMinimumSize(event.target.value))} />
-          </label>
-          <SettingsActionButton actionLabel="Calculate Session File Usage" failure={scanError || (scan ? issueText(scan.issues) : "")}
-            className="launch-toggle secondary" type="button" onClick={() => void calculate()}
-            disabled={busy || disabled || !api} aria-busy={phase === "scanning"}>
-            <ButtonContent busy={phase === "scanning"} busyLabel="Calculating session file usage.">Calculate</ButtonContent>
-          </SettingsActionButton>
-        </div>
-      </fieldset>
-      <div className="session-folder-cleanup-feedback" aria-live="polite" aria-atomic="true">
-        {validation ? <p className="session-folder-cleanup-error" role="alert">{validation}</p> : null}
-        {scan ? <>
-          <dl className="session-folder-cleanup-summary">
-            <div><dt>Session Folders</dt><dd>{numberFormat.format(scan.sessionCount)}</dd></div>
-            <div><dt>Total Size</dt><dd>{formatCleanupBytes(scan.totalBytes)}</dd></div>
-            <div className="session-folder-cleanup-target"><dt>To Delete</dt><dd>{formatCleanupBytes(scan.matchedBytes)} <small>· {numberFormat.format(scan.matchedFileCount)} Files</small></dd></div>
-          </dl>
-          {skippedSessions.length ? <p className="session-folder-cleanup-secondary">Skipped: {skippedSessions.join(" · ")}</p> : null}
-          {scan.issues.length ? <p className="session-folder-cleanup-error">Some Files Could Not Be Read</p> : null}
-        </> : null}
-        {result ? <>
-          <p>{numberFormat.format(result.deletedFileCount)} Files Deleted · {formatCleanupBytes(result.deletedBytes)}</p>
-          {result.skippedFileCount ? <p className="session-folder-cleanup-secondary">{numberFormat.format(result.skippedFileCount)} Files Skipped</p> : null}
-          {result.failedFileCount ? <p className="session-folder-cleanup-error">{numberFormat.format(result.failedFileCount)} Files Failed</p> : null}
-        </> : null}
-      </div>
-      <div ref={deleteButton} className="session-folder-cleanup-actions">
-        <SettingsActionButton actionLabel="Delete Session Files" failure={deleteFailure}
-          className="launch-toggle session-folder-cleanup-delete" type="button"
-          disabled={busy || disabled || !api || (!scan && !deleteFailure) || scan?.matchedFileCount === 0}
-          aria-busy={preparingDeletion || phase === "deleting"}
-          onClick={() => { if (scan) setConfirming(true); else void calculate(true); }}>
-          <ButtonContent busy={preparingDeletion || phase === "deleting"}
-            busyLabel={preparingDeletion ? "Recalculating session files for deletion." : "Deleting session files."}>Delete Files…</ButtonContent>
-        </SettingsActionButton>
-      </div>
-      {confirming && scan ? <CleanupConfirmation scan={scan}
+      </details>
+      {confirming && scan ? <CleanupConfirmation scan={scan} themeSource={deleteButton.current!}
         onCancel={() => setConfirming(false)}
-        onRestoreFocus={() => deleteButton.current?.querySelector("button")?.focus()}
+        onRestoreFocus={() => {
+          let target = deleteButton.current?.querySelector<HTMLElement>("button") ?? null;
+          let group = deleteButton.current?.closest<HTMLDetailsElement>("details:not([open])") ?? null;
+          while (group) {
+            target = group.querySelector<HTMLElement>("summary");
+            group = group.parentElement?.closest<HTMLDetailsElement>("details:not([open])") ?? null;
+          }
+          target?.focus();
+        }}
         onConfirm={() => void run()} /> : null}
     </div>
   );

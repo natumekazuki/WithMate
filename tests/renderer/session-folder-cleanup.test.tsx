@@ -26,14 +26,14 @@ async function withCleanup(api: SessionFolderCleanupApi, run: (harness: {
   const container = dom.window.document.getElementById("root")!;
   const root = createRoot(container);
   const click = async (text: string) => {
-    const element = [...container.querySelectorAll<HTMLButtonElement | HTMLLabelElement>("button,label")]
+    const element = [...dom.window.document.querySelectorAll<HTMLButtonElement | HTMLLabelElement>("button,label")]
       .find((item) => item.textContent?.trim() === text);
     assert.ok(element, `Missing control: ${text}`);
     if (element instanceof dom.window.HTMLButtonElement) assert.equal(element.disabled, false);
     await act(async () => { element.click(); });
   };
   try {
-    await act(async () => { root.render(<SessionFolderCleanup api={api} />); });
+    await act(async () => { root.render(<details className="settings-section-card" open><summary>Storage Maintenance</summary><SessionFolderCleanup api={api} /></details>); });
     await run({ document: dom.window.document, root: container, click });
   } finally {
     await act(async () => root.unmount());
@@ -70,9 +70,9 @@ test("概要確認のCancelでは削除せず、確定した計算IDだけを実
     await click("Calculate");
     await click("Delete Files…");
     assert.equal(requests.length, 0);
-    assert.match(root.querySelector("dialog")!.textContent!, /40 Files · 4 KiB/);
+    assert.match(root.ownerDocument.querySelector("dialog")!.textContent!, /40 Files · 4 KiB/);
     await click("Cancel");
-    assert.equal(root.querySelector("dialog"), null);
+    assert.equal(root.ownerDocument.querySelector("dialog"), null);
     assert.equal(requests.length, 0);
     await click("Delete Files…");
     await click("Permanently Delete");
@@ -115,10 +115,10 @@ test("計算失敗を再試行でき、入力変更で古い削除対象を失�
 
 // @test-value v2
 // kind = "contract"
-// claim = "削除失敗は同じ操作から再計算でき、再計算失敗も再操作でき、新しい概要の確認後だけ新しい計算IDで削除する"
-// oracle = { type = "contract", ref = "docs/design/settings-ui.md#session-folder-cleanup" }
-// fault = "削除失敗後に元の操作を無効化する、再計算失敗で回復不能になる、確認前に削除する、古い計算IDを再使用する"
-// observable = "元の削除buttonのenabled/busy状態、再計算回数、再確認の件数、削除APIの計算IDと呼出回数"
+// claim = "削除失敗は再計算と再確認で回復でき、groupを閉じても確認を隠さず取消時のfocusを戻し、確認後だけ新しい計算IDで削除する"
+// oracle = { type = "contract", ref = "docs/design/settings-ui.md#session-folder-cleanup and #decision" }
+// fault = "再操作が不能になる、閉じたgroup内に確認や復帰focusを隠す、確認前に削除する、古い計算IDを再使用する"
+// observable = "削除buttonのenabled/busy状態、再計算回数、確認件数と親要素、Cancel後focus、削除APIの計算IDと回数"
 // observation_boundary = "component-behavior"
 // scope = "SessionFolder cleanup deletion recovery"
 // lifecycle = "permanent"
@@ -152,18 +152,31 @@ test("削除失敗の再操作は再計算と再確認を経て新しい計算ID
     await click("Delete Files…");
     assert.equal(button.disabled, false);
     assert.match(button.parentElement!.querySelector('[popover]')!.textContent!, /Synthetic recalculation failure/);
-    assert.equal(root.querySelector("dialog"), null);
+    assert.equal(root.ownerDocument.querySelector("dialog"), null);
     assert.equal(requests.length, 1);
     await click("Delete Files…");
     assert.equal(button.disabled, true);
     assert.equal(button.getAttribute("aria-busy"), "true");
     await act(async () => button.click());
     assert.equal(scans, 3);
+    const group = root.querySelector<HTMLDetailsElement>("details.settings-subsection")!;
+    const summary = group.querySelector("summary")!;
+    const outer = root.querySelector<HTMLDetailsElement>("details.settings-section-card")!;
+    const outerSummary = outer.querySelector("summary")!;
+    await act(async () => summary.click());
+    assert.equal(group.open, false);
+    await act(async () => outerSummary.click());
+    assert.equal(outer.open, false);
     await act(async () => resolveRetry({ ...scan, scanId: "fresh-scan", matchedFileCount: 2, matchedBytes: 1024 }));
-    assert.match(root.querySelector("dialog")!.textContent!, /2 Files · 1 KiB/);
+    assert.match(root.ownerDocument.querySelector("dialog")!.textContent!, /2 Files · 1 KiB/);
+    assert.equal(root.ownerDocument.querySelector("dialog")!.closest("details"), null);
     assert.equal(requests.length, 1);
     await click("Cancel");
     assert.equal(requests.length, 1);
+    assert.equal(root.ownerDocument.activeElement, outerSummary);
+    assert.equal(group.open, false);
+    assert.equal(outer.open, false);
+    await act(async () => { outerSummary.click(); summary.click(); });
     await click("Delete Files…");
     await click("Permanently Delete");
     assert.deepEqual(requests, [{ scanId: "synthetic-scan" }, { scanId: "fresh-scan" }]);
@@ -208,7 +221,7 @@ test("ファイルとdirectoryの部分失敗は再操作でき、再計算0件�
       assert.equal(scans, 2);
       assert.equal(runs, 1);
       assert.equal(button.disabled, true);
-      assert.equal(root.querySelector("dialog"), null);
+      assert.equal(root.ownerDocument.querySelector("dialog"), null);
       assert.match(root.querySelector("dl")!.textContent!, /0 B/);
     });
   }
