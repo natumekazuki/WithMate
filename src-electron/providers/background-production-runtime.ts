@@ -69,7 +69,7 @@ export class BackgroundProductionRuntime {
   }
 
   reportFailure(input: BackgroundFailureInput, remember = true): void {
-    if (remember) this.calls.rememberFailure(input);
+    if (remember) this.calls.captureFailureRecorder(input)(input);
     try { this.deps.onFailure?.(projectBackgroundFailure(input)); }
     catch { console.warn("Background failure diagnostic could not be written."); }
   }
@@ -102,16 +102,21 @@ export class BackgroundProductionRuntime {
   forgetSource(kind: BackgroundSourceRef["kind"], sessionId: string): void { this.calls.forgetSource(kind, sessionId); }
 
   async prepare(input: PrepareBackgroundCallInput): Promise<PreparedBackgroundCall> {
+    const rememberFailure = this.calls.captureFailureRecorder(input);
+    const reportFailure = (failure: BackgroundFailureInput) => {
+      rememberFailure(failure);
+      this.reportFailure(failure, false);
+    };
     let selection: BackgroundCallInput["selection"] | undefined;
     let result: PreparedBackgroundCall;
     try { result = await this.prepareCall(input, (value) => { selection = value; }); }
     catch (error) {
-      this.reportFailure({ ...input, stage: "prepare", error, selection });
+      reportFailure({ ...input, stage: "prepare", error, selection });
       const failure = classifyBackgroundFailure(error, "prepare", "BACKGROUND_PREPARE_FAILED");
       return { status: "failed", code: failure.code, reason: failure.reason };
     }
     if (result.status !== "ready" && result.status !== "not_configured") {
-      this.reportFailure({ ...input, stage: "prepare", error: result, selection });
+      reportFailure({ ...input, stage: "prepare", error: result, selection });
     }
     return result;
   }

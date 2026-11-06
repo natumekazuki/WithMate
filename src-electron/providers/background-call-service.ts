@@ -101,15 +101,18 @@ export class BackgroundCallService {
     this.#providers.clear();
   }
 
-  rememberFailure(input: BackgroundFailureInput): void {
+  captureFailureRecorder(input: Pick<BackgroundFailureInput, "source" | "purpose">): (failure: BackgroundFailureInput) => void {
     const key = continuationKey(input.source, input.purpose);
-    const state = this.#continuations.get(key);
-    if (state && input.selection && state.providerId !== undefined && state.providerId !== input.selection.providerId) return;
-    const current = state ?? { id: randomUUID(), source: input.source, purpose: input.purpose,
-      providerId: input.selection?.providerId, threadId: null, abort: new AbortController() };
-    current.previousFailure = { ...classifyBackgroundFailure(input.error, input.stage, "BACKGROUND_PREPARE_FAILED"),
-      ...(input.selection ? { providerId: input.selection.providerId, modelId: input.selection.modelId } : {}) };
-    this.#continuations.set(key, current);
+    const state: Continuation = this.#continuations.get(key) ?? { id: randomUUID(), source: input.source,
+      purpose: input.purpose, threadId: null, abort: new AbortController() };
+    this.#continuations.set(key, state);
+    return (failure) => {
+      if (this.#continuations.get(key) !== state || state.abort.signal.aborted) return;
+      if (failure.selection && state.providerId !== undefined && state.providerId !== failure.selection.providerId) return;
+      state.providerId ??= failure.selection?.providerId;
+      state.previousFailure = { ...classifyBackgroundFailure(failure.error, failure.stage, "BACKGROUND_PREPARE_FAILED"),
+        ...(failure.selection ? { providerId: failure.selection.providerId, modelId: failure.selection.modelId } : {}) };
+    };
   }
 
   async runOnce(input: BackgroundCallInput): Promise<BackgroundCallResult> {

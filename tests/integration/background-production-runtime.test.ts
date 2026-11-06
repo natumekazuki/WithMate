@@ -55,6 +55,78 @@ function gate() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "準備失敗は同じ継続寿命の次呼出へ渡し、source解放・停止後の遅延失敗は診断だけに残して新しい失敗材料を上書きしない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#native文脈の継続と失敗情報" }
+// fault = "prepare待機中の寿命変更を無視して破棄済み失敗を新stateへ保存するか、現行prepare失敗の引継ぎや診断を失う"
+// observable = "prepare結果、失敗診断のcode、後続AgentのuserInput・thread、終了後binding件数"
+// observation_boundary = "consumer"
+// scope = "production prepare through real call service and binding lifecycle across delayed catalog throw or unavailable result"
+// lifecycle = "permanent"
+// impact = "破棄した会話文脈の失敗が次Turnの再検討材料へ混入し、現在の失敗原因を隠す"
+// distinction = "既存の実行中取消testはbinding発行前のprepare待機と失敗保持を通らず、型検査も非同期の寿命交差を検出できない"
+// @end-test-value
+test("準備失敗の引継ぎはsource解放とruntime停止の寿命を守る", async () => {
+  for (const reset of ["none", "forget", "stop"] as const) {
+    for (const outcome of ["throw", "unavailable"] as const) {
+      const f = await backgroundHistoryFixture();
+      const entered = gate(), release = gate();
+      try {
+        seed(f);
+        const agents: BackgroundAgentInput[] = [], failures: BackgroundFailureEvent[] = [];
+        const { deps, input } = setup(f, (agent) => { agents.push(agent); });
+        let reads = 0, currentFailure = false;
+        const runtime = new BackgroundProductionRuntime({ ...deps,
+          getModelCatalog: async () => {
+            if (++reads === 1) {
+              entered.resolve(); await release.promise;
+              if (outcome === "throw") throw new Error("fixture-stale-catalog");
+              return { providers: [] };
+            }
+            if (currentFailure) throw new Error("fixture-current-catalog");
+            return catalog;
+          },
+          onFailure: (failure) => { failures.push(failure); },
+        });
+        const pending = runtime.prepare(input);
+        await entered.promise;
+        const invoke = async () => {
+          const prepared = await runtime.prepare(input);
+          assert.equal(prepared.status, "ready");
+          assert.deepEqual(await runtime.calls.runOnce({ ...prepared.call, userInput: "current material", onAdmitted() {} }), { kind: "completed" });
+          assert.equal(agents.at(-1)!.continuation.threadId, null);
+          return agents.at(-1)!.userInput;
+        };
+        if (reset !== "none") {
+          if (reset === "forget") {
+            runtime.forgetSource("main", input.source.sessionId);
+            input.session.provider = "copilot";
+          } else { runtime.stop(); runtime.start(); }
+          assert.equal(await invoke(), "current material");
+          currentFailure = true;
+          assert.equal((await runtime.prepare(input)).status, "failed");
+          currentFailure = false;
+        }
+        release.resolve();
+        const failed = await pending;
+        assert.equal(failed.status, outcome === "throw" ? "failed" : "unavailable");
+        assert.equal(failures.at(-1)!.code, failed.code);
+        assert.equal(failures.at(-1)!.stage, "prepare");
+        const nextInput = await invoke();
+        if (reset === "none") assert.ok(nextInput.includes(failed.code));
+        else {
+          assert.match(nextInput, /fixture-current-catalog/);
+          assert.doesNotMatch(nextInput, /fixture-stale-catalog/);
+        }
+        assert.equal(await invoke(), "current material");
+        assert.equal(f.bindings.getActiveBindingCount(), 0);
+        runtime.stop();
+      } finally { release.resolve(); await f.close(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "背景prepareは現在rootと用途設定のfile scopeを捕捉し、read-only・planで復元を許可せず、失敗診断へrootを保存しない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memoryの添付と必要時復元" }
 // fault = "元会話の書込設定や全FS権限を流用する、後続の設定変更で準備済みscopeを拡大する、または診断へfile rootを保存する"

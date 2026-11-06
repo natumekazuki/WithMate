@@ -113,10 +113,10 @@ async function denied(client: Client, name: string, args: Record<string, unknown
 
 // @test-value v2
 // kind = "contract"
-// claim = "target-memoryのMCPと配布CLI登録は実暗号化添付と本文を保存し、三用途が明示復元だけで同じbytesを取得する"
+// claim = "target-memoryのMCPと配布CLI登録は実暗号化添付と本文を保存し、MCPはscope内復元を案内し、三用途が明示復元だけで同じbytesを取得する"
 // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md" }
-// fault = "背景の公開schema・grant・principal・実import/export接続が欠けるか、検索で実体または秘密pathを自動公開する"
-// observable = "両入口の登録応答、Worker保存本文・添付metadata、三用途の復元file bytes、検索と本文取得の公開JSON"
+// fault = "背景の公開schema・grant・principal・実import/export接続が欠けるか、initializeが許可済み復元を否定するか、検索で実体または秘密pathを自動公開する"
+// observable = "MCP initialize instructionsと公開tool、両入口の登録応答、Worker保存本文・添付metadata、三用途の復元file bytes、検索と本文取得の公開JSON"
 // observation_boundary = "public-boundary"
 // scope = "managed HTTP MCP and bundled CLI through production background registration and real protected object crypto/store/Worker"
 // lifecycle = "permanent"
@@ -127,6 +127,8 @@ test("背景添付の登録と三用途の必要時復元がMCPと配布CLIで�
   try {
     const execution = start(s); const binding = f.project(execution);
     const { client } = await f.connect(binding, "memoryUrl");
+    assert.match(client.getInstructions()!, /published file operations within the captured file scope/);
+    assert.match(client.getInstructions()!, /No other write or fallback authority is provided/);
     const tools = (await client.listTools()).tools;
     assert.ok(tools.some((tool) => tool.name === "memory.append" && JSON.stringify(tool.inputSchema).includes('"files"')));
     for (const tool of ["memory.get_file", "memory.export_files"]) assert.ok(tools.some((item) => item.name === tool));
