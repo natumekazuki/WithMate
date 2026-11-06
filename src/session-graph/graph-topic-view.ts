@@ -11,7 +11,8 @@ export async function readExpandedTopicViews(
   const expanded = topics.filter((topic) => expandedIds.includes(topic.id));
   const loaded = (id: string) => previous?.items.filter((record) => record.topicId === id).length ?? 0;
   const nextTopic = more ? expanded.find((topic) => loaded(topic.id) < topic.recordCount)?.id : undefined;
-  const pages = await Promise.all(expanded.map(async (topic) => {
+  const pages: SessionGraphReadResult[][] = [];
+  for (const topic of expanded) {
     const wanted = Math.min(topic.recordCount, Math.max(pageSize, loaded(topic.id) + (topic.id === nextTopic ? pageSize : 0)));
     const reads: SessionGraphReadResult[] = [];
     let count = 0;
@@ -28,8 +29,8 @@ export async function readExpandedTopicViews(
         break;
       }
     }
-    return reads;
-  }));
+    pages.push(reads);
+  }
   const reads = pages.flat();
   const items = reads.flatMap((read) => read.items);
   const total = expanded.reduce((sum, topic) => sum + topic.recordCount, 0);

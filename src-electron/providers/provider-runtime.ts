@@ -7,6 +7,8 @@ import type { ConversationTimingContext } from "../session/conversation-timing.j
 import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type { ProviderOutput } from "../../src-shared/session/provider-output.js";
+import type { SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -32,9 +34,11 @@ export type RunSessionTurnInput = {
   executionOptions: SessionExecutionOptions;
   executionWorkspacePath?: string;
   sessionFolderPath?: string;
+  crewFolderPath?: string;
   character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
+  inputProvenance?: { origin: SessionTurnQueueOrigin | null; originalChanged: boolean | null; coordinationOperation?: string };
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   conversationTimingContext?: ConversationTimingContext;
@@ -101,6 +105,7 @@ export type ListProviderModelsInput = {
 };
 
 export type RunSessionTurnResult = {
+  output?: ProviderOutput;
   threadId: string | null;
   assistantText: string;
   assistantQuestionRanges?: LiveSessionRunState["assistantQuestionRanges"];

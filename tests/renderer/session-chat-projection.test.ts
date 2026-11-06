@@ -470,7 +470,6 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
   return {
     id: "auxiliary-session",
     parentSessionId: "main-session",
-    status: "active",
     runState: "idle",
     title: "Auxiliary session",
     provider: "codex",
@@ -489,7 +488,6 @@ function createAuxiliaryRuntimeSession(): AuxiliarySession {
     displayAfterMessageIndex: null,
     createdAt: "2026-09-22T00:00:00.000Z",
     updatedAt: "2026-09-22T00:00:00.000Z",
-    closedAt: "",
   };
 }
 

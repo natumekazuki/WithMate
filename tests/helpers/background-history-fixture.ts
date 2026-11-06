@@ -63,7 +63,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   ], changedFiles: [], runChecks: [] };
   db.prepare("INSERT INTO session_messages_v6(session_id,seq,role,body,artifact_body,created_at) VALUES ('main',1,'assistant',?,?,'now')")
     .run(JSON.stringify({ role: "assistant", text: "saved answer", artifact }), JSON.stringify(artifact));
-  db.prepare("INSERT INTO auxiliary_sessions(id,parent_session_id,status,created_at,updated_at,character_id) VALUES ('aux','main','active','same-created-at','now','character')").run();
+  db.prepare("INSERT INTO auxiliary_sessions(id,parent_session_id,created_at,updated_at,character_id) VALUES ('aux','main','same-created-at','now','character')").run();
   db.prepare("INSERT INTO auxiliary_session_drafts(auxiliary_session_id,parent_session_id,incarnation,updated_at) VALUES ('aux','main','draft-a','now')").run();
   db.prepare("INSERT INTO auxiliary_session_messages(auxiliary_session_id,seq,role,body,created_at) VALUES ('aux',0,'user',?,'now')")
     .run(JSON.stringify({ role: "user", text: "auxiliary source" }));
@@ -101,6 +101,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const graph = new SessionGraphRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     applicationService: new SessionGraphApplicationService({ getStore: () => worker.stores.sessionGraph,
       resolveSession: (id) => sessions.has(id) ? { owner: { sessionId: id, incarnationId: sessions.get(id)!.incarnationId! },
+        source: { kind: "main", incarnationId: sessions.get(id)!.incarnationId! },
         providerId: "codex", generation: "fixture", identity: { sessionId: id, sessionTitle: id, role: "main",
           character: { id: "character", name: "Character" } } } : null }) });
   const runtime = createMemoryV6HttpServer({ ...owner, apiSecret: "api", mcpApiSecret: "mcp", operatorApiSecret: "operator",

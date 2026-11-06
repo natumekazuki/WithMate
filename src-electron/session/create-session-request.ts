@@ -3,6 +3,8 @@ import {
   normalizeCharacterOwnerId,
 } from "../../src-shared/character/character-owner.js";
 import { normalizeCharacterRuntimeSnapshot } from "../../src-shared/character/character-runtime-snapshot.js";
+import { type SessionRole } from "../../src-shared/session/session-role.js";
+import { validateSessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
 import type {
   CreateSessionInput,
   CreateSessionWorkspaceRequest,
@@ -91,6 +93,9 @@ export function parseCreateSessionRequest(input: unknown): {
   workspace: CreateSessionWorkspaceRequest;
 } {
   const request = requireRecord(input, "session");
+  const title = requireString(request.taskTitle, "taskTitle");
+  const description = optionalString(request.description, "description");
+  if (title.trim() || description !== undefined) validateSessionMetadataPatch({ ...(title.trim() ? { title } : {}), ...(description !== undefined ? { description } : {}) });
   const theme = requireRecord(request.characterThemeColors, "characterThemeColors");
   const runtimeSnapshot = request.characterRuntimeSnapshot === undefined || request.characterRuntimeSnapshot === null
     ? request.characterRuntimeSnapshot
@@ -128,7 +133,9 @@ export function parseCreateSessionRequest(input: unknown): {
     sessionInput: {
       provider: optionalString(request.provider, "provider"),
       catalogRevision: optionalNumber(request.catalogRevision, "catalogRevision"),
-      taskTitle: requireString(request.taskTitle, "taskTitle"),
+      taskTitle: title,
+      description,
+      sessionRole: optionalEnum<SessionRole>(request.sessionRole, "sessionRole", ["standalone", "overall-coordinator"]),
       sessionKind: optionalEnum<SessionKind>(
         request.sessionKind,
         "sessionKind",

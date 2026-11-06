@@ -2,6 +2,7 @@ import { basename, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { openAppDatabaseReadOnly } from "./sqlite-connection.js";
 import { migrateLegacySessionTurnsV6 } from "./migrations/migrate-session-turn-storage-v6.js";
+import { CREATE_V7_COORDINATION_RECORDS_SQL } from "../coordination/coordination-schema-v7.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
@@ -16,6 +17,8 @@ export const REQUIRED_V6_TABLES = [
   "characters",
   "project_scopes_v6",
   "sessions_v6",
+  "session_lifecycle_operations_v6",
+  "coordination_records_v7",
   "session_messages_v6",
   "session_file_pins_v6",
   "session_graphs_v6",
@@ -63,6 +66,11 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_characters_state_updated",
   "idx_v6_project_scopes_key",
   "idx_v6_sessions_last_active",
+  "idx_v6_sessions_root",
+  "idx_v6_sessions_parent",
+  "idx_v6_session_lifecycle_operations_kind_phase",
+  "idx_coordination_v7_crew",
+  "idx_coordination_v7_respondent",
   "idx_v6_session_messages_session_seq",
   "idx_auxiliary_sessions_parent_updated",
   "idx_v6_session_turns_session_updated",
@@ -105,6 +113,11 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "title",
     "state",
     "session_kind",
+    "session_role",
+    "root_session_id",
+    "parent_session_id",
+    "created_by_session_id",
+    "description",
     "provider_id",
     "catalog_revision",
     "model_id",
@@ -124,9 +137,11 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "last_active_at",
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
+  session_lifecycle_operations_v6: ["operation_id", "kind", "input_json", "targets_json", "resources_json", "prepared_json", "phase", "created_at", "updated_at"],
+  coordination_records_v7: ["id", "crew_root_session_id", "initiator_session_id", "initiator_kind", "initiator_incarnation_id", "respondent_session_id", "respondent_kind", "state", "payload_json"],
   session_file_pins_v6: ["session_id", "root_kind", "root_path", "relative_path", "relative_path_key", "kind", "root_label"],
-  session_turn_queue_v6: ["sequence", "queue_position", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
-  auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at"],
+  session_turn_queue_v6: ["sequence", "queue_position", "id", "session_id", "auxiliary_session_id", "incarnation_id", "request_id", "state", "captured_json", "accepted_json", "dispatched_json", "turn_id", "input_turn_id", "user_message_seq", "reason", "released_at", "created_at", "updated_at"],
+  auxiliary_sessions: ["id", "parent_session_id", "created_at", "updated_at"],
   auxiliary_session_messages: ["auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at"],
   session_turns_v6: [
     "id",
@@ -412,10 +427,10 @@ function hasRequiredColumns(db: DatabaseSync): boolean {
   }
 
   const auxiliaryColumns = tableColumnNames(db, "auxiliary_sessions");
-  const normalizedColumns = ["title", "run_state", "preview", "provider_id", "catalog_revision",
+  const normalizedColumns = ["title", "description", "run_state", "preview", "provider_id", "catalog_revision",
     "model_id", "reasoning_effort", "approval_mode", "codex_sandbox_mode", "codex_speed",
     "codex_reviewer", "custom_agent_name", "thread_id",
-    "display_after_message_index", "closed_at", "character_id", "character_snapshot_json",
+    "display_after_message_index", "character_id", "character_snapshot_json",
     "character_snapshot_invalid", "character_icon_path", "client_request_id", "creation_context_json",
     "creation_request_json"];
   if (!auxiliaryColumns.has("payload_json") && !normalizedColumns.every((name) => auxiliaryColumns.has(name))) {
@@ -456,6 +471,7 @@ function hasForeignKey(
 
 function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
+    && hasForeignKey(db, "coordination_records_v7", "crew_root_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_graphs_v6", "session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_graph_topics_v6", "session_id", "session_graphs_v6", "session_id", "CASCADE")
     && hasForeignKey(db, "session_graph_records_v6", "topic_id", "session_graph_topics_v6", "id", "CASCADE")
@@ -567,9 +583,10 @@ function tableSql(db: DatabaseSync, tableName: string): string {
 
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
+  const lifecycleSql = tableSql(db, "session_lifecycle_operations_v6");
+  const coordinationSql = tableSql(db, "coordination_records_v7");
   const filePinsSql = tableSql(db, "session_file_pins_v6");
   const turnQueueSql = tableSql(db, "session_turn_queue_v6");
-  const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
   const memoryEntriesSql = tableSql(db, "memory_entries_v6");
   const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
@@ -580,16 +597,17 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const affectIdempotencySql = tableSql(db, "character_affect_idempotency_v6");
   const affectMutationsSql = tableSql(db, "character_affect_mutations_v6");
   const affectObservationsSql = tableSql(db, "character_affect_observations_v6");
-  const auxiliaryStatusConstrained = auxiliarySessionsSql.includes("status IN ('active', 'closed')")
-    || (tableColumnNames(db, "auxiliary_sessions").has("payload_json")
-      && !db.prepare("SELECT 1 FROM auxiliary_sessions WHERE status NOT IN ('active', 'closed') OR status IS NULL LIMIT 1").get());
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
+    && lifecycleSql.includes("kind IN ('create', 'delete')")
+    && lifecycleSql.includes("phase IN ('preparing', 'applied', 'complete')")
+    && coordinationSql.includes("state IN ('open','resolved','withdrawn','corrected')")
+    && coordinationSql.includes("json_valid(payload_json)")
     && tableSql(db, "session_graphs_v6").includes("CHECK (revision >= 0)")
     && tableSql(db, "session_graph_records_v6").includes("kind IN ('requirement', 'constraint', 'decision', 'activity', 'observation', 'issue')")
     && tableSql(db, "session_graph_records_v6").includes("json_valid(payload_json)")
     && tableSql(db, "session_graph_relations_v6").includes("json_valid(payload_json)")
-    && filePinsSql.includes("root_kind IN ('workspace', 'session-folder', 'additional')")
+    && filePinsSql.includes("root_kind IN ('workspace', 'session-folder', 'crew-folder', 'additional')")
     && filePinsSql.includes("kind IN ('file', 'directory')")
     && filePinsSql.includes("root_path <> ''")
     && filePinsSql.includes("relative_path <> ''")
@@ -597,9 +615,10 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && filePinsSql.includes("PRIMARY KEY (session_id, root_kind, root_path, relative_path_key)")
     && turnQueueSql.includes("state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')")
     && turnQueueSql.includes("json_valid(captured_json)")
+    && turnQueueSql.includes("accepted_json IS NULL OR json_valid(accepted_json)")
+    && turnQueueSql.includes("dispatched_json IS NULL OR json_valid(dispatched_json)")
     && turnQueueSql.includes("FOREIGN KEY (auxiliary_session_id)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
-    && auxiliaryStatusConstrained
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
     && sessionTurnsSql.includes("session_id IS NOT NULL OR auxiliary_session_id IS NOT NULL")
     && sessionTurnsSql.includes("NOT (session_id IS NOT NULL AND auxiliary_session_id IS NOT NULL)")
@@ -725,6 +744,11 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
     title TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active', 'completed', 'failed', 'archived')),
     session_kind TEXT NOT NULL DEFAULT 'default',
+    session_role TEXT NOT NULL DEFAULT 'standalone',
+    root_session_id TEXT,
+    parent_session_id TEXT,
+    created_by_session_id TEXT,
+    description TEXT NOT NULL DEFAULT '',
     provider_id TEXT NOT NULL,
     catalog_revision INTEGER NOT NULL,
     model_id TEXT NOT NULL,
@@ -763,6 +787,25 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_sessions_character
     ON sessions_v6(character_id, last_active_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_sessions_root ON sessions_v6(root_session_id);
+  CREATE INDEX IF NOT EXISTS idx_v6_sessions_parent ON sessions_v6(parent_session_id);
+`;
+
+export const CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_lifecycle_operations_v6 (
+    operation_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('create', 'delete')),
+    input_json TEXT NOT NULL,
+    targets_json TEXT NOT NULL,
+    resources_json TEXT NOT NULL DEFAULT '[]',
+    prepared_json TEXT,
+    phase TEXT NOT NULL CHECK (phase IN ('preparing', 'applied', 'complete')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_session_lifecycle_operations_kind_phase
+    ON session_lifecycle_operations_v6(kind, phase);
 `;
 
 export const CREATE_V6_SESSION_GRAPH_TABLES_SQL = `
@@ -797,7 +840,7 @@ export const CREATE_V6_SESSION_GRAPH_TABLES_SQL = `
 export const CREATE_V6_SESSION_FILE_PINS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_file_pins_v6 (
     session_id TEXT NOT NULL,
-    root_kind TEXT NOT NULL CHECK (root_kind IN ('workspace', 'session-folder', 'additional')),
+    root_kind TEXT NOT NULL CHECK (root_kind IN ('workspace', 'session-folder', 'crew-folder', 'additional')),
     root_path TEXT NOT NULL CHECK (root_path <> ''),
     relative_path TEXT NOT NULL CHECK (relative_path <> ''),
     relative_path_key TEXT NOT NULL CHECK (relative_path_key <> ''),
@@ -830,10 +873,10 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS auxiliary_sessions (
     id TEXT PRIMARY KEY,
     parent_session_id TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
     run_state TEXT NOT NULL DEFAULT 'idle' CHECK (run_state IN ('idle', 'running', 'error')),
     preview TEXT NOT NULL DEFAULT '',
     provider_id TEXT NOT NULL DEFAULT 'codex',
@@ -847,7 +890,6 @@ export const CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL = `
     custom_agent_name TEXT NOT NULL DEFAULT '',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
-    closed_at TEXT NOT NULL DEFAULT '',
     character_id TEXT,
     character_snapshot_json TEXT,
     character_snapshot_invalid INTEGER NOT NULL DEFAULT 0,
@@ -1352,6 +1394,8 @@ export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
     request_id TEXT NOT NULL CHECK (request_id <> ''),
     state TEXT NOT NULL CHECK (state IN ('queued', 'starting', 'running', 'completed', 'failed', 'canceled', 'interrupted')),
     captured_json TEXT NOT NULL CHECK (json_valid(captured_json)),
+    accepted_json TEXT CHECK (accepted_json IS NULL OR json_valid(accepted_json)),
+    dispatched_json TEXT CHECK (dispatched_json IS NULL OR json_valid(dispatched_json)),
     turn_id TEXT,
     input_turn_id TEXT,
     user_message_seq INTEGER CHECK (user_message_seq IS NULL OR user_message_seq >= 0),
@@ -1377,6 +1421,8 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
+  CREATE_V6_SESSION_LIFECYCLE_OPERATIONS_TABLE_SQL,
+  CREATE_V7_COORDINATION_RECORDS_SQL,
   CREATE_V6_SESSION_FILE_PINS_TABLE_SQL,
   CREATE_V6_SESSION_GRAPH_TABLES_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
@@ -1419,7 +1465,6 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     CREATE TABLE auxiliary_sessions_v6_rebuild (
       id TEXT PRIMARY KEY,
       parent_session_id TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       payload_json TEXT NOT NULL
@@ -1429,7 +1474,6 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     INSERT INTO auxiliary_sessions_v6_rebuild (
       id,
       parent_session_id,
-      status,
       created_at,
       updated_at,
       payload_json
@@ -1437,7 +1481,6 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     SELECT
       id,
       parent_session_id,
-      status,
       ${createdAtExpression},
       updated_at,
       payload_json
@@ -1476,6 +1519,18 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   db.exec("DROP TABLE IF EXISTS model_catalog_models; DROP TABLE IF EXISTS model_catalog_providers; DROP TABLE IF EXISTS model_catalog_revisions;");
   db.exec("DROP TABLE IF EXISTS character_affect_turn_settlements;");
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
+  if (tableExists(db, "sessions_v6")) {
+    const sessionColumns = tableColumnNames(db, "sessions_v6");
+    for (const [name, definition] of [
+      ["session_role", "TEXT NOT NULL DEFAULT 'standalone'"],
+      ["root_session_id", "TEXT"],
+      ["parent_session_id", "TEXT"],
+      ["created_by_session_id", "TEXT"],
+      ["description", "TEXT NOT NULL DEFAULT ''"],
+    ]) {
+      if (!sessionColumns.has(name)) db.exec(`ALTER TABLE sessions_v6 ADD COLUMN ${name} ${definition}`);
+    }
+  }
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -1486,6 +1541,18 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     }
     db.exec(statement === CREATE_V6_CHARACTER_AFFECT_TABLES_SQL
       ? statement.replace(CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL, "") : statement);
+  }
+
+  if (!tableSql(db, "session_file_pins_v6").includes("'crew-folder'")) {
+    db.exec(CREATE_V6_SESSION_FILE_PINS_TABLE_SQL.replace("IF NOT EXISTS session_file_pins_v6", "session_file_pins_v6_rebuild"));
+    db.exec(`
+      INSERT INTO session_file_pins_v6_rebuild
+        (session_id, root_kind, root_path, relative_path, relative_path_key, kind, root_label)
+      SELECT session_id, root_kind, root_path, relative_path, relative_path_key, kind, root_label
+      FROM session_file_pins_v6;
+      DROP TABLE session_file_pins_v6;
+      ALTER TABLE session_file_pins_v6_rebuild RENAME TO session_file_pins_v6;
+    `);
   }
 
   if (!db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?").get(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY)) {
@@ -1509,6 +1576,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN incarnation_id TEXT NOT NULL DEFAULT '';");
   }
   db.exec("UPDATE sessions_v6 SET incarnation_id = 'legacy:' || id WHERE TRIM(COALESCE(incarnation_id, '')) = '';");
+  db.exec("UPDATE sessions_v6 SET root_session_id = id WHERE root_session_id IS NULL;");
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
@@ -1518,14 +1586,16 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     migrateLegacySessionTurnsV6(db);
     const hasRetainedAuxiliaryTurns = tableExists(db, "session_turns_v6")
       && Boolean(db.prepare("SELECT 1 FROM session_turns_v6 WHERE auxiliary_session_id IS NOT NULL LIMIT 1").get());
-    const shouldRebuildAuxiliarySessions = !hasRetainedAuxiliaryTurns && (
-      hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6")
-      || !tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')")
-    );
+    const shouldRebuildAuxiliarySessions = auxiliaryColumns.has("payload_json")
+      && !hasRetainedAuxiliaryTurns
+      && hasForeignKey(db, "auxiliary_sessions", "parent_session_id", "sessions_v6");
     if (shouldRebuildAuxiliarySessions) {
       rebuildAuxiliarySessionsTable(db, auxiliaryColumns);
     } else if (!auxiliaryColumns.has("created_at")) {
       db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN created_at TEXT NOT NULL DEFAULT ''");
+    }
+    if (!auxiliaryColumns.has("payload_json") && !auxiliaryColumns.has("description")) {
+      db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''");
     }
     backfillAuxiliarySessionsCreatedAt(db);
 
@@ -1564,6 +1634,12 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   if (!tableColumnNames(db, "session_turn_queue_v6").has("queue_position")) {
     db.exec("ALTER TABLE session_turn_queue_v6 ADD COLUMN queue_position INTEGER NOT NULL DEFAULT 0 CHECK (queue_position >= 0)");
     db.exec("UPDATE session_turn_queue_v6 SET queue_position = sequence");
+  }
+  const queueColumns = tableColumnNames(db, "session_turn_queue_v6");
+  for (const name of ["accepted_json", "dispatched_json"]) {
+    if (!queueColumns.has(name)) {
+      db.exec(`ALTER TABLE session_turn_queue_v6 ADD COLUMN ${name} TEXT CHECK (${name} IS NULL OR json_valid(${name}))`);
+    }
   }
   cleanupForbiddenV6Tables(db);
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {

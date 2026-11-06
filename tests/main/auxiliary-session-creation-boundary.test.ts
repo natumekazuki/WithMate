@@ -229,9 +229,9 @@ test("Claude Auxiliaryは非対応approvalを保存せず既定on-requestで作�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "新規Auxiliaryは同じ親の保存済みactive/closed CharacterをIDで避け、枯渇時だけMain以外で重複できる"
+// claim = "新規Auxiliaryは同じ親の保存済みCharacterをIDで避け、枯渇時だけMain以外で重複できる"
 // oracle = { type = "contract", ref = "docs/design/auxiliary-session.md#character-identity" }
-// fault = "表示名・他の親の使用状況を除外に使う、closedを無視する、または枯渇時に作成を拒否する"
+// fault = "表示名・他の親の使用状況を除外に使う、非表示会話を無視する、または枯渇時に作成を拒否する"
 // observable = "作成結果のCharacter ID列、再取得した既存会話・snapshot・draft・threadの一致"
 // observation_boundary = "public-boundary"
 // scope = "auxiliary-character-selection"
@@ -270,9 +270,7 @@ test("Auxiliary Characterは同じ親の保存済み使用状況を優先し枯�
     const draft = await service.getAuxiliaryDraft(first.id);
     assert.ok(draft);
     assert.equal((await service.saveAuxiliaryDraft({ auxiliarySessionId: first.id, parentSessionId: main.id, incarnation: draft.incarnation, expectedDurableRevision: draft.durableRevision, text: "keep draft", updatedAt: "2026-10-03T00:00:00.000Z" })).outcome, "saved");
-    await service.closeAuxiliarySession(first.id);
     const preserved = storage.getAuxiliarySession(first.id);
-    assert.equal(preserved?.status, "closed");
     assert.equal(preserved?.composerDraft, "keep draft");
     const second = await create();
     assert.equal(second.characterId, "aux-b");

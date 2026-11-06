@@ -32,7 +32,6 @@ import {
   sortLiveBackgroundTasks,
   toCopilotReasoningEffort,
 } from "../../src-electron/providers/copilot/copilot-adapter.js";
-import { applyCopilotAssistantEvent } from "../../src-electron/providers/copilot/copilot-turn-events.js";
 import { buildLiveElicitationRequestFromCopilotEvent, buildLiveElicitationRequestFromCopilotUserInput } from "../../src-electron/providers/copilot/copilot-elicitation.js";
 import { buildLiveElicitationFieldFromMcpSchema } from "../../src-electron/providers/mcp-elicitation.js";
 import {
@@ -451,6 +450,27 @@ function createWritePermissionRequest(): PermissionRequest {
     fileName: "F:/repo/tmp/output.txt",
   } as unknown as PermissionRequest;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "CopilotはCrew Folderを含む捕捉済み追加directoryをSDKへ渡し、変更時はnative session設定を更新する"
+// oracle = { type = "contract", ref = "docs/design/session-local-files.md#crew-folder" }
+// fault = "promptだけへpathを渡してSDKのadditionalDirectoriesを欠落させる、または旧設定cacheを再利用する"
+// observable = "SDK configのadditionalDirectoriesとsettingsKey"
+// observation_boundary = "consumer"
+// scope = "buildCopilotSessionSettings managed directory設定"
+// lifecycle = "permanent"
+// impact = "Copilotだけ共有folderを利用できずSession間の引継ぎが止まる"
+// distinction = "SDK型検査はoptional propertyの欠落やcache invalidationを保証しない"
+// @end-test-value
+it("Copilotは共有folderをnative追加directoryへ接続する", () => {
+  const input = createRunSessionInput();
+  const prompt = { ...EMPTY_PROMPT, additionalDirectories: ["F:/user-data/crew-files/root"] };
+  const configured = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
+  const previous = buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", resolveCustomAgents);
+  assert.deepEqual(configured.config.additionalDirectories, prompt.additionalDirectories);
+  assert.notEqual(configured.settingsKey, previous.settingsKey);
+});
 
 function createReadPermissionRequest(): PermissionRequest {
   return {
@@ -1479,91 +1499,6 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
     assert.equal("payload" in toProviderMetadataLogData(metadata[0]!), false);
   });
 
-  it("top-level assistant message は arrival 順に空行区切りで連結し、最後の非空 message を保持する", () => {
-    const first = applyCopilotAssistantEvent([], "", {
-      type: "assistant.message",
-      data: {
-        content: "最初の案内",
-        parentToolCallId: null,
-      },
-    } as never);
-    const second = applyCopilotAssistantEvent(first.messages, first.draft, {
-      type: "assistant.message",
-      data: {
-        content: "次の案内",
-        parentToolCallId: null,
-      },
-    } as never);
-    const trailingEmpty = applyCopilotAssistantEvent(second.messages, second.draft, {
-      type: "assistant.message",
-      data: {
-        content: "  ",
-        parentToolCallId: null,
-      },
-    } as never);
-
-    assert.equal(trailingEmpty.assistantText, "最初の案内\n\n次の案内");
-    assert.equal(trailingEmpty.lastNonEmptyAssistantMessageText, "次の案内");
-  });
-
-  it("delta のあとに同内容の final message が来ても二重化しない", () => {
-    const streamed = applyCopilotAssistantEvent([], "", {
-      type: "assistant.message_delta",
-      data: {
-        deltaContent: "進行中メッセージ",
-        parentToolCallId: null,
-      },
-    } as never);
-    const finalized = applyCopilotAssistantEvent(streamed.messages, streamed.draft, {
-      type: "assistant.message",
-      data: {
-        content: "進行中メッセージ",
-        parentToolCallId: null,
-      },
-    } as never);
-
-    assert.equal(finalized.assistantText, "進行中メッセージ");
-    assert.equal(finalized.messages.length, 1);
-    assert.equal(finalized.draft, "");
-  });
-
-  it("tool 配下の assistant message は本文へ混ぜない", () => {
-    const next = applyCopilotAssistantEvent(["本文"], "", {
-      type: "assistant.message",
-      data: {
-        content: "tool 内メッセージ",
-        parentToolCallId: "call-1",
-      },
-    } as never);
-
-    assert.equal(next.assistantText, "本文");
-    assert.deepEqual(next.messages, ["本文"]);
-  });
-
-  it("sub-agent の assistant message は本文へ混ぜない", () => {
-    const afterDelta = applyCopilotAssistantEvent(["本文"], "", {
-      type: "assistant.message_delta",
-      agentId: "subagent-1",
-      data: {
-        deltaContent: "sub-agent の途中経過",
-        parentToolCallId: null,
-      },
-    } as never);
-    const afterFinal = applyCopilotAssistantEvent(afterDelta.messages, afterDelta.draft, {
-      type: "assistant.message",
-      agentId: "subagent-1",
-      data: {
-        content: "sub-agent の完了報告",
-        parentToolCallId: null,
-      },
-    } as never);
-
-    assert.equal(afterFinal.assistantText, "本文");
-    assert.equal(afterFinal.lastNonEmptyAssistantMessageText, "本文");
-    assert.deepEqual(afterFinal.messages, ["本文"]);
-    assert.equal(afterFinal.draft, "");
-  });
-
   it("session.idle で実行中の background task を掃除する", () => {
     type BackgroundTasksMap = Parameters<typeof applyCopilotBackgroundTaskEvent>[0];
     type LiveBackgroundTask = BackgroundTasksMap extends Map<string, infer Task> ? Task : never;
@@ -2215,7 +2150,7 @@ it("Copilot 長文でもmetadataと正常・cancel partialを保持する", asyn
     const listeners = new Set<(event: SessionEvent) => void>();
     let rawEventCount = 0;
     const emit = (type: string, data: Record<string, unknown>, ephemeral = false) => {
-      const event = { type, timestamp: "2026-10-05T00:00:00Z", data, ephemeral } as SessionEvent;
+      const event = { id: `event-${rawEventCount}`, type, timestamp: "2026-10-05T00:00:00Z", data, ephemeral } as SessionEvent;
       if (!ephemeral && !type.endsWith("_delta")) rawEventCount += 1;
       for (const listener of listeners) listener(event);
     };
@@ -2229,7 +2164,7 @@ it("Copilot 長文でもmetadataと正常・cancel partialを保持する", asyn
           emit("user.message", { content: `${index}:あ😀\"\n${secret.repeat(2000)}` });
         }
         emit("dropped.ephemeral", {}, true);
-        emit("assistant.message_delta", { deltaContent: "delta" });
+        emit("assistant.message_delta", { messageId: "last", deltaContent: "delta" });
         emit(`custom.event.${secret}`, {});
         emit("tool.execution_start", { toolCallId: "check", toolName: "shell", arguments: { command: "npm test" } });
         emit("tool.execution_complete", { toolCallId: "check", success: true, result: { content: "passed" } });

@@ -11,6 +11,7 @@ import { buildProviderAgentRuntimeBindingEnv } from "../providers/provider-agent
 import { createWithMateMemoryMcpServer } from "../platform/mcp/withmate-memory-mcp.js";
 import { createWithMateGlossaryMcpServer } from "../platform/mcp/withmate-glossary-mcp.js";
 import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-session-graph-mcp.js";
+import { createWithMateSessionMcpServer } from "../platform/mcp/withmate-session-mcp.js";
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
 import { backgroundMemoryToolOperations, BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
@@ -156,7 +157,7 @@ export class ManagedHttpMcpHost {
     }
     const baseUrl = `http://127.0.0.1:${this.#address.port}`;
     return { memoryUrl: `${baseUrl}/mcp/memory`, glossaryUrl: `${baseUrl}/mcp/glossary`, sessionGraphUrl: `${baseUrl}/mcp/session-graph`,
-      ...(binding.background ? { sessionHistoryUrl: `${baseUrl}/mcp/session-history` } : {}), token: context.token };
+      ...(binding.background ? { sessionHistoryUrl: `${baseUrl}/mcp/session-history` } : { sessionUrl: `${baseUrl}/mcp/session` }), token: context.token };
   }
 
   release(handle: ProviderAgentRuntimeTurnHandle): void {
@@ -243,6 +244,7 @@ export class ManagedHttpMcpHost {
           .map(([name]) => name) : undefined)
       : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
       : pathname === "/mcp/session-graph" ? createWithMateSessionGraphMcpServer(deps)
+      : pathname === "/mcp/session" ? createWithMateSessionMcpServer(deps)
       : this.#options.sessionHistory!.createServer(deps,
         Object.values(this.#options.sessionHistory!.toolOperations).filter((operation) =>
           this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok));
@@ -291,7 +293,7 @@ export class ManagedHttpMcpHost {
   async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const pathname = request.url;
     if (pathname !== "/mcp/memory" && pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph"
-      && pathname !== "/mcp/session-history") {
+      && pathname !== "/mcp/session-history" && pathname !== "/mcp/session") {
       reply(response, 404, "Unknown MCP endpoint."); return;
     }
     if (request.socket.remoteAddress !== "127.0.0.1"

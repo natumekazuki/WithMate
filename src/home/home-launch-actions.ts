@@ -13,6 +13,7 @@ import {
 export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
 export type HomeLaunchFeedbackSource = "launch" | "readiness" | "creation-error";
 export type HomeLaunchResult = { title: string; message: string };
+export type HomeLaunchCreationAttempt = { request?: CreateSessionRequest };
 
 export function resolveRandomHomeLaunchFeedback(
   characterUsageStatus: SessionSummariesLoadStatus,
@@ -33,6 +34,7 @@ export function resolveRandomHomeLaunchFeedback(
 
 
 export type StartHomeLaunchInput = {
+  creationAttempt?: HomeLaunchCreationAttempt;
   draft: HomeLaunchDraft;
   launchStarting: boolean;
   mateState: MateStorageState | null;
@@ -97,7 +99,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       .filter((session) => openSessionWindowIdSet.has(session.id))
       .map((session) => session.characterId);
 
-    const sessionInput = buildCreateSessionRequestFromLaunchDraft({
+    const sessionInput = input.creationAttempt?.request ?? buildCreateSessionRequestFromLaunchDraft({
       draft: input.draft,
       mateProfile: input.mateProfile,
       selectedProviderId: input.selectedProviderId,
@@ -110,6 +112,9 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       input.setLaunchFeedback("Session requirements are incomplete.");
       return;
     }
+
+    sessionInput.clientRequestId ??= crypto.randomUUID();
+    if (input.creationAttempt) input.creationAttempt.request = sessionInput;
 
     const createdSession = await input.createSession(sessionInput);
     if (!createdSession) {

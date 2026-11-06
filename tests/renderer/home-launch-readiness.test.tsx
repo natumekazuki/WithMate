@@ -61,6 +61,9 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
   const invalidationListeners = new Set<Parameters<WithMateWindowApi["subscribeSessionInvalidation"]>[0]>();
   const invalidate = () => invalidationListeners.forEach((listener) => listener({ scope: "all" }));
   const api: Partial<WithMateWindowApi> = {
+    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    subscribeCoordinationChanged: () => () => {},
+    getSessionSummary: async () => null,
     listCharacters: async () => [{
       id: "mia", name: "Mia", description: "", iconFilePath: "",
       theme: { main: "#6f8cff", sub: "#6fb8c7" },

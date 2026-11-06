@@ -31,19 +31,19 @@ export class AuxiliaryLiveRunParents {
     return false;
   }
 
-  public remember(session: Pick<AuxiliarySession, "id" | "parentSessionId" | "status">, owner: object): void {
-    if (owner !== this.options.getStorageOwner() || session.status !== "active"
+  public remember(session: Pick<AuxiliarySession, "id" | "parentSessionId">, owner: object): void {
+    if (owner !== this.options.getStorageOwner()
       || !this.options.isRunPending(session.id)) return;
     this.parents.set(session.id, { parentSessionId: session.parentSessionId, owner });
   }
 
   public async trackRun<T>(
-    session: Pick<AuxiliarySession, "id" | "parentSessionId" | "status">,
+    session: Pick<AuxiliarySession, "id" | "parentSessionId">,
     owner: object,
     run: () => Promise<T>,
   ): Promise<T> {
     // Admission can publish cancellation before the first provider/session read.
-    if (owner === this.options.getStorageOwner() && session.status === "active") {
+    if (owner === this.options.getStorageOwner()) {
       this.parents.set(session.id, { parentSessionId: session.parentSessionId, owner });
     }
     try {

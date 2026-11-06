@@ -6,7 +6,9 @@ Session Graphは要求、制約、判断、活動、観測、未解決事項と�
 
 正本は既存Storage Workerが所有するV6 SQLiteの`session_graphs_v6`、`session_graph_topics_v6`、`session_graph_records_v6`、`session_graph_relations_v6`である。schemaの定義は`src-electron/storage/database-schema-v6.ts`、操作の型と入力schemaは`src-shared/session-graph/`を参照する。
 
-親Main SessionのIDとincarnationが所有境界で、MainとそのAuxiliaryは同じGraphを共有する。WorkspaceやCharacter名の一致では共有しない。親Mainの削除はforeign keyのcascadeでGraph全体を削除する。AuxiliaryのClose、表示切替、WindowのCloseでは削除しない。SessionFolder内の既存fileの保持・cleanupは[Session Local Files](session-local-files.md)に従う別の境界である。
+Crew起点のMain Session IDとincarnationが所有境界で、起点・全通常子孫・各Mainの全Auxiliaryが同じGraphを共有する。Standaloneは自身と所属Auxiliaryで一つのCrewになる。保存済みroot所属から解決し、Workspace・Character・画面選択では共有先を決めない。子は初回利用から起点Graphへ接続し、参加者台帳や子Graphの統合は作らない。既存Standaloneの昇格でもID・Graph・revision・帰属を保持する。
+
+Crew全体の削除は共通Session lifecycleの実行・queue・作成途中・未対応Coordinationガードを通り、起点のforeign key cascadeでGraph全体を削除する。部分Session削除やGraph独自の削除可否は設けない。会話の表示切替やWindowのCloseでは削除しない。関連Graph Window/tokenは起点削除・storage generation変更で失効する。SessionFolder内のfileの保持・cleanupは[Session Local Files](session-local-files.md)に従う別の境界である。
 
 ## 記録
 
@@ -23,7 +25,7 @@ Topicはstable IDと表示名を持つ。Recordは親Graph内で一意のstable 
 
 状態は省略できる。context選択ではissueの省略をopen、activityの省略をplannedとして扱うが、UIで確認済みの状態を創作しない。全kindに任意のvalidity `superseded` / `withdrawn`を持たせ、未指定を現行とする。活動の完了、結果の成功、論点の解消、判断の採用は別々の情報である。
 
-actorは同じ親Graphに属する担当Main/Auxiliaryの`{ sessionId }`である。新規recordでactorを省略すると信頼済み呼出元を担当にする。自分のSession ID、名前、画像の再入力やself取得は不要で、他担当の指定・担当変更はactorを明示する。同じCharacterを使うSessionもSession IDで区別する。`actorRole`は最大512文字の任意の作業役割であり、Character名やidentityのMain/Auxiliary区分とは別である。
+actorは同じCrewに属する担当Main/Auxiliaryの`{ sessionId }`である。新規recordでactorを省略すると信頼済み呼出元を担当にする。自分のSession ID、名前、画像の再入力やself取得は不要で、他担当の指定・担当変更はactorを明示する。同じCharacterを使うSessionもSession IDで区別する。IDがMain/Auxiliaryで曖昧な担当指定は別の参加者へ読み替えず拒否する。`actorRole`は最大512文字の任意の作業役割であり、Character名、Crew Role、identityのMain/Auxiliary区分とは別である。
 
 `origin`は`{ type: "agent" | "user" | "external", label?: string }`で内容の由来を示す。新規recordでは必須で、担当や記録者から推測しない。labelは最大512文字の任意の補足（外部サービス名など）。decisionの`adoptionOrigin`は同じ形式でaccepted/declinedの判断の由来を別に保持する。agent提案をuserが採用する場合は元のactor/originを保持し、adoptionとadoptionOriginを変更する。acceptedだけでuser採用を推測しない。由来はagentが内容を記録する属性であり、本人の直接編集の証明や実行承認・権限ではない。
 
@@ -57,7 +59,9 @@ recordの作成・更新時には何の要求・判断・活動・観測に関�
 
 `withmate-session-graph`はMCPとCLIで同じ6操作を公開し、入力意味・結果・エラー・保存契約を共有する。MCPはMemory・Glossaryと同じmanaged HTTP MCP hostを利用し、Codex、Copilot、Claudeのprovider turnへ専用endpointを渡す。CLIも同じ起動中runtimeへの認証・instance/generation照合とextension exchangeを通り、application service／Storage Workerへ操作を送る。CLIがDBやSessionFolderを直接更新する経路はない。
 
-両入口とも既存Session bindingから呼出元と親scopeを解決し、bindingなし・無効・失効を別Sessionや無bindingアクセスへ置き換えない。入力で親Session、呼出元、記録者、Character、権限を選ばせない。書込みは有効なturnに限り、同じturn capabilityを使用し、Workerのtransactionでownerのincarnation・actorの所属・turn失効を再確認してcommitする。
+両入口とも既存Session bindingから実callerの会話種別・incarnation・所属Crewを解決し、bindingなし・無効・失効を別Sessionや無bindingアクセスへ置き換えない。読取は自Crewを既定とし、`graphOwner: { sessionId, incarnationId }`で別Crewの起点Main Graphを明示指定できる。Session探索で得た起点identityを使い、対象削除・置換・非起点の指定はfallbackせず失敗する。読取先を変えてもcallerや帰属を置き換えない。分析専用grantは不要である。
+
+`apply`は`graphOwner`を受け付けず、有効なturnで自Crewだけへ書く。呼出元、記録者、Character、権限の自己申告は受け付けない。Worker transactionでownerのincarnation、保存済みroot所属、callerの会話種別/incarnation、actorの所属、turn失効を再確認してcommitする。applicationはread targetとcallerを別々に再検証し、storage generationの切替や遅い応答から失効済みGraphを復活させない。
 
 | MCP tool | CLI command | 用途 |
 | --- | --- | --- |
@@ -68,7 +72,7 @@ recordの作成・更新時には何の要求・判断・活動・観測に関�
 | `session_graph.search` | `search` | title/detailを文字列検索する |
 | `session_graph.apply` | `apply` | expectedRevision付きの原子的batch更新 |
 
-CLIは`--json <json>`、`--file <path>`、`@file`、`--stdin`のいずれか1つから入力し、MCPと同じshared schemaで検証する。`help`は操作方法、`schema`は6操作のJSON入力schemaをruntime接続なしで返す。runtimeの接続先選択は親Graphの選択ではなく、選択後もSession bindingのscopeを維持する。
+CLIは`--json <json>`、`--file <path>`、`@file`、`--stdin`のいずれか1つから入力し、MCPと同じshared schemaで検証する。`help`は操作方法、`schema`は6操作のJSON入力schemaをruntime接続なしで返す。runtimeの接続先選択はGraphの選択ではなく、他Crewの読取もJSON内の`graphOwner`で明示する。接続先や読取先を選んでもSession bindingの書込scopeは変わらない。
 
 ```sh
 withmate-session-graph list-topics
@@ -135,6 +139,10 @@ Topic間relationは保存済み端点のTopic・向き・kind別件数として�
 独立Graph WindowはHomeの既存`Previews`へ親Main単位で集約し、Graphの種別と話題・選択記録で識別する。既存Windowのfocus、個別Close、親単位Closeは同じ一覧から操作する。独立Windowを閉じても会話やGraphデータは変更しない。親Session Windowの通常CloseやAuxiliaryのCloseでは残し、Main削除・reset・app終了で関連Windowとtokenを失効させる。再起動後の閲覧Window復元や閲覧位置の永続化は行わない。
 
 中央のreadはowning parent Windowを認可し、独立WindowはMainが発行したtokenにWindow、親Main ID/incarnation、storage generationを結び付けて認可する。独立Windowから親IDを自己申告してGraphを読むことや、apply・provider権限への拡張は許さない。非同期read完了時にも失効を確認する。明示した参照リンクだけ既存のfile/link resolverへ親Sessionの認可で渡す。保存成功の通知は同じownerの中央と独立ビューへ届け、pollingや表示のたびのAI呼出しは使わない。
+
+更新通知は共有Graphを表示する各参加Mainの中央Graphと、起点ownerに属する独立Windowへ接続する。Graphが未表示なら本文を読まない。最小化等の`visibilityState=hidden`では待機中の再取得を保留し、進行中readの続きと遅い応答の適用を止める。再表示時は通知を受けたかにかかわらず現在状態を再取得する。focusのない表示Windowは停止対象にしない。
+
+各viewは通知をmicrotask境界でまとめ、一つのrefreshと高々一つの集約済み後続に直列化する。進行中の通知は最新の再取得要求として保持し、取得済みpage・展開Topic・選択詳細を同じrevisionで検証する。未展開Topicの本文を読まず、展開Topicのpageも順に取得して同時read数を増やさない。本文取得済みの選択recordは同じ結果を詳細へ使い、タイトルのための別Topic走査・record再取得を行わない。独立Windowのタイトルはrendererの取得済み話題名・選択record名から変化時だけ送る。本文・状態・新しさだけの更新で配置計算を再実行せず、node集合・関係label・配置寸法が変わる時だけ再配置する。倍率・scroll・選択はview内に保持する。
 
 入口の`All Topics`は親Graphの全Topicを1枚ずつのカードで示す。カードのダブルクリックまたは展開アイコン（▸）で、そのTopicだけを見出し付きの帯へ展開し、実recordと保存済みの有向関係を直接描く。帯の見出しのダブルクリックまたは縮小アイコン（▾）で縮小でき、他のTopicの展開状態を変えない。操作buttonはkeyboardからも使え、切替後は対応する展開・縮小buttonへfocusを戻す。Topic境界は所属を表し、関係線ではない。縮小中のTopic間は保存済みrelationの向き・kind別件数、展開と縮小の間は取得済みrecordと縮小Topicを結ぶ件数として示し、Topic全体への依存へ変換しない。両端を展開した関係は実record間を結ぶ。種類、採否、進捗、観測結果、未解決、撤回・置換をnode上で区別し、以前の判断や解消済み事項も状態を保って辿れる。分類別のTopic summaryやrecordリンク一覧を主内容にせず、選択した一件の本文・条件・参照だけを詳細paneで補う。全体用の要約保存や追加AI実行は行わない。
 

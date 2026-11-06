@@ -1533,6 +1533,8 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText: redactor.sanitizeText(finalAssistantText),
+      output: itemAssistantText.trim() ? diagnostics.projection?.output ?? collectCodexAssistantResponseFromItems(redactor.sanitize(finalItems)).output
+        : finalAssistantText ? { finality: "unknown", units: [{ id: "unclassified-stream", start: 0, end: redactor.sanitizeText(finalAssistantText).length, role: "unclassified", phase: null, completion: "partial", final: false, evidence: null }] } : { finality: "none", units: [] },
       assistantQuestionRanges,
       lastNonEmptyAssistantMessageText: redactor.sanitizeText(
         lastNonEmptyAssistantMessageText,

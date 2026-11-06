@@ -230,7 +230,7 @@ export class OpenCodeAdapter implements ProviderTurnAdapter {
       interactionsClosed = true;
       for (const pending of interactionControllers.values()) pending.abort();
     };
-    const result = (): RunSessionTurnResult => ({ threadId: threadReference || null, assistantText: redactor.sanitizeText(projection.assistantText), usage: projection.tokenUsage,
+    const result = (): RunSessionTurnResult => ({ threadId: threadReference || null, ...projection.output(redactor.sanitizeText), usage: projection.tokenUsage,
       artifact: redactor.sanitize({ title: "OpenCode", activitySummary: [], operationTimeline: [...projection.steps.values()], changedFiles: [], runChecks: [] }) });
     const publish = async () => {
       if (!onProgress) return;

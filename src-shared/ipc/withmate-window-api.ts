@@ -245,6 +245,8 @@ export type WithMateWindowSessionApi = {
   updateSession(session: Session): Promise<Session>;
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Promise<SetSessionTitleResult>;
+  promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string): Promise<SessionSummary>;
+  getCrewDeletionStatus(sessionId: string, incarnationId: string): Promise<import("../session/session-crew-deletion.js").CrewDeletionStatus>;
   setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Promise<void>;
   setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
   deleteSession(sessionId: string): Promise<void>;
@@ -277,8 +279,8 @@ export type WithMateWindowSessionApi = {
 
 export type WithMateWindowAuxiliaryApi = {
   listAuxiliarySessions(parentSessionId: string): Promise<AuxiliarySessionSummary[]>;
-  listOpenActiveAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
-  getActiveAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
+  listOpenAuxiliarySessionSummaries(): Promise<AuxiliarySessionSummary[]>;
+  getLatestAuxiliarySession(parentSessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession | null>;
   getAuxiliaryDraft(auxiliarySessionId: string): Promise<AuxiliaryDraftRecord | null>;
   saveAuxiliaryDraft(input: AuxiliaryDraftSaveInput): Promise<AuxiliaryDraftSaveResult>;
@@ -291,7 +293,6 @@ export type WithMateWindowAuxiliaryApi = {
   setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Promise<void>;
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Promise<void>;
-  closeAuxiliarySession(auxiliarySessionId: string): Promise<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Promise<AuxiliarySession>;
   steerAuxiliarySessionTurn(auxiliarySessionId: string, request: import("../session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../session/runtime-state.js").SteerSessionTurnResult>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Promise<void>;
@@ -406,6 +407,8 @@ export type WithMateWindowApi =
   & { isClipboardFileBacked(file: unknown): boolean }
   & WithMateHtmlPreviewApi
   & import("../session-graph/session-graph-window-contract.js").SessionGraphWindowApi
+  & import("../coordination/coordination-window-contract.js").CoordinationWindowApi
+  & import("../session/session-execution-window-contract.js").SessionExecutionWindowApi
   & WithMateWindowNavigationApi
   & MemoryV6ReviewApi
   & WithMateWindowCatalogApi

@@ -20,6 +20,8 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     getRuntimeSession(sessionId: string): Promise<Session | null>;
     getSession(sessionId: string): Promise<AuxiliarySession | null>;
     appendRunningInput: SessionRuntimeServiceDeps["appendRunningInput"];
+    beginRunningInput?: SessionRuntimeServiceDeps["beginRunningInput"];
+    settleRunningInput?: SessionRuntimeServiceDeps["settleRunningInput"];
     appendTerminalSession: SessionRuntimeServiceDeps["appendTerminalSession"];
     checkpointRuntimeMetadata: SessionRuntimeServiceDeps["checkpointRuntimeMetadata"];
     persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session>;
@@ -39,8 +41,9 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     getProviderCodingAdapter: NonNullable<SessionRuntimeServiceDeps["getProviderCodingAdapter"]>;
     resetProviderSessionThread: NonNullable<SessionRuntimeServiceDeps["resetProviderSessionThread"]>;
     endProviderAgentRuntimeTurn?: SessionRuntimeServiceDeps["endProviderAgentRuntimeTurn"];
-    resolveProviderSession(session: Session, parentSessionId: string): Session;
+    resolveProviderSession(session: Session, parentSessionId: string): Session | Promise<Session>;
     resolveSessionFolderPath(parentSessionId: string): string;
+    resolveCrewFolderPath?: (parentSessionId: string) => string | Promise<string>;
     issueRuntimeBinding(session: Session, provider: ModelCatalogProvider): Promise<ProviderAgentRuntimeBindingProjection>;
     beginRuntimeTurn?: SessionRuntimeServiceDeps["beginProviderAgentRuntimeTurn"];
   };
@@ -86,6 +89,8 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => guarded("session read", () => deps.auxiliary.getRuntimeSession(sessionId)),
     appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.auxiliary.appendRunningInput(session, text, turnId, queuedInput)),
+    beginRunningInput: deps.auxiliary.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.auxiliary.beginRunningInput!(...args)) : undefined,
+    settleRunningInput: deps.auxiliary.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.auxiliary.settleRunningInput!(...args)) : undefined,
     appendTerminalSession: (session, commit, options) => guarded("terminal Session append", () => deps.auxiliary.appendTerminalSession(session, commit, options)),
     checkpointRuntimeMetadata: (session, expected) => guarded("runtime metadata checkpoint", () => deps.auxiliary.checkpointRuntimeMetadata(session, expected)),
     persistRunningTurnStart: (session, expectedMessageCount) => guarded("running turn start", () => deps.auxiliary.persistRunningTurnStart(session, expectedMessageCount)),
@@ -104,6 +109,10 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
       const auxiliary = await deps.auxiliary.getSession(sessionId);
       return deps.provider.resolveSessionFolderPath(auxiliary?.parentSessionId ?? sessionId);
     }),
+    resolveCrewFolderPath: deps.provider.resolveCrewFolderPath ? (sessionId) => guarded("crew folder path", async () => {
+      const auxiliary = await deps.auxiliary.getSession(sessionId);
+      return deps.provider.resolveCrewFolderPath!(auxiliary?.parentSessionId ?? sessionId);
+    }) : undefined,
     getAppSettings: () => guarded("settings read", deps.memory.getAppSettings),
     resolveProviderCatalog: (providerId, revision) => guarded("provider catalog", () => deps.resolution.resolveProviderCatalog(providerId, revision)),
     getProviderCodingAdapter: (providerId) => { assertOwner("provider coding adapter"); return deps.provider.getProviderCodingAdapter(providerId); },

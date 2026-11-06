@@ -355,10 +355,10 @@ export type MainIpcAuxiliaryDeps = MainIpcEventWindowDeps &
     listAuxiliarySessions?(
       parentSessionId: string,
     ): Awaitable<AuxiliarySessionSummary[]>;
-    listOpenActiveAuxiliarySessionSummaries?(): Awaitable<
+    listOpenAuxiliarySessionSummaries?(): Awaitable<
       AuxiliarySessionSummary[]
     >;
-    getActiveAuxiliarySession?(
+    getLatestAuxiliarySession?(
       parentSessionId: string,
     ): Awaitable<AuxiliarySession | null>;
     getAuxiliarySession?(
@@ -405,9 +405,6 @@ export type MainIpcAuxiliaryDeps = MainIpcEventWindowDeps &
     setAuxiliaryExecutionOptions?(request: SetAuxiliaryExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
     setAuxiliaryTitle?(request: SetAuxiliaryTitleRequest): Awaitable<void>;
     setAuxiliaryMessageBookmark?(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
-    closeAuxiliarySession?(
-      auxiliarySessionId: string,
-    ): Awaitable<AuxiliarySession>;
     runAuxiliarySessionTurn?(
       auxiliarySessionId: string,
       request: RunSessionTurnRequest,
@@ -420,10 +417,10 @@ export type MainIpcAuxiliaryDepsRequired = {
   listAuxiliarySessions: (
     parentSessionId: string,
   ) => Awaitable<AuxiliarySessionSummary[]>;
-  listOpenActiveAuxiliarySessionSummaries: () => Awaitable<
+  listOpenAuxiliarySessionSummaries: () => Awaitable<
     AuxiliarySessionSummary[]
   >;
-  getActiveAuxiliarySession: (
+  getLatestAuxiliarySession: (
     parentSessionId: string,
   ) => Awaitable<AuxiliarySession | null>;
   getAuxiliarySession: (
@@ -451,9 +448,6 @@ export type MainIpcAuxiliaryDepsRequired = {
   ) => Awaitable<AuxiliarySession>;
   updateAuxiliarySession: (
     session: AuxiliarySession,
-  ) => Awaitable<AuxiliarySession>;
-  closeAuxiliarySession: (
-    auxiliarySessionId: string,
   ) => Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn: (
     auxiliarySessionId: string,

@@ -22,6 +22,7 @@ export type CodexProjectionProgress = {
 };
 export type CodexProjectionEvent = { changed: boolean; errorMessage?: string };
 export type CodexProjectionFinal = {
+  output: import("../../../src-shared/session/provider-output.js").ProviderOutput;
   items: CodexTurnItem[];
   assistantText: string;
   assistantQuestionRanges?: LiveSessionRunState["assistantQuestionRanges"];

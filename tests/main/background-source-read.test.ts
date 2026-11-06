@@ -56,9 +56,9 @@ test("Main sourceは同名Auxiliaryと別ownerを除外し、範囲内の保存�
   try {
     const { session: main, auxiliary, turn } = f.bundle.stores;
     const parent = await main.insertSession(session("parent"));
-    const aux: AuxiliarySession = { ...parent, id: "source", parentSessionId: parent.id, status: "active", runState: "idle",
+    const aux: AuxiliarySession = { ...parent, id: "source", parentSessionId: parent.id, runState: "idle",
       title: "Auxiliary", composerDraft: "", displayAfterMessageIndex: null,
-      createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", closedAt: "" };
+      createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z" };
     await auxiliary.upsertAuxiliarySession(aux);
     const auxiliaryTurn = await turn.createSessionTurn({ ...turnBase, sessionId: aux.id, phase: "completed", assistantMessageSeq: 3,
       completedAt: "2026-11-01T01:01:00.000Z" });
@@ -169,8 +169,8 @@ test("共通source captureは実Auxiliaryと固定範囲を保持し親とdraft 
     const { session: main, auxiliary, turn } = f.bundle.stores;
     const parent = await main.insertSession(session("parent"));
     const aux: AuxiliarySession = { ...parent, id: "same", parentSessionId: parent.id, characterId: "aux-character",
-      status: "active", runState: "idle", title: "Auxiliary", composerDraft: "", displayAfterMessageIndex: null,
-      createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z", closedAt: "" };
+      runState: "idle", title: "Auxiliary", composerDraft: "", displayAfterMessageIndex: null,
+      createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-01T00:00:00.000Z" };
     await auxiliary.upsertAuxiliarySession(aux);
     const terminal = await turn.createSessionTurn({ ...turnBase, sessionId: aux.id, phase: "failed", assistantMessageSeq: 3,
       completedAt: "2026-11-01T01:01:00.000Z" });

@@ -30,8 +30,8 @@ test("Auxiliary runtime commandは履歴を保持しowner CASとterminal transac
       db.exec(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id,
         reasoning_effort, approval_mode, character_snapshot_json, created_at, updated_at, last_active_at)
         VALUES ('main', '', 'active', 'codex', 1, '', 'medium', 'untrusted', '{}', 'created', 'before', 'before');
-        INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
-        VALUES ('aux', 'main', 'active', 'created', 'before');
+        INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+        VALUES ('aux', 'main', 'created', 'before');
         INSERT INTO auxiliary_session_messages (auxiliary_session_id, seq, role, body, artifact_body, created_at)
         VALUES ('aux', 0, 'assistant', '{"role":"assistant","text":"old","isBookmarked":true}', '{"private":"unchanged"}', 'before');
         INSERT INTO auxiliary_session_drafts (auxiliary_session_id, parent_session_id, incarnation, durable_revision, draft_text, updated_at)
@@ -107,8 +107,8 @@ test("Auxiliaryの失敗と取消はSession継続threadとturn実行threadを別
         VALUES ('main', '', 'active', 'codex', 1, '', 'medium', 'untrusted', '{}', 'created', 'before', 'before');`);
       for (const phase of ["failed", "canceled"] as const) {
         const id = `aux-${phase}`;
-        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, status, run_state, thread_id, created_at, updated_at)
-          VALUES (?, 'main', 'active', 'running', 'thread-stale', 'created', 'before')`).run(id);
+        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, run_state, thread_id, created_at, updated_at)
+          VALUES (?, 'main', 'running', 'thread-stale', 'created', 'before')`).run(id);
         const turn = turns.createSessionTurn({ sessionId: id, phase: "running", createdAt: "before",
           provider: "codex", model: "", reasoningEffort: "medium", approvalMode: "untrusted", threadId: "thread-live", errorMessage: "" });
         const ack = storage.appendAuxiliaryTerminal({ auxiliarySessionId: id, parentSessionId: "main", createdAt: "created",

@@ -625,7 +625,6 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
     const auxiliary: AuxiliarySession = {
       id: "worker-auxiliary",
       parentSessionId: parent.id,
-      status: "active",
       runState: "idle",
       title: "Auxiliary",
       provider: "codex",
@@ -643,7 +642,6 @@ test("V6 storage worker bundle は実V6 parentでAuxiliary draftを保存・cons
       displayAfterMessageIndex: null,
       createdAt: "2026-09-20T00:00:00.000Z",
       updatedAt: "2026-09-20T00:00:00.000Z",
-      closedAt: "",
       characterId: parent.characterId,
       characterRuntimeSnapshot: parent.characterRuntimeSnapshot,
       characterIconPath: parent.characterIconPath,
@@ -733,7 +731,6 @@ test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復
     const auxiliary: AuxiliarySession = {
       id: "worker-send-auxiliary",
       parentSessionId: parent.id,
-      status: "active",
       runState: "idle",
       title: "Auxiliary",
       provider: "codex",
@@ -751,7 +748,6 @@ test("Auxiliary Composer送信は実Storage Worker越しにdraftをconsume・復
       displayAfterMessageIndex: null,
       createdAt: "2026-09-20T00:00:00.000Z",
       updatedAt: "2026-09-20T00:00:00.000Z",
-      closedAt: "",
       characterId: parent.characterId,
       characterRuntimeSnapshot: parent.characterRuntimeSnapshot,
       characterIconPath: parent.characterIconPath,

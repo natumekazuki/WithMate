@@ -378,7 +378,6 @@ describe("SessionRuntimeService session admission", () => {
       const auxiliary = storage.upsertAuxiliarySession({
         id: "auxiliary-child",
         parentSessionId: parent.id,
-        status: "active",
         runState: "idle",
         title: "Auxiliary",
         provider: parent.provider,
@@ -396,7 +395,6 @@ describe("SessionRuntimeService session admission", () => {
         displayAfterMessageIndex: null,
         createdAt: "2026-09-21T00:00:00.000Z",
         updatedAt: "2026-09-21T00:00:00.000Z",
-        closedAt: "",
       });
       const auxiliaryService = new AuxiliarySessionService({
         getStorage: () => storage,

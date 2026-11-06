@@ -42,7 +42,7 @@ import {
   listIdentityBoundDirectory,
   type IdentityBoundDirectorySnapshot,
 } from "./identity-bound-directory-listing.js";
-import { resolveSessionFilesDirectory } from "./session-files.js";
+import { resolveCrewFilesDirectory, resolveSessionFilesDirectory } from "./session-files.js";
 import { resolveOpenPathTarget } from "./open-path.js";
 import type { SessionFilePinStorage } from "../storage/persistent-store-lifecycle-service.js";
 
@@ -152,6 +152,7 @@ export type SessionFileExplorerContext = {
   workspacePath: string;
   parentSessionId: string;
   parentIncarnationId?: string;
+  crewRootSessionId?: string;
   allowedAdditionalDirectories: string[];
 };
 
@@ -307,7 +308,10 @@ export class SessionFileExplorerService {
     const workspace = makeRoot("workspace", context.workspacePath, "workspace", "Workspace");
     const sessionFolderPath = resolveSessionFilesDirectory(this.deps.userDataPath, context.parentSessionId);
     const sessionFolder = makeRoot("session-folder", sessionFolderPath, "session-folder", "Session Folder");
-    const seen = new Set([pathKey(workspace.absolutePath), pathKey(sessionFolder.absolutePath)]);
+    const crewFolder = context.crewRootSessionId
+      ? makeRoot("crew-folder", resolveCrewFilesDirectory(this.deps.userDataPath, context.crewRootSessionId), "crew-folder", "Crew Folder")
+      : null;
+    const seen = new Set([workspace, sessionFolder, ...(crewFolder ? [crewFolder] : [])].map((root) => pathKey(root.absolutePath)));
     const additionalRoots: ResolvedSessionFileRoot[] = [];
     for (const directoryPath of context.allowedAdditionalDirectories) {
       const absolutePath = path.resolve(directoryPath);
@@ -318,7 +322,7 @@ export class SessionFileExplorerService {
       seen.add(key);
       additionalRoots.push(makeRoot("additional", absolutePath, makeAdditionalRootId(absolutePath), path.basename(absolutePath)));
     }
-    return [workspace, sessionFolder, ...additionalRoots];
+    return [workspace, sessionFolder, ...(crewFolder ? [crewFolder] : []), ...additionalRoots];
   }
 
   async listRoots(sessionId: string): Promise<SessionFileRoot[]> {
@@ -374,7 +378,7 @@ export class SessionFileExplorerService {
 
   async unpinSessionFile(request: SessionFilePinReference & { sessionId: string }): Promise<void> {
     if (!request || typeof request.sessionId !== "string" || !request.sessionId
-      || !["workspace", "session-folder", "additional"].includes(request.rootKind)
+      || !["workspace", "session-folder", "crew-folder", "additional"].includes(request.rootKind)
       || typeof request.rootPath !== "string" || !path.isAbsolute(request.rootPath)) {
       throw new TypeError("File Pin reference is invalid.");
     }
@@ -417,7 +421,7 @@ export class SessionFileExplorerService {
   }
 
   async resolveHistoryRoots(sessionId: string): Promise<ResolvedSessionFileRoot[]> {
-    return (await this.resolveRoots(sessionId)).filter((root) => root.kind !== "session-folder");
+    return (await this.resolveRoots(sessionId)).filter((root) => root.kind !== "session-folder" && root.kind !== "crew-folder");
   }
 
   async resolveHistoryRoot(sessionId: string, rootId: string): Promise<ResolvedSessionFileRoot | null> {
@@ -475,7 +479,7 @@ export class SessionFileExplorerService {
         throw new Error("File tree path action node kind does not match the current target.");
       }
     } catch (error) {
-      if (nodeKind === "root" && candidate.rootKind === "session-folder" && isMissingPathError(error)) {
+      if (nodeKind === "root" && (candidate.rootKind === "session-folder" || candidate.rootKind === "crew-folder") && isMissingPathError(error)) {
         return;
       }
       throw error;
@@ -563,7 +567,8 @@ export class SessionFileExplorerService {
     const priority: Record<SessionFileRootKind, number> = {
       workspace: 0,
       "session-folder": 1,
-      additional: 2,
+      "crew-folder": 2,
+      additional: 3,
     };
     const lstatPath = this.deps.lstatPath ?? lstat;
     let targetStats: BigIntStats | null = null;
@@ -638,7 +643,7 @@ export class SessionFileExplorerService {
       throw new Error("The specified file root is not available in the current session.");
     }
     const relativePath = normalizeRelativePath(request.relativePath, allowRoot);
-    if (allowRoot && !relativePath && root.kind === "session-folder") {
+    if (allowRoot && !relativePath && (root.kind === "session-folder" || root.kind === "crew-folder")) {
       await mkdir(root.absolutePath, { recursive: true });
     }
     const rootRealPath = await realpath(root.absolutePath);

@@ -1,4 +1,4 @@
-import { sessionGraphAgentRuntimeOperation, sessionGraphOperationRequestSchemas, sessionGraphRuntimeOperationByPath } from "../../src-shared/session-graph/session-graph-operation-schema.js";
+import { sessionGraphAgentRuntimeOperation, sessionGraphOperationRequestSchemas, sessionGraphRuntimeOperationByPath, sessionGraphSourceSchema } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import type { SessionGraphOwner } from "../../src-shared/session-graph/session-graph-contract.js";
 import type { AgentRuntimeBindingResolveResult } from "../providers/agent-runtime-binding.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
@@ -25,8 +25,10 @@ export class SessionGraphRuntimeService {
     if (!resolved.ok) return error(401, resolved.code, "Session Graph requires an active Session binding.");
     const binding = resolved.binding;
     const owner = binding.authoritySnapshot.sessionGraphOwner as SessionGraphOwner | undefined;
-    const actor = await this.deps.applicationService.resolveSession(binding.actorSessionId);
+    const source = sessionGraphSourceSchema.safeParse(binding.authoritySnapshot.sessionGraphSource);
+    const actor = source.success ? await this.deps.applicationService.resolveSession(binding.actorSessionId, source.data) : null;
     if (!owner || typeof owner.sessionId !== "string" || typeof owner.incarnationId !== "string" || !actor
+      || !source.success || actor.source?.kind !== source.data.kind || actor.source?.incarnationId !== source.data.incarnationId
       || actor.providerId !== binding.providerId || !sameSessionGraphOwner(owner, actor.owner)
       || typeof binding.authoritySnapshot.characterId !== "string"
       || actor.identity.character?.id !== binding.authoritySnapshot.characterId) {
@@ -48,7 +50,7 @@ export class SessionGraphRuntimeService {
       } };
     }
     try {
-      const result = await this.deps.applicationService.executeTrusted(binding.actorSessionId, operation, parsed.data, currentBinding, admission, owner);
+      const result = await this.deps.applicationService.executeTrusted(binding.actorSessionId, operation, parsed.data, currentBinding, admission, owner, source.data);
       return { status: result.status === "conflict" ? 409 : 200, value: { ...result } };
     } catch (cause) {
       return error(409, "SESSION_GRAPH_REQUEST_FAILED", cause instanceof Error ? cause.message : "Session Graph request failed.", operation === "apply" ? "unknown" : "none");

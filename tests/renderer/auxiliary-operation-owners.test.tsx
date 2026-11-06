@@ -26,11 +26,11 @@ function deferred<T>() {
 }
 
 function session(id = "aux-1"): AuxiliarySession {
-  return { id, parentSessionId: "parent", status: "active", runState: "idle", title: id, provider: "codex",
+  return { id, parentSessionId: "parent", runState: "idle", title: id, provider: "codex",
     catalogRevision: 1, model: "model-a", reasoningEffort: "medium", approvalMode: "untrusted",
     codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "",
     threadId: "thread", composerDraft: "", messages: [],
-    displayAfterMessageIndex: null, createdAt: "creation-1", updatedAt: "before", closedAt: "" };
+    displayAfterMessageIndex: null, createdAt: "creation-1", updatedAt: "before" };
 }
 
 function bindingFor(initial: AuxiliarySession) {
@@ -62,7 +62,7 @@ async function mountDrafts(t: TestContext) {
     return record;
   };
   const api: NonNullable<Parameters<typeof useAuxiliaryDraftPersistence>[0]["api"]> = {
-    getAuxiliarySessionStatus: async (id) => ({ id, parentSessionId: "parent", status: "active", runState: "idle", createdAt: "creation-1", incarnation: recordFor(id).incarnation }),
+    getAuxiliarySessionStatus: async (id) => ({ id, parentSessionId: "parent", runState: "idle", createdAt: "creation-1", incarnation: recordFor(id).incarnation }),
     getAuxiliaryDraft: async (id) => ({ ...recordFor(id) }),
     saveAuxiliaryDraft: async (request) => {
       const record = recordFor(request.auxiliarySessionId);

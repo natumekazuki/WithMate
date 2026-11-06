@@ -7,6 +7,7 @@
 @import "./ui/checkbox.css";
 @import "./ui/error-details.css";
 @import "./home/home.css";
+@import "./coordination/coordination.css";
 @import "./settings/settings.css";
 @import "./chat/session-shell.css";
 @import "./file-explorer/files.css";
@@ -14,6 +15,7 @@
 @import "./file-explorer/pdf-file-preview.css";
 @import "./ui/markdown/markdown-file-preview.css";
 @import "./chat/session.css";
+@import "./chat/conversation/turn-input-details.css";
 @import "./terminal/terminal.css";
 @import "./diff/diff-shell.css";
 @import "./character-editor/character-editor.css";

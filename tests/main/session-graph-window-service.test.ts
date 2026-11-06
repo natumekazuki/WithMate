@@ -14,15 +14,40 @@ class Window {
 }
 const state = { topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0 };
 function setup() {
-  let incarnation = "one"; let available = true; let sequence = 0;
+  let incarnation = "one"; let available = true; let sequence = 0; let reads = 0;
   let pending: (() => Promise<void>) | undefined;
   const generation = {};
-  const store: SessionGraphStore = { execute: async <K extends SessionGraphStorageOperation>() => { await pending?.(); return { status: "ok" as const, revision: 1, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [] } as unknown as SessionGraphStorageResult<K>; } };
-  const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: async (id) => available ? ({ owner: { sessionId: id, incarnationId: incarnation }, identity: { sessionId: id, sessionTitle: id, role: "main" as const }, providerId: "codex", generation }) : null });
+  const store: SessionGraphStore = { execute: async <K extends SessionGraphStorageOperation>() => { reads += 1; await pending?.(); return { status: "ok" as const, revision: 1, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [] } as unknown as SessionGraphStorageResult<K>; } };
+  const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: async (id) => available ? ({ owner: { sessionId: id, incarnationId: incarnation }, source: { kind: "main", incarnationId: incarnation }, identity: { sessionId: id, sessionTitle: id, role: "main" as const }, providerId: "codex", generation }) : null });
   const windows: Window[] = []; const notifications: Window[] = [];
   const service = new SessionGraphWindowService({ application, createWindow: () => { const w = new Window(); windows.push(w); return w; }, load: async () => {}, token: () => String(++sequence), changed: () => {}, notify: (w) => notifications.push(w) });
-  return { service, windows, notifications, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; } };
+  return { service, windows, notifications, reads: () => reads, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; } };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "独立Graphタイトルは認可したrendererの取得済み結果を使い、通知・閲覧位置変更でタイトル用の別Graph readを増やさない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/921" }
+// fault = "全Topic走査やrecord本文readをタイトル更新へ再導入する、または他viewのタイトルを上書きする"
+// observable = "payloadのWindowタイトル、view一覧のタイトル、Graph store実行回数"
+// observation_boundary = "public-boundary"
+// scope = "SessionGraphWindowServiceの認可済みstate/title更新と通知"
+// lifecycle = "permanent"
+// impact = "共有Graphの通知が独立Window数に応じた重複DB読取を誘発する"
+// distinction = "型検査はタイトルの重複読取を検出しない。二つのfake Windowだけで名前の反映と分離・読取予算を検証する"
+// @end-test-value
+test("Graph window titles reuse renderer data without additional graph reads", async () => {
+  const s = setup();
+  const a = await s.service.open("owner", state, () => true);
+  const b = await s.service.open("owner", state, () => true);
+  await s.service.update(s.windows[0]!, a.token, { ...state, topicId: "topic", selectedId: "work" }, "Topic · Work");
+  await s.service.update(s.windows[0]!, a.token, { ...state, topicId: "topic", selectedId: "work", zoom: 2 });
+  await s.service.notify("owner");
+  assert.equal((await s.service.payload(s.windows[0]!, a.token)).windowTitle, "Topic · Work — owner");
+  assert.equal((await s.service.payload(s.windows[1]!, b.token)).windowTitle, "Session Graph — owner");
+  assert.deepEqual(s.service.list().map((entry) => entry.title), ["Topic · Work", "Graph"]);
+  assert.equal(s.reads(), 0);
+});
 
 // @test-value v2
 // kind = "invariant"

@@ -1,4 +1,11 @@
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { assertSameSessionRelationship, normalizeSessionRelationship } from "../../src-shared/session/session-role.js";
+import { validateSessionMetadataPatch, type SessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
+import type { SessionLifecycleOperation } from "./session-lifecycle-operation.js";
+import type { CreateChildSessionRequest } from "../../src-shared/session/session-child-creation.js";
+import { getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
+import { DEFAULT_CODEX_SANDBOX_MODE } from "../../src-shared/settings/codex-sandbox-mode.js";
+import type { CrewDeletionStatus } from "../../src-shared/session/session-crew-deletion.js";
 import {
   buildNewSession,
   cloneSessions,
@@ -12,6 +19,7 @@ import {
 import {
   DEFAULT_PROVIDER_ID,
   getProviderCatalog,
+  getModelCatalogItem,
   resolveModelSelection,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
@@ -27,7 +35,7 @@ import type {
   DeleteSessionsLastActiveBeforeCutoff,
   DeleteSessionsResult,
 } from "../../src-shared/window/withmate-window-types.js";
-import { SessionIdCollisionError, SessionNotFoundError } from "./session-storage-errors.js";
+import { SessionIdCollisionError, SessionNotFoundError, SessionCrewDeletionBlockedError } from "./session-storage-errors.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { assertModelEnabled } from "../../src-shared/settings/model-availability.js";
@@ -39,7 +47,9 @@ import type {
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
 import type { SessionRuntimeMetadataPatchInput, SessionRuntimeMetadataPatchResult, SessionThreadPatchInput, SessionThreadPatchResult } from "./session-storage-v6.js";
-import type { SessionMetadataResult, SessionSteerAppendInput, SessionTerminalAppendInput, SessionRunMetadataCheckpointInput } from "./session-runtime-storage-contract.js";
+import type { SessionMetadataResult, SessionSteerAppendInput, SessionSteerBeginInput, SessionSteerSettleInput, SessionTerminalAppendInput, SessionRunMetadataCheckpointInput } from "./session-runtime-storage-contract.js";
+import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
+import type { TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
 import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import type { RunProviderRuntimeOperationExclusive } from "../providers/provider-runtime-operation-coordinator.js";
 
@@ -58,6 +68,7 @@ export type SessionPersistenceServiceDeps = {
   setSessions(nextSessions: Session[]): void;
   getSession(sessionId: string): Session | null;
   getStoredSession?(sessionId: string): Awaitable<Session | null>;
+  getStoredSessionSummary?(sessionId: string): Awaitable<SessionSummary | null>;
   isSessionRunInFlight(sessionId: string, scope?: "self" | "with-auxiliary"): boolean;
   listRunningActiveAuxiliaryParentIds?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
   listAuxiliarySessionRuntimeIdentities?(
@@ -65,6 +76,8 @@ export type SessionPersistenceServiceDeps = {
   ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   setStoredSessionTitle?(sessionId: string, incarnationId: string, title: string): Awaitable<void>;
+  patchStoredSessionMetadata?(sessionId: string, incarnationId: string, patch: SessionMetadataPatch): Awaitable<SessionSummary>;
+  promoteStoredSessionToOverallCoordinator?(sessionId: string, incarnationId: string): Awaitable<SessionSummary>;
   setStoredSessionMessageBookmark?(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Awaitable<void>;
   setStoredSessionExecutionOptions?(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Awaitable<void>;
   overlayCurrentExecutionOptions?(session: Session): Session;
@@ -74,6 +87,8 @@ export type SessionPersistenceServiceDeps = {
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   appendStoredSessionSteer?(input: SessionSteerAppendInput): Awaitable<SessionMetadataResult>;
+  beginStoredSessionSteer?(input: SessionSteerBeginInput): Awaitable<SessionMetadataResult>;
+  settleStoredSessionSteer?(input: SessionSteerSettleInput): Awaitable<SessionMetadataResult>;
   appendStoredSessionTerminal?(input: SessionTerminalAppendInput): Awaitable<SessionMetadataResult>;
   checkpointStoredSessionRunMetadata?(input: SessionRunMetadataCheckpointInput): Awaitable<SessionMetadataResult | null>;
   clearStoredCharacterAuthoringRuntimeState?(
@@ -82,6 +97,14 @@ export type SessionPersistenceServiceDeps = {
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
+  listStoredSessionSummaries?(): Awaitable<SessionSummary[]>;
+  getSessionLifecycleOperation?(operationId: string): Awaitable<SessionLifecycleOperation | null>;
+  listPendingSessionLifecycleOperations?(): Awaitable<SessionLifecycleOperation[]>;
+  beginSessionLifecycleOperation?(input: Parameters<import("./session-storage-v6.js").SessionStorageV6["beginSessionLifecycleOperation"]>[0]): Awaitable<SessionLifecycleOperation>;
+  advanceSessionLifecycleOperation?(operationId: string, phase: SessionLifecycleOperation["phase"], resources?: SessionLifecycleOperation["resources"]): Awaitable<SessionLifecycleOperation>;
+  deleteSessionCrewForLifecycle?(operationId: string): Awaitable<SessionLifecycleOperation>;
+  prepareSessionLifecycleCreation?(operationId: string, input: CreateSessionInput): Awaitable<SessionLifecycleOperation>;
+  getStoredCrewDeletionStatus?(sessionId: string, incarnationId: string): Awaitable<CrewDeletionStatus>;
   listStoredSessionIdsLastActiveBefore?(cutoff: DeleteSessionsLastActiveBeforeCutoff): Awaitable<string[]>;
   deleteStoredSession?(sessionId: string): Awaitable<void>;
   deleteStoredSessions?(sessionIds: readonly string[]): Awaitable<void>;
@@ -148,7 +171,7 @@ export class SessionPersistenceService {
     )).id;
   }
 
-  async createSession(input: CreateSessionInput): Promise<Session> {
+  async createSession(input: CreateSessionInput, deferPublication = false): Promise<Session> {
     const requestedSessionId = input.id?.trim() ?? "";
     if (
       requestedSessionId &&
@@ -192,7 +215,67 @@ export class SessionPersistenceService {
         input.allowedAdditionalDirectories ?? [],
       ),
     });
-    return this.upsertSession(created, "create");
+    return this.upsertSession(created, "create", deferPublication);
+  }
+
+  async validateChildSessionCreation(input: CreateChildSessionRequest): Promise<void> {
+    const settings = await this.deps.getAppSettings();
+    const catalog = await this.deps.getModelCatalogSnapshot(input.workspacePath, input.provider);
+    const provider = this.resolveEnabledProviderCatalog(catalog, settings, input.provider, true);
+    const model = getModelCatalogItem(provider, input.model);
+    if (!model) throw new Error("The selected child model is not in the discovered model list.");
+    if (model.reasoningEfforts.length === 0 ? input.reasoningEffort !== "" : !model.reasoningEfforts.includes(input.reasoningEffort)) throw new Error("The selected child depth is not supported by this model.");
+    assertModelEnabled(settings.modelAvailability, provider.id, model.id);
+    const sandbox = getSandboxOptionsForProvider(provider.id);
+    if (sandbox.length === 0 ? input.codexSandboxMode !== undefined : !sandbox.some((option) => option.value === input.codexSandboxMode)) throw new Error("The selected child sandbox option is not supported by this provider.");
+    validateSessionExecutionOptions({ model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode,
+      codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: "user", customAgentName: "" }, provider);
+    validateSessionMetadataPatch({ title: input.title ?? "New task", description: input.description ?? "" });
+  }
+
+  async prepareSessionLifecycleCreation(operationId: string, input: CreateSessionInput): Promise<SessionLifecycleOperation> {
+    if (!this.deps.prepareSessionLifecycleCreation) throw new Error("Session lifecycle preparation storage is unavailable.");
+    return this.deps.prepareSessionLifecycleCreation(operationId, input);
+  }
+
+  async getSessionLifecycleOperation(operationId: string): Promise<SessionLifecycleOperation | null> {
+    if (!this.deps.getSessionLifecycleOperation) throw new Error("Session lifecycle storage is unavailable.");
+    return this.deps.getSessionLifecycleOperation(operationId);
+  }
+
+  async listPendingSessionLifecycleOperations(): Promise<SessionLifecycleOperation[]> {
+    if (!this.deps.listPendingSessionLifecycleOperations) throw new Error("Session lifecycle storage is unavailable.");
+    return this.deps.listPendingSessionLifecycleOperations();
+  }
+
+  async beginSessionLifecycleOperation(input: Parameters<NonNullable<SessionPersistenceServiceDeps["beginSessionLifecycleOperation"]>>[0]): Promise<SessionLifecycleOperation> {
+    if (!this.deps.beginSessionLifecycleOperation) throw new Error("Session lifecycle storage is unavailable.");
+    return this.deps.beginSessionLifecycleOperation(input);
+  }
+
+  async advanceSessionLifecycleOperation(operationId: string, phase: SessionLifecycleOperation["phase"], resources?: SessionLifecycleOperation["resources"]): Promise<SessionLifecycleOperation> {
+    if (!this.deps.advanceSessionLifecycleOperation) throw new Error("Session lifecycle storage is unavailable.");
+    return this.deps.advanceSessionLifecycleOperation(operationId, phase, resources);
+  }
+
+  async publishCreatedSession(sessionId: string): Promise<Session> {
+    const session = await this.deps.getStoredSession?.(sessionId);
+    if (!session) throw new SessionNotFoundError(sessionId);
+    this.syncStoredSession(session);
+    this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(session)));
+    this.deps.broadcastSessions([sessionId]);
+    return session;
+  }
+
+  async readSessionForLifecycle(sessionId: string): Promise<Session | null> {
+    if (!this.deps.getStoredSession) throw new Error("Session lifecycle reads are unavailable.");
+    return this.deps.getStoredSession(sessionId);
+  }
+
+  async readSessionSummaryForLifecycle(sessionId: string): Promise<SessionSummary | null> {
+    if (this.deps.getStoredSessionSummary) return this.deps.getStoredSessionSummary(sessionId);
+    const session = await this.readSessionForLifecycle(sessionId);
+    return session ? projectSessionSummary(session) : null;
   }
 
   async updateSession(nextSession: Session): Promise<Session> {
@@ -204,6 +287,7 @@ export class SessionPersistenceService {
     assertSessionWritable(currentSession);
 
     const storedCurrentSession = await this.deps.getStoredSession?.(nextSession.id) ?? currentSession;
+    assertSameSessionRelationship(storedCurrentSession, nextSession);
     if (getSessionIncarnationId(storedCurrentSession) !== getSessionIncarnationId(nextSession)) {
       throw new SessionNotFoundError(nextSession.id);
     }
@@ -260,6 +344,39 @@ export class SessionPersistenceService {
     }
 
     return updatedSession;
+  }
+
+  async promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string, assertCurrent?: () => void): Promise<SessionSummary> {
+    return this.enqueueSessionMutation(async () => {
+      const current = this.deps.getSession(sessionId);
+      if (!current || getSessionIncarnationId(current) !== incarnationId) throw new SessionNotFoundError(sessionId);
+      assertSessionWritable(current);
+      if (current.sessionKind !== "default" || (current.sessionRole ?? "standalone") !== "standalone" || this.deps.isSessionRunInFlight(sessionId, "self") || isRunningSession(current)) {
+        throw new Error("Only an idle Standalone Session can become an overall coordinator.");
+      }
+      if (!this.deps.promoteStoredSessionToOverallCoordinator) throw new Error("Session Role storage is unavailable.");
+      assertCurrent?.();
+      const summary = await this.deps.promoteStoredSessionToOverallCoordinator(sessionId, incarnationId);
+      this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), { ...current, ...summary }));
+      this.deps.broadcastSessions([sessionId]);
+      return summary;
+    });
+  }
+
+  async patchSessionMetadata(sessionId: string, incarnationId: string, patch: SessionMetadataPatch, assertCurrent?: () => void): Promise<SessionSummary> {
+    const value = validateSessionMetadataPatch(patch);
+    return this.enqueueSessionMutation(async () => {
+      const current = this.deps.getSession(sessionId);
+      if (!current || getSessionIncarnationId(current) !== incarnationId) throw new SessionNotFoundError(sessionId);
+      assertSessionWritable(current);
+      if (!this.deps.patchStoredSessionMetadata) throw new Error("Session metadata storage is unavailable.");
+      assertCurrent?.();
+      const summary = await this.deps.patchStoredSessionMetadata(sessionId, incarnationId, value);
+      this.runCommittedProjectionBestEffort("metadata", "cache update", () => this.deps.setSessions(this.deps.getSessions().map((session) => session.id === sessionId && getSessionIncarnationId(session) === incarnationId
+        ? { ...session, taskTitle: summary.taskTitle, description: summary.description } : session)));
+      this.runCommittedProjectionBestEffort("metadata", "broadcast", () => this.deps.broadcastSessions([sessionId], false));
+      return summary;
+    });
   }
 
   async setSessionTitle(sessionId: string, incarnationId: string, title: string): Promise<SetSessionTitleResult> {
@@ -352,8 +469,8 @@ export class SessionPersistenceService {
     return projectSessionSummary(stored);
   }
 
-  async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
-    const commit = () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false });
+  async deleteSession(sessionId: string, lifecycleOperationId?: string): Promise<DeleteSessionsResult> {
+    const commit = () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false, lifecycleOperationId });
     const committed = await (this.deps.runProviderRuntimeOperationExclusive?.(commit) ?? commit());
     return this.finishSessionDeletion(committed);
   }
@@ -369,6 +486,21 @@ export class SessionPersistenceService {
     };
     const committed = await (this.deps.runProviderRuntimeOperationExclusive?.(commit) ?? commit());
     return this.finishSessionDeletion(committed);
+  }
+
+  async listCrewRootsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<string[]> {
+    if (!this.deps.listStoredSessionIdsLastActiveBefore) throw new Error("Crew cutoff storage is unavailable.");
+    return this.deps.listStoredSessionIdsLastActiveBefore(cutoff);
+  }
+
+  async getCrewDeletionStatus(rootSessionId: string, incarnationId: string): Promise<CrewDeletionStatus> {
+    if (!this.deps.getStoredCrewDeletionStatus) throw new Error("Crew deletion status storage is unavailable.");
+    const status = await this.deps.getStoredCrewDeletionStatus(rootSessionId, incarnationId);
+    const saved = this.deps.listStoredSessionSummaries ? await this.deps.listStoredSessionSummaries() : await this.deps.listStoredSessions();
+    const inFlight = saved.filter((session) => normalizeSessionRelationship(session).rootSessionId === rootSessionId && this.deps.isSessionRunInFlight(session.id));
+    const blockers = [...status.blockers, ...inFlight.filter((session) => !status.blockers.some((blocker) => blocker.kind === "running" && blocker.sessionId === session.id))
+      .map((session) => ({ kind: "running" as const, id: session.id, sessionId: session.id, message: "A Session execution is still in flight." }))];
+    return { allowed: blockers.length === 0, blockers };
   }
 
   async updateSessionThreadIfMatches(input: SessionThreadPatchInput): Promise<SessionThreadPatchResult | null> {
@@ -447,36 +579,40 @@ export class SessionPersistenceService {
       runningPolicy: "throw" | "skip";
       cutoff?: DeleteSessionsLastActiveBeforeCutoff;
       allowUncachedDeletion: boolean;
+      lifecycleOperationId?: string;
     },
   ): Promise<CommittedSessionDeletion> {
-    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    const requestedSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    const savedSessions = this.deps.listStoredSessionSummaries
+      ? await this.deps.listStoredSessionSummaries() : await this.deps.listStoredSessions();
+    const allSessionsById = new Map([...savedSessions, ...this.deps.getSessions()].map((session) => [session.id, session] as const));
+    const crews = requestedSessionIds.map((rootId) => {
+      const root = allSessionsById.get(rootId);
+      if (root?.parentSessionId) throw new Error("Only an entire Crew can be deleted from its root Session.");
+      return Array.from(allSessionsById.values()).filter((member) => normalizeSessionRelationship(member).rootSessionId === rootId).map((member) => member.id);
+    });
+    const uniqueSessionIds = Array.from(new Set(crews.flat()));
     const skippedRunningSessionIds: string[] = [];
     const deletableSessionIds: string[] = [];
-    const currentSessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
+    const currentSessionsById = allSessionsById;
     const runningActiveAuxiliaryParentIds =
       await this.deps.listRunningActiveAuxiliaryParentIds?.(uniqueSessionIds) ?? new Set<string>();
     const auxiliaryRuntimeIdentities =
       await this.deps.listAuxiliarySessionRuntimeIdentities?.(uniqueSessionIds) ?? [];
 
-    for (const sessionId of uniqueSessionIds) {
-      const session = currentSessionsById.get(sessionId);
-      if (
-        this.deps.isSessionRunInFlight(sessionId) ||
-        runningActiveAuxiliaryParentIds.has(sessionId) ||
-        (session ? isRunningSession(session) : false)
-      ) {
+    for (const crew of crews) {
+      if (crew.some((sessionId) => {
+        const session = currentSessionsById.get(sessionId);
+        return this.deps.isSessionRunInFlight(sessionId) || runningActiveAuxiliaryParentIds.has(sessionId)
+          || (session ? session.status === "running" || session.runState === "running" : false);
+      })) {
         if (options.runningPolicy === "throw") {
-          throw new Error("A running session cannot be deleted.");
+          throw new SessionCrewDeletionBlockedError("A running Crew cannot be deleted.");
         }
-        skippedRunningSessionIds.push(sessionId);
+        skippedRunningSessionIds.push(...crew);
         continue;
       }
-
-      if (!session && !options.allowUncachedDeletion) {
-        continue;
-      }
-
-      deletableSessionIds.push(sessionId);
+      deletableSessionIds.push(...crew);
     }
 
     if (deletableSessionIds.length === 0) {
@@ -493,7 +629,10 @@ export class SessionPersistenceService {
       };
     }
 
-    if (this.deps.deleteStoredSessions) {
+    if (options.lifecycleOperationId) {
+      if (!this.deps.deleteSessionCrewForLifecycle) throw new Error("Crew lifecycle deletion storage is unavailable.");
+      await this.deps.deleteSessionCrewForLifecycle(options.lifecycleOperationId);
+    } else if (this.deps.deleteStoredSessions) {
       await this.deps.deleteStoredSessions(deletableSessionIds);
     } else if (this.deps.deleteStoredSession) {
       for (const sessionId of deletableSessionIds) {
@@ -568,8 +707,9 @@ export class SessionPersistenceService {
   async upsertSession(
     nextSession: Session,
     operation: "create" | "upsert" = "upsert",
+    deferPublication = false,
   ): Promise<Session> {
-    return this.enqueueSessionMutation(() => this.upsertSessionNow(nextSession, operation));
+    return this.enqueueSessionMutation(() => this.upsertSessionNow(nextSession, operation, undefined, deferPublication));
   }
 
   async upsertTerminalSession(
@@ -661,6 +801,29 @@ export class SessionPersistenceService {
         ...(queuedInput ? { queuedInput } : {}),
       });
       return this.projectRuntimeAppend(nextSession, result, [...nextSession.messages, message]);
+    });
+  }
+
+  async beginRunningInput(nextSession: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[]): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      if (!this.deps.beginStoredSessionSteer) throw new Error("Durable Session input storage is unavailable.");
+      const message = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const } };
+      const result = await this.deps.beginStoredSessionSteer({ sessionId: nextSession.id, incarnationId: getSessionIncarnationId(nextSession),
+        expectedMessageCount: nextSession.messageCount ?? nextSession.messages.length, turnId, userMessage: message,
+        nativeTurnId, attachments, updatedAt: nextSession.updatedAt });
+      return this.projectRuntimeAppend(nextSession, result, [...nextSession.messages, message]);
+    });
+  }
+
+  async settleRunningInput(nextSession: Session, messageSeq: number, turnId: number, state: Exclude<TurnInputDeliveryState, "pending">): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      if (!this.deps.settleStoredSessionSteer) throw new Error("Durable Session input storage is unavailable.");
+      const count = nextSession.messageCount ?? nextSession.messages.length;
+      const result = await this.deps.settleStoredSessionSteer({ sessionId: nextSession.id, incarnationId: getSessionIncarnationId(nextSession),
+        expectedMessageCount: count, turnId, messageSeq, state, updatedAt: nextSession.updatedAt });
+      return this.projectRuntimeAppend(nextSession, result, nextSession.messages.map((message, index) =>
+        (message.historyIndex ?? count - nextSession.messages.length + index) === messageSeq && message.turnInput
+          ? { ...message, turnInput: { ...message.turnInput, state } } : message));
     });
   }
 
@@ -765,6 +928,7 @@ export class SessionPersistenceService {
     nextSession: Session,
     operation: "create" | "upsert",
     terminalCommit?: SessionTurnTerminalCommit,
+    deferPublication = false,
   ): Promise<Session> {
     const startedAt = Date.now();
     const currentSession = this.deps.getSession(nextSession.id);
@@ -790,6 +954,7 @@ export class SessionPersistenceService {
     if (!stored) {
       throw new Error("Atomic commit storage for the terminal Session is unavailable.");
     }
+    if (deferPublication) return cloneSessions([stored])[0];
     const storeDurationMs = Date.now() - storeStartedAt;
     const cacheStartedAt = Date.now();
     if (terminalCommit) {

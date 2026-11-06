@@ -9,6 +9,11 @@ import type { BackgroundSourceRef, BackgroundSourceSnapshot, CapturedBackgroundS
 import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import type { SessionFilePinOwner, SessionFilePinReference, StoredSessionFilePin } from "../../src-shared/file-explorer/file-explorer-contract.js";
 import { randomUUID } from "node:crypto";
+import { assertChildSessionRole, assertSessionRole, normalizeSessionRelationship } from "../../src-shared/session/session-role.js";
+import { validateSessionMetadataPatch, type SessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
+import { beginSessionLifecycleOperation, readSessionLifecycleOperation, type SessionLifecycleOperation } from "./session-lifecycle-operation.js";
+import { listCrewCoordinationBlockers } from "../coordination/coordination-schema-v7.js";
+import type { CrewDeletionBlocker, CrewDeletionStatus } from "../../src-shared/session/session-crew-deletion.js";
 
 import {
   cloneHomeSessionSummaries,
@@ -54,6 +59,7 @@ import {
   SessionIdCollisionError,
   SessionNotFoundError,
   SessionRunningTurnStartConflictError,
+  SessionCrewDeletionBlockedError,
 } from "./session-storage-errors.js";
 import {
   buildSessionSummaryKeysetClause,
@@ -78,7 +84,7 @@ import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type {
   SessionMetadataResult, SessionMessageIdentityInput, SessionMessageIdentity,
-  SessionSteerAppendInput, SessionTerminalAppendInput,
+  SessionSteerAppendInput, SessionSteerBeginInput, SessionSteerSettleInput, SessionTerminalAppendInput,
   SessionRunMetadataCheckpointInput,
 } from "./session-runtime-storage-contract.js";
 
@@ -86,6 +92,11 @@ type SessionV6Row = {
   id: string;
   incarnation_id: string;
   title: string;
+  description: string;
+  session_role: string;
+  root_session_id: string;
+  parent_session_id: string | null;
+  created_by_session_id: string | null;
   state: string;
   session_kind: string;
   provider_id: string;
@@ -180,6 +191,11 @@ type DecodedSessionV6RuntimeState = {
 };
 
 const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
+
+function readySessionClause(idExpression: string): string {
+  return `NOT EXISTS (SELECT 1 FROM session_lifecycle_operations_v6 operation, json_each(operation.targets_json) target
+    WHERE operation.kind = 'create' AND operation.phase <> 'complete' AND json_extract(target.value, '$.id') = ${idExpression})`;
+}
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -399,6 +415,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT *
       FROM sessions_v6
+      WHERE ${readySessionClause("sessions_v6.id")}
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessions(rows.map((row) => this.rowToSession(row)));
@@ -440,6 +457,7 @@ export class SessionStorageV6 {
     const rows = this.db.prepare(`
       SELECT *
       FROM sessions_v6
+      WHERE ${readySessionClause("sessions_v6.id")}
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummary(row)));
@@ -453,7 +471,7 @@ export class SessionStorageV6 {
       : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
     const search = buildSessionSummarySearchClause("s", parsed.searchText, V6_HOME_CHARACTER_NAME_EXPRESSION);
     const keyset = buildSessionSummaryKeysetClause("s", cursor);
-    const where: string[] = [];
+    const where: string[] = [readySessionClause("s.id")];
     const params: string[] = [];
 
     if (parsed.scope === "pinned") {
@@ -626,7 +644,7 @@ export class SessionStorageV6 {
 
   getSessionSummary(sessionId: string): SessionSummary | null {
     const row = this.db.prepare(`
-      SELECT id, incarnation_id, title, state, session_kind, provider_id,
+      SELECT id, incarnation_id, title, description, session_role, root_session_id, parent_session_id, created_by_session_id, state, session_kind, provider_id,
         catalog_revision, model_id, reasoning_effort, custom_agent_name,
         approval_mode, codex_sandbox_mode, allowed_additional_directories_json,
         runtime_policy_json, thread_id, character_id, character_snapshot_json,
@@ -699,22 +717,25 @@ export class SessionStorageV6 {
   }
 
   appendSessionSteer(input: SessionSteerAppendInput): SessionMetadataResult {
-    const message = normalizeMessage(input.userMessage);
+    let message = normalizeMessage(input.userMessage);
     if (!message || message.role !== "user" || !message.text.trim() || !input.updatedAt.trim()) throw new Error("The steer message is invalid.");
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const row = this.assertAppendOwner(input, input.turnId);
+      if (this.rowToSessionSummary(row).runState !== "running"
+        || !this.db.prepare("SELECT 1 FROM session_turns_v6 WHERE id = ? AND id = (SELECT MAX(id) FROM session_turns_v6 WHERE session_id = ?)")
+          .get(input.turnId, input.sessionId)) throw new Error("The current input turn no longer matches.");
       if (input.queuedInput) {
-        if (this.rowToSessionSummary(row).runState !== "running"
-          || !this.db.prepare("SELECT 1 FROM session_turns_v6 WHERE id = ? AND id = (SELECT MAX(id) FROM session_turns_v6 WHERE session_id = ?)")
-            .get(input.turnId, input.sessionId)) throw new Error("The current queued input turn no longer matches.");
-        const receipt = this.db.prepare(`SELECT captured_json FROM session_turn_queue_v6 WHERE id = ?
+        const receipt = this.db.prepare(`SELECT dispatched_json AS captured_json FROM session_turn_queue_v6 WHERE id = ?
           AND session_id = ? AND auxiliary_session_id IS NULL AND incarnation_id = ?
-          AND state = 'starting' AND input_turn_id = ? AND user_message_seq IS NULL`)
-          .get(input.queuedInput.queueId, input.sessionId, input.incarnationId, input.queuedInput.inputTurnId) as { captured_json: string } | undefined;
-        if (!receipt || (JSON.parse(receipt.captured_json) as SessionTurnQueueCapturedInput).request.userMessage !== message.text) {
+          AND state = 'starting' AND input_turn_id = ? AND user_message_seq IS NULL AND turn_id = ? AND dispatched_json IS NOT NULL`)
+          .get(input.queuedInput.queueId, input.sessionId, input.incarnationId, input.queuedInput.inputTurnId, String(input.turnId)) as { captured_json: string } | undefined;
+        const captured = receipt ? JSON.parse(receipt.captured_json) as SessionTurnQueueCapturedInput : null;
+        if (!captured || captured.request.userMessage !== message.text) {
           throw new Error("The queued input does not match its captured message.");
         }
+        message = { ...message, turnInput: { turnId: String(input.turnId), nativeTurnId: input.queuedInput.inputTurnId,
+          state: "confirmed", queueId: input.queuedInput.queueId, attachments: captured.attachments } };
       }
       this.insertAppendedMessage(input.sessionId, message, input.updatedAt);
       if (input.queuedInput) {
@@ -733,6 +754,32 @@ export class SessionStorageV6 {
       this.db.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  beginSessionSteer(input: SessionSteerBeginInput): SessionMetadataResult {
+    if (!input.nativeTurnId?.trim() || input.queuedInput) throw new Error("A direct Steer target is required.");
+    return this.appendSessionSteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
+      turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
+    } } });
+  }
+
+  settleSessionSteer(input: SessionSteerSettleInput): SessionMetadataResult {
+    if (!["confirmed", "unknown", "not-sent"].includes(input.state) || !Number.isSafeInteger(input.messageSeq) || input.messageSeq < 0) throw new Error("The Steer settlement is invalid.");
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const owner = this.assertAppendOwner(input, input.turnId);
+      const row = this.db.prepare("SELECT body FROM session_messages_v6 WHERE session_id = ? AND seq = ? AND role = 'user'")
+        .get(input.sessionId, input.messageSeq) as { body: string } | undefined;
+      const message = row ? normalizeMessage(JSON.parse(row.body)) : null;
+      if (!message?.turnInput || message.turnInput.turnId !== String(input.turnId) || message.turnInput.queueId
+        || (message.turnInput.state !== "pending" && message.turnInput.state !== input.state)) throw new Error("The pending Steer input no longer matches.");
+      this.db.prepare("UPDATE session_messages_v6 SET body = ? WHERE session_id = ? AND seq = ?")
+        .run(encodeMessage({ ...message, turnInput: { ...message.turnInput, state: input.state } }), input.sessionId, input.messageSeq);
+      const result = this.rowToSessionMetadata(owner);
+      this.db.exec("COMMIT");
+      this.onConversationChanged("session_messages_v6", input.sessionId);
+      return result;
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 
   appendSessionTerminal(input: SessionTerminalAppendInput): SessionMetadataResult {
@@ -828,6 +875,135 @@ export class SessionStorageV6 {
     if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
   }
 
+  getSessionLifecycleOperation(operationId: string): SessionLifecycleOperation | null {
+    return readSessionLifecycleOperation(this.db, operationId);
+  }
+
+  getCrewDeletionStatus(rootSessionId: string, incarnationId: string): CrewDeletionStatus {
+    this.db.exec("BEGIN");
+    try {
+      const root = this.getSessionSummary(rootSessionId);
+      if (!root || getSessionIncarnationId(root) !== incarnationId || root.parentSessionId) throw new Error("The Crew deletion root identity is invalid.");
+      const ids = (this.db.prepare("SELECT id FROM sessions_v6 WHERE root_session_id = ?").all(rootSessionId) as Array<{ id: string }>).map((row) => row.id);
+      const blockers = this.readCrewDeletionBlockers(ids, this.listAuxiliarySessionIdsForParentsIfTableExists(ids));
+      this.db.exec("COMMIT");
+      return { allowed: blockers.length === 0, blockers };
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  private readCrewDeletionBlockers(mainIds: string[], auxiliaryIds: string[]): CrewDeletionBlocker[] {
+    if (mainIds.length === 0) return [];
+    const placeholders = mainIds.map(() => "?").join(",");
+    const blockers: CrewDeletionBlocker[] = [];
+    for (const row of this.db.prepare(`SELECT id FROM sessions_v6 WHERE id IN (${placeholders}) AND state = 'active'`).all(...mainIds) as Array<{ id: string }>) {
+      blockers.push({ kind: "running", id: row.id, sessionId: row.id, message: "A Main Session is running." });
+    }
+    for (const row of this.db.prepare(`SELECT id FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders}) AND run_state = 'running'`).all(...mainIds) as Array<{ id: string }>) {
+      blockers.push({ kind: "running", id: row.id, sessionId: row.id, message: "An Auxiliary Session is running." });
+    }
+    for (const row of this.db.prepare(`SELECT id, session_id FROM session_turn_queue_v6 WHERE session_id IN (${placeholders})
+      AND (state IN ('queued','starting','running') OR (state='interrupted' AND released_at IS NULL))`).all(...mainIds) as Array<{ id: string; session_id: string }>) {
+      blockers.push({ kind: "queue", id: row.id, sessionId: row.session_id, message: "Accepted work is pending, running, or unresolved." });
+    }
+    for (const row of this.db.prepare(`SELECT DISTINCT operation.operation_id FROM session_lifecycle_operations_v6 operation, json_each(operation.targets_json) target
+      WHERE operation.kind='create' AND operation.phase<>'complete' AND (json_extract(target.value,'$.id') IN (${placeholders}) OR json_extract(target.value,'$.rootSessionId') IN (${placeholders}))`)
+      .all(...mainIds, ...mainIds) as Array<{ operation_id: string }>) {
+      blockers.push({ kind: "creation", id: row.operation_id, message: "A Session creation is incomplete." });
+    }
+    blockers.push(...listCrewCoordinationBlockers(this.db, [...mainIds.map((id) => ({ id, kind: "main" as const })), ...auxiliaryIds.map((id) => ({ id, kind: "auxiliary" as const }))])
+      .map((item) => ({ kind: "coordination" as const, id: item.id, message: item.reason })));
+    return blockers;
+  }
+
+  listPendingSessionLifecycleOperations(): SessionLifecycleOperation[] {
+    const rows = this.db.prepare("SELECT operation_id FROM session_lifecycle_operations_v6 WHERE phase <> 'complete' ORDER BY created_at, operation_id").all() as Array<{ operation_id: string }>;
+    return rows.map((row) => readSessionLifecycleOperation(this.db, row.operation_id)!);
+  }
+
+  beginSessionLifecycleOperation(input: Parameters<typeof beginSessionLifecycleOperation>[1]): SessionLifecycleOperation {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const result = beginSessionLifecycleOperation(this.db, input);
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  deleteSessionCrewForLifecycle(operationId: string): SessionLifecycleOperation {
+    const operation = readSessionLifecycleOperation(this.db, operationId);
+    if (!operation || operation.kind !== "delete") throw new Error("The Crew deletion operation could not be found.");
+    if (operation.phase !== "preparing") return operation;
+    for (const target of operation.targets) {
+      const current = this.getSessionSummary(target.id);
+      if (!current || getSessionIncarnationId(current) !== target.incarnationId) throw new Error("The Crew deletion target identity changed.");
+    }
+    this.deleteSessions(operation.targets.map((target) => target.id), operationId);
+    return readSessionLifecycleOperation(this.db, operationId)!;
+  }
+
+  prepareSessionLifecycleCreation(operationId: string, input: import("../../src-shared/session/session-state.js").CreateSessionInput): SessionLifecycleOperation {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const operation = readSessionLifecycleOperation(this.db, operationId);
+      if (!operation || operation.kind !== "create" || operation.targets[0]?.id !== input.id) throw new Error("The prepared creation owner does not match its operation.");
+      if (!operation.preparedSession) this.db.prepare("UPDATE session_lifecycle_operations_v6 SET prepared_json = ?, updated_at = ? WHERE operation_id = ? AND prepared_json IS NULL")
+        .run(JSON.stringify(input), new Date().toISOString(), operationId);
+      const result = readSessionLifecycleOperation(this.db, operationId)!;
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  advanceSessionLifecycleOperation(operationId: string, phase: SessionLifecycleOperation["phase"], resources?: SessionLifecycleOperation["resources"]): SessionLifecycleOperation {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const operation = readSessionLifecycleOperation(this.db, operationId);
+      if (!operation) throw new Error("The lifecycle operation could not be found.");
+      const phases = ["preparing", "applied", "complete"];
+      if (phases.indexOf(phase) < phases.indexOf(operation.phase)) throw new Error("A lifecycle operation cannot move backwards.");
+      const targets = operation.kind === "create" && phase !== "preparing" ? operation.targets.map((target) => {
+        const session = this.getSessionSummary(target.id);
+        if (!session || (target.incarnationId && getSessionIncarnationId(session) !== target.incarnationId)) throw new Error("The creation target identity no longer matches.");
+        return { ...target, incarnationId: getSessionIncarnationId(session) };
+      }) : operation.targets;
+      if (operation.kind === "create" && phase === "complete") {
+        for (const target of targets) {
+          if (!this.db.prepare(`SELECT 1 FROM auxiliary_sessions WHERE parent_session_id = ?
+            AND CASE WHEN json_valid(creation_context_json) THEN json_extract(creation_context_json, '$.parentIncarnationId') ELSE NULL END = ? LIMIT 1`).get(target.id, target.incarnationId!)) {
+            throw new Error("A created Main Session requires its initial Auxiliary before completion.");
+          }
+        }
+      }
+      if (resources && operation.resources.length > 0 && (resources.length !== operation.resources.length || resources.some((resource, index) => {
+        const previous = operation.resources[index];
+        return !previous || resource.path !== previous.path || resource.stagingPath !== previous.stagingPath || resource.device !== previous.device || resource.inode !== previous.inode || (previous.cleaned && !resource.cleaned);
+      }))) throw new Error("Lifecycle resource ownership cannot be replaced.");
+      if (operation.kind === "delete" && phase === "complete" && operation.phase === "preparing") throw new Error("The Crew deletion has not been applied.");
+      if (operation.kind === "delete" && phase === "complete" && (resources ?? operation.resources).some((resource) => !resource.cleaned)) throw new Error("Owned resource cleanup is not complete.");
+      this.db.prepare("UPDATE session_lifecycle_operations_v6 SET phase = ?, resources_json = ?, targets_json = ?, updated_at = ? WHERE operation_id = ?")
+        .run(phase, JSON.stringify(resources ?? operation.resources), JSON.stringify(targets), new Date().toISOString(), operationId);
+      const result = readSessionLifecycleOperation(this.db, operationId)!;
+      this.db.exec("COMMIT");
+      return { ...result, transitioned: operation.phase !== phase };
+    } catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+
+  patchSessionMetadata(sessionId: string, incarnationId: string, patch: SessionMetadataPatch): SessionSummary {
+    const value = validateSessionMetadataPatch(patch);
+    const result = this.db.prepare(`UPDATE sessions_v6 SET title = COALESCE(?, title), description = COALESCE(?, description)
+      WHERE id = ? AND incarnation_id = ?`).run(value.title ?? null, value.description ?? null, sessionId, incarnationId);
+    if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
+    return this.getSessionSummary(sessionId)!;
+  }
+
+  promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string): SessionSummary {
+    const result = this.db.prepare(`UPDATE sessions_v6 SET session_role = 'overall-coordinator'
+      WHERE id = ? AND incarnation_id = ? AND session_role = 'standalone' AND root_session_id = id
+        AND parent_session_id IS NULL AND session_kind = 'default' AND state <> 'active'`).run(sessionId, incarnationId);
+    if (Number(result.changes) !== 1) throw new Error("Only an idle Standalone Session can become an overall coordinator.");
+    return this.getSessionSummary(sessionId)!;
+  }
+
   setSessionMessageBookmark(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): void {
     if (!Number.isSafeInteger(messageIndex) || messageIndex < 0) throw new Error("The message index is invalid.");
     const previous = this.db.prepare("SELECT json_type(body, '$.isBookmarked') AS bookmark FROM session_messages_v6 WHERE session_id = ? AND seq = ?")
@@ -881,12 +1057,18 @@ export class SessionStorageV6 {
   }
 
   listSessionIdsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): string[] {
+    const includeDrafts = this.auxiliaryDraftsTableExists();
     const rows = this.db.prepare(`
-      SELECT id
-      FROM sessions_v6
-      WHERE last_active_at < ?
-      ORDER BY last_active_at ASC, id ASC
-    `).all(cutoff.cutoffIso) as SessionIdRow[];
+      SELECT root.id FROM sessions_v6 root
+      WHERE root.parent_session_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM sessions_v6 member
+          WHERE COALESCE(member.root_session_id, member.id) = root.id AND member.last_active_at >= ?)
+        AND NOT EXISTS (SELECT 1 FROM auxiliary_sessions auxiliary JOIN sessions_v6 member ON member.id = auxiliary.parent_session_id
+          WHERE COALESCE(member.root_session_id, member.id) = root.id AND auxiliary.updated_at >= ?)
+        ${includeDrafts ? `AND NOT EXISTS (SELECT 1 FROM auxiliary_session_drafts draft JOIN sessions_v6 member ON member.id = draft.parent_session_id
+          WHERE COALESCE(member.root_session_id, member.id) = root.id AND draft.updated_at >= ?)` : ""}
+      ORDER BY root.last_active_at ASC, root.id ASC
+    `).all(cutoff.cutoffIso, cutoff.cutoffIso, ...(includeDrafts ? [cutoff.cutoffIso] : [])) as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
 
@@ -1075,8 +1257,8 @@ export class SessionStorageV6 {
 
       if (input.queuedTurn) {
         const { queueId, turn } = input.queuedTurn;
-        const queueRow = this.db.prepare(`SELECT captured_json, request_id FROM session_turn_queue_v6
-          WHERE id = ? AND session_id = ? AND auxiliary_session_id IS NULL AND input_turn_id IS NULL AND incarnation_id = ? AND state = 'starting'`)
+        const queueRow = this.db.prepare(`SELECT dispatched_json AS captured_json, request_id FROM session_turn_queue_v6
+          WHERE id = ? AND session_id = ? AND auxiliary_session_id IS NULL AND input_turn_id IS NULL AND incarnation_id = ? AND state = 'starting' AND dispatched_json IS NOT NULL`)
           .get(queueId, sessionId, currentRow.incarnation_id) as { captured_json: string; request_id: string } | undefined;
         if (!queueRow) throw new Error("The queued turn is not starting for the current Session owner.");
         const captured = JSON.parse(queueRow.captured_json) as SessionTurnQueueCapturedInput;
@@ -1198,7 +1380,30 @@ export class SessionStorageV6 {
     try {
       const existing = operation === "create"
         ? undefined
-        : this.db.prepare("SELECT id, incarnation_id FROM sessions_v6 WHERE id = ?").get(normalized.id) as SessionIdRow | undefined;
+        : this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(normalized.id) as SessionV6Row | undefined;
+      if (existing) {
+        normalized.taskTitle = existing.title;
+        normalized.description = existing.description;
+        Object.assign(normalized, normalizeSessionRelationship({ id: existing.id,
+          sessionRole: existing.session_role as import("../../src-shared/session/session-role.js").SessionRole,
+          rootSessionId: existing.root_session_id, parentSessionId: existing.parent_session_id, createdBySessionId: existing.created_by_session_id }));
+      } else {
+        const relationship = normalizeSessionRelationship(normalized);
+        assertSessionRole(relationship.sessionRole);
+        if (normalized.sessionKind !== "default" && relationship.sessionRole !== "standalone") throw new Error("Only normal Sessions can have a coordination Role.");
+        if (relationship.parentSessionId) {
+          const parent = this.getSessionSummary(relationship.parentSessionId);
+          if (!parent) throw new SessionNotFoundError(relationship.parentSessionId);
+          const parentRelationship = normalizeSessionRelationship(parent);
+          assertChildSessionRole(parentRelationship.sessionRole, relationship.sessionRole);
+          if (relationship.rootSessionId !== parentRelationship.rootSessionId || relationship.createdBySessionId !== parent.id) {
+            throw new Error("The child Session relationship does not match its saved creator.");
+          }
+        } else if (relationship.rootSessionId !== normalized.id || relationship.createdBySessionId !== null
+          || (relationship.sessionRole !== "standalone" && relationship.sessionRole !== "overall-coordinator")) {
+          throw new Error("Invalid root Session relationship.");
+        }
+      }
       const requestedIncarnationId = getSessionIncarnationId(normalized);
       if (operation === "update") {
         if (!existing) {
@@ -1266,6 +1471,7 @@ export class SessionStorageV6 {
         auxiliarySessionIds: removedAuxiliarySessionIds,
       });
       this.db.exec("DELETE FROM session_messages_v6;");
+      if (normalizedSessions.length === 0) this.db.exec("DELETE FROM session_lifecycle_operations_v6;");
       this.deleteStoredSessionsByIds(removedSessionIds);
       for (const session of normalizedSessions) {
         const existing = this.db.prepare(
@@ -1289,10 +1495,12 @@ export class SessionStorageV6 {
   }
 
   deleteSession(sessionId: string): void {
+    const session = this.getSessionSummary(sessionId);
+    if (session?.parentSessionId) throw new Error("Only an entire Crew can be deleted from its root Session.");
     this.deleteSessions([sessionId]);
   }
 
-  deleteSessions(sessionIds: readonly string[]): void {
+  deleteSessions(sessionIds: readonly string[], lifecycleOperationId?: string): void {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
     if (uniqueSessionIds.length === 0) {
       return;
@@ -1301,13 +1509,36 @@ export class SessionStorageV6 {
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      const members = this.db.prepare(`SELECT id, incarnation_id, root_session_id, parent_session_id, state FROM sessions_v6
+        WHERE root_session_id IN (SELECT root_session_id FROM sessions_v6 WHERE id IN (${placeholders}))`).all(...uniqueSessionIds) as Array<{ id: string; incarnation_id: string; root_session_id: string; parent_session_id: string | null; state: string }>;
+      if (lifecycleOperationId) {
+        const operation = readSessionLifecycleOperation(this.db, lifecycleOperationId);
+        if (!operation || operation.kind !== "delete" || operation.targets.some((target) => !members.some((member) => member.id === target.id && member.incarnation_id === target.incarnationId))) {
+          throw new Error("The Crew deletion target identity changed.");
+        }
+        const cutoffIso = (operation.input as { cutoffIso?: string }).cutoffIso;
+        if (cutoffIso) {
+          const includeDrafts = this.auxiliaryDraftsTableExists();
+          const changedActivity = this.db.prepare(`SELECT 1 FROM sessions_v6 WHERE id IN (${placeholders}) AND last_active_at >= ?
+            UNION ALL SELECT 1 FROM auxiliary_sessions WHERE parent_session_id IN (${placeholders}) AND updated_at >= ?
+            ${includeDrafts ? `UNION ALL SELECT 1 FROM auxiliary_session_drafts WHERE parent_session_id IN (${placeholders}) AND updated_at >= ?` : ""} LIMIT 1`)
+            .get(...uniqueSessionIds, cutoffIso, ...uniqueSessionIds, cutoffIso, ...(includeDrafts ? [...uniqueSessionIds, cutoffIso] : []));
+          if (changedActivity) throw new SessionCrewDeletionBlockedError("The Crew no longer meets the activity cutoff.");
+        }
+      }
+      const requestedIds = new Set(uniqueSessionIds);
+      if (members.some((member) => !requestedIds.has(member.id))) throw new Error("A Crew must be deleted as a whole.");
       const auxiliarySessionIds = this.listAuxiliarySessionIdsForParentsIfTableExists(uniqueSessionIds);
+      const blockers = this.readCrewDeletionBlockers(uniqueSessionIds, auxiliarySessionIds);
+      if (blockers.length > 0) throw new SessionCrewDeletionBlockedError(blockers.map((blocker) => blocker.message).join(" "));
       deleteSessionTurnsForTargets(this.db, {
         sessionIds: uniqueSessionIds,
         auxiliarySessionIds,
       });
       this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
       this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
+      if (lifecycleOperationId) this.db.prepare("UPDATE session_lifecycle_operations_v6 SET phase = 'applied', updated_at = ? WHERE operation_id = ? AND kind = 'delete'")
+        .run(new Date().toISOString(), lifecycleOperationId);
       this.db.exec("COMMIT");
       uniqueSessionIds.forEach((id) => this.onConversationChanged("session_messages_v6", id));
       auxiliarySessionIds.forEach((id) => this.onConversationChanged("auxiliary_session_messages", id));
@@ -1321,6 +1552,7 @@ export class SessionStorageV6 {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       deleteSessionTurnsForTargets(this.db, { allSessionTargets: true });
+      this.db.exec("DELETE FROM session_lifecycle_operations_v6;");
       this.db.exec("DELETE FROM session_messages_v6;");
       this.db.exec("DELETE FROM sessions_v6;");
       this.deleteAllAuxiliarySessionsIfTableExists();
@@ -1362,7 +1594,6 @@ export class SessionStorageV6 {
       ? "ON CONFLICT(id) DO NOTHING"
       : `
         ON CONFLICT(id) DO UPDATE SET
-          title = excluded.title,
           state = excluded.state,
           session_kind = excluded.session_kind,
           provider_id = excluded.provider_id,
@@ -1386,6 +1617,11 @@ export class SessionStorageV6 {
         id,
         incarnation_id,
         title,
+        description,
+        session_role,
+        root_session_id,
+        parent_session_id,
+        created_by_session_id,
         state,
         session_kind,
         provider_id,
@@ -1406,12 +1642,17 @@ export class SessionStorageV6 {
         updated_at,
         last_active_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ${conflictClause}
     `).run(
       session.id,
       incarnationId,
       session.taskTitle,
+      session.description ?? "",
+      session.sessionRole ?? "standalone",
+      session.rootSessionId ?? session.id,
+      session.parentSessionId ?? null,
+      session.createdBySessionId ?? null,
       toV6State(session),
       session.sessionKind,
       session.provider,
@@ -1505,6 +1746,11 @@ export class SessionStorageV6 {
       id: row.id,
       incarnationId: row.incarnation_id?.trim() || `legacy:${row.id}`,
       taskTitle: row.title,
+      description: row.description,
+      sessionRole: row.session_role,
+      rootSessionId: row.root_session_id,
+      parentSessionId: row.parent_session_id,
+      createdBySessionId: row.created_by_session_id,
       status: typeof runtimePolicy.appStatus === "string" ? runtimePolicy.appStatus : row.state === "active" ? "running" : "idle",
       updatedAt: row.updated_at || row.last_active_at,
       isPinned: row.is_pinned === 1,

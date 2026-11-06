@@ -1,0 +1,155 @@
+.coordination-pane {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+.coordination-pane[hidden] {
+  display: none;
+}
+.command-monitor-stack.coordination {
+  margin-top: 0;
+}
+.coordination-toolbar,
+.coordination-detail-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.coordination-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.coordination-pane select,
+.coordination-pane textarea {
+  color: var(--ink);
+  background: var(--surface-deep);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  padding: 8px;
+  max-width: 100%;
+}
+.coordination-pane textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.coordination-parties,
+.coordination-list-row span,
+.coordination-list-row time {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.coordination-parties {
+  margin: 0;
+}
+.coordination-list {
+  display: grid;
+}
+.coordination-list-row {
+  display: grid;
+  gap: 5px;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 4px;
+  cursor: pointer;
+}
+.coordination-list-row:hover {
+  background: var(--surface-strong);
+}
+.coordination-answers {
+  display: grid;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.coordination-answer-form fieldset {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.coordination-answer-form legend {
+  padding: 0 0 8px;
+  font-weight: 600;
+}
+.coordination-choice {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+.coordination-actions label {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+.coordination-pane summary {
+  cursor: pointer;
+  padding-block: 5px;
+}
+.coordination-withdrawal {
+  border-inline-start: 3px solid var(--muted);
+  padding-inline-start: 10px;
+}
+.coordination-withdrawal p {
+  white-space: pre-wrap;
+  margin-block: 6px 0;
+}
+.coordination-references {
+  display: grid;
+  gap: 4px;
+}
+.coordination-references dd {
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+  font-family: monospace;
+}
+.coordination-history {
+  padding-inline-start: 20px;
+}
+.coordination-history li {
+  margin-bottom: 10px;
+  overflow-wrap: anywhere;
+}
+.coordination-history p,
+.coordination-operation-feedback {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.coordination-monitor-list {
+  display: grid;
+  align-content: start;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  gap: 8px;
+  padding: 8px;
+}
+.coordination-monitor-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  width: 100%;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  cursor: pointer;
+}
+.coordination-monitor-row strong {
+  flex: 1;
+  overflow-wrap: anywhere;
+}

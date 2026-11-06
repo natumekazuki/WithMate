@@ -49,6 +49,7 @@ import { BackgroundExecutionService } from "../../src-electron/providers/backgro
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { MemoryRecordingController } from "../../src-electron/memory/memory-recording-controller.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
+import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -186,6 +187,113 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     ...overrides,
   });
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "指定WithMate Turn停止は同incarnationの現在Turnだけに適用し、Provider Turn IDや後続Turnへ対象を付け替えない"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 取消・Turn停止の権限と対象" }
+// fault = "Provider IDで停止する、古いTurnの停止が後続Turnを止める、非同期認可中に変化した対象へ停止を適用する"
+// observable = "stopSessionTurn outcomeとProvider AbortSignal、Turn完了後の停止結果"
+// observation_boundary = "public-boundary"
+// scope = "SessionRuntimeService指定Turn停止と非同期認可の競合"
+// lifecycle = "permanent"
+// distinction = "既存cancelRunはSession単位であり指定WithMate Turnとの一致を検証しない"
+// @end-test-value
+it("指定Turn停止はWithMate identityを固定し後続へ適用しない", async () => {
+  const session = createSession();
+  const finish: Array<() => void> = [];
+  let turnNumber = 0;
+  let activeSignal: AbortSignal | undefined;
+  const runtime = createProgressRuntime(session, async (input, progress) => {
+    activeSignal = input.signal;
+    await emitTestProgress(progress, createLiveRunState({ sessionId: session.id, turnId: "provider-id" }));
+    await new Promise<void>((resolve) => { finish.push(resolve); });
+    return createPartialResult({ assistantText: "saved partial" });
+  }, { createSessionTurn: (input) => ({ ...input, id: ++turnNumber }) });
+  const running = runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
+  let next: Promise<Session> | undefined;
+  try {
+    await waitForCondition(() => Boolean(activeSignal), "provider started");
+    const owner = getSessionIncarnationId(session);
+    assert.equal((await runtime.stopSessionTurn(session.id, owner, "provider-id")).outcome, "not-applied");
+    assert.equal((await runtime.stopSessionTurn(session.id, "old-incarnation", "1")).outcome, "not-applied");
+    assert.equal(activeSignal?.aborted, false);
+    let authorize!: () => void;
+    const authorized = new Promise<void>((resolve) => { authorize = resolve; });
+    const delayed = runtime.stopSessionTurn(session.id, owner, "1", () => authorized);
+    finish[0]!();
+    await running;
+    next = runtime.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "next" });
+    await waitForCondition(() => finish.length === 2, "next provider turn started");
+    authorize();
+    assert.equal((await delayed).outcome, "not-applied");
+    assert.equal(activeSignal?.aborted, false);
+    assert.equal((await runtime.stopSessionTurn(session.id, owner, "2")).outcome, "applied");
+    assert.equal(activeSignal?.aborted, true);
+  } finally { for (const resolve of finish) resolve(); await running; await next; }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "直接SteerはProvider呼出前にpendingを保存し、未送信・外部結果不明・保存ACK喪失を区別して再送せず同じTurnの本文を保持する"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 新規Steerの送信前記録と未送信・不明結果の区別" }
+// fault = "記録前にProviderへ送る、未送信を不明にする、不明送信を再送する、確定commitのACK喪失で入力を上書きする"
+// observable = "adapter呼出時のpending message、呼出件数、保存messageのTurn/native IDと配送状態、terminal後の本文列"
+// observation_boundary = "public-boundary"
+// scope = "SessionRuntimeService直接Steerとfixture永続portの故障注入"
+// lifecycle = "permanent"
+// distinction = "SQLite testはProvider dispatch境界・取消・ACK喪失時のruntime count回復を通らない"
+// @end-test-value
+it("直接Steerは未送信と不明結果を保存しACK喪失でも自動再送しない", async () => {
+  for (const mode of ["unknown", "not-sent", "begin-lost", "confirm-lost"] as const) {
+    let stored = createSession({ threadId: "thread" });
+    let finish!: () => void;
+    const done = new Promise<void>((resolve) => { finish = resolve; });
+    let calls = 0;
+    let entered = false;
+    let injected = false;
+    let runtime!: ProductionSessionRuntimeService;
+    const run: ProviderCodingAdapter["runSessionTurn"] = async (input, progress) => {
+      await emitTestProgress(progress, { ...createLiveRunState({ sessionId: input.session.id }), turnId: "native-turn", inputAvailable: true });
+      entered = true;
+      await done;
+      return createPartialResult({ assistantText: "partial retained", threadId: "thread" });
+    };
+    const adapter: ProviderCodingAdapter = {
+      composePrompt: () => ({ systemBodyText: "system", inputBodyText: "input", logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" }, imagePaths: [], additionalDirectories: [] }),
+      getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {}, runSessionTurn: run,
+      steerSessionTurn: async (input) => {
+        calls++;
+        assert.equal(stored.messages.at(-1)?.turnInput?.state, "pending");
+        assert.equal(stored.messages.at(-1)?.turnInput?.turnId, "1");
+        assert.equal(stored.messages.at(-1)?.turnInput?.nativeTurnId, input.expectedTurnId);
+        if (mode === "unknown") throw new Error("Provider outcome unknown");
+        return { turnId: input.expectedTurnId };
+      },
+    };
+    runtime = createProgressRuntime(stored, run, { getSession: () => stored, getProviderCodingAdapter: () => adapter,
+      upsertSession: (next) => {
+        stored = next;
+        const state = next.messages.at(-1)?.turnInput?.state;
+        if (!injected && ((state === "pending" && (mode === "not-sent" || mode === "begin-lost")) || (state === "confirmed" && mode === "confirm-lost"))) {
+          injected = true;
+          if (mode === "not-sent") runtime.cancelRun(stored.id);
+          else throw new Error("Input persistence reply lost");
+        }
+        return next;
+      } });
+    const turn = runtime.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "start" });
+    try {
+      await waitForCondition(() => entered, "direct input active turn");
+      await assert.rejects(runtime.steerSessionTurn(stored.id, { expectedTurnId: "native-turn", userMessage: "additional" }));
+      assert.equal(calls, mode === "unknown" || mode === "confirm-lost" ? 1 : 0);
+      assert.equal(stored.messages.at(-1)?.turnInput?.state, mode === "unknown" ? "unknown" : mode === "confirm-lost" ? "confirmed" : "not-sent");
+      finish();
+      await turn;
+      assert.deepEqual(stored.messages.map((message) => message.text), ["start", "additional", "partial retained"]);
+    } finally { finish(); await turn; }
+  }
+});
 
 function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps): ProductionSessionRuntimeService {
   const writes = {
@@ -361,7 +469,7 @@ it("実保存イベントからMemoryを発火し背景失敗を会話から隔�
 });
 
 function queuedReceipt(session: Session): SessionTurnQueueReceipt {
-  return { sessionId: session.id, incarnationId: getSessionIncarnationId(session), id: "queue-1", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
+  const receipt: SessionTurnQueueReceipt = { sessionId: session.id, incarnationId: getSessionIncarnationId(session), id: "queue-1", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
     sequence: 1, queuePosition: 1, state: "starting", turnId: null, userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
     captured: { provider: session.provider, workspacePath: session.workspacePath,
       request: { clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10", submitSource: "composer", userMessage: "captured message",
@@ -369,6 +477,9 @@ function queuedReceipt(session: Session): SessionTurnQueueReceipt {
       attachments: [{ id: "captured-file", kind: "file", source: "text", absolutePath: "C:/workspace/captured.txt",
         displayPath: "captured.txt", workspaceRelativePath: "captured.txt", isOutsideWorkspace: false }],
     } };
+  receipt.accepted = structuredClone(receipt.captured);
+  receipt.dispatched = structuredClone(receipt.captured);
+  return receipt;
 }
 
 function queueGate() {
@@ -376,6 +487,46 @@ function queueGate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "queue runtimeは予定入力でなくclaim固定本文と添付を実行し、受付時originと原文変更有無を実Provider compositionへ渡す"
+// oracle = { type = "contract", ref = "GitHub Issue #832: claim時固定入力; GitHub Issue #837: Provider入力の実送信元" }
+// fault = "captured本文を実行へ流す、固定添付を予定添付へ差し替える、originや原文変更値をadapter呼出で落とす"
+// observable = "開始保存user本文、Provider RunSessionTurnInput本文/添付/provenance、共通compose結果と元receiptの不変値"
+// observation_boundary = "public-boundary"
+// scope = "SessionRuntimeService.runQueuedSessionTurnからProviderCodingAdapterまで"
+// lifecycle = "permanent"
+// distinction = "prompt単体testとstorage claim testの間にあるruntime入力配線を確認する"
+// @end-test-value
+it("queue runtimeは固定入力と実送信元をProviderへ渡し受付原文を変更しない", async () => {
+  const session = createSession();
+  const receipt = queuedReceipt(session);
+  receipt.dispatched!.request.userMessage = "fixed instruction";
+  receipt.dispatched!.attachments = [];
+  receipt.dispatched!.origin = { kind: "session", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "parent-incarnation",
+    actorTurnId: "12", operation: "send", targetSessionId: session.id, targetIncarnationId: getSessionIncarnationId(session) };
+  const original = structuredClone(receipt);
+  let calls = 0;
+  const runtime = createProgressRuntime(session, async (input) => {
+    calls++;
+    assert.equal(input.userMessage, "fixed instruction");
+    assert.deepEqual(input.attachments, []);
+    assert.deepEqual(input.inputProvenance?.origin, receipt.dispatched!.origin);
+    assert.equal(input.inputProvenance?.originalChanged, true);
+    const prompt = composeProviderPrompt(input);
+    assert.match(prompt.inputBodyText, /# Session Input\n\nfixed instruction/);
+    assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
+    return createPartialResult({ assistantText: "done" });
+  }, { assertCapturedComposerAttachmentsAvailable: async (_session, attachments) => { assert.deepEqual(attachments, []); },
+    persistQueuedTurnStart: async (next, count, _queueId, turn) => {
+      assert.equal(next.messages.at(-1)?.text, "fixed instruction");
+      return { session: { ...next, messageCount: count + 1 }, turn: { ...turn, id: 41 } };
+    }, appendTerminalSession: async (next) => next });
+  assert.deepEqual(await runtime.runQueuedSessionTurn(receipt, async () => {}), { state: "completed" });
+  assert.equal(calls, 1);
+  assert.deepEqual(receipt, original);
+});
 
 // @test-value v2
 // kind = "contract"
@@ -768,7 +919,7 @@ it("queued runtimeは無効になった捕捉入力を開始前にfailedで返�
         return { snapshot: { providers: [provider] }, provider };
       },
     });
-    if (stage === "model") receipt.captured.request.executionOptions = { ...receipt.captured.request.executionOptions, model: "" };
+    if (stage === "model") receipt.dispatched!.request.executionOptions = { ...receipt.dispatched!.request.executionOptions, model: "" };
     const result = await runtime.runQueuedSessionTurn(receipt, async () => { assert.fail("Rejected start cannot be observed as started"); });
     assert.equal(result.state, "failed");
     assert.ok(result.reason);
@@ -980,7 +1131,7 @@ describe("SessionRuntimeService stale retry helpers", () => {
 describe("SessionRuntimeService", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "async質問の回答は通常steerと区別され、受理ACKと終端が競合しても回答本文と全質問の最終状態を同じturnに保存する"
+  // claim = "async質問の回答は通常steerと区別され、ACK前は入力をpendingで保存し、ACKと終端が競合しても回答本文と全質問の最終状態を同じturnに保存する"
   // oracle = { type = "contract", ref = "Issue #823; Issue #780 explicit same-turn input" }
   // fault = "通常steerで質問を回答済みにする、provider progressで質問を消す、ACK前に回答済みへ進める、または終端保存が回答ACKを追い越して質問履歴を失う"
   // observable = "実SessionElicitationServiceのlive要求・record、adapter steer入力、保存Sessionのuser本文とterminal elicitationRecords"
@@ -1056,7 +1207,8 @@ describe("SessionRuntimeService", () => {
         const answer = questions.resolveLiveElicitation(stored.id, "answer-me", { action: "accept", content: { answer: "Take option A" } });
         await waitForCondition(() => sent.length === 2, "answer dispatched through existing steer");
         assert.equal(currentLive().elicitationRecords?.[0].status, "pending", "ACK is required before answered");
-        assert.deepEqual(stored.messages.map(message => message.text), ["start", "ordinary steer"]);
+        assert.deepEqual(stored.messages.map(message => message.text), ["start", "ordinary steer", "Take option A"]);
+        assert.equal(stored.messages.at(-1)?.turnInput?.state, "pending");
         if (outcome === "canceled") service.cancelRun(stored.id);
         finishProvider();
         await waitForCondition(() => currentLive().inputAvailable === false, "provider terminal stops input admission");
@@ -1263,6 +1415,7 @@ describe("SessionRuntimeService", () => {
       webContents = { send() { throw new Error("renderer unavailable"); } };
       isDestroyed() { return this.destroyed; }
       isMinimized() { return false; }
+      minimize() {}
       restore() {} focus() {} show() {}
       once(_event: "ready-to-show", _listener: () => void) {}
       on(event: "close", listener: (event: { preventDefault(): void }) => void): void;
@@ -1483,10 +1636,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "queued steerは捕捉添付を再解決せず、準備中の重複を拒否し、append返信喪失でも正本件数をterminalへ維持する"
+  // claim = "queued steerは固定添付・実送信元をProviderへ渡し、準備中の重複を拒否し、append返信喪失でも元本文と正本件数をterminalへ維持する"
   // oracle = { type = "contract", ref = "GitHub Issue #801: current-turn queued input atomic commit and captured attachments" }
   // fault = "queued本文を再previewするか、commit済み追加入力の件数を失いterminal保存を失敗させる"
-  // observable = "provider attachments、重複reject、append queue contextと件数、terminal本文"
+  // observable = "provider attachmentsと実送信元/変更有無付き入力本文、重複reject、append queue contextと件数、terminalの未装飾本文"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService.steerQueuedSessionTurn and terminal persistence"
   // lifecycle = "permanent"
@@ -1514,10 +1667,14 @@ describe("SessionRuntimeService", () => {
     };
     const receipt: SessionTurnQueueReceipt = {
       sessionId: stored.id, incarnationId: getSessionIncarnationId(stored), id: "queued-input", requestId: "queued-request", sequence: 1, queuePosition: 1,
-      state: "starting", turnId: null, inputTurnId: "provider-turn", userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
+      state: "starting", turnId: "1", inputTurnId: "provider-turn", userMessageSeq: null, reason: null, releasedAt: null, createdAt: "now", updatedAt: "now",
       captured: { request: { userMessage: "queued @captured", clientRequestId: "queued-request", executionOptions: TEST_EXECUTION_OPTIONS },
         attachments: [{ id: "captured", kind: "file", source: "text", absolutePath: "captured-path", displayPath: "captured", workspaceRelativePath: "captured", isOutsideWorkspace: false }], provider: stored.provider, workspacePath: stored.workspacePath },
     };
+    receipt.captured.origin = { kind: "session", actorKind: "main", actorSessionId: "actual-parent", actorIncarnationId: "parent-incarnation",
+      actorTurnId: "15", operation: "send", targetSessionId: stored.id, targetIncarnationId: getSessionIncarnationId(stored) };
+    receipt.accepted = structuredClone(receipt.captured);
+    receipt.dispatched = structuredClone(receipt.captured);
     const service = createTestRuntime({
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async (_, text) => { assert.equal(text, "start"); return { attachments: [], errors: [] }; },
@@ -1545,6 +1702,9 @@ describe("SessionRuntimeService", () => {
     finishPrepare();
     await steer;
     assert.deepEqual(sent[0]?.attachments, receipt.captured.attachments);
+    assert.match(sent[0]!.userMessage, /# Session Input\n\nqueued @captured/);
+    assert.match(sent[0]!.userMessage, /"actorSessionId": "actual-parent"/);
+    assert.match(sent[0]!.userMessage, /"changedSinceAcceptance": false/);
     assert.equal(sent.length, 1);
     finishTurn();
     assert.deepEqual((await turn).messages.map((message) => message.text), ["start", "queued @captured", "done"]);

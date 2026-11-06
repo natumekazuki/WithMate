@@ -37,7 +37,7 @@ Home関連の追加・修正では、`HomeApp`への責務集中を抑えるた�
 
 ## Sessionの起動と継続
 
-HomeのNew Sessionでtitle、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。
+HomeのNew Sessionでtitle、起点Role（Standalone／Overall Coordinator）、workspace、provider、Characterを選び、保存済みSessionを作成してSession Windowを開く。同じ作成試行の再試行は同じclientRequestIdと作成入力を使う。Recent Sessionsからの再開では、同じSessionのWindowが開いていれば再利用・focusする。
 
 通常Sessionはstable Character ownerと表示metadataを維持し、active Characterの定義変更だけを送信開始時に反映する。詳細は[Character Storage](character-storage.md#runtime-snapshot)を参照する。Character authoringでは専用のSession種別とworkspaceを使い、Windowの基本lifecycleは通常Sessionと共有する。
 

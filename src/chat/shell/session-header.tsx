@@ -6,8 +6,19 @@ import type { LiveBackgroundTask } from "../../../src-shared/session/runtime-sta
 
 import type { ChatWindowModeKind } from "../../chat/chat-window-mode.js";
 import { SessionHeaderIcon } from "./session-header-icon.js";
+import type { SessionRole } from "../../../src-shared/session/session-role.js";
+
+const SESSION_ROLE_LABELS: Record<SessionRole, string> = {
+  standalone: "Standalone",
+  "overall-coordinator": "Overall Coordinator",
+  "task-coordinator": "Task Coordinator",
+  executor: "Worker",
+};
 
 export type SessionHeaderProps = {
+  sessionRole?: SessionRole;
+  isRoleChangePending?: boolean;
+  onPromoteToOverallCoordinator?: () => void;
   taskTitle: string;
   isEditingTitle: boolean;
   titleDraft: string;
@@ -19,6 +30,7 @@ export type SessionHeaderProps = {
   showTerminalButton?: boolean;
   isTerminalDisabled?: boolean;
   showDeleteButton?: boolean;
+  deleteActionLabel?: string;
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
   actions?: ReactNode;
@@ -34,6 +46,9 @@ export type SessionHeaderProps = {
 };
 
 export function SessionHeader({
+  sessionRole,
+  isRoleChangePending = false,
+  onPromoteToOverallCoordinator,
   taskTitle,
   isEditingTitle,
   titleDraft,
@@ -45,6 +60,7 @@ export function SessionHeader({
   showTerminalButton = true,
   isTerminalDisabled = false,
   showDeleteButton = true,
+  deleteActionLabel = "Delete",
   workspaceActions,
   sessionFilesActions,
   actions,
@@ -88,6 +104,7 @@ export function SessionHeader({
         {!isEditingTitle ? (
           <div className="session-title-shell">
             <span className="session-window-title session-title-accent">{taskTitle}</span>
+            {sessionRole ? <span className="session-window-control-group-label" aria-label={`Role: ${SESSION_ROLE_LABELS[sessionRole]}`}>{SESSION_ROLE_LABELS[sessionRole]}</span> : null}
           </div>
         ) : (
           <>
@@ -148,7 +165,7 @@ export function SessionHeader({
               </div>
             ) : null}
             {actions}
-            {onTogglePin || showRenameButton || showDeleteButton ? (
+            {onTogglePin || showRenameButton || showDeleteButton || onPromoteToOverallCoordinator ? (
               <details
                 ref={sessionActionsRef}
                 className="session-header-more"
@@ -196,9 +213,20 @@ export function SessionHeader({
                       Rename
                     </button>
                   ) : null}
+                  {onPromoteToOverallCoordinator ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => runSessionAction(onPromoteToOverallCoordinator)}
+                      disabled={isRunning || isReadOnly || isRoleChangePending}
+                      aria-busy={isRoleChangePending || undefined}
+                    >
+                      <ButtonContent busy={isRoleChangePending} busyLabel="Changing session role.">Become Overall Coordinator</ButtonContent>
+                    </button>
+                  ) : null}
                   {showDeleteButton ? (
                     <button className="danger" type="button" role="menuitem" onClick={() => runSessionAction(onDeleteSession)} disabled={isRunning}>
-                      Delete
+                      {deleteActionLabel}
                     </button>
                   ) : null}
                 </div>

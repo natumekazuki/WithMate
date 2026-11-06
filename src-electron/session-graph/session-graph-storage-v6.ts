@@ -1,5 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
-import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphRecordInput, SessionGraphRecord, SessionGraphRelation, SessionGraphTopic, SessionGraphEndpoint } from "../../src-shared/session-graph/session-graph-contract.js";
+import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphOperation, SessionGraphRequest, SessionGraphRecordInput, SessionGraphRecord, SessionGraphRelation, SessionGraphTopic, SessionGraphEndpoint, SessionGraphStorageAuthority } from "../../src-shared/session-graph/session-graph-contract.js";
 import { SESSION_GRAPH_RELATION_LIMIT } from "../../src-shared/session-graph/session-graph-contract.js";
 import { sessionGraphRecordSchema } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
@@ -109,12 +109,24 @@ export class SessionGraphStorageV6 {
     return { status: "ok", revision, items, total, offset, hasMore, incomplete: hasMore || offset > 0, endpoints };
   }
 
-  execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots: SessionGraphIdentity[] = []): SessionGraphStorageResult<K> {
+  execute<K extends SessionGraphStorageOperation>(owner: SessionGraphOwner, operation: K, request: SessionGraphStorageRequest<K>, identity?: SessionGraphIdentity, actorSnapshots: SessionGraphIdentity[] = [], authority?: SessionGraphStorageAuthority): SessionGraphStorageResult<K> {
     const input = sessionGraphStorageRequestSchemas[operation].parse(request);
     if (operation === "apply") assertRuntimeTurnAdmission();
     this.db.exec(operation === "apply" ? "BEGIN IMMEDIATE" : "BEGIN");
     try {
-      if (!this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND incarnation_id = ?").get(owner.sessionId, owner.incarnationId)) throw new Error("Session Graph owner is stale or unavailable.");
+      this.validateOwner(owner);
+      const requestedOwner = (input as SessionGraphRequest<"recent">).graphOwner;
+      if (requestedOwner && (requestedOwner.sessionId !== owner.sessionId || requestedOwner.incarnationId !== owner.incarnationId)) throw new Error("Session Graph read target does not match its owner.");
+      if (authority) {
+        this.validateOwner(authority.callerOwner);
+        const caller = authority.caller;
+        const valid = caller.kind === "main"
+          ? this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND incarnation_id = ? AND COALESCE(root_session_id, id) = ?").get(caller.sessionId, caller.incarnationId, authority.callerOwner.sessionId)
+          : this.db.prepare(`SELECT 1 FROM auxiliary_sessions a JOIN sessions_v6 m ON m.id = a.parent_session_id
+              WHERE a.id = ? AND a.created_at = ? AND COALESCE(m.root_session_id, m.id) = ?`).get(caller.sessionId, caller.incarnationId, authority.callerOwner.sessionId);
+        if (!valid || identity?.sessionId !== caller.sessionId || identity.role !== caller.kind) throw new Error("Session Graph caller identity is stale or outside its Crew.");
+        if (operation === "apply" && (owner.sessionId !== authority.callerOwner.sessionId || owner.incarnationId !== authority.callerOwner.incarnationId)) throw new Error("Session Graph writes require the caller's own Crew.");
+      }
       const revision = (this.db.prepare("SELECT revision FROM session_graphs_v6 WHERE session_id = ?").get(owner.sessionId) as { revision: number } | undefined)?.revision ?? 0;
       let output: unknown;
       if (input.expectedRevision !== undefined && input.expectedRevision !== revision) output = { status: "conflict", revision };
@@ -139,8 +151,15 @@ export class SessionGraphStorageV6 {
   }
 
   private validateIdentity(owner: SessionGraphOwner, identity: SessionGraphIdentity): void {
-    if (identity.sessionId === owner.sessionId && identity.role === "main") return;
-    if (identity.role !== "auxiliary" || !this.db.prepare("SELECT 1 FROM auxiliary_sessions WHERE id = ? AND parent_session_id = ?").get(identity.sessionId, owner.sessionId)) throw new Error("Session Graph identity is outside the parent session.");
+    const member = identity.role === "main"
+      ? this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND COALESCE(root_session_id, id) = ?").get(identity.sessionId, owner.sessionId)
+      : this.db.prepare(`SELECT 1 FROM auxiliary_sessions a JOIN sessions_v6 m ON m.id = a.parent_session_id
+          WHERE a.id = ? AND COALESCE(m.root_session_id, m.id) = ?`).get(identity.sessionId, owner.sessionId);
+    if (!member) throw new Error("Session Graph identity is outside the parent Crew.");
+  }
+
+  private validateOwner(owner: SessionGraphOwner): void {
+    if (!this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ? AND incarnation_id = ? AND COALESCE(root_session_id, id) = id").get(owner.sessionId, owner.incarnationId)) throw new Error("Session Graph owner is stale or unavailable.");
   }
 
   private apply(owner: SessionGraphOwner, input: SessionGraphRequest<"apply">, revision: number, identity: SessionGraphIdentity | undefined, snapshots: SessionGraphIdentity[]) {

@@ -82,6 +82,9 @@ export type SessionStorageRead = AwaitableStorageMethods<
   getSessionMessageIdentity?: AwaitableStorageMethods<SessionStorageV6, "getSessionMessageIdentity">["getSessionMessageIdentity"];
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
   listSessionCredentialThreads?(): Awaitable<import("../session/session-storage-v6.js").SessionCredentialThreadInfo[]>;
+  getSessionLifecycleOperation?: AwaitableStorageMethods<SessionStorageV6, "getSessionLifecycleOperation">["getSessionLifecycleOperation"];
+  listPendingSessionLifecycleOperations?: AwaitableStorageMethods<SessionStorageV6, "listPendingSessionLifecycleOperations">["listPendingSessionLifecycleOperations"];
+  getCrewDeletionStatus?: AwaitableStorageMethods<SessionStorageV6, "getCrewDeletionStatus">["getCrewDeletionStatus"];
 };
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
@@ -100,6 +103,14 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   appendSessionSteer?: AwaitableStorageMethods<SessionStorageV6, "appendSessionSteer">["appendSessionSteer"];
+  beginSessionSteer?: AwaitableStorageMethods<SessionStorageV6, "beginSessionSteer">["beginSessionSteer"];
+  settleSessionSteer?: AwaitableStorageMethods<SessionStorageV6, "settleSessionSteer">["settleSessionSteer"];
+  patchSessionMetadata?: AwaitableStorageMethods<SessionStorageV6, "patchSessionMetadata">["patchSessionMetadata"];
+  promoteSessionToOverallCoordinator?: AwaitableStorageMethods<SessionStorageV6, "promoteSessionToOverallCoordinator">["promoteSessionToOverallCoordinator"];
+  beginSessionLifecycleOperation?: AwaitableStorageMethods<SessionStorageV6, "beginSessionLifecycleOperation">["beginSessionLifecycleOperation"];
+  prepareSessionLifecycleCreation?: AwaitableStorageMethods<SessionStorageV6, "prepareSessionLifecycleCreation">["prepareSessionLifecycleCreation"];
+  advanceSessionLifecycleOperation?: AwaitableStorageMethods<SessionStorageV6, "advanceSessionLifecycleOperation">["advanceSessionLifecycleOperation"];
+  deleteSessionCrewForLifecycle?: AwaitableStorageMethods<SessionStorageV6, "deleteSessionCrewForLifecycle">["deleteSessionCrewForLifecycle"];
   appendSessionTerminal?: AwaitableStorageMethods<SessionStorageV6, "appendSessionTerminal">["appendSessionTerminal"];
   checkpointSessionRunMetadata?: AwaitableStorageMethods<SessionStorageV6, "checkpointSessionRunMetadata">["checkpointSessionRunMetadata"];
   clearCharacterAuthoringRuntimeState?(
@@ -124,13 +135,15 @@ export type AuxiliarySessionStorageAsyncAccess = AwaitableStorageMethods<
   | "listAllAuxiliarySessions"
   | "listAuxiliarySessions"
   | "listAuxiliarySessionSummaries"
-  | "listActiveAuxiliarySessionSummaries"
-  | "listRunningActiveAuxiliarySessions"
-  | "getActiveAuxiliarySession"
+  | "listRunningAuxiliarySessions"
+  | "getLatestAuxiliarySession"
   | "getAuxiliarySession"
   | "getAuxiliarySessionMetadata"
   | "appendAuxiliaryRunningTurnStart"
   | "appendAuxiliarySteer"
+  | "beginAuxiliarySteer"
+  | "settleAuxiliarySteer"
+  | "patchAuxiliarySessionMetadata"
   | "appendAuxiliaryTerminal"
   | "checkpointAuxiliaryRuntimeMetadata"
   | "getAuxiliarySessionView"
@@ -441,6 +454,9 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
   getAuxiliarySessionMetadata(): null { return null; }
   appendAuxiliaryRunningTurnStart(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   appendAuxiliarySteer(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  beginAuxiliarySteer(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  settleAuxiliarySteer(): never { throw new Error("Auxiliary runtime storage requires V6."); }
+  patchAuxiliarySessionMetadata(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   appendAuxiliaryTerminal(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   checkpointAuxiliaryRuntimeMetadata(): never { throw new Error("Auxiliary runtime storage requires V6."); }
   getAuxiliarySessionView(): null { return null; }
@@ -457,15 +473,11 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
     return [];
   }
 
-  listActiveAuxiliarySessionSummaries(): AuxiliarySessionSummary[] {
+  listRunningAuxiliarySessions(): AuxiliarySessionSummary[] {
     return [];
   }
 
-  listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[] {
-    return [];
-  }
-
-  getActiveAuxiliarySession(): AuxiliarySession | null {
+  getLatestAuxiliarySession(): AuxiliarySession | null {
     return null;
   }
 

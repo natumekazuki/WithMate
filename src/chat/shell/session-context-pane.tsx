@@ -18,6 +18,8 @@ import {
 } from "../runtime/session-ui-projection.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
+import { CoordinationPane } from "../../coordination/CoordinationPane.js";
+import type { OpenCoordinationRequest } from "../../../src-shared/coordination/coordination-window-contract.js";
 
 import { SessionSwitcher, type SessionSwitcherOption } from "../../chat/session-switcher.js";
 
@@ -52,6 +54,9 @@ export type MessageNavigatorPage = {
 };
 
 export type SessionContextPaneProps = {
+  visible?: boolean;
+  coordinationSessionId?: string;
+  coordinationNavigation?: OpenCoordinationRequest | null;
   activeContextPaneTab: ContextPaneTabKey;
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: ContextPaneProjection;
@@ -271,6 +276,9 @@ export class SessionPaneErrorBoundary extends Component<
 }
 
 export function SessionContextPane({
+  visible = true,
+  coordinationSessionId,
+  coordinationNavigation = null,
   activeContextPaneTab,
   availableContextPaneTabs,
   contextPaneProjection,
@@ -301,6 +309,10 @@ export function SessionContextPane({
   onJumpToMessage,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const coordinationScrollTop = useRef(0);
+  useLayoutEffect(() => {
+    if (activeContextPaneTab === "coordination" && visible && contentRef.current) contentRef.current.scrollTop = coordinationScrollTop.current;
+  }, [activeContextPaneTab, visible]);
   useEffect(() => {
     onMessageNavigatorActiveChange?.(activeContextPaneTab === "messages");
   }, [activeContextPaneTab, onMessageNavigatorActiveChange]);
@@ -425,6 +437,7 @@ export function SessionContextPane({
       return;
     }
 
+    if (activeContextPaneTab === "coordination") return;
     contentNode.scrollTop = activeContextPaneTab === "messages"
       || activeContextPaneTab === "glossary"
       ? 0
@@ -432,7 +445,7 @@ export function SessionContextPane({
   }, [contentScrollKey]);
 
   return (
-    <aside className="session-context-pane session-context-pane-header-expanded">
+    <aside className="session-context-pane session-context-pane-header-expanded" style={visible ? undefined : { display: "none" }}>
       <section className={`command-monitor-shell ${activeContextPaneTab}${messageNavigatorBookmarksEnabled ? " has-message-filter-toolbar" : ""}`} aria-label="Right pane">
         <div className="command-monitor-head">
           <SessionSwitcher
@@ -447,7 +460,9 @@ export function SessionContextPane({
           />
         </div>
 
-        <div ref={contentRef} className="command-monitor-content">
+        <div ref={contentRef} className="command-monitor-content" onScroll={(event) => {
+          if (activeContextPaneTab === "coordination") coordinationScrollTop.current = event.currentTarget.scrollTop;
+        }}>
           {activeContextPaneTab === "messages" && messageNavigatorBookmarksEnabled ? (
             <div className="messages-navigator-toolbar">
             <div className="messages-navigator-filter-toolbar" role="group" aria-label="Messages filter">
@@ -476,6 +491,7 @@ export function SessionContextPane({
             </div>
           ) : null}
           <div className={`command-monitor-stack ${activeContextPaneTab}`}>
+            {coordinationSessionId ? <CoordinationPane sessionId={coordinationSessionId} active={visible && activeContextPaneTab === "coordination"} navigation={coordinationNavigation} /> : null}
             {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
               <div className="command-monitor-card">
                 <div className="command-monitor-card-head">

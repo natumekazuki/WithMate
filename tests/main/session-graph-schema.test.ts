@@ -32,13 +32,13 @@ function graphFixture(db: DatabaseSync, payload: string): void {
 function retainedFixture(db: DatabaseSync): void {
   db.exec(`
     INSERT INTO characters (id, name, created_at, updated_at) VALUES ('character', 'Character', 'time', 'time');
-    INSERT INTO sessions_v6 (id, incarnation_id, title, state, provider_id, catalog_revision, model_id,
+    INSERT INTO sessions_v6 (id, root_session_id, incarnation_id, title, state, provider_id, catalog_revision, model_id,
       approval_mode, character_id, character_snapshot_json, created_at, updated_at, last_active_at)
-      VALUES ('main-a', 'incarnation-a', 'Main A', 'active', 'codex', 1, 'model', 'default', 'character', '{}', 'time', 'time', 'time'),
-        ('main-b', 'incarnation-b', 'Main B', 'active', 'codex', 1, 'model', 'default', NULL, NULL, 'time', 'time', 'time');
+      VALUES ('main-a', 'main-a', 'incarnation-a', 'Main A', 'active', 'codex', 1, 'model', 'default', 'character', '{}', 'time', 'time', 'time'),
+        ('main-b', 'main-b', 'incarnation-b', 'Main B', 'active', 'codex', 1, 'model', 'default', NULL, NULL, 'time', 'time', 'time');
     INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at) VALUES ('main-a', 0, 'user', 'conversation', 'time');
-    INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
-      VALUES ('aux', 'main-a', 'active', 'time', 'time');
+    INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+      VALUES ('aux', 'main-a', 'time', 'time');
     INSERT INTO auxiliary_session_messages VALUES ('aux', 0, 'user', '{"text":"aux conversation"}', NULL, 'time');
     INSERT INTO auxiliary_session_drafts VALUES ('aux', 'main-a', 'draft-incarnation', 3, 'draft', 'time');
     INSERT INTO session_turns_v6 (session_id, phase, started_at, completed_at, updated_at)

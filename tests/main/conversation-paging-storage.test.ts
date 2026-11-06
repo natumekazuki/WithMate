@@ -56,7 +56,6 @@ test("会話pageは全履歴seqを維持しfull保存へ流れない", async () 
     const aux: AuxiliarySession = {
       id: "aux-pages",
       parentSessionId: session.id,
-      status: "active",
       runState: "idle",
       title: "",
       preview: "",
@@ -75,7 +74,6 @@ test("会話pageは全履歴seqを維持しfull保存へ流れない", async () 
       displayAfterMessageIndex: null,
       createdAt: "2026-10-04T00:00:00.000Z",
       updatedAt: "2026-10-04T00:00:00.000Z",
-      closedAt: "",
     };
     auxiliary.upsertAuxiliarySession(aux);
     for (const [storage, id] of [
@@ -154,14 +152,12 @@ test("paged Renderer metadata更新はfull履歴とBookmarkを保持する", asy
       ...session,
       id: "aux-service",
       parentSessionId: session.id,
-      status: "active",
       runState: "idle",
       title: "Before",
       composerDraft: "",
       displayAfterMessageIndex: null,
       createdAt: "2026-10-04T00:00:00.000Z",
       updatedAt: "2026-10-04T00:00:00.000Z",
-      closedAt: "",
       characterId: "char",
       characterRuntimeSnapshot: {
         characterId: "char",
@@ -186,6 +182,7 @@ test("paged Renderer metadata更新はfull履歴とBookmarkを保持する", asy
       getStoredSession: (id) => main.getSession(id),
       isSessionRunInFlight: () => false,
       upsertStoredSession: (next) => main.upsertSession(next),
+      patchStoredSessionMetadata: main.patchSessionMetadata.bind(main),
       replaceStoredSessions: () => undefined,
       listStoredSessions: () => [],
       getAppSettings: () => normalizeAppSettings({}),
@@ -209,6 +206,8 @@ test("paged Renderer metadata更新はfull履歴とBookmarkを保持する", asy
     });
     const mainView = main.getSessionView(session.id)!;
     const auxView = auxiliary.getAuxiliarySessionView(aux.id)!;
+    await mainService.patchSessionMetadata(session.id, mainView.incarnationId!, { title: "After" });
+    await auxService.patchAuxiliarySessionMetadata({ auxiliarySessionId: aux.id, parentSessionId: aux.parentSessionId, createdAt: aux.createdAt, patch: { title: "After" } });
     await mainService.updateSession({
       ...mainView,
       taskTitle: "After",

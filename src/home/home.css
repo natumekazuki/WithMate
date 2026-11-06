@@ -885,15 +885,6 @@
   border-radius: 50%;
 }
 
-.home-page .home-monitor-status-icon.closed {
-  color: #8794a8;
-}
-
-.home-page .home-monitor-status-icon.closed .home-monitor-status-icon-mark {
-  border: 1.5px solid currentColor;
-  border-radius: 50%;
-}
-
 .home-page .home-monitor-status-icon.loading {
   color: #aab6c8;
 }
@@ -1612,7 +1603,7 @@
 }
 
 .home-launch-dialog .launch-panel {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }

@@ -11,6 +11,7 @@ type HomeLaunchDialogPropsInput = {
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
+  onSelectRole: (role: HomeLaunchDraft["sessionRole"]) => void;
   onChangeWorkspacePath: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectSessionFolder: () => void;
@@ -29,6 +30,7 @@ export function buildHomeLaunchDialogProps({
   launchStarting,
   onClose,
   onChangeTitle,
+  onSelectRole,
   onChangeWorkspacePath,
   onBrowseWorkspace,
   onSelectSessionFolder,
@@ -40,6 +42,7 @@ export function buildHomeLaunchDialogProps({
   return {
     open: draft.open,
     title: draft.title,
+    sessionRole: draft.sessionRole,
     sessionFolderSelected: projection.sessionFolderSelected,
     workspacePathInput: projection.workspacePathInput,
     workspaceValidation: projection.workspaceValidation,
@@ -59,6 +62,7 @@ export function buildHomeLaunchDialogProps({
     launchStarting,
     onClose,
     onChangeTitle,
+    onSelectRole,
     onChangeWorkspacePath,
     onBrowseWorkspace,
     onSelectSessionFolder,

@@ -21,6 +21,7 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
+import { TurnInputDetails, type TurnInputReadContext } from "./turn-input-details.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
@@ -87,6 +88,7 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
 }
 export type SessionMessageColumnProps = {
+  inputReadContext?: TurnInputReadContext;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
   responsePending?: boolean;
   submissionError?: string;
@@ -455,6 +457,7 @@ export function SelectionTextActionSurface({
 }
 
 export function SessionMessageColumn({
+  inputReadContext,
   turnQueueMetadata,
   onCancelQueuedTurn,
   onReleaseInterruptedTurn,
@@ -1518,6 +1521,7 @@ export function SessionMessageColumn({
                 ) : null}
                 <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
                   <div className="message-card-content">
+                    <TurnInputDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} />
                     {artifact && !isAssistant ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"

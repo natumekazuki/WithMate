@@ -43,17 +43,17 @@ function readCssAtRuleBlocks(stylesSource: string, header: string): string[] {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは3分類の見出しと水平境界を表示し、分類内一覧のscrollと内容幅740pxでの列数切替をCSSへ宣言する"
+// claim = "MonitorはAttention・Coordination・Running・Stoppedの見出しと水平境界を表示し、各分類内一覧のscrollとSession一覧の内容幅740pxでの列数切替をCSSへ宣言する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "分類境界や見出しを欠落させる、一覧が割当高さ内でscrollできない、またはviewport幅で列数を決める"
 // observable = "描画したsectionとseparatorの順序と件数、busy属性、一覧scrollとcontainer queryのCSS"
 // observation_boundary = "implementation"
-// scope = "HomeMonitorContentとhome.cssのMonitor専用layout"
+// scope = "HomeMonitorContentとMonitor専用layout CSS"
 // lifecycle = "permanent"
 // impact = "10〜20親の状態を件数の偏りに応じて連続して確認でき、Homeでも実際のMonitor幅に合う密度を使える"
 // distinction = "component描画とCSSのscroll責務・container境界を確認する。境界操作は別component test、実寸法と列の整列はbrowserで確認する"
 // @end-test-value
-test("Monitorは3分類の境界と分類内scrollと内容幅に応じた列数を宣言する", async () => {
+test("Monitorは4分類の境界と分類内scrollと内容幅に応じた列数を宣言する", async () => {
   const stylesSource = await readStylesheet();
   for (const auxiliaryDataState of ["loading", "ready"] as const) {
     const html = renderToStaticMarkup(createElement(HomeMonitorContent, {
@@ -69,16 +69,18 @@ test("Monitorは3分類の境界と分類内scrollと内容幅に応じた列数
 
     assert.deepEqual(
       [...(sections?.children ?? [])].map((section) => section.getAttribute("aria-labelledby") ?? section.getAttribute("role")),
-      ["home-monitor-approval", "separator", "home-monitor-running", "separator", "home-monitor-inactive"],
+      ["home-monitor-approval", "separator", "home-monitor-coordination", "separator", "home-monitor-running", "separator", "home-monitor-inactive"],
     );
-    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Attention", "Running", "Stopped"]);
-    assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0"]);
+    assert.deepEqual([...document.querySelectorAll(".home-monitor-section-head h3")].map((heading) => heading.textContent), ["Attention", "Coordination", "Running", "Stopped"]);
+    assert.deepEqual([...document.querySelectorAll(".home-monitor-count")].map((count) => count.textContent), ["0", "0", "0", "0"]);
     assert.equal(document.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), String(auxiliaryDataState === "loading"));
   }
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-sections > .home-monitor-section"), /display:\s*flex;\s*flex-direction:\s*column;/);
   const sectionsRule = readCssRule(stylesSource, ".home-page .home-monitor-sections");
   assert.match(sectionsRule, /overflow:\s*hidden;/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-list"), /overflow-y:\s*auto;/);
+  assert.match(readCssRule(stylesSource, ".coordination-monitor-list"), /overflow-y:\s*auto;/);
+  assert.match(readCssRule(stylesSource, ".coordination-monitor-list"), /min-height:\s*0;/);
   assert.match(sectionsRule, /container:\s*monitor-content \/ inline-size;/);
   const columns = readCssAtRuleBlocks(stylesSource, "@container monitor-content (min-width: 740px)")[0];
   assert.ok(columns);
@@ -91,13 +93,13 @@ test("Monitorは3分類の境界と分類内scrollと内容幅に応じた列数
 // kind = "contract"
 // claim = "Home Monitorの承認は静止した感嘆符、他の状態は固有形状で区別し、待機と終了は円形で揃えreduced motionにも従う"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
-// fault = "承認を回転spinnerや色だけで示す、他の状態の形を失う、旧status selectorを残す、またはreduced motion時も回転を続ける"
-// observable = "状態別status icon rule本体、旧selectorの不在、reduced motion時のanimation無効化CSS"
+// fault = "承認を回転spinnerや色だけで示す、他の状態の形を失う、またはreduced motion時も回転を続ける"
+// observable = "状態別status icon rule本体とreduced motion時のanimation無効化CSS"
 // observation_boundary = "implementation"
 // scope = "Home Monitor and shared session status icon CSS"
 // lifecycle = "permanent"
 // impact = "承認待ちを実行中と混同せず、失敗・中断・待機・終了・未確定も静止形状で区別できる"
-// distinction = "Home Monitor専用iconのclosed形状と、共有status iconの既存形状・旧selector不在・reduced motionをまとめて検証する"
+// distinction = "Home Monitor専用iconと共有status iconの形状・reduced motionをまとめて検証する。待機と終了は共通neutral表現を使う"
 // @end-test-value
 test("Home Monitor の status icon は状態ごとの形とmotion制御で styling される", async () => {
   const stylesSource = await readStylesheet();
@@ -110,7 +112,6 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
     stylesSource,
     /\.home-page \.home-session-chip-status,\s*\.home-page \.home-session-status,\s*\.home-page \.session-mode-badge\s*{/,
   );
-  assert.doesNotMatch(stylesSource, /\.home-page \.home-monitor-status(?:[.\s,{]|$)/);
   for (const state of ["running", "interrupted", "error", "neutral"]) {
     assert.match(
       stylesSource,
@@ -130,7 +131,6 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.error"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.interrupted"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral"), "");
-  assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.closed"), "");
   assert.notEqual(readCssRule(stylesSource, ".home-page .home-monitor-status-icon.loading"), "");
   assert.match(
     readCssRule(stylesSource, ".home-page .home-monitor-status-icon.running .home-monitor-status-icon-mark"),
@@ -149,11 +149,7 @@ test("Home Monitor の status icon は状態ごとの形とmotion制御で styli
     /border: 1\.5px solid currentColor;/,
   );
   assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.closed .home-monitor-status-icon-mark"),
-    /border: 1\.5px solid currentColor;/,
-  );
-  assert.match(
-    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.closed .home-monitor-status-icon-mark"),
+    readCssRule(stylesSource, ".home-page .home-monitor-status-icon.neutral .home-monitor-status-icon-mark"),
     /border-radius: 50%;/,
   );
   assert.match(

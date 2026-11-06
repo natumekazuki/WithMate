@@ -8,6 +8,14 @@ Main Sessionの新規作成では、`New Session`のworkspace選択やCharacter 
 
 ## Access Contract
 
+### Crew Folder
+
+通常Mainは保存済みの`rootSessionId`（Standaloneは自身）から、Auxiliaryは所属Mainから同じCrew起点を解決し、追加のmanaged directory `crew-files/{rootSessionId}/`を共有する。Workspaceと既存SessionFolderは維持し、paste・添付コピー先を変更しない。Crew Folderは共通資料・成果物・引き継ぎ用であり、置かれただけのファイルを特定Turnの公開artifactとは扱わない。
+
+入力準備時に自Crewのdirectoryを確保し、composer preview、Queue、追加指示、Provider入力の許可rootへ接続する。Folder ContextとSession APIの参照、Filesの`Crew Folder` rootは同じpathを使う。Codex・Copilot・Claude・OpenCodeの追加directory設定を利用し、各実行のApproval／Sandboxは変更しない。全Crewの公開情報読取とfilesystemの許可は別であり、別Crewのfolderを自動接続しない。
+
+Crew Folderの内容はWindowやTurnの寿命では削除しない。Crew削除の共通lifecycleで所有resourceとして扱い、Workspaceと重なるfolderを保護する。子作成失敗のcleanupで既存Crewのfolderを削除せず、Settingsの`Clean Session Files`の対象にも含めない。FilesのPinと表示状態は従来のMain／Window所有を維持する。
+
 Session Local Filesはcomposerの`@path` preview、Markdown local image、providerのattachment／additional directory解決で許可対象に含める。ユーザーが明示追加する`allowedAdditionalDirectories`とは別のmanaged directoryであり、DBのその一覧やUIの`Dirs {N}`に数えない。`Session Folder`自体をworkspaceにした場合は同じdirectoryを二重に追加しない。promptへfile本文を常設inline展開せず、参照とprovider固有の画像入力に分ける。
 
 ## Composerと保存

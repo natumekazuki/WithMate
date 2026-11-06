@@ -3,10 +3,11 @@ import type { LiveBackgroundTask, LiveRunStep, ProviderQuotaSnapshot, ProviderQu
 import type { SessionGlossaryProjection } from "../../../src-shared/glossary/glossary-contract.js";
 import { liveRunStepStatusLabel } from "../../ui/ui-utils.js";
 
-export type ContextPaneTabKey = "latest-command" | "messages" | "glossary" | "reasoning" | "tasks";
+export type ContextPaneTabKey = "latest-command" | "coordination" | "messages" | "glossary" | "reasoning" | "tasks";
 
 export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = [
   "latest-command",
+  "coordination",
   "messages",
   "glossary",
   "reasoning",
@@ -332,6 +333,8 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
       return "Latest Command";
     case "messages":
       return "Messages";
+    case "coordination":
+      return "Coordination";
     case "glossary":
       return "Glossary";
     case "reasoning":

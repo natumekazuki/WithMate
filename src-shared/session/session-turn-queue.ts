@@ -1,11 +1,23 @@
 import type { ComposerAttachment, RunSessionTurnRequest } from "./runtime-state.js";
 
 export type SessionTurnQueueOwner = { sessionId: string; incarnationId: string };
+export type SessionTurnQueueOrigin = {
+  kind: "gui" | "session";
+  actorSessionId?: string;
+  actorKind?: "main" | "auxiliary";
+  actorIncarnationId?: string;
+  actorTurnId?: string;
+  operation: "send";
+  targetSessionId: string;
+  targetIncarnationId: string;
+};
 export type SessionTurnQueueCapturedInput = {
+  coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; answerId?: string; answerRevision?: number };
   request: RunSessionTurnRequest & { clientRequestId: string };
   attachments: ComposerAttachment[];
   provider: string;
   workspacePath: string;
+  origin?: SessionTurnQueueOrigin;
 };
 export type SessionTurnQueueState = "queued" | "starting" | "running" | "completed" | "failed" | "canceled" | "interrupted";
 export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
@@ -15,6 +27,10 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   queuePosition: number;
   state: SessionTurnQueueState;
   captured: SessionTurnQueueCapturedInput;
+  /** Immutable acceptance input; absent/null means the original was not recorded. */
+  accepted?: SessionTurnQueueCapturedInput | null;
+  /** Input frozen by the dispatch claim, not proof of Provider delivery. */
+  dispatched?: SessionTurnQueueCapturedInput | null;
   turnId: string | null;
   inputTurnId?: string | null;
   userMessageSeq: number | null;
@@ -35,6 +51,7 @@ export type SessionTurnQueueAcceptanceResult = SessionTurnQueueReceipt | {
 export type SessionTurnQueueStore = {
   enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): Promise<SessionTurnQueueReceipt>;
   getReceipt(owner: SessionTurnQueueOwner, requestId: string): Promise<SessionTurnQueueReceipt | null>;
+  getReceiptById(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt | null>;
   listActive(owner: SessionTurnQueueOwner): Promise<SessionTurnQueueReceipt[]>;
   listReceipts(owner: SessionTurnQueueOwner, options?: { cursor?: number; limit?: number }): Promise<SessionTurnQueueReceiptPage>;
   listPendingOwners(): Promise<SessionTurnQueueOwner[]>;

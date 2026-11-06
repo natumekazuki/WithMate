@@ -1,5 +1,23 @@
 # Session History
 
+## 通常Sessionの保存実行読取
+
+通常Main／AuxiliaryはSession APIの`session.list_executions`から受付一覧またはWithMate Turn一覧を読み、`session.get_execution`へ受付ID、Turn ID、または保存message seqのいずれかを指定する。message seqは既存の受付・Turn・保存追加入力が持つ正確な参照だけから解決し、無対応は`EXECUTION_LINK_UNAVAILABLE`とする。受付のない既存Turn、未開始受付、同じTurnへ追加した受付を区別する。対象は明示したSession／incarnation（Auxiliaryは親のidentityも含む）で検証し、別Crewの公開保存結果も読める。背景専用の`session_history` grant・認可scopeは転用しない。
+
+通常Session APIの`list_messages / get_message / list_operations / get_operation_detail`は同じ対象検証と保存履歴helperを使い、Turn参照を持たない既存messageも取得できる。空会話は明示した空window（`fromSeq: 0, toSeq: -1`）の一覧を返す。これらも背景専用scopeやgrantを使わない。
+
+読取の正本は`src-electron/storage/session-execution-read.ts`で、Storage Workerの`execution.execute`が既存DBの一つのread transactionから返す。receiptの`turn_id`から`session_turns_v6`の`user_message_seq`／`assistant_message_seq`だけを参照し、最新messageを代用しない。状態・入力概要・結果を同じsnapshotから返し、終端結果にもその時点の追加入力概要を含める。成功・取消・失敗と本文確定は別であり、終端保存がない場合は`not-saved`、Turn未確定のdispatchは`unknown`として返す。
+
+`list_execution_inputs`は開始入力に続けて、`Message.turnInput.turnId`が一致し配送保存を確認できた追加入力をseq順に返す。pending／unknown、未送信、記録不足は別に示す。本文の位置や近い時刻から所属を補わない。受付入口の比較と開始入力の変更有無は独立し、複数受付が同じTurnへ属しても専用回答や因果関係を推定しない。
+
+入力一覧の既定は開始入力と確定済み追加入力であり、`state: unresolved / not-sent`で未確定／未送信を別にpage取得する。入力概要の各参照配列は先頭100件までとし、総件数と次のoffsetを示す。confirmed参照の続きは開始入力1件を含む一覧offset、未確定／未送信の続きは対応する`state`のoffsetである。
+
+`get_execution_input`は不変受付原文と予定／dispatch固定入力の`inputPair`を一つのsnapshotで返す。原文不明は`null`である。本文は`maxChars`と`offset`で分割し、各pieceの実offset・続き・全長を返す。続きは最初の応答の`expectedInput`を指定し、予定入力が編集された場合は`EXECUTION_INPUT_RESTART_REQUIRED`として先頭からの再取得を要求する。cursorには既存の更新時刻と参照identityを使い、本文全体・独自hash・別revision台帳は保持しない。添付はID・種類・名前の参照だけを返し、内部の絶対pathを公開しない。
+
+`list_execution_outputs`／`get_execution_output`は保存messageの`output`が持つidentity・順序・本文range・phase・本文確定・最終回答根拠を返す。分類がない既存本文は未分類／確定不明で取得でき、最終回答は捏造しない。`list_execution_operations`／`get_execution_operation_detail`は以下の既存artifact読取・pagingを再利用し、大きい詳細は一覧へ常時混ぜない。追加watch、raw event replay、結果コピーDBは持たない。
+
+以下は背景実行向けの固定範囲履歴読取契約である。
+
 Session Historyは、アプリが管理する背景実行へ、元Sessionの保存済み会話と操作記録を読取専用で渡す公開操作である。保存正本・Storage Worker・Session Graphと同じ共有HTTP MCP host／runtime認証を使い、履歴のコピーDBや別の読取engineは持たない。MCPとCLIは同じ操作・入力schema・認可・結果を共有する（[ADR 029](../adr/029-cli-mcp-parity-context-binding.md)）。
 
 ## 認可と範囲

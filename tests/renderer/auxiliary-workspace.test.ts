@@ -23,7 +23,6 @@ function session(id: string, createdAt: string, overrides: Partial<AuxiliarySess
   return {
     id,
     parentSessionId: "parent-1",
-    status: "active",
     runState: "idle",
     title: id,
     provider: "codex",
@@ -41,7 +40,6 @@ function session(id: string, createdAt: string, overrides: Partial<AuxiliarySess
     displayAfterMessageIndex: null,
     createdAt,
     updatedAt: createdAt,
-    closedAt: "",
     ...overrides,
   };
 }

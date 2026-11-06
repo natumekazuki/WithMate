@@ -64,8 +64,40 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 
 describe("composeProviderPrompt", () => {
   // @test-value v2
+  // kind = "contract"
+  // claim = "Session由来の開始入力は実送信元・操作・受付後変更有無をProvider本文へ明示し、ユーザーの直接発言として表示しない"
+  // oracle = { type = "contract", ref = "GitHub Issue #837: 実送信元と編集差分のProvider入力への反映" }
+  // fault = "Session送信をUser Inputへ偽装する、実actor/Turn/操作を落とす、比較不能な過去入力を変更なしと断定する"
+  // observable = "4 Provider共通compositionのinputBodyTextにある送信元JSON・変更値・入力見出しと採用本文"
+  // observation_boundary = "public-boundary"
+  // scope = "composeProviderPromptの共通Provider入力composition"
+  // lifecycle = "permanent"
+  // distinction = "UI表示testとqueue保存testではProvider transportへ渡る本文の送信者偽装を検出できない"
+  // @end-test-value
+  it("Session入力の送信者と原文変更有無を共通Provider promptへ明示する", () => {
+    const session = buildNewSession({ id: "target", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/workspace", branch: "main",
+      characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors, approvalMode: "untrusted" });
+    const base = { session, executionOptions: captureSessionExecutionOptions(session), providerCatalog, userMessage: "Fixed edited instruction", appSettings: createDefaultAppSettings(), attachments: [] };
+    const prompt = composeProviderPrompt({ ...base, inputProvenance: { origin: { kind: "session", actorKind: "auxiliary", actorSessionId: "actual-sender",
+      actorIncarnationId: "sender-incarnation", actorTurnId: "17", operation: "send", targetSessionId: session.id, targetIncarnationId: session.incarnationId! }, originalChanged: true } });
+    assert.match(prompt.inputBodyText, /not spoken directly by the user/);
+    assert.match(prompt.inputBodyText, /"actorKind": "auxiliary"/);
+    assert.match(prompt.inputBodyText, /"actorSessionId": "actual-sender"/);
+    assert.match(prompt.inputBodyText, /"actorTurnId": "17"/);
+    assert.match(prompt.inputBodyText, /"operation": "send"/);
+    assert.match(prompt.inputBodyText, /"changedSinceAcceptance": true/);
+    assert.match(prompt.inputBodyText, /# Session Input\n\nFixed edited instruction/);
+    assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
+    const unknown = composeProviderPrompt({ ...base, inputProvenance: { origin: null, originalChanged: null } });
+    assert.match(unknown.inputBodyText, /original sender.*not recorded/);
+    assert.match(unknown.inputBodyText, /"changedSinceAcceptance": null/);
+    assert.match(unknown.inputBodyText, /# Queued Input/);
+    assert.doesNotMatch(unknown.inputBodyText, /# User Input/);
+  });
+
+  // @test-value v2
   // kind = "invariant"
-  // claim = "promptは実行workspaceとSessionFolderおよび許可directoryをsystem側へ配置する"
+  // claim = "promptは実行workspaceとSessionFolder・Crew Folderおよび許可directoryをsystem側へ配置する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
   // fault = "保存workspaceまたは許可外directoryをpromptに載せる"
   // observable = "systemBodyTextの各section"
@@ -98,6 +130,7 @@ describe("composeProviderPrompt", () => {
       executionOptions: captureSessionExecutionOptions(session),
       executionWorkspacePath: "execution-workspace",
       sessionFolderPath: "F:/user-data/session-files/session-1",
+      crewFolderPath: "F:/user-data/crew-files/root",
       providerCatalog,
       userMessage: "実行して",
       appSettings: createDefaultAppSettings(),
@@ -106,12 +139,13 @@ describe("composeProviderPrompt", () => {
 
     assert.match(prompt.systemBodyText, /^# Workspace\n\nexecution-workspace/);
     assert.match(prompt.systemBodyText, /# SessionFolder\n\nF:\/user-data\/session-files\/session-1/);
+    assert.match(prompt.systemBodyText, /# Crew Folder\n\nF:\/user-data\/crew-files\/root/);
     assert.match(prompt.systemBodyText, /# Additional Directories\n\n- /);
     assert.doesNotMatch(prompt.systemBodyText, /雑多な作業ファイル|filesystem access grant|sandbox|approval policy/);
     assert.equal(prompt.systemBodyText.includes(path.resolve("execution-workspace", "nested")), false);
     assert.equal(prompt.systemBodyText.includes(`- ${path.resolve("external")}`), true);
     assert.deepEqual(prompt.additionalDirectories, [path.resolve("external")]);
-    assertSectionOrder(prompt.systemBodyText, ["# Workspace", "# SessionFolder", "# Additional Directories"]);
+    assertSectionOrder(prompt.systemBodyText, ["# Workspace", "# SessionFolder", "# Crew Folder", "# Additional Directories"]);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
   });
 

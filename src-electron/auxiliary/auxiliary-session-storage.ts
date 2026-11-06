@@ -5,6 +5,7 @@ import type { ConversationPageRequest } from "../../src-shared/session/conversat
 import type { SessionHistoryReadInput, SessionHistoryResult } from "../../src-shared/session-history/session-history-contract.js";
 import { readSessionHistory } from "../storage/session-history-read.js";
 import { randomUUID } from "node:crypto";
+import { validateSessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
 
 import {
   normalizeAuxiliarySession,
@@ -14,7 +15,7 @@ import {
   type AuxiliarySessionSummary,
 } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { CURRENT_SESSION_SCHEMA_VERSION, isReadOnlySession } from "../../src-shared/session/session-state.js";
-import { normalizeMessage, summarizeMessageArtifact, type Message, type MessageArtifact } from "../../src-shared/session/session-state.js";
+import { normalizeMessage, summarizeMessageArtifact, type Message, type MessageArtifact, type TurnInputMetadata, type TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { writeSessionTurnTerminalCommit, type SessionTurnTerminalCommit } from "../session/session-turn-terminal-commit.js";
 import type { ProviderRuntimeMetadataPatch } from "../providers/provider-runtime-metadata-patch.js";
@@ -38,10 +39,10 @@ export type AuxiliaryDraftStorageConsumeInput = AuxiliaryDraftConsumeInput & { a
 type AuxiliarySessionRow = {
   id: string;
   parent_session_id: string;
-  status: "active" | "closed";
   created_at: string;
   updated_at: string;
   title: string;
+  description: string;
   run_state: "idle" | "running" | "error";
   preview: string;
   provider_id: string;
@@ -55,7 +56,6 @@ type AuxiliarySessionRow = {
   custom_agent_name: string;
   thread_id: string;
   display_after_message_index: number | null;
-  closed_at: string;
   character_id: string | null;
   character_snapshot_json: string | null;
   character_snapshot_invalid: number;
@@ -114,6 +114,8 @@ export type AuxiliaryRunningTurnStartInput = AuxiliaryRuntimeWriteInput & {
   queuedTurn?: { queueId: string; turn: SessionTurnInput };
 };
 export type AuxiliarySteerAppendInput = AuxiliaryRuntimeWriteInput & { turnId: number; userMessage: Message; queuedInput?: { queueId: string; inputTurnId: string } };
+export type AuxiliarySteerBeginInput = AuxiliarySteerAppendInput & Pick<TurnInputMetadata, "nativeTurnId" | "attachments">;
+export type AuxiliarySteerSettleInput = AuxiliaryRuntimeWriteInput & { turnId: number; messageSeq: number; state: Exclude<TurnInputDeliveryState, "pending"> };
 export type AuxiliaryTerminalAppendInput = AuxiliaryRuntimeWriteInput & {
   assistantMessage: Message;
   runState: AuxiliarySession["runState"];
@@ -148,7 +150,6 @@ const CREATE_AUXILIARY_SESSIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS auxiliary_sessions (
     id TEXT PRIMARY KEY,
     parent_session_id TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('active', 'closed')),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     title TEXT NOT NULL DEFAULT '',
@@ -165,7 +166,6 @@ const CREATE_AUXILIARY_SESSIONS_TABLE_SQL = `
     custom_agent_name TEXT NOT NULL DEFAULT '',
     thread_id TEXT NOT NULL DEFAULT '',
     display_after_message_index INTEGER,
-    closed_at TEXT NOT NULL DEFAULT '',
     character_id TEXT,
     character_snapshot_json TEXT,
     character_snapshot_invalid INTEGER NOT NULL DEFAULT 0,
@@ -189,11 +189,11 @@ const CREATE_AUXILIARY_MESSAGES_TABLE_SQL = `
   )
 `;
 
-const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.status, a.created_at, a.updated_at,
-  a.title, a.run_state, a.preview, a.provider_id, a.catalog_revision, a.model_id,
+const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.created_at, a.updated_at,
+  a.title, a.description, a.run_state, a.preview, a.provider_id, a.catalog_revision, a.model_id,
   a.reasoning_effort, a.approval_mode, a.codex_sandbox_mode, a.codex_speed,
   a.codex_reviewer, a.custom_agent_name,
-  a.thread_id, a.display_after_message_index, a.closed_at, a.character_id,
+  a.thread_id, a.display_after_message_index, a.character_id,
   NULL AS character_snapshot_json, 0 AS character_snapshot_invalid, a.character_icon_path,
   a.client_request_id, NULL AS creation_context_json, NULL AS creation_request_json`;
 
@@ -291,47 +291,12 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  listActiveAuxiliarySessionSummaries(parentSessionIds: readonly string[]): AuxiliarySessionSummary[] {
-    const normalizedParentSessionIds = Array.from(new Set(
-      parentSessionIds
-        .map((parentSessionId) => parentSessionId.trim())
-        .filter(Boolean),
-    ));
-    if (normalizedParentSessionIds.length === 0) {
-      return [];
-    }
-
-    return this.withDb((db) => {
-      const placeholders = normalizedParentSessionIds.map(() => "?").join(", ");
-      const rows = db.prepare(`
-        SELECT ${AUXILIARY_SUMMARY_COLUMNS}, MAX(d.updated_at, a.updated_at) AS effective_updated_at
-        FROM auxiliary_sessions a
-        LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
-        WHERE a.status = 'active'
-          AND a.parent_session_id IN (${placeholders})
-        ORDER BY MAX(d.updated_at, a.updated_at) DESC, a.id DESC
-      `).all(...normalizedParentSessionIds) as AuxiliarySessionSummaryRow[];
-      return rows.flatMap((row) => {
-        const session = parseAuxiliarySessionSummaryRow(row);
-        if (
-          !session
-          || session.status !== "active"
-          || session.parentSessionId !== row.parent_session_id
-        ) {
-          return [];
-        }
-        return [session];
-      });
-    });
-  }
-
-  listRunningActiveAuxiliarySessions(): AuxiliarySessionSummary[] {
+  listRunningAuxiliarySessions(): AuxiliarySessionSummary[] {
     return this.withDb((db) => {
       const rows = db.prepare(`
         SELECT ${AUXILIARY_SUMMARY_COLUMNS}, MAX(d.updated_at, a.updated_at) AS effective_updated_at
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
-        WHERE a.status = 'active'
         ORDER BY MAX(d.updated_at, a.updated_at) DESC, a.id DESC
       `).all() as AuxiliarySessionSummaryRow[];
       return rows
@@ -340,14 +305,13 @@ export class AuxiliarySessionStorage {
     });
   }
 
-  getActiveAuxiliarySession(parentSessionId: string): AuxiliarySession | null {
+  getLatestAuxiliarySession(parentSessionId: string): AuxiliarySession | null {
     return this.withDb((db) => {
       const row = db.prepare(`
         SELECT a.*
         FROM auxiliary_sessions a
         LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.parent_session_id = ?
-          AND a.status = 'active'
         ORDER BY MAX(d.updated_at, a.updated_at) DESC, a.id DESC
         LIMIT 1
       `).get(parentSessionId) as AuxiliarySessionRow | undefined;
@@ -379,8 +343,8 @@ export class AuxiliarySessionStorage {
       assertCharacterDefinitionSnapshotUpdate(current.characterRuntimeSnapshot, input.characterRuntimeSnapshot,
         current.characterId ?? input.characterRuntimeSnapshot?.characterId ?? "");
       if (input.queuedTurn) {
-        const row = db.prepare(`SELECT captured_json FROM session_turn_queue_v6 WHERE id = ?
-          AND session_id = ? AND auxiliary_session_id = ? AND incarnation_id = ? AND state = 'starting' AND input_turn_id IS NULL`)
+        const row = db.prepare(`SELECT dispatched_json AS captured_json FROM session_turn_queue_v6 WHERE id = ?
+          AND session_id = ? AND auxiliary_session_id = ? AND incarnation_id = ? AND state = 'starting' AND input_turn_id IS NULL AND dispatched_json IS NOT NULL`)
           .get(input.queuedTurn.queueId, current.parentSessionId, current.id, current.createdAt) as { captured_json: string } | undefined;
         if (!row) throw new Error("The Auxiliary queued turn is not starting.");
         const captured = JSON.parse(row.captured_json) as SessionTurnQueueCapturedInput;
@@ -399,7 +363,7 @@ export class AuxiliarySessionStorage {
         if (Number(result.changes) !== 1) throw new Error("The Auxiliary queued turn could not be committed.");
       }
       insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.userMessage, input.updatedAt);
-      db.prepare(`UPDATE auxiliary_sessions SET run_state = 'running', status = 'active', closed_at = '',
+      db.prepare(`UPDATE auxiliary_sessions SET run_state = 'running',
         character_id = COALESCE(character_id, ?), character_snapshot_json = ?, preview = ?, updated_at = ? WHERE id = ?`).run(
         input.characterRuntimeSnapshot?.characterId ?? null,
         input.characterRuntimeSnapshot === undefined ? (current.characterRuntimeSnapshot ? JSON.stringify(current.characterRuntimeSnapshot) : null)
@@ -414,19 +378,21 @@ export class AuxiliarySessionStorage {
     return this.writeRuntime(input, (db, current) => {
       if (current.runState !== "running" || input.userMessage.role !== "user" || !input.userMessage.text.trim()
         || !db.prepare(`SELECT id FROM session_turns_v6 WHERE id = ? AND session_id IS NULL
-          AND auxiliary_session_id = ? AND phase = 'running'`).get(input.turnId, current.id)) return false;
+          AND auxiliary_session_id = ? AND phase = 'running' AND id = (SELECT MAX(id) FROM session_turns_v6 WHERE auxiliary_session_id = ?)`).get(input.turnId, current.id, current.id)) return false;
+      let message = input.userMessage;
       if (input.queuedInput) {
-        if (!db.prepare("SELECT 1 FROM session_turns_v6 WHERE id = ? AND id = (SELECT MAX(id) FROM session_turns_v6 WHERE auxiliary_session_id = ?)")
-          .get(input.turnId, current.id)) throw new Error("The current Auxiliary queued input turn no longer matches.");
-        const receipt = db.prepare(`SELECT captured_json FROM session_turn_queue_v6 WHERE id = ?
+        const receipt = db.prepare(`SELECT dispatched_json AS captured_json FROM session_turn_queue_v6 WHERE id = ?
           AND session_id = ? AND auxiliary_session_id = ? AND incarnation_id = ?
-          AND state = 'starting' AND input_turn_id = ? AND user_message_seq IS NULL`)
-          .get(input.queuedInput.queueId, current.parentSessionId, current.id, current.createdAt, input.queuedInput.inputTurnId) as { captured_json: string } | undefined;
-        if (!receipt || (JSON.parse(receipt.captured_json) as SessionTurnQueueCapturedInput).request.userMessage !== input.userMessage.text) {
+          AND state = 'starting' AND input_turn_id = ? AND user_message_seq IS NULL AND turn_id = ? AND dispatched_json IS NOT NULL`)
+          .get(input.queuedInput.queueId, current.parentSessionId, current.id, current.createdAt, input.queuedInput.inputTurnId, String(input.turnId)) as { captured_json: string } | undefined;
+        const captured = receipt ? JSON.parse(receipt.captured_json) as SessionTurnQueueCapturedInput : null;
+        if (!captured || captured.request.userMessage !== input.userMessage.text) {
           throw new Error("The Auxiliary queued input does not match its captured message.");
         }
+        message = { ...message, turnInput: { turnId: String(input.turnId), nativeTurnId: input.queuedInput.inputTurnId,
+          state: "confirmed", queueId: input.queuedInput.queueId, attachments: captured.attachments } };
       }
-      insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.userMessage, input.updatedAt);
+      insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, message, input.updatedAt);
       if (input.queuedInput) {
         const result = db.prepare(`UPDATE session_turn_queue_v6 SET state = 'completed', turn_id = ?, user_message_seq = ?, updated_at = ?
           WHERE id = ? AND state = 'starting' AND input_turn_id = ?`)
@@ -438,13 +404,34 @@ export class AuxiliarySessionStorage {
     }, true);
   }
 
+  beginAuxiliarySteer(input: AuxiliarySteerBeginInput): AuxiliarySession | null {
+    if (!input.nativeTurnId?.trim() || input.queuedInput) throw new Error("A direct Auxiliary Steer target is required.");
+    return this.appendAuxiliarySteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
+      turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
+    } } });
+  }
+
+  settleAuxiliarySteer(input: AuxiliarySteerSettleInput): AuxiliarySession | null {
+    if (!["confirmed", "unknown", "not-sent"].includes(input.state) || !Number.isSafeInteger(input.messageSeq) || input.messageSeq < 0) throw new Error("The Auxiliary Steer settlement is invalid.");
+    return this.writeRuntime(input, (db, current) => {
+      const row = db.prepare("SELECT body FROM auxiliary_session_messages WHERE auxiliary_session_id = ? AND seq = ? AND role = 'user'")
+        .get(current.id, input.messageSeq) as { body: string } | undefined;
+      const message = row ? normalizeMessage(JSON.parse(row.body)) : null;
+      if (!message?.turnInput || message.turnInput.turnId !== String(input.turnId) || message.turnInput.queueId
+        || (message.turnInput.state !== "pending" && message.turnInput.state !== input.state)) throw new Error("The pending Auxiliary Steer input no longer matches.");
+      db.prepare("UPDATE auxiliary_session_messages SET body = ? WHERE auxiliary_session_id = ? AND seq = ?")
+        .run(JSON.stringify({ ...message, turnInput: { ...message.turnInput, state: input.state } }), current.id, input.messageSeq);
+      return true;
+    }, true);
+  }
+
   appendAuxiliaryTerminal(input: AuxiliaryTerminalAppendInput): AuxiliarySession | null {
     return this.writeRuntime(input, (db, current) => {
       const commit = input.terminalCommit;
       if (current.runState !== "running" || input.assistantMessage.role !== "assistant" || input.runState === "running"
         || commit.sessionId !== current.id || commit.assistantMessageSeq !== input.expectedMessageCount) return false;
       insertAuxiliaryMessage(db, current.id, input.expectedMessageCount, input.assistantMessage, input.updatedAt);
-      db.prepare(`UPDATE auxiliary_sessions SET run_state = ?, status = 'active', closed_at = '',
+      db.prepare(`UPDATE auxiliary_sessions SET run_state = ?,
         thread_id = ?, preview = ?, updated_at = ? WHERE id = ?`)
         .run(input.runState, input.threadId, input.preview, input.updatedAt, current.id);
       const result = db.prepare(`UPDATE session_turns_v6 SET phase = ?, assistant_message_seq = ?, thread_id = ?,
@@ -544,15 +531,14 @@ export class AuxiliarySessionStorage {
   getAuxiliarySessionStatus(auxiliarySessionId: string): AuxiliarySessionStatus | null {
     return this.withDb((db) => {
       const row = db.prepare(`
-        SELECT a.id, a.parent_session_id, a.status, a.created_at, a.run_state, d.incarnation
+        SELECT a.id, a.parent_session_id, a.created_at, a.run_state, d.incarnation
         FROM auxiliary_sessions a LEFT JOIN auxiliary_session_drafts d ON d.auxiliary_session_id = a.id
         WHERE a.id = ?
-      `).get(auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string; run_state: AuxiliarySession["runState"]; incarnation?: string } | undefined;
+      `).get(auxiliarySessionId) as { id: string; parent_session_id: string; created_at: string; run_state: AuxiliarySession["runState"]; incarnation?: string } | undefined;
       if (!row) return null;
       return {
         id: row.id,
         parentSessionId: row.parent_session_id,
-        status: row.status,
         createdAt: row.created_at,
         incarnation: row.incarnation ?? "",
         runState: row.run_state,
@@ -565,9 +551,9 @@ export class AuxiliarySessionStorage {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const session = db.prepare(`
-          SELECT id, parent_session_id, status, created_at
+          SELECT id, parent_session_id, created_at
           FROM auxiliary_sessions WHERE id = ?
-        `).get(input.auxiliarySessionId) as { id: string; parent_session_id: string; status: "active" | "closed"; created_at: string } | undefined;
+        `).get(input.auxiliarySessionId) as { id: string; parent_session_id: string; created_at: string } | undefined;
         const row = db.prepare(`
           SELECT auxiliary_session_id AS id, parent_session_id, incarnation,
             durable_revision, draft_text, updated_at
@@ -763,15 +749,17 @@ export class AuxiliarySessionStorage {
         const draftRow = db.prepare("SELECT draft_text FROM auxiliary_session_drafts WHERE auxiliary_session_id = ?")
           .get(input.expectedSession.id) as { draft_text: string } | undefined;
         const currentWithDraft = current && draftRow ? { ...current, composerDraft: draftRow.draft_text } : current;
-        const currentRuntime = currentWithDraft && { ...currentWithDraft, updatedAt: input.expectedSession.updatedAt,
+        const currentRuntime = currentWithDraft && { ...currentWithDraft, title: "", description: "", updatedAt: input.expectedSession.updatedAt,
           composerDraft: "", preview: currentWithDraft.preview ?? "",
           messages: currentWithDraft.messages.map((message) => ({ ...message, isBookmarked: undefined })) };
-        const expectedRuntime = expected && { ...expected, composerDraft: "", preview: expected.preview ?? current?.preview ?? "",
+        const expectedRuntime = expected && { ...expected, title: "", description: "", composerDraft: "", preview: expected.preview ?? current?.preview ?? "",
           messages: expected.messages.map((message) => ({ ...message,
             artifact: message.artifact ? summarizeMessageArtifact(message.artifact) : undefined,
             isBookmarked: undefined })) };
         if (!row || !current || !expected || input.session.id !== expected.id || input.session.parentSessionId !== expected.parentSessionId
-          || input.session.createdAt !== expected.createdAt || JSON.stringify(currentRuntime) !== JSON.stringify(expectedRuntime) || !parent) {
+          || input.session.createdAt !== expected.createdAt || JSON.stringify(currentRuntime) !== JSON.stringify(expectedRuntime) || !parent
+          || (input.session.title !== expected.title && current.title !== expected.title)
+          || ((input.session.description ?? "") !== (expected.description ?? "") && (current.description ?? "") !== (expected.description ?? ""))) {
           db.exec("ROLLBACK");
           return null;
         }
@@ -787,7 +775,7 @@ export class AuxiliarySessionStorage {
           db.exec("ROLLBACK");
           return null;
         }
-        writeAuxiliaryMetadata(db, input.session);
+        writeAuxiliaryMetadata(db, input.session, current.title === expected.title && (current.description ?? "") === (expected.description ?? ""));
         const conversationChanged = writeAuxiliaryMessages(db, input.session);
         const storedRow = db.prepare(`SELECT * FROM auxiliary_sessions WHERE id = ?`).get(input.session.id) as AuxiliarySessionRow | undefined;
         const stored = storedRow ? readAuxiliarySession(db, storedRow) : null;
@@ -814,10 +802,10 @@ export class AuxiliarySessionStorage {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         db.prepare(`INSERT OR IGNORE INTO auxiliary_sessions
-          (id, parent_session_id, status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?)`)
-          .run(session.id, session.parentSessionId, session.status, session.createdAt, session.updatedAt);
-        writeAuxiliaryMetadata(db, persisted);
+          (id, parent_session_id, created_at, updated_at)
+          VALUES (?, ?, ?, ?)`)
+          .run(session.id, session.parentSessionId, session.createdAt, session.updatedAt);
+        writeAuxiliaryMetadata(db, persisted, !previousOwner);
         const conversationChanged = writeAuxiliaryMessages(db, persisted);
         db.prepare(`
           INSERT OR IGNORE INTO auxiliary_session_drafts
@@ -827,7 +815,9 @@ export class AuxiliarySessionStorage {
         db.exec("COMMIT");
         if (conversationChanged || !existing || previousOwner?.parent_session_id !== session.parentSessionId || previousOwner?.created_at !== session.createdAt)
           this.onConversationChanged("auxiliary_session_messages", session.id);
-        return persisted;
+        const stored = this.getAuxiliarySession(persisted.id);
+        if (!stored) throw new Error("The Auxiliary Session could not be read after saving.");
+        return stored;
       } catch (error) {
         db.exec("ROLLBACK");
         throw error;
@@ -920,6 +910,16 @@ export class AuxiliarySessionStorage {
     return this.updateScalarIfMatches(input, "title = ?", [input.title], true);
   }
 
+  patchAuxiliarySessionMetadata(input: AuxiliaryIdentityPatchInput & { patch: import("../../src-shared/session/session-metadata.js").SessionMetadataPatch }): AuxiliarySessionSummary {
+    const value = validateSessionMetadataPatch(input.patch);
+    if (!this.updateScalarIfMatches(input, "title = COALESCE(?, title), description = COALESCE(?, description)", [value.title ?? null, value.description ?? null])) {
+      throw new Error("The Auxiliary Session identity no longer matches its saved owner.");
+    }
+    const stored = this.getAuxiliarySessionSummary(input.auxiliarySessionId);
+    if (!stored) throw new Error("The Auxiliary Session could not be found after saving metadata.");
+    return stored;
+  }
+
   updateAuxiliaryExecutionOptionsIfMatches(input: AuxiliaryIdentityPatchInput & { options: AuxiliaryExecutionOptions }): boolean {
     const options = input.options;
     return this.updateScalarIfMatches(input,
@@ -940,7 +940,7 @@ export class AuxiliarySessionStorage {
       db.exec("BEGIN IMMEDIATE TRANSACTION");
       try {
         const owner = hasWritableAuxiliaryParent(db, input.parentSessionId)
-          ? db.prepare(`SELECT id FROM auxiliary_sessions WHERE id = ? AND parent_session_id = ? AND created_at = ? AND status = 'active'`)
+          ? db.prepare(`SELECT id FROM auxiliary_sessions WHERE id = ? AND parent_session_id = ? AND created_at = ?`)
           .get(input.auxiliarySessionId, input.parentSessionId, input.createdAt)
           : undefined;
         const row = owner ? db.prepare(`SELECT body FROM auxiliary_session_messages WHERE auxiliary_session_id = ? AND seq = ?`)
@@ -965,7 +965,7 @@ export class AuxiliarySessionStorage {
       try {
         if (!hasWritableAuxiliaryParent(db, input.parentSessionId)) { db.exec("ROLLBACK"); return false; }
         const result = db.prepare(`UPDATE auxiliary_sessions SET ${assignments}, updated_at = ?
-          WHERE id = ? AND parent_session_id = ? AND created_at = ? AND status = 'active' ${requireIdle ? "AND run_state <> 'running'" : ""}`)
+          WHERE id = ? AND parent_session_id = ? AND created_at = ? ${requireIdle ? "AND run_state <> 'running'" : ""}`)
           .run(...values, input.updatedAt, input.auxiliarySessionId, input.parentSessionId, input.createdAt);
         db.exec("COMMIT");
         return Number(result.changes) === 1;
@@ -1001,10 +1001,10 @@ function parseAuxiliarySessionRow(row: AuxiliarySessionRow): AuxiliarySession | 
     return normalizeAuxiliarySession({
       id: row.id,
       parentSessionId: row.parent_session_id,
-      status: row.status,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       title: row.title,
+      description: row.description,
       runState: row.run_state,
       preview: row.preview,
       provider: row.provider_id,
@@ -1018,7 +1018,6 @@ function parseAuxiliarySessionRow(row: AuxiliarySessionRow): AuxiliarySession | 
       customAgentName: row.custom_agent_name,
       threadId: row.thread_id,
       displayAfterMessageIndex: row.display_after_message_index,
-      closedAt: row.closed_at,
       characterId: row.character_id ?? undefined,
       characterRuntimeSnapshot: row.character_snapshot_json ? JSON.parse(row.character_snapshot_json) : undefined,
       characterRuntimeSnapshotInvalid: row.character_snapshot_invalid === 1,
@@ -1065,19 +1064,20 @@ function insertAuxiliaryMessage(db: DatabaseSync, id: string, seq: number, messa
     VALUES (?, ?, ?, ?, ?, ?)`).run(id, seq, normalized.role, body, artifact ? JSON.stringify(artifact) : null, updatedAt);
 }
 
-function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession): void {
-  db.prepare(`UPDATE auxiliary_sessions SET parent_session_id = ?, status = ?, created_at = ?, updated_at = ?,
-    title = ?, run_state = ?, preview = ?, provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?,
+function writeAuxiliaryMetadata(db: DatabaseSync, session: AuxiliarySession, initializeMetadata = false): void {
+  db.prepare(`UPDATE auxiliary_sessions SET parent_session_id = ?, created_at = ?, updated_at = ?,
+    title = CASE WHEN ? THEN ? ELSE title END, description = CASE WHEN ? THEN ? ELSE description END,
+    run_state = ?, preview = ?, provider_id = ?, catalog_revision = ?, model_id = ?, reasoning_effort = ?,
     approval_mode = ?, codex_sandbox_mode = ?, codex_speed = ?, codex_reviewer = ?, custom_agent_name = ?,
-    thread_id = ?, display_after_message_index = ?, closed_at = ?,
+    thread_id = ?, display_after_message_index = ?,
     character_id = ?, character_snapshot_json = ?, character_snapshot_invalid = ?, character_icon_path = ?,
     client_request_id = ?, creation_context_json = ?, creation_request_json = ? WHERE id = ?`).run(
-    session.parentSessionId, session.status, session.createdAt, session.updatedAt,
-    session.title, session.runState, session.preview ?? buildAuxiliaryPreview(session.messages),
+    session.parentSessionId, session.createdAt, session.updatedAt,
+    initializeMetadata ? 1 : 0, session.title, initializeMetadata ? 1 : 0, session.description ?? "", session.runState, session.preview ?? buildAuxiliaryPreview(session.messages),
     session.provider, session.catalogRevision, session.model, session.reasoningEffort,
     session.approvalMode, session.codexSandboxMode, session.codexSpeed, session.codexReviewer,
     session.customAgentName, session.threadId,
-    session.displayAfterMessageIndex, session.closedAt, session.characterId ?? null,
+    session.displayAfterMessageIndex, session.characterId ?? null,
     session.characterRuntimeSnapshot === undefined ? null : JSON.stringify(session.characterRuntimeSnapshot),
     session.characterRuntimeSnapshotInvalid ? 1 : 0, session.characterIconPath ?? null,
     session.clientRequestId ?? null,
@@ -1183,6 +1183,7 @@ function migrateAuxiliaryDrafts(db: DatabaseSync): void {
 
 function migrateAuxiliaryStorage(db: DatabaseSync): void {
   const columns = new Set((db.prepare("PRAGMA table_info(auxiliary_sessions)").all() as TableInfoRow[]).map(({ name }) => name));
+  if (!columns.has("description")) db.exec("ALTER TABLE auxiliary_sessions ADD COLUMN description TEXT NOT NULL DEFAULT ''");
   db.exec("BEGIN IMMEDIATE TRANSACTION");
   try {
     db.exec(CREATE_AUXILIARY_MESSAGES_TABLE_SQL);
@@ -1203,7 +1204,6 @@ function migrateAuxiliaryStorage(db: DatabaseSync): void {
         ["custom_agent_name", "TEXT NOT NULL DEFAULT ''"],
         ["thread_id", "TEXT NOT NULL DEFAULT ''"],
         ["display_after_message_index", "INTEGER"],
-        ["closed_at", "TEXT NOT NULL DEFAULT ''"],
         ["character_id", "TEXT"],
         ["character_snapshot_json", "TEXT"],
         ["character_snapshot_invalid", "INTEGER NOT NULL DEFAULT 0"],
@@ -1216,8 +1216,8 @@ function migrateAuxiliaryStorage(db: DatabaseSync): void {
         if (!columns.has(name)) db.exec(`ALTER TABLE auxiliary_sessions ADD COLUMN ${name} ${definition}`);
       }
       const summaryExpression = columns.has("summary_json") ? "summary_json" : "'' AS summary_json";
-      const rows = db.prepare(`SELECT id, parent_session_id, status, created_at, updated_at, payload_json, ${summaryExpression} FROM auxiliary_sessions`)
-        .all() as Array<{ id: string; parent_session_id: string; status: string; created_at: string; updated_at: string; payload_json: string; summary_json: string }>;
+      const rows = db.prepare(`SELECT id, parent_session_id, created_at, updated_at, payload_json, ${summaryExpression} FROM auxiliary_sessions`)
+        .all() as Array<{ id: string; parent_session_id: string; created_at: string; updated_at: string; payload_json: string; summary_json: string }>;
       for (const row of rows) {
         const raw = JSON.parse(row.payload_json) as Record<string, unknown>;
         if (!raw || typeof raw !== "object" || Array.isArray(raw) || !Array.isArray(raw.messages)) {
@@ -1232,13 +1232,15 @@ function migrateAuxiliaryStorage(db: DatabaseSync): void {
         const preview = typeof existingSummary?.preview === "string" ? existingSummary.preview
           : buildAuxiliaryPreview(session.messages);
         const migrated = { ...session, createdAt: session.createdAt || row.created_at,
-          updatedAt: session.updatedAt || row.updated_at, status: row.status as AuxiliarySession["status"], preview };
-        writeAuxiliaryMetadata(db, migrated);
+          updatedAt: session.updatedAt || row.updated_at, preview };
+        writeAuxiliaryMetadata(db, migrated, true);
         writeAuxiliaryMessages(db, migrated);
       }
       if (columns.has("summary_json")) db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN summary_json");
       db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN payload_json");
     }
+    if (columns.has("status")) db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN status");
+    if (columns.has("closed_at")) db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN closed_at");
     if (columns.has("allowed_additional_directories_json")) {
       db.exec("ALTER TABLE auxiliary_sessions DROP COLUMN allowed_additional_directories_json");
     }

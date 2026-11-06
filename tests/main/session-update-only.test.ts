@@ -183,12 +183,12 @@ describe("Session update-only persistence", () => {
         sharedState,
       );
 
-      const updated = await service.updateSession({ ...storedSession, taskTitle: "updated through adapter" });
+      const updated = await service.updateSession({ ...storedSession, threadId: "updated-through-adapter" });
 
-      assert.equal(updated.taskTitle, "updated through adapter");
-      assert.equal(getCached()[0]?.taskTitle, "updated through adapter");
+      assert.equal(updated.threadId, "updated-through-adapter");
+      assert.equal(getCached()[0]?.threadId, "updated-through-adapter");
       assert.deepEqual(sharedState.broadcasts, [[storedSession.id]]);
-      assert.equal(storage.getSession(session.id)?.taskTitle, "updated through adapter");
+      assert.equal(storage.getSession(session.id)?.threadId, "updated-through-adapter");
     });
   });
 
@@ -236,8 +236,8 @@ describe("Session update-only persistence", () => {
         assert.deepEqual(db.prepare("SELECT id, phase FROM session_turns_v6 WHERE session_id = ?").get(first.id), marker);
         assert.deepEqual(state.cached, cacheBefore);
         assert.deepEqual(state.broadcasts, broadcastsBefore);
-        const updated = await service.updateSession({ ...recreated, taskTitle: "fresh update" });
-        assert.equal(updated.taskTitle, "fresh update");
+        const updated = await service.updateSession({ ...recreated, threadId: "fresh-update-thread" });
+        assert.equal(updated.threadId, "fresh-update-thread");
         assert.equal(updated.incarnationId, recreated.incarnationId);
       } finally { db.close(); }
     });

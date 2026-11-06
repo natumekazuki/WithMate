@@ -22,6 +22,7 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 | Turn Queue | `session_turn_queue_v6` |
 | Files Pin | `session_file_pins_v6` |
 | Session Graph | `session_graphs_v6`、`session_graph_topics_v6`、`session_graph_records_v6`、`session_graph_relations_v6` |
+| Coordination | `coordination_records_v7` |
 | Auxiliary | `auxiliary_sessions`、`auxiliary_session_messages`、`auxiliary_session_drafts` |
 | Turn | `session_turns_v6` |
 | Memory | `memory_*_v6` |
@@ -40,16 +41,20 @@ Turn Queueは次の項目を保持する。
 - 親Session ID
 - 任意のAuxiliary ID
 - 対象incarnation
-- GUI request ID
+- 呼出元request ID
 - 受付順
 - 実行順
-- 捕捉値
+- 編集可能な実行予定入力（`captured_json`）
+- 不変の受付時入力（`accepted_json`）
+- dispatch claimで固定した採用入力（`dispatched_json`）
 - 状態
 - 最小turn ID／user seq
 - 追加入力先Turn ID
 - 結果不明後の明示解放時刻
 
 受付順の`sequence`は不変で履歴cursorにも使用し、並べ替え可能な`queue_position`を実行順の正本とする。新規受付と当該列を持たない既存DBの初期値はsequenceとする。
+
+receiptのUUIDは受付時から終端後まで同じexecution identityである。新規受付は実actorの会話・incarnation・Turn、操作と明示宛先をoriginとして入力に含める。GUI入力はGUI起点として区別する。受付時入力は再試行照合元であり、編集と追加入力では変更しない。採用入力は通常dispatchとqueue経由Steerのclaimで本文・添付を一緒に固定し、Provider未呼出が確認されたqueued復帰でのみ固定を解除する。固定はProvider受信の証明ではない。原文・採用入力が保存されていない既存行はNULLのまま保持し、現在の入力から補わない。
 
 Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親または対象Auxiliary削除でreceiptも削除する。receiptは通常messageとは別の受付・実行状態であり、会話本文やturnの正本を置換しない。受付・開始・終端のtransaction境界は[Electron Session Store](electron-session-store.md#turn-queue)を参照する。
 
@@ -74,6 +79,18 @@ Memory出典の`source_session_id`は実Main、`source_auxiliary_session_id`は�
 内部`sessionSource`が実kind・incarnation・親identity、背景では既存WorkerのownerIdentityを伝え、同名Main／Auxiliaryを区別する。未指定の既存入力はMainである。projection／version／inspect／correct／resetは同じownerを使う。別会話の一時感情は既存afterglowのread-time規則だけで合成し、relationshipへ転写しない。詳細は[ADR018](../adr/018-character-affect-event-persistence.md)に従う。
 
 schema ensureは既存Affect tablesの列・CHECK・FKを更新する際、接続するevent／reset／idempotency／mutation／observationを同じsavepoint内で再構築する。既存Main行、ID、Memory link、fingerprint、監査をコピーして保持し、Mainのstate versionを変更しない。Memory tablesと保存本文は対象外で、`user_version`は6を維持する。
+
+## Coordination
+
+`coordination_records_v7`はCrew起点Mainをownerとし、起票元の実Main／Auxiliary identity・Turn、元依頼receiptと保存originの実呼出元、現在の回答担当、本文・選択肢、回答revision、明示操作の履歴を保持する。回答担当の変更で起票元は変えない。参照は全Crewへ公開するが、更新権限は起票元・現在の担当・実ユーザーごとに検証する。実ユーザー回答はtrusted GUI入口に限る。
+
+明示配送は通常の`session_turn_queue_v6`へ受付け、Coordinationとqueueの保存は同じWorker接続のtransaction内で行う。操作UUIDによる再試行照合は記録自身の履歴を用い、独立queue・outbox・台帳は持たない。回答revisionとreceiptを対応させ、consumeは起票元が回答identity／現在revisionを明示して行う。読出し・描画・配送だけではconsumeしない。訂正記録と訂正元の状態も同じtransactionで保存する。
+
+取り下げと回答は併存する。取り下げは受理済み回答・queueを取消さず、その後の有効な回答も受付ける。queueの受付時入力を保ち、dispatch claim時だけ現在状態と取り下げ理由を採用入力へ追加する。回答原文・送信者・revisionは最新回答へ差し替えない。Coordinationは既存Provider質問・承認やGUI Steerへ変換しない。
+
+起票Turn終了・Window close・再起動で記録は失効しない。Crew削除は未対応記録の起票元・現在のAgent担当と通常queueの既存guardで判定し、成立したCrew全体削除ではCrew所有記録をcascade削除する。終了済み履歴はCrewが存続する間保持する。
+
+詳細取得は起票元の保存identityから共通execution read用の`initiatorTarget`を投影する。Auxiliaryでは現在の親Main identityも同じ読取transactionで解決し、記録自身へ重複保存しない。存在しない記録・明示指定された削除済みCrew／Mainの照会は`COORDINATION_DELETED`としてGUIへ返す。通信失敗や認可失敗をこの終端結果へ変換せず、一時取得失敗と削除済み表示を区別する。
 
 ## Session Graph
 

@@ -108,6 +108,7 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
     owner: { assertActive() {} },
     storage: {
       setSessionExecutionOptions(_id: string, _owner: string, options: SessionExecutionOptions) { checkpoints.push(options); },
+      listSessionSummaries: () => cached,
     } as never,
     pinStorage: {} as never,
     cache: {
@@ -224,7 +225,7 @@ it("Auxiliary実行中のMain選択を次turnへ渡し親削除を保護する",
     });
     assert.deepEqual(checkpoints.at(-1), chosen);
     assert.deepEqual(captureSessionExecutionOptions(getCached()), chosen);
-    await assert.rejects(persistence.deleteSession(stored.id), /running session cannot be deleted/);
+    await assert.rejects(persistence.deleteSession(stored.id), /running Crew cannot be deleted/);
     await runtime.runSessionTurn(stored.id, {
       userMessage: `run with ${count} auxiliaries`, executionOptions: captureSessionExecutionOptions(selections.apply(stored)),
     });

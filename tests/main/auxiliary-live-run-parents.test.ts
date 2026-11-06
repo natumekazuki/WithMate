@@ -4,7 +4,6 @@ import test from "node:test";
 import { AuxiliaryLiveRunParents } from "../../src-electron/auxiliary/auxiliary-live-run-parents.js";
 import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
-import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 
 // @test-value v2
@@ -35,8 +34,8 @@ test("全Auxiliaryの実guardを親の停止判定へ集約する", () => {
 });
 
 
-function auxiliary(id: string, parentSessionId = "parent-a", status: AuxiliarySession["status"] = "active") {
-  return { id, parentSessionId, status };
+function auxiliary(id: string, parentSessionId = "parent-a") {
+  return { id, parentSessionId };
 }
 
 function live(sessionId: string, overrides: Partial<LiveSessionRunState> = {}): LiveSessionRunState {
@@ -245,20 +244,20 @@ test("完了と受付失敗を繰り返しても不要な親関連を残さな�
 
 // @test-value v2
 // kind = "contract"
-// claim = "closeまたは削除で保持liveの親関連を解除し、closed会話や遅いactive読込みを再登録しない"
+// claim = "親削除で保持liveの親関連を解除し、遅い会話読込みを再登録しない"
 // oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#live-run-delivery" }
-// fault = "close/削除後の保持liveを根拠に親関連を復活させ、不要entryまたは詳細宛先を残す"
-// observable = "親関連数とclose/削除後にWindowBroadcastServiceが送る詳細通知数"
+// fault = "親削除後の保持liveを根拠に親関連を復活させ、不要entryまたは詳細宛先を残す"
+// observable = "親関連数と親削除後にWindowBroadcastServiceが送る詳細通知数"
 // observation_boundary = "public-boundary"
-// scope = "auxiliary-live-owner-close-delete-release"
+// scope = "auxiliary-live-owner-delete-release"
 // lifecycle = "permanent"
 // impact = "破棄済み会話のrouting metadataが残り、遅い状態が旧親Windowに配信される"
 // distinction = "通常完了では解除できない保持liveありの明示teardownと同generationの遅い読込みを確認する"
 // @end-test-value
-test("保持live付き会話のcloseと削除で親関連を解除する", () => {
+test("保持live付き会話の親削除で親関連を解除する", () => {
   const f = fixture();
   for (let i = 0; i < 40; i += 1) {
-    const row = auxiliary(`closed-or-deleted-${i}`);
+    const row = auxiliary(`deleted-${i}`);
     f.admission.add(row.id);
     f.parents.remember(row, f.owner);
     f.observability.setLiveSessionRun(row.id, live(row.id, { runState: "idle", reasoningText: "retained" }));
@@ -266,17 +265,12 @@ test("保持live付き会話のcloseと削除で親関連を解除する", () =>
     f.parents.releaseIfUnused(row.id, f.owner);
     assert.equal(f.parents.size, 1);
     f.parents.delete(row.id, f.owner);
-    f.parents.remember(auxiliary(row.id, row.parentSessionId, "closed"), f.owner);
     f.parents.remember(row, f.owner);
     assert.equal(f.parents.size, 0);
     const detailsBefore = f.details().length;
     f.observability.setLiveSessionRun(row.id, null);
     assert.equal(f.details().length, detailsBefore);
   }
-  // Closed rows must also be rejected even if a new admission has been reserved.
-  f.admission.add("closed");
-  f.parents.remember(auxiliary("closed", "parent-a", "closed"), f.owner);
-  assert.equal(f.parents.size, 0);
 });
 
 // @test-value v2

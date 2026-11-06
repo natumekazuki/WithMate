@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 import type { SessionGraphWindowPayload, SessionGraphViewState } from "../../src-shared/session-graph/session-graph-window-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
@@ -20,6 +20,10 @@ export default function SessionGraphWindowApp() {
   const [settingsError, setSettingsError] = useState("");
   const [settingsReadRevision, setSettingsReadRevision] = useState(0);
   const stateRef = useRef<SessionGraphViewState | null>(null);
+  const updateTitle = useCallback((title: string) => {
+    if (!api || !stateRef.current) return;
+    void api.updateSessionGraphWindowState(token, stateRef.current, title).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+  }, [api, token]);
   useEffect(() => startAppSettingsSubscription({
     api,
     loadInitial: true,
@@ -65,6 +69,7 @@ export default function SessionGraphWindowApp() {
       setSettingsReadRevision((current) => current + 1);
     }}>Retry Settings</button></div> : null}
     {payload && adapter && api ? <SessionGraphPreview api={adapter} sessionId={payload.ownerSessionId} initialState={payload.state}
+      onTitleChange={updateTitle}
       onStateChange={(state) => { stateRef.current = state; void api.updateSessionGraphWindowState(token, state).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))); }}
       onOpenPath={(target) => { void api.openSessionGraphWindowReference(token, target).then((result) => {
         if (result.status !== "opened") setError(result.message);

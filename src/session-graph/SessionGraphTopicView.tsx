@@ -29,6 +29,7 @@ import { layoutSessionGraph, sessionGraphCapacity, sessionGraphRoutePath, type S
 import { projectSessionGraph, type GraphOverviewNode } from "./graph-overview.js";
 import { applyGraphRead, applyGraphReadBatch, createGraphReadState, graphReadIsIncomplete, graphReadPendingScopes, type GraphReadState } from "./graph-read-state.js";
 import { collapsedTopicEdges, readExpandedTopicViews } from "./graph-topic-view.js";
+import { createGraphRefreshQueue } from "./graph-refresh.js";
 
 const PAGE_SIZE = 40;
 function OverviewIcon() {
@@ -138,6 +139,7 @@ export function SessionGraphTopicView({
   onMemoryChange,
   allTopics = false,
   onFocusTopic,
+  onTitleChange,
 }: {
   api: Pick<WithMateWindowApi, "readSessionGraph" | "subscribeSessionGraph">;
   sessionId: string;
@@ -150,6 +152,7 @@ export function SessionGraphTopicView({
   onMemoryChange?(memory: SessionGraphTopicMemory): void;
   allTopics?: boolean;
   onFocusTopic?(topicId: string): void;
+  onTitleChange?(title: string): void;
 }) {
   const [topics, setTopics] = useState<SessionGraphTopic[]>(initialMemory?.topics ?? []);
   const [topicOverviews, setTopicOverviews] = useState(initialMemory?.topicOverviews ?? []);
@@ -177,7 +180,7 @@ export function SessionGraphTopicView({
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [detailLoading, setDetailLoading] = useState(false);
-  const [refresh, setRefresh] = useState(0);
+  const [visible, setVisible] = useState(document.visibilityState !== "hidden");
   const [zoom, setZoom] = useState(initialState.zoom);
   const [backStack, setBackStack] = useState<SessionGraphTopicMemory["backStack"]>(initialMemory?.backStack ?? []);
   const [rangeBackStack, setRangeBackStack] = useState<GraphLocation[]>(initialMemory?.rangeBackStack ?? []);
@@ -274,9 +277,16 @@ export function SessionGraphTopicView({
     focusDetail.current = kind === "detail";
     pendingReturn.current = null;
   };
-  const load = useCallback(
+  const readView = useCallback(
     async (more = false, moreTopics = false) => {
       const revision = ++request.current;
+      if (document.visibilityState === "hidden") return;
+      const currentApi: Pick<WithMateWindowApi, "readSessionGraph"> = {
+        readSessionGraph: (...args) => {
+          if (request.current !== revision || document.visibilityState === "hidden") throw new Error("Graph view refresh was canceled.");
+          return api.readSessionGraph(...args);
+        },
+      };
       const restoreLoadFocus = more && document.activeElement === loadMoreRef.current;
       setLoading(true);
       setLoadingMore(more);
@@ -289,8 +299,8 @@ export function SessionGraphTopicView({
         const append = more && !rebuildPaging;
         const loadedCount = returning ? returning.location.recordIds.length : (view?.items.length ?? 0) + (rebuildPaging ? PAGE_SIZE : 0);
         const readTopics = async (options: { limit: number; offset: number; expectedRevision?: number }) => {
-          if (allTopics) return api.readSessionGraph(sessionId, "overview", options);
-          const page = await api.readSessionGraph(sessionId, "list_topics", options);
+          if (allTopics) return currentApi.readSessionGraph(sessionId, "overview", options);
+          const page = await currentApi.readSessionGraph(sessionId, "list_topics", options);
           return page.status === "ok" ? { ...page, topicRelations: [] } : page;
         };
         let topicPage = await readTopics({
@@ -332,14 +342,14 @@ export function SessionGraphTopicView({
         let combined: SessionGraphReadResult;
         let nextRecency: SessionGraphRecencyRange = {};
         if (allTopics) {
-          const expanded = await readExpandedTopicViews(api, sessionId, topicPage.revision,
+          const expanded = await readExpandedTopicViews(currentApi, sessionId, topicPage.revision,
             nextTopics as SessionGraphTopicOverview[], expandedTopicIds, view, more, PAGE_SIZE);
           if (request.current !== revision) return;
           reads = expanded.reads;
           combined = expanded.view;
         } else {
           const readRecords = (options: { limit: number; offset: number; expectedRevision?: number }) =>
-            api.readSessionGraph(sessionId, "get_topic_view", { ...options, topicId: nextTopic! });
+            currentApi.readSessionGraph(sessionId, "get_topic_view", { ...options, topicId: nextTopic! });
           let result = await readRecords({
             limit: append
               ? PAGE_SIZE
@@ -379,10 +389,11 @@ export function SessionGraphTopicView({
         }
         const knownIds = returning ? [...returning.location.recordIds, ...returning.location.inspectedIds]
           : [...inspectedRecords, ...(view?.items ?? [])].filter((record) => allTopics ? expandedTopicIds.includes(record.topicId) : record.topicId === nextTopic).map((record) => record.id);
+        if (selectedId) knownIds.push(selectedId);
         const extraIds = [...new Set(knownIds.filter((id) => !combined.items.some((item) => item.id === id)))];
         const refreshedExtras: SessionGraphRecord[] = [];
         if (!append || allTopics) for (let offset = 0; offset < extraIds.length; offset += 200) {
-          const extra = await api.readSessionGraph(sessionId, "get", { ids: extraIds.slice(offset, offset + 200), limit: 200, expectedRevision: combined.revision });
+          const extra = await currentApi.readSessionGraph(sessionId, "get", { ids: extraIds.slice(offset, offset + 200), limit: 200, expectedRevision: combined.revision });
           if (request.current !== revision) return;
           if (extra.status !== "ok") throw new Error("The graph changed. Retry to refresh its current state.");
           reads.push(extra);
@@ -416,6 +427,7 @@ export function SessionGraphTopicView({
         if (restoreLoadFocus && !combined.hasMore &&
           (document.activeElement === loadMoreRef.current || document.activeElement === document.body)) focusLoadedCount.current = true;
         setView(combined);
+        if (selectedId) setSelectedRecord([...combined.items, ...refreshedExtras].find((record) => record.id === selectedId) ?? null);
         if (allTopics) {
           setTopicOverviews(nextTopics as SessionGraphTopicOverview[]);
           setTopicRelations(topicPage.topicRelations);
@@ -435,23 +447,55 @@ export function SessionGraphTopicView({
     },
     [api, sessionId, allTopics, topics, view, selectedId, inspectedRecords, recordPagingNeedsRefresh, expandedTopicIds],
   );
+  const readViewRef = useRef(readView);
+  readViewRef.current = readView;
+  const refreshQueue = useRef<ReturnType<typeof createGraphRefreshQueue> | null>(null);
+  const load = useCallback((more = false, moreTopics = false) => refreshQueue.current?.request(more, moreTopics) ?? Promise.resolve(), []);
   const loadRef = useRef(load);
-  loadRef.current = load;
+  useEffect(() => {
+    const queue = createGraphRefreshQueue((more, moreTopics) => readViewRef.current(more, moreTopics));
+    refreshQueue.current = queue;
+    queue.pause(document.visibilityState === "hidden");
+    const visibility = () => {
+      const hidden = document.visibilityState === "hidden";
+      if (hidden) { request.current += 1; detailRequest.current += 1; }
+      queue.pause(hidden);
+      setVisible(!hidden);
+      if (!hidden) void queue.request();
+    };
+    document.addEventListener("visibilitychange", visibility);
+    return () => {
+      request.current += 1;
+      detailRequest.current += 1;
+      queue.dispose();
+      document.removeEventListener("visibilitychange", visibility);
+    };
+  }, [sessionId, api]);
   useEffect(() => {
     void loadRef.current();
     return () => {
       request.current += 1;
     };
-  }, [sessionId, topicId, refresh, expandedTopicIds]);
+  }, [api, sessionId, topicId, expandedTopicIds]);
   useEffect(
     () =>
       api.subscribeSessionGraph((ownerId) => {
-        if (ownerId === sessionId) setRefresh((value) => value + 1);
+        if (ownerId === sessionId) void loadRef.current();
       }),
     [api, sessionId],
   );
+  const revealRecord = useCallback((record: SessionGraphRecord) => {
+    setSelectedRecord(record);
+    if (allTopics) setExpandedTopicIds((current) => current.includes(record.topicId) ? current : [...current, record.topicId]);
+    if (!allTopics && record.topicId !== topicRef.current) {
+      setView(null);
+      setTopicId(record.topicId);
+      setScopes([]);
+    }
+  }, [allTopics]);
   const selectRecord = useCallback(
     async (id: string) => {
+      if (document.visibilityState === "hidden") return;
       const revision = ++detailRequest.current;
       setDetailLoading(true);
       setDetailError("");
@@ -469,13 +513,7 @@ export function SessionGraphTopicView({
         setRelationState(nextRelations);
         const record = result.items[0];
         setInspectedRecords((current) => [...current.filter((item) => item.id !== record.id), record]);
-        setSelectedRecord(record);
-        if (allTopics) setExpandedTopicIds((current) => current.includes(record.topicId) ? current : [...current, record.topicId]);
-        if (!allTopics && record.topicId !== topicRef.current) {
-          setView(null);
-          setTopicId(record.topicId);
-          setScopes([]);
-        }
+        revealRecord(record);
       } catch (cause) {
         if (detailRequest.current === revision)
           setDetailError(
@@ -485,14 +523,18 @@ export function SessionGraphTopicView({
         if (detailRequest.current === revision) setDetailLoading(false);
       }
     },
-    [api, sessionId, allTopics, view?.revision],
+    [api, sessionId, revealRecord],
   );
   useEffect(() => {
-    if (selectedId) void selectRecord(selectedId);
+    if (selectedId && visible) {
+      const record = view?.items.find((record) => record.id === selectedId) ?? inspectedRecords.find((record) => record.id === selectedId);
+      if (record) { revealRecord(record); setDetailLoading(false); setDetailError(""); }
+      else if (!loading) void selectRecord(selectedId);
+    }
     return () => {
       detailRequest.current += 1;
     };
-  }, [selectedId, selectRecord]);
+  }, [selectedId, selectRecord, revealRecord, visible, view, inspectedRecords, loading]);
   const records = useMemo(() => {
     const items = (view?.items ?? []).filter((record) => !allTopics || expandedTopicIds.includes(record.topicId));
     const extra = inspectedRecords.filter((record) => (allTopics ? expandedTopicIds.includes(record.topicId) : record.topicId === topicId) && !items.some((item) => item.id === record.id));
@@ -532,6 +574,15 @@ export function SessionGraphTopicView({
   const related = relations.filter(
     (edge) => edge.fromId === selectedId || edge.toId === selectedId,
   );
+  const title = [allTopics ? "" : topics.find((topic) => topic.id === topicId)?.title,
+    selectedId === selectedRecord?.id ? selectedRecord.title : ""].filter(Boolean).join(" · ") || "Overview";
+  const publishedTitle = useRef<string | null>(null);
+  useEffect(() => {
+    if (!loading && !error && publishedTitle.current !== title) {
+      publishedTitle.current = title;
+      onTitleChange?.(title);
+    }
+  }, [title, loading, error, onTitleChange]);
   const connectedIds = useMemo(() => {
     const ids = new Set([selectedId]);
     for (const edge of relations) {
@@ -561,6 +612,8 @@ export function SessionGraphTopicView({
       : !scopes.length && !navigationId ? [[`topic:${topic.id}`, topic.id] as const] : [];
   })) : undefined, [allTopics, topics, projection, scopes.length, navigationId, expandedTopicIds]);
   const layoutNodes = useMemo(() => topicByNode ? [...topicByNode.keys()].map((id) => ({ id })) : projection.nodes, [topicByNode, projection]);
+  const layoutContents = JSON.stringify([layoutNodes.map((node) => node.id), displayEdges,
+    topicByNode ? [...topicByNode] : null]);
   const layoutKey = JSON.stringify([topicId, navigationId, scopes.map((scope) => scope.ids), allTopics ? [...expandedTopicIds].sort() : null]);
   useLayoutEffect(() => {
     const measure = () => {
@@ -577,12 +630,12 @@ export function SessionGraphTopicView({
     const observer = new ResizeObserver(measure);
     for (const element of labelElements.current.values()) observer.observe(element);
     return () => observer.disconnect();
-  }, [displayEdges]);
+  }, [layoutContents]);
   const layoutReady = !!viewportSize && displayEdges.every((edge) => labelSizes.has(edge.id));
   const layout = useMemo(
     () => !layoutReady && layouts.current.has(layoutKey) && layoutNodes.every((node) => layouts.current.get(layoutKey)!.positions.has(node.id)) ? layouts.current.get(layoutKey)!
       : layoutSessionGraph(layoutNodes, displayEdges, viewportSize?.width ?? 0, viewportSize?.height ?? 0, labelSizes, layouts.current.get(layoutKey), expandedTopicIds.length ? topicByNode : undefined, new Set(expandedTopicIds)),
-    [layoutNodes, displayEdges, viewportSize, labelSizes, layoutKey, topicByNode, layoutReady, expandedTopicIds],
+    [layoutContents, viewportSize, labelSizes, layoutKey, layoutReady],
   );
   useLayoutEffect(() => { if (layoutReady) layouts.current.set(layoutKey, layout); }, [layoutKey, layout, layoutReady]);
   const edgeRoutes = displayEdges.flatMap((edge) => {

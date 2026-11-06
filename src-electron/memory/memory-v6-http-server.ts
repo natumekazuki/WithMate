@@ -59,6 +59,7 @@ import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-
 import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
 import { sessionHistoryRuntimeOperationByPath } from "../../src-shared/session-history/session-history-contract.js";
+import { glossaryRuntimeOperationByPath } from "../../src-shared/glossary/glossary-operation-schema.js";
 import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
 
 export type MemoryV6HttpServerOptions = {
@@ -1971,12 +1972,25 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime identity challenge is invalid."));
           return;
         }
-        if (activeAgentExtensionRequests >= 1) {
-          writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Agent runtime extension exchange has an in-flight request."));
-          return;
+        // Length only selects a bounded receive pool; it never establishes identity.
+        const contentLength = request.headers["content-length"];
+        const smallBody = typeof contentLength === "string" && /^\d+$/.test(contentLength)
+          && Number.isSafeInteger(Number(contentLength)) && Number(contentLength) <= maxBodyBytes;
+        if (smallBody) {
+          if (activeRequests >= maxConcurrentRequests) {
+            writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Memory API has too many in-flight requests."));
+            return;
+          }
+          activeRequests += 1;
+          admitted = true;
+        } else {
+          if (activeAgentExtensionRequests >= 1) {
+            writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Agent runtime extension exchange has an in-flight request."));
+            return;
+          }
+          activeAgentExtensionRequests += 1;
+          admittedAgentExtension = true;
         }
-        activeAgentExtensionRequests += 1;
-        admittedAgentExtension = true;
         request.setTimeout(requestTimeoutMs);
         response.setTimeout(requestTimeoutMs);
         response.writeEarlyHints({
@@ -1991,7 +2005,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           ),
         });
         const payload = parseRuntimeExchangePayload(
-          await readJsonBody(request, WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES),
+          await readJsonBody(request, smallBody ? maxBodyBytes : WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES),
         );
         if (!payload || !authenticateRuntimeExchange(payload, apiSecret, operatorApiSecret, mcpApiSecret)) {
           writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime extension exchange is not authorized."));
@@ -2000,6 +2014,15 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         if (payload.adapter === "agent_cli_fallback" || payload.operation.fallbackFrom !== undefined) {
           writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Agent runtime extension does not accept Memory CLI fallback mode."));
           return;
+        }
+        // Glossary retains its one-dispatch boundary, including small requests.
+        if (!admittedAgentExtension && glossaryRuntimeOperationByPath.has(new URL(payload.operation.path, "http://127.0.0.1").pathname)) {
+          if (activeAgentExtensionRequests >= 1) {
+            writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Agent runtime extension exchange has an in-flight request."));
+            return;
+          }
+          activeAgentExtensionRequests += 1;
+          admittedAgentExtension = true;
         }
         const historyOperation = sessionHistoryRuntimeOperationByPath.get(new URL(payload.operation.path, "http://127.0.0.1").pathname);
         const backgroundBinding = historyOperation ? resolveBackgroundFailureBinding(options, payload.bindingReference, payload.turnCapability) : undefined;

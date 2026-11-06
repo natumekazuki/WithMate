@@ -13,19 +13,25 @@ Character metadataの投影は名前・説明に限り、iconのpathは常設pro
 1. `Character Definition Snapshot`（有効なCharacter snapshotがあるとき）
 2. `Output Boundary`（通常SessionにCharacter snapshotがあるとき）
 3. `Tool Call Presence`（同条件で設定が有効なとき）
-4. `Folder Context`（実行workspace、解決済みSessionFolder、実効Additional Directories）
-5. `Character Affect Context`（取得でき、設定が有効なとき）
-6. input側の`Conversation Timing`（通常Sessionで設定が有効なとき）
-7. `User Input`とそのターンの本文
-8. 添付referenceとprovider固有のstructured input
+4. `Folder Context`（実行workspace、解決済みSessionFolder、Crew Folder、実効Additional Directories）
+5. `Session Metadata`（自会話の保存済みTitle／Descriptionと短い保守指示）
+6. `Character Affect Context`（取得でき、設定が有効なとき）
+7. input側の`Conversation Timing`（通常Sessionで設定が有効なとき）
+8. queue由来の`Input Provenance`（保存済みoriginと受付後の本文・添付変更有無）
+9. `User Input`／`Session Input`／`Queued Input`とそのターンの採用本文
+10. 添付referenceとprovider固有のstructured input
 
 Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。ユーザーへの応答に加え、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文にもCharacterの表現を使う。手元の記録でも要求・判断・作業・検証の主体、事実・条件・状態を保ち、ID、状態値、コマンド出力、正確な引用などを書き換えない。リポジトリに含めるものや外部へ提出・公開する成果物には、ユーザーが明示しない限りCharacterの表現を混ぜず、repository instruction、既存文体、対象の目的を優先する。`Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残る。`Tool Call Presence`は最初のtool call前の1〜3文の自然な応答と、長い作業で必要な経過・反応を求める。詳細な計画、定型の開始挨拶、操作ごとの実況やtoolが不要な応答への前置きは求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
 
-`Conversation Timing`はturn開始時に固定した観測値を`User Input`直前へ置き、会話のペースの弱いシグナルとして扱う。別Sessionの内容や生活状況を推測しない。`Character Affect Context`はAffectのread projectionであり、生event全体、Memory本文・preview、secretを含めない。Affectのfamily集約、session layerの時間減衰とafterglowはCharacter Context側が所有する。
+`Conversation Timing`はturn開始時に固定した観測値を入力section群の直前へ置き、会話のペースの弱いシグナルとして扱う。別Sessionの内容や生活状況を推測しない。`Character Affect Context`はAffectのread projectionであり、生event全体、Memory本文・preview、secretを含めない。Affectのfamily集約、session layerの時間減衰とafterglowはCharacter Context側が所有する。
+
+queue由来の通常開始とqueue経由Steerはclaim時の`dispatched`本文・添付を採用し、`accepted`や予定入力`captured`を上書きしない。Provider入力へ実送信元のMain／Auxiliary種別、会話・incarnation・Turn、送信操作と明示宛先を渡し、別Sessionの入力は`Session Input`として直接のユーザー要求から区別する。GUI由来は`User Input`、origin未記録は`Queued Input`とし、送信者を推測しない。受付時の本文・添付参照と採用入力の比較は変更あり／なし／比較不能として示し、編集者や生成prompt全体の履歴を推測しない。Coordinationには保存された配送操作も付ける。送信元metadataは権限を追加せず、古い原文を実行対象の本文へ混ぜない。4 Providerの通常開始は共通compositionを使用し、queue経由Steerも同じ入力境界表現を用いる。
 
 通常Main／Auxiliaryのturn開始時には、ユーザー入力によるMemory検索を行わない。Memoryは会話Agentが必要と判断したときに既存MCP／CLIで検索・一覧・本文取得し、アプリが検索結果をpromptへ自動注入しない。公開`character_context.get`／CLI `context-get`の任意queryによる明示取得も、この能動取得の経路に含む。
 
 ## 設定とSession種別
+
+通常Main／Auxiliaryの`Session Metadata`は、Turn開始時の自会話のTitle／DescriptionだけをJSONとして渡す。他Sessionの説明を常設注入せず、保存値を命令・Role・権限へ昇格させない。初回の依頼理解時と説明が実態に合わなくなった時に`session.update_metadata`で自己更新するよう案内し、毎Turnの保存・入力要求・専用生成Turnは設けない。更新後の値は次Turnの保存metadataから取得し、進行中のProvider contextを書き換えない。
 
 `AppSettings`の`characterDefinitionEnabled`、`characterAffectContextEnabled`、`conversationTimingEnabled`、`toolCallPresenceEnabled`は個別に対象sectionを切り替える。欠損した既存保存値では既定の`true`を使い、保存後の次turnから反映する。AffectとTimingをOFFにした通常Sessionでは、それぞれのturn開始時resolverも呼ばない。通常turn内のMemory／Affect MCPの利用説明やprovider自身の指示は、このcontext設定では切り替わらない。
 

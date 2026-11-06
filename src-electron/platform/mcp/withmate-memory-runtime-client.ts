@@ -25,6 +25,7 @@ import {
 import {
   createWithMateMemoryRuntimeChallenge,
   createWithMateMemoryRuntimeOwnerChallenge,
+  WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
   WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH,
@@ -852,6 +853,16 @@ export async function callWithMateMemoryRuntime(
 
   const nonce = randomBytes(16).toString("base64url");
   const exchangeUrl = new URL(options.exchangePath ?? WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
+  const payload = JSON.stringify({
+    schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+    apiSecret: connection.api.apiSecret,
+    adapter: exchangeAdapter,
+    adapterSecret: connection.credential.adapterSecret,
+    ...(options.bindingReference ? { bindingReference: options.bindingReference } : {}),
+    ...(options.turnCapability ? { turnCapability: options.turnCapability } : {}),
+    ...(options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {}),
+    operation,
+  });
 
   return new Promise<WithMateMemoryRuntimeResponse>((resolve, reject) => {
     let dispatched = false;
@@ -881,6 +892,8 @@ export async function callWithMateMemoryRuntime(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(options.exchangePath === WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH
+            ? { "Content-Length": Buffer.byteLength(payload, "utf8") } : {}),
           [WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
           [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: connection.api.runtimeGenerationId,
           [WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
@@ -962,18 +975,7 @@ export async function callWithMateMemoryRuntime(
       }
       identityVerified = true;
       dispatched = true;
-      request.end(JSON.stringify({
-        schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
-        apiSecret: connection.api.apiSecret,
-        adapter: exchangeAdapter,
-        adapterSecret: connection.credential.adapterSecret,
-        ...(options.bindingReference ? { bindingReference: options.bindingReference } : {}),
-        ...(options.turnCapability ? { turnCapability: options.turnCapability } : {}),
-        ...(options.fallbackAdmissionSecret
-          ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret }
-          : {}),
-        operation,
-      }));
+      request.end(payload);
     });
     request.on("error", (error) => fail("Memory API request failed.", error));
     options.signal.addEventListener("abort", () => fail("Memory API request was aborted."), { once: true });

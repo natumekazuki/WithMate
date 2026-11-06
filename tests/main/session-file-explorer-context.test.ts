@@ -16,7 +16,7 @@ function mainSummary() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "FilesのMainとAuxiliary認可は現在の親incarnationと共通の許可rootを返し、親削除と読取失敗を成功へ変更しない"
+// claim = "FilesのMainとAuxiliary認可は現在の親incarnation・保存済みCrew起点・共通の許可rootを返し、親削除と読取失敗を成功へ変更しない"
 // oracle = { type = "contract", ref = "docs/design/electron-session-store.md#Files認可metadata" }
 // fault = "Auxiliaryの古い個別root集合や削除済み親を再利用する"
 // observable = "再読込したFiles contextの親ID・incarnation・workspace・許可root、nullと例外"
@@ -36,12 +36,12 @@ test("Files contextはMainとAuxiliaryで現在の親の許可を使用する", 
     getSessionSummary: async (id: string) => exists && id === "main" ? parent : null,
   };
   assert.deepEqual(await readSessionFileExplorerContext("main", reads), {
-    workspacePath: "C:/workspace", parentSessionId: "main", parentIncarnationId: "owner-1", allowedAdditionalDirectories: ["C:/main-only"],
+    workspacePath: "C:/workspace", parentSessionId: "main", parentIncarnationId: "owner-1", crewRootSessionId: "main", allowedAdditionalDirectories: ["C:/main-only"],
   });
   assert.deepEqual((await readSessionFileExplorerContext("aux", reads))?.allowedAdditionalDirectories, ["C:/main-only"]);
-  parent = { ...parent, incarnationId: "owner-2", workspacePath: "C:/replacement", allowedAdditionalDirectories: [] };
+  parent = { ...parent, incarnationId: "owner-2", rootSessionId: "crew-root", parentSessionId: "crew-root", sessionRole: "executor", workspacePath: "C:/replacement", allowedAdditionalDirectories: [] };
   assert.deepEqual(await readSessionFileExplorerContext("aux", reads), {
-    workspacePath: "C:/replacement", parentSessionId: "main", parentIncarnationId: "owner-2", allowedAdditionalDirectories: [],
+    workspacePath: "C:/replacement", parentSessionId: "main", parentIncarnationId: "owner-2", crewRootSessionId: "crew-root", allowedAdditionalDirectories: [],
   });
   exists = false;
   assert.equal(await readSessionFileExplorerContext("aux", reads), null);

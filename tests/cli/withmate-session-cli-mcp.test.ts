@@ -1,0 +1,649 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { runWithMateSessionCli } from "../../src-cli/session/withmate-session.js";
+import { createWithMateSessionMcpServer } from "../../src-electron/platform/mcp/withmate-session-mcp.js";
+import type {
+  callWithMateMemoryRuntime,
+  WithMateMemoryRuntimeConnection,
+} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
+import {
+  SESSION_RUNTIME_OPERATION_PATHS,
+  getSessionAgentRuntimeOperations,
+  type SessionOperation,
+} from "../../src-shared/session/session-management-contract.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+import { CoordinationStorageV7 } from "../../src-electron/coordination/coordination-storage-v7.js";
+import { CoordinationApplicationService } from "../../src-electron/coordination/coordination-application-service.js";
+import { SessionManagementApplication } from "../../src-electron/session/session-management-application.js";
+import { SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
+import { resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
+import {
+  buildNewSession,
+  getSessionIncarnationId,
+} from "../../src-shared/session/session-state.js";
+const env = {
+  WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding",
+  WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn",
+};
+const connection: WithMateMemoryRuntimeConnection = {
+  api: {
+    baseUrl: "http://127.0.0.1:7777",
+    apiSecret: "secret",
+    applicationInstanceId: "instance",
+    runtimeGenerationId: "generation",
+    runtimeInstanceId: "generation",
+  },
+  credential: { adapter: "mcp", adapterSecret: "adapter" },
+};
+async function cli(
+  command: string,
+  body: unknown,
+  runtimeCall: typeof callWithMateMemoryRuntime,
+  boundEnv = env,
+) {
+  let output = "";
+  const exit = await runWithMateSessionCli(
+    [command, "--json", JSON.stringify(body)],
+    {
+      env: boundEnv,
+      connection,
+      runtimeCall,
+      stdout: {
+        write: (value) => {
+          output += String(value);
+          return true;
+        },
+      },
+      stderr: { write: () => true },
+    },
+  );
+  return { exit, value: JSON.parse(output) as Record<string, unknown> };
+}
+// @test-value v2
+// kind = "contract"
+// claim = "Session MCPとbound CLIは同一binding/turn付き操作と拒否を共有し送信応答喪失を未適用と偽らない"
+// oracle = { type = "contract", ref = "GitHub #835 MCPとbound CLIの入力・結果・拒否の同一契約" }
+// fault = "CLIが別actorで実行するかenqueue通信失敗をeffect noneとして返す"
+// observable = "SDK MCPとCLIのstructured結果、dispatch identity、enqueue effect unknown"
+// observation_boundary = "public-boundary"
+// scope = "session-cli-mcp"
+// lifecycle = "permanent"
+// distinction = "schemaやapplication単体では実CLIとSDK MCPの接続契約と応答喪失を検出できない"
+// @end-test-value
+test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", async () => {
+  const calls: unknown[] = [];
+  let lose = false;
+  let reject = true;
+  let successValues: Record<string, Record<string, unknown>> = {};
+  const runtimeCall: typeof callWithMateMemoryRuntime = async (
+    _connection,
+    request,
+    options,
+  ) => {
+    calls.push({
+      request,
+      binding: options.bindingReference,
+      turn: options.turnCapability,
+    });
+    if (lose) throw new Error("reply lost");
+    return reject
+      ? {
+          ok: false,
+          status: 403,
+          value: { ok: false, code: "SESSION_FORBIDDEN", effect: "none" },
+        }
+      : { ok: true, status: 200, value: successValues[request.path] };
+  };
+  const server = createWithMateSessionMcpServer({
+    env,
+    connection,
+    runtimeCall,
+  });
+  const client = new Client({ name: "session-parity", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b);
+    await client.connect(a);
+    const target = {
+      kind: "main",
+      sessionId: "child",
+      incarnationId: "child-v1",
+    };
+    const body = { target, requestId: "request", message: "work" };
+    const exact = { target, turnId: "1" };
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    const coordination = { operationId, id: "consultation" };
+    const inputs: Record<SessionOperation, Record<string, unknown>> = {
+      self: {},
+      list: { allCrews: true, limit: 2 },
+      get: { target },
+      update_metadata: { title: "updated" },
+      enqueue: body,
+      get_receipt: { target, requestId: "request" },
+      cancel_receipt: { target, receiptId: "receipt" },
+      stop_turn: { target, turnId: "1" },
+      list_executions: { target },
+      get_execution: exact,
+      list_execution_inputs: exact,
+      get_execution_input: exact,
+      list_execution_outputs: exact,
+      get_execution_output: { ...exact, index: 0 },
+      list_execution_operations: exact,
+      get_execution_operation_detail: { ...exact, kind: "operation", index: 0 },
+      coordination_list: { offset: 0, limit: 50 },
+      coordination_get: { id: "consultation" },
+      coordination_create: {
+        operationId,
+        kind: "decision",
+        body: "question",
+        choices: [],
+        deliver: false,
+      },
+      coordination_deliver: coordination,
+      coordination_escalate: { ...coordination, body: "need user" },
+      coordination_answer: {
+        ...coordination,
+        body: "answer",
+        selectedChoices: [],
+        expectedAnswerRevision: 0,
+        send: true,
+      },
+      coordination_withdraw: { ...coordination, reason: "" },
+      coordination_resolve: coordination,
+      coordination_consume: {
+        ...coordination,
+        answerId: "answer",
+        answerRevision: 1,
+      },
+      coordination_correct: { ...coordination, body: "correction" },
+      create_child: {
+        requestId: "child-create",
+        role: "executor",
+        provider: "codex",
+        model: "model",
+        reasoningEffort: "medium",
+        approvalMode: "untrusted",
+        codexSandboxMode: "workspace-write",
+        workspacePath: "workspace",
+      },
+      get_catalog: {},
+      list_messages: { target },
+      get_message: { target, seq: 1 },
+      list_operations: { target, seq: 1 },
+      get_operation_detail: { target, seq: 1, kind: "operation", index: 0 },
+    };
+    const session = {
+      id: "child",
+      incarnationId: "child-v1",
+      kind: "main",
+      role: "executor",
+      sessionRole: "executor",
+      rootSessionId: "parent",
+      parentSessionId: "parent",
+      createdBySessionId: "parent",
+      mainSessionId: "child",
+      mainIncarnationId: "child-v1",
+      title: "task",
+      description: "full",
+      runState: "running",
+    };
+    const receipt = {
+      id: "receipt",
+      requestId: "request",
+      sessionId: "child",
+      incarnationId: "child-v1",
+      state: "running",
+      turnId: "1",
+    };
+    const description = {
+      origin: null,
+      receiptId: "receipt",
+      receiptState: "running",
+      turnId: "1",
+      turnState: "running",
+      resultState: "running",
+      userMessageSeq: 1,
+      assistantMessageSeq: null,
+      inputs: {
+        entry: null,
+        startChanged: null,
+        additional: {
+          confirmedCount: 0,
+          references: [],
+          referencesNextOffset: null,
+          unresolved: [],
+          unresolvedCount: 0,
+          unresolvedNextOffset: null,
+          notSent: [],
+          notSentCount: 0,
+          notSentNextOffset: null,
+          coverage: "recorded",
+        },
+      },
+    };
+    const page = { items: [], total: 0, offset: 0, nextOffset: null };
+    const textPiece = {
+      text: "saved",
+      offset: 0,
+      nextOffset: null,
+      totalChars: 5,
+    };
+    const output = {
+      finality: "unknown",
+      unitCount: 1,
+      textChars: 5,
+      artifactSaved: false,
+    };
+    const record = {
+      id: "consultation",
+      crewRootSessionId: "parent",
+      state: "open",
+      answerRevision: 0,
+    };
+    const values: Record<SessionOperation, Record<string, unknown>> = {
+      self: {
+        session,
+        currentTurn: { turnId: "1", receipt: null, origin: null },
+        crewFolder: { rootSessionId: "parent", path: "crew-files/parent" },
+      },
+      list: { entries: [session], total: 1, hasMore: false },
+      get: {
+        session,
+        crewFolder: { rootSessionId: "parent", path: "crew-files/parent" },
+      },
+      update_metadata: {
+        metadata: { id: "child", taskTitle: "updated", description: "full" },
+      },
+      enqueue: { receipt },
+      get_receipt: { receipt },
+      cancel_receipt: { result: { outcome: "not-applied", receipt } },
+      stop_turn: { result: { outcome: "applied", turnId: "1" } },
+      list_executions: {
+        ...page,
+        kind: "receipts",
+        items: [description],
+        total: 1,
+      },
+      get_execution: { ...description, output },
+      list_execution_inputs: { ...description, ...page },
+      get_execution_input: {
+        ...description,
+        ...textPiece,
+        attachments: [],
+        expectedInput: "snapshot",
+        originalKnown: true,
+      },
+      list_execution_outputs: { ...description, ...page, finality: "unknown" },
+      get_execution_output: {
+        ...description,
+        ...textPiece,
+        unit: {
+          id: "unit",
+          start: 0,
+          end: 5,
+          final: false,
+          role: "unclassified",
+          completion: "complete",
+          phase: null,
+          evidence: null,
+        },
+        finality: "unknown",
+      },
+      list_execution_operations: {
+        ...description,
+        ...page,
+        seq: 2,
+        section: "operations",
+        artifactDetailSaved: false,
+      },
+      get_execution_operation_detail: {
+        ...description,
+        seq: 2,
+        kind: "operation",
+        index: 0,
+      },
+      coordination_list: { items: [record], total: 1, nextOffset: null },
+      coordination_get: { record, initiatorTarget: target },
+      coordination_create: { record },
+      coordination_deliver: { record },
+      coordination_escalate: { record },
+      coordination_answer: { record },
+      coordination_withdraw: { record },
+      coordination_resolve: { record },
+      coordination_consume: { record },
+      coordination_correct: { record },
+      create_child: {
+        session,
+        character: { id: "character", name: "Character" },
+        provider: "codex",
+        workspacePath: "workspace",
+        executionOptions: {
+          model: "model",
+          reasoningEffort: "medium",
+          approvalMode: "untrusted",
+          codexSandboxMode: "workspace-write",
+        },
+      },
+      get_catalog: {
+        catalog: {
+          providers: [
+            {
+              id: "codex",
+              models: [{ id: "model", reasoningEfforts: ["medium"] }],
+            },
+          ],
+        },
+        options: [
+          {
+            provider: "codex",
+            approvalModes: [{ value: "untrusted", label: "Safety Focused" }],
+            sandboxModes: [{ value: "workspace-write", label: "Workspace" }],
+          },
+        ],
+      },
+      list_messages: { ...page, window: { fromSeq: 0, toSeq: 2 } },
+      get_message: { ...textPiece, seq: 1, role: "user", turn: null },
+      list_operations: {
+        ...page,
+        seq: 1,
+        section: "operations",
+        artifactDetailSaved: false,
+      },
+      get_operation_detail: {
+        ...textPiece,
+        seq: 1,
+        kind: "operation",
+        index: 0,
+      },
+    };
+    values.get_execution_input.inputPair = {
+      original: { ok: true, ...textPiece, attachments: [] },
+      comparison: { ok: true, ...textPiece, attachments: [] },
+    };
+    Object.assign(values.get_execution_operation_detail, textPiece);
+    successValues = Object.fromEntries(
+      Object.entries(values).map(([operation, value]) => [
+        SESSION_RUNTIME_OPERATION_PATHS[operation as SessionOperation],
+        { ok: true, ...value },
+      ]),
+    );
+    assert.deepEqual(
+      (await client.listTools()).tools.map((tool) => tool.name).sort(),
+      Object.keys(inputs)
+        .map((operation) => `session.${operation}`)
+        .sort(),
+    );
+    for (const rejected of [true, false]) {
+      reject = rejected;
+      for (const [operation, input] of Object.entries(inputs) as [
+        SessionOperation,
+        Record<string, unknown>,
+      ][]) {
+        const command = await cli(
+          operation.replaceAll("_", "-"),
+          input,
+          runtimeCall,
+        );
+        const tool = await client.callTool({
+          name: `session.${operation}`,
+          arguments: input,
+        });
+        assert.deepEqual(command.value, tool.structuredContent);
+        assert.equal(tool.isError, rejected ? true : undefined, operation);
+        assert.equal(command.exit, rejected ? 1 : 0);
+        if (rejected) assert.equal(command.value.effect, "none");
+        assert.deepEqual(calls.at(-1), calls.at(-2));
+        assert.deepEqual(calls.at(-1), {
+          request: {
+            method: "POST",
+            path: SESSION_RUNTIME_OPERATION_PATHS[operation],
+            body: input,
+          },
+          binding: "binding",
+          turn: "turn",
+        });
+      }
+    }
+    lose = true;
+    const lost = await cli("enqueue", body, runtimeCall);
+    assert.equal(lost.exit, 3);
+    assert.equal(lost.value.effect, "unknown");
+    assert.deepEqual(lost.value.recovery, {
+      operation: "get_receipt",
+      target,
+      requestId: "request",
+    });
+    assert.deepEqual(
+      (await client.callTool({ name: "session.enqueue", arguments: body }))
+        .structuredContent,
+      lost.value,
+    );
+    const invalid = await cli(
+      "enqueue",
+      { actorSessionId: "spoofed" },
+      runtimeCall,
+    );
+    assert.equal(invalid.exit, 2);
+    assert.equal(calls.length, Object.keys(inputs).length * 4 + 2);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "実保存のCoordination詳細はMain/Auxiliary起票元のexact targetを失わずMCPとbound CLIで取得できる"
+// oracle = { type = "contract", ref = "GitHub #835 全Crew保存読取とMCP/CLI同一結果 / #838 Coordination詳細" }
+// fault = "実storageのinitiatorTarget追加を公開schemaが拒否するかAuxiliary所属Main identityを削除する"
+// observable = "実SQLite起票からApplication/runtimeを経た両入口の成功code、record IDとinitiatorTarget"
+// observation_boundary = "public-boundary"
+// scope = "CoordinationStorageV7 → CoordinationApplicationService → SessionManagementRuntimeService → SDK MCP/bound CLI（HTTP exchangeのみin-process adapter）"
+// lifecycle = "permanent"
+// distinction = "全操作parityの手製成功fixtureでは実保存projectionと公開success schemaの不一致を検出できない"
+// @end-test-value
+test("saved Coordination details cross the real application and both public schemas", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "withmate-coordination-api-"));
+  const dbPath = join(directory, "withmate-v6.db");
+  const sessions = new SessionStorageV6(dbPath);
+  const source = sessions.insertSession(
+    buildNewSession({
+      id: "main",
+      taskTitle: "Main",
+      workspaceLabel: "Workspace",
+      workspacePath: directory,
+      branch: "main",
+      characterId: "unknown",
+      character: "Unknown",
+      characterIconPath: "",
+      characterThemeColors: { main: "#123456", sub: "#234567" },
+      approvalMode: "untrusted",
+      model: "test-model",
+      reasoningEffort: "medium",
+    }),
+  );
+  const incarnationId = getSessionIncarnationId(source);
+  const db = new DatabaseSync(dbPath);
+  db.prepare(
+    "INSERT INTO session_turns_v6(id,session_id,phase,started_at,updated_at) VALUES(1,?,'completed','now','now')",
+  ).run(source.id);
+  db.prepare(
+    "INSERT INTO auxiliary_sessions(id,parent_session_id,created_at,updated_at,character_id) VALUES ('aux',?,'aux-created','now','unknown')",
+  ).run(source.id);
+  db.prepare(
+    "INSERT INTO session_turns_v6(id,auxiliary_session_id,phase,started_at,updated_at) VALUES(2,'aux','completed','now','now')",
+  ).run();
+  const store = new CoordinationStorageV7(dbPath);
+  const bindings = new AgentRuntimeBindingRegistry();
+  const turns = new ProviderAgentRuntimeTurnCoordinator();
+  const identity = {
+    kind: "main" as const,
+    sessionId: source.id,
+    incarnationId,
+  };
+  const binding = bindings.issueOrReuse({
+    actorSessionId: source.id,
+    providerId: source.provider,
+    authoritySnapshot: { sessionIdentity: identity },
+    operationGrants: getSessionAgentRuntimeOperations(),
+  });
+  const turn = turns.begin({
+    actorSessionId: source.id,
+    providerId: source.provider,
+  });
+  const boundEnv = {
+    WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+    WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability,
+  };
+  const coordinationStore = {
+    execute: async (input) => store.execute(input),
+    deliveryTarget: async (input) => store.deliveryTarget(input),
+  } satisfies import("../../src-shared/coordination/coordination-contract.js").CoordinationStore;
+  const coordination = new CoordinationApplicationService({
+    getStore: () => coordinationStore,
+    prepareDelivery: async () => {
+      throw new Error("Read must not deliver");
+    },
+  });
+  const unused = async () => {
+    throw new Error("Unexpected operation");
+  };
+  const application = new SessionManagementApplication({
+    listSessions: async () => resolveRelatedSessions([source], []),
+    currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
+    crewFolder: async () => ({ rootSessionId: source.id, path: directory }),
+    updateMetadata: unused,
+    enqueue: unused,
+    getReceipt: unused,
+    cancelReceipt: unused,
+    stopTurn: unused,
+    readExecution: unused,
+    createChild: unused,
+    catalog: unused,
+    coordinate: (actor, _turnId, request, assertCurrent) =>
+      coordination.read(
+        {
+          kind: actor.kind,
+          sessionId: actor.id,
+          incarnationId: actor.incarnationId,
+        },
+        request,
+        () => {
+          assertCurrent();
+          return true;
+        },
+      ),
+  });
+  const runtime = new SessionManagementRuntimeService({
+    application,
+    bindingRegistry: bindings,
+    providerAgentRuntimeTurns: turns,
+  });
+  const runtimeCall: typeof callWithMateMemoryRuntime = async (
+    _connection,
+    operation,
+    options,
+  ) => {
+    const response = await runtime.route({
+      method: operation.method,
+      path: operation.path,
+      body: operation.body,
+      transport: "mcp",
+      bindingReference: options.bindingReference,
+      turnCapability: options.turnCapability,
+    });
+    assert.ok(response);
+    return {
+      ok: response.status >= 200 && response.status < 300,
+      status: response.status,
+      value: response.value,
+    };
+  };
+  const server = createWithMateSessionMcpServer({
+    env: boundEnv,
+    connection,
+    runtimeCall,
+  });
+  const client = new Client({
+    name: "coordination-real-storage",
+    version: "1",
+  });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b);
+    await client.connect(a);
+    await client.listTools();
+    const actors = [
+      { ...identity, turnId: "1" },
+      {
+        kind: "auxiliary" as const,
+        sessionId: "aux",
+        incarnationId: "aux-created",
+        turnId: "2",
+      },
+    ];
+    for (const actor of actors) {
+      const saved = store.execute({
+        actor,
+        request: {
+          operation: "create",
+          operationId: randomUUID(),
+          kind: "decision",
+          body: "Saved consultation",
+          choices: [],
+          respondent: { kind: "user" },
+          deliver: false,
+        },
+      });
+      assert.ok("record" in saved);
+      const input = { id: saved.record.id };
+      const command = await cli(
+        "coordination-get",
+        input,
+        runtimeCall,
+        boundEnv,
+      );
+      const tool = await client.callTool({
+        name: "session.coordination_get",
+        arguments: input,
+      });
+      assert.equal(command.exit, 0);
+      assert.equal(tool.isError, undefined);
+      assert.deepEqual(command.value, tool.structuredContent);
+      assert.equal(
+        (command.value.record as { id: string }).id,
+        saved.record.id,
+      );
+      assert.deepEqual(
+        command.value.initiatorTarget,
+        actor.kind === "main"
+          ? identity
+          : {
+              kind: "auxiliary",
+              sessionId: "aux",
+              incarnationId: "aux-created",
+              mainSessionId: source.id,
+              mainIncarnationId: incarnationId,
+            },
+      );
+    }
+  } finally {
+    await client.close();
+    await server.close();
+    turns.end(turn);
+    bindings.revokeAll();
+    store.close();
+    db.close();
+    sessions.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

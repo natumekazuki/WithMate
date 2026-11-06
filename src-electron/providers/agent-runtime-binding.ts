@@ -41,6 +41,7 @@ export type ProviderAgentRuntimeBindingProjection = {
     memoryUrl: string;
     glossaryUrl: string;
     sessionGraphUrl: string;
+    sessionUrl?: string;
     /** Served by the host but exposed to a Provider only for an app-managed background execution. */
     sessionHistoryUrl?: string;
     token: string;

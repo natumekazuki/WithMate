@@ -30,7 +30,7 @@ Auxiliary A/B/C ...  ├─ 同時実行可能。表示するAuxiliaryは1件
 Shared ActionDock ──┘
 ```
 
-「選択中」「継続利用可能」「実行中」は別状態である。新規追加、切り替え、turn完了で他会話をclosedにしない。Main送信中でもAuxiliaryを追加でき、非表示Auxiliaryのrunも継続する。
+「選択中」と「実行中」は別状態である。新規追加、切り替え、turn完了で他会話の保持状態を変更しない。Main送信中でもAuxiliaryを追加でき、非表示Auxiliaryのrunも継続する。
 
 作成要求は `preparing`、`queued`、`committing`、`committed`、`cancelled`、`failed`、`unknown`、`expired`、`not-found` の状態を持つ。準備中・待機中の取消は保存を開始せず、commit 開始後に取消が先に確定した場合も commit を成功扱いにしない。commit 応答が結果不明になった場合は自動再送せず、保存行の再照会で確定できたときだけ `committed` として扱う。親の削除・再作成、storage generation の交換、window owner の解放は保留中の要求を失効させる。
 
@@ -38,11 +38,11 @@ Shared ActionDock ──┘
 
 取消済みの作成レコードは、作成処理が終了した時点（未作成要求は取消確定時点）で回収する。回収前に当該親の受付世代を更新し、同じ旧世代でまだ受け付けていない遅延要求を `expired` として拒否する。回収後の取消要求の再照会も `expired` となる。登録済みの別要求は継続し、`unknown` の保存結果照会は維持する。新しい作成操作は新しい context を取得する。
 
-既存の`closed`行は保存された会話として一覧・継続対象に含める。継続時は同じID、thread、messages、draft、Character identityを使い、勝手に新規turnを開始しない。親削除時は親配下の全Auxiliaryをruntime停止・保存削除の対象にする。
+保存された全会話を一覧・継続対象に含める。継続時は同じID、thread、messages、draft、Character identityを使い、勝手に新規turnを開始しない。Auxiliary自体に終了状態やClose操作は設けず、削除はCrew全体を対象にする。
 
 ## Character identity
 
-新規AuxiliaryはMain Processでactive Character候補からMainのstable Character IDを除外する。同じ親Sessionに保存されたAuxiliaryが未使用のCharacterを優先するよう、既存のweighted random方式で選択する。使用状況は表示名ではなくstable Character IDで判定する。非表示・非実行中・`closed`の会話も含める。別の親Sessionでの使用状況は除外条件にしない。
+新規AuxiliaryはMain Processでactive Character候補からMainのstable Character IDを除外する。同じ親Sessionに保存されたAuxiliaryが未使用のCharacterを優先するよう、既存のweighted random方式で選択する。使用状況は表示名ではなくstable Character IDで判定し、非表示・非実行中の会話も含める。別の親Sessionでの使用状況は除外条件にしない。
 
 未使用候補が0件の場合は、Main以外のactive候補全体からweighted randomで選択し、既存Auxiliaryとの重複を許可して作成を継続する。件数上限は設けない。Main除外後の候補自体が0件、snapshot生成失敗、catalog競合の場合は作成を失敗させ、Main／neutralへfallbackしない。
 
@@ -186,7 +186,7 @@ draft の使用時刻は本文と別に扱う。最初の編集で必要な順�
 
 非terminalのlive eventは、runState・turn ID・取消・入力受付状態が変わった場合に軽量な保存済みrun statusを確認する。本文deltaだけでは再取得しない。Main runtimeは開始・終端のrunStateをliveへ投影するため、background／reasoning保持中も非nullだけでrunningと判断しない。terminal nullと実際の詳細表示では最新の本文を取得する。
 
-既存タグの payload 内 draft は active / closed とも同じ ID の独立保存単位へ移す。空文字も有効であり、移行と旧正本の除去を atomic に確定する。中断時は再実行可能とし、会話・thread・Character・設定を保持する。親削除では独立 draft も除去し、旧 incarnation / storage generation の保存で会話を再作成しない。新規の二重正本、任意 SQL port、全体 mutex、分散編集基盤は追加しない。
+既存タグの payload 内 draft は同じ ID の独立保存単位へ移す。空文字も有効であり、移行と旧正本の除去を atomic に確定する。中断時は再実行可能とし、会話・thread・Character・設定を保持する。親削除では独立 draft も除去し、旧 incarnation / storage generation の保存で会話を再作成しない。新規の二重正本、任意 SQL port、全体 mutex、分散編集基盤は追加しない。
 
 作成入力の runtime selection mode と runtime option は、既存 `clientRequestId` の結果を返す場合も先に検証する。不正な入力を既存行への再送として成功扱いにしない。準備と commit の排他・再検証境界は ADR 007 に従う。
 
@@ -216,13 +216,13 @@ terminal保存は通常本文・artifactと同ownerのrunning最小turnを同じ
 
 `composerDraft` は `auxiliary_session_drafts` の単一正本から全会話読込み時に合成する。既存の payload 形式は起動時に transaction 内で metadata、message、artifact、draft へ変換する。旧 payload と派生 summary の列は同時に除去する。不正な行があれば変換全体を rollback し、部分移行や黙った破棄をしない。
 
-Auxiliary一覧、active一覧、running一覧は metadata 列だけを読み、transcriptやCharacter定義本文を走査しない。title、Bookmark、実行設定のcheckpointは対象列・対象message行だけを更新する。
+Auxiliary一覧、最新会話、running一覧は metadata 列だけを読み、transcriptやCharacter定義本文を走査しない。title、Bookmark、実行設定のcheckpointは対象列・対象message行だけを更新する。
 
 Auxiliaryは最終使用順（`updatedAt DESC, id DESC`）で並べる。実行、draft、preview更新で順序を更新する。選択状態はindexではなくstable IDで保持する。
 
 ## Recovery
 
-アプリ強制終了などで `runState = running` の Auxiliary が残った場合、次回起動時に active 行を `runState = error` へ補正し、中断を示す assistant message を重複なく追加する。自動 resume は行わず、Session Window から直前 user message を明示的に再送する。補正後も Auxiliary の status と保存済み Character / provider identity は変更しない。
+アプリ強制終了などで `runState = running` の Auxiliary が残った場合、次回起動時に対象行を `runState = error` へ補正し、中断を示す assistant message を重複なく追加する。自動 resume は行わず、Session Window から直前 user message を明示的に再送する。保存済み Character / provider identity は変更しない。
 
 ## Preview contract
 

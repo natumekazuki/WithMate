@@ -509,7 +509,6 @@ import {
 } from "../../src-electron/ipc/register-main-ipc.js";
 import {
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
-  WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_CREATION_CONTEXT_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_CREATION_CHANNEL,
@@ -521,7 +520,7 @@ import {
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
-  WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CONVERSATION_PAGE_CHANNEL,
   WITHMATE_GET_LATEST_SESSION_TURN_CHANNEL,
   WITHMATE_SEARCH_CONVERSATION_CHANNEL,
@@ -543,7 +542,7 @@ import {
   WITHMATE_GET_MATE_STATE_CHANNEL,
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
-  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
@@ -808,7 +807,7 @@ test("steer IPCはMainとAuxiliaryのowner Windowを検証する", async () => {
   const { deps } = createDeps({
     resolveEventWindow: () => sender,
     resolveSessionWindow: (id: string) => id === "session-1" ? owner : null,
-    getAuxiliarySession: async () => ({ id: "aux-1", parentSessionId: "session-1", status: "active" }),
+    getAuxiliarySession: async () => ({ id: "aux-1", parentSessionId: "session-1" }),
     steerSessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
     steerAuxiliarySessionTurn: async (id: string, payload: unknown) => { sent.push([id, payload]); return { turnId: "turn-one" }; },
   });
@@ -884,7 +883,6 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
   return {
     id: "aux-1",
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -900,7 +898,6 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
     displayAfterMessageIndex: null,
     createdAt: "2026-07-04T00:00:00.000Z",
     updatedAt: "2026-07-04T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }
@@ -2772,7 +2769,6 @@ test("narrow session mutation IPC はowner windowとmutation identityを確認�
     getAuxiliarySessionStatus: async () => ({
       id: "aux-1",
       parentSessionId: "session-1",
-      status: "active",
       createdAt: "2026-07-04T00:00:00.000Z",
       incarnation: "aux-incarnation-1",
       runState: "idle",
@@ -3546,11 +3542,11 @@ test("Auxiliary draft IPC はreadをownerへ、mutationをSession ownerへ限定
 // @test-value v2
 // kind = "contract"
 // claim = "Auxiliary mutation/run IPCは対象外windowからdepsへ到達させない"
-// oracle = { type = "contract", ref = "src-electron/main-ipc-registration.ts" }
-// fault = "Home、Settings、Diff、MonitorからAuxiliaryの作成・更新・終了・実行・取消を許可する"
-// observable = "各対象外Windowからの5操作のrejectionとmutationCallsが空であること"
+// oracle = { type = "contract", ref = "src-electron/ipc/auxiliary.ts: assertAuxiliaryOwnerWindowSender" }
+// fault = "Home、Settings、Diff、MonitorからAuxiliaryの作成・更新・実行・取消を許可する"
+// observable = "各対象外Windowからの4操作のrejectionとmutationCallsが空であること"
 // observation_boundary = "public-boundary"
-// scope = "scripts/tests/main-ipc-registration.test.ts"
+// scope = "auxiliary-mutation-ipc-owner-authorization"
 // lifecycle = "permanent"
 // @end-test-value
 test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run に到達しない", async () => {
@@ -3569,10 +3565,6 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
     },
     updateAuxiliarySession: async () => {
       mutationCalls.push("updateAuxiliarySession");
-      return auxiliarySession;
-    },
-    closeAuxiliarySession: async () => {
-      mutationCalls.push("closeAuxiliarySession");
       return auxiliarySession;
     },
     runAuxiliarySessionTurn: async () => {
@@ -3604,10 +3596,6 @@ test("Auxiliary mutation/run IPC は対象外 window から deps mutation/run �
     );
     await assert.rejects(
       () => handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession) as Promise<unknown>,
-      /Auxiliary session IPC is only available/,
-    );
-    await assert.rejects(
-      () => handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
       /Auxiliary session IPC is only available/,
     );
     await assert.rejects(
@@ -3647,15 +3635,15 @@ test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒
     resolveEventWindow: () => homeWindow,
     resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : null,
     listAuxiliarySessions: async () => [createAuxiliarySessionStub({ messages: undefined, composerDraft: undefined })],
-    getActiveAuxiliarySession: async () => {
-      detailReadCalls.push("getActiveAuxiliarySession");
+    getLatestAuxiliarySession: async () => {
+      detailReadCalls.push("getLatestAuxiliarySession");
       return auxiliarySession;
     },
     getAuxiliarySession: async () => {
       detailReadCalls.push("getAuxiliarySession");
       return auxiliarySession;
     },
-    getAuxiliarySessionStatus: async () => ({ id: auxiliarySession.id, parentSessionId: auxiliarySession.parentSessionId, status: auxiliarySession.status, createdAt: auxiliarySession.createdAt, incarnation: "test", runState: auxiliarySession.runState }),
+    getAuxiliarySessionStatus: async () => ({ id: auxiliarySession.id, parentSessionId: auxiliarySession.parentSessionId, createdAt: auxiliarySession.createdAt, incarnation: "test", runState: auxiliarySession.runState }),
   });
 
   registerMainIpcHandlers(ipcMain, deps);
@@ -3665,7 +3653,7 @@ test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒
     1,
   );
   await assert.rejects(
-    () => handlers.get(WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    () => handlers.get(WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL)?.({}, "session-1") as Promise<unknown>,
     /Auxiliary session IPC is only available/,
   );
   await assert.rejects(
@@ -3675,7 +3663,17 @@ test("Auxiliary detail IPC は対象外 window の要求を本文取得前に拒
   assert.deepEqual(detailReadCalls, []);
 });
 
-test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の active summary だけを返す", async () => {
+// @test-value v2
+// kind = "contract"
+// claim = "Home用Auxiliary一覧IPCはMainが確定したopen parent範囲の軽量summaryをそのまま返す"
+// oracle = { type = "contract", ref = "docs/design/electron-window-runtime.md#live-run-delivery" }
+// fault = "renderer指定scopeや別のdetail取得経路を用いて対象外会話やtranscriptをHomeへ渡す"
+// observable = "登録済IPC handlerの返却summary、Main側一覧の呼出記録、summaryのmessages/composerDraft不在"
+// observation_boundary = "public-boundary"
+// scope = "home-auxiliary-summary-ipc"
+// lifecycle = "permanent"
+// @end-test-value
+test("Home 用 Auxiliary summary IPC は main が確定した open parent scope の summary だけを返す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const {
     messages: _messages,
@@ -3684,8 +3682,8 @@ test("Home 用 Auxiliary summary IPC は main が確定した open parent scope 
   } = createAuxiliarySessionStub();
   const calls: string[] = [];
   const { deps } = createDeps({
-    listOpenActiveAuxiliarySessionSummaries: async () => {
-      calls.push("listOpenActiveAuxiliarySessionSummaries");
+    listOpenAuxiliarySessionSummaries: async () => {
+      calls.push("listOpenAuxiliarySessionSummaries");
       return [summary];
     },
   });
@@ -3693,10 +3691,10 @@ test("Home 用 Auxiliary summary IPC は main が確定した open parent scope 
   registerMainIpcHandlers(ipcMain, deps);
 
   assert.deepEqual(
-    await handlers.get(WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
+    await handlers.get(WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL)?.({}),
     [summary],
   );
-  assert.deepEqual(calls, ["listOpenActiveAuxiliarySessionSummaries"]);
+  assert.deepEqual(calls, ["listOpenAuxiliarySessionSummaries"]);
   assert.equal("messages" in summary, false);
   assert.equal("composerDraft" in summary, false);
 });

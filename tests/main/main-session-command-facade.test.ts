@@ -11,6 +11,7 @@ import {
 } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
 import type { SessionLaunchSelection } from "../../src-electron/session/session-launch-selection-service.js";
 import type { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
+import type { SessionLifecycleOperation } from "../../src-electron/session/session-lifecycle-operation.js";
 import { SettingsCatalogService } from "../../src-electron/settings/settings-catalog-service.js";
 
 const runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive =
@@ -73,12 +74,44 @@ function createMainSessionCommandFacade(
   deps: MainSessionCommandFacadeTestDeps,
 ): MainSessionCommandFacade {
   const defaultStorageIdentity = {};
+  const operations = new Map<string, SessionLifecycleOperation>();
+  const sessions = new Map<string, Session>();
+  const getPersistence = (): SessionPersistenceService => {
+    const service = deps.getSessionPersistenceService();
+    return {
+      ...service,
+      createSession: async (...args: Parameters<SessionPersistenceService["createSession"]>) => {
+        const created = await service.createSession(...args);
+        sessions.set(created.id, created);
+        return created;
+      },
+      beginSessionLifecycleOperation: async (input: Parameters<SessionPersistenceService["beginSessionLifecycleOperation"]>[0]) => {
+        const operation: SessionLifecycleOperation = operations.get(input.operationId) ?? { ...input, resources: input.resources ?? [], phase: "preparing", createdAt: "now", updatedAt: "now" };
+        operations.set(input.operationId, operation);
+        return operation;
+      },
+      readSessionForLifecycle: async (id: string) => sessions.get(id) ?? null,
+      advanceSessionLifecycleOperation: async (id: string, phase: SessionLifecycleOperation["phase"], resources?: SessionLifecycleOperation["resources"]) => {
+        const operation = { ...operations.get(id)!, phase, ...(resources ? { resources } : {}) };
+        operations.set(id, operation);
+        return operation;
+      },
+      publishCreatedSession: async (id: string) => sessions.get(id)!,
+    } as unknown as SessionPersistenceService;
+  };
   return new MainSessionCommandFacade({
     initializeCreatedSession: async () => undefined,
     dismissSessionTurnNotification: () => undefined,
     validateWorkspaceDirectory: async () => ({ valid: true }),
     getSessionStorageIdentity: () => defaultStorageIdentity,
     ...deps,
+    getSessionPersistenceService: getPersistence,
+    prepareSessionLifecycleFiles: async (input, sessionId) => {
+      if (input.resource) return input.resource.path;
+      const directoryPath = await deps.createSessionFilesDirectory(sessionId);
+      await input.persistResource({ path: directoryPath, device: "1", inode: "1", cleaned: false });
+      return directoryPath;
+    },
   });
 }
 
@@ -965,16 +998,16 @@ test("Character authoring Session も SessionFolder 準備後に provider 排他
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionFolder準備後のcommitは初回に解決したstorage identityとlaunch selectionを再検証し、不一致時は保存せず今回のfolderだけを後始末する"
-// oracle = { type = "adr", ref = "docs/adr/007-provider-runtime-selection-inheritance.md" }
-// fault = "準備中のSettings/catalog/providerまたはDB resetの変更を検知せず古い選択でSessionを保存する、または再検証失敗後にfolderを残す"
-// observable = "再解決回数、Persistence Service呼出し、今回のSession IDに対するfolder cleanup呼出し"
+// claim = "SessionFolder準備後のcommitは初回のstorage identityとlaunch selectionを再検証し、不一致時は古い設定を保存しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/833" }
+// fault = "準備中のSettings/catalog/providerまたはDB resetの変更を検知せず古い選択でSessionを保存する"
+// observable = "再解決回数、Persistence Service呼出しと再検証失敗"
 // observation_boundary = "public-boundary"
 // scope = "main-session-create-session-folder-revalidation"
 // lifecycle = "permanent"
 // distinction = "SessionFolder準備中の外部待機とcoordinator内のcommit再検証を、Persistence Serviceの保存結果ではなく作成境界で確認する"
 // @end-test-value
-test("SessionFolder のcommit前再検証は selection と storage の変更を保存せず今回のfolderだけcleanupする", async () => {
+test("SessionFolder のcommit前再検証は selection と storage の変更を保存しない", async () => {
   const selectionChanges: Partial<SessionLaunchSelection>[] = [
     { provider: "copilot" },
     { model: "gpt-5.6-pro" },
@@ -1025,7 +1058,7 @@ test("SessionFolder のcommit前再検証は selection と storage の変更を�
       /Startup settings changed during creation/,
     );
     assert.equal(persisted, false);
-    assert.deepEqual(calls, ["resolve:1", "resolve:2", "cleanup:launch-selection-changed"]);
+    assert.deepEqual(calls, ["resolve:1", "resolve:2"]);
   }
 
   for (const mode of ["storage", "resolve-error"] as const) {
@@ -1072,7 +1105,7 @@ test("SessionFolder のcommit前再検証は selection と storage の変更を�
       facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
       mode === "storage" ? /Session storage changed during creation/ : /latest selection read failed/,
     );
-    assert.deepEqual(calls, ["cleanup:launch-storage-changed"]);
+    assert.deepEqual(calls, []);
   }
 });
 
@@ -1242,17 +1275,17 @@ test("MainSessionCommandFacade は IPC payload のMain-owned fieldsを無視す�
 
 // @test-value v2
 // kind = "invariant"
-// claim = "SessionFolder workspaceの起動選択取得失敗時はSessionを保存せず作成folderをcleanupする"
-// oracle = { type = "contract", ref = "accepted behavior: workspace discovery precedes Session persistence; failed preparation cleans up" }
-// fault = "discovery失敗でもSessionを保存するか準備したfolderを残す"
-// observable = "discovery失敗の拒否とfolder cleanup、Session保存呼出しなし"
+// claim = "SessionFolder workspaceの起動選択取得失敗時は未完成のSessionを保存しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/833" }
+// fault = "discovery失敗でもSessionを保存する"
+// observable = "discovery失敗の拒否とSession保存呼出しなし"
 // observation_boundary = "public-boundary"
 // scope = "main-session-creation-discovery-failure"
 // lifecycle = "permanent"
-// impact = "作成失敗で空Sessionや孤児folderを残さない"
-// distinction = "provider単独の失敗testではMain作成副作用のcleanupを確認できない"
+// impact = "設定不明の未完成Sessionを実行可能な会話にしない"
+// distinction = "provider単独の失敗testではMain作成境界の保存拒否を確認できない"
 // @end-test-value
-test("MainSessionCommandFacade は起動設定の取得失敗時に準備folderをcleanupし永続化しない", async () => {
+test("MainSessionCommandFacade は起動設定の取得失敗時にSessionを永続化しない", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
@@ -1290,7 +1323,7 @@ test("MainSessionCommandFacade は起動設定の取得失敗時に準備folder�
     facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
     /latest selection read failed/,
   );
-  assert.deepEqual(calls, ["issue-id", "mkdir", "resolve", "cleanup"]);
+  assert.deepEqual(calls, ["issue-id", "mkdir", "resolve"]);
 });
 
 // @test-value v2

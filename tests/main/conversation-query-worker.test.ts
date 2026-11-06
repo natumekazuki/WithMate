@@ -20,9 +20,9 @@ async function fixture() {
     characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "never" }),
     messages: Array.from({ length: 135 }, (_, index): Message => ({ role: index === 0 ? "user" : "assistant",
       text: index === 3 ? "**needle** needle ![hidden](hidden.png) [filename](C:/users/admin/documents/sample.md)" : `message ${index} needle`, isBookmarked: index === 4 })) });
-  const auxiliary: AuxiliarySession = { ...session, id: "query-aux", parentSessionId: session.id, status: "active", runState: "idle",
+  const auxiliary: AuxiliarySession = { ...session, id: "query-aux", parentSessionId: session.id, runState: "idle",
     title: "Query aux", preview: "", composerDraft: "", displayAfterMessageIndex: null,
-    createdAt: "2026-10-10T00:00:00.000Z", updatedAt: "2026-10-10T00:00:00.000Z", closedAt: "" };
+    createdAt: "2026-10-10T00:00:00.000Z", updatedAt: "2026-10-10T00:00:00.000Z" };
   await bundle.stores.auxiliary.upsertAuxiliarySession(auxiliary);
   return { directory, options, bundle, session, auxiliary, close: async () => { await bundle.client.close(); await rm(directory, { recursive: true, force: true }); } };
 }

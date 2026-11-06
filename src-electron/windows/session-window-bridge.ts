@@ -16,6 +16,7 @@ export type SessionWindowCloseEvent = {
 export type SessionWindowLike = {
   isDestroyed(): boolean;
   isMinimized(): boolean;
+  minimize(): void;
   restore(): void;
   focus(): void;
   show(): void;
@@ -56,11 +57,18 @@ export type SessionWindowRestoreState =
 
 export type SessionWindowRendererState = "responsive" | "unresponsive" | "gone";
 
+type SessionWindowPresentation<TWindow> = {
+  window?: TWindow;
+  foreground: boolean;
+  presented: boolean;
+};
+
 export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly sessionWindows = new Map<string, TWindow>();
   private readonly retainedMonitorSessionIds = new Set<string>();
   private readonly retainMonitorOnClose = new Map<TWindow, boolean>();
   private readonly openingSessionWindows = new Map<string, Promise<TWindow>>();
+  private readonly windowPresentations = new Map<string, SessionWindowPresentation<TWindow>>();
   private readonly rendererStates = new Map<TWindow, SessionWindowRendererState>();
   private readonly allowCloseSessionWindows = new Set<TWindow>();
   private readonly pendingCloseConfirmations = new Map<TWindow, AbortController>();
@@ -172,8 +180,16 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       throw new Error("Session Window open is suspended while drafts are flushing.");
     }
     const auxiliarySessionId = options.auxiliarySessionId?.trim() || null;
+    const foreground = options.presentation !== "minimized";
     const openingWindow = this.openingSessionWindows.get(sessionId);
     if (openingWindow) {
+      const presentation = this.windowPresentations.get(sessionId);
+      if (foreground && presentation) {
+        presentation.foreground = true;
+        if (presentation.presented && presentation.window && !presentation.window.isDestroyed()) {
+          this.activateWindow(presentation.window);
+        }
+      }
       const window = await openingWindow;
       if (auxiliarySessionId) {
         this.sendAuxiliarySessionNavigation(sessionId, auxiliarySessionId, window);
@@ -182,22 +198,26 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     const existingWindow = this.getWindow(sessionId);
-    if (existingWindow && this.rendererState(existingWindow) === "responsive") {
-      if (existingWindow.isMinimized()) {
-        existingWindow.restore();
+    if (existingWindow && (!foreground || this.rendererState(existingWindow) === "responsive")) {
+      if (foreground) {
+        const presentation = this.windowPresentations.get(sessionId);
+        if (presentation) {
+          presentation.foreground = true;
+          presentation.presented = true;
+        }
+        this.activateWindow(existingWindow);
       }
-
-      existingWindow.show();
-      existingWindow.focus();
       if (auxiliarySessionId) {
         this.sendAuxiliarySessionNavigation(sessionId, auxiliarySessionId, existingWindow);
       }
       return existingWindow;
     }
 
+    const presentation: SessionWindowPresentation<TWindow> = { foreground, presented: false };
+    this.windowPresentations.set(sessionId, presentation);
     const openingPromise = existingWindow
-      ? this.reopenSessionWindow(sessionId, existingWindow, auxiliarySessionId)
-      : this.createSessionWindow(sessionId, auxiliarySessionId);
+      ? this.reopenSessionWindow(sessionId, existingWindow, auxiliarySessionId, presentation)
+      : this.createSessionWindow(sessionId, auxiliarySessionId, presentation);
     this.openingSessionWindows.set(sessionId, openingPromise);
 
     try {
@@ -206,15 +226,26 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       if (this.openingSessionWindows.get(sessionId) === openingPromise) {
         this.openingSessionWindows.delete(sessionId);
       }
+      if (!presentation.window && this.windowPresentations.get(sessionId) === presentation) {
+        this.windowPresentations.delete(sessionId);
+      }
     }
   }
 
-  private async createSessionWindow(sessionId: string, auxiliarySessionId: string | null): Promise<TWindow> {
+  private async createSessionWindow(
+    sessionId: string,
+    auxiliarySessionId: string | null,
+    presentation: SessionWindowPresentation<TWindow>,
+  ): Promise<TWindow> {
     const window = this.deps.createWindow(sessionId);
+    presentation.window = window;
     this.sessionWindows.set(sessionId, window);
     this.broadcast();
     window.once("ready-to-show", () => {
-      if (!window.isDestroyed()) window.show();
+      if (window.isDestroyed() || presentation.presented) return;
+      presentation.presented = true;
+      if (presentation.foreground) this.activateWindow(window);
+      else window.minimize();
     });
     window.on("close", (event) => this.handleWindowClose(sessionId, window, event));
     window.on("closed", () => this.releaseWindowClaim(sessionId, window));
@@ -235,6 +266,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     sessionId: string,
     window: TWindow,
     auxiliarySessionId: string | null,
+    presentation: SessionWindowPresentation<TWindow>,
   ): Promise<TWindow> {
     if (this.rendererState(window) === "gone") {
       const closed = new Promise<void>((resolve) => window.on("closed", resolve));
@@ -245,7 +277,13 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
     if (this.draftFlushGateActive) throw new Error("Session Window open is suspended while drafts are flushing.");
     if (!this.deps.getSession(sessionId)) throw new Error("The session is no longer available.");
-    return this.createSessionWindow(sessionId, auxiliarySessionId);
+    return this.createSessionWindow(sessionId, auxiliarySessionId, presentation);
+  }
+
+  private activateWindow(window: TWindow): void {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
   }
 
   private rendererState(window: TWindow): SessionWindowRendererState {
@@ -260,6 +298,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     const window = this.sessionWindows.get(sessionId);
     if (!window || window.isDestroyed()) {
       this.sessionWindows.delete(sessionId);
+      if (this.windowPresentations.get(sessionId)?.window === window) this.windowPresentations.delete(sessionId);
       if (window) {
         this.allowCloseSessionWindows.delete(window);
         const wasSnapshotEligible = this.snapshotEligibleWindows.delete(window);
@@ -510,6 +549,7 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     this.sessionWindows.delete(sessionId);
+    if (this.windowPresentations.get(sessionId)?.window === window) this.windowPresentations.delete(sessionId);
     if (retainOnClose || this.deps.isRunInFlight(sessionId)) {
       this.retainedMonitorSessionIds.add(sessionId);
     } else if (retainOnClose === false) {
@@ -649,4 +689,5 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
 
 export type SessionWindowOpenOptions = {
   auxiliarySessionId?: string | null;
+  presentation?: "minimized";
 };

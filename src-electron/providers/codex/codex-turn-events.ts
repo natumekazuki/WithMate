@@ -9,6 +9,7 @@ import {
   stringifyBoundedProviderValue,
 } from "../../session/provider-payload-limits.js";
 import { ProviderProgressMap } from "../provider-progress.js";
+import { projectProviderOutput, type ProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
 
 // The fields consumed here follow Codex App Server 0.159.0's ThreadItem schema.
 export type CodexFileChange = {
@@ -59,6 +60,7 @@ export type CodexNativeNotification = { method: string; params?: unknown };
 export type CodexTurnStreamState = {
   revision: number;
   items: Map<string, CodexTurnItem>;
+  completedItemIds: Set<string>;
   liveSteps: ProviderProgressMap<LiveRunStep>;
   threadId: string | null;
   turnId: string | null;
@@ -136,7 +138,8 @@ const textCaches = new WeakMap<CodexTurnStreamState, {
 
 export function collectCodexAssistantResponseFromItems(
   items: Iterable<CodexTurnItem>,
-): { assistantText: string; lastNonEmptyAssistantMessageText: string; assistantQuestionRanges: AssistantQuestionRange[] } {
+  completedItemIds?: ReadonlySet<string>,
+): { assistantText: string; output: ProviderOutput; lastNonEmptyAssistantMessageText: string; assistantQuestionRanges: AssistantQuestionRange[] } {
   const entries = Array.from(items);
   const parts = entries
     .filter(
@@ -145,8 +148,16 @@ export function collectCodexAssistantResponseFromItems(
     )
     .map((item) => item.text);
   const assistantText = parts.join("\n\n");
+  const units: ProviderOutputTextUnit[] = entries.filter((item): item is Extract<CodexTurnItem, { type: "agentMessage" }> => item.type === "agentMessage" && item.text.trim().length > 0).map((item) => ({
+    id: item.id, messageId: item.id, text: item.text, phase: item.phase ?? null,
+    role: item.phase === "commentary" ? "progress" : item.phase === "final_answer" || item.phase === "partial_answer" ? "answer" : "unclassified",
+    completion: completedItemIds?.has(item.id) ? "complete" : "partial",
+    final: item.phase === "final_answer" && Boolean(completedItemIds?.has(item.id)),
+    evidence: item.phase === "final_answer" && completedItemIds?.has(item.id) ? "codex.final_answer:item/completed" : null,
+  }));
   return {
     assistantText,
+    output: projectProviderOutput(units, units.some((unit) => unit.final) ? "identified" : units.length ? "unknown" : "none").output,
     assistantQuestionRanges: collectCodexQuestionRanges(entries, assistantText),
     lastNonEmptyAssistantMessageText: parts.at(-1) ?? "",
   };
@@ -180,6 +191,7 @@ export function createCodexTurnStreamState(
   const state: CodexTurnStreamState = {
     revision: 0,
     items: new Map(),
+    completedItemIds: new Set(),
     liveSteps: new ProviderProgressMap(),
     threadId,
     turnId: null,
@@ -408,6 +420,7 @@ export function applyCodexTurnEvent(
     case "item/started":
     case "item/completed":
       acceptItem(state, params.item);
+      if (event.method === "item/completed" && typeof record(params.item).id === "string") state.completedItemIds.add(record(params.item).id as string);
       break;
     case "item/agentMessage/delta": {
       if (typeof params.itemId !== "string" || typeof params.delta !== "string")
@@ -502,7 +515,10 @@ export function applyCodexTurnEvent(
         throw new Error("Invalid Codex App Server terminal turn");
       state.turnId = turn.id;
       if (Array.isArray(turn.items))
-        for (const item of turn.items) acceptItem(state, item);
+        for (const item of turn.items) {
+          acceptItem(state, item);
+          if (turn.status === "completed" && typeof record(item).id === "string") state.completedItemIds.add(record(item).id as string);
+        }
       state.terminalStatus = turn.status;
       state.turnCompleted = true;
       state.streamErrorMessage =

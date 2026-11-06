@@ -39,6 +39,11 @@ export function currentRuntimeTurnAdmissionState(): SharedArrayBuffer | undefine
   return admission.getStore()?.state;
 }
 
+/** Accepted durable work is no longer owned by the initiating runtime Turn. */
+export function runWithoutRuntimeTurnAdmission<T>(operation: () => T): T {
+  return admission.exit(operation);
+}
+
 export function reportRuntimeTurnOperationError(error: unknown): void {
   try { admission.getStore()?.onOperationError?.(error); }
   catch { /* Diagnostics do not change confirmed effects or public errors. */ }

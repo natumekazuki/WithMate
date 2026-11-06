@@ -12,14 +12,14 @@ export function createAuxiliaryApi(
         parentSessionId,
       );
     },
-    listOpenActiveAuxiliarySessionSummaries() {
+    listOpenAuxiliarySessionSummaries() {
       return ipcRenderer.invoke(
-        channels.WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+        channels.WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
       );
     },
-    getActiveAuxiliarySession(parentSessionId) {
+    getLatestAuxiliarySession(parentSessionId) {
       return ipcRenderer.invoke(
-        channels.WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+        channels.WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL,
         parentSessionId,
       );
     },
@@ -93,12 +93,6 @@ export function createAuxiliaryApi(
       return ipcRenderer.invoke(
         channels.WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL,
         request,
-      );
-    },
-    closeAuxiliarySession(auxiliarySessionId) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
-        auxiliarySessionId,
       );
     },
     runAuxiliarySessionTurn(auxiliarySessionId, request) {

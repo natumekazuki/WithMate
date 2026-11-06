@@ -83,8 +83,8 @@ describe("companion removal database", () => {
     try {
       ensureV6Schema(db);
       db.prepare(`INSERT INTO auxiliary_sessions
-        (id, parent_session_id, status, created_at, updated_at)
-        VALUES ('live-aux', 'live-parent', 'active', 'now', 'now')`).run();
+        (id, parent_session_id, created_at, updated_at)
+        VALUES ('live-aux', 'live-parent', 'now', 'now')`).run();
       db.prepare(`INSERT INTO auxiliary_session_messages
         (auxiliary_session_id, seq, role, body, created_at)
         VALUES ('live-aux', 0, 'user', ?, 'now')`).run(JSON.stringify(message));

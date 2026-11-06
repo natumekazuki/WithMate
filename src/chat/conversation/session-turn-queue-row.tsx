@@ -9,6 +9,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
+import { TurnInputDetails, type TurnInputReadContext } from "./turn-input-details.js";
 
 export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
   return <><article className="message-row user" data-message-source="turn-submission">
@@ -75,9 +76,10 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
   </div>;
 }
 
-export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
+export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueStatus>[0] & { character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext; inputReadContext?: TurnInputReadContext }) {
   return <><article className="message-row user" data-message-source="turn-queue">
     <div className="message-card user"><div className="message-card-content">
+      <TurnInputDetails message={{ role: "user", text: props.receipt.captured.request.userMessage }} receipt={props.receipt} context={props.inputReadContext} />
       <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
       <SessionTurnQueueStatus {...props} />
     </div></div>

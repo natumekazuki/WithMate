@@ -1,4 +1,5 @@
 import { resolveRunExecutionTarget } from "../provider-runtime.js";
+import { projectProviderOutput, type ProviderOutputTextUnit } from "../../../src-shared/session/provider-output.js";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -39,7 +40,8 @@ export type ClaudeAdapterOptions = {
 
 type ClaudeTrace = {
   threadId: string | null;
-  messages: Array<{ id: string; text: string }>;
+  messages: Array<{ id: string; text: string; blocks: { index: number; text: string }[] }>;
+  streamingBlocks: Map<number, string>;
   streamingText: string;
   streamingId: string | null;
   steps: ProviderProgressMap<LiveRunStep>;
@@ -50,6 +52,7 @@ type ClaudeTrace = {
   redactor: ProviderAgentRuntimeBindingRedactor;
   usage: ProviderUsage | null;
   result: SDKResultMessage | null;
+  resultOutputCurrent: boolean;
   errorMessage: string;
 };
 
@@ -112,7 +115,7 @@ function assistantText(trace: ClaudeTrace): string {
 
 function liveText(trace: ClaudeTrace): string {
   return [assistantText(trace), trace.streamingText].filter(Boolean).join("\n\n")
-    || (trace.result?.subtype === "success" && !trace.result.is_error ? trace.result.result : "");
+    || (trace.resultOutputCurrent && trace.result?.subtype === "success" && !trace.result.is_error ? trace.result.result : "");
 }
 
 function signalRace<T>(promise: Promise<T> | T, signal: AbortSignal): Promise<T> {
@@ -327,7 +330,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
 
   private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
-    return { threadId, messages: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, errorMessage: "" };
+    return { threadId, messages: [], streamingBlocks: new Map(), streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, resultOutputCurrent: false, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
@@ -376,20 +379,29 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       if (event.type === "message_start") {
         trace.streamingId = event.message.id;
         trace.streamingText = "";
-      }
-      if (event.type === "message_stop") {
-        trace.streamingId = null;
+        trace.streamingBlocks.clear();
       }
       if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        trace.streamingText += event.delta.text;
+        if (event.delta.text) trace.resultOutputCurrent = false;
+        trace.streamingBlocks.set(event.index, (trace.streamingBlocks.get(event.index) ?? "") + event.delta.text);
+        trace.streamingText = [...trace.streamingBlocks.values()].join("\n");
       }
       return;
     }
     if (message.type === "assistant" && !message.parent_tool_use_id) {
       const content = message.message.content;
       const text = content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-      if (text && !trace.messages.some((entry) => entry.id === message.uuid)) {
-        trace.messages.push({ id: message.uuid, text });
+      const messageId = message.message.id ?? message.uuid;
+      const entry = { id: messageId, text, blocks: content.flatMap((block, index) => block.type === "text" ? [{ index, text: block.text }] : []) };
+      const existing = trace.messages.findIndex((entry) => entry.id === messageId);
+      if (existing >= 0) {
+        const previous = trace.messages[existing];
+        if (previous.blocks.length !== entry.blocks.length || previous.blocks.some((block, index) => block.index !== entry.blocks[index].index || block.text !== entry.blocks[index].text)) trace.resultOutputCurrent = false;
+        trace.messages[existing] = entry;
+      }
+      else if (text) {
+        trace.resultOutputCurrent = false;
+        trace.messages.push(entry);
         trace.operations.push({ id: message.uuid, type: "agent_message", summary: toProviderTextPreview(text, 300) ?? "", details: toProviderTextPreview(text), truncated: text.length > PROVIDER_TEXT_PREVIEW_LIMIT });
       }
       for (const block of content) {
@@ -402,6 +414,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       }
       if (text && trace.streamingId === message.message.id) {
         trace.streamingText = "";
+        trace.streamingBlocks.clear();
+        trace.streamingId = null;
       }
       if (message.error) trace.errorMessage = message.error;
       return;
@@ -427,6 +441,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     }
     if (message.type === "result") {
       trace.result = message;
+      trace.resultOutputCurrent = true;
       trace.threadId = message.session_id;
       trace.usage = usageFromResult(message, resumed);
       if (message.subtype !== "success") trace.errorMessage = message.errors.join("\n") || message.subtype;
@@ -447,6 +462,16 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   private result(input: RunSessionTurnInput, trace: ClaudeTrace): RunSessionTurnResult {
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const text = liveText(trace);
+    const nativeFinal = trace.result?.subtype === "success" && !trace.result.is_error && trace.resultOutputCurrent && !trace.streamingText ? trace.result.result : null;
+    const matched = nativeFinal ? trace.messages.find((message) => message.text === nativeFinal) : undefined;
+    const units: ProviderOutputTextUnit[] = trace.messages.flatMap((message) => message.blocks.map((block) => ({
+      id: `${message.id}:${block.index}`, messageId: message.id, blockIndex: block.index, text: block.text,
+      role: matched?.id === message.id ? "answer" : "unclassified", phase: null, completion: "complete", final: matched?.id === message.id,
+      evidence: matched?.id === message.id ? "claude.result:matching-assistant-blocks" : null,
+    })));
+    if (trace.streamingText) for (const [blockIndex, value] of trace.streamingBlocks) units.push({ id: `${trace.streamingId ?? "stream"}:${blockIndex}`, messageId: trace.streamingId ?? undefined, blockIndex, text: value, role: "unclassified", phase: null, completion: "partial", final: false, evidence: null });
+    if (nativeFinal && !matched) units.push({ id: `result:${trace.result!.uuid}`, text: nativeFinal, role: "answer", phase: null, completion: "complete", final: true, evidence: "claude.result:success-text" });
+    const projected = projectProviderOutput(units, nativeFinal ? "identified" : units.length ? "unknown" : "none", redactor.sanitizeText, (previous, current) => previous?.messageId && previous.messageId === current.messageId ? "\n" : "\n\n");
     const operations = redactor.sanitize(trace.operations);
     const emptySnapshot = createDisabledWorkspaceSnapshotCapture();
     const artifact = buildArtifactFromOperations({
@@ -465,8 +490,8 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     this.addExecutionChecks(artifact, input, trace);
     return {
       threadId: trace.threadId,
-      assistantText: redactor.sanitizeText(text),
-      lastNonEmptyAssistantMessageText: redactor.sanitizeText(trace.streamingText || trace.messages.at(-1)?.text || text),
+      ...projected,
+      lastNonEmptyAssistantMessageText: redactor.sanitizeText(nativeFinal || trace.streamingText || trace.messages.at(-1)?.text || text),
       artifact: redactor.sanitize(artifact),
       usage: trace.usage,
     };

@@ -40,6 +40,7 @@ function boundary() {
       return structuredClone(row);
     },
     getReceipt: async (owned, requestId) => rows.find((row) => row.incarnationId === owned.incarnationId && row.requestId === requestId) ?? null,
+    getReceiptById: async (owned, id) => rows.find((row) => row.incarnationId === owned.incarnationId && row.id === id) ?? null,
     listActive: async () => rows.filter((row) => ["queued", "starting", "running", "interrupted"].includes(row.state)),
     listReceipts: async () => ({ receipts: structuredClone(rows), nextCursor: null }),
     listPendingOwners: async () => rows.length ? [owner] : [],
@@ -83,6 +84,43 @@ function boundary() {
   };
   return { rows, store };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "queue lockの待機中に失効したactorの新規受付と取消を、lock取得後の認可で拒否する"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 非同期検証後の有効runtime binding確認" }
+// fault = "queue lock待機前だけ認可して失効済みactorのmutationを保存する"
+// observable = "受付行数、対象receipt状態、公開操作の失効reject"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueServiceの受付・取消lockとactor再検証"
+// lifecycle = "permanent"
+// distinction = "facadeのpreflight認可testではservice lock待機中の失効を再現しない"
+// @end-test-value
+test("queue lock取得後にactorの受付と取消権限を再検証する", async () => {
+  const { store, rows } = boundary();
+  const held = deferred<void>();
+  const entered = deferred<void>();
+  const enqueue = store.enqueue;
+  store.enqueue = async (...args) => { entered.resolve(); await held.promise; return enqueue(...args); };
+  let valid = true;
+  const assertActor = () => { if (!valid) throw new Error("Actor binding expired"); };
+  const service = new SessionTurnQueueService({ store, isRunInFlight: () => true, dispatch: async () => ({ state: "completed" }) });
+  try {
+    const first = service.enqueue(owner, captured("first"));
+    await entered.promise;
+    const second = service.enqueue(owner, captured("second"), assertActor);
+    const canceled = service.cancelQueued(owner, "first", assertActor);
+    const rejectedSecond = assert.rejects(second, /binding expired/);
+    const rejectedCancel = assert.rejects(canceled, /binding expired/);
+    valid = false;
+    held.resolve();
+    await first;
+    await rejectedSecond;
+    await rejectedCancel;
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.state, "queued");
+  } finally { held.resolve(); await service.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

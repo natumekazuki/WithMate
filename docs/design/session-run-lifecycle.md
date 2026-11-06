@@ -32,7 +32,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 - `Session Window` から実行中 session を明示キャンセルできる
 - アプリ終了は実行中 session がある場合に確認ダイアログを出す
 - 全 window が閉じても実行中 session がある場合は `Home Window` を再生成して、アプリ全体の終了を避ける
-- ActionDockは次の依頼の編集面として、Main / Auxiliaryの実行中も対応するapproval / sandbox / Reviewer / Speed / custom agent / model / depthとAdditional Directoryを変更できる。実行中 turn の捕捉済み設定やprovider権限は変更せず、現在選択は次の送信へ適用する。title / deleteの変更は引き続きUIとMain Processでブロックする。現在選択と保存 checkpoint の境界は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する。
+- ActionDockは次の依頼の編集面として、Main / Auxiliaryの実行中も対応するapproval / sandbox / Reviewer / Speed / custom agent / model / depthとAdditional Directoryを変更できる。実行中 turn の捕捉済み設定やprovider権限は変更せず、現在選択は次の送信へ適用する。GUIの手動title編集とCrew削除は実行中guardを維持する。Agent自身のTitle／Description専用patchは実行中も利用でき、Role・実行設定・本文を更新しない。現在選択と保存 checkpoint の境界は [Electron Session Store](electron-session-store.md#実行設定と-send) を参照する。
 - Turn の admission は対象 session の開始登録と provider の利用中判定だけを短い ownership 境界で行う。provider 入力の準備、workspace / SessionFolder 操作、Character 読込、外部 provider 呼出し、長い SQLite command の完了待ちはその境界の外で行い、別 session の開始・削除を不要に待たせない。
 - admission は provider → ownership の順で開始予約を登録し、Worker の Session / 親読込みを排他外で待つ。その間は starting 判定が削除・provider変更・Auxiliary 終了から対象を保護する。次送信用の実行設定選択は捕捉済みturnとは独立して変更できる。読込み後は短い同順序の排他内で owner、maintenance、cancel、provider cleanup 状態を再確認する。予約より先に所有権を得た削除は読込み発行前に完了し、拒否時は予約を解放して provider を開始しない。
 - V6 の保存 command は current storage Worker generation に送る。close / reset / reopen 後の旧 generation からの応答は current DB へ書き換えず、commit 結果不明を自動 retry しない。
@@ -78,6 +78,22 @@ Edit開始は既存のSession lockに入り、対象がqueuedであることを�
 Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確認した後に保留を解放して後続を起動する。Cancel Editは保存済み本文を変更せず解放する。Mainの保存失敗・storage応答不明では保留を保持し、mutationを自動再送しない。Main成功後のrendererへの返信だけが失われた場合は既に再開している可能性があるため、rendererは編集入力を保持し、保留中・未保存とは断定しない。Cancel Editは保存済み更新を巻き戻さない。編集対象のSteerや予約取消で未保存本文を送信・破棄しない。
 
 編集保留はowning Session Windowに属するMain内の一時状態であり、DBに編集状態を追加しない。Windowのnavigation、renderer消失、Window破棄では編集を取り消して保留を解放する。未Submitの編集入力は保存・復元せず、保存済み予約を保持する。
+
+## Bound Session API
+
+通常Agentの`session.*` MCPと`withmate-session` CLIは同じSession applicationとdurable queueを使う。公開入力の正本は`src-shared/session/session-management-contract.ts`で、自己情報、Crew内既定／全Crew明示のmetadata探索、自己Title／Description更新、直属親子へのenqueue、元request keyによる受付回復、親から直属子の指定受付取消・指定Turn停止を扱う。保存済み受付／Turnの一覧、入力原文・比較対象・追加入力、出力境界とartifact詳細は同じ公開入口から`session-execution-read.ts`のbounded readへ接続し、指定実行を最新結果へ置き換えない。CLIは起動中applicationへのbound clientであり、actor指定や独立Runtimeを持たない。
+
+通常の保存会話は`list_messages`／`get_message`、保存artifactは`list_operations`／`get_operation_detail`で取得し、Turnに未対応の過去messageも対象にする。既存保存history helperのpaging／欠落契約を使い、背景実行の限定scopeやgrantを流用しない。実行参照には保存receipt、WithMate Turn、保存message sequenceのいずれか一つを指定し、messageから確定した対応がない場合は欠落として返す。
+
+actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvider Turnから解決し、Main／Auxiliaryの同名IDを読み替えない。対象も会話種別・incarnationを固定し、Auxiliaryでは所属Mainのidentityも確認する。公開保存情報の全Crew読取は送信・取消・停止の権限を与えない。通常送信は実際の直属親子だけ、取消・停止は親から直属子だけに許可し、Auxiliary所属を通常親子として扱わない。GUI限定のRole変更、待機中指示編集、Steer、ユーザー回答・承認はこのAPIから公開しない。
+
+通常子の作成は`create_child`から共通lifecycleへ接続する。OはM／W、MはWを作成でき、Provider／Model／Depth／Approval／Workspaceを明示する。Sandboxは対応するCodexのみ明示必須で、他Providerの非対応値を受け付けない。`get_catalog`は既存catalogとnative設定optionsを返す。Characterは同Crewの通常Main使用数から共通作成ownerが選定し、同一request keyの再確認で子・Character・実行設定を変えない。Workspaceの準備と選定方針は親AgentのProvider管理runbookへ委ね、WithMateはWorktreeの作成・merge・削除やProvider設定同期を行わない。
+
+`coordination_*`は相談の起票・保存済み実呼出元への明示配送・ユーザーへの引継ぎ・Agent回答・取り下げ・参照・解決・consumeを共通Coordination applicationへ接続する。作成／配送／回答に伴う保存とqueue受付は同applicationのatomic操作を呼び、adapterで別々に保存・enqueueしない。実ユーザーとしての回答作成・変更はtrusted GUIへ分離する。
+
+`self`は自Crew、明示対象の`get`は対象CrewのCrew Folder公開参照を返す。他Crewを指定したpathの読取はdirectoryの自動mountや書込権限を与えず、一覧へ全Crewのfilesystem rootを配布しない。Providerの既定additional directoryは自Crewだけを使う。
+
+MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布する。背景実行の限定履歴scopeを通常Agentに流用しない。受付成功とTurn完了を区別し、送信後の応答喪失は`effect: unknown`とする。enqueueの再確認は元request keyを使い、保存された送信元・操作・対象に照合する。取消は開始済み受付をTurn停止へ自動変換せず、Turn停止も最新Turnへ付け替えない。
 
 ## Ownership
 

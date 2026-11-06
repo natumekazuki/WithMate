@@ -1314,6 +1314,7 @@ describe("HomeLaunchDialog", () => {
     <HomeLaunchDialog
       open={true}
       title="demo"
+      sessionRole="standalone"
       sessionFolderSelected={false}
       workspacePathInput="C:\\work space\\"
       workspaceValidation={workspaceValidation}
@@ -1332,6 +1333,7 @@ describe("HomeLaunchDialog", () => {
       launchStarting={false}
       onClose={noOp}
       onChangeTitle={noOp}
+      onSelectRole={noOp}
       onChangeWorkspacePath={noOp}
       onBrowseWorkspace={noOp}
       onSelectSessionFolder={noOp}
@@ -1382,6 +1384,7 @@ describe("HomeLaunchDialog", () => {
           <HomeLaunchDialog
             open={open}
             title="Draft title"
+            sessionRole="standalone"
             sessionFolderSelected={false}
             workspacePathInput={workspacePathInput}
             workspaceValidation="invalid"
@@ -1397,6 +1400,7 @@ describe("HomeLaunchDialog", () => {
             launchStarting={false}
             onClose={() => { closeCount += 1; setOpen(false); }}
             onChangeTitle={noOp}
+            onSelectRole={noOp}
             onChangeWorkspacePath={setWorkspacePathInput}
             onBrowseWorkspace={noOp}
             onSelectSessionFolder={noOp}
@@ -2078,7 +2082,6 @@ describe("HomeMonitorContent", () => {
   const createMonitorAuxiliary = (id: string, overrides: Record<string, unknown> = {}) => ({
     id,
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -2092,7 +2095,6 @@ describe("HomeMonitorContent", () => {
     displayAfterMessageIndex: null,
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-30T00:00:00.000Z",
-    closedAt: "",
     characterIconPath: "mate.png",
     preview: "Auxiliary preview",
     codexSpeed: "standard",
@@ -2123,9 +2125,8 @@ describe("HomeMonitorContent", () => {
         mainState: { kind: "neutral", label: "Idle" },
         auxiliarySessions: [
           createMonitorAuxiliary("aux-1", { runState: "error", preview: "Auxiliary error" }),
-          createMonitorAuxiliary("aux-closed", {
-            status: "closed",
-            preview: "Closed auxiliary",
+          createMonitorAuxiliary("aux-idle", {
+            preview: "Idle auxiliary",
           }),
         ],
       },
@@ -2170,7 +2171,7 @@ describe("HomeMonitorContent", () => {
       assert.equal(parentRow?.querySelector(".home-monitor-parent-title")?.textContent, entries[index]?.session.taskTitle);
       assert.equal(parentRow?.querySelectorAll(".home-monitor-status-cluster").length, index === 0 ? 2 : 1);
       assert.equal(
-        parentRow?.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
+        mainGroup.querySelectorAll(`.home-monitor-status-icon.${expectedMainStates[index]}`).length,
         1,
       );
     }
@@ -2181,20 +2182,18 @@ describe("HomeMonitorContent", () => {
     assert.equal(auxiliaryDisclosure.getAttribute("aria-expanded"), "false");
     assert.ok(auxiliaryDisclosure.querySelector('svg[aria-hidden="true"]'));
     assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Error: 1"]'));
-    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Closed: 1"]'));
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 1);
+    assert.ok(auxiliaryDisclosure.querySelector('[aria-label="Auxiliary Idle: 1"]'));
+    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.neutral").length, 2);
     assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.error").length, 1);
-    assert.equal(cards[0]?.querySelectorAll(".home-monitor-status-icon.closed").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-status-cluster").length, 1);
     assert.equal(cards[1]?.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
     assert.equal(html.match(/class="home-monitor-status-icon running"/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 1);
+    assert.equal(html.match(/class="home-monitor-status-icon neutral"/g)?.length, 2);
     assert.equal(html.match(/class="home-monitor-status-icon error"/g)?.length, 1);
-    assert.equal(html.match(/class="home-monitor-status-icon closed"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Running"/g)?.length, 1);
     assert.equal(html.match(/aria-label="Main Idle"/g)?.length, 1);
     assert.ok(html.includes('aria-label="Auxiliary Error: 1"'));
-    assert.ok(html.includes('aria-label="Auxiliary Closed: 1"'));
+    assert.ok(html.includes('aria-label="Auxiliary Idle: 1"'));
     assert.equal(html.match(/character-avatar tiny home-monitor-avatar/g)?.length, 2);
     assert.equal(html.match(/<img src="file:\/\/\/mate.png"/g)?.length, 2);
   });
@@ -2373,11 +2372,11 @@ describe("HomeMonitorContent", () => {
 
       assert.equal(document.querySelectorAll(".home-monitor-auxiliary-status").length, 0);
       if (auxiliaryDataState === "loading") {
-        assert.equal(document.querySelector('[role="status"]')?.getAttribute("aria-label"), expectedFeedback);
+        assert.equal(document.querySelector('.home-session-list-load-status [role="status"], .home-session-list-load-status[role="status"]')?.getAttribute("aria-label"), expectedFeedback);
         assert.equal(document.querySelector('[role="alert"]'), null);
       } else {
         assert.equal(document.querySelector('[role="alert"]')?.textContent, expectedFeedback);
-        assert.equal(document.querySelector('[role="status"]'), null);
+        assert.equal(document.querySelector('.home-session-list-load-status'), null);
       }
     }
   });
@@ -2418,7 +2417,6 @@ describe("HomeMonitorContent", () => {
       {
         id: "aux-a",
         parentSessionId: "session-expand",
-        status: "active",
         runState: "idle",
         preview: "First auxiliary",
         createdAt: "2026-03-28T00:00:00.000Z",
@@ -2426,7 +2424,6 @@ describe("HomeMonitorContent", () => {
       {
         id: "aux-b",
         parentSessionId: "session-expand",
-        status: "closed",
         runState: "error",
         preview: "Second auxiliary",
         createdAt: "2026-03-29T00:00:00.000Z",
@@ -2687,7 +2684,7 @@ describe("HomeMonitorContent", () => {
       />,
     );
 
-    assert.doesNotMatch(emptyHtml, /role="status"/);
+    assert.equal(new JSDOM(emptyHtml).window.document.querySelector('.home-session-list-feedback [role="status"]'), null);
     assert.match(
       failureHtml,
       /role="status" aria-live="polite">Could not copy session ID\.<\/p>/,
@@ -2953,7 +2950,7 @@ describe("HomeRightPane", () => {
     );
 
     assert.doesNotMatch(successHtml, /session-window-restore-feedback/);
-    assert.doesNotMatch(successHtml, /role="status"/);
+    assert.equal(new JSDOM(successHtml).window.document.querySelector('.session-window-restore-feedback [role="status"], .session-window-restore-feedback[role="status"]'), null);
     assert.match(failureHtml, /session-b \(Deleted\)/);
     assert.match(failureHtml, /role="status" aria-live="polite"/);
     assert.doesNotMatch(failureHtml, /件のSessionを開きました/);

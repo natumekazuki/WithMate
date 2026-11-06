@@ -35,8 +35,8 @@ function fixture() {
     `).run(id, `inc:${id}`, id, character, now, now, now);
   }
   db.prepare(`INSERT INTO auxiliary_sessions
-    (id, parent_session_id, status, created_at, updated_at, character_id, character_snapshot_json)
-    VALUES ('same-id', 'parent', 'active', ?, ?, 'character-a', '{}')`).run(now, now);
+    (id, parent_session_id, created_at, updated_at, character_id, character_snapshot_json)
+    VALUES ('same-id', 'parent', ?, ?, 'character-a', '{}')`).run(now, now);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
   auxiliary.close();
   db.prepare(`INSERT INTO auxiliary_session_drafts (auxiliary_session_id, parent_session_id, incarnation, updated_at)
@@ -198,6 +198,7 @@ it("Auxiliary削除と実親Session削除でscopeを消し、relationshipと同�
       storage.reset({ ...scope, layer: "session", reason: "Clear", resetAt: now, idempotencyKey: "reset" },
         { sessionSource: f.source });
       if (deleteParent) {
+        f.db.prepare("UPDATE sessions_v6 SET state='completed' WHERE id='parent'").run();
         sessions = new SessionStorageV6(f.dbPath);
         sessions.deleteSession("parent");
       } else {

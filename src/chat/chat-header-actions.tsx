@@ -6,6 +6,7 @@ import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboar
 import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../settings/shortcut-registry.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
+import type { SessionRole } from "../../src-shared/session/session-role.js";
 
 export type WorkspaceExplorerActionOptions = {
   disabled?: boolean;
@@ -13,6 +14,9 @@ export type WorkspaceExplorerActionOptions = {
 };
 
 export type LiveSessionHeaderPropsInput = {
+  sessionRole?: SessionRole;
+  isRoleChangePending?: boolean;
+  onPromoteToOverallCoordinator?: () => void;
   taskTitle: string;
   isEditingTitle: boolean;
   titleDraft: string;
@@ -97,6 +101,9 @@ export function createMessageCollapseHeaderAction({
 
 export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput): SessionHeaderProps {
   return {
+    sessionRole: input.sessionRole,
+    isRoleChangePending: input.isRoleChangePending,
+    onPromoteToOverallCoordinator: input.onPromoteToOverallCoordinator,
     taskTitle: input.taskTitle,
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,

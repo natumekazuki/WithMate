@@ -10,6 +10,8 @@ import type { Session } from "../../../src-shared/session/session-state.js";
 import type { CharacterProfile } from "../../../src-shared/character/character-state.js";
 
 import type { SessionGlossaryPaneProps } from "../../glossary/SessionGlossaryPane.js";
+import type { OpenCoordinationRequest } from "../../../src-shared/coordination/coordination-window-contract.js";
+import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
@@ -91,6 +93,12 @@ export function useSessionContextPaneFeature({
   onShowContextRail,
 }: SessionContextPaneFeatureInput): SessionContextPaneFeature {
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
+  const [coordinationNavigation, setCoordinationNavigation] = useState<OpenCoordinationRequest | null>(null);
+  useEffect(() => getWithMateApi()?.subscribeOpenCoordination((request) => {
+    setCoordinationNavigation(request);
+    setActiveContextPaneTab("coordination");
+    onShowContextRail();
+  }), [onShowContextRail]);
   const isCopilotSession = displayedSession?.provider === "copilot";
   const selectedCopilotQuotaProjection = useMemo(
     () => (isCopilotSession ? buildCopilotQuotaProjection(selectedProviderQuotaTelemetry) : null),
@@ -215,6 +223,8 @@ export function useSessionContextPaneFeature({
     messageNavigatorSessionId: displayedSession?.id ?? undefined,
     messageNavigatorCharacter: character ?? undefined,
     glossaryPaneProps: includeGlossaryContextPane ? glossaryPaneProps : undefined,
+    coordinationSessionId: selectedSession?.id,
+    coordinationNavigation,
     onCycleContextPaneTab: handleCycleContextPaneTab,
     onSelectContextPaneTab: setActiveContextPaneTab,
   } satisfies SessionContextPaneProps);

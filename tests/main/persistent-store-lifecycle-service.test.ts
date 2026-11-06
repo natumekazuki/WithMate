@@ -156,7 +156,6 @@ function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}
   return {
     id: "aux-v6",
     parentSessionId: "session-v6",
-    status: "active",
     runState: "idle",
     title: "V6 auxiliary",
     provider: "codex",
@@ -174,7 +173,6 @@ function createAuxiliarySessionFixture(overrides: Partial<AuxiliarySession> = {}
     displayAfterMessageIndex: null,
     createdAt: "2026-07-02T00:00:00.000Z",
     updatedAt: "2026-07-02T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }

@@ -43,10 +43,10 @@ function mainSession(id: string): Session {
 
 function auxiliarySession(parentSessionId: string): AuxiliarySession {
   return {
-    id: "aux-1", parentSessionId, status: "active", runState: "idle", title: "Aux", provider: "codex", catalogRevision: 1, model: "gpt-5.4",
+    id: "aux-1", parentSessionId, runState: "idle", title: "Aux", provider: "codex", catalogRevision: 1, model: "gpt-5.4",
     reasoningEffort: "high", approvalMode: DEFAULT_APPROVAL_MODE, codexSandboxMode: "danger-full-access", codexSpeed: "standard", codexReviewer: "user",
     customAgentName: "", threadId: "", composerDraft: "", messages: [{ role: "user", text: "aux question" }, { role: "assistant", text: "aux answer" }],
-    displayAfterMessageIndex: null, createdAt: "2026-07-30T00:00:00.000Z", updatedAt: "2026-07-30T00:00:00.000Z", closedAt: "",
+    displayAfterMessageIndex: null, createdAt: "2026-07-30T00:00:00.000Z", updatedAt: "2026-07-30T00:00:00.000Z",
   };
 }
 

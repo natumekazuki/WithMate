@@ -1,4 +1,5 @@
 import { resolveRunExecutionTarget } from "../provider-runtime.js";
+import { CopilotOutputProjection } from "./copilot-output.js";
 import { existsSync } from "node:fs";
 import { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -53,7 +54,6 @@ import type { ProviderAgentRuntimeBindingProjection } from "../agent-runtime-bin
 import { buildManagedHttpMcpServers } from "../managed-http-mcp.js";
 import { buildCopilotProviderQuotaTelemetry as buildProviderQuotaTelemetryProjection, buildCopilotSessionContextTelemetry as buildSessionContextTelemetryProjection, readCopilotQuotaSnapshots } from "./copilot-quota-telemetry.js";
 import { buildLiveElicitationRequestFromCopilotEvent as buildElicitationRequestProjection, buildLiveElicitationRequestFromCopilotUserInput } from "./copilot-elicitation.js";
-import { applyCopilotAssistantEvent } from "./copilot-turn-events.js";
 import type { ListProviderModelsInput } from "../provider-runtime.js";
 import type { ModelCatalogProvider } from "../../../src-shared/settings/model-catalog.js";
 import { ProviderProgressDelivery, ProviderProgressMap } from "../provider-progress.js";
@@ -96,6 +96,7 @@ type CopilotAdapterLogInput = {
 };
 
 type CopilotTurnStreamState = {
+  outputProjection: CopilotOutputProjection;
   liveSteps: ProviderProgressMap<LiveRunStep>;
   operationSteps: Map<string, LiveRunStep>;
   backgroundTasks: ProviderProgressMap<LiveBackgroundTask>;
@@ -107,8 +108,6 @@ type CopilotTurnStreamState = {
   redactor: ProviderAgentRuntimeBindingRedactor;
   assistantText: string;
   lastNonEmptyAssistantMessageText: string;
-  assistantMessages: string[];
-  assistantDraft: string;
   usage: ProviderUsage | null;
   streamErrorMessage: string;
 };
@@ -289,8 +288,7 @@ function createCopilotTurnStreamState(redactor = createProviderAgentRuntimeBindi
     redactor,
     assistantText: "",
     lastNonEmptyAssistantMessageText: "",
-    assistantMessages: [],
-    assistantDraft: "",
+    outputProjection: new CopilotOutputProjection(),
     usage: null,
     streamErrorMessage: "",
   };
@@ -346,13 +344,12 @@ function applyCopilotTurnEvent(args: {
   const { event, state, providerId, sessionId, workspacePath } = args;
 
   switch (event.type) {
+    case "assistant.message_start":
     case "assistant.message_delta":
     case "assistant.message": {
-      const nextAssistantState = applyCopilotAssistantEvent(state.assistantMessages, state.assistantDraft, event);
-      state.assistantMessages = nextAssistantState.messages;
-      state.assistantDraft = nextAssistantState.draft;
-      state.assistantText = nextAssistantState.assistantText;
-      state.lastNonEmptyAssistantMessageText = nextAssistantState.lastNonEmptyAssistantMessageText;
+      state.outputProjection.apply(event);
+      state.assistantText = state.outputProjection.project().assistantText;
+      state.lastNonEmptyAssistantMessageText = state.outputProjection.lastNonEmptyText;
       break;
     }
     case "assistant.usage":
@@ -772,6 +769,7 @@ export function buildCopilotSystemMessage(
 const SUPPORTED_COPILOT_EVENT_TYPES = new Set<string>([
   "user.message",
   "assistant.message",
+  "assistant.message_start",
   "assistant.usage",
   "session.error",
   "session.idle",
@@ -1058,6 +1056,7 @@ export function buildCopilotSessionSettings(
     model: selection.resolvedModel,
     ...(selection.resolvedReasoningEffort ? { reasoningEffort: toCopilotReasoningEffort(selection.resolvedReasoningEffort) } : {}),
     workingDirectory: workspacePath,
+    additionalDirectories: prompt.additionalDirectories,
     streaming: true,
     onPermissionRequest: buildPermissionHandler(input),
     ...(input.agentRuntimeBinding?.managedMcp
@@ -1076,6 +1075,7 @@ export function buildCopilotSessionSettings(
       config.model,
       config.reasoningEffort,
       config.workingDirectory,
+      config.additionalDirectories,
       input.executionOptions.approvalMode,
       systemMessage?.mode ?? "",
       systemMessage?.content ?? "",
@@ -1758,6 +1758,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
     providerQuotaTelemetry: ProviderQuotaTelemetry | null,
+    outputProjection?: CopilotOutputProjection,
   ): Promise<RunSessionTurnResult> {
     const redactor = createProviderAgentRuntimeBindingRedactor(agentRuntimeBinding);
     const { snapshot: afterSnapshot, stats: afterSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
@@ -1792,6 +1793,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText: redactor.sanitizeText(assistantText),
+      output: outputProjection?.project(redactor.sanitizeText).output,
       lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
       artifact: redactor.sanitize(artifact),
       providerMetadata,
@@ -1959,9 +1961,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
       });
     });
-    const execution = Promise.all([send, completion.wait]).then(async () => {
+    const execution = Promise.all([send, completion.wait]).then(async ([requestMessageId]) => {
       await Promise.all(interactionTasks);
       await progressDelivery.drain();
+      if (typeof requestMessageId === "string") streamState.outputProjection.completeRequest(requestMessageId);
     });
     let cancellationCleanup: Promise<never> | undefined;
     let cancellationFailures: string[] = [];
@@ -2028,6 +2031,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           beforeSnapshot,
           beforeSnapshotStats,
           null,
+          streamState.outputProjection,
         );
         throw new ProviderTurnError(
           redactor.sanitizeText(streamState.streamErrorMessage),
@@ -2052,6 +2056,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         beforeSnapshot,
         beforeSnapshotStats,
         null,
+        streamState.outputProjection,
       );
     } catch (error) {
       observingTurn = false;
@@ -2078,6 +2083,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         beforeSnapshot,
         beforeSnapshotStats,
         null,
+        streamState.outputProjection,
       );
       if (cancellationFailures.length > 0) {
         partialResult.providerMetadata = [

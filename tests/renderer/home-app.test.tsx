@@ -109,6 +109,9 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
     }),
     listSessionSummaryPage: async () => ({ entries: [], hasMore: false, nextCursor: null }),
     listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
+    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    subscribeCoordinationChanged: () => () => {},
+    getSessionSummary: async () => null,
     listSessionCharacterUsage: async () => [],
     subscribeSessionInvalidation: () => () => {},
     onSessionTurnUpdated: () => () => {},
@@ -411,6 +414,9 @@ test("Homeのmate status read中も既存Sessionを開ける", async () => {
     listOpenSessionWindowIds: async () => [],
     subscribeOpenSessionWindowIds: () => () => {},
     listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
+    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    subscribeCoordinationChanged: () => () => {},
+    getSessionSummary: async (id) => id === session.id ? session : null,
     subscribeLiveSessionRunStatus: () => () => {},
     getSessionWindowRestoreSet: async () => [],
     subscribeSessionWindowRestoreSet: () => () => {},
@@ -479,12 +485,12 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
       characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request",
     }));
     let auxiliary: AuxiliarySessionSummary = {
-      id: "monitor-aux", parentSessionId: summary.id, status: "active", runState: "idle",
+      id: "monitor-aux", parentSessionId: summary.id, runState: "idle",
       title: "Auxiliary", preview: "Auxiliary task", provider: "codex", catalogRevision: 1,
       model: "gpt-5.4", reasoningEffort: "high", approvalMode: "on-request", codexSpeed: "standard",
       codexReviewer: "auto-review", codexSandboxMode: "danger-full-access", customAgentName: "",
       threadId: "", displayAfterMessageIndex: null,
-      createdAt: "2026-10-07T00:00:00.000Z", updatedAt: "2026-10-07T00:00:00.000Z", closedAt: "",
+      createdAt: "2026-10-07T00:00:00.000Z", updatedAt: "2026-10-07T00:00:00.000Z",
     };
     const liveListeners = new Set<Parameters<WithMateWindowApi["subscribeLiveSessionRunStatus"]>[0]>();
     let summaryReads = 0;
@@ -519,6 +525,9 @@ test("Homeと独立MonitorはMainとAuxiliaryの実行状態をlive通知から�
         monitorReads += 1;
         return { entries: [summary], auxiliarySessions: [auxiliary], hasMore: false, nextCursor: null };
       },
+      executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+      subscribeCoordinationChanged: () => () => {},
+      getSessionSummary: async () => null,
       subscribeLiveSessionRunStatus: (listener) => {
         liveListeners.add(listener);
         return () => { liveListeners.delete(listener); };

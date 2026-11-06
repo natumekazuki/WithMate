@@ -172,7 +172,6 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
   return {
     id: "aux-1",
     parentSessionId: "session-1",
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -190,7 +189,6 @@ function createAuxiliarySession(overrides?: Partial<AuxiliarySession>): Auxiliar
     displayAfterMessageIndex: 0,
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-28T00:00:00.000Z",
-    closedAt: "",
     ...overrides,
   };
 }

@@ -221,7 +221,7 @@ test("不明queued turnの解除は実解放後だけcurrent metadataを収束�
 
 // @test-value v2
 // kind = "contract"
-// claim = "受付receiptは再open後もcapture値と同request照合を保持し、FIFO・queued限定取消・不明結果保留を維持する"
+// claim = "受付receiptは再open後もcapture値と同request照合を保持し、FIFO・指定receipt限定取消・開始済み取消の非適用・不明結果保留を維持する"
 // oracle = { type = "contract", ref = "GitHub Issue #801: durable ACK, immutable capture, FIFO, queued cancellation, uncertain outcome hold" }
 // fault = "受付をメモリだけに保持、terminal再送を別受付にする、異payloadを許可、または不明な先頭を再実行する"
 // observable = "再open後のreceipt・ページ・claim結果と拒否例外"
@@ -256,7 +256,7 @@ test("queue receipt はcapture・再送照合・FIFO・中断保留を永続化�
     assert.throws(() => queue.enqueue(owner, { ...original, request: { ...original.request, userMessage: "different" } }), /different payload/);
     assert.equal(queue.claimNext(owner)?.id, first.id);
     assert.equal(queue.claimNext(owner), null);
-    assert.throws(() => queue.cancelQueued(owner, first.id), /Only a queued/);
+    assert.equal(queue.cancelQueued(owner, first.id).state, "starting");
     queue.markStarted(owner, first.id, { turnId: "turn-1", userMessageSeq: 0 });
     queue.close();
     queue = new SessionTurnQueueStorageV6(dbPath);

@@ -8,6 +8,7 @@ import {
   BUNDLED_MEMORY_CLI_REPOSITORY_RELATIVE_PATH,
   BUNDLED_SESSION_GRAPH_CLI_FILE_NAME,
   BUNDLED_SESSION_HISTORY_CLI_FILE_NAME,
+  BUNDLED_SESSION_CLI_FILE_NAME,
 } from "../../src-shared/cli/cli-artifacts.js";
 
 const repositoryRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -99,6 +100,10 @@ export async function buildWithMateSessionHistoryCli(
   });
 }
 
+export async function buildWithMateSessionCli(outputDirectoryPath = defaultOutputDirectoryPath): Promise<string> {
+  return buildManagedCli({ entryPath: path.join(repositoryRootPath, "src-cli", "session", "withmate-session.ts"), outputDirectoryPath, outputFileName: BUNDLED_SESSION_CLI_FILE_NAME });
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await Promise.all([buildWithMateMemoryCli(), buildWithMateGlossaryCli(), buildWithMateSessionGraphCli(), buildWithMateSessionHistoryCli()]);
+  await Promise.all([buildWithMateMemoryCli(), buildWithMateGlossaryCli(), buildWithMateSessionGraphCli(), buildWithMateSessionHistoryCli(), buildWithMateSessionCli()]);
 }

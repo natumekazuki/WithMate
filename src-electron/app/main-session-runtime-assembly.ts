@@ -13,12 +13,13 @@ export type MainSessionRuntimeAssemblyDeps = {
     isActive(): boolean;
   };
   admission: Required<Pick<SessionRuntimeServiceDeps, "runSessionAdmissionExclusive">>;
-  sessions: Required<Pick<SessionRuntimeServiceDeps, "getSession" | "persistRunningTurnStart" | "clearCharacterAuthoringRuntimeState" | "appendRunningInput" | "appendTerminalSession" | "checkpointRuntimeMetadata">> & Pick<SessionRuntimeServiceDeps, "persistQueuedTurnStart" | "getQueuedInputReceipt">;
+  sessions: Required<Pick<SessionRuntimeServiceDeps, "getSession" | "persistRunningTurnStart" | "clearCharacterAuthoringRuntimeState" | "appendRunningInput" | "appendTerminalSession" | "checkpointRuntimeMetadata">> & Pick<SessionRuntimeServiceDeps, "persistQueuedTurnStart" | "getQueuedInputReceipt" | "beginRunningInput" | "settleRunningInput">;
   resolution: Pick<SessionRuntimeServiceDeps, "resolveRuntimeSessionForTurn" | "resolveComposerPreview" | "resolveProviderSession" | "resolveSessionFolderPath" | "resolveProviderCatalog"> & {
     resolveRuntimeSessionForTurn: NonNullable<SessionRuntimeServiceDeps["resolveRuntimeSessionForTurn"]>;
     resolveComposerPreview: SessionRuntimeServiceDeps["resolveComposerPreview"];
     resolveProviderSession: NonNullable<SessionRuntimeServiceDeps["resolveProviderSession"]>;
     resolveSessionFolderPath: NonNullable<SessionRuntimeServiceDeps["resolveSessionFolderPath"]>;
+    resolveCrewFolderPath?: SessionRuntimeServiceDeps["resolveCrewFolderPath"];
     resolveProviderCatalog: SessionRuntimeServiceDeps["resolveProviderCatalog"];
     assertCapturedComposerAttachmentsAvailable?: SessionRuntimeServiceDeps["assertCapturedComposerAttachmentsAvailable"];
   };
@@ -64,6 +65,8 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
       deps.admission.runSessionAdmissionExclusive(sessionId, () => guarded("admission", operation), signal),
     getSession: (sessionId) => { assertOwner("session read"); return deps.sessions.getSession(sessionId); },
     appendRunningInput: (session, text, turnId, queuedInput) => guarded("Session input append", () => deps.sessions.appendRunningInput(session, text, turnId, queuedInput)),
+    beginRunningInput: deps.sessions.beginRunningInput ? (...args) => guarded("Session input begin", () => deps.sessions.beginRunningInput!(...args)) : undefined,
+    settleRunningInput: deps.sessions.settleRunningInput ? (...args) => guarded("Session input settle", () => deps.sessions.settleRunningInput!(...args)) : undefined,
     getQueuedInputReceipt: deps.sessions.getQueuedInputReceipt
       ? (receipt) => guarded("queued input receipt", () => deps.sessions.getQueuedInputReceipt!(receipt))
       : undefined,
@@ -81,6 +84,9 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
       : undefined,
     resolveProviderSession: (session) => guarded("provider session path", () => deps.resolution.resolveProviderSession(session)),
     resolveSessionFolderPath: (id) => guarded("session folder path", () => deps.resolution.resolveSessionFolderPath(id)),
+    resolveCrewFolderPath: deps.resolution.resolveCrewFolderPath
+      ? (id) => guarded("crew folder path", () => deps.resolution.resolveCrewFolderPath!(id))
+      : undefined,
     getAppSettings: () => guarded("settings read", deps.memory.getAppSettings),
     resolveProviderCatalog: (providerId, revision) => guarded("provider catalog", () => deps.resolution.resolveProviderCatalog(providerId, revision)),
     getProviderCodingAdapter: deps.provider.getProviderCodingAdapter,

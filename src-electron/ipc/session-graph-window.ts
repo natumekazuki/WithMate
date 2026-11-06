@@ -35,7 +35,10 @@ export function registerSessionGraphWindowHandlers(ipc: IpcHandleRegistrar, deps
     if (typeof operation !== "string" || !Object.hasOwn(sessionGraphUiReadRequestSchemas, operation)) throw new TypeError("Invalid Graph read operation.");
     return deps.service.read(sender(event), token(value), operation as SessionGraphReadOperation, request);
   });
-  ipc.handle(channels.WITHMATE_UPDATE_SESSION_GRAPH_WINDOW_STATE_CHANNEL, (event, value, state) => deps.service.update(sender(event), token(value), sessionGraphViewStateSchema.parse(state)));
+  ipc.handle(channels.WITHMATE_UPDATE_SESSION_GRAPH_WINDOW_STATE_CHANNEL, (event, value, state, title) => {
+    if (title !== undefined && typeof title !== "string") throw new TypeError("Invalid Graph title.");
+    return deps.service.update(sender(event), token(value), sessionGraphViewStateSchema.parse(state), title);
+  });
   ipc.handle(channels.WITHMATE_OPEN_SESSION_GRAPH_WINDOW_REFERENCE_CHANNEL, async (event, value, target) => {
     const window = sender(event); const id = token(value);
     if (typeof target !== "string" || !target || target.length > 8192) throw new TypeError("Invalid Graph reference.");

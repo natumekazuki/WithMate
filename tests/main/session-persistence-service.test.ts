@@ -1864,7 +1864,7 @@ describe("SessionPersistenceService", () => {
 
     await assert.rejects(
       () => service.deleteSession(parentSession.id),
-      /A running session cannot be deleted/,
+      /A running Crew cannot be deleted/,
     );
 
     assert.deepEqual(deleted, []);

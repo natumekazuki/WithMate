@@ -83,6 +83,8 @@ Main Process は `app.requestSingleInstanceLock()` を取得し、2 つ目以降
 
 Window復元候補のsnapshotは任意保存とし、open完了・quit準備は保存完了を待たない。quit準備時は候補の保存を要求したうえでcloseによる候補更新を止める。Auxiliary draft等の必須flushは独立した終了条件として維持する。
 
+Bridgeの`presentation: "minimized"`指定は、新規Windowのready時に通常表示・focusを経ず最小化する。既存Windowの表示状態には触らず、通常のregistry・Monitor・snapshotへ接続する。生成中の表示意図はWindowの生存期間だけ保持し、明示openで通常表示へ昇格した後に遅いready・load完了で再最小化や再focusをしない。Restore serviceは全対象をこの最小化指定で開く。表示履歴や最小化フラグはsnapshotへ保存しない。
+
 表示へのbroadcastはWindowごとに配送可否と送信例外を扱い、終了済みRendererには送信しない。配送失敗は固定分類で診断し、他Windowへの配送とMainのprovider応答保存を止めない。新しいRendererはMainのSession / live runを再取得する。draft flushの診断はclose / quit、結果分類、経過時間だけを記録し、本文・URL・タイトル・ID・生errorを含めない。
 
 `SessionWindowRestoreService`は起動時に読み込んだ未処理候補とBridgeから受け取る現在openの集合を所有し、両者の和を同じsnapshotへ保存する。現在集合からcloseされたIDは未処理候補からも外し、復元成功対象は処理時に消費する。復元操作は起動時候補の読込みだけを待ち、その後の現在集合の保存には待機しない。

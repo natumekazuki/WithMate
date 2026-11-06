@@ -15,14 +15,17 @@ import { SESSION_WINDOW_RESTORE_SET_MAX } from "../../src-shared/window/session-
 
 class StubWindow implements SessionWindowLike {
   destroyed = false;
+  readonly presentationOperations: string[] = [];
+  private readonly readyListeners: Array<() => void> = [];
   private readonly closeListeners: Array<(event: SessionWindowCloseEvent) => void> = [];
   private readonly closedListeners: Array<() => void> = [];
 
   isDestroyed() { return this.destroyed; }
   isMinimized() { return false; }
+  minimize() { this.presentationOperations.push("minimize"); }
   restore() {}
-  focus() {}
-  show() {}
+  focus() { this.presentationOperations.push("focus"); }
+  show() { this.presentationOperations.push("show"); }
   destroy() { this.finishClose(); }
   close() {
     let prevented = false;
@@ -33,7 +36,8 @@ class StubWindow implements SessionWindowLike {
       this.finishClose();
     }
   }
-  once(_event: "ready-to-show", _listener: () => void) {}
+  once(_event: "ready-to-show", listener: () => void) { this.readyListeners.push(listener); }
+  emitReady() { for (const listener of this.readyListeners.splice(0)) listener(); }
   on(event: "close", listener: (event: SessionWindowCloseEvent) => void): void;
   on(event: "closed", listener: () => void): void;
   on(event: "close" | "closed", listener: ((event: SessionWindowCloseEvent) => void) | (() => void)) {
@@ -125,6 +129,49 @@ describe("SessionWindowRestoreService", () => {
     assert.deepEqual(notifications, [[]]);
     assert.deepEqual(await service.restoreSnapshot(), { requestedSessionIds: [], openedSessionIds: [], failures: [] });
     assert.deepEqual(opened, []);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "Restoreは今回開く全Windowを最小化で用意し、既存Windowに触らず同じsnapshot保存経路へ接続する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#復元操作" }
+  // fault = "Restoreのopen optionsをBridgeへ渡さず通常表示するか、既存Windowも最小化するか、保存集合から復元Windowを落とす"
+  // observable = "各Windowの表示操作列、復元結果、保存集合、生成Window数"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore minimized bridge integration"
+  // lifecycle = "permanent"
+  // distinction = "Bridge単体ではRestoreの対象除外・open optionsと保存serviceへの実接続を検出できない"
+  // @end-test-value
+  it("Restoreは新規対象だけを最小化し、既存Windowの表示と同じ保存経路を維持する", async () => {
+    const created = new Map<string, StubWindow[]>();
+    const writes: Promise<void>[] = [];
+    let saved: readonly string[] = [];
+    let bridge!: SessionWindowBridge<StubWindow>;
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() { return ["existing", "a", "b"]; },
+        async saveSnapshot(ids) { saved = [...ids]; },
+      },
+      getSession: () => ({}),
+      getSessionWindowRestoreStates: () => bridge.getSessionWindowRestoreStates(),
+      openSessionWindow: (id, options) => bridge.openSessionWindow(id, options),
+    });
+    bridge = createBridge({
+      created,
+      persist(ids) { const write = service.saveSnapshot(ids); writes.push(write); return write; },
+    });
+    const existing = await bridge.openSessionWindow("existing");
+    existing.emitReady();
+    assert.deepEqual((await service.restoreSnapshot()).openedSessionIds, ["a", "b"]);
+    for (const id of ["a", "b"]) {
+      const window = created.get(id)![0];
+      window.emitReady();
+      assert.deepEqual(window.presentationOperations, ["minimize"]);
+      assert.equal(created.get(id)?.length, 1);
+    }
+    assert.deepEqual(existing.presentationOperations, ["show", "focus"]);
+    await Promise.all(writes);
+    assert.deepEqual(new Set(saved), new Set(["existing", "a", "b"]));
   });
 
   // @test-value v2

@@ -92,7 +92,7 @@ export class CodexProjectionOwner {
 
   finish(diagnostics: BoundedProviderRawItem[]): CodexProjectionFinal {
     const items = this.redactor.sanitize([...this.state.items.values()]);
-    const response = collectCodexAssistantResponseFromItems(items);
+    const response = collectCodexAssistantResponseFromItems(items, this.state.completedItemIds);
     return {
       items, ...response,
       ...(this.input.diagnosticTrace ? { rawItemsJson: stringifyBoundedProviderRawItems([...this.redactor.sanitize(diagnostics), ...buildCodexStableRawItems(items)]) } : {}),

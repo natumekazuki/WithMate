@@ -37,8 +37,8 @@ it("queue準備中のAuxiliary取消はquit中止後のcloseでも親を監視�
   for (const phase of ["reservation", "provider-read"] as const) {
     const parent = createSession({ id: "parent" });
     const auxiliary: AuxiliarySessionSummary = {
-      ...parent, id: "aux", parentSessionId: parent.id, title: "Auxiliary", status: "active", runState: "idle",
-      displayAfterMessageIndex: null, createdAt: "now", closedAt: "",
+      ...parent, id: "aux", parentSessionId: parent.id, title: "Auxiliary", runState: "idle",
+      displayAfterMessageIndex: null, createdAt: "now",
     };
     const owner = {};
     let release!: () => void;
@@ -107,6 +107,7 @@ it("queue準備中のAuxiliary取消はquit中止後のcloseでも親を監視�
         request: { clientRequestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10", submitSource: "composer",
           userMessage: "queued input", executionOptions: captureSessionExecutionOptions(parent) } },
     };
+    receipt.dispatched = structuredClone(receipt.captured);
     const readMonitor = () => readSessionMonitorPage({
       hasUnreadResult: () => false,
       listMonitorSessionIds: () => bridge.listMonitorSessionIds(),
@@ -318,6 +319,13 @@ class StubWindow implements SessionWindowLike {
     return this.minimized;
   }
 
+  minimize(): void {
+    this.minimized = true;
+    this.visible = false;
+    this.focused = false;
+    this.activationOperations.push("minimize");
+  }
+
   restore(): void {
     this.minimized = false;
     this.visible = true;
@@ -452,6 +460,92 @@ function createDraftFlushBridge(options: {
 describe("SessionWindowBridge", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "自動新規Windowは通常表示・focusなしで最小化し、既存Windowの表示を変えず、明示openは最小化解除・focusする"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#復元操作; GitHub Issue #927" }
+  // fault = "自動作成でshow/focusするか、既存Windowを再最小化するか、明示openでWindowを利用できない"
+  // observable = "Windowのactivation操作列、registry・Monitor・保存集合、Window作成数"
+  // observation_boundary = "component-behavior"
+  // scope = "session-window-minimized-presentation"
+  // lifecycle = "permanent"
+  // distinction = "native表示の実機QAとは別にBridgeが表示前にshow/focusを要求しないことと保存経路の接続を確認する"
+  // @end-test-value
+  it("自動openは最小化だけを要求し、既存Windowには触らず明示openを前面化する", async () => {
+    const windows: StubWindow[] = [];
+    const snapshots: string[][] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow() { const window = new StubWindow(); windows.push(window); return window; },
+      async loadChatEntry() {},
+      getSession: () => createSession(),
+      isRunInFlight: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds(ids) { snapshots.push([...ids]); },
+    });
+    const window = await bridge.openSessionWindow("auto", { presentation: "minimized" });
+    assert.deepEqual(window.activationOperations, []);
+    window.emitReady();
+    assert.deepEqual(window.activationOperations, ["minimize"]);
+    assert.equal(window.focused, false);
+    assert.deepEqual(bridge.listMonitorSessionIds(), ["auto"]);
+    assert.deepEqual(snapshots.at(-1), ["auto"]);
+    assert.equal(await bridge.openSessionWindow("auto", { presentation: "minimized" }), window);
+    assert.deepEqual(window.activationOperations, ["minimize"]);
+    await bridge.openSessionWindow("auto");
+    assert.deepEqual(window.activationOperations, ["minimize", "restore", "show", "focus"]);
+    await bridge.openSessionWindow("auto", { presentation: "minimized" });
+    assert.deepEqual(window.activationOperations, ["minimize", "restore", "show", "focus"]);
+    assert.equal(windows.length, 1);
+    window.destroy();
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "最小化生成中の明示openはreadyとloadの前後を問わず通常表示を優先し、遅い自動処理で再最小化・再focusしない"
+  // oracle = { type = "contract", ref = "GitHub Issue #927: ユーザーの明示操作を優先する" }
+  // fault = "生成中の明示openを最小化で上書きするか、遅いready/loadで二度focusするか、Auxiliary移動を失う"
+  // observable = "共有open結果、activation操作列、Window作成数、Auxiliary navigation payload"
+  // observation_boundary = "component-behavior"
+  // scope = "session-window-minimized-explicit-open-race"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("ready前・ready後・load後の明示openは自動最小化より優先し、Auxiliaryへ移動する", async () => {
+    for (const phase of ["before-ready", "after-ready", "after-load"] as const) {
+      let finishLoad!: () => void;
+      const loading = new Promise<void>((resolve) => { finishLoad = resolve; });
+      const window = new StubWindow();
+      const navigations: unknown[] = [];
+      let created = 0;
+      const bridge = new SessionWindowBridge({
+        createWindow() { created += 1; return window; },
+        loadChatEntry: () => loading,
+        sendAuxiliarySessionNavigation(_window, payload) { navigations.push(payload); },
+        getSession: () => createSession(),
+        isRunInFlight: () => false,
+        confirmCloseWhileRunning: () => false,
+        broadcastOpenSessionWindowIds() {},
+      });
+      const automatic = bridge.openSessionWindow("auto", { presentation: "minimized" });
+      if (phase === "after-ready") window.emitReady();
+      if (phase === "after-load") { finishLoad(); await automatic; }
+      const explicit = bridge.openAuxiliarySessionWindow("auto", "aux");
+      const repeatedAutomatic = bridge.openSessionWindow("auto", { presentation: "minimized" });
+      if (phase === "before-ready") window.emitReady();
+      if (phase !== "after-load") finishLoad();
+      assert.equal(await automatic, window);
+      assert.equal(await explicit, window);
+      assert.equal(await repeatedAutomatic, window);
+      window.emitReady();
+      assert.deepEqual(window.activationOperations, phase === "after-ready"
+        ? ["minimize", "restore", "show", "focus"]
+        : ["show", "focus"]);
+      assert.deepEqual(navigations, [{ parentSessionId: "auto", auxiliarySessionId: "aux" }]);
+      assert.equal(created, 1);
+      window.destroy();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "初回queued AuxiliaryのadmissionとSession読込み待機中も親Windowのcloseを確認し、開始失敗後は警告と不要な親関連を残さない"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-window-close; GitHub Issue #877" }
   // fault = "親関連をprovider session解決まで登録しないか、開始失敗で親関連を解放しない"
@@ -490,7 +584,7 @@ describe("SessionWindowBridge", () => {
         broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
       });
       const owner = {};
-      const auxiliary = { id: "first-aux", parentSessionId: "parent", status: "active" as const };
+      const auxiliary = { id: "first-aux", parentSessionId: "parent" as const };
       const parents = new AuxiliaryLiveRunParents({
         getStorageOwner: () => owner, isRunPending: (id) => runtime.isRunInFlight(id),
         hasLiveSessionRun: () => false, broadcastLiveSessionRun() {},
@@ -504,6 +598,7 @@ describe("SessionWindowBridge", () => {
           attachments: [], provider: "codex", workspacePath: "C:/workspace" },
       };
       assert.equal(parents.size, 0);
+      receipt.dispatched = structuredClone(receipt.captured);
       const running = parents.trackRun(auxiliary, owner, () => runtime.runQueuedSessionTurn(receipt, unexpected));
       try {
         await ready;
@@ -559,7 +654,7 @@ describe("SessionWindowBridge", () => {
         broadcastLiveSessionRun() {},
       });
       for (const id of ["aux-background", "aux-second", "aux-other-parent"]) {
-        parents.remember({ id, parentSessionId: id === "aux-other-parent" ? "other-parent" : "parent", status: "active" }, owner);
+        parents.remember({ id, parentSessionId: id === "aux-other-parent" ? "other-parent" : "parent" }, owner);
       }
       const requests: Array<{ requestId: string; sessionId: string; reason: "close" | "quit" }> = [];
       let confirmations = 0;

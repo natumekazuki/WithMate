@@ -41,7 +41,6 @@ export type AuxiliaryDraftConsumeResult = {
 export type AuxiliarySessionStatus = {
   id: string;
   parentSessionId: string;
-  status: "active" | "closed";
   createdAt: string;
   incarnation: string;
   runState: AuxiliarySession["runState"];

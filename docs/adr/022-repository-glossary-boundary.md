@@ -8,6 +8,14 @@ Accepted
 
 [ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI／MCPのrepository指定をSession bindingだけに限定する判断は現行運用の適用対象外とする。明示repositoryによる無binding操作を同じruntime認証とapplication serviceへ接続する。binding指定時のscope、proactive条件、rendererのSession境界、checkout file正本とmutation契約は維持する。以下の本文は当時の判断として保持する。
 
+### V7共有extensionの容量分類
+
+V7のSession／Graph／保存履歴も使うextensionでは、小さい通常要求の並列読取を既存の資源上限内で受け付ける。共通clientはserialized envelopeのUTF-8 byte数をHTTP Content-Lengthで宣言するが、credentialと本文は従来どおり同じrequestの103 owner challenge検証後に送る。宣言長は非信頼の容量分類だけに使い、認証・認可の根拠にしない。
+
+宣言長が通常body上限以下の要求は既存Memoryと同じ共通枠（既定8件、各256KiB）を使い、実受信もそのbody上限で検査する。大きい／長さ不明の要求は既存の34MiB・1件枠を使う。小さいGlossaryも認証後に同じ1件枠を取得してからdispatchするため、Glossaryの同時dispatch数1は維持する。既に大要求枠を取得した要求は二重取得しない。
+
+この共有extensionへの適用で、以下本文の「Glossary専用」という対象範囲だけを置き換える。既存の受信総容量（通常8×256KiB＋大要求1×34MiB）とGlossary同時数1、body超過時のdispatch前拒否、exact owner／binding／captured turn、Origin拒否は変更しない。別queueや無認証の経路は追加しない。
+
 ## Context
 
 リポジトリ固有の語をSession message内で説明するには、手編集できる正本、provider Sessionに限定した変更権限、外部編集への追従、Markdown構造を壊さない表示投影が必要になる。用語集内容をWithMate DB、Session data、Memory、managed Skillへ複製すると、外部編集後にどれが現在値か判定できない。rendererやCLIがpathを自己申告する方式では、別checkoutへauthorityを広げられる。

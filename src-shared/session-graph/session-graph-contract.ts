@@ -2,6 +2,8 @@ import type { z } from "zod";
 import type { sessionGraphOperationRequestSchemas, sessionGraphRecordInputSchema, sessionGraphRecordSchema, sessionGraphRelationSchema } from "./session-graph-operation-schema.js";
 
 export type SessionGraphOwner = { sessionId: string; incarnationId: string };
+export type SessionGraphSource = { kind: "main" | "auxiliary"; incarnationId: string };
+export type SessionGraphStorageAuthority = { caller: SessionGraphSource & { sessionId: string }; callerOwner: SessionGraphOwner };
 export const SESSION_GRAPH_RELATION_LIMIT = 400;
 export type SessionGraphIdentity = {
   sessionId: string; sessionTitle: string; role: "main" | "auxiliary";

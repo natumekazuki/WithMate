@@ -16,6 +16,7 @@ import { ButtonContent } from "../ui/button-content.js";
 import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
+import { useCoordinationMonitor } from "../coordination/use-coordination-monitor.js";
 
 export type HomeMonitorContentProps = {
   approvalEntries: HomeMonitorEntry[];
@@ -37,7 +38,7 @@ export type HomeMonitorContentProps = {
   ) => void;
 };
 
-type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading" | "closed";
+type HomeMonitorStatusKind = HomeSessionState["kind"] | "loading";
 
 function fitSectionWeights(weights: number[], closed: boolean[], height: number): number[] {
   if (height <= 0) return weights;
@@ -114,7 +115,6 @@ function renderAuxiliaryStatusIcons(entry: HomeMonitorEntry) {
     { kind: "running" as const, label: "Waiting For Stop" },
     { kind: "error" as const, label: "Error" },
     { kind: "neutral" as const, label: "Idle" },
-    { kind: "closed" as const, label: "Closed" },
   ].map((group) => ({
     ...group,
     count: summaries.filter((summary) => getHomeAuxiliarySessionState(summary).label === group.label).length,
@@ -150,16 +150,17 @@ export function HomeMonitorContent({
   onShowContextMenu,
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
-  const [closedSections, setClosedSections] = useState([false, false, false]);
-  const [smallSections, setSmallSections] = useState([false, false, false]);
-  const [sectionWeights, setSectionWeights] = useState([1, 1, 1]);
+  const coordination = useCoordinationMonitor();
+  const [closedSections, setClosedSections] = useState([false, false, false, false]);
+  const [smallSections, setSmallSections] = useState([false, false, false, false]);
+  const [sectionWeights, setSectionWeights] = useState([0.5, 0.5, 1, 1]);
   const [availableHeight, setAvailableHeight] = useState(0);
   const [isQuotaExpanded, setIsQuotaExpanded] = useState(true);
   const sectionsRef = useRef<HTMLDivElement>(null);
   const dragStartRef = useRef<number[] | null>(null);
   const id = useId();
-  const sectionLabels = ["Attention", "Running", "Stopped"];
-  const sectionCounts = [approvalEntries.length, runningEntries.length, nonRunningEntries.length];
+  const sectionLabels = ["Attention", "Coordination", "Running", "Stopped"];
+  const sectionCounts = [approvalEntries.length, coordination.groups.length, runningEntries.length, nonRunningEntries.length];
 
   const getAvailableHeight = () => {
     const container = sectionsRef.current;
@@ -184,7 +185,7 @@ export function HomeMonitorContent({
       });
       sections.forEach((section, index) => {
         if ((closedSections[index] || small[index]) && section.querySelector(".home-monitor-section-content")?.contains(container.ownerDocument.activeElement)) {
-          container.querySelectorAll<HTMLButtonElement>(":scope > .home-monitor-splitter")[Math.min(index, 1)]?.focus({ preventScroll: true });
+          container.querySelectorAll<HTMLButtonElement>(":scope > .home-monitor-splitter")[Math.min(index, 2)]?.focus({ preventScroll: true });
         }
       });
       setSmallSections((current) => current.every((value, index) => value === small[index]) ? current : small);
@@ -199,7 +200,7 @@ export function HomeMonitorContent({
       for (const item of section.querySelectorAll(".home-monitor-section-head, .home-monitor-parent-row, .home-monitor-card, .home-monitor-list-items")) observer.observe(item);
     }
     return () => observer.disconnect();
-  }, [closedSections, approvalEntries, runningEntries, nonRunningEntries, expandedEntryKeys]);
+  }, [closedSections, approvalEntries, coordination.groups, runningEntries, nonRunningEntries, expandedEntryKeys]);
 
   const resizePair = (index: number, start: number[], delta: number) => {
     if (closedSections[index] || closedSections[index + 1]) return;
@@ -444,24 +445,41 @@ export function HomeMonitorContent({
 
         {renderSplitter(0)}
 
-        <section className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`} aria-labelledby="home-monitor-running">
+        <section className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`} aria-labelledby="home-monitor-coordination">
           <div className="home-monitor-section-head">
-            <h3 id="home-monitor-running">Running</h3>
-            <span className="home-monitor-count">{runningEntries.length}</span>
+            <h3 id="home-monitor-coordination">Coordination</h3>
+            <span className="home-monitor-count" aria-label={`${coordination.groups.length} Main session groups`}>{coordination.groups.length}</span>
           </div>
           <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
-            {renderMonitorList(runningEntries, runningEmptyMessage)}
+            {coordination.loading ? <LoadingIndicator label="Loading Coordination" /> : null}
+            {coordination.error ? <LoadError message={coordination.error} onRetry={coordination.retry} /> : null}
+            <div className="coordination-monitor-list">{coordination.groups.map((group) => <button type="button" className="coordination-monitor-row" key={group.session.id} onClick={() => void coordination.open(group)} aria-label={`Open Coordination for ${group.session.taskTitle}: ${group.items.length} items requiring response`}>
+              <CharacterAvatar character={{ name: group.session.character, iconPath: group.session.characterIconPath }} size="tiny" />
+              <strong>{group.session.taskTitle || group.session.id}</strong><span>{group.items.length}</span>
+            </button>)}</div>
           </div>
         </section>
 
         {renderSplitter(1)}
 
-        <section className={`home-monitor-section${closedSections[2] ? " is-closed" : ""}`} aria-labelledby="home-monitor-inactive">
+        <section className={`home-monitor-section${closedSections[2] ? " is-closed" : ""}`} aria-labelledby="home-monitor-running">
+          <div className="home-monitor-section-head">
+            <h3 id="home-monitor-running">Running</h3>
+            <span className="home-monitor-count">{runningEntries.length}</span>
+          </div>
+          <div id={`${id}-content-2`} className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`} inert={closedSections[2] || smallSections[2]} aria-hidden={closedSections[2] || smallSections[2]}>
+            {renderMonitorList(runningEntries, runningEmptyMessage)}
+          </div>
+        </section>
+
+        {renderSplitter(2)}
+
+        <section className={`home-monitor-section${closedSections[3] ? " is-closed" : ""}`} aria-labelledby="home-monitor-inactive">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-inactive">Stopped</h3>
             <span className="home-monitor-count">{nonRunningEntries.length}</span>
           </div>
-          <div id={`${id}-content-2`} className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`} inert={closedSections[2] || smallSections[2]} aria-hidden={closedSections[2] || smallSections[2]}>
+          <div id={`${id}-content-3`} className={`home-monitor-section-content${closedSections[3] || smallSections[3] ? " is-hidden" : ""}`} inert={closedSections[3] || smallSections[3]} aria-hidden={closedSections[3] || smallSections[3]}>
             {renderMonitorList(nonRunningEntries, nonRunningEmptyMessage)}
           </div>
         </section>

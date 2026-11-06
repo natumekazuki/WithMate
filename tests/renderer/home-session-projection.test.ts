@@ -49,7 +49,6 @@ function createSession(partial: Partial<Session> & Pick<Session, "id" | "taskTit
 
 function createAuxiliarySession(partial: Partial<AuxiliarySessionSummary> & Pick<AuxiliarySessionSummary, "id" | "parentSessionId">): AuxiliarySessionSummary {
   return {
-    status: "active",
     runState: "idle",
     title: "Auxiliary",
     provider: "codex",
@@ -63,7 +62,6 @@ function createAuxiliarySession(partial: Partial<AuxiliarySessionSummary> & Pick
     displayAfterMessageIndex: null,
     createdAt: "2026-03-28T00:00:00.000Z",
     updatedAt: "2026-03-30T00:00:00.000Z",
-    closedAt: "",
     ...partial,
     codexSpeed: partial.codexSpeed ?? "standard",
     codexReviewer: partial.codexReviewer ?? "auto-review",
@@ -340,8 +338,6 @@ describe("home-session-projection", () => {
         createAuxiliarySession({
           id: "aux-z",
           parentSessionId: "parent",
-          status: "closed",
-          closedAt: "2026-03-30T00:00:00.000Z",
           createdAt: "2026-03-28T00:00:00.000Z",
           updatedAt: "2026-04-01T00:00:00.000Z",
         }),
@@ -356,7 +352,6 @@ describe("home-session-projection", () => {
 
     const entry = projection.monitorEntries[0];
     assert.deepEqual(entry?.auxiliarySessions.map(({ id }) => id), ["aux-b", "aux-a", "aux-z"]);
-    assert.equal(entry?.auxiliarySessions.find(({ id }) => id === "aux-z")?.status, "closed");
     assert.equal(entry?.mainState.kind, "error");
     assert.equal(entry?.state.kind, "running");
     assert.deepEqual(projection.runningMonitorEntries.map(({ session }) => session.id), ["parent"]);
@@ -406,7 +401,6 @@ describe("home-session-projection", () => {
       createAuxiliarySession({
         id: "aux-e",
         parentSessionId: "parent-a",
-        status: "closed",
         updatedAt: "2026-04-03T00:00:00.000Z",
       }),
       createAuxiliarySession({

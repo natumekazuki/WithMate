@@ -23,13 +23,12 @@ export function getHomeSessionState(session: HomeSessionSummary, auxiliarySessio
   if (session.runState && session.runState !== "idle") return { kind: "neutral", label: "Unknown" };
   return { kind: "neutral", label: sessionStateLabel(session) };
 }
-export function getHomeAuxiliarySessionState(summary: AuxiliarySessionSummary): HomeSessionState | { kind: "closed"; label: string } {
+export function getHomeAuxiliarySessionState(summary: AuxiliarySessionSummary): HomeSessionState {
   if (summary.cancellationState === "terminating") return { kind: "running", label: "Waiting For Stop" };
   if (summary.cancellationState === "requested") return { kind: "running", label: "Canceling" };
   if (summary.approvalPending) return { kind: "approval", label: "Attention" };
   if (summary.runState === "running") return { kind: "running", label: "Running" };
   if (summary.runState === "error") return { kind: "error", label: "Error" };
-  if (summary.status === "closed") return { kind: "closed", label: "Closed" };
   return { kind: "neutral", label: "Idle" };
 }
 function sortAuxiliarySessions(sessions: readonly AuxiliarySessionSummary[]): AuxiliarySessionSummary[] {

@@ -817,6 +817,7 @@ export function ChatWindow({
               composerRegistry={composerProps.composerController?.registry}
               baseProps={{
                 ...resolvedMessageColumnProps,
+                inputReadContext: concurrentChats.main.inputReadContext,
                 isContentActive: (resolvedMessageColumnProps.isContentActive ?? true)
                   && concurrentChats.target === "main",
                 messageViewMode: renderedMessageViewMode,

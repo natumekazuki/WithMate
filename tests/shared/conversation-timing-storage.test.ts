@@ -232,8 +232,8 @@ describe("SessionTurnStorageV6 conversation timing", () => {
         insertSession(db, "no-owner", null);
         insertSession(db, "empty-owner", "char-empty");
         db.prepare(`
-          INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
-          VALUES ('aux', 'current', 'active', ?, ?)
+          INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+          VALUES ('aux', 'current', ?, ?)
         `).run("2026-08-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z");
 
         insertTurn(db, { sessionId: "current" }, "completed", "2026-08-04T09:50:00.000Z", "2026-08-04T10:00:00.000Z", 1);

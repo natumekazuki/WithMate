@@ -1,0 +1,15 @@
+.turn-input-details { margin-block: 0.35rem 0.65rem; font-size: 0.85em; }
+.turn-input-details p { margin-block: 0.35rem; }
+.turn-input-details summary { cursor: pointer; width: fit-content; }
+.turn-input-details summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.turn-input-origin, .turn-input-state { font-weight: 600; }
+.turn-input-origin { overflow-wrap: anywhere; }
+.turn-input-references { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 0.75rem; }
+.turn-input-references dt { font-weight: 600; }
+.turn-input-references dd { margin: 0; overflow-wrap: anywhere; }
+.turn-input-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 1rem; }
+.turn-input-comparison > section { min-width: 0; }
+.turn-input-comparison pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }
+.turn-input-comparison h4 { margin-block: 0.65rem 0.35rem; }
+.turn-input-comparison del { background: var(--editor-delete); }
+.turn-input-comparison ins { background: var(--editor-add); text-decoration: underline; }

@@ -30,8 +30,8 @@ test("最小turnは直接owner・最新running・一度だけのterminal確定�
       db.exec(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id,
         reasoning_effort, approval_mode, character_snapshot_json, created_at, updated_at, last_active_at)
         VALUES ('main', 'Main', 'active', 'codex', 1, 'model', 'medium', 'untrusted', '{}', '2026-10-01', '2026-10-01', '2026-10-01');
-        INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
-        VALUES ('aux', 'main', 'active', '2026-10-01', '2026-10-01');`);
+        INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+        VALUES ('aux', 'main', '2026-10-01', '2026-10-01');`);
     } finally { db.close(); }
     const storage = new SessionTurnStorageV6(dbPath);
     const input: SessionTurnInput = {

@@ -6,6 +6,8 @@ const text = z.string().max(100_000);
 export type SessionGraphJsonValue = string | number | boolean | null | SessionGraphJsonValue[] | { [key: string]: SessionGraphJsonValue };
 const json: z.ZodType<SessionGraphJsonValue> = z.lazy(() => z.union([z.string(), z.number().finite(), z.boolean(), z.null(), z.array(json), z.record(z.string(), json)]));
 export const sessionGraphActorSchema = z.object({ sessionId: id }).strict();
+export const sessionGraphOwnerSchema = z.object({ sessionId: id, incarnationId: id }).strict();
+export const sessionGraphSourceSchema = z.object({ kind: z.enum(["main", "auxiliary"]), incarnationId: id }).strict();
 export const sessionGraphOriginSchema = z.object({
   type: z.enum(["agent", "user", "external"]), label: z.string().min(1).max(512).optional(),
 }).strict();
@@ -40,7 +42,7 @@ export const sessionGraphRelationSchema = z.object({
   kind: z.enum(["fulfills", "constrains", "supports", "checks", "depends_on", "supersedes", "related"]).describe("fulfills: activity -> requirement; checks: observation -> checked target; supports: evidence -> decision/target; depends_on: dependent -> prerequisite; constrains: constraint -> target; supersedes: successor -> old record; related: other explicit connection. Relations never change record state automatically."),
   label: z.string().max(1024).optional(),
 }).strict();
-const page = { limit: z.number().int().min(1).max(200).optional(), offset: z.number().int().nonnegative().optional(), expectedRevision: z.number().int().nonnegative().optional() };
+const page = { graphOwner: sessionGraphOwnerSchema.optional().describe("Read another Crew's Graph by its root Main Session ID and incarnation. Omit for the caller's own Crew. This never changes the caller or authorizes writes."), limit: z.number().int().min(1).max(200).optional(), offset: z.number().int().nonnegative().optional(), expectedRevision: z.number().int().nonnegative().optional() };
 const recordPage = { ...page, relationOffset: z.number().int().nonnegative().optional().describe("Independent offset into relations touching returned items, ordered by stable relation ID (400 per read). Keep record filters/offset/limit and expectedRevision unchanged for continuation. Only a complete sequence from zero to relationsHasMore=false confirms absence within returned item IDs.") };
 const filters = { topicId: id.optional(), actorSessionId: id.optional(), recordedBySessionId: id.optional(),
   kind: sessionGraphRecordSchema.shape.kind.optional(), adoption: sessionGraphRecordSchema.shape.adoption,

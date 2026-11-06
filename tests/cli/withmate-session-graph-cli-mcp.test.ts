@@ -41,7 +41,7 @@ async function mcp(runtimeCall: typeof callWithMateMemoryRuntime, action: (clien
 
 // @test-value v2
 // kind = "contract"
-// claim = "Graph CLIとMCPの6操作は同じ入力とbinding/turnをextension exchangeへ渡し同じ結果を返す"
+// claim = "Graph CLIとMCPの6操作は他Crewの明示読取を含む同じ入力とbinding/turnをextension exchangeへ渡し同じ結果を返す"
 // oracle = { type = "contract", ref = "docs/design/session-graph.md#MCPと更新" }
 // fault = "CLIが別routeや認可contextを使い、MCPと異なる要求または結果になる"
 // observable = "runtime dispatchのpath/body/binding/turn/exchangeとCLI JSONおよびMCP structuredContent"
@@ -52,7 +52,8 @@ async function mcp(runtimeCall: typeof callWithMateMemoryRuntime, action: (clien
 // impact = "CLI経由の復元と更新がMCPと異なるGraph操作になることを防ぐ"
 // @end-test-value
 it("6操作のCLIとSDK MCPは同じbinding付き要求と結果を共有する", async () => {
-  const inputs = { list_topics: { limit: 1 }, recent: { limit: 1 }, context: { kind: "issue" }, get: { ids: ["r"] }, search: { query: "work" },
+  const graphOwner = { sessionId: "other-crew-root", incarnationId: "root-incarnation" };
+  const inputs = { list_topics: { limit: 1, graphOwner }, recent: { limit: 1, graphOwner }, context: { kind: "issue", graphOwner }, get: { ids: ["r"], graphOwner }, search: { query: "work", graphOwner },
     apply: { expectedRevision: 1, records: [{ id: "r", topicId: "t", kind: "decision", title: "decision", detail: "detail", scope: "task", references: [],
       origin: { type: "user" }, actorRole: null, adoption: "accepted", adoptionOrigin: { type: "user" } }] } } as const;
   const calls: unknown[] = [];
@@ -125,6 +126,9 @@ it("不正入力とbinding欠落をdispatch前に拒否する", async () => {
       assert.equal(result.exit, WITHMATE_SESSION_GRAPH_CLI_EXIT_CODES.usage);
       assert.equal((await client.callTool({ name: "session_graph.recent", arguments: body })).isError, true);
     }
+    const write = { expectedRevision: 0, graphOwner: { sessionId: "other-crew-root", incarnationId: "root-incarnation" } };
+    assert.equal((await cli(["apply", "--json", JSON.stringify(write)], runtimeCall)).exit, WITHMATE_SESSION_GRAPH_CLI_EXIT_CODES.usage);
+    assert.equal((await client.callTool({ name: "session_graph.apply", arguments: write })).isError, true);
   });
   assert.equal((await cli(["recent", "--session-id", "other"], runtimeCall)).exit, 2);
   const missing = await cli(["recent"], runtimeCall, { ...env, WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "" });

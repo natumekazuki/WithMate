@@ -16,6 +16,7 @@ import { ErrorDetailsButton } from "../ui/error-details.js";
 export type HomeLaunchDialogProps = {
   open: boolean;
   title: string;
+  sessionRole: "standalone" | "overall-coordinator";
   sessionFolderSelected: boolean;
   workspacePathInput: string;
   workspaceValidation: DirectoryPathValidationState;
@@ -35,6 +36,7 @@ export type HomeLaunchDialogProps = {
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
+  onSelectRole: (role: "standalone" | "overall-coordinator") => void;
   onChangeWorkspacePath: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectSessionFolder: () => void;
@@ -47,6 +49,7 @@ export type HomeLaunchDialogProps = {
 export function HomeLaunchDialog({
   open,
   title,
+  sessionRole,
   sessionFolderSelected,
   workspacePathInput,
   workspaceValidation,
@@ -66,6 +69,7 @@ export function HomeLaunchDialog({
   launchStarting,
   onClose,
   onChangeTitle,
+  onSelectRole,
   onChangeWorkspacePath,
   onBrowseWorkspace,
   onSelectSessionFolder,
@@ -126,6 +130,22 @@ export function HomeLaunchDialog({
         </>
       }
     >
+      <section className="launch-section minimal">
+        <div className="launch-field">
+          <label className="launch-field-label" htmlFor="launch-session-role">Role</label>
+          <select
+            id="launch-session-role"
+            className="launch-field-input"
+            value={sessionRole}
+            disabled={launchStarting}
+            onChange={(event) => onSelectRole(event.target.value === "overall-coordinator" ? "overall-coordinator" : "standalone")}
+          >
+            <option value="standalone">Standalone</option>
+            <option value="overall-coordinator">Overall Coordinator</option>
+          </select>
+        </div>
+      </section>
+
       <section className="launch-section minimal">
         <div className="launch-field">
           <label className="launch-field-label" htmlFor="launch-session-title">

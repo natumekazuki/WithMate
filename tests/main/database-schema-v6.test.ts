@@ -17,6 +17,7 @@ import {
   CREATE_V6_SCHEMA_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
+  CREATE_V6_SESSION_FILE_PINS_TABLE_SQL,
   REQUIRED_V6_TABLES,
   V6_SCHEMA_STATUS,
   cleanupForbiddenV6Tables,
@@ -114,6 +115,113 @@ function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
 describe("database-schema-v6", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "公開済みV6のPinを保持したままCrewFolder Pinを追加でき、いずれも親削除で除去される"
+  // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/928; docs/design/database-schema.md#files-pin" }
+  // fault = "root_kind CHECK更新で既存Pinを失うかCrewFolderを保存できない、または親削除後にPinが孤立する"
+  // observable = "旧Pinの保存行、CrewFolder PinのINSERT結果、再ensure後と親削除後のPin行"
+  // observation_boundary = "component-behavior"
+  // scope = "V6 Files Pin CrewFolder schema migration"
+  // lifecycle = "permanent"
+  // distinction = "fresh schema検査やFiles型検査では既存SQLite CHECK更新時のPin保持を保証できない"
+  // @end-test-value
+  it("既存Pinを保持してCrewFolder Pinを許容し親削除をcascadeする", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE session_file_pins_v6");
+      db.exec(CREATE_V6_SESSION_FILE_PINS_TABLE_SQL.replace("'session-folder', 'crew-folder'", "'session-folder'"));
+      db.exec(`INSERT INTO sessions_v6(id,title,state,provider_id,catalog_revision,model_id,approval_mode,created_at,updated_at,last_active_at)
+        VALUES ('main','saved','completed','codex',1,'model','never','now','now','now');
+        INSERT INTO session_file_pins_v6 VALUES ('main','workspace','C:/project','note.md','note.md','file','Workspace')`);
+      const previous = { ...db.prepare("SELECT * FROM session_file_pins_v6").get() };
+      ensureV6Schema(db);
+      assert.deepEqual({ ...db.prepare("SELECT * FROM session_file_pins_v6").get() }, previous);
+      db.exec("INSERT INTO session_file_pins_v6 VALUES ('main','crew-folder','C:/crew','output.md','output.md','file','CrewFolder')");
+      const pins = db.prepare("SELECT * FROM session_file_pins_v6 ORDER BY root_kind").all();
+      ensureV6Schema(db);
+      assert.deepEqual(db.prepare("SELECT * FROM session_file_pins_v6 ORDER BY root_kind").all(), pins);
+      assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+      db.exec("DELETE FROM sessions_v6 WHERE id = 'main'");
+      assert.deepEqual(db.prepare("SELECT * FROM session_file_pins_v6").all(), []);
+    } finally {
+      db.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "既存V6会話とqueueを保持してCrew列を追加し、未知の受付時・採用入力はNULLのままにする"
+  // oracle = { type = "contract", ref = "docs/design/database-schema.md; https://github.com/natumekazuki/WithMate/issues/834; https://github.com/natumekazuki/WithMate/issues/735" }
+  // fault = "列追加で既存会話・queueを破壊する、root identityを失う、または未知の受付時・採用入力を捏造する"
+  // observable = "ensure前後のSession・Auxiliary・message・queue行、追加列、index、JSON入力拒否結果"
+  // observation_boundary = "component-behavior"
+  // scope = "V6 additive Crew and turn queue migration"
+  // lifecycle = "permanent"
+  // distinction = "fresh schemaの列検査では既存行の移行・入力の未知状態保持・再実行時のデータ保持を検証できない"
+  // @end-test-value
+  it("既存V6の会話とqueueを保持してCrew列と未知の入力snapshotを追加する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec(`
+        DROP INDEX idx_v6_sessions_root;
+        DROP INDEX idx_v6_sessions_parent;
+        ALTER TABLE sessions_v6 DROP COLUMN session_role;
+        ALTER TABLE sessions_v6 DROP COLUMN root_session_id;
+        ALTER TABLE sessions_v6 DROP COLUMN parent_session_id;
+        ALTER TABLE sessions_v6 DROP COLUMN created_by_session_id;
+        ALTER TABLE sessions_v6 DROP COLUMN description;
+        ALTER TABLE session_turn_queue_v6 DROP COLUMN accepted_json;
+        ALTER TABLE session_turn_queue_v6 DROP COLUMN dispatched_json;
+        ALTER TABLE auxiliary_sessions DROP COLUMN description;
+        ALTER TABLE auxiliary_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed'));
+        ALTER TABLE auxiliary_sessions ADD COLUMN closed_at TEXT NOT NULL DEFAULT '';
+        INSERT INTO sessions_v6 (id, incarnation_id, title, state, provider_id, catalog_revision,
+          model_id, approval_mode, thread_id, created_at, updated_at, last_active_at)
+          VALUES ('main', 'incarnation', '保存済み会話', 'active', 'codex', 1, 'model', 'never', 'thread', 'now', 'now', 'now');
+        INSERT INTO auxiliary_sessions (id, parent_session_id, title, thread_id, status, closed_at, created_at, updated_at)
+          VALUES ('aux', 'main', '保存済みAuxiliary', 'aux-thread', 'closed', 'closed-time', 'now', 'now');
+        INSERT INTO auxiliary_session_messages (auxiliary_session_id, seq, role, body, created_at)
+          VALUES ('aux', 0, 'user', '{"text":"保存本文"}', 'now');
+        INSERT INTO session_turn_queue_v6 (id, queue_position, session_id, incarnation_id, request_id, state, captured_json, created_at, updated_at)
+          VALUES ('receipt', 7, 'main', 'incarnation', 'request', 'queued', '{"text":"編集済み入力"}', 'now', 'now');
+      `);
+      const previousSession = { ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() };
+      const previousAuxiliary = { ...db.prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'").get() };
+      const previousMessage = { ...db.prepare("SELECT * FROM auxiliary_session_messages").get() };
+      const previousQueue = { ...db.prepare("SELECT * FROM session_turn_queue_v6").get() };
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.deepEqual({ ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() }, {
+        ...previousSession, session_role: "standalone", root_session_id: "main",
+        parent_session_id: null, created_by_session_id: null, description: "",
+      });
+      assert.deepEqual({ ...db.prepare("SELECT * FROM auxiliary_sessions WHERE id = 'aux'").get() }, { ...previousAuxiliary, description: "" });
+      assert.deepEqual({ ...db.prepare("SELECT * FROM auxiliary_session_messages").get() }, previousMessage);
+      assert.deepEqual({ ...db.prepare("SELECT * FROM session_turn_queue_v6").get() }, {
+        ...previousQueue, accepted_json: null, dispatched_json: null,
+      });
+      assert.ok(indexNames(db).includes("idx_v6_sessions_root"));
+      assert.ok(indexNames(db).includes("idx_v6_sessions_parent"));
+      for (const name of ["accepted_json", "dispatched_json"]) {
+        assert.throws(() => db.exec(`UPDATE session_turn_queue_v6 SET ${name} = 'invalid'`), /CHECK constraint failed/);
+      }
+      db.exec(`UPDATE sessions_v6 SET session_role = 'worker', root_session_id = 'crew-root', parent_session_id = 'parent',
+        created_by_session_id = 'creator', description = '担当範囲' WHERE id = 'main';
+        UPDATE session_turn_queue_v6 SET accepted_json = '{"text":"受付時入力"}', dispatched_json = '{"text":"採用入力"}'`);
+      const migratedSession = { ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() };
+      const migratedQueue = { ...db.prepare("SELECT * FROM session_turn_queue_v6").get() };
+      ensureV6Schema(db);
+      assert.deepEqual({ ...db.prepare("SELECT * FROM sessions_v6 WHERE id = 'main'").get() }, migratedSession);
+      assert.deepEqual({ ...db.prepare("SELECT * FROM session_turn_queue_v6").get() }, migratedQueue);
+      assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+    } finally {
+      db.close();
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "新規DBと既存DBのschema ensure後は、履歴の失敗情報をownerとmessage seqで索引検索し、追加sortなしで最新failed turnを取得する"
   // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/857: A 履歴取得の性能回帰と既存データ保持" }
   // fault = "schema適用後も失敗情報をphaseやownerだけで走査する、sortを要する、または既存turnとmessageを変更する"
@@ -131,8 +239,8 @@ describe("database-schema-v6", () => {
         db.prepare(`INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision,
           model_id, approval_mode, created_at, updated_at, last_active_at)
           VALUES (?, '', 'active', 'codex', 1, '', 'never', 'now', 'now', 'now')`).run(id);
-        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
-          VALUES (?, 'target', 'active', 'now', 'now')`).run(id);
+        db.prepare(`INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+          VALUES (?, 'target', 'now', 'now')`).run(id);
       }
       const owners = [
         ["session_messages_v6", "session_id"],
@@ -417,6 +525,11 @@ describe("database-schema-v6", () => {
         "title",
         "state",
         "session_kind",
+        "session_role",
+        "root_session_id",
+        "parent_session_id",
+        "created_by_session_id",
+        "description",
         "provider_id",
         "catalog_revision",
         "model_id",
@@ -456,10 +569,10 @@ describe("database-schema-v6", () => {
       assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
         "id",
         "parent_session_id",
-        "status",
         "created_at",
         "updated_at",
         "title",
+        "description",
         "run_state",
         "preview",
         "provider_id",
@@ -473,7 +586,6 @@ describe("database-schema-v6", () => {
         "custom_agent_name",
         "thread_id",
         "display_after_message_index",
-        "closed_at",
         "character_id",
         "character_snapshot_json",
         "character_snapshot_invalid",
@@ -483,7 +595,6 @@ describe("database-schema-v6", () => {
         "creation_request_json",
       ]);
       assert.equal(findForeignKey(db, "auxiliary_sessions", "parent_session_id"), undefined);
-      assert.equal(tableSql(db, "auxiliary_sessions").includes("status IN ('active', 'closed')"), true);
       assert.deepEqual(columnNames(db, "auxiliary_session_messages"), [
         "auxiliary_session_id", "seq", "role", "body", "artifact_body", "created_at",
       ]);

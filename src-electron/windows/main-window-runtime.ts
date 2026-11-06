@@ -140,7 +140,7 @@ export class MainWindowRuntime {
       storage: new SessionWindowRestoreStorage(deps.userDataPath),
       getSession: deps.readSession,
       getSessionWindowRestoreStates: () => this.sessionWindowBridge.getSessionWindowRestoreStates(),
-      openSessionWindow: (sessionId) => this.sessionWindowBridge.openSessionWindow(sessionId),
+      openSessionWindow: (sessionId, options) => this.sessionWindowBridge.openSessionWindow(sessionId, options),
       onRestoreSetChanged: (sessionIds) => this.windowBroadcastService.broadcastSessionWindowRestoreSet(sessionIds),
     });
   }

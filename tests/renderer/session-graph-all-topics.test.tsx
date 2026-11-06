@@ -71,11 +71,106 @@ async function withDom(run: (doc: Document, root: Root) => Promise<void>, width 
 async function click(element: Element | undefined | null) { assert.ok(element); await act(async () => (element as HTMLElement).click()); }
 const node = (doc: Document, id: string) => [...doc.querySelectorAll(".session-graph-node")].find((item) => item.querySelector(".session-graph-node-title")?.textContent === `Record ${id}`);
 const expand = (doc: Document, id: string) => click(doc.querySelector(`[aria-label='Expand Topic: Topic ${id}']`));
+
+// @test-value v2
+// kind = "contract"
+// claim = "Graph viewは連続通知を単一の進行中refreshと後続へ集約し、非表示中は取得を保留して復帰時に最新内容と閲覧位置を表示する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/921" }
+// fault = "通知ごとに並行readを増やす、非表示でも本文を読み続ける、または復帰後の内容・選択・倍率を失う"
+// observable = "IPC adapterの同時read数、本文取得回数、復帰後の詳細本文と倍率・scroll"
+// observation_boundary = "component-behavior"
+// scope = "SessionGraphPreviewの通知・visibilitychange・選択状態"
+// lifecycle = "permanent"
+// impact = "参加view増加時にDB/IPCが増殖し、更新中の閲覧や会話操作が詰まる"
+// distinction = "型検査とstorage testは通知のburstと非表示復帰を再現しない。制御した一つの遅延readで実時間待機なしに確認する"
+// @end-test-value
+test("graph view coalesces refreshes and catches up after becoming visible", async () => {
+  await withDom(async (doc, root) => {
+    let visibility = "visible";
+    Object.defineProperty(doc, "visibilityState", { configurable: true, get: () => visibility });
+    const records = [record("work")];
+    const f = fixture(records);
+    const read = f.api.readSessionGraph;
+    let release: (() => void) | undefined;
+    let gate = false;
+    let inFlight = 0, maximum = 0;
+    f.api.readSessionGraph = (async (...args: Parameters<typeof read>) => {
+      maximum = Math.max(maximum, ++inFlight);
+      try {
+        if (gate && args[1] === "get_topic_view") {
+          gate = false;
+          await new Promise<void>((resolve) => { release = resolve; });
+        }
+        return await read(...args);
+      } finally { inFlight -= 1; }
+    }) as typeof read;
+    await act(async () => root.render(<SessionGraphPreview api={f.api} sessionId="main" onOpenPath={() => {}}
+      initialState={{ topicId: "a", selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0 }} />));
+    await click(node(doc, "work"));
+    await click(doc.querySelector("[aria-label='Zoom In']"));
+    const viewport = doc.querySelector<HTMLElement>(".session-graph-viewport")!;
+    viewport.scrollLeft = 29; viewport.scrollTop = 63;
+    const initialReads = f.calls.filter((call) => call.operation === "get_topic_view").length;
+    gate = true;
+    await act(async () => { f.update(); });
+    assert.ok(release, "a visible refresh reaches its bounded in-flight read");
+    await act(async () => { for (let index = 0; index < 20; index += 1) f.update(); });
+    assert.equal(inFlight, 1);
+    await act(async () => { release!(); });
+    assert.equal(maximum, 1);
+    assert.equal(f.calls.filter((call) => call.operation === "get_topic_view").length - initialReads, 2);
+    await act(async () => { visibility = "hidden"; doc.dispatchEvent(new doc.defaultView!.Event("visibilitychange")); });
+    const beforeHidden = f.calls.length;
+    records[0] = { ...records[0]!, detail: "Latest while minimized" };
+    await act(async () => { for (let index = 0; index < 20; index += 1) f.update(); });
+    assert.equal(f.calls.length, beforeHidden);
+    await act(async () => { visibility = "visible"; doc.dispatchEvent(new doc.defaultView!.Event("visibilitychange")); });
+    assert.match(doc.querySelector(".session-graph-details")?.textContent ?? "", /Latest while minimized/);
+    assert.match(doc.querySelector(".session-graph-zoom")?.textContent ?? "", /110%/);
+    assert.deepEqual([viewport.scrollLeft, viewport.scrollTop], [29, 63]);
+  });
+});
 async function doubleClickTopic(doc: Document, id: string) {
   const card = [...doc.querySelectorAll(".session-graph-topic-card")].find((item) => item.getAttribute("aria-label") === `Topic ${id}`);
   assert.ok(card);
   await act(async () => card.dispatchEvent(new doc.defaultView!.MouseEvent("dblclick", { bubbles: true, detail: 2 })));
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "All Topicsの関連先を再訪すると取得済み本文を使いながら縮小したTopicを再展開し、対応するnodeと詳細を表示する"
+// oracle = { type = "contract", ref = "docs/design/session-graph.md: 閲覧UI" }
+// fault = "関連先の初回取得時だけTopicを展開し、取得済みrecordの再訪では本文だけが開く"
+// observable = "初回と再訪の関連先node・詳細、Topic展開状態、再訪のget呼出数"
+// observation_boundary = "component-behavior"
+// scope = "SessionGraphPreviewのAll Topics関連移動と取得済み本文再利用"
+// lifecycle = "permanent"
+// impact = "関連記録の位置と関係を図で辿れず、本文と図の表示対象が食い違う"
+// distinction = "型検査とstorage testは縮小後の再訪経路を検証しない。二つのrecordを使う操作testで閲覧遷移と重複読取削減を同時に確認する"
+// @end-test-value
+test("all topics expands a cached related record again after its topic was collapsed", async () => {
+  await withDom(async (doc, root) => {
+    const f = fixture([record("source"), record("target", "b")], undefined,
+      [{ id: "jump", fromId: "source", toId: "target", kind: "related" }]);
+    await act(async () => root.render(<SessionGraphPreview api={f.api} sessionId="main" onOpenPath={() => {}} />));
+    const jump = () => [...doc.querySelectorAll(".session-graph-related button")].find((element) => element.textContent?.includes("Record target"));
+    await expand(doc, "a");
+    await click(node(doc, "source"));
+    await click(jump());
+    assert.ok(node(doc, "target"));
+    assert.match(doc.querySelector(".session-graph-details")?.textContent ?? "", /Body target/);
+    await click(doc.querySelector("[aria-label='Close Record Details']"));
+    await click(doc.querySelector("[aria-label='Collapse Topic: Topic b']"));
+    assert.ok(doc.querySelector("[aria-label='Expand Topic: Topic b']"));
+    await click(node(doc, "source"));
+    const gets = f.calls.filter((call) => call.operation === "get").length;
+    await click(jump());
+    assert.ok(doc.querySelector("[aria-label='Collapse Topic: Topic b']"));
+    assert.ok(node(doc, "target"));
+    assert.match(doc.querySelector(".session-graph-details")?.textContent ?? "", /Body target/);
+    assert.equal(f.calls.filter((call) => call.operation === "get").length, gets);
+  });
+});
 
 // @test-value v2
 // kind = "contract"

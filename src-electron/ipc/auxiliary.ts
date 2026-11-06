@@ -9,8 +9,8 @@ import type {
 
 import {
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
-  WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+  WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_AUXILIARY_DRAFT_CHANNEL,
   WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL,
@@ -23,7 +23,6 @@ import {
   WITHMATE_SET_AUXILIARY_EXECUTION_OPTIONS_CHANNEL,
   WITHMATE_SET_AUXILIARY_TITLE_CHANNEL,
   WITHMATE_SET_AUXILIARY_MESSAGE_BOOKMARK_CHANNEL,
-  WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_STEER_AUXILIARY_SESSION_TURN_CHANNEL,
@@ -69,12 +68,11 @@ export function registerAuxiliaryHandlers(
   ): MainIpcAuxiliaryDepsRequired => {
     if (
       !deps.listAuxiliarySessions ||
-      !deps.listOpenActiveAuxiliarySessionSummaries ||
-      !deps.getActiveAuxiliarySession ||
+      !deps.listOpenAuxiliarySessionSummaries ||
+      !deps.getLatestAuxiliarySession ||
       !deps.getAuxiliarySession ||
       !deps.createAuxiliarySession ||
       !deps.updateAuxiliarySession ||
-      !deps.closeAuxiliarySession ||
       !deps.runAuxiliarySessionTurn ||
       !deps.cancelAuxiliarySessionRun ||
       !deps.getAuxiliaryDraft ||
@@ -82,22 +80,21 @@ export function registerAuxiliaryHandlers(
       !deps.getAuxiliarySessionStatus
     ) {
       throw new Error(
-        "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenActiveAuxiliarySessionSummaries, " +
-          "getActiveAuxiliarySession, getAuxiliarySession, createAuxiliarySession, updateAuxiliarySession, " +
-          "closeAuxiliarySession, runAuxiliarySessionTurn, cancelAuxiliarySessionRun, " +
+        "Auxiliary session IPC is not wired. listAuxiliarySessions, listOpenAuxiliarySessionSummaries, " +
+          "getLatestAuxiliarySession, getAuxiliarySession, createAuxiliarySession, updateAuxiliarySession, " +
+          "runAuxiliarySessionTurn, cancelAuxiliarySessionRun, " +
           "getAuxiliaryDraft, saveAuxiliaryDraft, and getAuxiliarySessionStatus are required.",
       );
     }
 
     return {
       listAuxiliarySessions: deps.listAuxiliarySessions,
-      listOpenActiveAuxiliarySessionSummaries:
-        deps.listOpenActiveAuxiliarySessionSummaries,
-      getActiveAuxiliarySession: deps.getActiveAuxiliarySession,
+      listOpenAuxiliarySessionSummaries:
+        deps.listOpenAuxiliarySessionSummaries,
+      getLatestAuxiliarySession: deps.getLatestAuxiliarySession,
       getAuxiliarySession: deps.getAuxiliarySession,
       createAuxiliarySession: deps.createAuxiliarySession,
       updateAuxiliarySession: deps.updateAuxiliarySession,
-      closeAuxiliarySession: deps.closeAuxiliarySession,
       runAuxiliarySessionTurn: deps.runAuxiliarySessionTurn,
       cancelAuxiliarySessionRun: deps.cancelAuxiliarySessionRun,
       getAuxiliaryDraft: deps.getAuxiliaryDraft,
@@ -117,18 +114,18 @@ export function registerAuxiliaryHandlers(
     },
   );
   ipcMain.handle(
-    WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-    () => getAuxiliaryDeps(deps).listOpenActiveAuxiliarySessionSummaries(),
+    WITHMATE_LIST_OPEN_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
+    () => getAuxiliaryDeps(deps).listOpenAuxiliarySessionSummaries(),
   );
   ipcMain.handle(
-    WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
+    WITHMATE_GET_LATEST_AUXILIARY_SESSION_CHANNEL,
     (event, parentSessionId: string) => {
       const auxiliaryDeps = getAuxiliaryDeps(deps);
       if (!parentSessionId) {
         return null;
       }
       assertAuxiliaryOwnerWindowSender(event, parentSessionId, deps);
-      return Promise.resolve(auxiliaryDeps.getActiveAuxiliarySession(parentSessionId)).then((session) => session ? toConversationView(session) : null);
+      return Promise.resolve(auxiliaryDeps.getLatestAuxiliarySession(parentSessionId)).then((session) => session ? toConversationView(session) : null);
     },
   );
   ipcMain.handle(
@@ -305,18 +302,6 @@ export function registerAuxiliaryHandlers(
       }
       await assertAuxiliaryMutationOwner(event, request);
       return deps.setAuxiliaryMessageBookmark(request);
-    },
-  );
-  ipcMain.handle(
-    WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
-    async (event, auxiliarySessionId: string) => {
-      const auxiliaryDeps = getAuxiliaryDeps(deps);
-      const session = await getAuxiliarySessionForMutation(
-        auxiliaryDeps,
-        auxiliarySessionId,
-      );
-      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
-      return toConversationView(await auxiliaryDeps.closeAuxiliarySession(auxiliarySessionId));
     },
   );
   ipcMain.handle(

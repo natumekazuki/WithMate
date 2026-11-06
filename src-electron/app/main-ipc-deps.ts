@@ -341,8 +341,8 @@ export type MainIpcSessionQueryDepsArgs = {
 export type MainIpcAuxiliaryDepsArgs = {
   listAuxiliarySessions(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   listAuxiliarySessionSummaries(parentSessionIds: readonly string[]): Awaitable<AuxiliarySessionSummary[]>;
-  listOpenActiveAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
-  getActiveAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
+  listOpenAuxiliarySessionSummaries(): Awaitable<AuxiliarySessionSummary[]>;
+  getLatestAuxiliarySession(parentSessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession | null>;
   getAuxiliaryDraft(auxiliarySessionId: string): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftRecord | null>;
   saveAuxiliaryDraft(input: import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftSaveInput): Awaitable<import("../../src-shared/auxiliary/auxiliary-draft-contract.js").AuxiliaryDraftSaveResult>;
@@ -355,7 +355,6 @@ export type MainIpcAuxiliaryDepsArgs = {
   setAuxiliaryExecutionOptions(request: SetAuxiliaryExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
   setAuxiliaryTitle(request: SetAuxiliaryTitleRequest): Awaitable<void>;
   setAuxiliaryMessageBookmark(request: SetAuxiliaryMessageBookmarkRequest): Awaitable<void>;
-  closeAuxiliarySession(auxiliarySessionId: string): Awaitable<AuxiliarySession>;
   runAuxiliarySessionTurn(auxiliarySessionId: string, request: RunSessionTurnRequest): Awaitable<AuxiliarySession>;
   steerAuxiliarySessionTurn?(auxiliarySessionId: string, request: import("../../src-shared/session/runtime-state.js").SteerSessionTurnRequest): Promise<import("../../src-shared/session/runtime-state.js").SteerSessionTurnResult>;
   cancelAuxiliarySessionRun(auxiliarySessionId: string): Awaitable<void>;
@@ -428,8 +427,8 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
   return {
     listAuxiliarySessions: () => [],
     listAuxiliarySessionSummaries: () => [],
-    listOpenActiveAuxiliarySessionSummaries: () => [],
-    getActiveAuxiliarySession: () => null,
+    listOpenAuxiliarySessionSummaries: () => [],
+    getLatestAuxiliarySession: () => null,
     getAuxiliarySession: () => null,
     getAuxiliaryDraft: () => null,
     saveAuxiliaryDraft: throwUnavailable,
@@ -442,7 +441,6 @@ function createUnavailableAuxiliaryDeps(): MainIpcAuxiliaryDepsArgs {
     setAuxiliaryExecutionOptions: throwUnavailable,
     setAuxiliaryTitle: throwUnavailable,
     setAuxiliaryMessageBookmark: throwUnavailable,
-    closeAuxiliarySession: throwUnavailable,
     runAuxiliarySessionTurn: throwUnavailable,
     cancelAuxiliarySessionRun: throwUnavailable,
   };

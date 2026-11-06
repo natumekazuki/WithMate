@@ -12,6 +12,14 @@ export class SessionNotFoundError extends Error {
   }
 }
 
+export class SessionCrewDeletionBlockedError extends Error {
+  constructor(message: string) { super(message); this.name = "SessionCrewDeletionBlockedError"; }
+}
+
+export class ChildSessionCreationRejectedError extends Error {
+  constructor(message: string) { super(message); this.name = "ChildSessionCreationRejectedError"; }
+}
+
 export class SessionRunningTurnStartConflictError extends Error {
   constructor(
     readonly sessionId: string,

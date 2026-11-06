@@ -39,6 +39,10 @@ Provider 実行が失敗した場合、adapter は `ProviderTurnError` を投げ
 Provider 固有の error message 判定は adapter 側に閉じる。`SessionRuntimeService` は `reason` から失敗理由を生成し、最小turnのerrorとassistant messageの`runFailure`へ保存する。受信済み`text`は変更せず、失敗通知を本文へ追記しない。本文未取得でも空の`text`と失敗理由を保存する。provider 固有の英語 message を再 parse しない。
 
 provider実行結果から取得済みassistant本文とartifactをMainへ返し、正常・失敗・取消の通常履歴へ保存する。操作の正本は`MessageArtifact.operationTimeline`とし、live stepと共通の操作型で実取得したID、status、exitCode、構造化error、truncationを保持する。未取得の値は省略し、turn全体のphaseや自由文から個別操作の成功・失敗を推定しない。
+
+共通結果の`output`は通常messageにも保存し、本文は`Message.text`へ一度だけ置く。各unitはnative identityと順序、message／block参照、UTF-16本文範囲、`progress / answer / unclassified`、native phase（欠落はnull）、`complete / partial / streaming`、最終回答の判定と根拠を分ける。`finality`は`identified / none / unknown`で、空本文の成功と最終回答未確定を区別する。失敗・取消後も確定済みunitはそのまま保存し、実行成否を本文phaseから推測しない。
+
+Codexはitem IDと`commentary / partial_answer / final_answer`を保持し、completed itemの明示final phaseだけを最終回答とする。Copilotはmessage IDで増分と確定snapshotを置換し、本文が同じ別messageも残す。native phaseをCodexと同義にせず、要求完了と`originatingMessageId`・native Turnが対応する終端message群を特定できた場合だけ最終回答とする。対応が欠ける場合はunknownである。Claudeはnative message ID・content block indexを保持し、確定snapshotで増分を置換する。対応resultの本文と一致するblock群またはresult本文を最終回答として保持するが、result後にも親の出力が続いた場合は古いresultを現在の最終回答へ昇格させない。OpenCodeはmessage ID・part ordinalを保持し、step finishとは別に`finish: stop`の確定messageと直前のlength継続messageを回答範囲にする。公開型にないphaseは補完しない。
 Main Processでは`MainProviderFacade`が通常turnのadapterを提供し、`SessionRuntimeService`が実行する。Memory／Affect更新は通常turn内MCPから既存application serviceへ接続する。
 
 providerごとの差は次。
@@ -106,15 +110,17 @@ providerごとの差は次。
 
 アプリ管理の背景呼出しも既存の四つのadapterを使う。共通層の独立`executionTarget`でnative threadとcacheを元会話から分け、通常の承認・sandbox・管理者policyを維持する。独立binding／handle・履歴専用接続・指示と出力の境界は[Background Execution](background-execution.md)を参照する。通常adapterの対応を、背景だけの絶対的な副作用隔離や実認証推論確認済みと読み替えない。
 
-Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。endpointは`/mcp/memory`、`/mcp/glossary`、`/mcp/session-graph`である。tool schemaとruntime clientは`src-electron/platform/mcp/`に置き、Memory／Glossaryではstdio CLIとも共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
+Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)、[Session操作](session-run-lifecycle.md#bound-session-api)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。通常Turnのendpointは`/mcp/memory`、`/mcp/glossary`、`/mcp/session-graph`、`/mcp/session`である。tool schemaとruntime clientは`src-electron/platform/mcp/`に置き、対応するbound CLIと共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
 
 - Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。
-- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認した`withmate-memory`／`withmate-glossary`／`withmate-session-graph`だけを当threadで無効化し、`withmate-memory-http`／`withmate-glossary-http`／`withmate-session-graph-http`を登録する。第三者MCPと永続configは変更しない。
+- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認したmanaged名だけを当threadで無効化し、通常Turnでは`withmate-memory-http`／`withmate-glossary-http`／`withmate-session-graph-http`／`withmate-session-http`を登録する。第三者MCPと永続configは変更しない。
 - CopilotとClaudeは当turnのnative session／query optionsへ標準managed名のHTTP設定を渡す。既存native設定の探索と保存済みthreadのresumeは維持する。
 - OpenCodeは確定workspaceのlocationへ`mcp.add`で当turnのHTTP設定を登録し、必要なmanaged MCPの接続を`mcp.list`で確認してからpromptを送る。第三者MCPと永続設定は変更しない。
 - tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
 - HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。CLIは同じ公開操作・認可の明示入口として利用でき、admission付きの同一要求再照合は通常CLIとは別の限定経路として扱う。
+
+内側のextension exchangeはContent-Lengthが通常body上限以内ならMemoryと同じ共通枠（既定8件・各256KiB）、大きい／長さ不明なら既存34MiB・1件枠で受信する。宣言が小さくても実byte上限は拡張しない。小さいGlossaryも認証後に大要求と同じ1件枠を取得してからdispatchする。Session／Graphの小さい通常readは並列に実行でき、既存総受信容量とGlossary同時数は増やさない。Content-Lengthだけを先送りし、credentialと本文は103によるexact owner確認後に送る。
 
 provider adapterは共通のnative実行を所有し、用途別の背景SDK engineは持たない。Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
 

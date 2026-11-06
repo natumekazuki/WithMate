@@ -7,7 +7,7 @@ export type GraphWindow = {
   isDestroyed(): boolean; close(): void; show(): void; focus(): void; isMinimized(): boolean; restore(): void;
   on(event: "closed", listener: () => void): unknown;
 };
-type Entry<W> = { window: W; owner: SessionGraphOwner; generation: object | string; payload: SessionGraphWindowPayload; title: string };
+type Entry<W> = { window: W; owner: SessionGraphOwner; generation: object | string; payload: SessionGraphWindowPayload; title: string; sessionTitle: string };
 export class SessionGraphWindowService<W extends GraphWindow> {
   private readonly entries = new Map<string, Entry<W>>();
   constructor(private readonly deps: {
@@ -17,18 +17,17 @@ export class SessionGraphWindowService<W extends GraphWindow> {
     title?(window: W, title: string): void;
   }) {}
   async open(sessionId: string, state: SessionGraphViewState, guard: () => boolean, expected?: { owner: SessionGraphOwner; generation: object | string }) {
-    const resolved = await this.deps.application.resolveSession(sessionId);
+    const resolved = await this.deps.application.resolveSession(sessionId, { kind: "main" });
     if (!resolved || !guard() || (expected && (!sameSessionGraphOwner(expected.owner, resolved.owner) || expected.generation !== resolved.generation))) throw new Error("Session Graph owner is unavailable.");
     const token = this.deps.token();
     const window = this.deps.createWindow();
-    const payload = { token, ownerSessionId: resolved.owner.sessionId, windowTitle: "Session Graph", state: structuredClone(state) };
-    const entry = { window, owner: resolved.owner, generation: resolved.generation, payload, title: "Graph" };
+    const payload = { token, ownerSessionId: resolved.owner.sessionId, windowTitle: `Session Graph — ${resolved.identity.sessionTitle ?? "Session"}`, state: structuredClone(state) };
+    const entry = { window, owner: resolved.owner, generation: resolved.generation, payload, title: "Graph", sessionTitle: resolved.identity.sessionTitle ?? "Session" };
     this.entries.set(token, entry);
     window.on("closed", () => { this.entries.delete(token); this.deps.changed(); });
     try {
       await this.deps.load(window, token);
       await this.authorize(window, token);
-      await this.refreshTitle(window, token);
       if (!guard()) throw new Error("Session Graph authority changed.");
       window.show(); this.deps.changed();
       return { token };
@@ -37,14 +36,14 @@ export class SessionGraphWindowService<W extends GraphWindow> {
   async authorize(window: W, token: string) {
     const entry = this.entries.get(token);
     if (!entry || entry.window !== window || window.isDestroyed()) throw new Error("Session Graph window is unavailable.");
-    const current = await this.deps.application.resolveSession(entry.owner.sessionId);
+    const current = await this.deps.application.resolveSession(entry.owner.sessionId, { kind: "main", incarnationId: entry.owner.incarnationId });
     if (this.entries.get(token) !== entry || !current || current.generation !== entry.generation || !sameSessionGraphOwner(current.owner, entry.owner) || window.isDestroyed()) {
       throw new Error("Session Graph authority changed.");
     }
+    entry.sessionTitle = current.identity.sessionTitle ?? "Session";
     return entry;
   }
   async payload(window: W, token: string) {
-    await this.refreshTitle(window, token);
     return structuredClone((await this.authorize(window, token)).payload);
   }
   async read<K extends SessionGraphReadOperation>(window: W, token: string, operation: K, request: SessionGraphUiReadRequest<K>) {
@@ -55,11 +54,15 @@ export class SessionGraphWindowService<W extends GraphWindow> {
     await this.authorize(window, token);
     return result;
   }
-  async update(window: W, token: string, state: SessionGraphViewState) {
+  async update(window: W, token: string, state: SessionGraphViewState, title?: string) {
     const entry = await this.authorize(window, token);
-    const titleChanged = entry.payload.state.topicId !== state.topicId || entry.payload.state.selectedId !== state.selectedId;
     entry.payload.state = structuredClone(state);
-    if (titleChanged) await this.refreshTitle(window, token);
+    if (title !== undefined && entry.payload.windowTitle !== `${title} — ${entry.sessionTitle}`) {
+      entry.title = title;
+      entry.payload.windowTitle = `${title} — ${entry.sessionTitle}`;
+      this.deps.title?.(window, entry.payload.windowTitle);
+      this.deps.changed();
+    }
   }
   async notify(sessionId: string) {
     for (const [token, entry] of this.entries) {
@@ -67,37 +70,10 @@ export class SessionGraphWindowService<W extends GraphWindow> {
       try {
         await this.authorize(entry.window, token);
         this.deps.notify(entry.window, sessionId);
-        await this.refreshTitle(entry.window, token);
       } catch { /* Revoked or closed views are not notification targets. */ }
     }
   }
   isCurrent(token: string, window: W) { return this.entries.get(token)?.window === window && !window.isDestroyed(); }
-  private async refreshTitle(window: W, token: string) {
-    const entry = await this.authorize(window, token);
-    const state = entry.payload.state;
-    let topicTitle = "";
-    if (state.topicId) {
-      for (let offset = 0; ; offset += 200) {
-        const topics = await this.read(window, token, "list_topics", { offset, limit: 200 });
-        if (topics.status !== "ok") break;
-        topicTitle = topics.items.find((topic) => topic.id === state.topicId)?.title ?? "";
-        if (topicTitle || !topics.hasMore) break;
-      }
-    }
-    let recordTitle = "";
-    if (state.selectedId) {
-      const records = await this.read(window, token, "get", { ids: [state.selectedId] });
-      if (records.status === "ok") recordTitle = records.items[0]?.title ?? "";
-    }
-    const current = await this.authorize(window, token);
-    if (current.payload.state.topicId !== state.topicId || current.payload.state.selectedId !== state.selectedId) return;
-    entry.title = [topicTitle, recordTitle].filter(Boolean).join(" · ") || "Overview";
-    const owner = await this.deps.application.resolveSession(entry.owner.sessionId);
-    await this.authorize(window, token);
-    if (entry.payload.state.topicId !== state.topicId || entry.payload.state.selectedId !== state.selectedId) return;
-    entry.payload.windowTitle = `${entry.title} — ${owner?.identity.sessionTitle ?? "Session"}`;
-    this.deps.title?.(window, entry.payload.windowTitle); this.deps.changed();
-  }
   list() { return [...this.entries].map(([token, entry]) => ({ token, title: entry.title, ownerSessionId: entry.owner.sessionId, state: entry.payload.state })); }
   focus(token: string) { const w = this.entries.get(token)?.window; if (w && !w.isDestroyed()) { if(w.isMinimized()) w.restore(); w.show(); w.focus(); } }
   close(token: string) { const entry = this.entries.get(token); this.entries.delete(token); if (entry && !entry.window.isDestroyed()) entry.window.close(); this.deps.changed(); }

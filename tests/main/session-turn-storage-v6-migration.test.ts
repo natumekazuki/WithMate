@@ -39,8 +39,8 @@ test("既存V6を最小turnへ移行し通常履歴とturn ownerを保持する"
     const db = new DatabaseSync(dbPath);
     try {
       insertSession(db);
-      db.exec(`INSERT INTO auxiliary_sessions (id, parent_session_id, status, created_at, updated_at)
-        VALUES ('aux', 'main', 'active', '2026-10-01', '2026-10-01')`);
+      db.exec(`INSERT INTO auxiliary_sessions (id, parent_session_id, created_at, updated_at)
+        VALUES ('aux', 'main', '2026-10-01', '2026-10-01')`);
       db.exec(`INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
         VALUES ('main', 0, 'user', 'question', '2026-10-01'), ('main', 1, 'assistant', 'normal result', '2026-10-01')`);
       const artifactBody = JSON.stringify({ operationTimeline: [{ type: "shell", summary: "normal", details: "saved output" }] });

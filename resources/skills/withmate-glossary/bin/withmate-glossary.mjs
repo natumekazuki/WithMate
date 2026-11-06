@@ -23568,6 +23568,16 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 	if (!identityOutcome.ok) throw new WithMateMemoryRuntimeExchangeError("Memory API runtime identity could not be verified.", false, { discoveryCode: identityOutcome.discoveryCode });
 	const nonce = randomBytes(16).toString("base64url");
 	const exchangeUrl = new URL(options.exchangePath ?? "/v1/exchange", connection.api.baseUrl);
+	const payload = JSON.stringify({
+		schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+		apiSecret: connection.api.apiSecret,
+		adapter: exchangeAdapter,
+		adapterSecret: connection.credential.adapterSecret,
+		...options.bindingReference ? { bindingReference: options.bindingReference } : {},
+		...options.turnCapability ? { turnCapability: options.turnCapability } : {},
+		...options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {},
+		operation
+	});
 	return new Promise((resolve, reject) => {
 		let dispatched = false;
 		let identityVerified = false;
@@ -23590,6 +23600,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
+					...options.exchangePath === "/v1/agent-runtime-extension-exchange" ? { "Content-Length": Buffer.byteLength(payload, "utf8") } : {},
 					[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
 					[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: connection.api.runtimeGenerationId,
 					[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
@@ -23650,16 +23661,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 			}
 			identityVerified = true;
 			dispatched = true;
-			request$1.end(JSON.stringify({
-				schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
-				apiSecret: connection.api.apiSecret,
-				adapter: exchangeAdapter,
-				adapterSecret: connection.credential.adapterSecret,
-				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
-				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
-				...options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {},
-				operation
-			}));
+			request$1.end(payload);
 		});
 		request$1.on("error", (error) => fail("Memory API request failed.", error));
 		options.signal.addEventListener("abort", () => fail("Memory API request was aborted."), { once: true });

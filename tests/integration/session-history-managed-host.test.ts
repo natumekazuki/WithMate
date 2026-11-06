@@ -238,7 +238,7 @@ test("両入口で保存sourceのownerを照合しdraft編集と再作成を区�
     const { client: currentAuxClient } = await f.connect(currentAux);
     await check(currentAux, currentAuxClient);
 
-    f.db.prepare("UPDATE sessions_v6 SET incarnation_id='inc-recreated' WHERE id='main'").run();
+    f.db.prepare("UPDATE sessions_v6 SET incarnation_id='inc-recreated', state='completed' WHERE id='main'").run();
     await check(main, mainClient, "HISTORY_SOURCE_REPLACED");
     await check(currentAux, currentAuxClient, "HISTORY_SOURCE_REPLACED");
     await f.worker.stores.session.deleteSession("main");

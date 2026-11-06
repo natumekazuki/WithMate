@@ -3,7 +3,7 @@ import {
   normalizeSessionWindowRestoreIds,
   type SessionWindowRestoreResult,
 } from "../../src-shared/window/session-window-restore.js";
-import type { SessionWindowRestoreState } from "./session-window-bridge.js";
+import type { SessionWindowOpenOptions, SessionWindowRestoreState } from "./session-window-bridge.js";
 
 type SessionWindowRestoreStorageLike = {
   loadSnapshot(): Promise<string[]>;
@@ -14,7 +14,7 @@ type SessionWindowRestoreServiceDeps = {
   storage: SessionWindowRestoreStorageLike;
   getSession(sessionId: string): Awaitable<unknown | null>;
   getSessionWindowRestoreStates(): ReadonlyMap<string, SessionWindowRestoreState>;
-  openSessionWindow(sessionId: string): Promise<unknown>;
+  openSessionWindow(sessionId: string, options: SessionWindowOpenOptions): Promise<unknown>;
   onRestoreSetChanged?(sessionIds: readonly string[]): void;
 };
 
@@ -88,7 +88,7 @@ export class SessionWindowRestoreService {
       if (state.kind !== "opening") {
         continue;
       }
-      openingResults.set(sessionId, this.deps.openSessionWindow(sessionId).then(
+      openingResults.set(sessionId, this.deps.openSessionWindow(sessionId, { presentation: "minimized" }).then(
         () => "opened",
         () => "open-failed",
       ));
@@ -134,7 +134,7 @@ export class SessionWindowRestoreService {
         continue;
       }
       try {
-        await this.deps.openSessionWindow(sessionId);
+        await this.deps.openSessionWindow(sessionId, { presentation: "minimized" });
         openedSessionIds.push(sessionId);
         this.restoreSet = this.restoreSet.filter((candidate) => candidate !== sessionId);
       } catch {

@@ -1850,7 +1850,7 @@ test("completed receipt reads converge even when queue notifications arrive befo
   submissions.accept({ ...terminal, state: "queued", turnId: null, userMessageSeq: null });
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected queue operation"); };
   const store: SessionTurnQueueStore = {
-    getReceipt: async () => terminal, listActive: async () => [], claimNext: async () => null,
+    getReceipt: async () => terminal, getReceiptById: async () => terminal, listActive: async () => [], claimNext: async () => null,
     enqueue: unexpected, listReceipts: unexpected, listPendingOwners: unexpected, markStarted: unexpected,
     settle: unexpected, cancelQueued: unexpected, recoverInterrupted: unexpected, releaseInterrupted: unexpected,
     claimForInput: unexpected, restoreQueuedInput: unexpected, reorderQueued: unexpected, updateQueued: unexpected,

@@ -5765,6 +5765,14 @@ var json = lazy(() => union([
 	record(string(), json)
 ]));
 var sessionGraphActorSchema = object({ sessionId: id }).strict();
+var sessionGraphOwnerSchema = object({
+	sessionId: id,
+	incarnationId: id
+}).strict();
+object({
+	kind: _enum(["main", "auxiliary"]),
+	incarnationId: id
+}).strict();
 var sessionGraphOriginSchema = object({
 	type: _enum([
 		"agent",
@@ -5858,6 +5866,7 @@ var sessionGraphRelationSchema = object({
 	label: string().max(1024).optional()
 }).strict();
 var page = {
+	graphOwner: sessionGraphOwnerSchema.optional().describe("Read another Crew's Graph by its root Main Session ID and incarnation. Omit for the caller's own Crew. This never changes the caller or authorizes writes."),
 	limit: number().int().min(1).max(200).optional(),
 	offset: number().int().nonnegative().optional(),
 	expectedRevision: number().int().nonnegative().optional()
@@ -7883,6 +7892,16 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 	if (!identityOutcome.ok) throw new WithMateMemoryRuntimeExchangeError("Memory API runtime identity could not be verified.", false, { discoveryCode: identityOutcome.discoveryCode });
 	const nonce = randomBytes(16).toString("base64url");
 	const exchangeUrl = new URL(options.exchangePath ?? "/v1/exchange", connection.api.baseUrl);
+	const payload = JSON.stringify({
+		schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+		apiSecret: connection.api.apiSecret,
+		adapter: exchangeAdapter,
+		adapterSecret: connection.credential.adapterSecret,
+		...options.bindingReference ? { bindingReference: options.bindingReference } : {},
+		...options.turnCapability ? { turnCapability: options.turnCapability } : {},
+		...options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {},
+		operation
+	});
 	return new Promise((resolve, reject) => {
 		let dispatched = false;
 		let identityVerified = false;
@@ -7905,6 +7924,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
+					...options.exchangePath === "/v1/agent-runtime-extension-exchange" ? { "Content-Length": Buffer.byteLength(payload, "utf8") } : {},
 					[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
 					[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: connection.api.runtimeGenerationId,
 					[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
@@ -7965,16 +7985,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 			}
 			identityVerified = true;
 			dispatched = true;
-			request$1.end(JSON.stringify({
-				schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
-				apiSecret: connection.api.apiSecret,
-				adapter: exchangeAdapter,
-				adapterSecret: connection.credential.adapterSecret,
-				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
-				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
-				...options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {},
-				operation
-			}));
+			request$1.end(payload);
 		});
 		request$1.on("error", (error) => fail("Memory API request failed.", error));
 		options.signal.addEventListener("abort", () => fail("Memory API request was aborted."), { once: true });
@@ -8134,7 +8145,9 @@ Connection options:
   --generation <runtime-generation-id>
 
 Operations use the current provider Session binding and turn capability.
-Use schema for the shared JSON input schemas. No caller or parent Session selector is accepted.
+Reads default to the caller's Crew. Set graphOwner:{sessionId,incarnationId} to read another Crew's root Graph.
+Apply always writes the caller's own Crew; graphOwner is not accepted for writes.
+Use schema for the shared JSON input schemas. No caller or recorder selector is accepted.
 `;
 var SessionGraphCliUsageError = class extends Error {};
 async function parseWithMateSessionGraphCliArgs(args, deps = {}) {

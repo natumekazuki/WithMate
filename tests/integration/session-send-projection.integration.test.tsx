@@ -48,7 +48,7 @@ async function setup() {
   };
   api.getAuxiliarySessionStatus = async (id) => {
     const session = await api.getAuxiliarySession(id);
-    return session ? { id, parentSessionId: session.parentSessionId, status: session.status, createdAt: session.createdAt, incarnation: session.createdAt, runState: session.runState } : null;
+    return session ? { id, parentSessionId: session.parentSessionId, createdAt: session.createdAt, incarnation: session.createdAt, runState: session.runState } : null;
   };
   api.saveAuxiliaryDraft = async (request) => {
     const current = drafts.get(request.auxiliarySessionId);
@@ -354,7 +354,7 @@ test("Session Windowはdurable受付の旧rejectから新入力を保護し、ca
   let auxiliaryDraft: AuxiliaryDraftRecord = { auxiliarySessionId: auxiliary.id, parentSessionId: auxiliary.parentSessionId, incarnation: auxiliary.createdAt, durableRevision: 0, text: auxiliary.composerDraft, updatedAt: auxiliary.updatedAt };
   api.getSession = async (id) => id === main.id ? main : null;
   api.getAuxiliarySession = async (id) => id === auxiliary.id ? auxiliary : null;
-  api.getAuxiliarySessionStatus = async () => ({ id: auxiliary.id, parentSessionId: auxiliary.parentSessionId, status: auxiliary.status, createdAt: auxiliary.createdAt, incarnation: auxiliary.createdAt, runState: auxiliary.runState });
+  api.getAuxiliarySessionStatus = async () => ({ id: auxiliary.id, parentSessionId: auxiliary.parentSessionId, createdAt: auxiliary.createdAt, incarnation: auxiliary.createdAt, runState: auxiliary.runState });
   api.getAuxiliaryDraft = async () => ({ ...auxiliaryDraft });
   api.saveAuxiliaryDraft = async (request) => {
     if (request.expectedDurableRevision !== auxiliaryDraft.durableRevision || request.incarnation !== auxiliaryDraft.incarnation) return { outcome: "stale" };

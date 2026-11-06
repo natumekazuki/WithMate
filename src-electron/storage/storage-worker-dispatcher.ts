@@ -10,6 +10,7 @@ import {
 } from "../memory/memory-v6-storage.js";
 import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../character/character-affect-storage.js";
 import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { CoordinationDeletedError, CoordinationRejectedError } from "../coordination/coordination-errors.js";
 
 export type StorageWorkerHandlerContext = StorageWorkerRequestContext & {
   reportProgress(progress: unknown): void;
@@ -58,6 +59,8 @@ export function serializeStorageWorkerError(
   let details: Record<string, string | number> | undefined;
   if (normalized instanceof RuntimeTurnInactiveError) {
     code = "RUNTIME_TURN_INACTIVE";
+  } else if (normalized instanceof CoordinationRejectedError || normalized instanceof CoordinationDeletedError) {
+    code = normalized.code;
   } else if (normalized instanceof StorageWorkerCommandNotAllowedError) {
     code = normalized.code;
   } else if (normalized instanceof MemoryV6IdempotencyConflictError) {

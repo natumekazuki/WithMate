@@ -32,6 +32,22 @@ export class SessionRuntimeFixture extends SessionRuntimeService {
     };
     super({
       ...deps,
+      beginRunningInput: deps.beginRunningInput ?? (async (session, text, turnId, nativeTurnId, attachments) => {
+        const message = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const } };
+        return write({ ...session, messages: [...session.messages, message] }, [message]);
+      }),
+      settleRunningInput: deps.settleRunningInput ?? (async (session, messageSeq, _turnId, state) => {
+        const full = await deps.getSession(session.id);
+        if (!full?.messages[messageSeq]?.turnInput) throw new Error("Fixture pending input missing");
+        if (full.messages[messageSeq]!.turnInput!.state !== "pending" && full.messages[messageSeq]!.turnInput!.state !== state) throw new Error("Fixture input already settled");
+        const messages = full.messages.map((message, index) => index === messageSeq && message.turnInput
+          ? { ...message, turnInput: { ...message.turnInput, state } } : message);
+        const saved = await deps.upsertSession({ ...full, messages });
+        stored.set(saved.id, saved);
+        const count = session.messageCount ?? session.messages.length;
+        return project(saved, session.messages.map((message, index) => count - session.messages.length + index === messageSeq && message.turnInput
+          ? { ...message, turnInput: { ...message.turnInput, state } } : message));
+      }),
       async getSession(id) {
         const full = await deps.getSession(id);
         if (!full) return null;

@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
@@ -25,9 +25,11 @@ async function fixture() {
     characterId: "character", character: "Character", characterIconPath: "", characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" }, approvalMode: "on-request" }));
   const owner = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
   const capture = (userMessage: string): SessionTurnQueueCapturedInput => ({ request: { userMessage, clientRequestId: randomUUID(), submitSource: "composer",
-    executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: session.provider, workspacePath: session.workspacePath });
+    executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: session.provider, workspacePath: session.workspacePath,
+    origin: { kind: "gui", operation: "send", targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId } });
   const store: SessionTurnQueueStore = {
     enqueue: async (...args) => queue.enqueue(...args), getReceipt: async (...args) => queue.getReceipt(...args),
+    getReceiptById: async (...args) => queue.getReceiptById(...args),
     listActive: async (...args) => queue.listActive(...args), listReceipts: async (...args) => queue.listReceipts(...args),
     listPendingOwners: async () => queue.listPendingOwners(), claimNext: async (...args) => queue.claimNext(...args),
     claimForInput: async (...args) => queue.claimForInput(...args), restoreQueuedInput: async (...args) => queue.restoreQueuedInput(...args),
@@ -82,6 +84,8 @@ test("後方queued編集中は対象会話だけを保留して更新後に同�
     assert.deepEqual({ id: updated.id, requestId: updated.requestId, sequence: updated.sequence }, { id: rear.id, requestId: rear.requestId, sequence: rear.sequence });
     assert.equal(updated.queuePosition, earlier.queuePosition);
     assert.deepEqual(updated.captured, { ...rear.captured, request: { ...rear.captured.request, userMessage: "edited" } });
+    assert.deepEqual(updated.accepted, rear.captured);
+    assert.equal(updated.dispatched, null);
     await service.waitForPending();
     assert.deepEqual(dispatched, ["running", "independent", "edited", "earlier"]);
   } finally { finish(); await service.close(); await f.close(); }
@@ -89,7 +93,77 @@ test("後方queued編集中は対象会話だけを保留して更新後に同�
 
 // @test-value v2
 // kind = "contract"
-// claim = "編集preflightと保存失敗は停止を保持し、保存返信不明も再送せず、明示取消は正本本文を変えず再開し、成功は本文と再解決添付だけを保存する"
+// claim = "同じ受付の原文とclaim採用入力を別保存し、編集後も原文の再試行だけを受け付け、不明な過去原文を現在値で補わない"
+// oracle = { type = "contract", ref = "GitHub Issue #832: 待機中の指示編集と再試行" }
+// fault = "編集で再試行照合元を置換する、claim後に採用入力を失う、過去行の現在値を原文として返す"
+// observable = "再open後のaccepted/dispatched/captured、再試行receipt ID、競合例外とID照会結果"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueStorageV6のSQLite受付・編集・claim・終端・過去行読取"
+// lifecycle = "permanent"
+// impact = "再送による二重実行と送信原文の誤表示を防ぐ"
+// distinction = "既存編集testのplanned本文とdispatch順だけでは不変原文と固定採用入力の永続性を検出できない"
+// @end-test-value
+test("受付原文とclaim採用入力は編集・取消・再open後も取り違えない", async () => {
+  const f = await fixture();
+  try {
+    const sent = f.capture("sent @original");
+    const receipt = f.queue.enqueue(f.owner, sent);
+    assert.equal(f.queue.getReceiptById(f.owner, receipt.id)?.requestId, receipt.requestId);
+    assert.equal(f.queue.getReceiptById(f.owner, "absent"), null);
+    assert.throws(() => f.queue.getReceiptById({ ...f.owner, incarnationId: "old" }, receipt.id), /incarnation mismatch/);
+    const planned = f.queue.updateQueued(f.owner, receipt.id, { userMessage: "edited", attachments: [] });
+    assert.deepEqual(planned.accepted, sent);
+    assert.equal(planned.dispatched, null);
+    assert.equal(f.queue.enqueue(f.owner, sent).id, receipt.id);
+    assert.throws(() => f.queue.enqueue(f.owner, planned.captured), /different payload/);
+    const claimed = f.queue.claimNext(f.owner)!;
+    assert.deepEqual(claimed.dispatched, planned.captured);
+    assert.equal(f.queue.cancelQueued(f.owner, receipt.id).state, "starting");
+    f.queue.settle(f.owner, receipt.id, "interrupted", "provider reply unknown");
+    const reopened = new SessionTurnQueueStorageV6(f.dbPath);
+    try {
+      const saved = reopened.getReceipt(f.owner, receipt.requestId)!;
+      assert.deepEqual(saved.accepted, sent);
+      assert.deepEqual(saved.dispatched, planned.captured);
+      assert.equal(reopened.enqueue(f.owner, sent).state, "interrupted");
+    } finally { reopened.close(); }
+    const db = new DatabaseSync(f.dbPath);
+    try { db.prepare("UPDATE session_turn_queue_v6 SET accepted_json = NULL, dispatched_json = NULL WHERE id = ?").run(receipt.id); }
+    finally { db.close(); }
+    assert.equal(f.queue.getReceipt(f.owner, receipt.requestId)?.accepted, null);
+    assert.equal(f.queue.getReceipt(f.owner, receipt.requestId)?.dispatched, null);
+    assert.throws(() => f.queue.enqueue(f.owner, sent), /original.*unavailable/);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "同ms内の複数queue編集でも既存updatedAtを厳密前進させ、入力分割readが別の本文を混在させない変更検出値を持つ"
+// oracle = { type = "contract", ref = "GitHub Issue #836: queue指示差分の分割取得中の変更検出" }
+// fault = "同ms再編集で同じupdatedAtを返し古いcursorの続きに新本文を混ぜる"
+// observable = "時刻固定下の2編集のreceipt.updatedAtとcaptured本文"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueStorageV6.updateQueuedの既存更新時刻"
+// lifecycle = "permanent"
+// distinction = "通常の編集永続化testは同ms複数保存の更新識別を検証しない"
+// @end-test-value
+test("同msのqueue編集でもupdatedAtは厳密に前進する", async () => {
+  const f = await fixture();
+  try {
+    const receipt = f.queue.enqueue(f.owner, f.capture("original"));
+    mock.method(Date, "now", () => Date.parse(receipt.updatedAt));
+    const first = f.queue.updateQueued(f.owner, receipt.id, { userMessage: "first", attachments: [] });
+    const second = f.queue.updateQueued(f.owner, receipt.id, { userMessage: "second", attachments: [] });
+    assert.ok(first.updatedAt > receipt.updatedAt);
+    assert.ok(second.updatedAt > first.updatedAt);
+    assert.equal(second.captured.request.userMessage, "second");
+    assert.equal(second.accepted?.request.userMessage, "original");
+  } finally { mock.restoreAll(); await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "編集失敗は停止を保持し、編集保存後も受付時入力の再試行は同じreceiptへ収束し、変更後入力でkeyを再利用できない"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: GUI Turn Queue編集の停止と再開; docs/design/electron-session-store.md: Turn Queue本文添付更新" }
 // fault = "失敗時にqueueを再開する、取消で本文を消す、添付を旧本文のまま保存する、旧incarnation/read-onlyを更新する"
 // observable = "保存receipt payload、dispatch本文列、保存呼出回数、preview引数、旧owner/read-only/state拒否"
@@ -156,8 +230,8 @@ test("編集失敗は停止を保持し取消と成功時だけ再開する", as
     const updated = await facade.updateQueuedSessionTurn(f.session.id, { ...nextEdit, userMessage: "  new @new.txt  " });
     assert.equal(previewText, "new @new.txt");
     assert.deepEqual(updated.captured, { ...next.captured, request: { ...next.captured.request, userMessage: "new @new.txt" }, attachments: [attachment] });
-    await assert.rejects(facade.enqueueSessionTurn(f.session.id, { ...next.captured.request, incarnationId: f.owner.incarnationId }), /different input/);
-    assert.equal((await facade.enqueueSessionTurn(f.session.id, { ...updated.captured.request, incarnationId: f.owner.incarnationId })).id, next.id);
+    assert.equal((await facade.enqueueSessionTurn(f.session.id, { ...next.captured.request, incarnationId: f.owner.incarnationId })).id, next.id);
+    await assert.rejects(facade.enqueueSessionTurn(f.session.id, { ...updated.captured.request, incarnationId: f.owner.incarnationId }), /different input/);
     assert.equal(f.queue.listReceipts(f.owner).receipts.length, 2);
     assert.throws(() => f.queue.updateQueued({ ...f.owner, incarnationId: "old" }, next.id, { userMessage: "bad", attachments: [] }), /incarnation mismatch/);
     f.sessions.updateSession({ ...f.session, accessMode: "legacy_readonly" });

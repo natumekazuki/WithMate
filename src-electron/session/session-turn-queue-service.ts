@@ -51,9 +51,10 @@ export class SessionTurnQueueService {
     })());
   }
 
-  enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput): Promise<SessionTurnQueueReceipt> {
+  enqueue(owner: SessionTurnQueueOwner, captured: SessionTurnQueueCapturedInput, assertAuthorized?: () => void | Promise<void>): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     return this.track(this.withLock(owner.sessionId, async () => {
+      await assertAuthorized?.();
       const receipt = await this.deps.store.enqueue(owner, captured);
       this.adoptOwner(owner);
       this.notify(owner);
@@ -72,9 +73,10 @@ export class SessionTurnQueueService {
     this.wake(receipt.sessionId);
   }
 
-  cancelQueued(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt> {
+  cancelQueued(owner: SessionTurnQueueOwner, id: string, assertAuthorized?: () => void | Promise<void>): Promise<SessionTurnQueueReceipt> {
     this.requireAccepting();
     return this.track(this.withLock(owner.sessionId, async () => {
+      await assertAuthorized?.();
       this.assertNotEditing(owner, id);
       const receipt = await this.deps.store.cancelQueued(owner, id);
       if (this.isCurrentOwner(owner)) {
@@ -174,7 +176,7 @@ export class SessionTurnQueueService {
               this.blocked.add(owner.sessionId);
               if (canonical.state === "starting" && canonical.sessionId === owner.sessionId
                 && canonical.incarnationId === owner.incarnationId && canonical.id === id
-                && canonical.inputTurnId === expectedTurnId && canonical.turnId === null && canonical.userMessageSeq === null) {
+                && canonical.inputTurnId === expectedTurnId && canonical.userMessageSeq === null) {
                 // No provider call has begun. Restore only this confirmed input
                 // claim, and resolve a lost restore reply by reading, not retrying.
                 const restored = await this.restoreInputClaim(owner, id, expectedTurnId, candidate.requestId);
@@ -248,7 +250,7 @@ export class SessionTurnQueueService {
       const current = await this.deps.store.getReceipt(owner, requestId);
       if (current?.state === "queued") return current;
       if (current?.state === "starting" && current.id === id && current.inputTurnId === expectedTurnId
-        && current.turnId === null && current.userMessageSeq === null) {
+        && current.userMessageSeq === null) {
         await this.deps.store.settle(owner, id, "interrupted", "The input claim recovery could not be confirmed.");
       }
       throw error;

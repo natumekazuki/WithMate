@@ -33,7 +33,9 @@ Connection options:
   --generation <runtime-generation-id>
 
 Operations use the current provider Session binding and turn capability.
-Use schema for the shared JSON input schemas. No caller or parent Session selector is accepted.
+Reads default to the caller's Crew. Set graphOwner:{sessionId,incarnationId} to read another Crew's root Graph.
+Apply always writes the caller's own Crew; graphOwner is not accepted for writes.
+Use schema for the shared JSON input schemas. No caller or recorder selector is accepted.
 `;
 class SessionGraphCliUsageError extends Error {}
 

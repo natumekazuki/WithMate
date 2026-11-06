@@ -34,6 +34,9 @@ test("New SessionのModel取得失敗は入力を保持し詳細と明示Retry�
   const requests: CreateSessionRequest[] = [];
   const opened: string[] = [];
   const api: Partial<WithMateWindowApi> = {
+    executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
+    subscribeCoordinationChanged: () => () => {},
+    getSessionSummary: async () => null,
     getMateState: async () => "not_created",
     listCharacters: async () => [],
     getAppSettings: async () => createDefaultAppSettings(),
