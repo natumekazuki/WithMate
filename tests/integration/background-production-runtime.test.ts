@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { resolve } from "node:path";
+import { mkdir, realpath } from "node:fs/promises";
 import { BackgroundProductionRuntime, buildBackgroundExecutionScope, type BackgroundRuntimeEvent, type PrepareBackgroundCallInput } from "../../src-electron/providers/background-production-runtime.js";
 import type { BackgroundAgentInput, BackgroundAgentPort } from "../../src-electron/providers/background-call-service.js";
 import type { BackgroundFailureEvent } from "../../src-electron/providers/background-failure.js";
@@ -11,6 +15,8 @@ import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catal
 import { currentRuntimeTurnAdmissionState, assertRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
 import { MEMORY_REGISTRATION_PRESETS } from "../../src-shared/memory-recording/memory-registration-input.js";
 import { backgroundHistoryFixture, owner } from "../helpers/background-history-fixture.js";
+import { getBackgroundMemoryFileOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import type { BackgroundExecutionSelection } from "../../src-shared/settings/background-settings.js";
 
 type Fixture = Awaited<ReturnType<typeof backgroundHistoryFixture>>;
 const sourceKinds = { "character-memory": ["main"], "target-memory": ["main"], affect: ["main"] } as const;
@@ -34,7 +40,7 @@ function setup(f: Fixture, runAgent: BackgroundAgentPort) {
     resolveAuthority: () => ({ userId: "local-user" as const, characterId: "character", allowedProjectIds: [] }), sourceKinds };
   const runtime = new BackgroundProductionRuntime(deps);
   const input: PrepareBackgroundCallInput = { purpose: "target-memory", source: { kind: "main", sessionId: "main", incarnationId: "inc-main" },
-    session: f.sessions.get("main")!, processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: targets };
+    session: f.sessions.get("main")!, memoryTargets: targets };
   return { runtime, deps, settings, input };
 }
 function project(f: Fixture, agent: BackgroundAgentInput) {
@@ -46,6 +52,142 @@ function gate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "準備失敗は同じ継続寿命の次呼出へ渡し、source解放・停止後の遅延失敗は診断だけに残して新しい失敗材料を上書きしない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#native文脈の継続と失敗情報" }
+// fault = "prepare待機中の寿命変更を無視して破棄済み失敗を新stateへ保存するか、現行prepare失敗の引継ぎや診断を失う"
+// observable = "prepare結果、失敗診断のcode、後続AgentのuserInput・thread、終了後binding件数"
+// observation_boundary = "consumer"
+// scope = "production prepare through real call service and binding lifecycle across delayed catalog throw or unavailable result"
+// lifecycle = "permanent"
+// impact = "破棄した会話文脈の失敗が次Turnの再検討材料へ混入し、現在の失敗原因を隠す"
+// distinction = "既存の実行中取消testはbinding発行前のprepare待機と失敗保持を通らず、型検査も非同期の寿命交差を検出できない"
+// @end-test-value
+test("準備失敗の引継ぎはsource解放とruntime停止の寿命を守る", async () => {
+  for (const reset of ["none", "forget", "stop"] as const) {
+    for (const outcome of ["throw", "unavailable"] as const) {
+      const f = await backgroundHistoryFixture();
+      const entered = gate(), release = gate();
+      try {
+        seed(f);
+        const agents: BackgroundAgentInput[] = [], failures: BackgroundFailureEvent[] = [];
+        const { deps, input } = setup(f, (agent) => { agents.push(agent); });
+        let reads = 0, currentFailure = false;
+        const runtime = new BackgroundProductionRuntime({ ...deps,
+          getModelCatalog: async () => {
+            if (++reads === 1) {
+              entered.resolve(); await release.promise;
+              if (outcome === "throw") throw new Error("fixture-stale-catalog");
+              return { providers: [] };
+            }
+            if (currentFailure) throw new Error("fixture-current-catalog");
+            return catalog;
+          },
+          onFailure: (failure) => { failures.push(failure); },
+        });
+        const pending = runtime.prepare(input);
+        await entered.promise;
+        const invoke = async () => {
+          const prepared = await runtime.prepare(input);
+          assert.equal(prepared.status, "ready");
+          assert.deepEqual(await runtime.calls.runOnce({ ...prepared.call, userInput: "current material", onAdmitted() {} }), { kind: "completed" });
+          assert.equal(agents.at(-1)!.continuation.threadId, null);
+          return agents.at(-1)!.userInput;
+        };
+        if (reset !== "none") {
+          if (reset === "forget") {
+            runtime.forgetSource("main", input.source.sessionId);
+            input.session.provider = "copilot";
+          } else { runtime.stop(); runtime.start(); }
+          assert.equal(await invoke(), "current material");
+          currentFailure = true;
+          assert.equal((await runtime.prepare(input)).status, "failed");
+          currentFailure = false;
+        }
+        release.resolve();
+        const failed = await pending;
+        assert.equal(failed.status, outcome === "throw" ? "failed" : "unavailable");
+        assert.equal(failures.at(-1)!.code, failed.code);
+        assert.equal(failures.at(-1)!.stage, "prepare");
+        const nextInput = await invoke();
+        if (reset === "none") assert.ok(nextInput.includes(failed.code));
+        else {
+          assert.match(nextInput, /fixture-current-catalog/);
+          assert.doesNotMatch(nextInput, /fixture-stale-catalog/);
+        }
+        assert.equal(await invoke(), "current material");
+        assert.equal(f.bindings.getActiveBindingCount(), 0);
+        runtime.stop();
+      } finally { release.resolve(); await f.close(); }
+    }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景prepareは現在rootと用途設定のfile scopeを捕捉し、read-only・planで復元を許可せず、失敗診断へrootを保存しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memoryの添付と必要時復元" }
+// fault = "元会話の書込設定や全FS権限を流用する、後続の設定変更で準備済みscopeを拡大する、または診断へfile rootを保存する"
+// observable = "prepareのcanonical root・export先・operation grants、開始bindingのfile認可結果と失敗診断のscope"
+// observation_boundary = "consumer"
+// scope = "production preparation with background Settings and real filesystem roots, then per-call binding authorization"
+// lifecycle = "permanent"
+// impact = "背景toolが許可されていないdirectoryへ復元する"
+// distinction = "importer単体は用途設定からのscope捕捉・grant発行・設定snapshotの独立性を検証できない"
+// @end-test-value
+test("背景file scopeは現在rootと用途の書込設定を呼出ごとに固定する", async () => {
+  const f = await backgroundHistoryFixture();
+  try {
+    seed(f);
+    const sessionFolder = resolve(f.directory, "session-folder");
+    const extra = resolve(f.directory, "additional");
+    await mkdir(sessionFolder);
+    await mkdir(extra);
+    const { deps, settings, input } = setup(f, () => {});
+    const failures: BackgroundFailureEvent[] = [];
+    const runtime = new BackgroundProductionRuntime({ ...deps,
+      resolveSessionFolderPath: () => sessionFolder,
+      runAgent: async () => { throw new Error("fixture agent failure"); },
+      onFailure: (event) => { failures.push(event); },
+      getModelCatalog: async () => ({ providers: [...catalog.providers,
+        { ...catalog.providers[0]!, id: "codex", label: "Codex" }] }),
+    });
+    input.session.allowedAdditionalDirectories = [extra];
+    const selections: BackgroundExecutionSelection[] = [
+      { providerId: "claude", modelId: "test", approvalMode: "plan" },
+      { providerId: "codex", modelId: "test", codexSandboxMode: "read-only" },
+      { providerId: "codex", modelId: "test", codexSandboxMode: "danger-full-access" },
+      { providerId: "claude", modelId: "test" },
+    ];
+    for (const selection of selections) {
+      settings.backgroundExecutionSettings["target-memory"] = { selection };
+      const prepared = await runtime.prepare(input);
+      assert.equal(prepared.status, "ready");
+      const access = prepared.call.context.scope.fileAccess!;
+      assert.ok(access.readRoots.includes(await realpath(input.session.workspacePath)));
+      assert.ok(access.readRoots.includes(await realpath(extra)));
+      const writable = selection.approvalMode !== "plan" && selection.codexSandboxMode !== "read-only";
+      assert.equal(access.exportRoot, writable ? resolve(await realpath(sessionFolder), "memory-exports") : null);
+      for (const operation of getBackgroundMemoryFileOperations()) {
+        assert.equal(prepared.call.context.operationGrants.includes(operation), writable);
+      }
+      settings.backgroundExecutionSettings["target-memory"] = { selection: { providerId: "claude", modelId: "test" } };
+      const execution = f.executions.begin({ ...prepared.call.context, providerId: selection.providerId });
+      for (const operation of getBackgroundMemoryFileOperations()) {
+        assert.equal(f.bindings.resolve(execution.binding.bindingReference, operation).ok, writable);
+      }
+      f.executions.finish(execution);
+      assert.equal((await runtime.calls.runOnce({ ...prepared.call, userInput: "fixture", onAdmitted() {} })).kind, "failed");
+      assert.equal(failures.at(-1)!.stage, "agent");
+      assert.deepEqual(failures.at(-1)!.execution!.scope, { purpose: input.purpose,
+        history: prepared.call.context.scope.history, memoryTargets: input.memoryTargets });
+      assert.ok(!JSON.stringify(failures.at(-1)).includes(sessionFolder));
+      assert.equal(access.exportRoot, writable ? resolve(await realpath(sessionFolder), "memory-exports") : null);
+    }
+  } finally { await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -114,10 +256,10 @@ test("Modelとサービスの無効化は三用途の次の準備に適用する
 
 // @test-value v2
 // kind = "contract"
-// claim = "本番prepareで選んだ三用途は同じ実行admissionのbound MCPから既存用途handlerとWorkerへ登録し、通常会話の選択を保つ"
+// claim = "三用途の継続後は新bindingのMCP/CLIで読み書きし、旧credentialを拒否して通常会話を変えない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "設定から別用途か別bindingへ接続し、本文を失うか通常Sessionの選択を書き換える"
-// observable = "Agent入力、admission、bound tool登録応答、実Workerの保存本文、通常Session"
+// fault = "継続後に古い接続情報を使うか旧credentialを認可するか、native文脈・指示本文を失い通常Sessionを書き換える"
+// observable = "継続ID/thread、新旧MCP/CLIの応答、admission、実Workerの保存本文、通常Session"
 // observation_boundary = "public-boundary"
 // scope = "production runtime prepare through purpose consumers and real bound MCP registration"
 // lifecycle = "permanent"
@@ -129,6 +271,8 @@ test("本番設定から三用途consumerへ接続し、bound MCPで実保存す
     seed(f);
     const original = structuredClone(f.sessions.get("main")!);
     let sequence = 0;
+    let savedAffect = 0;
+    const previous = new Map<string, { binding: ReturnType<typeof project>; id: string }>();
     let agentError: unknown;
     const { runtime, settings, input } = setup(f, async (agent) => {
       try {
@@ -142,6 +286,24 @@ test("本番設定から三用途consumerへ接続し、bound MCPで実保存す
           assert.equal(agent.userInput.split("## 登録指示\n\n")[1]!.split("\n\n## 実行範囲")[0], body);
         } else assert.equal(agent.userInput.split("# 登録指示本文\n\n")[1]!.split("\n\n# 実行情報")[0], body ?? MEMORY_REGISTRATION_PRESETS[purpose]);
         const binding = project(f, agent);
+        const prior = previous.get(purpose);
+        assert.equal(agent.continuation.threadId, prior ? `native-${purpose}` : null);
+        if (prior) {
+          assert.equal(agent.continuation.id, prior.id);
+          assert.notEqual(binding.bindingReference, prior.binding.bindingReference);
+          assert.equal((await f.request(prior.binding, prior.binding.managedMcp!.memoryUrl, "memory.append")).status, 401);
+          await assert.rejects(promisify(execFile)(process.execPath, [resolve("resources/cli/withmate-session-history.mjs"), "list-messages", "--json", "{}"],
+            { cwd: f.directory, env: f.cliEnv(prior.binding), windowsHide: true }), (error: unknown) => {
+              const failed = error as { stdout: string };
+              assert.equal(JSON.parse(failed.stdout).code, "SESSION_BINDING_INVALID");
+              return true;
+            });
+        }
+        const { stdout } = await promisify(execFile)(process.execPath, [resolve("resources/cli/withmate-session-history.mjs"), "list-messages", "--json", "{}"],
+          { cwd: f.directory, env: f.cliEnv(binding), windowsHide: true });
+        assert.equal(JSON.parse(stdout).ok, true);
+        agent.continuation.onThreadId(`native-${purpose}`);
+        previous.set(purpose, { binding, id: agent.continuation.id });
         assert.equal(binding.bindingId, agent.handle.bindingId);
         const { client } = await f.connect(binding, "memoryUrl");
         const registrationTools = (await client.listTools()).tools.map((tool) => tool.name)
@@ -161,10 +323,10 @@ test("本番設定から三用途consumerへ接続し、bound MCPで実保存す
         if (purpose !== "affect") {
           const saved = response.structuredContent as { entry: { id: string } };
           assert.equal((await f.memoryWorker.storage.getEntry(saved.entry.id))!.body, key);
-        } else assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 1);
+        } else assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, ++savedAffect);
       } catch (error) { agentError = error; throw error; }
     });
-    for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
+    for (const purpose of ["character-memory", "target-memory", "affect"] as const) for (const _iteration of [0, 1]) {
       settings.backgroundExecutionSettings[purpose].instructionText = purpose === "target-memory" ? "" : purpose === "affect" ? "Edited Affect registration instructions" : undefined;
       const prepared = await runtime.prepare({ ...input, purpose });
       assert.equal(prepared.status, "ready");
@@ -179,16 +341,16 @@ test("本番設定から三用途consumerへ接続し、bound MCPで実保存す
       if (agentError) throw agentError;
       assert.deepEqual(result, { kind: "completed" });
     }
-    assert.equal(sequence, 3); assert.deepEqual(f.sessions.get("main"), original);
+    assert.equal(sequence, 6); assert.deepEqual(f.sessions.get("main"), original);
     assert.equal(f.bindings.getActiveBindingCount(), 0);
   } finally { await f.close(); }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "本番runtimeは同用途を並行開始し個別finishとstopで実権限を終了し、source付き保存・実行状態と設定・停止eventをconsumerへ渡す"
+// claim = "本番runtimeは異なる用途を並行開始し個別finishとstopで権限を終了し、source付きeventをconsumerへ渡す"
 // oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md" }
-// fault = "共通runtimeが同用途を直列化するかstopを実execution寿命へ接続しない"
+// fault = "共通runtimeが別用途まで直列化するかstopを実execution寿命へ接続しない"
 // observable = "停止前のAgent二件、個別signal、binding数、終了結果、配信event"
 // observation_boundary = "consumer"
 // scope = "production runtime concurrency and stop delegation"
@@ -219,8 +381,10 @@ test("本番runtimeの並行実行と停止は実executionの寿命へ届く", a
     runtime.start();
     const prepared = await runtime.prepare(input);
     assert.equal(prepared.status, "ready");
-    const pending = release.map(() => runBackgroundMemoryRegistration(runtime.calls, { ...prepared.call,
-      context: { ...prepared.call.context, scope: { ...prepared.call.context.scope, purpose: "target-memory" } },
+    const other = await runtime.prepare({ ...input, purpose: "character-memory" });
+    assert.equal(other.status, "ready");
+    const pending = [prepared, other].map((call) => runBackgroundMemoryRegistration(runtime.calls, { ...call.call,
+      context: { ...call.call.context, scope: { ...call.call.context.scope, purpose: call.call.context.scope.purpose as "target-memory" | "character-memory" } },
       materials: "saved answer", onAdmitted() {} }));
     await entered.promise;
     assert.equal(f.bindings.getActiveBindingCount(), 2);
@@ -237,10 +401,10 @@ test("本番runtimeの並行実行と停止は実executionの寿命へ届く", a
 
 // @test-value v2
 // kind = "contract"
-// claim = "本番prepareは未設定・disabled・source未対応・catalog失敗を区別し、取得済みhistoryと明示processingを固定する"
+// claim = "本番prepareは未設定・disabled・source未対応・catalog失敗を区別し、保存済みterminalを含む読取権限historyを固定する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
 // fault = "通常会話へのfallbackや同じ失敗への丸めを行うか、scopeが後続変更に追随し範囲外Turnを許可する"
-// observable = "prepareのstatusとcode、固定scope、範囲外processingの例外、Agent回数"
+// observable = "prepareのstatusとcode、固定scope、terminal不在またはhistory範囲外の例外、Agent回数"
 // observation_boundary = "consumer"
 // scope = "production preparation eligibility and captured execution scope"
 // lifecycle = "permanent"
@@ -263,28 +427,30 @@ test("本番prepareは設定失敗を区別し、保存済み範囲を固定す�
     const failed = await new BackgroundProductionRuntime({ ...deps, getModelCatalog: async () => { throw new Error("offline"); } }).prepare(input);
     assert.equal(failed.status, "failed"); assert.equal(failed.code, "BACKGROUND_CATALOG_UNAVAILABLE");
     const captured = (await deps.captureSource(input.source))!;
-    const processing = { afterTurnId: null, throughTurnId: 1 };
-    const scope = buildBackgroundExecutionScope(captured, { ...input, processing });
-    processing.throughTurnId = 2;
-    assert.equal(scope.processing.throughTurnId, 1); assert.deepEqual(scope.history, f.scope().history);
-    assert.throws(() => buildBackgroundExecutionScope(captured, { ...input, processing }), /saved terminal Turn/);
-    assert.throws(() => buildBackgroundExecutionScope(captured, { ...input, processing: { afterTurnId: 1, throughTurnId: 1 } }), /saved terminal Turn/);
+    const history = { ...captured.history };
+    const scope = buildBackgroundExecutionScope({ ...captured, history }, input);
+    const original = structuredClone(captured.history);
+    history.throughMessageSeq = 0;
+    assert.deepEqual(scope.history, original);
+    assert.throws(() => buildBackgroundExecutionScope({ ...captured, history }, input), /saved terminal Turn/);
+    assert.throws(() => buildBackgroundExecutionScope({ ...captured, snapshot: { ...captured.snapshot, turns: [] } }, input), /saved terminal Turn/);
     assert.equal(calls, 0);
   } finally { await f.close(); }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "開始準備中の設定変更は取得済みProvider・Model・Depth・権限・空本文を変えず、後続呼出しだけへ反映する"
+// claim = "準備中の設定snapshotを維持しつつProvider切替eventは旧準備済み呼出を取消し、新Providerから新しいthreadを始める"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#本番共通runtimeとprovider" }
-// fault = "catalog取得await中に共有設定を参照し続け、開始済みの選択や登録本文を別設定へ差し替える"
-// observable = "共通runOnceのAgent入力selectionと登録指示本文、後続prepareの選択と本文"
+// fault = "設定読取やcatalog待機後に古い選択で切替通知を上書きするか、旧Providerを実行し旧threadを新Providerへ移す"
+// observable = "準備snapshot、切替後旧呼出のcanceled、後続AgentのProvider・本文・新thread"
 // observation_boundary = "consumer"
 // scope = "production preparation snapshot across asynchronous catalog lookup and purpose consumer"
 // lifecycle = "permanent"
 // distinction = "設定保存とadapter native写像のtestだけでは非同期prepare中の共有設定変更を観測できない"
 // @end-test-value
 test("開始準備の選択と本文は設定変更から独立し、次の呼出しへ反映する", async () => {
+  for (const delayedRead of ["settings", "catalog"] as const) {
   const f = await backgroundHistoryFixture();
   const entered = gate(), release = gate();
   try {
@@ -299,14 +465,20 @@ test("開始準備の選択と本文は設定変更から独立し、次の呼�
       id: "codex", label: "Codex", defaultModelId: "next", defaultReasoningEffort: "",
       models: [{ id: "next", label: "Next", reasoningEfforts: ["low"] }],
     }] };
-    const runtime = new BackgroundProductionRuntime({ ...deps, getModelCatalog: async () => {
-      entered.resolve(); await release.promise; return snapshotCatalog;
+    const runtime = new BackgroundProductionRuntime({ ...deps, getAppSettings: async () => {
+      const snapshot = structuredClone(settings);
+      if (delayedRead === "settings") { entered.resolve(); await release.promise; }
+      return snapshot;
+    }, getModelCatalog: async () => {
+      if (delayedRead === "catalog") { entered.resolve(); await release.promise; }
+      return snapshotCatalog;
     } });
     const pending = runtime.prepare(input);
     await entered.promise;
     const configured = settings.backgroundExecutionSettings["target-memory"];
     Object.assign(configured.selection!, { providerId: "codex", modelId: "next", reasoningEffort: "low", approvalMode: "never", codexReviewer: "user", codexSandboxMode: "read-only" });
     configured.instructionText = "Next instructions";
+    runtime.publish({ kind: "settings_changed", settings });
     release.resolve();
     const prepared = await pending;
     assert.equal(prepared.status, "ready");
@@ -315,12 +487,18 @@ test("開始準備の選択と本文は設定変更から独立し、次の呼�
     assert.deepEqual(await runBackgroundMemoryRegistration(runtime.calls, { ...prepared.call,
       context: { ...prepared.call.context, scope: { ...prepared.call.context.scope, purpose: "target-memory" } },
       materials: "saved materials", instructionText: prepared.instructionText, onAdmitted() {},
-    }), { kind: "completed" });
-    assert.deepEqual(observed!.selection, prepared.call.selection);
-    assert.equal(observed!.userInput.split("# 登録指示本文\n\n")[1]!.split("\n\n# 実行情報")[0], "");
+    }), { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" });
+    assert.equal(observed, undefined);
     const next = await runtime.prepare(input);
     assert.equal(next.status, "ready");
     assert.deepEqual(next.call.selection, configured.selection);
     assert.equal(next.instructionText, "Next instructions");
+    await runBackgroundMemoryRegistration(runtime.calls, { ...next.call,
+      context: { ...next.call.context, scope: { ...next.call.context.scope, purpose: "target-memory" } },
+      materials: "new material", instructionText: next.instructionText, onAdmitted() {} });
+    assert.deepEqual(observed!.selection, configured.selection);
+    assert.equal(observed!.continuation.threadId, null);
+    assert.equal(observed!.userInput.split("# 登録指示本文\n\n")[1]!.split("\n\n# 実行情報")[0], "Next instructions");
   } finally { release.resolve(); await f.close(); }
+  }
 });

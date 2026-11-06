@@ -290,11 +290,11 @@ it("stale discovery endpointへ接続できない場合はcanonical unavailable�
 // @test-value v2
 // kind = "contract"
 // claim = "生成済みCLI schemaは診断とdomain操作のpublic input schemaを列挙する"
-// oracle = { type = "adr", ref = "ADR-023" }
+// oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#cli-commandとmcp公開範囲" }
 // scope = "bundled-memory-cli"
 // lifecycle = "permanent"
-// fault = "配布artifactのcapabilityからinstancesが欠落する"
-// observable = "append.inputSchema.properties.kind.enum.includes(\"decision\"));; append.inputSchema.required.includes(\"idempotencyKey\"));; tools.some((tool) => tool.name === \"character_affect.inspect\"));; tools.some((tool) => tool.name === \"memory.instances\"));"
+// fault = "配布artifactのcapabilityから診断操作または単件・各配列itemの冪等key契約が欠落する"
+// observable = "配布CLIのschema出力にあるappend kind enum・単件分岐と配列itemの必須key・Character inspectとinstances操作"
 // observation_boundary = "public-boundary"
 // @end-test-value
 it("schema は helper 単体で capability を返す", async () => {
@@ -306,7 +306,8 @@ it("schema は helper 単体で capability を返す", async () => {
     const tools = schema.tools as Array<{ name: string; inputSchema: Record<string, any> }>;
     const append = tools.find((tool) => tool.name === "memory.append")!;
     assert.ok(append.inputSchema.properties.kind.enum.includes("decision"));
-    assert.ok(append.inputSchema.required.includes("idempotencyKey"));
+    assert.ok(append.inputSchema.oneOf.some((branch: { required?: string[] }) => branch.required?.includes("idempotencyKey")));
+    assert.ok(append.inputSchema.properties.entries.items.required.includes("idempotencyKey"));
     assert.ok(tools.some((tool) => tool.name === "character_affect.inspect"));
     assert.ok(tools.some((tool) => tool.name === "memory.instances"));
   });

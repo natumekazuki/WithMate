@@ -18,7 +18,7 @@ import { WITHMATE_MANAGED_MCP_TOKEN_HEADER } from "../../src-electron/providers/
 import { ManagedHttpMcpHost } from "../../src-electron/memory/managed-http-mcp-host.js";
 import { createMemoryV6HttpServer } from "../../src-electron/memory/memory-v6-http-server.js";
 import { MemoryV6WorkerClient } from "../../src-electron/memory/memory-v6-worker-client.js";
-import { MemoryV6Service } from "../../src-electron/memory/memory-v6-service.js";
+import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory/memory-v6-service.js";
 import { CharacterAffectService } from "../../src-electron/character/character-affect-service.js";
 import { CharacterContextApplicationService } from "../../src-electron/character/character-context-application-service.js";
 import { GlossaryApplicationService } from "../../src-electron/glossary/glossary-application-service.js";
@@ -38,7 +38,9 @@ export const readOperation = "session_history.route.get_message";
 
 export async function backgroundHistoryFixture(diagnosticSink?: StorageOperationDiagnosticSink,
   registrationHandlers?: BackgroundRegistration["handlers"], now?: () => Date,
-  sourceKinds: BackgroundRegistration["sourceKinds"] = { "character-memory": ["main"], "target-memory": ["main"], affect: ["main"] }) {
+  sourceKinds: BackgroundRegistration["sourceKinds"] = { "character-memory": ["main"], "target-memory": ["main"], affect: ["main"] },
+  memoryDependencies?: (directory: string) => Partial<Pick<MemoryV6ServiceDeps,
+    "protectedObjectImporter" | "protectedObjectExporter" | "getMemoryFileQuotaBytes">>) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-background-foundation-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
@@ -72,7 +74,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url), diagnosticSink, now });
   const memory = new MemoryV6Service({ storage: memoryWorker.storage,
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
-    resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath });
+    resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath, ...memoryDependencies?.(directory) });
   const affect = new CharacterAffectService(memoryWorker.affectStorage, { async evaluate() { return []; } }, {
     async writeEpisode() { throw new Error("History fixture must not write episodes"); },
     validateEpisode() { throw new Error("History fixture must not validate episodes"); },
@@ -105,6 +107,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     service: memory, characterContextService: characterContext, agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     backgroundRegistration,
     onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
+    onBackgroundOperation: (id, observation) => executions.observeOperation(id, observation),
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath,
     resolveActorSession: (id, sourceKind) => {
@@ -128,6 +131,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const host = new ManagedHttpMcpHost({ connection,
     bindingRegistry: bindings, turns, fallbackAdmissionSecret: "fallback", backgroundRegistration,
     onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
+    onBackgroundOperation: (id, observation) => executions.observeOperation(id, observation),
     sessionHistory: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer } });
   await host.start();
   const executions = new BackgroundExecutionService({ bindings, turns, closeConnection: (handle) => host.closeConnection(handle) });
@@ -142,16 +146,16 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
         parent: { sessionId: "main", incarnationId: readConversationQuerySnapshot(db, "session_messages_v6", "main")!.incarnationId } }
       : { kind, sessionId: id, incarnationId: snapshot.incarnationId, ownerIdentity: snapshot.ownerIdentity };
     return { purpose, history: { source, fromMessageSeq: 0, throughMessageSeq: id === "main" ? 1 : 0 },
-      processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] };
+      memoryTargets: [] };
   }
-  type ReadOptions = { memoryTargets?: BackgroundExecutionScope["memoryTargets"]; allowedProjectIds?: string[]; authoritySnapshot?: Record<string, unknown> };
+  type ReadOptions = { memoryTargets?: BackgroundExecutionScope["memoryTargets"]; fileAccess?: BackgroundExecutionScope["fileAccess"]; allowedProjectIds?: string[]; authoritySnapshot?: Record<string, unknown> };
   function started(id = "main", providerId = "codex", purpose: BackgroundPurpose = "affect", signal?: AbortSignal, operationGrants = getSessionHistoryAgentRuntimeOperations(), options: ReadOptions = {}) {
     return executions.begin({ actorSessionId: id, providerId, session: sessions.get(id)!,
-      scope: { ...scope(id, purpose), memoryTargets: options.memoryTargets ?? [] },
+      scope: { ...scope(id, purpose), memoryTargets: options.memoryTargets ?? [], ...(options.fileAccess ? { fileAccess: options.fileAccess } : {}) },
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: options.allowedProjectIds ?? [],
         ...options.authoritySnapshot }, operationGrants, signal });
   }
-  function project(execution: BackgroundExecution): ProviderAgentRuntimeBindingProjection {
+  function project(execution: Pick<BackgroundExecution, "binding" | "handle" | "signal" | "admission">): ProviderAgentRuntimeBindingProjection {
     const binding = { ...execution.binding, memoryRuntimeOwner: owner };
     return { ...binding, managedMcp: host.issue(binding, execution.handle, execution.signal) };
   }

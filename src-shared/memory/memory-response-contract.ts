@@ -168,6 +168,16 @@ export type MemoryAppendResponse = {
 
 export type MemoryForgetResultStatus = "forgotten" | "already_forgotten" | "not_found";
 
+export type MemoryAppendEntriesResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  results: Array<
+    | { index: number; status: "saved"; result: MemoryAppendResponse }
+    | { index: number; status: "failed" | "unknown"; result: MemoryErrorResponse }
+    | { index: number; status: "not_run" }
+  >;
+  error?: MemoryError;
+};
+
 export type MemoryForgetResult = {
   entryId: string;
   status: MemoryForgetResultStatus;

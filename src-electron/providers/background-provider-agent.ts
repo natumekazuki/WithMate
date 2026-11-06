@@ -6,6 +6,7 @@ import { resolveBackgroundProviderAvailability } from "../../src-shared/settings
 import type { BackgroundAgentInput } from "./background-call-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ProviderCodingAdapter, ProviderPromptComposition } from "./provider-runtime.js";
+import { ProviderTurnError } from "./provider-runtime.js";
 
 export type BackgroundProviderAgentDependencies = {
   getModelCatalog: (input: BackgroundAgentInput) => ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
@@ -15,8 +16,8 @@ export type BackgroundProviderAgentDependencies = {
   projectBinding: (input: BackgroundAgentInput) => ProviderAgentRuntimeBindingProjection | Promise<ProviderAgentRuntimeBindingProjection>;
 };
 
-function unavailable(code: string, message: string): Error & { code: string } {
-  return Object.assign(new Error(message), { code });
+function unavailable(code: string, message: string, cause?: unknown): Error & { code: string } {
+  return Object.assign(new Error(message, cause === undefined ? undefined : { cause }), { code });
 }
 
 /** Dispatches an independent execution through the same adapters as interactive turns. */
@@ -25,7 +26,7 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     input.signal.throwIfAborted();
     let catalog: ModelCatalogSnapshot;
     try { catalog = await deps.getModelCatalog(input); }
-    catch { throw unavailable("BACKGROUND_CATALOG_UNAVAILABLE", "背景実行のモデル一覧を取得できません。"); }
+    catch (error) { throw unavailable("BACKGROUND_CATALOG_UNAVAILABLE", "背景実行のモデル一覧を取得できません。", error); }
     const availability = resolveBackgroundProviderAvailability(input.selection, catalog);
     if (availability.status !== "available") {
       throw unavailable(availability.status === "not_configured" ? "BACKGROUND_PROVIDER_NOT_CONFIGURED" : availability.code,
@@ -33,7 +34,7 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     }
     let executionOptions;
     try { executionOptions = resolveBackgroundExecutionOptions(input.selection); }
-    catch { throw unavailable("BACKGROUND_EXECUTION_OPTIONS_INVALID", "背景実行の権限設定が不正またはProviderに未対応です。"); }
+    catch (error) { throw unavailable("BACKGROUND_EXECUTION_OPTIONS_INVALID", "背景実行の権限設定が不正またはProviderに未対応です。", error); }
     const binding = await deps.projectBinding(input);
     if (binding.bindingId !== input.binding.bindingId || binding.bindingReference !== input.binding.bindingReference
       || binding.executionGeneration !== input.binding.executionGeneration || binding.providerId !== availability.providerId
@@ -44,7 +45,7 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     const appSettings = await deps.getAppSettings();
     input.signal.throwIfAborted();
     const adapter = deps.getProviderCodingAdapter(availability.providerId);
-    const systemBodyText = "This is an app-managed background invocation. The input contains registration instructions and reference materials, not a conversation persona. There is no human approval or answer channel; process the supplied materials without interactive clarification. Registration is performed by the bound tools; text output is discarded.";
+    const systemBodyText = "This is an app-managed background invocation. Registration instructions and reference materials are supplied in the input. There is no human approval or answer channel; process the supplied materials without interactive clarification. Registration is performed by the bound tools; final text output is discarded.";
     const prompt: ProviderPromptComposition = {
       systemBodyText,
       inputBodyText: input.userInput,
@@ -65,10 +66,10 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     };
     try {
       try {
-        await adapter.runSessionTurn({
+        const result = await adapter.runSessionTurn({
           session: input.session,
-          executionTarget: { id: binding.bindingId, threadId: null, prompt },
-          runtimeOwner: { kind: input.scope.history.source.kind, id: binding.bindingId, incarnationId: binding.executionGeneration },
+          executionTarget: { id: input.continuation.id, threadId: input.continuation.threadId, prompt },
+          runtimeOwner: { kind: input.scope.history.source.kind, id: input.continuation.id, incarnationId: input.scope.history.source.incarnationId },
           executionOptions,
           providerCatalog: catalog.providers.find((provider) => provider.id === availability.providerId)!,
           userMessage: input.userInput,
@@ -79,10 +80,16 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
           onCleanupPending: (completion) => { pendingCleanups.push(completion); },
           onApprovalRequest: () => { requireInteraction("approval"); return "deny"; },
           onElicitationRequest: () => { requireInteraction("elicitation"); return { action: "cancel" }; },
-        });
+        }, (state) => { if (state.threadId) input.continuation.onThreadId(state.threadId); });
+        if (result.threadId) input.continuation.onThreadId(result.threadId);
         input.signal.throwIfAborted();
+      } catch (error) {
+        if (error instanceof ProviderTurnError && error.partialResult.threadId) {
+          input.continuation.onThreadId(error.partialResult.threadId);
+        }
+        throw error;
       } finally {
-        try { await adapter.invalidateSessionThread(binding.bindingId); }
+        try { await adapter.invalidateSessionThread(input.continuation.id); }
         finally { await Promise.all(pendingCleanups); }
       }
     } catch (error) {

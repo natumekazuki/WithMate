@@ -21,7 +21,7 @@ export type RunSessionTurnInput = {
   /** Independent native execution; the source Session remains authorization/workspace context. */
   executionTarget?: {
     id: string;
-    threadId: null;
+    threadId: string | null;
     prompt: ProviderPromptComposition;
   };
   runtimeOwner?: {

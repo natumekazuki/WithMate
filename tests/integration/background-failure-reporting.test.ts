@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { resolve } from "node:path";
 import { BackgroundProductionRuntime } from "../../src-electron/providers/background-production-runtime.js";
 import { BackgroundCallService } from "../../src-electron/providers/background-call-service.js";
-import type { BackgroundFailureEvent } from "../../src-electron/providers/background-failure.js";
+import type { BackgroundFailureEvent, BackgroundFailureInput } from "../../src-electron/providers/background-failure.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { backgroundHistoryFixture } from "../helpers/background-history-fixture.js";
 import { backgroundMemoryRegistrationHandlers } from "../../src-electron/memory/background-memory-registration.js";
@@ -17,12 +17,13 @@ import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/sessio
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
 import { callWithMateMemoryRuntime } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electron/platform/memory/memory-runtime-exchange.js";
+import { backgroundOperationResult } from "../../src-electron/providers/background-diagnostics.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "Main/Auxiliaryの三用途で準備失敗とAgent例外を一件だけ安全な原因付きで記録し、成功・通常取消・未設定は記録しない"
+// claim = "Main/Auxiliaryの三用途で準備失敗とAgent例外の実原因を秘密除去して一件記録し、成功・通常取消・未設定は記録しない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "失敗結果を捨てる、重複記録する、機密例外を保存する、または正常非実行を失敗にする"
+// fault = "失敗原因を定型文へ潰す、重複記録する、tokenやpromptを保存する、または正常非実行を失敗にする"
 // observable = "ProductionRuntimeのonFailure eventの件数・用途・元会話・原因・権限とrunOnce結果"
 // observation_boundary = "consumer"
 // scope = "real production preparation, call and binding lifetime with injected catalog/source/Agent"
@@ -30,14 +31,14 @@ import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src-electr
 // impact = "用途と元会話を特定して背景失敗を調査できないか会話・認証情報が漏れる"
 // distinction = "logger単体とcontroller単体は共有prepare/runOnceの結果を専用failure callbackまで観測しない"
 // @end-test-value
-test("all background purposes and source kinds report terminal failures once without raw diagnostics", async () => {
+test("all background purposes and source kinds retain causal diagnostics without credentials or prompt dumps", async () => {
   const f = await backgroundHistoryFixture();
   const events: BackgroundFailureEvent[] = [];
   const settings = normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } });
   let failCatalog = false, failAgent = false;
   const runtime = new BackgroundProductionRuntime({ executions: f.executions, onFailure: (event) => events.push(event),
     getAppSettings: () => settings,
-    getModelCatalog: () => { if (failCatalog) throw new Error("prompt SECRET token=https://host/?token=SECRET");
+    getModelCatalog: () => { if (failCatalog) throw new Error("Catalog connection refused token=CATALOG_SECRET");
       return { providers: [{ id: "claude", label: "Claude", defaultModelId: "test", defaultReasoningEffort: "",
         models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] }; },
     captureSource: async (source) => ({ history: f.scope(source.sessionId).history,
@@ -47,17 +48,22 @@ test("all background purposes and source kinds report terminal failures once wit
           completedAt: "now", assistantMessageSeq: 0 }] } }),
     resolveAuthority: () => ({ userId: "local-user", characterId: "character", allowedProjectIds: [] }),
     sourceKinds: { "character-memory": ["main", "auxiliary"], "target-memory": ["main", "auxiliary"], affect: ["main", "auxiliary"] },
-    runAgent: () => { if (failAgent) throw Object.assign(new Error("prompt SECRET token=https://host/?token=SECRET"), { code: "BACKGROUND_APPROVAL_REQUIRED" }); },
+    runAgent: () => { if (failAgent) throw Object.assign(new Error("Approval rejected authorization=AGENT_SECRET", {
+      cause: Object.assign(new Error("Service refused token=CAUSE_SECRET"), { code: "REMOTE_DENIED" }),
+    }), { code: "BACKGROUND_APPROVAL_REQUIRED" }); },
   });
   try {
     for (const id of ["main", "aux"]) for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
       settings.backgroundExecutionSettings[purpose] = { selection: { providerId: "claude", modelId: "test", approvalMode: "on-request" } };
-      const input = { purpose, source: f.scope(id, purpose).history.source, session: f.sessions.get(id)!, processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] };
+      const input = { purpose, source: f.scope(id, purpose).history.source, session: f.sessions.get(id)!, memoryTargets: [] };
       const before = events.length;
       failCatalog = true;
       assert.equal((await runtime.prepare(input)).status, "failed");
       assert.equal(events.length, before + 1);
       assert.equal(events.at(-1)!.code, "BACKGROUND_CATALOG_UNAVAILABLE");
+      assert.partialDeepStrictEqual(events.at(-1)!.diagnostic, {
+        cause: { message: "Catalog connection refused token=[REDACTED]" },
+      });
       failCatalog = false;
       const prepared = await runtime.prepare(input);
       assert.equal(prepared.status, "ready");
@@ -69,6 +75,11 @@ test("all background purposes and source kinds report terminal failures once wit
       assert.equal(events.at(-1)!.sourceKind, input.source.kind);
       assert.equal(events.at(-1)!.sourceSessionId, id);
       assert.equal(events.at(-1)!.permissions!.approvalMode, "on-request");
+      assert.partialDeepStrictEqual(events.at(-1)!.diagnostic, { code: "BACKGROUND_APPROVAL_REQUIRED",
+        message: "Approval rejected authorization=[REDACTED]", cause: { code: "REMOTE_DENIED", message: "Service refused token=[REDACTED]" } });
+      assert.match(JSON.stringify(events.at(-1)!.diagnostic), /stack/);
+      assert.equal(events.at(-1)!.execution!.executionId, events.at(-1)!.execution!.bindingId);
+      assert.ok(events.at(-1)!.execution!.startedAt <= events.at(-1)!.execution!.endedAt);
       failAgent = false;
       assert.deepEqual(await runtime.calls.runOnce({ ...prepared.call, userInput: "", onAdmitted() {} }), { kind: "completed" });
       const cancel = new AbortController(); cancel.abort();
@@ -99,7 +110,7 @@ test("bound MCP and CLI failures survive a normally returning Agent", async () =
   try {
     const other = f.started("other");
     for (const mode of ["mcp", "cli", "schema", "grant"] as const) {
-      const errors: unknown[] = [];
+      const errors: BackgroundFailureInput[] = [];
       const service = new BackgroundCallService({ executions: f.executions, onFailure: (failure) => errors.push(failure),
         runAgent: async (agent) => {
           const binding = f.project({ binding: agent.binding, handle: agent.handle, signal: agent.signal, admission: { state: agent.handle.revocationState } });
@@ -125,6 +136,18 @@ test("bound MCP and CLI failures survive a normally returning Agent", async () =
         scope: f.scope(), operationGrants: ["session_history.route.get_message"] }, selection: { providerId: "claude", modelId: "test" }, userInput: "", onAdmitted() {} });
       assert.deepEqual(result, { kind: "failed", code: mode === "schema" ? "BACKGROUND_OPERATION_FAILED" : mode === "grant" ? "SESSION_BINDING_FORBIDDEN" : "HISTORY_OUT_OF_RANGE" });
       assert.equal(errors.length, 1);
+      const operations = errors[0]!.execution!.operations.filter((operation) => operation.boundary === (mode === "cli" ? "history" : "mcp"));
+      assert.equal(operations.length, 2, mode);
+      assert.equal(operations[0]!.phase, "request");
+      assert.equal(operations[1]!.phase, "response");
+      assert.equal(operations[0]!.requestId, operations[1]!.requestId);
+      assert.equal(operations[1]!.outcome, "failure");
+      assert.equal(operations[1]!.boundary, mode === "cli" ? "history" : "mcp");
+      if (mode === "schema") {
+        assert.equal(operations[0]!.toolName, "session_history.get_message");
+        const diagnostic = JSON.stringify(operations[1]!.failure!.diagnostic);
+        assert.match(diagnostic, /seq/); assert.match(diagnostic, /number/); assert.match(diagnostic, /string/);
+      }
       assert.equal(other.admission.isCurrent!(), true);
     }
   } finally { await f.close(); }
@@ -132,10 +155,10 @@ test("bound MCP and CLI failures survive a normally returning Agent", async () =
 
 // @test-value v2
 // kind = "contract"
-// claim = "三用途のMain/Auxiliary登録は保存後に既知拒否が起きてもprefixを保持し、Agent正常returnを失敗へ変換する"
+// claim = "三用途のMain/Auxiliary登録は拒否前後と途中保存を保持し、MCP/CLIの実保存例外の原因と保存IDを失敗診断へ残す"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "後続登録拒否を成功として扱うか、先行保存を取消すか、bindingを残す"
-// observable = "実bound MCPの保存と拒否応答、Agent正常return到達、runOnce失敗code、一件のfailure event、SQLiteから読み直した保存件数"
+// fault = "登録拒否を成功にするか保存を取消すか、公開エラーへの変換で保存例外を失うか秘密をログに残す"
+// observable = "MCP/CLIの公開応答、runOnce失敗code、一件のfailure eventの境界別操作列・保存ID・DB実原因、SQLite保存件数"
 // observation_boundary = "public-boundary"
 // scope = "all background registration handlers through managed MCP, HTTP service and SQLite Worker"
 // lifecycle = "permanent"
@@ -154,11 +177,12 @@ test("registration failures preserve earlier saved Memory and Affect for both so
     }
     let savedMemory = 0, savedAffect = 0;
     for (const id of ["main", "aux"]) for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
-      const errors: unknown[] = [];
+      const errors: BackgroundFailureInput[] = [];
       const key = `${id}-${purpose}`;
       let savedResponse: Record<string, unknown> | undefined;
       let rejectedResponse: Record<string, unknown> | undefined;
       let returnedNormally = false;
+      const storageResponses: Record<string, unknown>[] = [];
       const service = new BackgroundCallService({ executions: f.executions, onFailure: (error) => errors.push(error), runAgent: async (agent) => {
         const binding = f.project({ binding: agent.binding, handle: agent.handle, signal: agent.signal, admission: { state: agent.handle.revocationState } });
         const { client } = await f.connect(binding, "memoryUrl");
@@ -172,12 +196,48 @@ test("registration failures preserve earlier saved Memory and Affect for both so
           : purpose === "character-memory" ? { idempotencyKey: `${key}-bad`, episode: { ...args.episode, observedFact: "" } }
           : { ...args, target: { kind: "project", project: { type: "id", id: "ungranted" } } };
         rejectedResponse = await client.callTool({ name: tool, arguments: rejected });
+        const late = purpose === "affect" ? args : { ...args, idempotencyKey: `${key}-late` };
+        const lateResponse = await client.callTool({ name: tool, arguments: late });
+        assert.equal(lateResponse.isError, undefined);
+        for (const transport of ["mcp", "cli"] as const) {
+          const storageError = Object.assign(new Error("database is locked token=STORE_SECRET", {
+            cause: new Error("The storage write was rejected credential=CAUSE_SECRET"),
+          }), { code: "SQLITE_BUSY" });
+          const originalAppend = f.memory.append;
+          const originalRecord = f.memoryWorker.affectStorage.recordEvent;
+          let writes = 0;
+          if (purpose === "affect") {
+            f.memoryWorker.affectStorage.recordEvent = (...input) => ++writes === 2
+              ? Promise.reject(storageError) : originalRecord(...input);
+          } else f.memory.append = async () => { throw storageError; };
+          const storageArgs = purpose === "affect" ? { candidates: [0, 1].map((index) => ({ ...args.candidates![0], targetId: `${key}-${transport}-${index}` })) }
+            : { ...args, idempotencyKey: `${key}-${transport}-storage` };
+          try {
+            if (transport === "mcp") {
+              const response = await client.callTool({ name: tool, arguments: storageArgs });
+              assert.equal(response.isError, true);
+              storageResponses.push(response.structuredContent as Record<string, unknown>);
+            } else {
+              const command = purpose === "affect" ? "affect-appraise" : purpose === "character-memory" ? "character-memory-append-episode" : "append";
+              await assert.rejects(promisify(execFile)(process.execPath, [resolve("resources/cli/withmate-memory.mjs"), command, "--json", JSON.stringify(storageArgs)],
+                { cwd: f.directory, env: f.cliEnv(binding), windowsHide: true }), (error: unknown) => {
+                const response = error as { code: number; stdout: string };
+                assert.equal(typeof response.code, "number");
+                storageResponses.push(JSON.parse(response.stdout));
+                return true;
+              });
+            }
+          } finally {
+            f.memory.append = originalAppend;
+            f.memoryWorker.affectStorage.recordEvent = originalRecord;
+          }
+        }
         returnedNormally = true;
       } });
       const initial = f.scope(id, purpose);
       const result = await service.runOnce({ context: { session: f.sessions.get(id)!, actorSessionId: id,
         authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
-        scope: { ...initial, history: { ...initial.history, throughMessageSeq: 1 }, processing: { afterTurnId: null, throughTurnId: id === "main" ? 1 : 2 },
+        scope: { ...initial, history: { ...initial.history, throughMessageSeq: 1 },
           memoryTargets: [{ owner: "user", scope: "global" }, { owner: "character", scope: "character", character: { type: "id", id: "character" } }] },
         operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS[purpose].operation] }, selection: { providerId: "claude", modelId: "test" }, userInput: "", onAdmitted() {} });
       assert.equal(returnedNormally, true);
@@ -186,7 +246,29 @@ test("registration failures preserve earlier saved Memory and Affect for both so
       assert.deepEqual(result, { kind: "failed", code: purpose === "target-memory" ? "MEMORY_INVALID_FIELD"
         : purpose === "character-memory" ? "BACKGROUND_OPERATION_FAILED" : "invalid_input" }, `${id}/${purpose}`);
       assert.equal(errors.length, 1);
-      if (purpose === "affect") savedAffect++; else savedMemory++;
+      const operations = errors[0]!.execution!.operations;
+      assert.deepEqual(operations.map((operation) => operation.sequence), operations.map((_, index) => index + 1));
+      const responses = operations.filter((operation) => operation.phase === "response" && operation.boundary === "mcp");
+      assert.deepEqual(responses.slice(0, 3).map((operation) => operation.outcome), ["success", "failure", "success"]);
+      assert.ok(operations.every((operation) => operation.boundary === "registration" || operation.boundary === "mcp"));
+      for (const response of [responses[0]!, responses[2]!]) assert.match(JSON.stringify(response.result), purpose === "affect" ? /eventId/ : /"id"/);
+      const storageFailures = operations.filter((operation) => operation.boundary === "registration" && operation.failure
+        && JSON.stringify(operation.failure.diagnostic).includes("SQLITE_BUSY"));
+      assert.equal(storageFailures.length, 2, `${id}/${purpose}`);
+      for (const failure of storageFailures) {
+        assert.match(JSON.stringify(failure.failure!.diagnostic), /database is locked token=\[REDACTED\]/);
+        assert.match(JSON.stringify(failure.failure!.diagnostic), /storage write was rejected credential=\[REDACTED\]/);
+        if (purpose === "affect") assert.match(JSON.stringify(failure.result), /eventId/);
+      }
+      assert.equal(storageResponses.length, 2);
+      for (const response of storageResponses) {
+        assert.equal(JSON.stringify(response).includes("SQLITE_BUSY"), false);
+        assert.equal(JSON.stringify(response).includes("database is locked"), false);
+      }
+      assert.equal(JSON.stringify(errors).includes("Saved answer"), false);
+      assert.equal(JSON.stringify(errors).includes("STORE_SECRET"), false);
+      assert.equal(JSON.stringify(errors).includes("CAUSE_SECRET"), false);
+      if (purpose === "affect") savedAffect += 4; else savedMemory += 2;
       assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM memory_entries_v6").get()!.n, savedMemory);
       assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM character_affect_events_v6").get()!.n, savedAffect);
       assert.equal(f.bindings.getActiveBindingCount(), 0);
@@ -196,10 +278,10 @@ test("registration failures preserve earlier saved Memory and Affect for both so
 
 // @test-value v2
 // kind = "contract"
-// claim = "拒否candidate付きのAffect結果は保存件数に関係なく失敗とし、既存ProviderTurnErrorの有限reasonだけを安全な原因へ写像する"
+// claim = "Affectの候補別拒否と部分保存IDを保持し、Provider実原因は診断項目だけを秘密除去して残す"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "Affectのrejectedを無視するか、Provider例外の機密messageを原因へ転載する"
-// observable = "safe failure projectionのcode・reasonと、拒否のない0件結果がfailureを返さないこと"
+// fault = "Affectのrejectedや実原因を捨てるか、Providerのtokenや会話partialResultを転載する"
+// observable = "failure projectionのcode・候補別diagnostic・部分保存IDと、拒否のない0件結果がfailureを返さないこと"
 // observation_boundary = "component-behavior"
 // scope = "trusted operation-result and app-owned ProviderTurnError reason projection"
 // lifecycle = "permanent"
@@ -208,13 +290,28 @@ test("registration failures preserve earlier saved Memory and Affect for both so
 // @end-test-value
 test("safe projection distinguishes candidate rejection and finite provider reasons", () => {
   for (const saved of [[], [{ id: "saved-prefix" }]]) {
-    assert.deepEqual(backgroundOperationFailure({ saved, rejected: [{ code: "invalid_input", message: "SECRET" }] }, "registration"),
-      { code: "invalid_input", reason: "The bound Character operation failed.", stage: "registration" });
+    assert.deepEqual(backgroundOperationFailure({ saved, rejected: [{ code: "invalid_input", message: "Expected number", details: { path: ["candidates", 0], expected: "number" } }] }, "registration"),
+      { code: "invalid_input", reason: "The bound Character operation failed.", stage: "registration",
+        diagnostic: { errors: [{ code: "invalid_input", message: "Expected number", details: { path: ["candidates", 0], expected: "number" } }] } });
   }
+  const rejected = backgroundOperationFailure({ rejected: [
+    { code: "invalid_input", message: "Expected number", candidateIndex: 0 },
+    { code: "authority_denied", message: "Target not permitted", candidateIndex: 1 },
+  ] }, "registration");
+  assert.partialDeepStrictEqual(rejected?.diagnostic, { errors: [
+    { code: "invalid_input", message: "Expected number", candidateIndex: 0 },
+    { code: "authority_denied", message: "Target not permitted", candidateIndex: 1 },
+  ] });
+  assert.deepEqual(backgroundOperationResult({ error: { details: { saved: [{ eventId: "saved-event", memoryEntryId: "saved-memory" }], body: "PRIVATE" } } }),
+    { error: { details: { saved: [{ eventId: "saved-event", memoryEntryId: "saved-memory" }] } } });
+  assert.deepEqual(classifyBackgroundFailure({ diagnostic: { message: "Denied token=PRIVATE", prompt: "PRIVATE", arguments: { body: "PRIVATE" } } }, "agent").diagnostic,
+    { message: "Denied token=[REDACTED]" });
   assert.equal(backgroundOperationFailure({ saved: [], rejected: [] }, "registration"), undefined);
   for (const [reason, suffix] of [["usage_limit", "USAGE_LIMIT"], ["auth", "AUTH"], ["network", "NETWORK"], ["provider_unavailable", "UNAVAILABLE"]] as const) {
-    const failure = classifyBackgroundFailure(new ProviderTurnError("SECRET", { threadId: "", assistantText: "SECRET", usage: null }, false, reason), "agent");
+    const failure = classifyBackgroundFailure(new ProviderTurnError("Connection refused token=SECRET", { threadId: "", assistantText: "SECRET", usage: null }, false, reason), "agent");
     assert.equal(failure.code, `BACKGROUND_PROVIDER_${suffix}`); assert.equal(failure.reason.includes("SECRET"), false);
+    assert.partialDeepStrictEqual(failure.diagnostic, { name: "ProviderTurnError", message: "Connection refused token=[REDACTED]", reason });
+    assert.equal(JSON.stringify(failure).includes("SECRET"), false);
   }
 });
 

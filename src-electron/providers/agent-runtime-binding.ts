@@ -5,9 +5,10 @@ import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/ba
 import { assertSessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { BACKGROUND_REGISTRATION_OPERATIONS, getBackgroundMemoryFileOperations } from "../../src-shared/agent-runtime/background-operations.js";
 
 const backgroundReadOperations = new Set([...getSessionHistoryAgentRuntimeOperations(), ...getBackgroundMemoryReadOperations()]);
+const backgroundFileOperations = new Set(getBackgroundMemoryFileOperations());
 
 export type AgentRuntimeOperation = string;
 
@@ -223,11 +224,6 @@ export class AgentRuntimeBindingRegistry {
       || !providerId || getProviderAgentRuntimeBindingCapability(providerId).transport !== "env") {
       throw new Error("Background binding requires its real source Session and a supported provider.");
     }
-    const { afterTurnId, throughTurnId } = input.scope.processing;
-    if (!Number.isSafeInteger(throughTurnId) || throughTurnId < 1
-      || (afterTurnId !== null && (!Number.isSafeInteger(afterTurnId) || afterTurnId < 0 || afterTurnId >= throughTurnId))) {
-      throw new Error("Background processing range is invalid.");
-    }
     const reference = randomBytes(32).toString("base64url");
     const record: AgentRuntimeBindingRecord = {
       bindingId: randomUUID(), bindingReferenceHash: hashBindingReference(reference),
@@ -254,6 +250,7 @@ export class AgentRuntimeBindingRegistry {
     const result = this.resolveIdentity(bindingReference, now);
     if (!result.ok) return result;
     if (result.binding.backgroundScope && !backgroundReadOperations.has(operation)
+      && !(backgroundFileOperations.has(operation) && result.binding.backgroundScope.fileAccess?.exportRoot)
       && BACKGROUND_REGISTRATION_OPERATIONS[result.binding.backgroundScope.purpose].operation !== operation) {
       return { ok: false, code: "SESSION_BINDING_FORBIDDEN" };
     }

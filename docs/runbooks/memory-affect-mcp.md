@@ -27,7 +27,7 @@ CLIとMCPは27の公開操作を同じtool registry、input schema、runtime cli
 
 `memory.get_file`と`memory.export_files`は、target照合後に新しい出力fileだけを作成する。既存fileを上書きしないためdestructive annotationは付けない。ただし、external side effectを持ち、同じrequestの再実行は既存file errorになり得る。そのためread-onlyまたはidempotentとは表示しない。
 
-Characterのget/search/inspectと一般Memoryの検索・取得・一覧・診断はread-onlyである。Characterのappraise/append_episodeと一般Memoryのappendはbounded writeである。
+Characterのget/search/inspectと一般Memoryの検索・取得・一覧・診断はread-onlyである。Characterのappraise/append_episodeと一般Memoryのappendは認可されたwriteであり、登録件数に固定上限はない。項目単位の制約は維持する。
 
 Character Memoryのcorrect/forgetと一般Memoryのforget/move_entryをユーザーの代理として実行できる。条件は明示target、具体的な理由、idempotency key、変更後のread-backである。一般Memoryのbulk forgetは実行前にdry-runする。
 
@@ -79,6 +79,10 @@ Memoryは重要な決定や長期的な選好だけでなく、小さな好み�
 
 `memory.append`では`target`、`kind`、`title`、`body`、`preview`、`idempotencyKey`を明示する。`tags`は省略でき、省略時は`[]`と同じ値へ正規化する。必要な分類がある場合は明示tagを付ける。タグの自動生成は行わない。
 
+複数の独立記録を渡す場合は、同じ操作へ共通targetと`entries`を指定する。Character Memoryも同じappend_episode操作へ`episodes`を指定できる。各itemは単件内容と自身のidempotency keyを持ち、単件fieldとは混在させない。非空配列の件数上限はないが、本文文字数・一entryの添付数等は維持する。Affect candidatesにも固定件数上限はない。
+
+一括結果は各input indexにsaved／failed／unknown／not_runと既存単件resultを返す。途中失敗・実行条件喪失では残りを実行せず、確定済保存を保持する。top errorがある場合は項目別結果とeffectを確認し、全件未保存としてbatch全体を自動再送しない。項目の変更なしinputと同じkeyによる既存replayを利用する。
+
 title/previewは検索・一覧で本文取得前にも表示されるため、表示してよい短い値をAgentが指定する。短い本文をそのままpreviewにする場合も表示範囲を確認し、previewの280 UTF-16 code units上限を守る。本文の自動切り出しでは要点・分類語が失われ、本文限定の内容を検索結果へ出す可能性があるため、自動補完はしない。
 
 タグなしでも本文検索、通常一覧、ID指定の本文取得は使えるが、tag一覧やtag filterの対象にはならない。既存の全項目明示入力、target authority、入力検証、idempotency、訂正・忘却の境界は維持する。応答喪失時は入力とkeyを変えず再照合する。
@@ -101,7 +105,7 @@ title/previewは検索・一覧で本文取得前にも表示されるため、�
 | `get-file` | `memory.get_file` | `target,objectId,outputPath`。絶対path・非上書き |
 | `export-files` | `memory.export_files` | `target,entryId,outputDirectoryPath`。絶対path・非上書き |
 | `list-tags` | `memory.list_tags` | target 1件、withCounts/sampleLimit/limit/cursor |
-| `append` | `memory.append` | 明示target、本文・preview・kind・title、idempotencyKey |
+| `append` | `memory.append` | 共通targetと単件field、またはentries（各itemの内容とidempotencyKey）。一括はindex別結果 |
 | `forget` | `memory.forget` | target/entryIds/reason/idempotencyKey。dryRunで非変更preview |
 | `move-entry` | `memory.move_entry` | entryId/from/to/reason/idempotencyKey。entry identityを保持 |
 | `context-get` | `character_context.get` | binding必須。任意query、memoryLimit既定3 |
@@ -110,7 +114,7 @@ title/previewは検索・一覧で本文取得前にも表示されるため、�
 | `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/explicitUserRequest/reason/replacement |
 | `affect-reset` | `character_affect.reset` | binding必須。layer/expectedVersion/explicitUserRequest/reason/resetAt/idempotencyKey |
 | `character-memory-search` | `character_memory.search` | binding必須。query、明示scope、limit既定5 |
-| `character-memory-append-episode` | `character_memory.append_episode` | binding必須。episode/idempotencyKey |
+| `character-memory-append-episode` | `character_memory.append_episode` | binding必須。episode/idempotencyKeyまたはepisodes。一括はindex別結果 |
 | `character-memory-correct` | `character_memory.correct` | binding必須。entryId/reason/idempotencyKey/replacement、read-back |
 | `character-memory-forget` | `character_memory.forget` | binding必須。entryId/reason/idempotencyKey、read-back |
 | `character-metrics` | `character_context.metrics` | 本文を含まないruntime/DB全体の診断counter |

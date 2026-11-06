@@ -335,7 +335,8 @@ it("実保存イベントからMemoryを発火し背景失敗を会話から隔�
       sourceKinds: { "character-memory": [kind], "target-memory": [kind] },
       runAgent(input) { agents.push(input.scope.purpose); assert.equal(input.scope.history.source.kind, kind); throw new Error("background generation failed"); } });
     const controller = new MemoryRecordingController({ runtime: background, getSettings: () => settings,
-      captureSource: async () => structuredClone(captured), resolveAuthority: authority });
+      captureSource: async () => structuredClone(captured), resolveAuthority: authority,
+      readCharacterDefinition: async () => "fixture Character definition" });
     background.start(); controller.start();
     const normal = createProgressRuntime(session, async () => createPartialResult({ assistantText: "saved" }), {
       appendTerminalSession(next, terminal) {

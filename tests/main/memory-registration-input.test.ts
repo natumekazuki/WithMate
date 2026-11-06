@@ -15,14 +15,15 @@ import { buildMemoryRegistrationInput, MEMORY_REGISTRATION_PRESETS, type MemoryR
 // @end-test-value
 test("二用途の編集本文をpresetへ重ねず実行情報から分離する", () => {
   for (const purpose of ["character-memory", "target-memory"] as const) {
-    const scope: MemoryRegistrationScope = { purpose, processing: { afterTurnId: 1, throughTurnId: 3 },
+    const scope: MemoryRegistrationScope = { purpose,
       history: { source: { kind: "main", sessionId: "main", incarnationId: "inc", ownerIdentity: "owner" }, fromMessageSeq: 2, throughMessageSeq: 5 },
-      memoryTargets: [{ owner: "user", scope: "global" }] };
+      memoryTargets: [{ owner: "user", scope: "global" }],
+      fileAccess: { readRoots: ["/workspace"], exportRoot: "/session/memory-exports" } };
     for (const instructionText of [undefined, "サブエージェントを使わない。", "", "  edited\ntext  "] as const) {
       const value = buildMemoryRegistrationInput({ scope, materials: "saved material", instructionText });
       assert.equal(value, ["# 登録指示本文", instructionText ?? MEMORY_REGISTRATION_PRESETS[purpose],
-        "# 実行情報（アプリが確定した読取・登録範囲）", JSON.stringify({ purpose, processing: scope.processing,
-          history: { fromMessageSeq: 2, throughMessageSeq: 5 }, memoryTargets: scope.memoryTargets }),
+        "# 実行情報（アプリが確定した読取・登録範囲）", JSON.stringify({ purpose,
+          history: { fromMessageSeq: 2, throughMessageSeq: 5 }, memoryTargets: scope.memoryTargets, fileAccess: scope.fileAccess }),
         "# 参照材料", "saved material", "# 接続済み操作の利用情報",
         `MCP: ${purpose === "character-memory" ? "character_memory.append_episode" : "memory.append"}。入力項目は公開tool schemaを参照。identityと登録先上限はruntime bindingから解決される。`,
         `CLI: withmate-memory ${purpose === "character-memory" ? "character-memory-append-episode" : "append"} --json '<toolと同じ公開入力JSON>'。接続方法は実行環境の既存CLI設定を使う。`,

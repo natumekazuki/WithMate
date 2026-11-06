@@ -36,8 +36,7 @@ function fixture() {
     return {
       context: { actorSessionId: id, session, authoritySnapshot: { characterId: "character", userId: "local-user" },
         operationGrants: ["session_history.route.list_messages"],
-        scope: { purpose, history: { source, fromMessageSeq: 0, throughMessageSeq: 1 },
-          processing: { afterTurnId: null, throughTurnId: 1 }, memoryTargets: [] } },
+        scope: { purpose, history: { source, fromMessageSeq: 0, throughMessageSeq: 1 }, memoryTargets: [] } },
       selection: { providerId: "claude", modelId: "fixed-model" }, userInput: "Use the permitted saved material.",
       onAdmitted: () => {},
     };
@@ -133,41 +132,128 @@ test("Agent completion and callback errors release ownership", async () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "同用途同会話のAgentを並行開始し、各受付を実開始時に通知して個別の完了・取消を他の実行へ波及させない"
-// oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#同時上限の撤廃" }
-// fault = "同用途を見送るか直列化する、通知を完了まで遅延する、または一件の終了で他のadmissionを閉じる"
-// observable = "Agent開始数、終了前の受付通知、実行別結果と取消signal、残った実行のadmission"
+// claim = "同source用途のnative threadは直列継続し、他用途と別sourceは並行して各回の権限を独立に閉じる"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "同threadへ同時送信する、native文脈を失う、または別source用途まで待機させる"
+// observable = "Agent開始数・継続ID/thread、bindingとcapabilityの更新、別実行の有効性、終了後権限"
 // observation_boundary = "consumer"
 // scope = "concurrent runOnce ownership through Agent awaits"
 // lifecycle = "permanent"
-// impact = "有効な背景処理が開始されないか、別実行の終了で処理と権限が失われる"
-// distinction = "型検査とbegin単体testはrunOnceの通知時点・Agentのawait・個別finallyを確認できない。小さい固定並行数で検証する"
+// impact = "生成文脈や操作が同thread内で競合し、別用途や会話まで止まる"
+// distinction = "型検査とbegin単体testはnative継続と呼出権限の異なる寿命を確認できない"
 // @end-test-value
-test("concurrent same-scope Agents receive independent admission and cleanup", async () => {
-  const f = fixture(), releases = Array.from({ length: 5 }, deferred);
+test("same-scope native context is serial while other sources and purposes remain independent", async () => {
+  const f = fixture(), releases = Array.from({ length: 4 }, deferred);
   const agents: BackgroundAgentInput[] = []; let admitted = 0;
   const service = new BackgroundCallService({ executions: f.executions, runAgent: async (input) => {
     const index = agents.length; agents.push(input);
     assert.equal(admitted, index + 1);
+    input.continuation.onThreadId(`native-${input.continuation.id}`);
     await releases[index]!.promise; assertRuntimeTurnAdmission();
   } });
-  const pending = releases.map(() => service.runOnce({ ...f.input(), onAdmitted: () => { admitted += 1; } }));
+  const invoke = (purpose: BackgroundPurpose = "affect", id = "main") => service.runOnce({ ...f.input(purpose, id), onAdmitted: () => { admitted += 1; } });
+  const pending = [invoke(), invoke(), invoke("target-memory"), invoke("affect", "aux")];
   try {
-    assert.deepEqual([admitted, agents.length, f.bindings.getActiveBindingCount()], [5, 5, 5]);
-    assert.equal(new Set(agents.map((agent) => agent.binding.bindingId)).size, 5);
-    releases[1]!.resolve(); assert.deepEqual(await pending[1], { kind: "completed" });
-    f.executions.cancel(agents[3]!.binding.bindingId);
-    releases[3]!.resolve(); assert.deepEqual(await pending[3], { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" });
+    assert.deepEqual([admitted, agents.length, f.bindings.getActiveBindingCount()], [3, 3, 3]);
+    assert.equal(new Set(agents.map((agent) => agent.continuation.id)).size, 3);
+    releases[0]!.resolve(); assert.deepEqual(await pending[0], { kind: "completed" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(agents.length, 4);
+    assert.equal(agents[3]!.continuation.id, agents[0]!.continuation.id);
+    assert.equal(agents[3]!.continuation.threadId, `native-${agents[0]!.continuation.id}`);
+    assert.notEqual(agents[3]!.binding.bindingId, agents[0]!.binding.bindingId);
+    assert.notEqual(agents[3]!.handle.capability, agents[0]!.handle.capability);
+    assert.equal(f.bindings.resolveIdentity(agents[0]!.binding.bindingReference).ok, false);
     assert.equal(f.bindings.getActiveBindingCount(), 3);
-    for (const index of [0, 2, 4]) {
+    for (const index of [1, 2, 3]) {
       assert.equal(agents[index]!.signal.aborted, false);
-      releases[index]!.resolve(); assert.deepEqual(await pending[index], { kind: "completed" });
+      releases[index]!.resolve();
     }
+    assert.ok((await Promise.all(pending)).every((result) => result.kind === "completed"));
     assert.equal(f.bindings.getActiveBindingCount(), 0);
-    assert.equal(new Set(f.closes).size, 5); assert.equal(f.closes.length, 5);
+    assert.equal(new Set(f.closes).size, 4); assert.equal(f.closes.length, 4);
   } finally {
-    f.executions.stop(); for (const release of releases) release.resolve(); await Promise.allSettled(pending);
+    service.stop(); f.executions.stop(); for (const release of releases) release.resolve(); await Promise.allSettled(pending);
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "失敗後も利用可能threadを次回へ引継ぎ、失敗材料を渡し、正常な登録不要終了後は古い失敗を再送しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "失敗でthreadを消すか、全件未保存と推定するか、成功後も古い失敗を繰返す"
+// observable = "次回Agentの継続thread・userInputの実失敗原因と元入力、呼出回数、正常終了"
+// observation_boundary = "consumer"
+// scope = "BackgroundCallService across failed and subsequent successful invocations"
+// lifecycle = "permanent"
+// distinction = "単発保存testやadapter resume testだけでは次回発火へ渡す失敗材料を確認できない"
+// @end-test-value
+test("usable thread and failure evidence continue on the next call without an automatic retry", async () => {
+  const f = fixture(), agents: BackgroundAgentInput[] = [];
+  const service = new BackgroundCallService({ executions: f.executions, runAgent(input) {
+    agents.push(input);
+    if (agents.length === 1) {
+      input.continuation.onThreadId("usable-native-thread");
+      throw Object.assign(new Error("Registration was refused token=PRIVATE"), { code: "MEMORY_FORBIDDEN" });
+    }
+  } });
+  try {
+    assert.equal((await service.runOnce(f.input())).kind, "failed");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(agents.length, 1);
+    assert.deepEqual(await service.runOnce({ ...f.input(), userInput: "New saved turn" }), { kind: "completed" });
+    assert.equal(agents[1]!.continuation.id, agents[0]!.continuation.id);
+    assert.equal(agents[1]!.continuation.threadId, "usable-native-thread");
+    assert.ok(agents[1]!.userInput.startsWith("New saved turn"));
+    assert.match(agents[1]!.userInput, /MEMORY_FORBIDDEN/);
+    assert.match(agents[1]!.userInput, /Registration was refused token=\[REDACTED\]/);
+    assert.equal(agents[1]!.userInput.includes("PRIVATE"), false);
+    await service.runOnce(f.input());
+    assert.equal(agents[2]!.userInput, f.input().userInput);
+  } finally { service.stop(); f.executions.stop(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Provider切替は旧呼出の権限を失効しcleanup後に新threadを開始、遅延結果を無視しruntime停止とsource削除で継続を破棄する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "旧credentialを延命するか遅延threadを新状態へ混ぜるか、停止・削除後にnative文脈を復元する"
+// observable = "切替時signalとbinding失効、新AgentのProvider/継続ID/thread、停止・削除後の新thread"
+// observation_boundary = "consumer"
+// scope = "provider selection invalidation, source lifecycle and in-memory continuity ownership"
+// lifecycle = "permanent"
+// risk_tags = ["authorization"]
+// distinction = "型検査や逐次resumeでは取消中の遅延結果と再起動境界を観測できない"
+// @end-test-value
+test("provider changes revoke old calls and ignore late thread updates before starting fresh", async () => {
+  const f = fixture(), release = deferred(), agents: BackgroundAgentInput[] = [];
+  const service = new BackgroundCallService({ executions: f.executions, runAgent: async (input) => {
+    agents.push(input);
+    if (agents.length === 1) { await release.promise; input.continuation.onThreadId("late-old-thread"); }
+    else input.continuation.onThreadId("new-native-thread");
+  } });
+  const old = service.runOnce(f.input());
+  try {
+    service.setProvider("affect", "codex");
+    assert.equal(agents[0]!.signal.aborted, true);
+    assert.equal(f.bindings.resolveIdentity(agents[0]!.binding.bindingReference).ok, false);
+    const nextInput = { ...f.input(), selection: { providerId: "codex", modelId: "next" } };
+    const next = service.runOnce(nextInput);
+    assert.equal(agents.length, 1);
+    release.resolve(); assert.equal((await old).kind, "canceled");
+    assert.equal((await next).kind, "completed");
+    assert.notEqual(agents[1]!.continuation.id, agents[0]!.continuation.id);
+    assert.equal(agents[1]!.continuation.threadId, null);
+    assert.equal(agents[1]!.selection.providerId, "codex");
+    service.stop(); f.executions.stop(); f.executions.start();
+    await service.runOnce(nextInput);
+    assert.equal(agents[2]!.continuation.threadId, null);
+    assert.notEqual(agents[2]!.continuation.id, agents[1]!.continuation.id);
+    service.forgetSource("main", "main");
+    await service.runOnce(nextInput);
+    assert.equal(agents[3]!.continuation.threadId, null);
+    assert.notEqual(agents[3]!.continuation.id, agents[2]!.continuation.id);
+  } finally { release.resolve(); service.stop(); f.executions.stop(); await old; }
 });
 
 // @test-value v2

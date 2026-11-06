@@ -200,6 +200,20 @@ export type CharacterMemoryCorrectRequest = {
   replacement: CharacterMemoryEpisodeInput;
 };
 
+export type CharacterMemoryAppendEpisodesRequest = Omit<CharacterMemoryAppendEpisodeRequest, "idempotencyKey" | "episode"> & {
+  episodes: Array<Pick<CharacterMemoryAppendEpisodeRequest, "idempotencyKey" | "episode">>;
+};
+
+export type CharacterMemoryAppendEpisodesResponse = {
+  schemaVersion: typeof CHARACTER_CONTEXT_SCHEMA_VERSION;
+  results: Array<
+    | { index: number; status: "saved"; result: CharacterMemoryMutationResponse }
+    | { index: number; status: "failed" | "unknown"; result: CharacterContextErrorResponse }
+    | { index: number; status: "not_run" }
+  >;
+  error?: CharacterContextErrorResponse["error"];
+};
+
 export type CharacterMemoryForgetRequest = {
   schemaVersion: typeof CHARACTER_CONTEXT_SCHEMA_VERSION;
   characterId: string;

@@ -1,6 +1,6 @@
 import type { BackgroundExecutionScope, BackgroundPurpose } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { BACKGROUND_REGISTRATION_OPERATIONS, getBackgroundMemoryFileOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
@@ -13,8 +13,9 @@ import type { SessionBackgroundEvent } from "../session/session-background-event
 import { BackgroundCallService, type BackgroundAgentPort, type BackgroundCallInput } from "./background-call-service.js";
 import type { BackgroundExecutionService } from "./background-execution-service.js";
 import type { BackgroundRegistration } from "./background-registration.js";
-import { projectBackgroundFailure, type BackgroundFailureEvent, type BackgroundFailureInput } from "./background-failure.js";
+import { classifyBackgroundFailure, projectBackgroundFailure, type BackgroundFailureEvent, type BackgroundFailureInput } from "./background-failure.js";
 import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
+import { captureBackgroundMemoryFileAccess } from "../memory/background-memory-file-access.js";
 
 export type BackgroundRuntimeEvent =
   | (SessionBackgroundEvent & Readonly<{ source: BackgroundSourceRef }>)
@@ -25,7 +26,6 @@ export type PrepareBackgroundCallInput = Readonly<{
   purpose: BackgroundPurpose;
   source: BackgroundSourceRef;
   session: Session;
-  processing: BackgroundExecutionScope["processing"];
   memoryTargets: BackgroundExecutionScope["memoryTargets"];
 }>;
 
@@ -33,22 +33,19 @@ export type PreparedBackgroundCall =
   | { status: "ready"; call: Omit<BackgroundCallInput, "userInput" | "onAdmitted">; instructionText?: string }
   | { status: "not_configured" | "unavailable" | "failed"; code: string; reason: string };
 
-/** Purpose controllers choose processing positions; the shared builder only fixes and validates their scope. */
+/** History is an authority window, not an AI processing-progress interval. */
 export function buildBackgroundExecutionScope(
   captured: CapturedBackgroundSource,
-  input: Pick<PrepareBackgroundCallInput, "purpose" | "processing" | "memoryTargets">,
+  input: Pick<PrepareBackgroundCallInput, "purpose" | "memoryTargets">,
 ): BackgroundExecutionScope {
-  const { afterTurnId, throughTurnId } = input.processing;
-  if ((afterTurnId !== null && (!Number.isSafeInteger(afterTurnId) || afterTurnId < 0))
-    || !Number.isSafeInteger(throughTurnId) || throughTurnId <= (afterTurnId ?? 0)
-    || !captured.snapshot.turns.some((turn) => turn.id === throughTurnId
-      && turn.phase !== "running" && turn.completedAt && turn.assistantMessageSeq !== undefined
+  if (!captured.snapshot.turns.some((turn) => ["completed", "failed", "canceled"].includes(turn.phase)
+      && turn.completedAt && turn.assistantMessageSeq !== undefined
       && turn.assistantMessageSeq >= captured.history.fromMessageSeq
       && turn.assistantMessageSeq <= captured.history.throughMessageSeq)) {
-    throw new Error("Background processing requires a saved terminal Turn within the captured history.");
+    throw new Error("Background registration requires a saved terminal Turn within the captured history.");
   }
   return structuredClone({ purpose: input.purpose, history: captured.history,
-    processing: input.processing, memoryTargets: input.memoryTargets });
+    memoryTargets: input.memoryTargets });
 }
 
 /** Shared production seam; scheduling and storage policy belong to purpose controllers. */
@@ -63,14 +60,16 @@ export class BackgroundProductionRuntime {
     getModelCatalog(session: Session, providerId: string): ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
+    resolveSessionFolderPath?(source: BackgroundSourceRef): string;
     sourceKinds: BackgroundRegistration["sourceKinds"];
     onFailure?: (event: BackgroundFailureEvent) => void;
   }) {
     this.calls = new BackgroundCallService({ executions: deps.executions, runAgent: deps.runAgent,
-      onFailure: (failure) => this.reportFailure(failure) });
+      onFailure: (failure) => this.reportFailure(failure, false) });
   }
 
-  reportFailure(input: BackgroundFailureInput): void {
+  reportFailure(input: BackgroundFailureInput, remember = true): void {
+    if (remember) this.calls.captureFailureRecorder(input)(input);
     try { this.deps.onFailure?.(projectBackgroundFailure(input)); }
     catch { console.warn("Background failure diagnostic could not be written."); }
   }
@@ -81,6 +80,11 @@ export class BackgroundProductionRuntime {
   }
 
   publish(event: BackgroundRuntimeEvent): void {
+    if (event.kind === "settings_changed") {
+      for (const purpose of ["character-memory", "target-memory", "affect"] as const) {
+        this.calls.setProvider(purpose, event.settings.backgroundExecutionSettings[purpose].selection?.providerId);
+      }
+    }
     for (const listener of this.#listeners) {
       try {
         void Promise.resolve(listener(event)).catch((error) => console.warn("Background controller callback failed", error));
@@ -90,20 +94,29 @@ export class BackgroundProductionRuntime {
 
   start(): void { this.deps.executions.start(); }
   stop(): void {
+    this.calls.stop();
     this.deps.executions.stop();
     this.publish({ kind: "stopped" });
   }
 
+  forgetSource(kind: BackgroundSourceRef["kind"], sessionId: string): void { this.calls.forgetSource(kind, sessionId); }
+
   async prepare(input: PrepareBackgroundCallInput): Promise<PreparedBackgroundCall> {
+    const rememberFailure = this.calls.captureFailureRecorder(input);
+    const reportFailure = (failure: BackgroundFailureInput) => {
+      rememberFailure(failure);
+      this.reportFailure(failure, false);
+    };
     let selection: BackgroundCallInput["selection"] | undefined;
     let result: PreparedBackgroundCall;
     try { result = await this.prepareCall(input, (value) => { selection = value; }); }
     catch (error) {
-      this.reportFailure({ ...input, stage: "prepare", error, selection });
-      return { status: "failed", code: "BACKGROUND_PREPARE_FAILED", reason: "The background call could not be prepared." };
+      reportFailure({ ...input, stage: "prepare", error, selection });
+      const failure = classifyBackgroundFailure(error, "prepare", "BACKGROUND_PREPARE_FAILED");
+      return { status: "failed", code: failure.code, reason: failure.reason };
     }
     if (result.status !== "ready" && result.status !== "not_configured") {
-      this.reportFailure({ ...input, stage: "prepare", error: result, selection });
+      reportFailure({ ...input, stage: "prepare", error: result, selection });
     }
     return result;
   }
@@ -111,12 +124,13 @@ export class BackgroundProductionRuntime {
   private async prepareCall(input: PrepareBackgroundCallInput, selected: (selection: BackgroundCallInput["selection"]) => void): Promise<PreparedBackgroundCall> {
     let settings: AppSettings;
     try { settings = await this.deps.getAppSettings(); }
-    catch { return { status: "failed", code: "BACKGROUND_SETTINGS_UNAVAILABLE", reason: "Background settings could not be retrieved." }; }
+    catch (cause) { throw Object.assign(new Error("Background settings could not be retrieved.", { cause }), { code: "BACKGROUND_SETTINGS_UNAVAILABLE" }); }
     const configured = structuredClone(settings.backgroundExecutionSettings[input.purpose]);
     if (!configured.selection) return { status: "not_configured", code: "BACKGROUND_NOT_CONFIGURED", reason: "Select a provider and model for this purpose in Settings." };
     selected(configured.selection);
-    try { resolveBackgroundExecutionOptions(configured.selection); }
-    catch { return { status: "failed", code: "BACKGROUND_EXECUTION_OPTIONS_INVALID", reason: "The background execution settings are invalid for the provider." }; }
+    let executionOptions;
+    try { executionOptions = resolveBackgroundExecutionOptions(configured.selection); }
+    catch (cause) { throw Object.assign(new Error("The background execution settings are invalid for the provider.", { cause }), { code: "BACKGROUND_EXECUTION_OPTIONS_INVALID" }); }
     if (!settings.codingProviderSettings[configured.selection.providerId]?.enabled) {
       return { status: "unavailable", code: "BACKGROUND_PROVIDER_DISABLED", reason: "Enable the selected provider in Settings." };
     }
@@ -128,7 +142,7 @@ export class BackgroundProductionRuntime {
     }
     let catalog: ModelCatalogSnapshot;
     try { catalog = await this.deps.getModelCatalog(input.session, configured.selection.providerId); }
-    catch { return { status: "failed", code: "BACKGROUND_CATALOG_UNAVAILABLE", reason: "Background models could not be retrieved." }; }
+    catch (cause) { throw Object.assign(new Error("Background models could not be retrieved.", { cause }), { code: "BACKGROUND_CATALOG_UNAVAILABLE" }); }
     const availability = resolveBackgroundProviderAvailability(configured.selection, catalog);
     if (availability.status !== "available") {
       return availability.status === "not_configured"
@@ -144,10 +158,17 @@ export class BackgroundProductionRuntime {
     }
     const authoritySnapshot = this.deps.resolveAuthority(session);
     if (!authoritySnapshot) return { status: "unavailable", code: "BACKGROUND_AUTHORITY_UNAVAILABLE", reason: "The source Character authority is unavailable." };
-    const scope = buildBackgroundExecutionScope(captured, input);
+    const sessionFolderPath = this.deps.resolveSessionFolderPath?.(input.source);
+    const fileAccess = sessionFolderPath === undefined ? undefined : await captureBackgroundMemoryFileAccess({
+      readRoots: [session.workspacePath, ...session.allowedAdditionalDirectories, sessionFolderPath], sessionFolderPath,
+      writable: executionOptions.approvalMode !== "plan"
+        && (configured.selection.providerId !== "codex" || executionOptions.codexSandboxMode !== "read-only"),
+    });
+    const scope = { ...buildBackgroundExecutionScope(captured, input), ...(fileAccess ? { fileAccess } : {}) };
     return { status: "ready", instructionText: configured.instructionText, call: {
       context: { session, actorSessionId: session.id, authoritySnapshot, scope,
         operationGrants: [...getSessionHistoryAgentRuntimeOperations(), ...getBackgroundMemoryReadOperations(),
+          ...(fileAccess?.exportRoot ? getBackgroundMemoryFileOperations() : []),
           BACKGROUND_REGISTRATION_OPERATIONS[input.purpose].operation] },
       selection: { ...configured.selection },
     } };

@@ -1095,6 +1095,7 @@ async function createOrResumeCopilotSession(
   client: CopilotSessionConnector,
   threadId: string | null,
   config: SessionConfig,
+  requireExistingThread = false,
 ): Promise<CopilotSession> {
   if (!threadId?.trim()) {
     return client.createSession(config);
@@ -1104,7 +1105,7 @@ async function createOrResumeCopilotSession(
     return await client.resumeSession(threadId, config);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!isRecoverableCopilotMissingSessionErrorMessage(message)) {
+    if (requireExistingThread || !isRecoverableCopilotMissingSessionErrorMessage(message)) {
       throw error;
     }
 
@@ -1239,6 +1240,7 @@ export async function resolveCopilotSessionForSettings(args: {
   threadId: string | null;
   config: SessionConfig;
   client: CopilotSessionConnector;
+  requireExistingThread?: boolean;
 }): Promise<{ session: CopilotSession; reusedCached: boolean }> {
   const {
     cached,
@@ -1260,7 +1262,7 @@ export async function resolveCopilotSessionForSettings(args: {
   }
 
   return {
-    session: await createOrResumeCopilotSession(client, threadId, config),
+    session: await createOrResumeCopilotSession(client, threadId, config, args.requireExistingThread),
     reusedCached: false,
   };
 }
@@ -1603,6 +1605,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       threadId: resolveRunExecutionTarget(input).threadId,
       config: nextSettings.config,
       client,
+      requireExistingThread: Boolean(input.executionTarget),
     });
     if (resolved.reusedCached) {
       this.clientKeysBySession.set(resolveRunExecutionTarget(input).id, clientKey);
@@ -2125,7 +2128,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     try {
       return await this.runSessionTurnOnce(input, prompt, onProgress, () => { acquiredToolResult = true; });
     } catch (error) {
-      if (acquiredToolResult || !shouldRetryCopilotTurn(error)) {
+      if (input.executionTarget || acquiredToolResult || !shouldRetryCopilotTurn(error)) {
         throw error;
       }
 

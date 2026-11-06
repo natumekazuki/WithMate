@@ -13,7 +13,7 @@ const boundRequestSchema = z.object({
   authority: z.object({ kind: z.literal("conversation") }).strict(),
   candidates: z.array(backgroundAffectCandidateSchema.safeExtend({
     userId: z.literal("local-user"), characterId: z.string().min(1), sessionId: z.string().min(1),
-  })).min(1).max(10),
+  })).min(1),
 }).strict();
 const rejection = { retryable: false, conversationMayContinue: true, effect: "none" } as const;
 
@@ -23,7 +23,11 @@ export const registerBackgroundAffect: BackgroundRegistrationHandler = async (in
   }
   const parsed = boundRequestSchema.safeParse(input.body);
   if (!parsed.success) {
-    return createCharacterContextError("invalid_input", "Invalid background affect candidates.", rejection);
+    return createCharacterContextError("invalid_input", "Invalid background affect candidates.", {
+      ...rejection, details: { issues: parsed.error.issues.map((issue) => ({ code: issue.code, path: issue.path, message: issue.message,
+        ...("expected" in issue ? { expected: issue.expected } : {}), ...("minimum" in issue ? { minimum: issue.minimum } : {}),
+        ...("maximum" in issue ? { maximum: issue.maximum } : {}) })) },
+    });
   }
   const request = parsed.data;
   const source = input.source;
@@ -38,8 +42,7 @@ export const registerBackgroundAffect: BackgroundRegistrationHandler = async (in
       ? turn?.sessionId === source.session.id && turn.auxiliarySessionId === undefined
       : turn?.sessionId === null && turn.auxiliarySessionId === source.session.id;
     if (!turn || !belongsToSource || !["completed", "failed", "canceled"].includes(turn.phase)
-      || !turn.completedAt || sourceTurnId <= (input.scope.processing.afterTurnId ?? 0)
-      || sourceTurnId > input.scope.processing.throughTurnId || turn.assistantMessageSeq === undefined
+      || !turn.completedAt || turn.assistantMessageSeq === undefined
       || turn.assistantMessageSeq < input.scope.history.fromMessageSeq || turn.assistantMessageSeq > input.scope.history.throughMessageSeq) {
       return createCharacterContextError("invalid_input", "sourceTurnId must identify a terminal Turn within the execution scope.", {
         ...rejection, details: { candidateIndex },

@@ -19,6 +19,8 @@ export type AppLogServiceOptions = {
   maxBytes?: number;
   maxFiles?: number;
   rotation?: boolean;
+  /** Only for the already-selected, redacted background failure event. */
+  backgroundFailureDiagnostics?: boolean;
   runtimeInfo: AppLogServiceRuntimeInfo;
 };
 
@@ -83,7 +85,8 @@ export class AppLogService {
   }
 
   private buildEntry(input: AppLogInput): AppLogEntry {
-    const data = sanitizeData(input.data);
+    const data = this.options.backgroundFailureDiagnostics && input.kind === "background.execution.failed"
+      ? input.data : sanitizeData(input.data);
     return {
       ...this.options.runtimeInfo,
       ...input,

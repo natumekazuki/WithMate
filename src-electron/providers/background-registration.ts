@@ -16,8 +16,8 @@ export type BackgroundRegistrationHandler = (input: Readonly<{
   admission: RuntimeTurnAdmission;
   transport: CharacterContextTransport;
 }>, services: Readonly<{
-  memory: Pick<MemoryV6Service, "append">;
-  character: Pick<CharacterContextApplicationService, "appraise" | "appendEpisode"> | undefined;
+  memory: Pick<MemoryV6Service, "append" | "appendEntries">;
+  character: Pick<CharacterContextApplicationService, "appraise" | "appendEpisode" | "appendEpisodes"> | undefined;
 }>) => unknown | Promise<unknown>;
 
 /** Both a handler and explicit source-kind support are required; normal turn writes are never a fallback. */

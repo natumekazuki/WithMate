@@ -1,4 +1,4 @@
-import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, reportRuntimeTurnOperationError, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 import {
   CHARACTER_AFFECT_FAMILIES,
   assertValidAffectEvent,
@@ -14,6 +14,8 @@ import {
   type CharacterContextResponse,
   type CharacterContextServiceResult,
   type CharacterMemoryMutationResponse,
+  type CharacterMemoryAppendEpisodesResponse,
+  type CharacterMemoryEpisodeInput,
   type CharacterMemorySearchResponse,
   type CharacterOperationAuthority,
 } from "../../src-shared/character-context/character-context-contract.js";
@@ -25,11 +27,13 @@ import {
   validateCharacterAffectResetRequest,
   validateCharacterContextGetRequest,
   validateCharacterMemoryAppendEpisodeRequest,
+  validateCharacterMemoryAppendEpisodesRequest,
   validateCharacterMemoryCorrectRequest,
   validateCharacterMemoryForgetRequest,
   validateCharacterMemorySearchRequest,
 } from "../../src-shared/character-context/character-context-validation.js";
 import { MEMORY_V6_SCHEMA_VERSION, type MemoryTargetSelector } from "../../src-shared/memory/memory-contract.js";
+import { validateMemoryAppendRequest } from "../../src-shared/memory/memory-validation.js";
 import type { MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import type { MemoryEntrySummary } from "../../src-shared/memory/memory-state.js";
 import {
@@ -116,6 +120,20 @@ function characterTarget(characterId: string): MemoryTargetSelector {
 
 function memoryError(value: unknown): value is MemoryErrorResponse {
   return Boolean(value && typeof value === "object" && "error" in value);
+}
+
+function episodeMemoryFields(episode: CharacterMemoryEpisodeInput) {
+  return {
+    kind: "context" as const,
+    title: episode.title,
+    body: episode.body,
+    preview: episode.preview,
+    tags: [
+      ...(episode.motif ? [{ type: "motif", value: episode.motif }] : []),
+      ...(episode.observedFact ? [{ type: "evidence", value: "user-stated" }] : []),
+      ...(episode.characterObservation ? [{ type: "evidence", value: "character-observation" }] : []),
+    ],
+  };
 }
 
 function sourceVersion(items: readonly { updatedAt: string }[]): string | null {
@@ -380,6 +398,7 @@ export class CharacterContextApplicationService {
           })).version;
         } catch (error) {
           if (error instanceof CharacterAffectEpisodePersistenceError) {
+            reportRuntimeTurnOperationError(error);
             if (error.eventCreated) {
               this.affectMetrics.savedByFamily[candidate.family] += 1;
             }
@@ -400,6 +419,7 @@ export class CharacterContextApplicationService {
             );
           }
           if (saved.length > 0) {
+            reportRuntimeTurnOperationError(error);
             return createCharacterContextError("partial_failure", "Some affect candidates were saved before the operation failed.", {
               retryable: true,
               conversationMayContinue: true,
@@ -626,6 +646,61 @@ export class CharacterContextApplicationService {
     });
   }
 
+  async appendEpisodes(
+    request: unknown,
+    transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
+  ): Promise<CharacterContextServiceResult<CharacterMemoryAppendEpisodesResponse>> {
+    return this.measure("character_memory.append_episode", transport, "unknown", async () => {
+      const { episodes, ...common } = validateCharacterMemoryAppendEpisodesRequest(request);
+      for (const [index, item] of episodes.entries()) {
+        const validated = validateMemoryAppendRequest({
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: characterTarget(common.characterId),
+          ...episodeMemoryFields(item.episode),
+          idempotencyKey: item.idempotencyKey,
+        });
+        if (!validated.ok) {
+          return createCharacterContextError("invalid_input", validated.error.message, {
+            field: `episodes[${index}].${validated.error.field ?? "episode"}`,
+            retryable: false, conversationMayContinue: true, effect: "none",
+          });
+        }
+      }
+      const results: CharacterMemoryAppendEpisodesResponse["results"] = [];
+      for (const [index, item] of episodes.entries()) {
+        try {
+          assertRuntimeTurnAdmission();
+        } catch (error) {
+          if (!(error instanceof RuntimeTurnInactiveError)) throw error;
+          const failure = this.mapThrownError(error, "episode batch admission", "none");
+          for (let remaining = index; remaining < episodes.length; remaining += 1) {
+            results.push({ index: remaining, status: "not_run" });
+          }
+          return {
+            schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+            results,
+            error: { ...failure.error, effect: index > 0 ? "partial" : "none" },
+          };
+        }
+        const result = await this.appendEpisode({ ...common, ...item }, transport, principal);
+        if (isCharacterContextError(result)) {
+          results.push({ index, status: result.error.effect === "unknown" ? "unknown" : "failed", result });
+          for (let remaining = index + 1; remaining < episodes.length; remaining += 1) {
+            results.push({ index: remaining, status: "not_run" });
+          }
+          return {
+            schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+            results,
+            error: { ...result.error, effect: index > 0 ? "partial" : result.error.effect },
+          };
+        }
+        results.push({ index, status: "saved", result });
+      }
+      return { schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, results };
+    });
+  }
+
   async correctMemory(
     request: unknown,
     transport: CharacterContextTransport = "internal",
@@ -737,31 +812,15 @@ export class CharacterContextApplicationService {
     principal: MemoryV6Principal;
     characterId: string;
     idempotencyKey: string;
-    episode: {
-      title: string;
-      body: string;
-      preview: string;
-      motif?: string;
-      observedFact?: string;
-      characterObservation?: string;
-    };
+    episode: CharacterMemoryEpisodeInput;
     operation: "append_episode" | "correct";
     supersedes?: string;
     mutationReason?: string;
   }): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
-    const tags = [
-      ...(input.episode.motif ? [{ type: "motif", value: input.episode.motif }] : []),
-      ...(input.episode.observedFact ? [{ type: "evidence", value: "user-stated" }] : []),
-      ...(input.episode.characterObservation ? [{ type: "evidence", value: "character-observation" }] : []),
-    ];
     const result = await this.deps.memoryService.append(input.principal, {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: characterTarget(input.characterId),
-      kind: "context",
-      title: input.episode.title,
-      body: input.episode.body,
-      preview: input.episode.preview,
-      tags,
+      ...episodeMemoryFields(input.episode),
       ...(input.supersedes ? { supersedes: [input.supersedes] } : {}),
       ...(input.mutationReason ? { mutationReason: input.mutationReason } : {}),
       idempotencyKey: input.idempotencyKey,
@@ -787,6 +846,7 @@ export class CharacterContextApplicationService {
     operation: string,
     effect: "none" | "unknown",
   ): CharacterContextErrorResponse {
+    reportRuntimeTurnOperationError(error);
     if (error instanceof RuntimeTurnInactiveError) {
       return createCharacterContextError("authority_denied", error.message, {
         retryable: false, conversationMayContinue: true, effect: "none",

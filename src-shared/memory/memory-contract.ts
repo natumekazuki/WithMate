@@ -166,6 +166,16 @@ export type MemoryAppendRequest = {
 
 export type MemoryEntryContent = Pick<MemoryAppendRequest, "kind" | "title" | "body" | "preview" | "tags">;
 
+export type MemoryAppendEntryInput = Omit<MemoryAppendRequest, "schemaVersion" | "target" | "idempotencyKey"> & {
+  idempotencyKey: string;
+};
+
+export type MemoryAppendEntriesRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  target: MemoryTargetSelector;
+  entries: MemoryAppendEntryInput[];
+};
+
 export const MEMORY_FORGET_REASONS = [
   "user_request",
   "incorrect",

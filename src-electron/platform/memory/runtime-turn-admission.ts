@@ -3,6 +3,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export type RuntimeTurnAdmission = {
   state: SharedArrayBuffer;
   isCurrent?: () => boolean;
+  /** Diagnostic-only; reporting must not alter the operation or its public response. */
+  onOperationError?: (error: unknown) => void;
 };
 
 export class RuntimeTurnInactiveError extends Error {
@@ -35,4 +37,9 @@ export function assertRuntimeTurnAdmission(): void {
 
 export function currentRuntimeTurnAdmissionState(): SharedArrayBuffer | undefined {
   return admission.getStore()?.state;
+}
+
+export function reportRuntimeTurnOperationError(error: unknown): void {
+  try { admission.getStore()?.onOperationError?.(error); }
+  catch { /* Diagnostics do not change confirmed effects or public errors. */ }
 }

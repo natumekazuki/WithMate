@@ -314,7 +314,8 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       }
       for (const toolName of ["memory.append", "memory.forget", "memory.move_entry"]) {
         const tool = result.tools.find((candidate) => candidate.name === toolName);
-        assert.ok(tool?.inputSchema.required?.includes("idempotencyKey"));
+        assert.ok(tool?.inputSchema.required?.includes("idempotencyKey")
+          || (tool?.inputSchema.oneOf as Array<{ required?: string[] }> | undefined)?.some((branch) => branch.required?.includes("idempotencyKey")));
       }
       assert.ok(result.tools.find((tool) => tool.name === "memory.forget")?.inputSchema.required?.includes("reason"));
       assert.ok(result.tools.find((tool) => tool.name === "memory.move_entry")?.inputSchema.required?.includes("reason"));
@@ -351,7 +352,13 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       const listTagsSchema = result.tools.find((tool) => tool.name === "memory.list_tags")?.inputSchema;
       assert.match(result.tools.find((tool) => tool.name === "memory.list_tags")?.description ?? "", /one explicit Memory target/);
       const appendSchema = result.tools.find((tool) => tool.name === "memory.append")?.inputSchema;
-      assert.deepEqual(appendSchema?.required?.slice().sort(), ["target", "kind", "title", "body", "preview", "idempotencyKey"].sort());
+      assert.deepEqual(appendSchema?.required, ["target"]);
+      assert.ok((appendSchema?.oneOf as Array<{ required?: string[] }>).some((branch) =>
+        JSON.stringify(branch.required?.slice().sort()) === JSON.stringify(["kind", "title", "body", "preview", "idempotencyKey"].sort())));
+      const batchEntries = appendSchema?.properties?.entries as { minItems?: number; maxItems?: number; items?: { required?: string[] } };
+      assert.equal(batchEntries.minItems, 1);
+      assert.equal(batchEntries.maxItems, undefined);
+      assert.ok(batchEntries.items?.required?.includes("idempotencyKey"));
       assert.equal((appendSchema?.properties?.tags as { maxItems?: number })?.maxItems, 20);
       assert.equal((listTagsSchema?.properties?.targets as { minItems?: number; maxItems?: number })?.minItems, 1);
       assert.equal((listTagsSchema?.properties?.targets as { minItems?: number; maxItems?: number })?.maxItems, 1);

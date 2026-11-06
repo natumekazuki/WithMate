@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { AppLogService, type AppLogServiceOptions } from "../../src-electron/app/app-log-service.js";
+import { projectBackgroundFailure } from "../../src-electron/providers/background-failure.js";
 
 function createService(logsPath: string, options: Partial<AppLogServiceOptions> = {}): AppLogService {
   return new AppLogService({
@@ -145,5 +146,42 @@ test("AppLogService は循環 data を安全に記録する", () => {
   } finally {
     rmSync(logsPath, { recursive: true, force: true });
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景専用JSONLは実原因の長いmessage・stack・causeを保持し、通常loggerと他kindの上限は維持する"
+// oracle = { type = "contract", ref = "docs/design/app-log-base.md#background-failure-log-policy" }
+// fault = "背景診断の原因を4000字または12000字で失うか、専用optionが通常ログの上限も解除する"
+// observable = "実ファイルから読み直した背景eventのdiagnosticと通常eventのtruncated data"
+// observation_boundary = "component-behavior"
+// scope = "failure projection through dedicated and normal AppLogService JSONL files"
+// lifecycle = "permanent"
+// impact = "長いschema・cause chainの末尾にある実原因が永続ログから調査できない"
+// distinction = "projection単体と容量rotation testはJSONL内の診断内容の切詰めを検出しない"
+// @end-test-value
+test("AppLogService は背景診断だけを原因情報の長さで切り詰めない", () => {
+  const logsPath = mkdtempSync(path.join(tmpdir(), "withmate-log-test-"));
+  try {
+    const longMessage = `${"Failure detail ".repeat(1000)}token=REAL_SECRET`;
+    const error = new Error(longMessage, { cause: Object.assign(new Error("The actual service rejected the request"), { code: "REMOTE_REJECTED" }) });
+    (error.cause as Error).stack = "cause frame\n".repeat(1000);
+    error.stack = `${"stack frame\n".repeat(1500)}terminal frame token=REAL_SECRET`;
+    const event = projectBackgroundFailure({ purpose: "affect", source: { kind: "main", sessionId: "source", incarnationId: "incarnation" }, stage: "agent", error });
+    const fileName = "background-failures.jsonl";
+    const service = createService(logsPath, { fileName, rotation: false, backgroundFailureDiagnostics: true });
+    const input = { level: "error", kind: "background.execution.failed", process: "main", message: "failed", data: event } as const;
+    service.write(input);
+    const saved = JSON.parse(readFileSync(path.join(logsPath, fileName), "utf8"));
+    assert.deepEqual(saved.data, event);
+    assert.match(saved.data.diagnostic.stack, /terminal frame token=\[REDACTED\]$/);
+    assert.equal(saved.data.diagnostic.message, longMessage.replace("REAL_SECRET", "[REDACTED]"));
+    assert.equal(saved.data.diagnostic.cause.code, "REMOTE_REJECTED");
+    assert.equal(JSON.stringify(saved).includes("REAL_SECRET"), false);
+    const other = service.write({ ...input, kind: "ipc.error" });
+    assert.equal((other.data as { truncated: boolean }).truncated, true);
+    const normal = createService(logsPath).write(input);
+    assert.equal((normal.data as { truncated: boolean }).truncated, true);
+  } finally { rmSync(logsPath, { recursive: true, force: true }); }
 });
 

@@ -67,9 +67,9 @@ function count(f: Fixture) { return f.db.prepare("SELECT COUNT(*) AS count FROM 
 
 // @test-value v2
 // kind = "contract"
-// claim = "二用途のpresetまたは編集本文を受け取った同一Agent実行からMCPと配布CLIで実Memoryを登録する"
+// claim = "presetと空文字列を含む編集本文とCharacter定義をAgentへ渡し、MCPと配布CLIの実登録で本人の語りを保持する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
-// fault = "用途入力がrunOnceへ届かないか、実用途handlerが公開登録からWorkerへ接続されていない"
+// fault = "編集本文にpresetを重ねるか定義を欠落させるか、公開登録から保存・取得の間で本人の語りを改変する"
 // observable = "Agentへ渡る指示本文、MCPとCLIの登録応答、Workerの本文と保存先、runOnceの終了結果"
 // observation_boundary = "public-boundary"
 // scope = "Memory purpose assembly through runOnce, production handlers, MCP, bundled CLI and Worker store"
@@ -80,59 +80,64 @@ test("Memory二用途の実handlerへ同一AgentからMCPと配布CLIで登録�
   const f = await fixture(undefined, backgroundMemoryRegistrationHandlers);
   try {
     seed(f);
-    for (const purpose of purposes) for (const instructionText of [undefined, "サブエージェントを使わない。必要な記録を登録する。"] as const) {
+    for (const purpose of purposes) for (const instructionText of [undefined, "サブエージェントを使わない。必要な記録を登録する。", ""] as const) {
       const ids: string[] = [];
       const calls = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
         const body = agent.userInput.split("# 登録指示本文\n\n")[1]!.split("\n\n# 実行情報")[0];
         assert.equal(body, instructionText ?? MEMORY_REGISTRATION_PRESETS[purpose]);
+        if (purpose === "character-memory") assert.ok(agent.userInput.includes("一人称はうち。親しい口調で話す。"));
         assert.ok(agent.userInput.includes("saved answer"));
         const binding = project(f, agent);
         const { client } = await f.connect(binding, "memoryUrl");
-        const mcpOp = operation(purpose, `${purpose}-${instructionText === undefined ? "preset" : "edited"}-mcp`);
+        const label = instructionText === undefined ? "preset" : instructionText === "" ? "empty" : "edited";
+        const mcpOp = operation(purpose, `${purpose}-${label}-mcp`);
+        if (purpose === "character-memory") mcpOp.input.episode.body = "うち、一緒に話せてうれしかった。この話、また思い出したいな。";
         const mcp = await client.callTool({ name: mcpOp.tool, arguments: mcpOp.input });
         assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
         const mcpValue = mcp.structuredContent as { entry: { id: string } };
         ids.push(mcpValue.entry.id);
-        const cliOp = operation(purpose, `${purpose}-${instructionText === undefined ? "preset" : "edited"}-cli`);
+        const cliOp = operation(purpose, `${purpose}-${label}-cli`);
+        if (purpose === "character-memory") cliOp.input.episode.body = "うち、一緒に話せてうれしかった。この話、また思い出したいな。";
         const child = await cli(f, binding, cliOp);
         assert.equal(child.code, 0, JSON.stringify(child.value));
         ids.push(child.value.entry.id);
         for (const [index, op] of [mcpOp, cliOp].entries()) {
           const saved = (await f.memoryWorker.storage.getEntry(ids[index]))!;
-          assert.equal(saved.body, `body ${op.input.idempotencyKey}`);
+          assert.equal(saved.body, purpose === "character-memory" ? op.input.episode.body : op.input.body);
           assert.equal(saved.owner.type, purpose === "character-memory" ? "character" : "user");
           assert.equal(saved.scope.type, purpose === "character-memory" ? "character" : "global");
         }
       } });
       assert.deepEqual(await runBackgroundMemoryRegistration(calls, { context: context(f, purpose),
-        selection: { providerId: "claude", modelId: "test" }, onAdmitted() {}, materials: "saved answer", instructionText }), { kind: "completed" });
+        selection: { providerId: "claude", modelId: "test" }, onAdmitted() {}, materials: "saved answer", instructionText,
+        ...(purpose === "character-memory" ? { characterDefinition: "一人称はうち。親しい口調で話す。" } : {}) }), { kind: "completed" });
       assert.equal(ids.length, 2);
     }
-    assert.equal(count(f), 8);
+    assert.equal(count(f), 12);
   } finally { await f.close(); }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "用途handlerは保存済み終端Turnがhistoryとprocessingに属さない場合および通常入力不正をMCPとCLIで拒否する"
+// claim = "用途handlerは許可historyに保存済み終端Turnがない場合および通常入力不正をMCPとCLIで拒否する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
-// fault = "未保存・未完了・processing外のsourceを許容するか、既存append validatorを迂回する"
+// fault = "未保存・未完了・完了時刻欠落・他owner・history外のsourceを許容するか、既存append validatorを迂回する"
 // observable = "実MCPのisErrorとCLI非zeroおよび保存件数0"
 // observation_boundary = "public-boundary"
 // scope = "production Memory registration handlers over real source reader and ordinary validators"
 // lifecycle = "permanent"
-// distinction = "共通認可testは用途handler固有のprocessing所属と通常validatorへの委譲を検査しない"
+// distinction = "共通認可testは用途handler固有の保存済み終端証拠と通常validatorへの委譲を検査しない"
 // @end-test-value
 test("Memoryの根拠範囲と不正入力をMCPと配布CLIで拒否する", async () => {
   const f = await fixture(undefined, backgroundMemoryRegistrationHandlers);
   try {
     seed(f);
-    for (const purpose of purposes) for (const invalid of ["missing", "running", "processing", "history", "input", "target"] as const) {
-      f.db.prepare("UPDATE session_turns_v6 SET phase = ?, assistant_message_seq = ? WHERE id = 1")
-        .run(invalid === "running" ? "running" : "completed", invalid === "history" ? 0 : 1);
+    for (const purpose of purposes) for (const invalid of ["missing", "running", "unfinished", "owner", "history", "input", "target"] as const) {
+      f.db.prepare("UPDATE session_turns_v6 SET phase = ?, assistant_message_seq = ?, completed_at = ?, session_id = ? WHERE id = 1")
+        .run(invalid === "running" ? "running" : "completed", invalid === "history" ? 0 : 1,
+          invalid === "unfinished" ? null : completedAt, invalid === "owner" ? "other" : "main");
       const ctx = context(f, purpose);
       if (invalid === "missing") f.db.prepare("DELETE FROM session_turns_v6 WHERE id = 1").run();
-      if (invalid === "processing") ctx.scope = { ...ctx.scope, processing: { afterTurnId: 1, throughTurnId: 2 } };
       if (invalid === "history") ctx.scope = { ...ctx.scope, history: { ...ctx.scope.history, fromMessageSeq: 1 } };
       if (invalid === "target") ctx.scope = { ...ctx.scope, memoryTargets: [] };
       const execution = f.executions.begin({ ...ctx, providerId: "claude" });
@@ -221,7 +226,7 @@ test("Auxiliaryの二用途を実storeへ登録し同名Mainと区別する", as
     for (const purpose of purposes) {
       const base = context(f, purpose);
       const scope = { ...f.scope("aux", purpose), history: { ...f.scope("aux", purpose).history, throughMessageSeq: 1 },
-        processing: { afterTurnId: null, throughTurnId: 50 }, memoryTargets: targets };
+        memoryTargets: targets };
       const execution = f.executions.begin({ ...base, session: f.sessions.get("aux")!, actorSessionId: "aux", providerId: "claude", scope });
       const binding = f.project(execution);
       const { client } = await f.connect(binding, "memoryUrl");

@@ -10,6 +10,7 @@ import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../../src-shared/c
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   isCharacterContextError,
+  type CharacterMemoryAppendEpisodesResponse,
 } from "../../src-shared/character-context/character-context-contract.js";
 import {
   CharacterContextApplicationService,
@@ -144,6 +145,160 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
 }
 
 describe("CharacterContextApplicationService", () => {
+  // @test-value v2
+  // kind = "contract"
+  // claim = "一括episodeは入力順の独立entryを保存し、同じ項目keyの再送で重複を作らない"
+  // oracle = { type = "contract", ref = "docs/design/background-execution.md#Memoryの登録本文と直接登録" }
+  // fault = "episodeを連結する、項目結果を取り違える、再送を新規entryへ保存する"
+  // observable = "appendEpisodesのindex/status/entry IDと保存済bodyの集合"
+  // observation_boundary = "public-boundary"
+  // scope = "CharacterMemory batch application and isolated SQLite"
+  // lifecycle = "permanent"
+  // distinction = "単件testでは複数項目の対応と項目別再送を検出できない"
+  // @end-test-value
+  it("一括episodeを独立保存して項目単位で再送する", async () => {
+    const fixture = createFixture();
+    const request = {
+      schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a",
+      authority: { kind: "conversation" },
+      episodes: Array.from({ length: 11 }, (_, index) => ({
+        idempotencyKey: `batch-${index}`,
+        episode: { title: `episode ${index}`, body: `independent body ${index}`, preview: `preview ${index}`, observedFact: "shared event" },
+      })),
+    };
+    try {
+      const first = await fixture.service.appendEpisodes(request);
+      const second = await fixture.service.appendEpisodes(request);
+      assert.equal("results" in first, true);
+      assert.equal("results" in second, true);
+      if (!("results" in first) || !("results" in second)) return;
+      assert.equal(first.results.length, 11);
+      const ids: string[] = [];
+      for (const [index, item] of first.results.entries()) {
+        assert.equal(item.index, index);
+        assert.equal(item.status, "saved");
+        if (item.status !== "saved") continue;
+        assert.equal(item.result.entry?.title, `episode ${index}`);
+        assert.equal(item.result.created, true);
+        ids.push(item.result.entry!.id);
+        const replay: CharacterMemoryAppendEpisodesResponse["results"][number] = second.results[index]!;
+        assert.equal(replay.status, "saved");
+        if (replay.status === "saved") {
+          assert.equal(replay.result.entry?.id, item.result.entry?.id);
+        }
+      }
+      assert.equal(new Set(ids).size, 11);
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        const bodies = db.prepare("SELECT body FROM memory_entries_v6 ORDER BY title").all();
+        assert.equal(bodies.length, 11);
+        assert.deepEqual(new Set(bodies.map((row) => row.body)), new Set(request.episodes.map((item) => item.episode.body)));
+      } finally { db.close(); }
+    } finally { fixture.close(); }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "不正な一括入力を保存前に拒否し、途中の保存失敗・結果不明では確定prefixを保持して残りを未実行と返す"
+  // oracle = { type = "contract", ref = "docs/design/background-execution.md#Memoryの登録本文と直接登録" }
+  // fault = "後続の不正項目を確認せず保存するか、失敗後も保存を継続し結果不明を未保存と断定する"
+  // observable = "appendEpisodes error/resultsとMemory append呼出数、保存済entryのread-back"
+  // observation_boundary = "public-boundary"
+  // scope = "CharacterMemory batch validation and partial outcomes"
+  // lifecycle = "permanent"
+  // distinction = "単件testでは事前全件検証と保存prefix/未実行の境界を検出できない"
+  // @end-test-value
+  it("一括入力の事前検証と途中失敗の保存効果を区別する", async () => {
+    const fixture = createFixture();
+    const request = {
+      schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a",
+      authority: { kind: "conversation" },
+      episodes: [0, 1, 2].map((index) => ({ idempotencyKey: `partial-${index}`, episode: {
+        title: `episode ${index}`, body: "body", preview: "preview", observedFact: "shared event",
+      } })),
+    };
+    const append = fixture.memoryService.append.bind(fixture.memoryService);
+    let calls = 0;
+    fixture.memoryService.append = async (...args) => { calls += 1; return append(...args); };
+    try {
+      for (const invalid of [
+        { ...request, episodes: [] },
+        { ...request, episode: request.episodes[0]!.episode },
+        { ...request, episodes: [request.episodes[0], { ...request.episodes[1], characterId: "character-b" }] },
+        { ...request, episodes: [request.episodes[0], { ...request.episodes[1], episode: { ...request.episodes[1]!.episode, body: "x".repeat(8001) } }] },
+      ]) {
+        const rejected = await fixture.service.appendEpisodes(invalid);
+        assert.equal(isCharacterContextError(rejected), true);
+        assert.equal(calls, 0);
+      }
+      for (const effect of ["none", "unknown"] as const) {
+        calls = 0;
+        fixture.memoryService.append = async (...args) => {
+          calls += 1;
+          if (calls === 2) return { schemaVersion: "withmate-memory-v1", error: {
+            code: effect === "none" ? "MEMORY_FORBIDDEN" : "MEMORY_STORAGE_UNAVAILABLE",
+            message: "injected failure", effect,
+          } };
+          return append(...args);
+        };
+        const result = await fixture.service.appendEpisodes(request);
+        assert.equal("results" in result, true);
+        if (!("results" in result)) continue;
+        assert.deepEqual(result.results.map((item) => item.status), ["saved", effect === "unknown" ? "unknown" : "failed", "not_run"]);
+        assert.equal(result.error?.effect, "partial");
+        assert.equal(calls, 2);
+        const failed = result.results[1]!;
+        if (failed.status === "failed" || failed.status === "unknown") assert.equal(failed.result.error.effect, effect);
+        const saved = result.results[0]!;
+        if (saved.status === "saved") {
+          assert.equal(saved.result.readBack, "active");
+          assert.equal(saved.result.entry?.title, "episode 0");
+        }
+      }
+    } finally { fixture.close(); }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "項目間のruntime失効では確定済episodeだけを残し未実行の後続を書き込まない"
+  // oracle = { type = "contract", ref = "docs/design/background-execution.md#Memoryの登録本文と直接登録" }
+  // fault = "失効したadmissionで後続episodeの書込みを継続するか確定済保存を巻き戻す"
+  // observable = "appendEpisodesの部分結果とSQLite内のentry件数"
+  // observation_boundary = "public-boundary"
+  // scope = "CharacterMemory batch runtime admission"
+  // lifecycle = "permanent"
+  // distinction = "単件の認可testと異なり最初のcommit後にadmissionを失効させる"
+  // @end-test-value
+  it("一括episodeの途中失効で保存prefixと未実行を保持する", async () => {
+    const fixture = createFixture();
+    const state = new SharedArrayBuffer(4);
+    const append = fixture.memoryService.append.bind(fixture.memoryService);
+    let calls = 0;
+    fixture.memoryService.append = async (...args) => {
+      calls += 1;
+      const result = await append(...args);
+      if (calls === 1) Atomics.store(new Int32Array(state), 0, 1);
+      return result;
+    };
+    try {
+      const result = await runWithRuntimeTurnAdmission({ state }, () => fixture.service.appendEpisodes({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a",
+        authority: { kind: "conversation" }, episodes: [0, 1, 2].map((index) => ({
+          idempotencyKey: `cancel-${index}`, episode: { title: `episode ${index}`, body: "body", preview: "preview", observedFact: "event" },
+        })),
+      }));
+      assert.equal("results" in result, true);
+      if (!("results" in result)) return;
+      assert.deepEqual(result.results.map((item) => item.status), ["saved", "not_run", "not_run"]);
+      assert.equal(result.error?.effect, "partial");
+      assert.equal(result.error?.code, "authority_denied");
+      assert.equal(calls, 1);
+      const db = new DatabaseSync(fixture.dbPath);
+      try { assert.equal(db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()?.count, 1); }
+      finally { db.close(); }
+    } finally { fixture.close(); }
+  });
+
   // @test-value v2
   // kind = "invariant"
   // claim = "TurnのAffect contextは採用済みsnapshotのbaselineを使いcanonicalを再読込せず、別Characterのsnapshotは拒否する"

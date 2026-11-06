@@ -122,7 +122,7 @@ test("Auxiliary登録とcontextは実ownerを使いrelationshipだけ同Characte
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliary登録は他owner・processing外・history外のsourceTurnとcallerによる保存identity指定をMCPと配布CLIで拒否する"
+// claim = "Auxiliary登録は他owner・history外のsourceTurnとcallerによる保存identity指定をMCPと配布CLIで拒否する"
 // oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録" }
 // fault = "背景scope外のTurnやcallerのidentityを保存根拠として受理する"
 // observable = "MCP/CLIの拒否応答と実DBのAffect event件数"
@@ -138,7 +138,6 @@ test("Auxiliaryのscope外Turnとcaller identityはMCPとCLIから保存でき�
     f.db.prepare(`INSERT INTO session_turns_v6(id,session_id,phase,assistant_message_seq,started_at,completed_at,updated_at)
       VALUES (2,'main','completed',1,?,?,?)`).run(time, time, time);
     const scopes = [undefined,
-      (scope: BackgroundExecutionScope) => ({ ...scope, processing: { afterTurnId: 1, throughTurnId: 2 } }),
       (scope: BackgroundExecutionScope) => ({ ...scope, history: { ...scope.history, throughMessageSeq: 0 } })];
     for (const [index, change] of scopes.entries()) {
       const execution = start(f, change), binding = f.project(execution);

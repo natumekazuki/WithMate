@@ -4,6 +4,10 @@
 
 Accepted
 
+背景のfile／exportを許可しない従前の範囲は、[背景Memoryの添付と必要時復元](#背景memoryの添付と必要時復元)の後継判断で置き換える。Memory target認可と呼出ごとのfile認可は維持・分離する。
+
+登録を一件の公開入力へ限定する範囲とAffectの候補件数上限は、[一括登録と件数上限](#一括登録と件数上限)の後継判断で置き換える。既存項目単位の保存・認可・原子性は維持する。
+
 三用途に共通するcheckpointと保存確定・復旧の判断は、[適用範囲](#適用範囲)の後継判断で置き換える。#909のCharacter Memory・対象Memoryに固有の開始位置と保存停止の扱いは[#909後継判断](#909-memory記録の後継判断)に定める。共通binding／履歴read／admissionと既存データ保護の判断は維持する。
 
 2026-11-03に、三用途の専用構造化finalとnative完了後の保存phaseを[背景実行内の直接登録](#背景実行内のmcpcli直接登録)へ置き換える判断を採用した。現在の適用範囲は末尾の[共通基盤への適用](#共通基盤への適用)に示す。以下の従前判断の本文は保持する。
@@ -11,6 +15,10 @@ Accepted
 同日の後継判断として、背景全体3件・用途×会話1件という同時上限の条項は[同時上限の撤廃](#同時上限の撤廃)で置き換える。直接登録、認可、実行寿命、データ保護の判断は維持する。
 
 同日の[共通Provider実行とDepth](#共通provider実行とdepth)により、本番共通接続時点のClaude専用portと背景だけの機械的完全隔離は適用対象外とする。当時の本文は保持する。
+
+2026-11-05の[登録内容と失敗診断](#登録内容と失敗診断)により、失敗を既知codeと定型の短い原因だけへ限定する方針は適用対象外とする。失敗専用ファイル・通常成功を記録しない運用と、認可・保存済みデータ保護は維持する。
+
+2026-11-06の[背景native threadの継続](#背景native-threadの継続)により、呼出しごとのnative thread破棄、同source・用途の並行送信、生成・登録対象をprocessing区間で固定する条項は適用対象外とする。当時の本文を保持し、呼出しごとのbinding／認可／失効と保存済みデータ保護は維持する。
 
 ## Context
 
@@ -152,3 +160,31 @@ WithMateの履歴範囲・owner／保存先・入力・用途operation grantは�
 背景の失敗だけを`logs/background-failures.jsonl`へ追記し、回転・切詰め・自動削除は行わない。通常ログの5MiB・5ファイルは維持する。診断項目と安全な短い原因だけを残し、本文・credential・raw例外を保存しない。重複記録は既存呼出境界の責務で避け、台帳・DB・queue・viewerを追加しない。
 
 共通Provider実行時点のsource権限継承とcallback省略による拒否の扱いは本判断で置き換える。当時の本文は保持する。独立binding・元thread非再開・認可・データ保護と直接登録は維持する。現行実装は[用途別権限と非対話終了](../design/background-execution.md#用途別権限と非対話終了)と[失敗ログ](../design/app-log-base.md#background-failure-log-policy)に示す。
+
+## 登録内容と失敗診断
+
+三用途の登録本文は自身の目的・材料・判断・登録・終了条件から構成し、自然言語の分量制限を設けない。Character Memoryには実Characterの定義を参照材料として渡し、観察事実と本人の解釈を区別した本人の語りを保存する。共通Provider systemでその語りを否定しない。編集本文によるプリセット置換と、保存済み編集本文の保護を維持する。
+
+失敗の定型分類だけでは操作の拒否理由や、失敗と同じ実行で確認できた保存を追えないため、既存実行寿命に操作の要求・応答metadataと選別・秘匿化した原因を保持する。実行が失敗した時だけ既存の専用JSONLへ出し、正常な成功実行の恒久履歴や新規台帳・DB・再送queueは設けない。途中失敗後の保存成功は診断材料であり、全体の失敗を成功へ変えない。会話・prompt・tool引数や応答本文の無差別dumpは行わず、診断に必要な実code／message・検証箇所・期待条件・cause／stackと保存識別情報を選ぶ。認証情報を秘匿化し、原因情報を恣意的な短文化で落とさない。現行仕様は[Background Execution](../design/background-execution.md)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)に示す。
+
+## 背景native threadの継続
+
+元会話Sessionの実identityと用途ごとに、現在のアプリruntime内だけでProvider native threadを継続する。同じthreadへの送信は直列化し、実行中の新しい発火を次回へ残す。別source・用途を全体で直列化せず、永続queueや全体同時上限を追加しない。Provider選択の変更は旧実行を取消し、新Providerの新threadへ切り替える。遅延した旧完了・旧設定snapshotで新状態を上書きしない。
+
+native文脈と呼出ごとのbinding／credential／scopeの寿命を分ける。resumeには現在の接続情報を渡し、各呼出終了で認可を失効させる。native履歴は文脈として利用できるが、現在の保存状態・権限の正本とはしない。失敗しても利用可能なthreadは保持し、次の会話Turnによる用途発火へ失敗事実と新しい材料を渡す。即時の自動retryや、失敗を全件未保存とする補償は行わない。
+
+発火頻度の位置はAIの処理済み範囲と分離し、生成・登録対象をアプリのprocessing区間へ固定しない。AIは認可された保存済みhistory内で必要な会話・操作結果・既存記録・過去Turnの再検討を選ぶ。実source・owner・Character・許可target・terminal Turn・履歴末尾windowと失効write拒否は維持する。再起動後は継続状態を復元せず、新しい会話Turnから新threadを開始する。既存Memory／Affectを削除・再生成せず、独自の完了台帳・hash・再送DBは設けない。現行仕様は[Background Execution](../design/background-execution.md#native文脈の継続と失敗情報)に示す。
+
+## 背景Memoryの添付と必要時復元
+
+2026-11-06、ユーザー承認により採用。背景target-memoryの既存append.filesと、三用途の許可されたMemory参照に必要な既存get_file／export_filesを接続する。従前のfile／export一律除外はこの範囲で適用対象外とし、当時の本文は保持する。新しいstore・復元API・台帳は設けず、既存Protected Objectの検証・暗号化・quota・原子保存・idempotencyを利用する。
+
+Memory targetの許可だけではElectron側のfile I/O権限を証明しないため、毎呼出のbindingへfile scopeを捕捉する。取込はsource Workspace・許可Additional Directory・既存SessionFolder、復元はそのSessionFolder内memory-exportsだけに限定する。AuxiliaryのSessionFolderは既存の親Main共有を用いる。書込不可の用途設定では復元を拒否し、全FS設定でもtool上限は拡大しない。実体pathと現在admissionをI/O境界で確認し、root外のsymlink／junction、既存出力の上書きを拒否する。
+
+添付選択・必要時復元はAIの判断とし、本文は添付なしでも主題・保持理由を理解できる形を保つ。継続threadの過去応答や失敗事実を機械的な再添付・再exportの根拠とせず、確定済み保存を維持する。復元の応答喪失を未実行扱いで自動retryしない。現行仕様は[Background Execution](../design/background-execution.md#背景memoryの添付と必要時復元)を正本とする。
+
+## 一括登録と件数上限
+
+2026-11-06の追加要求により採用。通常MemoryとCharacter Memoryは同じ既存公開操作へ非空のentry／episode配列を渡せるようにし、Affect候補の最大10件を撤廃する。登録件数・呼出回数に別の固定上限を設けず、記録の粒度と必要件数はAIが判断する。本文・添付等の項目単位制約と通信・Provider・認可の制限は維持する。
+
+公開tagで成立している単件入力／応答は保持し、同じ操作の代替配列形式として追加する。項目入力を事前検証し、入力順に既存単件保存を利用する。失敗・結果不明・共通実行条件喪失で停止し、indexごとに確定済・失敗・未実行・結果不明を返す。既存item idempotencyとentry添付原子性を維持し、先行確定分を巻き戻さず、新batch DB・台帳・永続queue・全件transaction・即時全体再送を設けない。現行契約は[Background Execution](../design/background-execution.md#一括登録と項目別結果)を正本とする。
