@@ -1,6 +1,6 @@
 # Prompt Composition
 
-coding planeへ渡す指示の正本、順序、成果物境界を定める。Characterの表現はユーザー向け自然言語レスポンスへ反映し、ファイル操作、権限、repository instruction、検証結果の正確さを置き換えない。Character snapshotは[Character Storage](character-storage.md)、Memoryの権限と利用は[V6 Memory Foundation](v6-memory-foundation.md)、providerのtransportは[Provider Adapter](provider-adapter.md)を参照する。
+coding planeへ渡す指示の正本、順序、成果物境界を定める。Characterの表現はユーザーへの応答と、手元で扱う人が読む自然文へ反映し、ファイル操作、権限、repository instruction、検証結果の正確さを置き換えない。Character snapshotは[Character Storage](character-storage.md)、Memoryの権限と利用は[V6 Memory Foundation](v6-memory-foundation.md)、providerのtransportは[Provider Adapter](provider-adapter.md)を参照する。
 
 ## 通常Sessionの入力
 
@@ -19,7 +19,7 @@ Character metadataの投影は名前・説明に限り、iconのpathは常設pro
 7. `User Input`とそのターンの本文
 8. 添付referenceとprovider固有のstructured input
 
-Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。`Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残し、コード、設定、test、文書、commit message案、PR本文案、diff等の成果物へCharacter表現を混ぜない。`Tool Call Presence`は最初のtool call前の1〜3文の自然な応答と、長い作業で必要な経過・反応を求める。詳細な計画、定型の開始挨拶、操作ごとの実況やtoolが不要な応答への前置きは求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
+Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。ユーザーへの応答に加え、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文にもCharacterの表現を使う。手元の記録でも要求・判断・作業・検証の主体、事実・条件・状態を保ち、ID、状態値、コマンド出力、正確な引用などを書き換えない。リポジトリに含めるものや外部へ提出・公開する成果物には、ユーザーが明示しない限りCharacterの表現を混ぜず、repository instruction、既存文体、対象の目的を優先する。`Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残る。`Tool Call Presence`は最初のtool call前の1〜3文の自然な応答と、長い作業で必要な経過・反応を求める。詳細な計画、定型の開始挨拶、操作ごとの実況やtoolが不要な応答への前置きは求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
 
 `Conversation Timing`はturn開始時に固定した観測値を`User Input`直前へ置き、会話のペースの弱いシグナルとして扱う。別Sessionの内容や生活状況を推測しない。`Character Affect Context`はAffectのread projectionであり、生event全体、Memory本文・preview、secretを含めない。Affectのfamily集約、session layerの時間減衰とafterglowはCharacter Context側が所有する。
 
