@@ -391,15 +391,15 @@ describe("composeProviderPrompt", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "保存済みCharacter名・説明・定義をsystem側へ投影し、自然言語と成果物・技術判断の境界およびtool前の短い応答指示を保持する"
+  // claim = "保存済みCharacter定義をsystem側へ投影し、手元の自然文と外部向け成果物の表現境界、正確性およびtool前の短い応答指示を保持する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
-  // fault = "現在のCharacter profileを代用する、定義をuser本文へ混ぜる、または成果物・技術判断・tool前応答の境界指示を落とす"
+  // fault = "現在のCharacter profileを代用する、手元の自然文へのCharacter表現を制限する、または外部向け成果物・正確性・tool前応答の指示を落とす"
   // observable = "systemBodyTextのCharacter metadata・Output Boundary・Tool Call Presence、inputBodyText、imagePaths、additionalDirectories"
   // observation_boundary = "component-behavior"
   // scope = "保存済み CharacterRuntimeSnapshot"
   // lifecycle = "permanent"
-  // impact = "採用済みCharacterと異なる定義や意図しない添付・権限をproviderへ渡す"
-  // distinction = "snapshot由来文面と通常会話の境界・tool前応答指示をprovider向けprompt本文で観測する"
+  // impact = "手元の共有記録でCharacter表現が制限される、または外部向け成果物に意図しないCharacter表現が混入する"
+  // distinction = "typecheckでは検出できないsnapshot由来文面と表現境界・tool前応答指示をprovider向けprompt本文で観測する"
   // @end-test-value
   it("保存済み CharacterRuntimeSnapshot の名前・説明・定義を system prompt に投影する", () => {
     const session = buildNewSession({
@@ -445,9 +445,12 @@ describe("composeProviderPrompt", () => {
     assert.deepEqual(prompt.additionalDirectories, []);
     assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
     assert.match(prompt.systemBodyText, /# Output Boundary/);
+    assert.match(prompt.systemBodyText, /Character 定義は、ユーザーへ返す自然言語の応答と、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文の話し方・温度・反応に使ってください。/);
     assert.match(prompt.systemBodyText, /技術判断、操作、権限、検証結果、未確認事実の扱いはCharacter定義で置き換えず、通常のcoding agentとして正確に扱ってください。/);
-    assert.match(prompt.systemBodyText, /生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
-    assert.match(prompt.systemBodyText, /成果物は repository instruction、既存文体、対象ファイルの目的を優先してください。/);
+    assert.match(prompt.systemBodyText, /手元の記録でも、誰の要求・判断・作業・検証かを明確にし、事実・条件・状態を保ってください。/);
+    assert.match(prompt.systemBodyText, /ID、状態値、コマンド出力、正確な引用などをCharacter表現によって書き換えないでください。/);
+    assert.match(prompt.systemBodyText, /リポジトリに含めるものや外部へ提出・公開する成果物（コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、diffなど）には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
+    assert.match(prompt.systemBodyText, /リポジトリや外部向けの成果物は repository instruction、既存文体、対象の目的を優先してください。/);
     assert.match(prompt.systemBodyText, /# Tool Call Presence/);
     assert.match(prompt.systemBodyText, /最初の実行前に1〜3文で自然に応答してください/);
     assert.match(prompt.systemBodyText, /詳細な計画・操作説明は不要/);
@@ -521,7 +524,7 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /authoring 対象の character\.md。/);
     assert.doesNotMatch(prompt.systemBodyText, /# Output Boundary/);
     assert.doesNotMatch(prompt.systemBodyText, /# Tool Call Presence/);
-    assert.doesNotMatch(prompt.systemBodyText, /生成ファイル、diff、artifact summary/);
+    assert.doesNotMatch(prompt.systemBodyText, /リポジトリに含めるものや外部へ提出・公開する成果物/);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# Character Definition Snapshot",
       "# Workspace",
