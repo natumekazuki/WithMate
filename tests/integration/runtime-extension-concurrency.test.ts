@@ -295,7 +295,7 @@ test("declared lengths never bypass body caps or runtime credentials", async () 
     assert.equal(denied.status, 401);
     assert.equal(dispatches, 0);
     for (const length of [512, null]) {
-      const before = dispatches;
+      const before: number = dispatches;
       await new Promise<void>((resolve, reject) => {
         let challenged = false,
           partialFlushed = false;
