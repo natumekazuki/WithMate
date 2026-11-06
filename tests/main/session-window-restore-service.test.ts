@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -77,6 +77,166 @@ function createBridge(input: {
 
 describe("SessionWindowRestoreService", () => {
   // @test-value v2
+  // kind = "contract"
+  // claim = "初期読込失敗後の回復保存中に明示closeした対象は、先行保存成功でも候補へ復活せず、保存集合と復元対象が空へ収束する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#保存する集合; docs/features/session-window-restore.md#失敗時の扱い" }
+  // fault = "回復保存開始後のcloseを古い保存成功で巻き戻し、diskから消えたWindowを同一instanceの復元操作で開き直す"
+  // observable = "順序制御した保存先集合、serviceの候補・通知、復元結果とopen呼出し列"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore recovery save and explicit close race"
+  // lifecycle = "permanent"
+  // impact = "利用者が明示的に閉じたWindowがRestore Sessionsで意図せず再表示される"
+  // distinction = "逐次保存の既存testや型検査では未知集合からの回復保存中に発生するcloseとの順序競合を検出できない"
+  // @end-test-value
+  it("回復保存の完了待ち中にcloseしたWindowを候補へ復活させない", async () => {
+    let releaseFirstSave!: () => void;
+    const firstSaveGate = new Promise<void>((resolve) => { releaseFirstSave = resolve; });
+    let firstSaveStarted!: () => void;
+    const savingFirst = new Promise<void>((resolve) => { firstSaveStarted = resolve; });
+    let saves = 0;
+    let durable: readonly string[] = [];
+    const notifications: string[][] = [];
+    const opened: string[] = [];
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() { throw new Error("initial read failed"); },
+        async saveSnapshot(ids) {
+          if (++saves === 1) {
+            firstSaveStarted();
+            await firstSaveGate;
+          }
+          durable = [...ids];
+        },
+      },
+      getSession: () => ({}),
+      getSessionWindowRestoreStates: () => new Map(),
+      async openSessionWindow(id) { opened.push(id); },
+      onRestoreSetChanged(ids) { notifications.push([...ids]); },
+    });
+    await assert.rejects(service.getSnapshot(), /initial read failed/);
+    const openingSave = service.saveSnapshot(["a"]);
+    await savingFirst;
+    const closingSave = service.saveSnapshot([]);
+    await Promise.resolve();
+    releaseFirstSave();
+    await Promise.all([openingSave, closingSave]);
+    assert.deepEqual(durable, []);
+    assert.deepEqual(await service.getSnapshot(), []);
+    assert.deepEqual(notifications, [[]]);
+    assert.deepEqual(await service.restoreSnapshot(), { requestedSessionIds: [], openedSessionIds: [], failures: [] });
+    assert.deepEqual(opened, []);
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "初期snapshot読込失敗と保存失敗を報告し、Bridgeの後続保存成功から同じserviceの取得・復元と通知を回復する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#失敗時の扱い" }
+  // fault = "未知の集合を空の成功にするか、正常保存後も初期rejectを再利用するか、既存Windowを二重生成する"
+  // observable = "取得・保存のreject、回復通知、同一instanceの候補と復元結果、実snapshotと生成Window数"
+  // observation_boundary = "public-boundary"
+  // scope = "session-window-restore recovery"
+  // lifecycle = "permanent"
+  // impact = "一時的な保存先障害で復元機能が再起動まで利用できなくなる"
+  // distinction = "通常load成功やstorage単体の検証ではBridgeの保存成功後も残るserviceの失敗状態を検出できない"
+  // @end-test-value
+  it("不正JSONと保存失敗の後、通常Window保存で同一instanceの取得・復元を回復する", async () => {
+    const root = await mkdtemp(join(tmpdir(), "withmate-restore-recovery-"));
+    const writes: Promise<void>[] = [];
+    try {
+      await writeFile(join(root, "session-window-restore-set.json"), "invalid JSON", "utf8");
+      const storage = new SessionWindowRestoreStorage(root);
+      const notifications: string[][] = [];
+      let failSave = true;
+      let bridge!: SessionWindowBridge<StubWindow>;
+      const service = new SessionWindowRestoreService({
+        storage: {
+          loadSnapshot: () => storage.loadSnapshot(),
+          async saveSnapshot(sessionIds) {
+            if (failSave) throw new Error("save failed");
+            await storage.saveSnapshot(sessionIds);
+          },
+        },
+        getSession: () => ({}),
+        getSessionWindowRestoreStates: () => bridge.getSessionWindowRestoreStates(),
+        openSessionWindow: (sessionId) => bridge.openSessionWindow(sessionId),
+        onRestoreSetChanged: (sessionIds) => { notifications.push([...sessionIds]); },
+      });
+      const created = new Map<string, StubWindow[]>();
+      bridge = createBridge({
+        created,
+        persist: (sessionIds) => {
+          const write = service.saveSnapshot(sessionIds);
+          writes.push(write);
+          return write;
+        },
+      });
+      await assert.rejects(service.getSnapshot(), SyntaxError);
+      assert.deepEqual(notifications, []);
+      await bridge.openSessionWindow("a");
+      await assert.rejects(writes[0], /save failed/);
+      await assert.rejects(service.getSnapshot(), SyntaxError);
+      failSave = false;
+      await bridge.openSessionWindow("b");
+      await writes[1];
+      assert.deepEqual(await storage.loadSnapshot(), ["a", "b"]);
+      assert.deepEqual(await service.getSnapshot(), ["a", "b"]);
+      assert.deepEqual(notifications, [["a", "b"]]);
+      assert.deepEqual(await service.restoreSnapshot(), { requestedSessionIds: [], openedSessionIds: [], failures: [] });
+      assert.equal(created.get("a")?.length, 1);
+      assert.equal(created.get("b")?.length, 1);
+      bridge.closeSessionWindow("a");
+      await Promise.allSettled(writes);
+      assert.deepEqual(await storage.loadSnapshot(), ["b"]);
+    } finally {
+      await Promise.allSettled(writes);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v2
+  // kind = "contract"
+  // claim = "一時読込障害後の明示再取得で同一serviceが回復し、並行する通常保存は読み直せた未処理候補を保持する"
+  // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#失敗時の扱い" }
+  // fault = "初期失敗を固定するか無操作で再試行するか、再取得と保存の競合で未処理候補を上書きする"
+  // observable = "取得errorと取得回数、再取得結果・通知、保存先のID集合"
+  // observation_boundary = "component-behavior"
+  // scope = "session-window-restore recovery"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("次の取得で一時読込障害から回復し、並行保存でも未処理集合を残す", async () => {
+    let loads = 0;
+    let finishLoad!: (sessionIds: string[]) => void;
+    const recovered = new Promise<string[]>((resolve) => { finishLoad = resolve; });
+    let durable: readonly string[] = [];
+    const notifications: string[][] = [];
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() {
+          if (++loads === 1) throw new Error("temporarily unavailable");
+          return recovered;
+        },
+        async saveSnapshot(sessionIds) { durable = [...sessionIds]; },
+      },
+      getSession: () => ({}),
+      getSessionWindowRestoreStates: () => new Map(),
+      openSessionWindow: async () => undefined,
+      onRestoreSetChanged: (sessionIds) => { notifications.push([...sessionIds]); },
+    });
+    await assert.rejects(service.getSnapshot(), /temporarily unavailable/);
+    assert.equal(loads, 1);
+    const retry = service.getSnapshot();
+    const joined = service.getSnapshot();
+    const saving = service.saveSnapshot(["current"]);
+    finishLoad(["pending"]);
+    assert.deepEqual(await retry, ["pending"]);
+    assert.deepEqual(await joined, ["pending"]);
+    await saving;
+    assert.equal(loads, 2);
+    assert.deepEqual(notifications, [["pending"]]);
+    assert.deepEqual(durable, ["pending", "current"]);
+  });
+
+  // @test-value v2
   // kind = "invariant"
   // claim = "復元途中の確定Window保存は未処理・失敗対象を永続化し、明示closeを巻き戻さず再試行後は現在集合へ収束する"
   // oracle = { type = "contract", ref = "docs/features/session-window-restore.md#保存する集合" }
@@ -104,7 +264,10 @@ describe("SessionWindowRestoreService", () => {
       const service = new SessionWindowRestoreService({
         storage,
         getSession: async (sessionId) => {
-          if (sessionId === "b") { reachedB(); await waitingB; }
+          if (sessionId === "b") {
+            reachedB();
+            await waitingB;
+          }
           return { id: sessionId };
         },
         getSessionWindowRestoreStates: () => bridge.getSessionWindowRestoreStates(),

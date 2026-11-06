@@ -87,6 +87,8 @@ Window復元候補のsnapshotは任意保存とし、open完了・quit準備は�
 
 `SessionWindowRestoreService`は起動時に読み込んだ未処理候補とBridgeから受け取る現在openの集合を所有し、両者の和を同じsnapshotへ保存する。現在集合からcloseされたIDは未処理候補からも外し、復元成功対象は処理時に消費する。復元操作は起動時候補の読込みだけを待ち、その後の現在集合の保存には待機しない。
 
+初期読込の失敗は取得元へ返し、次の取得で再読込する。未取得状態で保存が成功した場合は、その有効な保存集合から同一serviceを回復する。再読込と回復保存は既存の書込queueと順序を揃え、取得済みの候補を通常保存で置換しない。回復後は既存の復元集合通知でHomeへ反映し、Homeは読込失敗中にfocusすると再取得する。
+
 ### MainWindowComposition / MainWindowRuntime
 
 - `MainWindowComposition` は BrowserWindow の共通生成設定、cursor placement、Homeと同じWindowでの起動状態表示を所有する。bootstrap完了時にAuxWindowServiceがそのWindowをHomeとして引き継ぐ

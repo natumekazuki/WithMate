@@ -498,27 +498,47 @@ export default function HomeApp() {
       return;
     }
     let active = true;
-    let receivedSnapshotUpdate = false;
+    let snapshotRevision = 0;
+    let loading = false;
+    let loadError: string | null = null;
+    const clearLoadError = () => {
+      const previousError = loadError;
+      loadError = null;
+      if (previousError !== null) {
+        setSessionWindowRestoreFeedback((feedback) => feedback === previousError ? "" : feedback);
+      }
+    };
     const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => {
       if (active) {
-        receivedSnapshotUpdate = true;
+        snapshotRevision += 1;
         setSessionWindowRestoreIds(sessionIds);
+        clearLoadError();
       }
     });
-    void api.getSessionWindowRestoreSet().then((sessionIds) => {
-      if (active && !receivedSnapshotUpdate) {
-        setSessionWindowRestoreIds(sessionIds);
-      }
-    }).catch((error) => {
-      if (active) {
-        setSessionWindowRestoreFeedback(
-          error instanceof Error ? error.message : "Could not load previous sessions.",
-        );
-      }
-    });
+    const loadSnapshot = () => {
+      const revision = snapshotRevision;
+      loading = true;
+      void api.getSessionWindowRestoreSet().then((sessionIds) => {
+        if (active && revision === snapshotRevision) {
+          setSessionWindowRestoreIds(sessionIds);
+          clearLoadError();
+        }
+      }).catch((error) => {
+        if (active && revision === snapshotRevision) {
+          loadError = error instanceof Error ? error.message : "Could not load previous sessions.";
+          setSessionWindowRestoreFeedback(loadError);
+        }
+      }).finally(() => { loading = false; });
+    };
+    const retryOnFocus = () => {
+      if (loadError !== null && !loading) loadSnapshot();
+    };
+    loadSnapshot();
+    window.addEventListener("focus", retryOnFocus);
     return () => {
       active = false;
       unsubscribe();
+      window.removeEventListener("focus", retryOnFocus);
     };
   }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
 
