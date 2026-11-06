@@ -5,6 +5,7 @@
 !define WITHMATE_GLOSSARY_ALIAS "${WITHMATE_WINDOWS_APPS_DIR}\withmate-glossary.cmd"
 !define WITHMATE_SESSION_GRAPH_ALIAS "${WITHMATE_WINDOWS_APPS_DIR}\withmate-session-graph.cmd"
 !define WITHMATE_SESSION_HISTORY_ALIAS "${WITHMATE_WINDOWS_APPS_DIR}\withmate-session-history.cmd"
+!define WITHMATE_SESSION_ALIAS "${WITHMATE_WINDOWS_APPS_DIR}\withmate-session.cmd"
 
 !macro customInstall
   CreateDirectory "${WITHMATE_WINDOWS_APPS_DIR}"
@@ -36,6 +37,13 @@
   FileWrite $0 '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\resources\cli\withmate-session-history.mjs" %*$\r$\n'
   FileWrite $0 "exit /b %ERRORLEVEL%$\r$\n"
   FileClose $0
+  FileOpen $0 "${WITHMATE_SESSION_ALIAS}" w
+  FileWrite $0 "@echo off$\r$\n"
+  FileWrite $0 "setlocal$\r$\n"
+  FileWrite $0 "set ELECTRON_RUN_AS_NODE=1$\r$\n"
+  FileWrite $0 '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\resources\cli\withmate-session.mjs" %*$\r$\n'
+  FileWrite $0 "exit /b %ERRORLEVEL%$\r$\n"
+  FileClose $0
   SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 !macroend
 
@@ -44,5 +52,6 @@
   Delete "${WITHMATE_GLOSSARY_ALIAS}"
   Delete "${WITHMATE_SESSION_GRAPH_ALIAS}"
   Delete "${WITHMATE_SESSION_HISTORY_ALIAS}"
+  Delete "${WITHMATE_SESSION_ALIAS}"
   SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
 !macroend
