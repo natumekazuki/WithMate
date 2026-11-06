@@ -21,6 +21,7 @@ type SessionWindowRestoreServiceDeps = {
 export class SessionWindowRestoreService {
   private readonly restoreSetLoaded: Promise<void>;
   private restoreSet: string[] = [];
+  private currentSessionIds: string[] = [];
   private writeTail: Promise<void>;
 
   constructor(private readonly deps: SessionWindowRestoreServiceDeps) {
@@ -47,7 +48,16 @@ export class SessionWindowRestoreService {
     if (!normalized) {
       return Promise.reject(new TypeError("The Session Window restore snapshot is invalid."));
     }
-    const write = this.writeTail.then(() => this.deps.storage.saveSnapshot(normalized));
+    const previousSessionIds = this.currentSessionIds;
+    this.currentSessionIds = normalized;
+    const snapshot = this.restoreSetLoaded.then(() => {
+      const closedSessionIds = new Set(previousSessionIds.filter((sessionId) => !normalized.includes(sessionId)));
+      const previousRestoreSetSize = this.restoreSet.length;
+      this.restoreSet = this.restoreSet.filter((sessionId) => !closedSessionIds.has(sessionId));
+      if (this.restoreSet.length !== previousRestoreSetSize) this.notifyRestoreSetChanged();
+      return normalizeSessionWindowRestoreIds([...this.restoreSet, ...normalized])!;
+    }, () => normalized);
+    const write = this.writeTail.then(async () => this.deps.storage.saveSnapshot(await snapshot));
     this.writeTail = write.then(
       () => undefined,
       () => undefined,
@@ -68,18 +78,24 @@ export class SessionWindowRestoreService {
       ));
     }
     const restoreSessionIds = await this.getSnapshot();
-    const requestedSessionIds = restoreSessionIds.filter(
+    const candidates = restoreSessionIds.filter(
       (sessionId) => initialWindowStates.get(sessionId)?.kind !== "settled-open",
     );
+    this.restoreSet = this.restoreSet.filter((sessionId) => initialWindowStates.get(sessionId)?.kind !== "settled-open");
+    const requestedSessionIds: string[] = [];
     const openedSessionIds: string[] = [];
     const failures: SessionWindowRestoreResult["failures"] = [];
 
-    for (const sessionId of requestedSessionIds) {
+    for (const sessionId of candidates) {
+      // A manual open followed by close can consume a not-yet-processed target.
+      if (!this.restoreSet.includes(sessionId)) continue;
+      requestedSessionIds.push(sessionId);
       const initialWindowState = initialWindowStates.get(sessionId);
       if (initialWindowState?.kind === "opening") {
         const openingResult = await openingResults.get(sessionId);
         if (openingResult === "opened") {
           openedSessionIds.push(sessionId);
+          this.restoreSet = this.restoreSet.filter((candidate) => candidate !== sessionId);
         } else {
           failures.push({ sessionId, reason: "open-failed" });
         }
@@ -97,21 +113,29 @@ export class SessionWindowRestoreService {
         failures.push({ sessionId, reason: "missing" });
         continue;
       }
+      if (!this.restoreSet.includes(sessionId)) {
+        requestedSessionIds.pop();
+        continue;
+      }
       try {
         await this.deps.openSessionWindow(sessionId);
         openedSessionIds.push(sessionId);
+        this.restoreSet = this.restoreSet.filter((candidate) => candidate !== sessionId);
       } catch {
         failures.push({ sessionId, reason: "open-failed" });
       }
     }
 
-    this.restoreSet = failures.map(({ sessionId }) => sessionId);
+    this.notifyRestoreSetChanged();
+
+    return { requestedSessionIds, openedSessionIds, failures };
+  }
+
+  private notifyRestoreSetChanged(): void {
     try {
       this.deps.onRestoreSetChanged?.(this.restoreSet);
     } catch {
       // The invoke result remains the canonical projection when a renderer notification fails.
     }
-
-    return { requestedSessionIds, openedSessionIds, failures };
   }
 }

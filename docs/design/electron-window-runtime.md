@@ -85,7 +85,7 @@ Window復元候補のsnapshotは任意保存とし、open完了・quit準備は�
 
 表示へのbroadcastはWindowごとに配送可否と送信例外を扱い、終了済みRendererには送信しない。配送失敗は固定分類で診断し、他Windowへの配送とMainのprovider応答保存を止めない。新しいRendererはMainのSession / live runを再取得する。draft flushの診断はclose / quit、結果分類、経過時間だけを記録し、本文・URL・タイトル・ID・生errorを含めない。
 
-`SessionWindowRestoreService`は起動時に読み込んだ復元候補と現在開いているWindowの保存集合を分離する。復元操作は起動時候補の読込みだけを待ち、その後の現在集合の保存には待機しない。
+`SessionWindowRestoreService`は起動時に読み込んだ未処理候補とBridgeから受け取る現在openの集合を所有し、両者の和を同じsnapshotへ保存する。現在集合からcloseされたIDは未処理候補からも外し、復元成功対象は処理時に消費する。復元操作は起動時候補の読込みだけを待ち、その後の現在集合の保存には待機しない。
 
 ### MainWindowComposition / MainWindowRuntime
 
