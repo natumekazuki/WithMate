@@ -309,9 +309,6 @@ export function HomeMonitorContent({
       >
         <div className="home-monitor-parent-row">
           <div className="home-monitor-parent-identity" role="group" aria-label={`Main session: ${title}`}>
-            <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
-              <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
-            </span>
             <button
               className={`home-monitor-parent-button${mainUnread ? " has-unread-result" : ""}`}
               type="button"
@@ -326,8 +323,15 @@ export function HomeMonitorContent({
                 size="tiny"
                 className="home-monitor-avatar"
               />
-              <strong className="home-monitor-parent-title">{title}</strong>
+              <span className="home-monitor-parent-copy">
+                <strong className="home-monitor-parent-title">{title}</strong>
+                <span className="home-monitor-parent-workspace">{entry.session.workspaceLabel || entry.session.workspacePath || "Workspace not set"}</span>
+              </span>
             </button>
+            <span className={`home-monitor-status-cluster home-monitor-main-status ${entry.mainState.kind}`} aria-label={`Main status: ${entry.mainState.label}`}>
+              <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
+              {entry.mainState.label}
+            </span>
           </div>
           {canExpand ? (
             <button

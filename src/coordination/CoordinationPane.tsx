@@ -3,6 +3,7 @@ import type {
   CoordinationRecord,
   CoordinationRequest,
   CoordinationSummary,
+  CoordinationIdentity,
 } from "../../src-shared/coordination/coordination-contract.js";
 import type { OpenCoordinationRequest } from "../../src-shared/coordination/coordination-window-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
@@ -12,6 +13,8 @@ import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { useCoordinationQuery } from "./use-coordination-query.js";
 import { CoordinationAnswerDelivery } from "./CoordinationAnswerDelivery.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
+import { coordinationIdentityKey, useCoordinationIdentities } from "./use-coordination-identities.js";
 
 export function coordinationKindLabel(
   kind: CoordinationSummary["kind"],
@@ -56,6 +59,7 @@ export function CoordinationPane({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [originError, setOriginError] = useState<{ id: string; message: string } | null>(null);
   const operationInFlight = useRef(false);
   const draftKey = `${sessionId}:${selectedId ?? ""}`;
   const draft = drafts[draftKey] ?? { body: "", choices: [], reason: "" };
@@ -96,6 +100,33 @@ export function CoordinationPane({
     detail.result && "record" in detail.result
       ? detail.result.initiatorTarget
       : undefined;
+  const identities = useCoordinationIdentities(
+    selectedId
+      ? record ? [record.initiator, ...(record.respondent.kind === "user" ? [] : [record.respondent]), ...record.answers.flatMap((answer) => answer.actor.kind === "user" ? [] : [answer.actor])] : []
+      : page?.items.map((item) => item.initiator) ?? [],
+    active,
+  );
+  const identityRead = (identity: CoordinationIdentity) => identities.reads[coordinationIdentityKey(identity)];
+  const identityTitle = (identity: CoordinationIdentity) => {
+    const read = identityRead(identity);
+    return read?.identity?.title ?? (read?.error ? "Session Identity Unavailable" : read ? "Session Unavailable" : "Loading Session");
+  };
+  const identityAvatar = (identity: CoordinationIdentity) => (
+    <CharacterAvatar key={coordinationIdentityKey(identity)} character={identityRead(identity)?.identity?.character ?? { name: "?", iconPath: "" }} size="tiny" />
+  );
+  const openOrigin = async () => {
+    if (!record || !initiatorTarget) return;
+    const id = record.id;
+    setOriginError(null);
+    try {
+      await getWithMateApi()!.openSession(
+        initiatorTarget.kind === "main" ? initiatorTarget.sessionId : initiatorTarget.mainSessionId,
+        initiatorTarget.kind === "auxiliary" ? initiatorTarget.sessionId : undefined,
+      );
+    } catch (error) {
+      setOriginError({ id, message: error instanceof Error ? error.message : "Could not open the originating Session." });
+    }
+  };
 
   const mutate = async (request: CoordinationRequest) => {
     if (operationInFlight.current) return;
@@ -159,16 +190,22 @@ export function CoordinationPane({
     busyId !== null || Boolean(draft.pendingRequest) || Boolean(detail.error);
   const renderDetail = (item: CoordinationRecord) => (
     <>
-      <div className="coordination-detail-heading">
-        <strong>{coordinationKindLabel(item.kind)}</strong>
-        <span>{stateLabel(item.state)}</span>
+      <div className="coordination-origin">
+        <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${identityTitle(item.initiator)}`} onClick={() => void openOrigin()}>
+          {identityAvatar(item.initiator)}
+          <span><strong>{identityRead(item.initiator)?.identity?.character.name ?? "Session"}</strong><span className="coordination-session-title">{identityTitle(item.initiator)}</span></span>
+        </button>
+        {identityRead(item.initiator)?.error ? <LoadError message={identityRead(item.initiator)!.error!} onRetry={identities.refresh} /> : null}
+        {originError?.id === item.id ? <LoadError message={originError.message} onRetry={() => void openOrigin()} /> : null}
+      </div>
+      <div className="coordination-event-meta">
+        <span className={`coordination-kind coordination-kind-${item.kind}`}>{coordinationKindLabel(item.kind)}</span>
+        <span className={`coordination-state coordination-state-${item.state}`}>{stateLabel(item.state)}</span>
+        <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time>
       </div>
       <p className="coordination-parties">
-        From {item.initiator.sessionId} · Reply To{" "}
-        {item.initiator.kind === "auxiliary" ? "Auxiliary" : "Session"}
-        <br />
         Respondent:{" "}
-        {item.respondent.kind === "user" ? "User" : item.respondent.sessionId}
+        {item.respondent.kind === "user" ? "User" : identityTitle(item.respondent)}
       </p>
       <MessageRichText text={item.body} embeddedMedia="text" />
       {item.state === "withdrawn" ? (
@@ -186,7 +223,7 @@ export function CoordinationPane({
                 <span>
                   {answer.actor.kind === "user"
                     ? "User"
-                    : answer.actor.sessionId}
+                    : identityTitle(answer.actor)}
                 </span>
               </div>
               <MessageRichText text={answer.body} embeddedMedia="text" />
@@ -228,7 +265,7 @@ export function CoordinationPane({
           <fieldset disabled={buttonsDisabled}>
             <legend>{item.answerRevision ? "Change Answer" : "Answer"}</legend>
             {item.choices.map((choice) => (
-              <label key={choice} className="coordination-choice">
+              <label key={choice} className={`coordination-choice${draft.choices.includes(choice) ? " selected" : ""}`}>
                 <input
                   type="checkbox"
                   checked={draft.choices.includes(choice)}
@@ -240,7 +277,7 @@ export function CoordinationPane({
                     })
                   }
                 />
-                {choice}
+                <span>{choice}</span>
               </label>
             ))}
             <textarea
@@ -251,7 +288,7 @@ export function CoordinationPane({
             />
             <button
               type="submit"
-              className="drawer-toggle compact secondary"
+              className="drawer-toggle compact secondary coordination-primary-action"
               disabled={!draft.body.trim() && !draft.choices.length}
               aria-busy={busyId === item.id}
             >
@@ -354,25 +391,14 @@ export function CoordinationPane({
             Back To List
           </button>
         ) : (
-          <label>
-            Show
-            <select
-              aria-label="Coordination filter"
-              value={pendingOnly ? "pending" : "history"}
-              onChange={(event) => {
-                setPendingOnly(event.target.value === "pending");
-                setOffset(0);
-              }}
-            >
-              <option value="pending">Needs Your Response</option>
-              <option value="history">All Records</option>
-            </select>
-          </label>
+          <div className="coordination-filter-tabs" role="group" aria-label="Coordination filter">
+            {([[true, "Needs Your Response"], [false, "All Records"]] as const).map(([pending, label]) => <button key={String(pending)} type="button" aria-pressed={pendingOnly === pending} className={pendingOnly === pending ? "active" : ""} onClick={() => { setPendingOnly(pending); setOffset(0); }}>{label}</button>)}
+          </div>
         )}
         {!(selectedId ? detail.deleted : list.deleted) ? <button
           type="button"
           className="drawer-toggle compact secondary"
-          onClick={selectedId ? detail.refresh : list.refresh}
+          onClick={() => { (selectedId ? detail.refresh : list.refresh)(); identities.refresh(); }}
         >
           Refresh
         </button> : null}
@@ -421,14 +447,16 @@ export function CoordinationPane({
                 key={item.id}
                 onClick={() => setSelectedId(item.id)}
               >
-                <strong>{coordinationKindLabel(item.kind)}</strong>
-                <span className="coordination-list-preview">
-                  {item.bodyPreview}
+                {identityAvatar(item.initiator)}
+                <span className="coordination-event-copy">
+                  <strong className="coordination-list-preview">{item.bodyPreview}</strong>
+                  <span className="coordination-session-title">{identityRead(item.initiator)?.identity?.character.name ?? "Session"} · {identityTitle(item.initiator)}</span>
+                  <span className="coordination-event-meta">
+                    <span className={`coordination-kind coordination-kind-${item.kind}`}>{coordinationKindLabel(item.kind)}</span>
+                    <span className={`coordination-state coordination-state-${item.state}`}>{stateLabel(item.state)}</span>
+                    <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time>
+                  </span>
                 </span>
-                <span>
-                  {stateLabel(item.state)} · {item.initiator.sessionId}
-                </span>
-                <time>{new Date(item.updatedAt).toLocaleString("en-US")}</time>
               </button>
             ))}
           </div>

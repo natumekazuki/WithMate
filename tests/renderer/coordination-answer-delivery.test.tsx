@@ -56,6 +56,8 @@ test("saved answer delivery lazily reloads exact receipt after remount and separ
   let turnState = "running";
   const record: CoordinationRecord = { id: "actual-consultation", crewRootSessionId: "actual-parent", kind: "blocker", initiator: { kind: "auxiliary", sessionId: target.sessionId, incarnationId: target.incarnationId }, initiatorTurnId: "origin-turn", originReceiptId: null, caller: null, body: "Need a decision", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 1, answers: [{ id: "answer-1", revision: 1, actor: { kind: "user" }, body: "Use the agreed approach", selectedChoices: [], createdAt: "2026-11-07T00:00:00Z", receiptId: "saved-receipt" }], history: [], createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z" };
   const h = harness(async () => ({ ...description, turnState }), {
+    getCoordinationIdentity: async () => ({ title: "Origin Session", character: { name: "Origin Character", iconPath: "" } }),
+    subscribeSessionInvalidation: () => () => {},
     executeCoordination: async (request: CoordinationRequest) => request.operation === "get" ? { record, initiatorTarget: target } : { items: [], total: 0, nextOffset: null },
     subscribeCoordinationChanged: () => () => {},
   });

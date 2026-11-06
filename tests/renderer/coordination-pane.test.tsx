@@ -7,6 +7,7 @@ import { CoordinationPane } from "../../src/coordination/CoordinationPane.js";
 import type {
   CoordinationRecord,
   CoordinationRequest,
+  CoordinationSummary,
 } from "../../src-shared/coordination/coordination-contract.js";
 import type { WithMateWindowApi } from "../../src-shared/ipc/withmate-window-api.js";
 
@@ -62,6 +63,8 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
   let changed = () => {};
   const answers: CoordinationRequest[] = [];
   dom.window.withmate = {
+    async getCoordinationIdentity() { return { title: "Origin Session", character: { name: "Origin Character", iconPath: "" } }; },
+    subscribeSessionInvalidation() { return () => {}; },
     subscribeCoordinationChanged(listener) {
       changed = () =>
         listener({
@@ -82,7 +85,7 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
     },
   } as Pick<
     WithMateWindowApi,
-    "executeCoordination" | "subscribeCoordinationChanged"
+    "executeCoordination" | "subscribeCoordinationChanged" | "getCoordinationIdentity" | "subscribeSessionInvalidation"
   > as WithMateWindowApi;
   const root = createRoot(dom.window.document.getElementById("root")!);
   const navigation = { ...record.initiator, id: record.id };
@@ -144,6 +147,75 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
 
 // @test-value v2
 // kind = "contract"
+// claim = "一覧と詳細は起票者の現在CharacterとSession titleを表示し、明示Open OriginはAuxiliaryの所属Mainと対象Auxiliaryを開く"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordination; Session Graph v7-ui-v64-authority" }
+// fault = "現在表示中Sessionを起票者として表示する、内部IDをtitleに使う、またはAuxiliaryの親を誤って開く"
+// observable = "一覧・詳細のCharacter/title、avatar画像、openSessionのMain/Auxiliary引数、filter変更後list request"
+// observation_boundary = "component-behavior"
+// scope = "CoordinationPaneのidentity投影と明示origin移動。metadataとcoordination APIはfixture"
+// lifecycle = "permanent"
+// impact = "利用者が相談の起票元を取り違え、別会話を開くことを防ぐ"
+// distinction = "IPC認可・型検査とidentity hook単体では実paneの表示・通常navigation API接続を確認できない"
+// @end-test-value
+test("Coordination shows originating identities and opens the exact Auxiliary route", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  globals.forEach((name) => Object.defineProperty(globalThis, name, { configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name] }));
+  const initiator = { kind: "auxiliary" as const, sessionId: "origin-aux", incarnationId: "origin-inc" };
+  const record: CoordinationRecord = {
+    id: "identity-consultation", crewRootSessionId: "crew", kind: "user_decision_required", initiator,
+    initiatorTurnId: "origin-turn", originReceiptId: null, caller: null, body: "Which approach?", choices: ["A", "B"],
+    respondent: { kind: "user" }, state: "open", answerRevision: 0, answers: [], history: [],
+    createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z",
+  };
+  const { body, choices, answers, history, ...summaryFields } = record;
+  const summary: CoordinationSummary = { ...summaryFields, initiatorMainSessionId: "origin-main", bodyPreview: body };
+  const requests: CoordinationRequest[] = [];
+  const opened: Array<[string, string | undefined]> = [];
+  dom.window.withmate = {
+    subscribeCoordinationChanged: () => () => {},
+    subscribeSessionInvalidation: () => () => {},
+    getCoordinationIdentity: async (identity) => {
+      assert.deepEqual(identity, initiator);
+      return { title: "Origin Task", character: { name: "Origin Character", iconPath: "data:image/png;base64,AQ==" } };
+    },
+    openSession: async (main, auxiliary) => { opened.push([main, auxiliary]); },
+    executeCoordination: async (request) => {
+      requests.push(request);
+      return request.operation === "get"
+        ? { record, initiatorTarget: { ...initiator, mainSessionId: "origin-main", mainIncarnationId: "main-inc" } }
+        : { items: [summary], total: 1, nextOffset: null };
+    },
+  } as Pick<WithMateWindowApi, "executeCoordination" | "subscribeCoordinationChanged" | "subscribeSessionInvalidation" | "getCoordinationIdentity" | "openSession"> as WithMateWindowApi;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(createElement(CoordinationPane, { sessionId: "viewer-main", active: true, navigation: null })));
+    const row = dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!;
+    assert.match(row.textContent!, /Which approach\?.*Origin Character.*Origin Task/s);
+    assert.equal(row.querySelector("img")?.getAttribute("src"), "data:image/png;base64,AQ==");
+    const all = [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "All Records")!;
+    await act(async () => all.click());
+    assert.equal(all.getAttribute("aria-pressed"), "true");
+    assert.ok(requests.some((request) => request.operation === "list" && request.mainSessionId === "viewer-main" && request.userPending === false));
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!.click());
+    const origin = dom.window.document.querySelector<HTMLButtonElement>(".coordination-detail-origin")!;
+    assert.match(origin.textContent!, /Origin Character.*Origin Task/s);
+    await act(async () => origin.click());
+    assert.deepEqual(opened, [["origin-main", "origin-aux"]]);
+    const checks = [...dom.window.document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    await act(async () => { checks[0].click(); checks[1].click(); });
+    assert.ok(checks.every((checkbox) => checkbox.checked));
+    assert.equal(requests.filter((request) => request.operation === "answer").length, 0);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((name, index) => { const descriptor = saved[index]; if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "通信失敗は取得済み詳細とdraftを保持し、typed削除済みでは古いrecordを除去してdraftを保ち、遅い取得成功で復活させない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/839 閉じたWindow・再起動・更新の整合/Crew全体の削除条件" }
 // fault = "一時失敗で入力を失う、削除済みrecordを現行として描画する、または削除確認後の遅い成功を適用して古い本文を復活させる"
@@ -197,6 +269,8 @@ test("Coordination distinguishes transient reads from terminal deletion without 
     resolveOld = resolve;
   });
   dom.window.withmate = {
+    async getCoordinationIdentity() { return { title: "Origin Session", character: { name: "Origin Character", iconPath: "" } }; },
+    subscribeSessionInvalidation() { return () => {}; },
     subscribeCoordinationChanged() {
       return () => {};
     },
@@ -216,7 +290,7 @@ test("Coordination distinguishes transient reads from terminal deletion without 
     },
   } as Pick<
     WithMateWindowApi,
-    "executeCoordination" | "subscribeCoordinationChanged"
+    "executeCoordination" | "subscribeCoordinationChanged" | "getCoordinationIdentity" | "subscribeSessionInvalidation"
   > as WithMateWindowApi;
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {

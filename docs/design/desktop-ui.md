@@ -148,14 +148,14 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Monitor本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体ではなくHomeの分割後の幅で判定する。2列は前半を左、後半を右へ上から順に積み、Auxiliary展開で反対列の親行を押し下げない。分類ごとのscrollは共用し、狭幅では左列から右列の順に1列へ戻す。幅の切替や他Sessionの追加・除去・再分類で一覧を再mountせず、同じ分類に残るSessionのAuxiliary展開・focus・scrollを保持する
   - 分類splitterのclickは隣接2枠のMainグループ件数が少ない側の一覧を閉じる。同数では後の枠を閉じる。Auxiliary数やCoordination item数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は前の枠を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
   - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行を表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
-  - 常設の workspace / provider / command / transcript は表示せず、親titleとAuxiliary previewは既存の省略表示規則を使う
+  - 親行は32pxのCharacter avatar、太字のSession title、workspaceの副行、Mainの状態文字をまとめる。provider / command / transcriptは常設せず、親title、workspace、Auxiliary previewは既存の省略表示規則を使う
   - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - 親行の右クリック、またはfocus中のShift+F10／Context Menu keyで共通のnative menuを開く。`Copy Session ID`は親Session ID、`Copy Session Title`は選択時に取得した現在のタイトル全文をコピーする。表示の省略はコピー内容へ適用せず、取得・コピー失敗はMonitor内へ表示する。Homeと独立Monitorで同じ操作を使い、`Close`は対象Windowが開いている場合だけ有効とする
   - Main／Auxiliaryの新しい終了結果は、未読の間だけMain title、Aux状態集約、対象Auxiliary previewを青で示す。実行状態とは分け、件数ラベル・未読dot・未読による並べ替えは追加しない。成功・失敗・取消の結果を対象とし、OS通知の設定や配送とは独立する
   - 対象Session Windowがfocus中で、その会話の保存済み最新結果が表示領域内に見えていると自動で既読にする。本文なしの結果は失敗理由、または取得済みDetailsの展開表示で判定し、Detailsの読込中・取得失敗だけでは既読にしない。Windowの単なる表示・最前面固定、過去履歴・別会話の閲覧、Auxiliary一覧の展開だけでは既読にしない。Main／Auxiliaryを独立に扱い、古い結果の既読要求で新しい結果を既読にしない
   - 既読・未読はMain Processのメモリだけで共有し、アプリ再起動やDB切替・初期化でリセットする。過去の結果から未読を復元せず、新たに保存された終了結果から追跡する
   - running / interrupted / error は形状を含む状態アイコンで判別でき、待機と終了は中空円形で揃えつつ状態ラベルと集約単位を分ける
-  - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、常設の状態文字は追加しない。Main／Auxiliaryの個別行・Aux状態集約で同じ表現を使い、tooltipとaccessible nameは`Attention`とする。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
+  - 承認・入力待ちは静止した黄色系の丸囲み`!`アイコンで示し、Main行では`Attention`の状態文字も示す。Auxiliaryの個別行・Aux状態集約はアイコンとtooltip・accessible nameを使う。Auxの件数は会話数であり要求数ではない。要求の詳細と回答・判断操作はSession画面で扱う
   - 取消要求中は`Canceling`、実終了待ちは`Waiting For Stop`をMain／Auxiliaryごとのtooltipとaccessible statusへ反映し、Auxiliaryの件数も状態別に集約する。保存済みidleより取消待ちを優先し、最後の実終了で解除する
   - 取消・承認・入力待ち状態はMainが既存の軽量summary応答へ現在のlive状態から付与し、永続化しない。summaryと本文を含まないlive状態通知は共通の投影を使い、`approvalPending`に承認・入力待ちを集約する。Home／Monitorは初回・再表示時にsummaryを取得し、取消・承認・入力待ち状態の変化を再取得契機とする。通知payloadを直接投影せず、無効化前の遅い取得結果は適用しない
   - 監視対象の親・Auxiliary summaryの取得状態はMonitor領域のstatus feedbackで示し、失敗時は`Retry`で再取得できる。取得済みのcardは再取得中・失敗時も保持し、未知のAuxiliary集約や正常な0件へ置き換えない
@@ -466,6 +466,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、未対応／全履歴のページング一覧から詳細へ開く。本文、回答revision、取り下げ理由と後着回答、起票Turn・receipt・訂正履歴を読み、ユーザー担当の回答・回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の保存、通常queueへの配送、実際の消費・解決を別々に表示する
+- Coordinationの一覧は34pxのCharacter avatar、本文preview、Character名とSession title、種別・状態・日時を同じ行のまとまりで示す。詳細にも起票元のavatarと名前を置き、`Open Origin`で正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxと明示的な`Save And Send`を使い、選択だけでは送信しない
 - 保存済み回答の`Delivery Details`から、その回答receiptと保存済み起票元identityに対応する受付配送・受信Turn・保存結果を必要時に再取得する。受付completedをTurn全体の完了と同一視せず、`Read Recipient Turn Result`から同じ受付の保存応答をページング取得できる。通常表示へ全回答の実行履歴を常設取得しない
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する
@@ -584,7 +585,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 
 ### Queued Message Edit
 
-Main／Auxiliaryの未開始の予約には、`Steer`の隣に`Edit`を表示する。Steer非対応のproviderでも編集できる。Editすると対象会話をActionDockの送信対象にし、既存のPromptを展開して本文を編集する。通常下書きとは別の会話別入力を使い、Auxiliaryの通常下書き保存へ編集本文を混ぜない。
+Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表示する。Coordination由来の予約は回答と配送の対応を維持するためEdit／Steerの対象にしない。Steer非対応のproviderでも通常予約は編集できる。Editすると対象会話をActionDockの送信対象にし、既存のPromptを展開して本文を編集する。通常下書きとは別の会話別入力を使い、Auxiliaryの通常下書き保存へ編集本文を混ぜない。
 
 編集中だけ既存Sendの紙飛行機をチェックiconへ替え、tooltipとaccessible nameを`Submit`にする。その左に×のicon buttonを置き、`Cancel Edit`とする。追加の状態label、bubbleの強調枠、専用pane、復帰用buttonは設けない。上段の実行中TurnのCancelは別操作として維持する。予約時の実行設定は変更せず既存controlで参照し、本文・添付を更新する。
 
@@ -592,7 +593,9 @@ Main／Auxiliaryの未開始の予約には、`Steer`の隣に`Edit`を表示す
 
 ### Turn Input Details
 
-会話の`Input Details`は保存済みの受付・WithMate Turn参照から共通execution読取を利用する。通常表示では開始入力の原文との差と確認済み追加入力件数を分け、Agent由来の入力には保存された送信元Sessionと`Open Sender`を示す。Characterや現在の画面選択を送信者identityの代わりにしない。
+会話の`Input Details`は保存済みの受付・WithMate Turn参照から共通execution読取を利用する。通常表示では開始入力の原文との差と確認済み追加入力件数を分ける。Agent由来の入力は予約・保存済み会話とも、受付時に保存したCharacter avatarを右側、名前を本文上に置き、本文先頭のSession名から送信元を開く。avatar下のinfo入口から同じ読取結果のInput Detailsを開く。Auxiliary送信元は保存した所属MainとAuxiliary IDを指定する。未記録の表示snapshotは不明と示し、現在のCharacterや画面選択で過去の送信者を補わない。
+
+送信側は既存receiptを表示中のsource WithMate Turnから一括取得し、自身の保存Character avatarを左側、`@Character · Session名`と送信本文を同じまとまりに置く。出力内の厳密な送信位置は記録されないためsource Turn単位にまとめ、複数assistant messageへ重複表示しない。最初は320字までと全文文字数を示し、必要時に正確な宛先とreceiptから原文を継続取得する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別する。送信表示のための別台帳や本文コピーは持たない。
 
 詳細では同じsnapshotの`Original Input`と予定／固定済み比較入力、添付参照を並べて確認できる。長文は同じsnapshotへの継続参照で取得し、再編集などにより継続できなくなった場合は再読込する。詳細取得後はそのsnapshotの状態・比較結果を表示し、古い状態取得の判定を本文へ使い回さない。変更者や全編集履歴は表示しない。
 

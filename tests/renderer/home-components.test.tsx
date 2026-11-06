@@ -2106,10 +2106,10 @@ describe("HomeMonitorContent", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Monitorの親行はMain状態をavatar/titleと同じまとまりに表示し、Auxiliaryの状態別件数を配下一覧の展開操作へまとめる"
+  // claim = "Home Monitorの親行はavatar、title、workspaceと読めるMain状態を同じまとまりに表示し、Auxiliaryの状態別件数を配下一覧の展開操作へまとめる"
   // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#session-monitor-window" }
-  // fault = "Main状態を親名と分離する、Auxiliaryの集約と展開操作を分離する、Main/Aux状態を混同する、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
-  // observable = "Main session group内の状態と親を開くbutton、Auxiliary展開button内の状態別件数とicon、aria-expanded、avatarとtitle"
+  // fault = "Main状態の文字やworkspaceを表示しない、Main状態を親名と分離する、Auxiliaryの集約と展開操作を分離する、Main/Aux状態を混同する、状態別件数を1件だけ省略する、またはavatar/titleが欠落する"
+  // observable = "Main session group内の状態文字と親を開くbutton、workspace、Auxiliary展開button内の状態別件数とicon、aria-expanded、avatarとtitle"
   // observation_boundary = "component-behavior"
   // scope = "home-monitor-rendering"
   // lifecycle = "permanent"
@@ -2155,7 +2155,6 @@ describe("HomeMonitorContent", () => {
 
     assert.ok(html.includes("Agent task"));
     assert.ok(html.includes("Auxiliary task"));
-    assert.equal(html.includes("workspace"), false);
     assert.equal(cards.length, 2);
     for (const [index, card] of cards.entries()) {
       const parentRow = card.querySelector(".home-monitor-parent-row");
@@ -2163,6 +2162,8 @@ describe("HomeMonitorContent", () => {
       assert.ok(mainGroup);
       assert.ok(mainGroup.querySelector(`button[aria-label="Open session: ${entries[index]?.session.taskTitle}"]`));
       assert.ok(mainGroup.querySelector(`.home-monitor-status-icon.${expectedMainStates[index]}`));
+      assert.equal(mainGroup.querySelector(".home-monitor-main-status")?.textContent, entries[index]?.mainState.label);
+      assert.equal(mainGroup.querySelector(".home-monitor-parent-workspace")?.textContent, entries[index]?.session.workspaceLabel);
       assert.equal(card.querySelectorAll(".home-monitor-parent-row").length, 1);
       assert.equal(card.querySelectorAll(".home-monitor-auxiliary-list").length, 0);
       assert.equal(card.querySelectorAll(".home-monitor-parent-title").length, 1);

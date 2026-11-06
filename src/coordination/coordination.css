@@ -19,12 +19,6 @@
   justify-content: space-between;
   gap: 8px;
 }
-.coordination-toolbar label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.coordination-pane select,
 .coordination-pane textarea {
   color: var(--ink);
   background: var(--surface-deep);
@@ -40,8 +34,8 @@
   resize: vertical;
 }
 .coordination-parties,
-.coordination-list-row span,
-.coordination-list-row time {
+.coordination-session-title,
+.coordination-event-meta {
   font-size: 12px;
   color: var(--muted);
   overflow-wrap: anywhere;
@@ -54,13 +48,17 @@
 }
 .coordination-list-row {
   display: grid;
-  gap: 5px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
   text-align: left;
   color: inherit;
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--line);
-  padding: 12px 4px;
+  padding: 14px 4px;
   cursor: pointer;
 }
 .coordination-list-row:hover {
@@ -88,6 +86,127 @@
   display: flex;
   align-items: start;
   gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.coordination-choice.selected {
+  border-color: var(--orange);
+  background: var(--orange-soft);
+}
+.coordination-choice:focus-within,
+.coordination-detail-origin:focus-visible,
+.coordination-filter-tabs button:focus-visible,
+.coordination-list-row:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+.coordination-event-copy,
+.coordination-detail-origin > span {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+.coordination-event-copy > strong {
+  color: var(--ink);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.coordination-session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.coordination-event-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11.5px;
+}
+.coordination-kind,
+.coordination-state {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.coordination-state-open {
+  border-color: rgba(246, 200, 112, 0.22);
+  color: #f6c870;
+  background: rgba(246, 200, 112, 0.12);
+}
+.coordination-state-resolved {
+  border-color: rgba(125, 211, 168, 0.22);
+  color: #7dd3a8;
+  background: rgba(125, 211, 168, 0.12);
+}
+.coordination-kind-user_decision_required,
+.coordination-kind-blocker {
+  border-color: rgba(255, 124, 124, 0.22);
+  color: #ff9b9b;
+  background: rgba(255, 124, 124, 0.12);
+}
+.coordination-detail-origin {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.coordination-detail-origin:hover:not(:disabled) .coordination-session-title {
+  text-decoration: underline;
+}
+.coordination-detail-origin:disabled {
+  cursor: default;
+}
+.coordination-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.coordination-filter-tabs button {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.coordination-filter-tabs button.active {
+  border-color: var(--line);
+  color: var(--ink);
+  background: var(--orange-soft);
+}
+.coordination-filter-tabs button:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+.coordination-answer-form {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.coordination-answer-form textarea {
+  min-height: 88px;
+  border-radius: 10px;
+  padding: 10px;
+}
+.coordination-pane .coordination-primary-action {
+  justify-self: start;
+  background: var(--character-main);
+  color: var(--character-main-ink);
 }
 .coordination-actions label {
   display: grid;

@@ -760,7 +760,13 @@
   outline-offset: -2px;
 }
 
-.home-page .home-monitor-avatar.character-avatar,
+.home-page .home-monitor-list-items .home-monitor-avatar.character-avatar {
+  width: 32px;
+  height: 32px;
+  border-width: 1px;
+  box-shadow: none;
+}
+
 .home-page .home-monitor-auxiliary-avatar.character-avatar {
   width: 24px;
   height: 24px;
@@ -768,7 +774,13 @@
   box-shadow: none;
 }
 
+.home-page .home-monitor-parent-copy {
+  display: grid;
+  min-width: 0;
+}
+
 .home-page .home-monitor-parent-title,
+.home-page .home-monitor-parent-workspace,
 .home-page .home-monitor-auxiliary-preview {
   min-width: 0;
   overflow: hidden;
@@ -781,6 +793,28 @@
   font-size: 0.82rem;
   font-weight: 400;
 }
+
+.home-page .home-monitor-list-items .home-monitor-parent-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.home-page .home-monitor-parent-workspace {
+  color: #aab6c8;
+  font-size: 0.72rem;
+}
+
+.home-page .home-monitor-main-status {
+  margin-right: 8px;
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.home-page .home-monitor-main-status.running { color: #79d4df; }
+.home-page .home-monitor-main-status.approval { color: #f5cf75; }
+.home-page .home-monitor-main-status.error { color: #ff9b8e; }
+.home-page .home-monitor-main-status.interrupted { color: #ffab77; }
 
 .home-page .has-unread-result .home-monitor-parent-title,
 .home-page .has-unread-result .home-monitor-auxiliary-preview,
