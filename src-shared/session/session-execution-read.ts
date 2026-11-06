@@ -9,6 +9,7 @@ const reference = { target: sessionTargetSchema, receiptId: id.optional(), turnI
 const exactReference = <T extends z.ZodRawShape>(extra: T) => z.object({ ...reference, ...extra }).strict()
   .refine((value) => { const ref = value as { receiptId?: string; turnId?: string; messageSeq?: number }; return [ref.receiptId, ref.turnId, ref.messageSeq].filter((value) => value !== undefined).length === 1; }, "Specify exactly one receiptId, WithMate turnId or saved messageSeq.");
 export const executionOperationRequestSchemas = {
+  list_sent_deliveries: z.object({ target: sessionTargetSchema, messageSeqs: z.array(z.number().int().nonnegative()).max(180), liveTurnIds: z.array(z.string().regex(/^[1-9]\d*$/)).max(1).optional(), cursor: z.number().int().nonnegative().optional(), limit: z.number().int().min(1).max(20).optional() }).strict(),
   list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({ target: sessionTargetSchema }),
   get_message: sessionHistoryOperationRequestSchemas.get_message.extend({ target: sessionTargetSchema }),
   list_operations: sessionHistoryOperationRequestSchemas.list_operations.extend({ target: sessionTargetSchema }),
@@ -27,7 +28,8 @@ export type ExecutionReadRequest = z.infer<typeof executionOperationRequestSchem
 export type ExecutionReadInput = { target: SessionTarget; operation: ExecutionReadOperation; request: ExecutionReadRequest };
 const nullableId = z.string().nullable();
 const summary = z.object({ entry: z.object({ receiptId: id, inputSeq: z.number().nullable(), kind: z.enum(["start", "additional"]), stage: z.enum(["fixed", "planned", "not-fixed"]), comparison: z.enum(["unchanged", "changed", "unknown"]), detail: z.object({ operation: z.literal("get_execution_input"), receiptId: id }) }).nullable(), startChanged: z.boolean().nullable(), additional: z.object({ confirmedCount: z.number().int().nonnegative(), references: z.array(z.object({ seq: z.number().int().nonnegative() })), referencesNextOffset: z.number().nullable(), unresolved: z.array(z.object({ seq: z.number().nullable(), receiptId: id.optional(), state: z.enum(["pending", "unknown"]) })), unresolvedCount: z.number(), unresolvedNextOffset: z.number().nullable(), notSent: z.array(z.object({ seq: z.number() })), notSentCount: z.number(), notSentNextOffset: z.number().nullable(), coverage: z.enum(["recorded", "unknown"]) }) });
-const origin = z.object({ kind: z.enum(["gui", "session"]), actorKind: z.enum(["main", "auxiliary"]).optional(), actorSessionId: id.optional(), actorIncarnationId: id.optional(), actorTurnId: id.optional(), operation: z.literal("send"), targetSessionId: id, targetIncarnationId: id });
+const displaySnapshot = z.object({ sessionTitle: z.string(), character: z.object({ id: z.string(), name: z.string(), iconPath: z.string() }) });
+const origin = z.object({ kind: z.enum(["gui", "session"]), actorKind: z.enum(["main", "auxiliary"]).optional(), actorSessionId: id.optional(), actorIncarnationId: id.optional(), actorTurnId: id.optional(), actorMainSessionId: id.optional(), actorSnapshot: displaySnapshot.optional(), operation: z.literal("send"), targetSessionId: id, targetIncarnationId: id, targetSnapshot: displaySnapshot.optional() });
 const description = z.object({ origin: origin.nullable(), receiptId: nullableId, receiptState: nullableId, turnId: nullableId, turnState: nullableId, resultState: z.enum(["not-started", "unknown", "running", "not-saved", "saved", "partial"]), userMessageSeq: z.number().nullable(), assistantMessageSeq: z.number().nullable(), inputs: summary });
 const resultPage = { items: z.array(z.unknown()), total: z.number().int().nonnegative(), offset: z.number().int().nonnegative(), nextOffset: z.number().int().nonnegative().nullable() };
 const textPiece = { text: z.string(), offset: z.number().int().nonnegative(), nextOffset: z.number().int().nonnegative().nullable(), totalChars: z.number().int().nonnegative() };
@@ -36,6 +38,7 @@ const publicAttachments = z.array(z.object({ id: z.string(), kind: z.enum(["file
 const inputPiece = z.object({ ...ok, ...textPiece, attachments: publicAttachments });
 const outputUnit = providerOutputSchema.shape.units.element;
 export const executionOperationResultSchemas = {
+  list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, textPreview: z.string(), textChars: z.number().int().nonnegative() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_messages: z.object({ ...ok, window: z.object({ fromSeq: z.number(), toSeq: z.number() }), ...resultPage }).passthrough(),
   get_message: z.object({ ...ok, seq: z.number(), role: z.enum(["user", "assistant"]), turn: z.unknown(), ...textPiece }).passthrough(),
   list_operations: z.object({ ...ok, seq: z.number(), section: z.string(), artifactDetailSaved: z.boolean(), ...resultPage }).passthrough(),
@@ -53,6 +56,7 @@ export const executionOperationResultSchemas = {
   ]),
 } as const;
 export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, string> = {
+  list_sent_deliveries: "Read bounded outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor; get_execution_input on each returned exact target/receipt reads its original full input. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
   list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",
   get_message: "Read one exact saved message in bounded UTF-16 text pieces. Its saved Turn linkage may be null; no latest-message or inferred Turn fallback.",
   list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",

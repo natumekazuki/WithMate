@@ -93,6 +93,32 @@ test("後方queued編集中は対象会話だけを保留して更新後に同�
 
 // @test-value v2
 // kind = "contract"
+// claim = "Coordinationの配送は通常入力の編集・Steerで変更せず、拒否後に通常queueの実行を保留しない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/838" }
+// fault = "Coordinationを編集holdへ取り込み、storage拒否後もqueueの開始を止めるか追加入力としてclaimする"
+// observable = "serviceの編集とSteer拒否、保持されたqueued状態と後続通常入力の編集成功"
+// observation_boundary = "public-boundary"
+// scope = "SessionTurnQueueServiceのCoordination受付操作境界"
+// lifecycle = "permanent"
+// impact = "相談回答の保存本文と配送本文の不一致や、通常送信の停止を防ぐ"
+// distinction = "storage拒否だけのtestではserviceが先に取得する編集holdやclaimを観測しない"
+// @end-test-value
+test("Coordination edit and Steer reject before acquiring an edit hold or dispatch claim", async () => {
+  const f = await fixture();
+  const service = new SessionTurnQueueService({ store: f.store, isRunInFlight: () => true, sendInput: async () => { throw new Error("unexpected Provider input"); }, dispatch: async () => ({ state: "completed" }) });
+  try {
+    const receipt = f.queue.enqueue(f.owner, { ...f.capture("Coordination"), coordination: { id: "coordination", operation: "answer", actor: { kind: "user" } } });
+    const ordinary = f.queue.enqueue(f.owner, f.capture("ordinary"));
+    await assert.rejects(service.beginQueuedEdit(f.owner, receipt.id, async () => {}), /Coordination/);
+    await assert.rejects(service.sendQueuedInput(f.owner, receipt.id, "1"), /Coordination/);
+    assert.equal(f.queue.getReceiptById(f.owner, receipt.id)?.state, "queued");
+    assert.equal((await service.beginQueuedEdit(f.owner, ordinary.id, async () => {})).id, ordinary.id);
+    await service.cancelQueuedEdit(f.owner, ordinary.id);
+  } finally { await service.close(); await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "同じ受付の原文とclaim採用入力を別保存し、編集後も原文の再試行だけを受け付け、不明な過去原文を現在値で補わない"
 // oracle = { type = "contract", ref = "GitHub Issue #832: 待機中の指示編集と再試行" }
 // fault = "編集で再試行照合元を置換する、claim後に採用入力を失う、過去行の現在値を原文として返す"

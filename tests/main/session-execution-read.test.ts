@@ -13,6 +13,7 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { projectProviderOutput } from "../../src-shared/session/provider-output.js";
 import { executionOperationResultSchemas, type ExecutionReadOperation } from "../../src-shared/session/session-execution-read.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
+import { captureSessionTurnQueueDisplay } from "../../src-shared/session/session-turn-queue.js";
 
 async function fixture(action: (context: { sessions: SessionStorageV6; turns: SessionTurnStorageV6; queue: SessionTurnQueueStorageV6; read: SessionExecutionReadStorage; auxiliary: AuxiliarySessionStorage }) => void) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-execution-read-"));
@@ -23,6 +24,80 @@ async function fixture(action: (context: { sessions: SessionStorageV6; turns: Se
   finally { auxiliary.close(); read.close(); queue.close(); turns.close(); sessions.close(); await rm(directory, { recursive: true, force: true }); }
 }
 function session() { return buildNewSession({ id: "read-main", taskTitle: "Read", workspaceLabel: "workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#112233", sub: "#445566" }, approvalMode: "on-request" }); }
+
+// @test-value v2
+// kind = "contract"
+// claim = "送信時のCharacterとSession名は保存済みoriginから取得し、名称変更・編集・終端後も過去の送信者を入れ替えない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/837" }
+// fault = "execution読取のschemaが表示snapshotを落とすか、入力編集・終端で保存済み送信者を置き換える"
+// observable = "実SQLite receiptと保存messageSeqのexecution公開結果に含まれるorigin snapshot"
+// observation_boundary = "public-boundary"
+// scope = "受付originから完了済み会話executionへの投影"
+// lifecycle = "permanent"
+// impact = "別Sessionからの指示を誰の発言か取り違えることを防ぐ"
+// distinction = "型検査とqueue単体ではexecutionの公開schemaと保存message参照を通るsnapshot保持を検証できない"
+// @end-test-value
+test("saved sender display survives edits and completion without adopting current metadata", async () => {
+  await fixture(({ sessions, queue, turns, read }) => {
+    const sender = sessions.insertSession({ ...session(), id: "sender", taskTitle: "Original Sender", character: "Sender", characterIconPath: "C:/sender.png" });
+    const receiver = sessions.insertSession({ ...session(), messages: [{ role: "user", text: "edited instruction" }, { role: "assistant", text: "answer" }] });
+    const owner = { sessionId: receiver.id, incarnationId: getSessionIncarnationId(receiver) };
+    const origin = { kind: "session" as const, actorKind: "main" as const, actorSessionId: sender.id, actorIncarnationId: getSessionIncarnationId(sender), actorTurnId: "12", actorSnapshot: captureSessionTurnQueueDisplay(sender), operation: "send" as const, targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(receiver) };
+    const receipt = queue.enqueue(owner, { request: { userMessage: "original instruction", clientRequestId: randomUUID(), submitSource: "composer", executionOptions: captureSessionExecutionOptions(receiver) }, attachments: [], provider: receiver.provider, workspacePath: receiver.workspacePath, origin });
+    queue.updateQueued(owner, receipt.id, { userMessage: "edited instruction", attachments: [] });
+    sessions.patchSessionMetadata(sender.id, getSessionIncarnationId(sender), { title: "Renamed Sender" });
+    const turn = turns.createSessionTurn({ sessionId: receiver.id, provider: receiver.provider, model: receiver.model, reasoningEffort: receiver.reasoningEffort, approvalMode: receiver.approvalMode, threadId: "", errorMessage: "", createdAt: "2026-11-07T00:00:00Z", phase: "completed", userMessageSeq: 0, assistantMessageSeq: 1 });
+    queue.claimNext(owner); queue.markStarted(owner, receipt.id, { turnId: String(turn.id), userMessageSeq: 0 }); queue.settle(owner, receipt.id, "completed");
+    assert.equal(queue.listActive(owner).length, 0);
+    const target = { kind: "main" as const, ...owner };
+    const result = executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, messageSeq: 0 } }));
+    assert.deepEqual(result.origin, origin);
+    assert.equal(result.origin?.actorSnapshot?.sessionTitle, "Original Sender");
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "表示範囲の送信はsource Turnと実actorを一致させて一度だけ返し、受付順のbounded pageで原文previewと配送状態を保持する"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/837" }
+// fault = "同じTurnのuserとassistant参照で送信を重複させる、他actorの受付を混ぜる、編集本文を原文へ置換する、またはcursorで送信を欠落する"
+// observable = "共通list_sent_deliveriesのreceipt ID順、source anchor、原文preview長、原状態、続きcursor"
+// observation_boundary = "public-boundary"
+// scope = "既存receiptからの送信側一括execution読取"
+// lifecycle = "permanent"
+// impact = "利用者が送信相手や送信内容、取消済み受付を取り違えることを防ぐ"
+// distinction = "受信側queueや型検査ではsource message群から複数宛先receiptを逆引く結合とkeyset継続を検証できない"
+// @end-test-value
+test("outgoing deliveries batch exact source Turns with bounded immutable previews and cursor", async () => {
+  await fixture(({ sessions, turns, queue, read }) => {
+    const sender = sessions.insertSession({ ...session(), messages: [{ role: "user", text: "start" }, { role: "assistant", text: "answer" }, { role: "user", text: "later" }, { role: "assistant", text: "later answer" }] });
+    const recipient = sessions.insertSession({ ...session(), id: "recipient" });
+    const recipientOwner = { sessionId: recipient.id, incarnationId: getSessionIncarnationId(recipient) };
+    const base = { sessionId: sender.id, provider: sender.provider, model: sender.model, reasoningEffort: sender.reasoningEffort, approvalMode: sender.approvalMode, threadId: "", errorMessage: "", createdAt: "2026-11-07T00:00:00Z", phase: "completed" as const };
+    const first = turns.createSessionTurn({ ...base, userMessageSeq: 0, assistantMessageSeq: 1 });
+    const later = turns.createSessionTurn({ ...base, userMessageSeq: 2, assistantMessageSeq: 3 });
+    const origin = { kind: "session" as const, actorKind: "main" as const, actorSessionId: sender.id, actorIncarnationId: getSessionIncarnationId(sender), actorTurnId: String(first.id), operation: "send" as const, targetSessionId: recipient.id, targetIncarnationId: recipientOwner.incarnationId };
+    const send = (text: string, patch: object = {}) => queue.enqueue(recipientOwner, { request: { userMessage: text, clientRequestId: randomUUID(), submitSource: "composer", executionOptions: captureSessionExecutionOptions(recipient) }, attachments: [], provider: recipient.provider, workspacePath: recipient.workspacePath, origin: { ...origin, ...patch } });
+    const a = send("a".repeat(400));
+    const b = send("second"); queue.cancelQueued(recipientOwner, b.id);
+    send("other incarnation", { actorIncarnationId: "different" });
+    send("other kind", { actorKind: "auxiliary" });
+    send("later", { actorTurnId: String(later.id) });
+    queue.updateQueued(recipientOwner, a.id, { userMessage: "edited", attachments: [] });
+    const target = { kind: "main" as const, sessionId: sender.id, incarnationId: getSessionIncarnationId(sender) };
+    const call = (extra: object = {}) => executionOperationResultSchemas.list_sent_deliveries.parse(read.execute({ target, operation: "list_sent_deliveries", request: { target, messageSeqs: [0, 1], limit: 1, ...extra } }));
+    const page = call();
+    assert.deepEqual(page.items.map((item) => [item.receiptId, item.sourceMessageSeq, item.textPreview.length, item.textChars, item.state]), [[a.id, 1, 320, 400, "queued"]]);
+    assert.equal(page.items[0].origin.actorSnapshot, undefined);
+    assert.deepEqual(page.items[0].target, { kind: "main", ...recipientOwner });
+    const next = call({ cursor: page.nextCursor });
+    assert.deepEqual(next.items.map((item) => [item.receiptId, item.state]), [[b.id, "canceled"]]);
+    assert.equal(next.nextCursor, null);
+    const live = call({ messageSeqs: [], liveTurnIds: [String(first.id)], limit: 20 });
+    assert.deepEqual(live.items.map((item) => [item.receiptId, item.sourceMessageSeq]), [[a.id, null], [b.id, null]]);
+    assert.deepEqual(call({ messageSeqs: [2, 3] }).items.map((item) => item.textPreview), ["later"]);
+  });
+});
 
 // @test-value v2
 // kind = "contract"

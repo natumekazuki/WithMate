@@ -838,6 +838,7 @@ export function useConversationMessageColumn({
     provider: session.provider,
     artifactDetailsEnabled: enabled,
     character: columnCharacter,
+    liveWithMateTurnId: responseSessionTurnId,
     messages: projection.messages,
     messageKeys: projection.keys,
     turnQueueMetadata: queuedProjection.metadata,

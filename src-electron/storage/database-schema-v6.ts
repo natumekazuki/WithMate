@@ -1641,6 +1641,11 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       db.exec(`ALTER TABLE session_turn_queue_v6 ADD COLUMN ${name} TEXT CHECK (${name} IS NULL OR json_valid(${name}))`);
     }
   }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_v6_session_turn_queue_sender ON session_turn_queue_v6(
+    json_extract(accepted_json, '$.origin.actorKind'),
+    json_extract(accepted_json, '$.origin.actorSessionId'),
+    json_extract(accepted_json, '$.origin.actorIncarnationId'),
+    json_extract(accepted_json, '$.origin.actorTurnId'), sequence)`);
   cleanupForbiddenV6Tables(db);
   if (tableColumnNames(db, "session_turns_v6").has("summary")) {
     db.exec("ALTER TABLE session_turns_v6 DROP COLUMN summary");

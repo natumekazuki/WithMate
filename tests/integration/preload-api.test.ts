@@ -779,6 +779,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
 
   const keys = Object.keys(api).sort();
   const expectedKeys = [
+    "getCoordinationIdentity",
     "executeCoordination",
     "subscribeCoordinationChanged",
     "openCoordination",

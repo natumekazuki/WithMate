@@ -21,7 +21,9 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
-import { TurnInputDetails, type TurnInputReadContext } from "./turn-input-details.js";
+import { TurnInputReadBoundary, TurnInputDetailsContent, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { useSentDeliveries } from "./use-sent-deliveries.js";
+import { SentDeliveryRow } from "./sent-delivery-row.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
 import { PendingRunIndicator } from "../runtime/pending-run-indicator.js";
 import { clampFindMatchIndex, findTextMatches } from "../../../src-shared/text/find-text-matches.js";
@@ -89,6 +91,7 @@ function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFol
 }
 export type SessionMessageColumnProps = {
   inputReadContext?: TurnInputReadContext;
+  liveWithMateTurnId?: string;
   turnSubmissions?: import("../runtime/session-turn-submissions.js").SessionTurnSubmissions;
   responsePending?: boolean;
   submissionError?: string;
@@ -458,6 +461,7 @@ export function SelectionTextActionSurface({
 
 export function SessionMessageColumn({
   inputReadContext,
+  liveWithMateTurnId,
   turnQueueMetadata,
   onCancelQueuedTurn,
   onReleaseInterruptedTurn,
@@ -532,6 +536,7 @@ export function SessionMessageColumn({
   glossaryAnnotationMatcher,
   onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
+  const sentDeliveries = useSentDeliveries(inputReadContext, suppliedMessages, liveWithMateTurnId, isContentActive && artifactDetailsEnabled);
   const hasResponseStatus = isRunning || responsePending || !!submissionError;
   const sharedPending = !!responsePresentationKey && hasResponseStatus && (suppliedPendingResponseKey === null || !suppliedMessageKeys?.includes(suppliedPendingResponseKey));
   const rawMessages = useMemo(() => sharedPending ? [...suppliedMessages, { role: "assistant" as const, text: "" }] : suppliedMessages, [suppliedMessages, sharedPending]);
@@ -1489,8 +1494,11 @@ export function SessionMessageColumn({
                     <span>{messageGroup.label}</span>
                   </div>
                 ) : null}
-              <article
-                className={`message-row ${message.role}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
+              <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
+                const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
+                const displayedRole = isSessionOrigin ? "session-origin" : message.role;
+                return <article
+                className={`message-row ${displayedRole}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
@@ -1519,9 +1527,11 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
+                {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
+                <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
                   <div className="message-card-content">
-                    <TurnInputDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} />
+                    {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={(error) => { read.setReadError(error); read.setOpen(true); }} /> : null}
+                    {!isSessionOrigin ? <TurnInputDetailsContent message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} read={read} /> : null}
                     {artifact && !isAssistant ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -1622,6 +1632,7 @@ export function SessionMessageColumn({
                         )}
                       </div>
                     </div>
+                    {isSessionOrigin ? <TurnInputDetailsContent message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} read={read} compact /> : null}
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
                     {artifact ? (
                       <section className="artifact-shell">
@@ -1739,14 +1750,19 @@ export function SessionMessageColumn({
                       : message.runFailure === undefined && (isRunning || responsePending || submissionError) && absoluteIndex === pendingResponseMessageIndex ? renderResponseStatus() : null}
                   </div>
                 </div>
-                </article>
+                </article>;
+              }}</TurnInputReadBoundary>
+                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} />) : null}
                 {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </div>
             );
           })}
             </div>
             {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
+            {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === null && item.sourceTurnId === liveWithMateTurnId).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} />) : null}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
+            {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
+            {sentDeliveries.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.loadMore}>Load More Sent Messages</button> : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}

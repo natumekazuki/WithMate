@@ -96,6 +96,7 @@ export class SessionTurnQueueService {
       if (edit && (edit.incarnationId !== owner.incarnationId || edit.id !== id)) throw new Error("Another queued message is being edited.");
       const receipt = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
       if (!receipt || receipt.state !== "queued") throw new Error("Only a queued receipt can be edited.");
+      if (receipt.captured.coordination) throw new Error("Coordination delivery cannot be edited as a queued message.");
       this.adoptOwner(owner);
       this.edits.set(owner.sessionId, { incarnationId: owner.incarnationId, id });
       return receipt;
@@ -164,6 +165,7 @@ export class SessionTurnQueueService {
         if (!this.deps.sendInput) throw new Error("Queued Session input is unavailable.");
         const candidate = (await this.deps.store.listActive(owner)).find((entry) => entry.id === id);
         if (!candidate || candidate.state !== "queued") throw new Error("The queued input is no longer available.");
+        if (candidate.captured.coordination) throw new Error("Coordination delivery cannot be sent as additional input.");
         let claimed: SessionTurnQueueReceipt;
         try {
           claimed = await this.deps.store.claimForInput(owner, id, expectedTurnId);

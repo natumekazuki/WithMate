@@ -74,6 +74,38 @@ export class SessionExecutionReadStorage {
     const receiptColumns = "id, sequence, state, captured_json, accepted_json, dispatched_json, turn_id, input_turn_id, user_message_seq, updated_at";
     const receiptQuery = `SELECT ${receiptColumns} FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`;
     const turnWhere = target.kind === "main" ? "session_id = ? AND auxiliary_session_id IS NULL" : "auxiliary_session_id = ?";
+    if (operation === "list_sent_deliveries") {
+      const options = request as import("zod").z.infer<typeof executionOperationRequestSchemas.list_sent_deliveries>;
+      const messageSeqs = [...new Set(options.messageSeqs)];
+      const liveTurnIds = options.liveTurnIds ?? [];
+      if (!messageSeqs.length && !liveTurnIds.length) return { ok: true, items: [], nextCursor: null };
+      const marks = (values: unknown[]) => values.map(() => "?").join(",");
+      const clauses = [...(messageSeqs.length ? [`user_message_seq IN (${marks(messageSeqs)}) OR assistant_message_seq IN (${marks(messageSeqs)})`] : []), ...(liveTurnIds.length ? [`id IN (${marks(liveTurnIds)})`] : [])];
+      const sourceTurns = this.db.prepare(`SELECT id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (${clauses.join(" OR ")})`)
+        .all(target.sessionId, ...messageSeqs, ...messageSeqs, ...liveTurnIds) as Pick<Turn, "id" | "user_message_seq" | "assistant_message_seq">[];
+      if (!sourceTurns.length) return { ok: true, items: [], nextCursor: null };
+      const turnIds = sourceTurns.map((turn) => String(turn.id));
+      const limit = options.limit ?? 20;
+      const rows = this.db.prepare(`SELECT q.id, q.sequence, q.state, q.session_id, q.auxiliary_session_id, q.incarnation_id,
+        parent.incarnation_id AS main_incarnation_id, json_extract(q.accepted_json, '$.origin') AS origin_json,
+        substr(json_extract(q.accepted_json, '$.request.userMessage'), 1, 320) AS text_preview,
+        withmate_execution_utf16_length(json_extract(q.accepted_json, '$.request.userMessage')) AS text_chars
+        FROM session_turn_queue_v6 q JOIN sessions_v6 parent ON parent.id=q.session_id
+        LEFT JOIN auxiliary_sessions auxiliary ON auxiliary.id=q.auxiliary_session_id AND auxiliary.parent_session_id=parent.id
+        WHERE json_extract(q.accepted_json, '$.origin.actorKind')=?
+          AND json_extract(q.accepted_json, '$.origin.actorSessionId')=?
+          AND json_extract(q.accepted_json, '$.origin.actorIncarnationId')=?
+          AND json_extract(q.accepted_json, '$.origin.actorTurnId') IN (${marks(turnIds)})
+          AND json_extract(q.accepted_json, '$.origin.kind')='session' AND q.sequence>?
+          AND ((q.auxiliary_session_id IS NULL AND parent.incarnation_id=q.incarnation_id) OR auxiliary.created_at=q.incarnation_id)
+        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; origin_json: string; text_preview: string; text_chars: number }>;
+      return { ok: true, items: rows.slice(0, limit).map((row) => {
+        const origin = JSON.parse(row.origin_json) as NonNullable<SessionTurnQueueCapturedInput["origin"]>;
+        const sourceTurn = sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!;
+        const recipient = row.auxiliary_session_id ? { kind: "auxiliary", sessionId: row.auxiliary_session_id, incarnationId: row.incarnation_id, mainSessionId: row.session_id, mainIncarnationId: row.main_incarnation_id } : { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id };
+        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: sourceTurn.assistant_message_seq !== null && messageSeqs.includes(sourceTurn.assistant_message_seq) ? sourceTurn.assistant_message_seq : sourceTurn.user_message_seq !== null && messageSeqs.includes(sourceTurn.user_message_seq) ? sourceTurn.user_message_seq : null, target: recipient, state: row.state, origin, textPreview: row.text_preview, textChars: row.text_chars };
+      }), nextCursor: rows.length > limit ? rows[limit - 1].sequence : null };
+    }
     const getMessage = (seq: number | null): Message | null => {
       if (seq === null) return null;
       const row = this.db.prepare(`SELECT role, body FROM ${table} WHERE ${owner} = ? AND seq = ?`).get(target.sessionId, seq) as SavedMessage | undefined;

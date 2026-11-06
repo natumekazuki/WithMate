@@ -1,11 +1,14 @@
 import type { BrowserWindow } from "electron";
 import {
   coordinationRequestSchema,
+  coordinationIdentitySchema,
+  type CoordinationIdentity,
   type CoordinationRequest,
 } from "../../src-shared/coordination/coordination-contract.js";
 import {
   openCoordinationRequestSchema,
   type OpenCoordinationRequest,
+  type CoordinationDisplayIdentity,
 } from "../../src-shared/coordination/coordination-window-contract.js";
 import type { CoordinationApplicationService } from "../coordination/coordination-application-service.js";
 import type { IpcHandleRegistrar } from "./contracts.js";
@@ -23,6 +26,7 @@ export function registerCoordinationHandlers(
       request: CoordinationRequest,
     ): Promise<void>;
     open(request: OpenCoordinationRequest): Promise<BrowserWindow>;
+    resolveIdentity(identity: CoordinationIdentity): Promise<CoordinationDisplayIdentity | null>;
   },
 ) {
   const navigation = new Map<number, OpenCoordinationRequest>();
@@ -37,6 +41,13 @@ export function registerCoordinationHandlers(
       throw new Error("Invalid Coordination window sender.");
     return window;
   };
+  ipc.handle("withmate:coordination:identity", async (event, raw) => {
+    authorize(event);
+    const identity = coordinationIdentitySchema.parse(raw);
+    const result = await deps.resolveIdentity(identity);
+    authorize(event);
+    return result;
+  });
   ipc.handle("withmate:coordination:execute", async (event, raw) => {
     const window = authorize(event);
     const request = coordinationRequestSchema.parse(raw);

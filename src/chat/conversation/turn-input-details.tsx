@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Message } from "../../../src-shared/session/session-state.js";
-import type { SessionTurnQueueReceipt } from "../../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueReceipt, SessionTurnQueueOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
+import { CharacterAvatar } from "../../ui/ui-utils.js";
 
 const deliveryLabels = {
   pending: "Input Acceptance Pending",
@@ -77,7 +78,9 @@ function InputSnapshot({ context, reference, seq, onSnapshot }: { context: TurnI
   </div>;
 }
 
-export function TurnInputDetails({ message, receipt, context }: { message: Message; receipt?: SessionTurnQueueReceipt; context?: TurnInputReadContext }) {
+type TurnInputProps = { message: Message; receipt?: SessionTurnQueueReceipt; context?: TurnInputReadContext };
+
+export function useTurnInputRead({ message, receipt, context }: TurnInputProps) {
   const input = message.turnInput;
   const [execution, setExecution] = useState<Execution | null>(null);
   const [snapshot, setSnapshot] = useState<InputDetail | null>(null);
@@ -87,6 +90,8 @@ export function TurnInputDetails({ message, receipt, context }: { message: Messa
   const receiptId = receipt?.id ?? input?.queueId;
   const reference: InputReference | null = receiptId ? { receiptId } : input ? { turnId: input.turnId } : null;
   const statusReference = reference ?? (message.historyIndex !== undefined ? { messageSeq: message.historyIndex } : null);
+  const referenceIdentity = JSON.stringify([context, statusReference]);
+  const loadedReference = useRef(referenceIdentity);
   const identity = JSON.stringify([context, statusReference, receipt?.updatedAt, input?.state, revision]);
   useEffect(() => {
     const api = getWithMateApi();
@@ -97,7 +102,8 @@ export function TurnInputDetails({ message, receipt, context }: { message: Messa
     return () => { queueChanged?.(); turnUpdated?.(); };
   }, [context?.target.sessionId, context?.ownerSessionId, message.role]);
   useEffect(() => {
-    setExecution(null); setSnapshot(null); setReadError("");
+    if (loadedReference.current !== referenceIdentity) { setExecution(null); loadedReference.current = referenceIdentity; }
+    setSnapshot(null); setReadError("");
     const api = getWithMateApi();
     if (message.role !== "user" || !context || !statusReference || !api?.readSessionExecution) return;
     let active = true;
@@ -107,19 +113,58 @@ export function TurnInputDetails({ message, receipt, context }: { message: Messa
     }).catch((error) => { if (active) setReadError(error instanceof Error ? error.message : "Could not read saved input."); });
     return () => { active = false; };
   }, [identity]);
-  const observed = snapshot ?? execution;
+  const observed = loadedReference.current === referenceIdentity ? snapshot ?? execution : null;
   const origin = observed?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
+  return { input, observed, origin, statusReference, receiptId, identity, open, setOpen, setSnapshot, readError, setReadError, setRevision };
+}
+
+export function TurnInputDetails(props: TurnInputProps) {
+  return <TurnInputDetailsContent {...props} read={useTurnInputRead(props)} />;
+}
+
+export function TurnInputReadBoundary({ children, ...props }: TurnInputProps & { children: (read: ReturnType<typeof useTurnInputRead>) => ReactNode }) {
+  return children(useTurnInputRead(props));
+}
+
+export function TurnInputOriginAvatar({ read }: { read: ReturnType<typeof useTurnInputRead> }) {
+  const origin = read.origin;
+  if (origin?.kind !== "session") return null;
+  const character = origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
+  return <><div className="message-avatar-stack">
+    <CharacterAvatar character={character} size="small" className="message-avatar" />
+    <button type="button" className="artifact-toggle artifact-toggle-icon" aria-label={read.open ? "Hide Input Details" : "Show Input Details"} title="Input Details" aria-expanded={read.open} onClick={() => read.setOpen(!read.open)}>{read.open ? "−" : "i"}</button>
+  </div><div className="message-character-name">{character.name}</div></>;
+}
+
+export function SessionOriginRoute({ origin, target, onError }: { origin: SessionTurnQueueOrigin; target?: SessionTarget; onError: (message: string) => void }) {
+  const outbound = target !== undefined;
+  const snapshot = outbound ? origin.targetSnapshot : origin.actorSnapshot;
+  const route = target ? target.kind === "auxiliary" ? [target.mainSessionId, target.sessionId] as const : [target.sessionId] as const : origin.actorKind === "auxiliary"
+    ? origin.actorMainSessionId && origin.actorSessionId ? [origin.actorMainSessionId, origin.actorSessionId] as const : null
+    : origin.actorSessionId ? [origin.actorSessionId] as const : null;
+  return <button type="button" className="related-session-route" disabled={!route || !getWithMateApi()?.openSession}
+    title={outbound ? "Recipient Session" : "Open Sender"} aria-label={outbound ? "Recipient Session" : `Open Sender: ${snapshot?.sessionTitle ?? "Unknown Session"}`}
+    onClick={() => { if (route) void getWithMateApi()!.openSession(route[0], route[1]).catch((failure) => onError(failure instanceof Error ? failure.message : "Could not open sender Session.")); }}>
+    {outbound ? <><span aria-hidden="true">@</span><span className="related-session-character">{snapshot?.character.name ?? "Unknown Recipient"}</span><span aria-hidden="true">·</span></> : null}
+    <span className="related-session-title">{snapshot?.sessionTitle ?? "Unknown Session"}</span>
+  </button>;
+}
+
+export function TurnInputDetailsContent({ message, receipt, context, read, compact = false }: TurnInputProps & { read: ReturnType<typeof useTurnInputRead>; compact?: boolean }) {
+  const { input, observed, origin, statusReference, receiptId, identity, open, setOpen, setSnapshot, readError, setReadError, setRevision } = read;
   if (message.role !== "user" || (!statusReference && !input) || (!input && origin?.kind !== "session" && !context)) return null;
   const summary = observed?.inputs;
   const resolvedReceiptId = receiptId ?? observed?.receiptId;
   const resolvedTurnId = input?.turnId ?? receipt?.turnId ?? observed?.turnId;
   const detailReference: InputReference | null = resolvedReceiptId ? { receiptId: resolvedReceiptId } : resolvedTurnId ? { turnId: resolvedTurnId } : null;
-  return <section className="turn-input-details" aria-label="Input Details">
-    {origin?.kind === "session" ? <p className="turn-input-origin">From Session <code>{origin.actorSessionId}</code>{origin.actorSessionId && getWithMateApi()?.openSession ? <> <button type="button" className="drawer-toggle compact secondary" onClick={() => { void getWithMateApi()!.openSession(origin.actorSessionId!).catch((error) => setReadError(error instanceof Error ? error.message : "Could not open sender Session.")); }}>Open Sender</button></> : null}</p> : null}
-    {input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
+  return <>
+    {compact && input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
+    <section className={`turn-input-details${compact ? " is-origin-details" : ""}`} aria-label="Input Details" hidden={compact && !open}>
+    {!compact && origin?.kind === "session" ? <SessionOriginRoute origin={origin} onError={setReadError} /> : null}
+    {!compact && input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
     {summary?.entry ? <p>{summary.entry.kind === "additional" ? "Additional" : "Start"} Input · {summary.entry.comparison === "changed" ? "Changed From Original" : summary.entry.comparison === "unchanged" ? "Unchanged From Original" : "Comparison Unknown"}</p> : null}
     {summary ? <p>{summary.additional.confirmedCount} Confirmed Additional Inputs{summary.additional.unresolved.length ? ` · ${summary.additional.unresolved.length} Unresolved` : ""}{summary.additional.coverage === "unknown" ? " · Input Coverage Unknown" : ""}</p> : null}
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>Input Details</summary>
       <dl className="turn-input-references">
         {resolvedReceiptId ? <><dt>Receipt</dt><dd><code>{resolvedReceiptId}</code></dd></> : null}
@@ -143,7 +188,7 @@ export function TurnInputDetails({ message, receipt, context }: { message: Messa
         <AdditionalInput context={context} turnId={observed.turnId!} seq={seq} />
       </details>) : null}
     </details>
-  </section>;
+  </section></>;
 }
 
 function AdditionalInput({ context, turnId, seq }: { context: TurnInputReadContext; turnId: string; seq: number }) {

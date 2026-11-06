@@ -5732,6 +5732,13 @@ var exactReference = (extra) => object({
 	].filter((value) => value !== void 0).length === 1;
 }, "Specify exactly one receiptId, WithMate turnId or saved messageSeq.");
 var executionOperationRequestSchemas = {
+	list_sent_deliveries: object({
+		target: sessionTargetSchema,
+		messageSeqs: array(number().int().nonnegative()).max(180),
+		liveTurnIds: array(string().regex(/^[1-9]\d*$/)).max(1).optional(),
+		cursor: number().int().nonnegative().optional(),
+		limit: number().int().min(1).max(20).optional()
+	}).strict(),
 	list_messages: sessionHistoryOperationRequestSchemas.list_messages.extend({ target: sessionTargetSchema }),
 	get_message: sessionHistoryOperationRequestSchemas.get_message.extend({ target: sessionTargetSchema }),
 	list_operations: sessionHistoryOperationRequestSchemas.list_operations.extend({ target: sessionTargetSchema }),
@@ -5805,17 +5812,29 @@ var summary = object({
 		coverage: _enum(["recorded", "unknown"])
 	})
 });
+var displaySnapshot = object({
+	sessionTitle: string(),
+	character: object({
+		id: string(),
+		name: string(),
+		iconPath: string()
+	})
+});
+var origin = object({
+	kind: _enum(["gui", "session"]),
+	actorKind: _enum(["main", "auxiliary"]).optional(),
+	actorSessionId: id$1.optional(),
+	actorIncarnationId: id$1.optional(),
+	actorTurnId: id$1.optional(),
+	actorMainSessionId: id$1.optional(),
+	actorSnapshot: displaySnapshot.optional(),
+	operation: literal("send"),
+	targetSessionId: id$1,
+	targetIncarnationId: id$1,
+	targetSnapshot: displaySnapshot.optional()
+});
 var description = object({
-	origin: object({
-		kind: _enum(["gui", "session"]),
-		actorKind: _enum(["main", "auxiliary"]).optional(),
-		actorSessionId: id$1.optional(),
-		actorIncarnationId: id$1.optional(),
-		actorTurnId: id$1.optional(),
-		operation: literal("send"),
-		targetSessionId: id$1,
-		targetIncarnationId: id$1
-	}).nullable(),
+	origin: origin.nullable(),
 	receiptId: nullableId,
 	receiptState: nullableId,
 	turnId: nullableId,
@@ -5862,6 +5881,29 @@ var inputPiece = object({
 });
 var outputUnit = providerOutputSchema.shape.units.element;
 var executionOperationResultSchemas = {
+	list_sent_deliveries: object({
+		...ok,
+		items: array(object({
+			receiptId: id$1,
+			sequence: number().int().nonnegative(),
+			sourceTurnId: id$1,
+			sourceMessageSeq: number().nullable(),
+			target: sessionTargetSchema,
+			state: _enum([
+				"queued",
+				"starting",
+				"running",
+				"completed",
+				"failed",
+				"canceled",
+				"interrupted"
+			]),
+			origin,
+			textPreview: string(),
+			textChars: number().int().nonnegative()
+		})),
+		nextCursor: number().int().nonnegative().nullable()
+	}),
 	list_messages: object({
 		...ok,
 		window: object({
@@ -5995,6 +6037,7 @@ var executionOperationResultSchemas = {
 	}).passthrough()])
 };
 var EXECUTION_OPERATION_DESCRIPTIONS = {
+	list_sent_deliveries: "Read bounded outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor; get_execution_input on each returned exact target/receipt reads its original full input. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
 	list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",
 	get_message: "Read one exact saved message in bounded UTF-16 text pieces. Its saved Turn linkage may be null; no latest-message or inferred Turn fallback.",
 	list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",

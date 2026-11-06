@@ -6,6 +6,8 @@ export function createCoordinationApi(
   ipc: IpcRendererLike,
 ): CoordinationWindowApi {
   return {
+    getCoordinationIdentity: (identity) =>
+      ipc.invoke("withmate:coordination:identity", identity),
     executeCoordination: (request) =>
       ipc.invoke("withmate:coordination:execute", request),
     subscribeCoordinationChanged: (listener) =>

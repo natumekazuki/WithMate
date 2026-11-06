@@ -5,7 +5,7 @@ import { CoordinationRejectedError, isCoordinationDeletedError } from "./coordin
 
 export type CoordinationApplicationDeps = {
   getStore(): CoordinationStore;
-  prepareDelivery(target: CoordinationIdentity, operationId: string): Promise<SessionTurnQueueCapturedInput>;
+  prepareDelivery(target: CoordinationIdentity, operationId: string, actor: CoordinationActor): Promise<SessionTurnQueueCapturedInput>;
   onAccepted?(receipt: SessionTurnQueueReceipt): void;
   onNotificationError?(error: unknown): void;
 };
@@ -28,7 +28,7 @@ export class CoordinationApplicationService {
     let captured: SessionTurnQueueCapturedInput | null;
     try {
       target = await store.deliveryTarget({ actor, request });
-      captured = target && "operationId" in request ? await this.deps.prepareDelivery(target, request.operationId) : null;
+      captured = target && "operationId" in request ? await this.deps.prepareDelivery(target, request.operationId, actor) : null;
     } catch (error) { if (isCoordinationDeletedError(error)) throw error; throw new CoordinationRejectedError(error instanceof Error ? error.message : String(error)); }
     check();
     const result = await store.execute({ actor, request, ...(target && captured ? { delivery: { target, captured } } : {}) });

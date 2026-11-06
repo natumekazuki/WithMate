@@ -131,6 +131,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       get_receipt: { target, requestId: "request" },
       cancel_receipt: { target, receiptId: "receipt" },
       stop_turn: { target, turnId: "1" },
+      list_sent_deliveries: { target, messageSeqs: [0, 1] },
       list_executions: { target },
       get_execution: exact,
       list_execution_inputs: exact,
@@ -267,6 +268,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       get_receipt: { receipt },
       cancel_receipt: { result: { outcome: "not-applied", receipt } },
       stop_turn: { result: { outcome: "applied", turnId: "1" } },
+      list_sent_deliveries: { items: [], nextCursor: null },
       list_executions: {
         ...page,
         kind: "receipts",

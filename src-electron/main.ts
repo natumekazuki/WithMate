@@ -22,6 +22,7 @@ import {
 
 import type { DiscoveredCustomAgent, DiscoveredSkill, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry } from "../src-shared/session/runtime-state.js";
 import { projectLiveSessionRunStatus } from "../src-shared/session/live-session-run-status.js";
+import { captureSessionTurnQueueDisplay } from "../src-shared/session/session-turn-queue.js";
 import { currentTimestampLabel } from "../src-shared/time-state.js";
 import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
@@ -955,7 +956,15 @@ const coordinationApplicationService = new CoordinationApplicationService({
     if (!owner.storageWorker || databaseMaintenanceRequested) throw new Error("Coordination storage is unavailable.");
     return owner.storageWorker.stores.coordination;
   },
-  prepareDelivery: (target, operationId) => requireMainSessionTurnQueueFacade().prepareCoordinationDelivery(target, operationId),
+  prepareDelivery: async (target, operationId, actor) => {
+    const captured = await requireMainSessionTurnQueueFacade().prepareCoordinationDelivery(target, operationId);
+    const recipient = target.kind === "main" ? await getRuntimeSession(target.sessionId) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(target.sessionId);
+    const sender = actor.kind === "user" ? null : actor.kind === "main" ? await getRuntimeSession(actor.sessionId) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.sessionId);
+    const auxiliarySender = actor.kind === "auxiliary" ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(actor.sessionId) : null;
+    if (!recipient || getSessionIncarnationId(recipient) !== target.incarnationId || (actor.kind !== "user" && (!sender || getSessionIncarnationId(sender) !== actor.incarnationId))) throw new Error("The Coordination sender or recipient changed.");
+    return { ...captured, origin: { kind: actor.kind === "user" ? "gui" : "session", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId,
+      targetSnapshot: captureSessionTurnQueueDisplay(recipient), ...(sender ? { actorSnapshot: captureSessionTurnQueueDisplay(sender) } : {}), ...(auxiliarySender ? { actorMainSessionId: auxiliarySender.parentSessionId } : {}) } };
+  },
   onAccepted: (receipt) => requireMainSessionTurnQueueService().reconcileKnownReceipt(receipt),
   onNotificationError: (error) => writeAppLog({ level: "warn", kind: "coordination.notification-failed", process: "main", message: "A saved Coordination notification failed", error: appLogService.errorToLogError(error) }),
 });
@@ -1026,10 +1035,18 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
       const facade = requireMainSessionTurnQueueFacade();
       const previous = await facade.getSessionTurnQueueReceipt(target.id, input.requestId, target.incarnationId);
       const executionOptions = previous?.accepted?.request.executionOptions ?? captureSessionExecutionOptions(session);
+      const savedOrigin = previous?.accepted?.origin;
+      if (savedOrigin && (savedOrigin.kind !== "session" || savedOrigin.actorKind !== actor.kind || savedOrigin.actorSessionId !== actor.id || savedOrigin.actorIncarnationId !== actor.incarnationId)) {
+        throw new SessionManagementError("SESSION_FORBIDDEN", "This request identity belongs to a different sender.");
+      }
+      const sender = savedOrigin ? null : actor.kind === "main" ? await getRuntimeSession(actor.id) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.id);
+      if (!savedOrigin && (!sender || getSessionIncarnationId(sender) !== actor.incarnationId)) throw new Error("The sender Session is unavailable or changed.");
+      const origin = savedOrigin ?? { kind: "session" as const, actorKind: actor.kind, actorSessionId: actor.id, actorIncarnationId: actor.incarnationId, actorTurnId: turnId,
+        actorSnapshot: captureSessionTurnQueueDisplay(sender!), operation: "send" as const, targetSessionId: target.id, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session) };
       try {
         return await facade.enqueueSessionTurn(target.id,
           { incarnationId: target.incarnationId, clientRequestId: input.requestId, userMessage: input.message, submitSource: "composer", executionOptions },
-          { kind: "session", actorKind: actor.kind, actorSessionId: actor.id, actorIncarnationId: actor.incarnationId, actorTurnId: turnId, operation: "send", targetSessionId: target.id, targetIncarnationId: target.incarnationId }, assertCurrent);
+          origin, assertCurrent);
       } catch (error) {
         if (error instanceof SessionTurnQueuePreflightRejectedError) throw new SessionManagementError("SESSION_REJECTED", error.message);
         throw error;
@@ -1621,6 +1638,26 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               registerCoordinationHandlers(ipc, {
                 service: coordinationApplicationService,
+                resolveIdentity: async (identity) => {
+                  const owner = requireActivePersistentStoreOwnerForFactory("Coordination display identity");
+                  if (!owner.sessionStorage.getSessionMetadata) throw new Error("Session metadata reads are unavailable.");
+                  const auxiliary = identity.kind === "auxiliary"
+                    ? await requireAuxiliarySessionService().getAuxiliarySessionMetadata(identity.sessionId)
+                    : null;
+                  assertPersistentStoreOwnerIsActive(owner, "Coordination display identity");
+                  if (identity.kind === "auxiliary" && (!auxiliary || auxiliary.createdAt !== identity.incarnationId)) return null;
+                  const metadata = await owner.sessionStorage.getSessionMetadata(auxiliary?.parentSessionId ?? identity.sessionId);
+                  assertPersistentStoreOwnerIsActive(owner, "Coordination display identity");
+                  if (!metadata || (identity.kind === "main" && getSessionIncarnationId(metadata.summary) !== identity.incarnationId)) return null;
+                  const snapshot = auxiliary?.characterRuntimeSnapshot ?? metadata.characterRuntimeSnapshot;
+                  return {
+                    title: auxiliary ? auxiliary.title : metadata.summary.taskTitle,
+                    character: {
+                      name: snapshot?.name ?? metadata.summary.character,
+                      iconPath: auxiliary?.characterIconPath ?? snapshot?.iconFilePath ?? metadata.summary.characterIconPath,
+                    },
+                  };
+                },
                 resolveWindow: (sender) => BrowserWindow.fromWebContents(sender),
                 isTrustedWindow: (window) => window === requireAuxWindowService().getHomeWindow()
                   || requireMainWindowFacade().isSessionMonitorWindow(window)

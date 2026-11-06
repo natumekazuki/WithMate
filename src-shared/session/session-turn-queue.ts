@@ -1,15 +1,29 @@
 import type { ComposerAttachment, RunSessionTurnRequest } from "./runtime-state.js";
+import type { Session } from "./session-state.js";
 
 export type SessionTurnQueueOwner = { sessionId: string; incarnationId: string };
+export type SessionTurnQueueDisplaySnapshot = {
+  sessionTitle: string;
+  character: { id: string; name: string; iconPath: string };
+};
+export function captureSessionTurnQueueDisplay(session: Session): SessionTurnQueueDisplaySnapshot {
+  return { sessionTitle: session.taskTitle, character: {
+    id: session.characterId, name: session.characterRuntimeSnapshot?.name ?? session.character,
+    iconPath: session.characterIconPath || session.characterRuntimeSnapshot?.iconFilePath || "",
+  } };
+}
 export type SessionTurnQueueOrigin = {
   kind: "gui" | "session";
   actorSessionId?: string;
   actorKind?: "main" | "auxiliary";
   actorIncarnationId?: string;
   actorTurnId?: string;
+  actorMainSessionId?: string;
+  actorSnapshot?: SessionTurnQueueDisplaySnapshot;
   operation: "send";
   targetSessionId: string;
   targetIncarnationId: string;
+  targetSnapshot?: SessionTurnQueueDisplaySnapshot;
 };
 export type SessionTurnQueueCapturedInput = {
   coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; answerId?: string; answerRevision?: number };
