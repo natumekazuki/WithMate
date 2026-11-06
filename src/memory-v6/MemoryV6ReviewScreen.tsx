@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useDialogA11y } from "../ui/a11y.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { ButtonContent } from "../ui/button-content.js";
+import { CharacterAvatar } from "../ui/ui-utils.js";
+import { formatTimestampLabel } from "../../src-shared/time-state.js";
 import { MemoryReviewError, type MemoryReviewFailure } from "./MemoryReviewError.js";
 import type { MemoryEntryKind, MemoryForgetReason } from "../../src-shared/memory/memory-contract.js";
 import type {
@@ -64,12 +66,39 @@ const FORGET_REASON_LABELS: Record<MemoryForgetReason, string> = {
   other: "Other",
 };
 
-function ownerLabel(entry: Pick<MemoryV6ReviewSearchHit, "owner" | "scope">): string {
-  return `${entry.owner.type}:${entry.owner.id} / ${entry.scope.type}:${entry.scope.id}`;
+type TargetIdentity = { id: string; name: string | null; state: string; disambiguation?: string };
+
+function targetLabel(target: TargetIdentity, kind: "Character" | "Project") {
+  const name = target.name || (target.state === "missing" ? `Deleted ${kind}` : `Unnamed ${kind}`);
+  const supplement = target.disambiguation || (!target.name || target.state === "missing" ? target.id : "");
+  return { name: `${name}${target.state === "archived" ? " (Archived)" : ""}`, supplement };
+}
+
+function targetName(target: TargetIdentity, kind: "Character" | "Project"): string {
+  const { name, supplement } = targetLabel(target, kind);
+  return `${name}${supplement ? ` · ${supplement}` : ""}`;
+}
+
+function TargetLabel({ target, kind }: { target: TargetIdentity; kind: "Character" | "Project" }) {
+  const { name, supplement } = targetLabel(target, kind);
+  return <span>{name}{supplement ? <small className="memory-review-target-supplement"> · {supplement}</small> : null}</span>;
+}
+
+function MemoryTarget({ target }: { target: MemoryV6ReviewSearchHit["target"] }) {
+  return (
+    <span className="memory-review-target">
+      {target.character ? <span className="memory-review-target-character">
+        <CharacterAvatar key={`${target.character.id}:${target.character.iconFilePath}`} size="tiny" character={{ name: target.character.name || "?", iconPath: target.character.iconFilePath || "" }} />
+        <TargetLabel target={target.character} kind="Character" />
+      </span> : null}
+      {target.project ? <span className="memory-review-target-project">{target.character ? " / " : ""}<TargetLabel target={target.project} kind="Project" /></span> : null}
+      {target.kind === "user-global" ? <span>User Common</span> : null}
+    </span>
+  );
 }
 
 function formatTags(entry: Pick<MemoryV6ReviewSearchHit, "tags">): string {
-  return entry.tags.map((tag) => `${tag.type}:${tag.value}`).join(" / ");
+  return entry.tags.map((tag) => tag.value).join(" · ");
 }
 
 function formatBytes(bytes: number): string {
@@ -87,16 +116,14 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`;
 }
 
-function formatPercent(usedBytes: number, quotaBytes: number): string {
-  if (quotaBytes <= 0) {
-    return "0%";
-  }
-  return `${Math.min(999, Math.round((usedBytes / quotaBytes) * 100))}%`;
-}
-
 export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6ReviewScreenProps) {
   const [query, setQuery] = useState("");
   const [selectedKind, setSelectedKind] = useState<MemoryEntryKind | "">("");
+  const [selectedCharacter, setSelectedCharacter] = useState("");
+  const [selectedProject, setSelectedProject] = useState("");
+  const [targets, setTargets] = useState<Awaited<ReturnType<MemoryV6ReviewApi["listMemoryV6ReviewTargets"]>> | null>(null);
+  const [targetsLoading, setTargetsLoading] = useState(true);
+  const [targetsError, setTargetsError] = useState<MemoryReviewFailure | null>(null);
   const [items, setItems] = useState<MemoryV6ReviewSearchHit[]>([]);
   const [fileUsage, setFileUsage] = useState<MemoryFileUsageResponse | null>(null);
   const [gcReport, setGcReport] = useState<MemoryV6ProtectedObjectGcResponse | null>(null);
@@ -108,7 +135,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const [usageError, setUsageError] = useState<MemoryReviewFailure | null>(null);
   const [entryError, setEntryError] = useState<MemoryReviewFailure | null>(null);
   const [entryFeedback, setEntryFeedback] = useState<OperationFeedback | null>(null);
-  const [gcFeedback, setGcFeedback] = useState<OperationFeedback | null>(null);
+  const [gcFeedback, setGcFeedback] = useState<MemoryReviewFailure | null>(null);
   const [usageLoading, setUsageLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -127,6 +154,22 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const searchRequestIdRef = useRef(0);
   const refreshRequestIdRef = useRef(0);
   const usageRequestIdRef = useRef(0);
+  const targetsRequestIdRef = useRef(0);
+
+  const changeFilters = (change: () => void) => {
+    ++searchRequestIdRef.current;
+    ++entryRequestIdRef.current;
+    setItems([]);
+    setNextCursor("");
+    setSelectedEntry(null);
+    setSelectedEntryId("");
+    setEntryLoading(false);
+    setEntryError(null);
+    setEntryFeedback(null);
+    setConfirmForgetOpen(false);
+    setSearchError(null);
+    change();
+  };
 
   const closeForgetConfirm = () => {
     if (!forgetting) {
@@ -146,11 +189,14 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
   const searchRequest = useMemo(() => ({
     query,
     ...(selectedKind ? { kinds: [selectedKind] } : {}),
+    ...(selectedCharacter ? { characterId: selectedCharacter } : {}),
+    ...(selectedProject ? { projectId: selectedProject } : {}),
     limit: 50,
-  }), [query, selectedKind]);
+  }), [query, selectedKind, selectedCharacter, selectedProject]);
 
   const runSearch = async (options?: SearchOptions) => {
     const requestId = ++searchRequestIdRef.current;
+    const entryRequestId = entryRequestIdRef.current;
     const api = getApi();
     if (!api) {
       setSearchError({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE, options });
@@ -181,7 +227,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       setItems((currentItems) => append ? [...currentItems, ...result.items] : result.items);
       setNextCursor(result.nextCursor ?? "");
       setSearchError(null);
-      if (!append && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
+      if (!append && entryRequestId === entryRequestIdRef.current && selectedEntryId && !result.items.some((item) => item.id === selectedEntryId)) {
         ++entryRequestIdRef.current;
         setEntryLoading(false);
         setSelectedEntry(null);
@@ -230,11 +276,35 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     }
   };
 
+  const loadTargets = async () => {
+    const requestId = ++targetsRequestIdRef.current;
+    setTargetsLoading(true);
+    const api = getApi();
+    if (!api) {
+      setTargetsError({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE });
+      setTargetsLoading(false);
+      return;
+    }
+    try {
+      const result = await api.listMemoryV6ReviewTargets();
+      if (requestId === targetsRequestIdRef.current) {
+        setTargets(result);
+        setTargetsError(null);
+      }
+    } catch (error) {
+      if (requestId === targetsRequestIdRef.current) {
+        setTargetsError({ message: error instanceof Error ? error.message : "Could not load Memory targets." });
+      }
+    } finally {
+      if (requestId === targetsRequestIdRef.current) setTargetsLoading(false);
+    }
+  };
+
   const refreshReview = async () => {
     const requestId = ++refreshRequestIdRef.current;
     setRefreshing(true);
     try {
-      await Promise.all([runSearch(), loadFileUsage()]);
+      await Promise.all([runSearch(), loadFileUsage(), loadTargets()]);
     } finally {
       if (requestId === refreshRequestIdRef.current) {
         setRefreshing(false);
@@ -248,6 +318,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
 
   useEffect(() => {
     void loadFileUsage();
+    void loadTargets();
     document.title = "Memory Review";
   }, []);
 
@@ -306,7 +377,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       ++entryRequestIdRef.current;
       setEntryLoading(false);
       setEntryError(null);
-      setEntryFeedback({ message: `Forget result: ${result.status}` });
+      setEntryFeedback({ message: result.status === "forgotten" ? "Memory forgotten." : result.status === "already_forgotten" ? "Memory was already forgotten." : "Memory was not found or is no longer active." });
       setSelectedEntry(null);
       setSelectedEntryId("");
       setConfirmForgetOpen(false);
@@ -329,11 +400,12 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     }
     setExporting(true);
     setEntryFeedback(null);
+    const entryRequestId = entryRequestIdRef.current;
     try {
       const result = await api.exportMemoryV6EntryFiles(selectedEntryId);
-      setEntryFeedback({ message: result ? `${result.exportedCount} files exported.` : "Memory file export canceled." });
+      if (result && entryRequestId === entryRequestIdRef.current) setEntryFeedback({ message: `${result.exportedCount} files exported.` });
     } catch (error) {
-      setEntryFeedback({ message: error instanceof Error ? error.message : "Could not export Memory files.", notice: "File Export Failed", error: true, label: "Memory File Export Error" });
+      if (entryRequestId === entryRequestIdRef.current) setEntryFeedback({ message: error instanceof Error ? error.message : "Could not export Memory files.", notice: "File Export Failed", error: true, label: "Memory File Export Error" });
     } finally {
       setExporting(false);
     }
@@ -343,12 +415,12 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
     if (runningGc) {
       return;
     }
-    if (!dryRun && !window.confirm("Delete pending Memory files, orphan protected object files, and stale staging files? This permanently removes files that are no longer referenced by active Memory entries.")) {
+    if (!dryRun && !window.confirm("Permanently delete files no longer referenced by active memories and temporary files left by unfinished saves?")) {
       return;
     }
     const api = getApi();
     if (!api) {
-      setGcFeedback({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE, error: true, label: "Memory File GC Error" });
+      setGcFeedback({ message: DESKTOP_RUNTIME_NOTICE, notice: DESKTOP_RUNTIME_NOTICE });
       return;
     }
     const gcAction = dryRun ? "dry-run" : "cleanup";
@@ -362,13 +434,16 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
       if (selectedEntryId && selectedEntryId === selectedEntry?.id && entryRequestId === entryRequestIdRef.current) {
         await selectEntry(selectedEntryId);
       }
-      setGcFeedback({ message: dryRun ? "Memory file GC dry-run completed." : "Memory file GC cleanup completed." });
     } catch (error) {
-      setGcFeedback({ message: error instanceof Error ? error.message : "Could not run Memory file GC.", notice: "File GC Failed", error: true, label: "Memory File GC Error" });
+      setGcFeedback({ message: error instanceof Error ? error.message : "Could not clean up Memory files.", notice: "File Cleanup Failed" });
     } finally {
       setRunningGc(null);
     }
   };
+
+  const cleanupEligible = gcReport ? gcReport.deletePending.candidates + gcReport.orphanFiles.candidates + gcReport.stagingFiles.candidates : 0;
+  const cleanupRemoved = gcReport ? gcReport.deletePending.deleted + gcReport.orphanFiles.deleted + gcReport.stagingFiles.deleted : 0;
+  const cleanupFailed = gcReport ? gcReport.deletePending.failed + gcReport.orphanFiles.failed + gcReport.stagingFiles.failed : 0;
 
   return (
     <div className={`${homePageClassName} home-page-memory-review`.trim()}>
@@ -382,7 +457,7 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               className="launch-toggle"
               type="button"
               onClick={() => void refreshReview()}
-              disabled={refreshing || loading || loadingMore}
+              disabled={refreshing || loading || loadingMore || forgetting}
               aria-busy={refreshing}
               aria-label={refreshing ? "Refreshing Memory review" : "Refresh Memory review"}
             >
@@ -398,16 +473,38 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
               <input
                 type="search"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                disabled={forgetting}
+                onChange={(event) => changeFilters(() => setQuery(event.target.value))}
               />
             </label>
             <label className="settings-provider-input">
               <span>Kind</span>
-              <select value={selectedKind} onChange={(event) => setSelectedKind(event.target.value as MemoryEntryKind | "")}>
+              <select disabled={forgetting} value={selectedKind} onChange={(event) => changeFilters(() => setSelectedKind(event.target.value as MemoryEntryKind | ""))}>
                 <option value="">All Kinds</option>
                 {MEMORY_KIND_OPTIONS.map((kind) => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind]}</option>)}
               </select>
             </label>
+            <label className="settings-provider-input">
+              <span>Character</span>
+              <select disabled={forgetting || !targets} value={selectedCharacter} onChange={(event) => changeFilters(() => setSelectedCharacter(event.target.value))}>
+                <option value="">All Characters</option>
+                {targets?.characters.map((character) => <option key={character.id} value={character.id}>{targetName(character, "Character")}</option>)}
+              </select>
+            </label>
+            <label className="settings-provider-input">
+              <span>Project</span>
+              <select disabled={forgetting || !targets} value={selectedProject} onChange={(event) => changeFilters(() => setSelectedProject(event.target.value))}>
+                <option value="">All Projects</option>
+                {targets?.projects.map((project) => <option key={project.id} value={project.id}>{targetName(project, "Project")}</option>)}
+              </select>
+            </label>
+            <div className="memory-review-target-status" aria-busy={targetsLoading}>
+              {targetsError ? <MemoryReviewError label="Memory Targets Error" {...targetsError}>
+                <button type="button" className="launch-toggle" aria-label="Retry Memory targets" disabled={targetsLoading} onClick={() => void loadTargets()}>
+                  <ButtonContent busy={targetsLoading} busyLabel="Loading Memory targets.">Retry</ButtonContent>
+                </button>
+              </MemoryReviewError> : targetsLoading ? <LoadingIndicator inline label="Loading Memory targets" /> : null}
+            </div>
           </div>
 
           <div className="memory-review-grid">
@@ -427,12 +524,12 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   className={`memory-review-item ${selectedEntryId === item.id ? "active" : ""}`.trim()}
                   type="button"
                   aria-pressed={selectedEntryId === item.id}
+                  disabled={forgetting}
                   onClick={() => void selectEntry(item.id)}
                 >
                   <span className="memory-review-item-title">{item.title || "(untitled)"}</span>
+                  <MemoryTarget target={item.target} />
                   <span className="memory-review-item-preview">{item.preview}</span>
-                  <span className="memory-review-item-meta">{item.kind} / {ownerLabel(item)}</span>
-                  {item.tags.length > 0 ? <span className="memory-review-item-meta">{formatTags(item)}</span> : null}
                 </button>
               ))}
               {nextCursor ? (
@@ -465,26 +562,21 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                     <div className="memory-review-detail-head">
                       <div>
                         <h2>{selectedEntry.title || "(untitled)"}</h2>
-                        <p>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</p>
+                        <MemoryTarget target={selectedEntry.target} />
                       </div>
-                      <span>{selectedEntry.updatedAt}</span>
                     </div>
-                    <dl className="memory-review-meta">
-                      <div>
-                        <dt>Source</dt>
-                        <dd>{selectedEntry.source.sessionId ?? "none"} / {selectedEntry.source.providerId ?? "none"}</dd>
-                      </div>
-                      {selectedEntry.tags.length > 0 ? (
-                        <div>
-                          <dt>Tags</dt>
-                          <dd>{formatTags(selectedEntry)}</dd>
-                        </div>
-                      ) : null}
-                    </dl>
+                    <div className="memory-review-detail-meta">
+                      <span>{MEMORY_KIND_LABELS[selectedEntry.kind]}</span>
+                      <time dateTime={selectedEntry.updatedAt}>Updated {formatTimestampLabel(selectedEntry.updatedAt)}</time>
+                    </div>
+                    <div className="memory-review-body">
+                      <pre>{selectedEntry.body}</pre>
+                    </div>
+                    {selectedEntry.tags.length > 0 ? <p className="memory-review-tags"><span>Tags</span> {formatTags(selectedEntry)}</p> : null}
                     {selectedEntry.files && selectedEntry.files.length > 0 ? (
                       <section className="memory-review-files" aria-label="Protected files">
                         <div className="memory-review-files-head">
-                          <h3>Protected Files</h3>
+                          <h3>Attachments</h3>
                           <button
                             ref={exportFilesButtonRef}
                             type="button"
@@ -502,8 +594,8 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                           {selectedEntry.files.map((file, index) => (
                             <li key={`${file.role}-${file.mediaKind}-${file.displayName}-${index}`}>
                               <div>
-                                <strong>{file.displayName || file.mediaKind}</strong>
-                                <span>{file.role} / {file.mediaKind} / {formatBytes(file.originalBytes)}</span>
+                                <strong>{file.displayName || `${file.mediaKind.charAt(0).toUpperCase()}${file.mediaKind.slice(1)} File`}</strong>
+                                <span>{formatBytes(file.originalBytes)}</span>
                               </div>
                               <p>{file.summary}</p>
                             </li>
@@ -511,9 +603,6 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                         </ul>
                       </section>
                     ) : null}
-                    <div className="memory-review-body">
-                      <pre>{selectedEntry.body}</pre>
-                    </div>
                   </>
                 ) : null}
               </div>
@@ -523,17 +612,11 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 : null}
               {selectedEntry && selectedEntry.id === selectedEntryId ? (
                 <div className="memory-review-forget-row">
-                  <label className="settings-provider-input">
-                    <span>Forget Reason</span>
-                    <select value={forgetReason} onChange={(event) => setForgetReason(event.target.value as MemoryForgetReason)}>
-                      {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{FORGET_REASON_LABELS[reason]}</option>)}
-                    </select>
-                  </label>
                   <button
                     ref={forgetButtonRef}
                     className="launch-toggle danger-button"
                     type="button"
-                    onClick={() => setConfirmForgetOpen(true)}
+                    onClick={() => { setForgetReason("user_request"); setConfirmForgetOpen(true); }}
                     disabled={forgetting || entryLoading}
                     aria-busy={forgetting || undefined}
                     aria-label={forgetting ? "Forgetting Memory entry" : "Forget Memory entry"}
@@ -555,33 +638,21 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                 </button>
               </MemoryReviewError>
             ) : usageLoading ? <LoadingIndicator inline label="Loading Memory file usage" /> : null}
-            {fileUsage ? (
-              <>
-                <div className="memory-review-usage-summary">
-                  <div>
-                    <span>Used</span>
-                    <strong>{formatBytes(fileUsage.usedBytes)}</strong>
-                    <small>{formatPercent(fileUsage.usedBytes, fileUsage.quotaBytes)} of {formatBytes(fileUsage.quotaBytes)}</small>
-                  </div>
-                  <div>
-                    <span>Available</span>
-                    <strong>{formatBytes(fileUsage.availableBytes)}</strong>
-                    <small>{fileUsage.objectCount} active objects</small>
-                  </div>
-                  <div>
-                    <span>Pending Delete</span>
-                    <strong>{formatBytes(fileUsage.pendingDeleteBytes)}</strong>
-                    <small>{fileUsage.pendingDeleteCount} objects</small>
-                  </div>
-                </div>
+            <details className="memory-review-storage-details">
+              <summary>
+                <span>File Storage</span>
+                {fileUsage ? <span className="memory-review-storage-total">{formatBytes(fileUsage.usedBytes)} of {formatBytes(fileUsage.quotaBytes)}</span> : null}
+              </summary>
+              {fileUsage ? <div className="memory-review-maintenance">
+                <p className="memory-review-pending">Pending Deletion <strong>{formatBytes(fileUsage.pendingDeleteBytes)}</strong> · {fileUsage.pendingDeleteCount} items</p>
                 {fileUsage.largestEntries && fileUsage.largestEntries.length > 0 ? (
                   <div className="memory-review-largest-entries">
-                    <span>Largest Entries</span>
+                    <span>Largest Attachments — All Memories</span>
                     <div>
                       {fileUsage.largestEntries.map((entry) => (
-                        <button key={entry.entryId} type="button" onClick={() => void selectEntry(entry.entryId)}>
+                        <button key={entry.entryId} type="button" disabled={forgetting} onClick={() => void selectEntry(entry.entryId)}>
                           <strong>{entry.title || "(untitled)"}</strong>
-                          <small>{formatBytes(entry.totalFileBytes)} / {entry.fileCount} files</small>
+                          <small>{formatBytes(entry.totalFileBytes)} · {entry.fileCount} {entry.fileCount === 1 ? "file" : "files"}</small>
                         </button>
                       ))}
                     </div>
@@ -591,45 +662,36 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
                   <button
                     type="button"
                     onClick={() => void runProtectedObjectGc(true)}
-                    disabled={runningGc !== null || refreshing}
+                    disabled={runningGc !== null || refreshing || forgetting}
                     aria-busy={runningGc === "dry-run"}
-                    aria-label={runningGc === "dry-run" ? "Running Memory file GC dry run" : "Run Memory file GC dry run"}
+                    aria-label={runningGc === "dry-run" ? "Previewing Memory file cleanup" : "Preview Memory file cleanup"}
                   >
-                    <ButtonContent busy={runningGc === "dry-run"} busyLabel="Running Memory file GC dry run.">
-                      GC Dry Run
+                    <ButtonContent busy={runningGc === "dry-run"} busyLabel="Previewing Memory file cleanup.">
+                      Preview Cleanup
                     </ButtonContent>
                   </button>
                   <button
                     type="button"
                     onClick={() => void runProtectedObjectGc(false)}
-                    disabled={runningGc !== null || refreshing}
+                    disabled={runningGc !== null || refreshing || forgetting}
                     aria-busy={runningGc === "cleanup"}
-                    aria-label={runningGc === "cleanup" ? "Running Memory file GC cleanup" : "Run Memory file GC cleanup"}
+                    aria-label={runningGc === "cleanup" ? "Cleaning up Memory files" : "Clean up Memory files"}
                   >
-                    <ButtonContent busy={runningGc === "cleanup"} busyLabel="Running Memory file GC cleanup.">
-                      Run GC Cleanup
+                    <ButtonContent busy={runningGc === "cleanup"} busyLabel="Cleaning up Memory files.">
+                      Clean Up Files
                     </ButtonContent>
                   </button>
                 </div>
-              </>
-            ) : null}
-            {gcFeedback ? gcFeedback.error
-              ? <MemoryReviewError {...gcFeedback} recoveryRef={gcActionsRef} />
-              : <p className="settings-feedback memory-review-feedback" role="status">{gcFeedback.message}</p>
-              : null}
+              </div> : null}
+            </details>
+            {gcFeedback ? <MemoryReviewError label="Memory File GC Error" {...gcFeedback} recoveryRef={gcActionsRef} /> : null}
             {gcReport ? (
-              <div className="memory-review-gc-report" aria-label="Memory file GC report">
-                <span>{gcReport.dryRun ? "Dry Run" : "Cleanup"}</span>
-                <small>
-                  Pending {gcReport.deletePending.candidates} / deleted {gcReport.deletePending.deleted} / missing {gcReport.deletePending.missing ?? 0} / failed {gcReport.deletePending.failed}
-                </small>
-                <small>
-                  Orphan {gcReport.orphanFiles.candidates} / deleted {gcReport.orphanFiles.deleted} / failed {gcReport.orphanFiles.failed}
-                </small>
-                <small>
-                  Staging {gcReport.stagingFiles.candidates} / deleted {gcReport.stagingFiles.deleted} / failed {gcReport.stagingFiles.failed}
-                </small>
-                <small>Missing active {gcReport.missingActiveObjects}</small>
+              <div className="memory-review-gc-report" aria-label="Memory file cleanup report">
+                <p role="status">{gcReport.dryRun ? `Cleanup Preview: ${cleanupEligible} items eligible for removal.` : `Cleanup: ${cleanupRemoved} items removed.`}
+                  {!gcReport.dryRun && gcReport.deletePending.missing ? ` ${gcReport.deletePending.missing} items were already missing.` : ""}
+                </p>
+                {cleanupFailed > 0 || gcReport.warnings.length > 0 ? <MemoryReviewError label="Memory File Cleanup Warning" message={gcReport.warnings.join("\n") || "Some items could not be removed. Try the cleanup again."} notice={cleanupFailed > 0 ? `${cleanupFailed} items could not be removed.` : "File cleanup needs attention."} /> : null}
+                {gcReport.missingActiveObjects > 0 ? <p className="memory-review-file-warning" role="alert">{gcReport.missingActiveObjects} files attached to active memories are missing.</p> : null}
               </div>
             ) : null}
           </section>
@@ -660,9 +722,14 @@ export function MemoryV6ReviewScreen({ homePageClassName, getApi }: MemoryV6Revi
             </header>
             <div className="memory-review-modal-body">
               <p>Remove this Memory entry from search?</p>
-              <strong>{selectedEntry.title || selectedEntry.id}</strong>
-              <span>{selectedEntry.kind} / {ownerLabel(selectedEntry)}</span>
-              <span>Reason: {forgetReason}</span>
+              <strong>{selectedEntry.title || "(untitled)"}</strong>
+              <MemoryTarget target={selectedEntry.target} />
+              <label className="settings-provider-input">
+                <span>Forget Reason</span>
+                <select value={forgetReason} disabled={forgetting} onChange={(event) => setForgetReason(event.target.value as MemoryForgetReason)}>
+                  {FORGET_REASON_OPTIONS.map((reason) => <option key={reason} value={reason}>{FORGET_REASON_LABELS[reason]}</option>)}
+                </select>
+              </label>
               {forgetReason === "privacy" ? (
                 <span>For privacy requests, the title, body, preview, and tags are also deleted.</span>
               ) : null}

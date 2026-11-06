@@ -178,6 +178,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       exportMemoryV6EntryFiles: () => null,
       runMemoryV6ProtectedObjectGc: () => ({}) as never,
       searchMemoryV6Entries: () => ({ items: [] }),
+      listMemoryV6ReviewTargets: () => ({ characters: [], projects: [] }),
       getMemoryV6Entry: () => null,
       forgetMemoryV6Entry: (entryId: string) => ({ entryId, status: "not_found", reason: "user_request" }),
       async resetAppDatabase() {

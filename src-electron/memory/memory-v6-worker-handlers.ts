@@ -60,6 +60,8 @@ export function createStorageWorkerCommandHandlers(): StorageWorkerCommandHandle
     "memory.appendEntry": (payload) => memory.appendEntry(input(payload)),
     "memory.resolveAppendIdempotencyReplay": (payload) => memory.resolveAppendIdempotencyReplay(input(payload)),
     "memory.getEntry": (payload) => memory.getEntry(String(requireObjectPayload(payload).entryId ?? "")),
+    "memory.getEntryForReview": (payload) => memory.getEntryForReview(String(requireObjectPayload(payload).entryId ?? "")),
+    "memory.listReviewTargets": (payload) => { noPayload(payload); return memory.listReviewTargets(); },
     "memory.listTargets": (payload) => memory.listTargets(input(payload)),
     "memory.listEntries": (payload) => memory.listEntries(input(payload)),
     "memory.searchEntries": (payload) => memory.searchEntries(input(payload)),

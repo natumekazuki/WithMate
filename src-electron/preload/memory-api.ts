@@ -52,6 +52,7 @@ export function createMemoryV6ReviewApi(
   | "exportMemoryV6EntryFiles"
   | "runMemoryV6ProtectedObjectGc"
   | "searchMemoryV6Entries"
+  | "listMemoryV6ReviewTargets"
   | "getMemoryV6Entry"
   | "forgetMemoryV6Entry"
 > {
@@ -72,6 +73,9 @@ export function createMemoryV6ReviewApi(
         channels.WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL,
         request,
       );
+    },
+    listMemoryV6ReviewTargets() {
+      return ipcRenderer.invoke(channels.WITHMATE_LIST_MEMORY_V6_REVIEW_TARGETS_CHANNEL);
     },
     searchMemoryV6Entries(request) {
       return ipcRenderer.invoke(

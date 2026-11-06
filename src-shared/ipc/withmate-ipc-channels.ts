@@ -173,6 +173,7 @@ export const WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL = "withmate:get-memory-v6
 export const WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL = "withmate:export-memory-v6-entry-files";
 export const WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL = "withmate:run-memory-v6-protected-object-gc";
 export const WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL = "withmate:search-memory-v6-entries";
+export const WITHMATE_LIST_MEMORY_V6_REVIEW_TARGETS_CHANNEL = "withmate:list-memory-v6-review-targets";
 export const WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL = "withmate:get-memory-v6-entry";
 export const WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL = "withmate:forget-memory-v6-entry";
 export const WITHMATE_GET_APP_BOOT_STATUS_CHANNEL = "withmate:get-app-boot-status";

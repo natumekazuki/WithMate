@@ -59,6 +59,8 @@ export class MemoryV6WorkerClient {
       resolveAppendIdempotencyReplay: (input) => call("memory.resolveAppendIdempotencyReplay", input),
       settleAppendCleanupObligation: (input) => call("memory.settleAppendCleanupObligation", input, true),
       getEntry: (entryId) => call("memory.getEntry", { entryId }),
+      getEntryForReview: (entryId) => call("memory.getEntryForReview", { entryId }),
+      listReviewTargets: () => call("memory.listReviewTargets", undefined),
       listTargets: (input) => call("memory.listTargets", input),
       listEntries: (input) => call("memory.listEntries", input),
       searchEntries: (input) => call("memory.searchEntries", input),

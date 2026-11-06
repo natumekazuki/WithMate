@@ -2894,6 +2894,46 @@ test("run-session-turn IPC拒否ログは本文を含めずclient request IDを�
   assert.doesNotMatch(JSON.stringify(errors.at(-1)), /secretprompt/);
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "Reviewの候補取得と対象ID付き検索はpreloadから専用IPCへ接続し、Review以外のWindowを依存呼出し前に拒否し、取得errorを伝播する"
+// oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md#memory-review; src-shared/memory/memory-review-state.ts" }
+// fault = "新規候補APIが未配線、target filterが欠落、通常Windowが候補へアクセス、またはread failureを空結果へ置換する"
+// observable = "preload APIの返却値・serviceに届くrequest・Promise拒否と依存呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "Memory Review selector and search IPC"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "Worker/service testではElectron sender認可とpreload runtime channel配線を検証できない"
+// @end-test-value
+test("Memory Review target selector and filter IPC preserve authorization and failures", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const reviewWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
+  let sender = reviewWindow;
+  let targetCalls = 0;
+  let failure: Error | undefined;
+  const targets = { characters: [{ id: "character-a", name: "あやめ", iconFilePath: null, state: "active" }], projects: [] };
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => sender,
+    isMemoryV6ReviewWindow: (window: unknown) => window === reviewWindow,
+    listMemoryV6ReviewTargets: async () => { targetCalls++; if (failure) throw failure; return targets; },
+    searchMemoryV6Entries: async (request: unknown) => { requests.push(request); return { items: [] }; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const api = createWithMateWindowApi({ invoke: async (channel: string, ...args: unknown[]) => handlers.get(channel)!({}, ...args) } as never);
+  assert.deepEqual(await api.listMemoryV6ReviewTargets(), targets);
+  const request = { query: "あやめ", characterId: "character-a", projectId: "project-a", cursor: "next", kinds: ["note" as const] };
+  assert.deepEqual(await api.searchMemoryV6Entries(request), { items: [] });
+  assert.deepEqual(requests, [request]);
+  sender = createWindowStub("http://localhost:5173/?mode=memory-review");
+  await assert.rejects(api.listMemoryV6ReviewTargets(), /Memory V6 Review IPC is only available/);
+  assert.equal(targetCalls, 1);
+  sender = reviewWindow;
+  failure = new Error("catalog read failed");
+  await assert.rejects(api.listMemoryV6ReviewTargets(), (error) => error === failure);
+});
+
 test("Memory V6 Review IPC は memory-review window からだけ呼び出せる", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const reviewWindow = createWindowStub("http://localhost:5173/?mode=memory-review");

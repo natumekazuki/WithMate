@@ -79,7 +79,7 @@ type Awaitable<T> = T | Promise<T>;
 export type MemoryV6StorageAccess = {
   [K in keyof Pick<MemoryV6Storage,
     | "appendEntry" | "resolveAppendIdempotencyReplay" | "settleAppendCleanupObligation"
-    | "getEntry" | "listTargets" | "listEntries" | "searchEntries" | "searchEntriesForReview"
+    | "getEntry" | "getEntryForReview" | "listReviewTargets" | "listTargets" | "listEntries" | "searchEntries" | "searchEntriesForReview"
     | "getFileUsage" | "listLargestFileEntries" | "getProtectedObjectForExport"
     | "listProtectedObjectsForEntryExport" | "listDeletePendingProtectedObjectsForGc"
     | "listProtectedObjectIdsForGc" | "markProtectedObjectDeletedForGc" | "listTags"
