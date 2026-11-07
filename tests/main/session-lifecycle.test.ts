@@ -117,6 +117,8 @@ it("deletes a whole idle Crew and resumes only its fixed owned Files cleanup", a
     storage.beginSessionLifecycleOperation({ operationId: "delete-1", kind: "delete", input: { root: root.id }, targets: [root, child].map((item) => ({ id: item.id, incarnationId: item.incarnationId })), resources: [resource] });
     const operation = storage.deleteSessionCrewForLifecycle("delete-1");
     assert.equal(operation.phase, "applied");
+    assert.deepEqual(storage.beginSessionLifecycleOperation({ operationId: "delete-1", kind: "delete", input: { root: root.id },
+      targets: [{ id: "replacement" }], resources: [] }), operation);
     assert.equal(storage.getSession(root.id), null);
     assert.equal(storage.getSession(child.id), null);
     await assert.rejects(cleanupSessionLifecycleResource({ ...resource, inode: (BigInt(resource.inode) + 1n).toString() }), /identity changed/);
@@ -125,6 +127,63 @@ it("deletes a whole idle Crew and resumes only its fixed owned Files cleanup", a
     storage.advanceSessionLifecycleOperation(operation.operationId, "complete", [cleaned]);
     assert.equal(storage.getSessionLifecycleOperation(operation.operationId)?.phase, "complete");
     assert.equal(storage.deleteSessionCrewForLifecycle(operation.operationId).phase, "complete");
+  } finally {
+    storage.close(); await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "invariant"
+// claim = "DB未適用のCrew削除拒否後は、子追加を含む現在のCrew全体と所有Filesを次の明示削除で削除でき、別CrewのデータとFilesを保持する"
+// oracle = { type = "contract", ref = "docs/design/electron-session-store.md#crewの作成削除" }
+// fault = "拒否時のtargetsやFilesを再利用して再削除を拒否し続けるか、新しい子のFilesを残すか、別Crewを削除する"
+// observable = "拒否後と回復後の保存Main一覧、Files本文、再削除完了後の操作targetsとresourcesとfolder不存在"
+// observation_boundary = "component-behavior"
+// scope = "Crew explicit deletion retry through facade, persistence, real SQLite and isolated Files"
+// lifecycle = "permanent"
+// impact = "通常のCrew削除が拒否から回復できなくなるか、対象外データを失う"
+// distinction = "型検査やstorage単体testではfacadeによる旧操作再利用と所有Files再収集を通らないため、小さい隔離Crewを実DBで削除する"
+// @end-test-value
+it("reprepares a rejected Crew deletion for the current children and owned Files", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-delete-retry-"));
+  const storage = new SessionStorageV6(path.join(directory, "app.db"));
+  const catalog: ModelCatalogProvider = { id: "codex", label: "Codex", defaultModelId: "model", defaultReasoningEffort: "high", models: [{ id: "model", label: "Model", reasoningEfforts: ["high"] }] };
+  try {
+    const root = storage.insertSession({ ...buildNewSession(input("root")), sessionRole: "overall-coordinator" });
+    const child = storage.insertSession({ ...buildNewSession(input("child")), sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id, status: "running", runState: "running" });
+    const other = storage.insertSession(buildNewSession(input("other")));
+    const crewFiles = path.join(directory, "crew-files");
+    for (const folder of [path.join(directory, root.id), path.join(directory, child.id), path.join(directory, other.id), crewFiles]) {
+      await mkdir(folder);
+      await writeFile(path.join(folder, "content.txt"), path.basename(folder));
+    }
+    const makeFacade = () => lifecycleFacade(storage, directory, lifecyclePersistence(storage, catalog), { resolveCrewFilesDirectory: () => crewFiles });
+    await assert.rejects(makeFacade().deleteSession(root.id));
+    const pending = storage.listPendingSessionLifecycleOperations()[0];
+    assert.equal(pending.phase, "preparing");
+    assert.deepEqual(new Set(pending.targets.map((target) => target.id)), new Set([root.id, child.id]));
+    assert.equal(storage.listSessionSummaries().length, 3);
+    for (const resource of pending.resources) assert.equal(await readFile(path.join(resource.path, "content.txt"), "utf8"), path.basename(resource.path));
+
+    storage.updateSession({ ...child, status: "idle", runState: "idle" });
+    const added = storage.insertSession({ ...buildNewSession(input("added")), sessionRole: "executor", rootSessionId: root.id, parentSessionId: root.id, createdBySessionId: root.id });
+    await mkdir(path.join(directory, added.id));
+    await writeFile(path.join(directory, added.id, "content.txt"), "added");
+    await makeFacade().recoverPendingSessionLifecycleOperations();
+    assert.equal(storage.listSessionSummaries().length, 4);
+    assert.equal(await readFile(path.join(directory, added.id, "content.txt"), "utf8"), "added");
+
+    await makeFacade().deleteSession(root.id);
+    assert.deepEqual(storage.listSessionSummaries().map((session) => session.id), [other.id]);
+    const complete = storage.getSessionLifecycleOperation(pending.operationId)!;
+    assert.equal(complete.phase, "complete");
+    assert.deepEqual(new Set(complete.targets.map((target) => target.id)), new Set([root.id, child.id, added.id]));
+    assert.deepEqual(new Set(complete.resources.map((resource) => resource.path)), new Set([root.id, child.id, added.id].map((id) => path.join(directory, id)).concat(crewFiles)));
+    for (const resource of complete.resources) {
+      assert.equal(resource.cleaned, true);
+      await assert.rejects(stat(resource.path), { code: "ENOENT" });
+    }
+    assert.equal(await readFile(path.join(directory, other.id, "content.txt"), "utf8"), other.id);
   } finally {
     storage.close(); await rm(directory, { recursive: true, force: true });
   }

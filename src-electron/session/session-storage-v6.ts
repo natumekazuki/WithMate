@@ -923,9 +923,14 @@ export class SessionStorageV6 {
   beginSessionLifecycleOperation(input: Parameters<typeof beginSessionLifecycleOperation>[1]): SessionLifecycleOperation {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
-      const result = beginSessionLifecycleOperation(this.db, input);
+      let operation = beginSessionLifecycleOperation(this.db, input);
+      if (operation.kind === "delete" && operation.phase === "preparing") {
+        this.db.prepare("UPDATE session_lifecycle_operations_v6 SET targets_json = ?, resources_json = ?, updated_at = ? WHERE operation_id = ?")
+          .run(JSON.stringify(input.targets), JSON.stringify(input.resources ?? []), new Date().toISOString(), operation.operationId);
+        operation = readSessionLifecycleOperation(this.db, operation.operationId)!;
+      }
       this.db.exec("COMMIT");
-      return result;
+      return operation;
     } catch (error) { this.db.exec("ROLLBACK"); throw error; }
   }
 

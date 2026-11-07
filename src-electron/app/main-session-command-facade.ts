@@ -279,7 +279,7 @@ export class MainSessionCommandFacade {
     if (this.deps.resolveSessionFilesDirectory) {
       const persistence = this.deps.getSessionPersistenceService();
       let operation = (await persistence.listPendingSessionLifecycleOperations()).find((item) => item.kind === "delete" && item.targets[0]?.id === sessionId
-        && (item.phase === "applied" || (item.input as { cutoffIso?: string }).cutoffIso === cutoff?.cutoffIso));
+        && item.phase === "applied");
       if (!operation) {
         const saved = await this.deps.getStoredSessionSummaries();
         const root = saved.find((item) => item.id === sessionId);
