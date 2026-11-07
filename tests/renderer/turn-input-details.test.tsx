@@ -51,7 +51,7 @@ test("input details render the common paired snapshot rather than message text",
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
   const requests: { operation: string; request: unknown }[] = [];
   const description = { ok: true, origin: null, receiptId: "receipt-2", receiptState: "queued", turnId: null, turnState: null, resultState: "not-started", userMessageSeq: null, assistantMessageSeq: null,
-    inputs: { entry: { receiptId: "receipt-2", inputSeq: null, kind: "start", stage: "planned", comparison: "changed", detail: { operation: "get_execution_input", receiptId: "receipt-2" } }, startChanged: null, additional: { confirmedCount: 0, references: [], unresolved: [{ seq: 7, state: "unknown" }], notSent: [], coverage: "unknown" } } };
+    inputs: { entry: { receiptId: "receipt-2", inputSeq: null, kind: "start", stage: "planned", comparison: "changed", detail: { operation: "get_execution_input", receiptId: "receipt-2" } }, startChanged: null, additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [{ seq: 7, state: "unknown" }], unresolvedCount: 1, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "unknown" } } };
   const piece = (text: string, reference: string) => ({ ok: true, text, offset: 0, nextOffset: null, totalChars: text.length, attachments: [{ id: reference, kind: "file", name: "input.md", reference }] });
   Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async (_owner: string, operation: string, request: unknown) => {
     requests.push({ operation, request });
@@ -70,6 +70,88 @@ test("input details render the common paired snapshot rather than message text",
     assert.deepEqual(requests.map(({ operation }) => operation), ["get_execution", "get_execution_input"]);
     assert.equal((requests[0].request as { messageSeq: number }).messageSeq, 7);
     assert.equal((requests[1].request as { receiptId: string }).receiptId, "receipt-2");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "入力詳細は各配送分類の総数を表示し、100件以降を正確なTurnの継続参照で開き、失敗時も既読と続きの位置を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
+// fault = "summary配列長を総数にする、開始入力を含むoffsetをずらす、失敗で既読を失う、またはseq未確定の受付を別入力として読む"
+// observable = "総件数DOM、分類別継続requestと再試行offset、追加された入力行、受付から取得した原文DOM"
+// observation_boundary = "consumer"
+// scope = "TurnInputDetailsとreadSessionExecution。100件summaryと継続pageを固定fixtureで返す"
+// lifecycle = "permanent"
+// impact = "多数の指示を含むTurnで保存済み入力へ到達できず、配送状況の件数を誤認する"
+// distinction = "storage testはrendererのoffset引継ぎや失敗からの継続操作を検証しない。3分類を単一component fixtureで確認する"
+// @end-test-value
+test("input details page all delivery groups and retry without losing saved references", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
+  const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
+  const target = { kind: "auxiliary", sessionId: "aux", mainSessionId: "main", mainIncarnationId: "main-inc", incarnationId: "inc" } as const;
+  const description = { ok: true, origin: null, receiptId: "start-receipt", receiptState: "running", turnId: "42", turnState: "running", resultState: "running", userMessageSeq: 0, assistantMessageSeq: null,
+    inputs: { entry: null, startChanged: false, additional: {
+      confirmedCount: 102, references: Array.from({ length: 100 }, (_, index) => ({ seq: index + 1 })), referencesNextOffset: 101,
+      unresolvedCount: 101, unresolved: Array.from({ length: 100 }, (_, index) => ({ seq: index + 200, state: "unknown" })), unresolvedNextOffset: 100,
+      notSentCount: 101, notSent: Array.from({ length: 100 }, (_, index) => ({ seq: index + 400 })), notSentNextOffset: 100, coverage: "recorded",
+    } } };
+  const requests: { operation: string; request: Record<string, unknown> }[] = [];
+  let failConfirmed = true;
+  const piece = (text: string) => ({ ok: true, text, offset: 0, nextOffset: null, totalChars: text.length, attachments: [] });
+  Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async (owner: string, operation: string, request: Record<string, unknown>) => {
+    assert.equal(owner, "main"); assert.deepEqual(request.target, target);
+    requests.push({ operation, request });
+    if (operation === "get_execution") return { ...description, output: null };
+    if (operation === "list_execution_inputs") {
+      assert.equal(request.turnId, "42");
+      if (request.state === "confirmed" && failConfirmed) { failConfirmed = false; return { ok: false, code: "READ_FAILED", message: "Saved input list unavailable" }; }
+      const items = request.state === "confirmed" ? [{ seq: 101, kind: "additional", state: "confirmed" }, { seq: 102, kind: "additional", state: "confirmed" }]
+        : request.state === "unresolved" ? [{ seq: null, kind: "additional", state: "pending", queueId: "pending-receipt" }]
+        : [{ seq: 500, kind: "additional", state: "not-sent", queueId: "not-sent-receipt" }];
+      return { ...description, offset: request.offset, nextOffset: null, total: request.state === "confirmed" ? 103 : 101, items };
+    }
+    return { ...description, ...piece(String(request.receiptId ?? request.seq)), expectedInput: "snapshot", originalKnown: true, inputPair: { original: piece(String(request.receiptId ?? request.seq)), comparison: piece(String(request.receiptId ?? request.seq)) } };
+  } } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const click = async (button: Element) => act(async () => { button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const buttonNamed = (text: string) => [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === text)!;
+  try {
+    await act(async () => { root.render(<TurnInputDetails context={{ ownerSessionId: "main", target }} message={{ role: "user", text: "start", historyIndex: 0 }} />); });
+    assert.match(dom.window.document.body.textContent!, /102 Confirmed Additional Inputs · 101 Unresolved/);
+    assert.match(dom.window.document.body.textContent!, /101 Inputs Not Sent/);
+    const details = dom.window.document.querySelector("details")!;
+    await act(async () => { details.open = true; details.dispatchEvent(new dom.window.Event("toggle")); });
+    const confirmed = dom.window.document.querySelector('section[aria-label="Confirmed Inputs"]')!;
+    await click(buttonNamed("Load More Confirmed Inputs"));
+    assert.equal(confirmed.querySelectorAll("li").length, 100);
+    assert.match(confirmed.textContent!, /Could Not Read Confirmed Inputs/);
+    assert.ok(confirmed.querySelector('button[aria-label="Confirmed Inputs Read Error Details"]'));
+    await click(buttonNamed("Retry Confirmed Inputs"));
+    assert.equal(confirmed.querySelectorAll("li").length, 102);
+    for (const label of ["Unresolved Inputs", "Not Sent Inputs"]) await click(buttonNamed(`Load More ${label}`));
+    const unresolved = dom.window.document.querySelector('section[aria-label="Unresolved Inputs"]')!;
+    assert.equal(unresolved.querySelectorAll("li").length, 101);
+    const pending = [...unresolved.querySelectorAll("li")].at(-1)!;
+    assert.match(pending.textContent!, /Input Acceptance Pending · Receipt pending-receipt/);
+    await click(pending.querySelector("button")!);
+    assert.deepEqual([...pending.querySelectorAll("pre")].map((element) => element.textContent), ["pending-receipt", "pending-receipt"]);
+    const notSent = dom.window.document.querySelector('section[aria-label="Not Sent Inputs"]')!;
+    assert.equal(notSent.querySelectorAll("li").length, 101);
+    await click([...confirmed.querySelectorAll("li")].at(-1)!.querySelector("button")!);
+    await click([...notSent.querySelectorAll("li")].at(-1)!.querySelector("button")!);
+    assert.deepEqual(requests.filter(({ operation }) => operation === "list_execution_inputs").map(({ request }) => [request.state, request.offset]), [["confirmed", 101], ["confirmed", 101], ["unresolved", 100], ["not-sent", 100]]);
+    const reads = requests.filter(({ operation }) => operation === "get_execution_input").map(({ request }) => request);
+    assert.ok(reads.some((request) => request.receiptId === "pending-receipt" && request.seq === undefined));
+    assert.ok(reads.some((request) => request.turnId === "42" && request.seq === 102));
+    assert.ok(reads.some((request) => request.receiptId === "not-sent-receipt" && request.seq === undefined));
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

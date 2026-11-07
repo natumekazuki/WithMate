@@ -41,17 +41,17 @@ test("incoming rows use saved sender identity and retain unknown legacy identity
 
 // @test-value v2
 // kind = "contract"
-// claim = "送信表示は正確な宛先とreceiptで全文原文を継続取得し、失敗時も既読本文を保持して再読できる"
-// oracle = { type = "contract", ref = "docs/design/database-schema.md#現行DBと正本" }
-// fault = "別宛先へ全文照会する、続きで既読本文を置換する、または取得失敗を全文取得済みとして扱う"
-// observable = "全文取得requestのtarget・receipt・offsetとsnapshot、表示本文、再読操作、配送とTurn状態"
+// claim = "送信表示は正確な宛先とreceiptで原文を継続取得し、既読本文を保持したまま配送状態を通知と再展開で更新する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
+// fault = "別宛先へ照会する、続きや状態更新で既読本文を置換する、取得失敗を全文取得済みにする、または配送状態を初回値のまま固定する"
+// observable = "読取requestのtarget・receipt・offsetとsnapshot、表示本文、再読操作、通知と再展開後の配送とTurn状態"
 // observation_boundary = "consumer"
 // scope = "SentDeliveryRowのbounded previewから共通execution原文読取への接続"
 // lifecycle = "permanent"
 // impact = "送信した指示の全文が欠落するか、別の送信内容を表示する"
 // distinction = "storage読取とhook testは全文buttonから継続snapshotとDOMへの接続を通らない"
 // @end-test-value
-test("sent messages read exact recipient input and retain pages on failure", async () => {
+test("sent messages retain input pages while refreshing exact delivery state", async () => {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
   const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const previous = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -59,13 +59,25 @@ test("sent messages read exact recipient input and retain pages on failure", asy
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
   const requests: Record<string, unknown>[] = [];
+  const statusRequests: Record<string, unknown>[] = [];
   let fail = false;
+  let statusFail = false;
+  let receiptState = "queued";
+  let turnState = "running";
+  let turnUpdated: ((id: string) => void) | undefined;
+  let queueChanged: ((id: string) => void) | undefined;
   Object.defineProperty(dom.window, "withmate", { value: { openSession: async () => {}, readSessionExecution: async (_owner: string, operation: string, request: Record<string, unknown>) => {
+    if (operation === "get_execution") {
+      statusRequests.push(request);
+      if (statusFail) return { ok: false, message: "State Read Failed" };
+      return { ok: true, receiptState, turnState, turnId: "53" };
+    }
     assert.equal(operation, "get_execution_input"); requests.push(request);
     if (fail) return { ok: false, message: "Read Failed" };
     const continuation = request.offset === 5;
     return { ok: true, receiptState: "completed", turnState: "running", turnId: "53", expectedInput: "snapshot", inputPair: { original: { text: continuation ? "text" : "full ", offset: continuation ? 5 : 0, nextOffset: continuation ? null : 5 }, comparison: null } };
-  } } });
+  }, onSessionTurnUpdated: (listener: (id: string) => void) => { turnUpdated = listener; return () => { turnUpdated = undefined; }; },
+  onSessionTurnQueueChanged: (listener: (id: string) => void) => { queueChanged = listener; return () => { queueChanged = undefined; }; } } });
   const root = createRoot(dom.window.document.getElementById("root")!);
   const click = async (label: string) => { const button = [...dom.window.document.querySelectorAll("button")].find((element) => element.textContent?.includes(label) || element.getAttribute("aria-label") === label)!; assert.ok(button); await act(async () => button.click()); };
   try {
@@ -80,9 +92,31 @@ test("sent messages read exact recipient input and retain pages on failure", asy
     assert.equal(requests.at(-1)!.offset, 5); assert.equal(requests.at(-1)!.expectedInput, "snapshot");
     assert.match(dom.window.document.body.textContent!, /full text/);
     await click("Show Delivery Details");
-    const refs = [...dom.window.document.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]);
-    assert.ok(refs.some(([name, value]) => name === "Receipt State" && value === "completed"));
-    assert.ok(refs.some(([name, value]) => name === "Turn State" && value === "running"));
+    const state = (label: string) => [...dom.window.document.querySelectorAll("dt")].find((term) => term.textContent === label)?.nextElementSibling?.textContent;
+    assert.equal(state("Receipt State"), "queued");
+    assert.equal(state("Turn State"), "running");
+    assert.deepEqual(statusRequests[0], { target: item.target, receiptId: item.receiptId });
+    receiptState = "completed";
+    await act(async () => root.render(<SentDeliveryRow item={{ ...item, state: "completed" }} context={context} />));
+    assert.equal(state("Receipt State"), "completed");
+    turnState = "completed";
+    await act(async () => turnUpdated?.("target"));
+    assert.equal(state("Turn State"), "completed");
+    assert.match(dom.window.document.body.textContent!, /full text/);
+    const readCount = statusRequests.length;
+    await act(async () => queueChanged?.("unrelated-target"));
+    assert.equal(statusRequests.length, readCount);
+    await click("Hide Delivery Details");
+    statusFail = true;
+    await click("Show Delivery Details");
+    assert.equal(statusRequests.length, readCount + 1);
+    assert.match(dom.window.document.body.textContent!, /State Read Failed/);
+    assert.match(dom.window.document.body.textContent!, /full text/);
+    statusFail = false; turnState = "failed";
+    await click("Retry Delivery Details");
+    assert.equal(state("Turn State"), "failed");
+    assert.match(dom.window.document.body.textContent!, /full text/);
+    assert.equal(requests.length, 3, "state refresh does not reread or replace input pages");
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

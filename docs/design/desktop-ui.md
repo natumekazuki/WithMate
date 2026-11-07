@@ -595,11 +595,11 @@ Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表
 
 会話の`Input Details`は保存済みの受付・WithMate Turn参照から共通execution読取を利用する。通常表示では開始入力の原文との差と確認済み追加入力件数を分ける。Agent由来の入力は予約・保存済み会話とも、受付時に保存したCharacter avatarを右側、名前を本文上に置き、本文先頭のSession名から送信元を開く。avatar下のinfo入口から同じ読取結果のInput Detailsを開く。Auxiliary送信元は保存した所属MainとAuxiliary IDを指定する。未記録の表示snapshotは不明と示し、現在のCharacterや画面選択で過去の送信者を補わない。
 
-送信側は既存receiptを表示中のsource WithMate Turnから一括取得し、自身の保存Character avatarを左側、`@Character · Session名`と送信本文を同じまとまりに置く。出力内の厳密な送信位置は記録されないためsource Turn単位にまとめ、複数assistant messageへ重複表示しない。最初は320字までと全文文字数を示し、必要時に正確な宛先とreceiptから原文を継続取得する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別する。送信表示のための別台帳や本文コピーは持たない。
+送信側は既存receiptを表示中のsource WithMate Turnから一括取得し、自身の保存Character avatarを左側、`@Character · Session名`と送信本文を同じまとまりに置く。出力内の厳密な送信位置は記録されないためsource Turn単位にまとめ、複数assistant messageへ重複表示しない。最初は320字までと全文文字数を示し、必要時に正確な宛先とreceiptから原文を継続取得する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別する。送信表示のための別台帳や本文コピーは持たない。詳細の配送・Turn状態は再展開と宛先の通知で再取得し、取得済み原文とは分ける。
 
 詳細では同じsnapshotの`Original Input`と予定／固定済み比較入力、添付参照を並べて確認できる。長文は同じsnapshotへの継続参照で取得し、再編集などにより継続できなくなった場合は再読込する。詳細取得後はそのsnapshotの状態・比較結果を表示し、古い状態取得の判定を本文へ使い回さない。変更者や全編集履歴は表示しない。
 
-追加入力は保存順の参照から個別に開き、`Input Acceptance Pending`、`Additional Input Confirmed`、`Input Delivery Unknown`、`Input Not Sent`を区別する。未送信や未確定は確認済み件数へ含めず、記録の網羅性が不明な場合も示す。受付の配送完了とTurn全体の終端、WithMate TurnとProvider TurnのIDは別に表示する。過去の原文・対応関係が記録されていない場合は推測で補わない。
+追加入力は配送分類ごとの総数を表示し、保存順の参照から個別に開く。参照一覧は必要時に同じ宛先・Turnへ継続取得し、取得失敗でも既読の参照と続きの位置を保持して再試行できる。message sequence未確定の入力は保存済み受付から詳細を開く。`Input Acceptance Pending`、`Additional Input Confirmed`、`Input Delivery Unknown`、`Input Not Sent`を区別し、未送信や未確定は確認済み件数へ含めず、記録の網羅性が不明な場合も示す。受付の配送完了とTurn全体の終端、WithMate TurnとProvider TurnのIDは別に表示する。過去の原文・対応関係が記録されていない場合は推測で補わない。
 
 ## Diff Window
 

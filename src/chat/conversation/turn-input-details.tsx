@@ -5,6 +5,8 @@ import type { SessionTarget } from "../../../src-shared/session/session-target.j
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
+import { ButtonContent } from "../../ui/button-content.js";
+import { ErrorDetailsButton } from "../../ui/error-details.js";
 import { CharacterAvatar } from "../../ui/ui-utils.js";
 
 const deliveryLabels = {
@@ -17,6 +19,7 @@ const deliveryLabels = {
 export type TurnInputReadContext = { ownerSessionId: string; target: SessionTarget };
 type InputDetail = Extract<SessionExecutionReadResult<"get_execution_input">, { ok: true }>;
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
+type InputList = Extract<SessionExecutionReadResult<"list_execution_inputs">, { ok: true }>;
 type InputReference = { receiptId: string; turnId?: never } | { turnId: string; receiptId?: never };
 
 function ComparedText({ text, other, original }: { text: string; other: string; original: boolean }) {
@@ -163,7 +166,7 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
     {!compact && origin?.kind === "session" ? <SessionOriginRoute origin={origin} onError={setReadError} /> : null}
     {!compact && input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
     {summary?.entry ? <p>{summary.entry.kind === "additional" ? "Additional" : "Start"} Input · {summary.entry.comparison === "changed" ? "Changed From Original" : summary.entry.comparison === "unchanged" ? "Unchanged From Original" : "Comparison Unknown"}</p> : null}
-    {summary ? <p>{summary.additional.confirmedCount} Confirmed Additional Inputs{summary.additional.unresolved.length ? ` · ${summary.additional.unresolved.length} Unresolved` : ""}{summary.additional.coverage === "unknown" ? " · Input Coverage Unknown" : ""}</p> : null}
+    {summary ? <p>{summary.additional.confirmedCount} Confirmed Additional Inputs{summary.additional.unresolvedCount ? ` · ${summary.additional.unresolvedCount} Unresolved` : ""}{summary.additional.coverage === "unknown" ? " · Input Coverage Unknown" : ""}</p> : null}
     <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>Input Details</summary>
       <dl className="turn-input-references">
@@ -174,8 +177,7 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
         {origin?.kind === "session" ? <><dt>Sender Session</dt><dd><code>{origin.actorSessionId}</code></dd><dt>Sender Incarnation</dt><dd><code>{origin.actorIncarnationId}</code></dd><dt>Sender Turn</dt><dd><code>{origin.actorTurnId}</code></dd><dt>Target Session</dt><dd><code>{origin.targetSessionId}</code></dd></> : null}
       </dl>
       {summary?.entry?.kind === "additional" ? <p>Start Input · {summary.startChanged === null ? "Comparison Unknown" : summary.startChanged ? "Changed From Original" : "Unchanged From Original"}</p> : null}
-      {summary?.additional.notSent.length ? <p>{summary.additional.notSent.length} Inputs Not Sent · Excluded From Confirmed Inputs</p> : null}
-      {summary?.additional.unresolved.length ? <ul aria-label="Unresolved Inputs">{summary.additional.unresolved.map((unresolved, index) => <li key={unresolved.receiptId ?? unresolved.seq ?? index}>{deliveryLabels[unresolved.state]} · {unresolved.seq !== null ? `Message ${unresolved.seq}` : `Receipt ${unresolved.receiptId ?? "Reference Unknown"}`}</li>)}</ul> : null}
+      {summary?.additional.notSentCount ? <p>{summary.additional.notSentCount} Inputs Not Sent · Excluded From Confirmed Inputs</p> : null}
       {input?.state === "pending" ? <p>Acceptance and saving have not been confirmed.</p> : null}
       {input?.state === "unknown" ? <p>Delivery or saving could not be confirmed. This input is not a confirmed addition.</p> : null}
       {input?.state === "not-sent" ? <p>This input was not delivered to the Turn. It has not been sent as a new Turn.</p> : null}
@@ -183,15 +185,58 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
       {readError ? <p role="alert">{readError} <button type="button" className="drawer-toggle compact secondary" onClick={() => setRevision((value) => value + 1)}>Retry Input Details</button></p> : null}
       {open && context && detailReference && (resolvedReceiptId || message.historyIndex !== undefined) ? <InputSnapshot key={`${identity}:entry`} context={context} reference={detailReference} seq={!resolvedReceiptId ? message.historyIndex : undefined} onSnapshot={setSnapshot} /> : null}
       {open && input && !receiptId && message.historyIndex === undefined ? <p>The exact saved input reference is not yet available.</p> : null}
-      {open && context && observed?.turnId ? summary?.additional.references.map(({ seq }) => <details key={seq}>
-        <summary>Additional Input · Message {seq}</summary>
-        <AdditionalInput context={context} turnId={observed.turnId!} seq={seq} />
-      </details>) : null}
+      {open && context && detailReference && summary ? <InputReferences key={`${identity}:${JSON.stringify(summary.additional)}`} context={context} reference={resolvedTurnId ? { turnId: resolvedTurnId } : detailReference} additional={summary.additional} /> : null}
     </details>
   </section></>;
 }
 
-function AdditionalInput({ context, turnId, seq }: { context: TurnInputReadContext; turnId: string; seq: number }) {
+function AdditionalInput({ context, reference, seq }: { context: TurnInputReadContext; reference: InputReference; seq?: number }) {
   const [show, setShow] = useState(false);
-  return show ? <InputSnapshot context={context} reference={{ turnId }} seq={seq} /> : <button type="button" className="drawer-toggle compact secondary" onClick={() => setShow(true)}>Read Saved Input</button>;
+  return show ? <InputSnapshot context={context} reference={reference} seq={seq} /> : <button type="button" className="drawer-toggle compact secondary" onClick={() => setShow(true)}>Read Saved Input</button>;
+}
+
+function InputReferences({ context, reference, additional }: { context: TurnInputReadContext; reference: InputReference; additional: Execution["inputs"]["additional"] }) {
+  return <>
+    <InputReferenceList context={context} reference={reference} state="confirmed" initial={additional.references.map(({ seq }) => ({ seq, state: "confirmed" }))} nextOffset={additional.referencesNextOffset} />
+    <InputReferenceList context={context} reference={reference} state="unresolved" initial={additional.unresolved.map(({ receiptId, ...item }) => ({ ...item, queueId: receiptId }))} nextOffset={additional.unresolvedNextOffset} />
+    <InputReferenceList context={context} reference={reference} state="not-sent" initial={additional.notSent.map(({ seq }) => ({ seq, state: "not-sent" }))} nextOffset={additional.notSentNextOffset} />
+  </>;
+}
+
+type ListedInput = Pick<InputList["items"][number], "seq" | "state" | "queueId">;
+function InputReferenceList({ context, reference, state, initial, nextOffset }: { context: TurnInputReadContext; reference: InputReference; state: "confirmed" | "unresolved" | "not-sent"; initial: ListedInput[]; nextOffset: number | null }) {
+  const [items, setItems] = useState(initial);
+  const [next, setNext] = useState(nextOffset);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const label = state === "confirmed" ? "Confirmed Inputs" : state === "unresolved" ? "Unresolved Inputs" : "Not Sent Inputs";
+  const load = async () => {
+    const api = getWithMateApi();
+    if (!api?.readSessionExecution) { setError("Saved input reads are unavailable."); return; }
+    if (next == null || busy) return;
+    setBusy(true); setError("");
+    try {
+      const result = await api.readSessionExecution(context.ownerSessionId, "list_execution_inputs", { target: context.target, ...reference, state, offset: next, limit: 100 });
+      if (!active.current) return;
+      if (!result.ok) { setError(result.message); return; }
+      setItems((before) => [...before, ...result.items.filter((item) => item.kind === "additional")]);
+      setNext(result.nextOffset);
+    } catch (failure) {
+      if (active.current) setError(failure instanceof Error ? failure.message : "Could not read saved inputs.");
+    } finally { if (active.current) setBusy(false); }
+  };
+  if (!items.length && next == null) return null;
+  return <section aria-label={label} aria-busy={busy || undefined}>
+    <ul aria-label={label}>{items.map((item, index) => <li key={item.queueId ?? item.seq ?? index}>
+      <details>
+        <summary>{item.state && item.state !== "confirmed" ? deliveryLabels[item.state] : "Additional Input"} · {item.seq !== null ? `Message ${item.seq}` : `Receipt ${item.queueId ?? "Reference Unknown"}`}</summary>
+        {item.seq !== null || item.queueId ? <AdditionalInput context={context} reference={item.queueId ? { receiptId: item.queueId } : reference} seq={item.queueId ? undefined : item.seq ?? undefined} /> : <p>The exact saved input reference is not yet available.</p>}
+      </details>
+    </li>)}</ul>
+    {busy ? <span role="status" className="visually-hidden">Loading {label}</span> : null}
+    {error ? <p role="alert">Could Not Read {label} <ErrorDetailsButton message={error} label={`${label} Read Error Details`} /></p> : null}
+    {next != null ? <button type="button" className="drawer-toggle compact secondary" disabled={busy} aria-busy={busy || undefined} onClick={() => void load()}><ButtonContent busy={busy}>{error ? `Retry ${label}` : `Load More ${label}`}</ButtonContent></button> : null}
+  </section>;
 }
