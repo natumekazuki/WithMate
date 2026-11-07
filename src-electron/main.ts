@@ -965,7 +965,7 @@ const coordinationApplicationService = new CoordinationApplicationService({
     return { ...captured, origin: { kind: actor.kind === "user" ? "gui" : "session", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId,
       targetSnapshot: captureSessionTurnQueueDisplay(recipient), ...(sender ? { actorSnapshot: captureSessionTurnQueueDisplay(sender) } : {}), ...(auxiliarySender ? { actorMainSessionId: auxiliarySender.parentSessionId } : {}) } };
   },
-  onAccepted: (receipt) => requireMainSessionTurnQueueService().reconcileKnownReceipt(receipt),
+  onAccepted: (receipt) => requireMainSessionTurnQueueService().acceptCommittedReceipt(receipt),
   onNotificationError: (error) => writeAppLog({ level: "warn", kind: "coordination.notification-failed", process: "main", message: "A saved Coordination notification failed", error: appLogService.errorToLogError(error) }),
 });
 const sessionManagementRuntimeService = new SessionManagementRuntimeService({

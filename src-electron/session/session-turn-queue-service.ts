@@ -63,6 +63,12 @@ export class SessionTurnQueueService {
     }));
   }
 
+  acceptCommittedReceipt(receipt: SessionTurnQueueReceipt): void {
+    this.adoptOwner(receipt);
+    this.notify(receipt);
+    this.wake(receipt.sessionId);
+  }
+
   reconcileKnownReceipt(receipt: SessionTurnQueueReceipt): void {
     this.adoptOwner(receipt);
     if (this.lastClaim.get(receipt.sessionId)?.id === receipt.id && isConfirmedTerminal(receipt)) {
