@@ -65,6 +65,34 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 describe("composeProviderPrompt", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "通常Mainは保存Role名、Auxiliaryは実行owner種別に対応する自身のRole名を共通Provider入力へ渡す"
+  // oracle = { type = "contract", ref = "GitHub Issue #834 第6節 Role情報の入力; docs/design/prompt-composition.md" }
+  // fault = "Roleを入力から落とす、別Roleへ固定する、Auxiliaryへ所属MainのRoleを渡す"
+  // observable = "systemBodyTextのSession Role sectionとlogicalPromptのsystemText/composedText"
+  // observation_boundary = "public-boundary"
+  // scope = "composeProviderPromptの通常Main/Auxiliary Role投影"
+  // lifecycle = "permanent"
+  // distinction = "保存と認可のtestでは4 Providerへ渡るRole名の欠落やMain/Auxiliary取り違えを検出できない"
+  // @end-test-value
+  it("保存Roleと実Auxiliary種別から自身のRole名だけを共通promptへ投影する", () => {
+    const session = buildNewSession({ id: "target", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/workspace", branch: "main",
+      characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors, approvalMode: "untrusted" });
+    const base = { session, executionOptions: captureSessionExecutionOptions(session), providerCatalog, userMessage: "work", appSettings: createDefaultAppSettings(), attachments: [] };
+    for (const role of ["standalone", "overall-coordinator", "task-coordinator", "executor"] as const) {
+      const prompt = composeProviderPrompt({ ...base, session: { ...session, sessionRole: role } });
+      assert.equal(prompt.systemBodyText.split("# Session Role\n\n")[1]?.split("\n\n")[0], role);
+      assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
+      assert.ok(prompt.logicalPrompt.composedText.includes(`# Session Role\n\n${role}\n\n`));
+    }
+    const auxiliary = composeProviderPrompt({ ...base, session: { ...session, sessionRole: "overall-coordinator" },
+      runtimeOwner: { kind: "auxiliary", id: session.id, incarnationId: session.incarnationId! } });
+    assert.equal(auxiliary.systemBodyText.split("# Session Role\n\n")[1]?.split("\n\n")[0], "auxiliary");
+    const implicitStandalone = composeProviderPrompt({ ...base, session: { ...session, sessionRole: undefined } });
+    assert.equal(implicitStandalone.systemBodyText.split("# Session Role\n\n")[1]?.split("\n\n")[0], "standalone");
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "Session由来の開始入力は実送信元・操作・受付後変更有無をProvider本文へ明示し、ユーザーの直接発言として表示しない"
   // oracle = { type = "contract", ref = "GitHub Issue #837: 実送信元と編集差分のProvider入力への反映" }
   // fault = "Session送信をUser Inputへ偽装する、実actor/Turn/操作を落とす、比較不能な過去入力を変更なしと断定する"

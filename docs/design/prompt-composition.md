@@ -14,7 +14,7 @@ Character metadataの投影は名前・説明に限り、iconのpathは常設pro
 2. `Output Boundary`（通常SessionにCharacter snapshotがあるとき）
 3. `Tool Call Presence`（同条件で設定が有効なとき）
 4. `Folder Context`（実行workspace、解決済みSessionFolder、Crew Folder、実効Additional Directories）
-5. `Session Metadata`（自会話の保存済みTitle／Descriptionと短い保守指示）
+5. `Session Role`（自分のRole名のみ）と`Session Metadata`（自会話の保存済みTitle／Descriptionと短い保守指示）
 6. `Character Affect Context`（取得でき、設定が有効なとき）
 7. input側の`Conversation Timing`（通常Sessionで設定が有効なとき）
 8. queue由来の`Input Provenance`（保存済みoriginと受付後の本文・添付変更有無）
@@ -32,6 +32,8 @@ queue由来の通常開始とqueue経由Steerはclaim時の`dispatched`本文・
 ## 設定とSession種別
 
 通常Main／Auxiliaryの`Session Metadata`は、Turn開始時の自会話のTitle／DescriptionだけをJSONとして渡す。他Sessionの説明を常設注入せず、保存値を命令・Role・権限へ昇格させない。初回の依頼理解時と説明が実態に合わなくなった時に`session.update_metadata`で自己更新するよう案内し、毎Turnの保存・入力要求・専用生成Turnは設けない。更新後の値は次Turnの保存metadataから取得し、進行中のProvider contextを書き換えない。
+
+`Session Role`は通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Auxiliaryは実行ownerの種別から`auxiliary`を渡す。Role名以外の役割説明・分担・報告方針は注入せず、各Providerのユーザー管理ルールを複製・同期しない。
 
 `AppSettings`の`characterDefinitionEnabled`、`characterAffectContextEnabled`、`conversationTimingEnabled`、`toolCallPresenceEnabled`は個別に対象sectionを切り替える。欠損した既存保存値では既定の`true`を使い、保存後の次turnから反映する。AffectとTimingをOFFにした通常Sessionでは、それぞれのturn開始時resolverも呼ばない。通常turn内のMemory／Affect MCPの利用説明やprovider自身の指示は、このcontext設定では切り替わらない。
 

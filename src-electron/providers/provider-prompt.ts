@@ -159,6 +159,10 @@ function buildFolderContextSection(
 function buildSessionMetadataSection(input: RunSessionTurnInput): string {
   if (input.session.sessionKind === "character-authoring") return "";
   return [
+    "# Session Role",
+    "",
+    input.runtimeOwner?.kind === "auxiliary" ? "auxiliary" : input.session.sessionRole ?? "standalone",
+    "",
     "# Session Metadata",
     "",
     "Maintain your own Title and Description with the WithMate session.update_metadata MCP operation so other agents can choose a destination without reading your conversation. Keep the Title concise; describe your scope and current situation in a few sentences. Initialize them after understanding the first request, and update them when they no longer match your work. No update is needed when they remain accurate. Do not ask the user to fill them in, start a special turn, or append a running log. Preserve an informative description of the work after completion.",
