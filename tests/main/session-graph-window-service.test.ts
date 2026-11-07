@@ -14,22 +14,23 @@ class Window {
 }
 const state = { topicId: null, selectedId: null, zoom: 1, scrollLeft: 0, scrollTop: 0 };
 function setup() {
-  let incarnation = "one"; let available = true; let sequence = 0; let reads = 0;
+  let incarnation = "one"; let available = true; let sequence = 0; let reads = 0; let sessionTitle: string | undefined;
   let pending: (() => Promise<void>) | undefined;
   const generation = {};
   const store: SessionGraphStore = { execute: async <K extends SessionGraphStorageOperation>() => { reads += 1; await pending?.(); return { status: "ok" as const, revision: 1, items: [], total: 0, offset: 0, hasMore: false, incomplete: false, relations: [], externalEndpoints: [] } as unknown as SessionGraphStorageResult<K>; } };
-  const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: async (id) => available ? ({ owner: { sessionId: id, incarnationId: incarnation }, source: { kind: "main", incarnationId: incarnation }, identity: { sessionId: id, sessionTitle: id, role: "main" as const }, providerId: "codex", generation }) : null });
+  const application = new SessionGraphApplicationService({ getStore: () => store, resolveSession: async (id) => available ? ({ owner: { sessionId: id, incarnationId: incarnation }, source: { kind: "main", incarnationId: incarnation }, identity: { sessionId: id, sessionTitle: sessionTitle ?? id, role: "main" as const }, providerId: "codex", generation }) : null });
   const windows: Window[] = []; const notifications: Window[] = [];
-  const service = new SessionGraphWindowService({ application, createWindow: () => { const w = new Window(); windows.push(w); return w; }, load: async () => {}, token: () => String(++sequence), changed: () => {}, notify: (w) => notifications.push(w) });
-  return { service, windows, notifications, reads: () => reads, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; } };
+  const titles = new Map<Window, string>();
+  const service = new SessionGraphWindowService({ application, createWindow: () => { const w = new Window(); windows.push(w); return w; }, load: async () => {}, token: () => String(++sequence), changed: () => {}, notify: (w) => notifications.push(w), title: (w, title) => titles.set(w, title) });
+  return { service, windows, notifications, titles, rename: (value: string) => { sessionTitle = value; }, reads: () => reads, incarnation: (value: string) => { incarnation = value; }, unavailable: () => { available = false; }, pending: (value: () => Promise<void>) => { pending = value; } };
 }
 
 // @test-value v2
 // kind = "contract"
-// claim = "独立Graphタイトルは認可したrendererの取得済み結果を使い、通知・閲覧位置変更でタイトル用の別Graph readを増やさない"
+// claim = "独立Graphタイトルはrendererの取得済み結果と最新owner名を使い、通知・閲覧位置変更・改名でタイトル用の別Graph readを増やさない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/921" }
-// fault = "全Topic走査やrecord本文readをタイトル更新へ再導入する、または他viewのタイトルを上書きする"
-// observable = "payloadのWindowタイトル、view一覧のタイトル、Graph store実行回数"
+// fault = "全Topic走査やrecord本文readをタイトル更新へ再導入する、他viewのタイトルを上書きする、またはowner改名を反映しない"
+// observable = "nativeとpayloadのWindowタイトル、view一覧のタイトルと選択状態、Graph store実行回数"
 // observation_boundary = "public-boundary"
 // scope = "SessionGraphWindowServiceの認可済みstate/title更新と通知"
 // lifecycle = "permanent"
@@ -46,6 +47,17 @@ test("Graph window titles reuse renderer data without additional graph reads", a
   assert.equal((await s.service.payload(s.windows[0]!, a.token)).windowTitle, "Topic · Work — owner");
   assert.equal((await s.service.payload(s.windows[1]!, b.token)).windowTitle, "Session Graph — owner");
   assert.deepEqual(s.service.list().map((entry) => entry.title), ["Topic · Work", "Graph"]);
+  const selectedState = (await s.service.payload(s.windows[0]!, a.token)).state;
+  s.rename("Renamed");
+  await s.service.notify("owner");
+  assert.equal(s.titles.get(s.windows[0]!), "Topic · Work — Renamed");
+  assert.equal((await s.service.payload(s.windows[0]!, a.token)).windowTitle, "Topic · Work — Renamed");
+  assert.deepEqual((await s.service.payload(s.windows[0]!, a.token)).state, selectedState);
+  s.rename("Renamed Again");
+  await s.service.update(s.windows[0]!, a.token, selectedState, "Topic · Work");
+  assert.equal(s.titles.get(s.windows[0]!), "Topic · Work — Renamed Again");
+  assert.equal((await s.service.payload(s.windows[0]!, a.token)).windowTitle, "Topic · Work — Renamed Again");
+  assert.deepEqual((await s.service.payload(s.windows[0]!, a.token)).state, selectedState);
   assert.equal(s.reads(), 0);
 });
 

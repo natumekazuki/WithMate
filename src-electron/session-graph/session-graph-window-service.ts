@@ -40,7 +40,11 @@ export class SessionGraphWindowService<W extends GraphWindow> {
     if (this.entries.get(token) !== entry || !current || current.generation !== entry.generation || !sameSessionGraphOwner(current.owner, entry.owner) || window.isDestroyed()) {
       throw new Error("Session Graph authority changed.");
     }
-    entry.sessionTitle = current.identity.sessionTitle ?? "Session";
+    const sessionTitle = current.identity.sessionTitle ?? "Session";
+    if (entry.sessionTitle !== sessionTitle) {
+      entry.sessionTitle = sessionTitle;
+      this.refreshTitle(entry);
+    }
     return entry;
   }
   async payload(window: W, token: string) {
@@ -57,12 +61,17 @@ export class SessionGraphWindowService<W extends GraphWindow> {
   async update(window: W, token: string, state: SessionGraphViewState, title?: string) {
     const entry = await this.authorize(window, token);
     entry.payload.state = structuredClone(state);
-    if (title !== undefined && entry.payload.windowTitle !== `${title} — ${entry.sessionTitle}`) {
+    if (title !== undefined) {
       entry.title = title;
-      entry.payload.windowTitle = `${title} — ${entry.sessionTitle}`;
-      this.deps.title?.(window, entry.payload.windowTitle);
-      this.deps.changed();
+      this.refreshTitle(entry);
     }
+  }
+  private refreshTitle(entry: Entry<W>) {
+    const title = `${entry.title} — ${entry.sessionTitle}`;
+    if (entry.payload.windowTitle === title) return;
+    entry.payload.windowTitle = title;
+    this.deps.title?.(entry.window, title);
+    this.deps.changed();
   }
   async notify(sessionId: string) {
     for (const [token, entry] of this.entries) {
