@@ -70,10 +70,10 @@ async function cli(
 }
 // @test-value v2
 // kind = "contract"
-// claim = "Session MCPとbound CLIは同一binding/turn付き操作と拒否を共有し送信応答喪失を未適用と偽らない"
+// claim = "Session MCPとbound CLIは同一binding/turn付き操作と拒否を共有し、queue requestIdはUUIDのみ受け付け、送信応答喪失を未適用と偽らない"
 // oracle = { type = "contract", ref = "GitHub #835 MCPとbound CLIの入力・結果・拒否の同一契約" }
-// fault = "CLIが別actorで実行するかenqueue通信失敗をeffect noneとして返す"
-// observable = "SDK MCPとCLIのstructured結果、dispatch identity、enqueue effect unknown"
+// fault = "CLIが別actorで実行するかenqueue/get_receiptが非UUIDをdispatchするかenqueue通信失敗をeffect noneとして返す"
+// observable = "SDK MCPとCLIのstructured結果、dispatch identity、非UUIDの拒否とdispatch未実行、enqueue effect unknown"
 // observation_boundary = "public-boundary"
 // scope = "session-cli-mcp"
 // lifecycle = "permanent"
@@ -118,7 +118,8 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       sessionId: "child",
       incarnationId: "child-v1",
     };
-    const body = { target, requestId: "request", message: "work" };
+    const requestId = "11111111-1111-4111-8111-111111111111";
+    const body = { target, requestId, message: "work" };
     const exact = { target, turnId: "1" };
     const operationId = "11111111-1111-4111-8111-111111111111";
     const coordination = { operationId, id: "consultation" };
@@ -128,7 +129,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       get: { target },
       update_metadata: { title: "updated" },
       enqueue: body,
-      get_receipt: { target, requestId: "request" },
+      get_receipt: { target, requestId },
       cancel_receipt: { target, receiptId: "receipt" },
       stop_turn: { target, turnId: "1" },
       list_sent_deliveries: { target, messageSeqs: [0, 1] },
@@ -199,7 +200,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     };
     const receipt = {
       id: "receipt",
-      requestId: "request",
+      requestId,
       sessionId: "child",
       incarnationId: "child-v1",
       state: "running",
@@ -415,6 +416,16 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         });
       }
     }
+    for (const operation of ["enqueue", "get_receipt"] as const) {
+      const input = { ...inputs[operation], requestId: "request-1" };
+      const before = calls.length;
+      const invalidId = await cli(operation.replaceAll("_", "-"), input, runtimeCall);
+      assert.equal(invalidId.exit, 2);
+      assert.equal(invalidId.value.effect, "none");
+      const invalidTool = await client.callTool({ name: `session.${operation}`, arguments: input });
+      assert.equal(invalidTool.isError, true);
+      assert.equal(calls.length, before);
+    }
     lose = true;
     const lost = await cli("enqueue", body, runtimeCall);
     assert.equal(lost.exit, 3);
@@ -422,7 +433,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     assert.deepEqual(lost.value.recovery, {
       operation: "get_receipt",
       target,
-      requestId: "request",
+      requestId,
     });
     assert.deepEqual(
       (await client.callTool({ name: "session.enqueue", arguments: body }))

@@ -89,7 +89,7 @@ test("direct parent-child sending uses the actual actor and Turn", async () => {
     (
       await application.execute(
         "enqueue",
-        { target: reference(parent), requestId: "r", message: "report" },
+        { target: reference(parent), requestId: "11111111-1111-4111-8111-111111111111", message: "report" },
         context,
       )
     ).ok,
@@ -100,7 +100,7 @@ test("direct parent-child sending uses the actual actor and Turn", async () => {
     (
       await application.execute(
         "enqueue",
-        { target: reference(child), requestId: "parent-r", message: "request" },
+        { target: reference(child), requestId: "22222222-2222-4222-8222-222222222222", message: "request" },
         { actor: reference(parent), assertCurrent() {} },
       )
     ).ok,
@@ -111,7 +111,7 @@ test("direct parent-child sending uses the actual actor and Turn", async () => {
     await assert.rejects(
       application.execute(
         "enqueue",
-        { target: reference(target), requestId: "r2", message: "request" },
+        { target: reference(target), requestId: "33333333-3333-4333-8333-333333333333", message: "request" },
         context,
       ),
       (error) =>
@@ -147,7 +147,7 @@ test("request-key recovery verifies immutable saved actor and target", async () 
       },
     },
   });
-  const input = { target: reference(child), requestId: "known" };
+  const input = { target: reference(child), requestId: "11111111-1111-4111-8111-111111111111" };
   assert.equal(
     (
       await application.execute("get_receipt", input, {
@@ -190,7 +190,7 @@ test("saved kind disambiguates colliding Main and Auxiliary IDs", async () => {
     mainIncarnationId: parent.incarnationId,
   };
   const { application, calls } = setup([parent, child, auxiliary]);
-  const input = { target: reference(parent), requestId: "r", message: "hello" };
+  const input = { target: reference(parent), requestId: "11111111-1111-4111-8111-111111111111", message: "hello" };
   await assert.rejects(
     application.execute("enqueue", input, {
       actor: {

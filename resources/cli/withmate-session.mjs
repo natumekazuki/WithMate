@@ -5611,6 +5611,8 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
 	return /* @__PURE__ */ _superRefine(fn, params);
 }
+// src-shared/session/runtime-state.ts
+var SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // src-shared/session/session-target.ts
 var id$2 = string().trim().min(1).max(256);
 var sessionTargetSchema = discriminatedUnion("kind", [object({
@@ -6225,6 +6227,7 @@ var CODEX_SANDBOX_MODE_VALUES = [
 ];
 // src-shared/session/session-management-contract.ts
 var id = string().trim().min(1).max(256);
+var queueRequestId = string().trim().regex(SESSION_TURN_CLIENT_REQUEST_ID_PATTERN, "requestId must be a UUID.");
 var page = {
 	offset: number().int().min(0).optional(),
 	limit: number().int().min(1).max(100).optional()
@@ -6281,12 +6284,12 @@ var sessionOperationRequestSchemas = {
 	}).strict().refine((value) => value.title !== void 0 || value.description !== void 0, "Title or description is required."),
 	enqueue: object({
 		target: sessionTargetSchema,
-		requestId: id,
+		requestId: queueRequestId,
 		message: string().trim().min(1).max(1e5)
 	}).strict(),
 	get_receipt: object({
 		target: sessionTargetSchema,
-		requestId: id
+		requestId: queueRequestId
 	}).strict(),
 	cancel_receipt: object({
 		target: sessionTargetSchema,
@@ -6469,8 +6472,8 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	list: "List saved Session metadata across the current Crew by default. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
 	get: "Read metadata, saved relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
 	update_metadata: "Update only this actor's title and/or description. This does not change Role, execution settings or another Session's metadata.",
-	enqueue: "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. requestId identifies the immutable acceptance; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
-	get_receipt: "Recover this sender's receipt by its original requestId and exact target. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
+	enqueue: "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. requestId must be a UUID and identifies the immutable acceptance; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
+	get_receipt: "Recover this sender's receipt by its original UUID requestId and exact target. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
 	cancel_receipt: "Cancel one exact pending receipt of a direct child. Parent authority does not depend on who sent the receipt. If started, report its actual state without stopping its Turn.",
 	stop_turn: "Stop one specified WithMate Turn of a direct child, including all committed additional inputs. Never stop the latest Turn instead. A terminal Turn reports not-applied; this does not withdraw one instruction."
 };
@@ -8697,7 +8700,7 @@ Normal messages enqueue only between actual direct parents and children, includi
 Only direct parents cancel pending child receipts or stop a specified child Turn (including additional inputs). No Steer, queue editing, Role promotion, user answering or approval is exposed.
 Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Character selection is automatic and identical requestId retries recover the same child/settings. Selection policy stays in your Provider-managed runbook; no Worktree creation/merge/deletion is performed.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
-On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
+Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
 Use schema for exact shared input schemas and operation descriptions.
 `;
 async function parseWithMateSessionCliArgs(args, deps = {}) {

@@ -38,7 +38,7 @@ Normal messages enqueue only between actual direct parents and children, includi
 Only direct parents cancel pending child receipts or stop a specified child Turn (including additional inputs). No Steer, queue editing, Role promotion, user answering or approval is exposed.
 Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Character selection is automatic and identical requestId retries recover the same child/settings. Selection policy stays in your Provider-managed runbook; no Worktree creation/merge/deletion is performed.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
-On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
+Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
 Use schema for exact shared input schemas and operation descriptions.
 `;
 export async function parseWithMateSessionCliArgs(

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SESSION_TURN_CLIENT_REQUEST_ID_PATTERN } from "./runtime-state.js";
 import { sessionTargetSchema } from "./session-target.js";
 import {
   executionOperationRequestSchemas,
@@ -16,6 +17,7 @@ import { SESSION_HISTORY_USAGE_NOTICE } from "../session-history/session-history
 export { sessionTargetSchema, type SessionTarget } from "./session-target.js";
 
 const id = z.string().trim().min(1).max(256);
+const queueRequestId = z.string().trim().regex(SESSION_TURN_CLIENT_REQUEST_ID_PATTERN, "requestId must be a UUID.");
 const page = {
   offset: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(100).optional(),
@@ -85,12 +87,12 @@ export const sessionOperationRequestSchemas = {
   enqueue: z
     .object({
       target: sessionTargetSchema,
-      requestId: id,
+      requestId: queueRequestId,
       message: z.string().trim().min(1).max(100000),
     })
     .strict(),
   get_receipt: z
-    .object({ target: sessionTargetSchema, requestId: id })
+    .object({ target: sessionTargetSchema, requestId: queueRequestId })
     .strict(),
   cancel_receipt: z
     .object({ target: sessionTargetSchema, receiptId: id })
@@ -369,9 +371,9 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     update_metadata:
       "Update only this actor's title and/or description. This does not change Role, execution settings or another Session's metadata.",
     enqueue:
-      "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. requestId identifies the immutable acceptance; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
+      "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. requestId must be a UUID and identifies the immutable acceptance; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
     get_receipt:
-      "Recover this sender's receipt by its original requestId and exact target. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
+      "Recover this sender's receipt by its original UUID requestId and exact target. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
     cancel_receipt:
       "Cancel one exact pending receipt of a direct child. Parent authority does not depend on who sent the receipt. If started, report its actual state without stopping its Turn.",
     stop_turn:
