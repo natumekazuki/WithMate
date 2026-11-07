@@ -442,9 +442,9 @@ function result(sessionId: string, overrides: Record<string, unknown> = {}): SDK
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claudeの同一native message更新はblock境界を保って増分を置換し、対応resultの本文確定を実行失敗と独立に返す"
+// claim = "Claudeの同一native message内のblock通知は各native indexの増分を置換し、同じ通知UUIDの訂正と対応resultの本文確定を実行失敗と独立に返す"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/836" }
-// fault = "増分とsnapshotを二重化する、複数text blockを落とす、訂正snapshotを無視する、または後続stream失敗で確定本文を失う"
+// fault = "増分と確定通知を二重化する、別通知のtext blockを落とす、同UUIDの訂正を無視する、または後続stream失敗で確定本文を失う"
 // observable = "runSessionTurn成功結果とProviderTurnError.partialResultの本文、outputのnative ID/blockIndex/range・completion/finality"
 // observation_boundary = "public-boundary"
 // scope = "Claude adapter common output projection"
@@ -456,9 +456,15 @@ it("Claude common output keeps block identity and text finality after stream fai
   for (const failed of [false, true]) {
     const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
       yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start", message: { id: "native-output" } } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
       yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "draft" } } });
-      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "native-output", content: [{ type: "text", text: "draft" }, { type: "text", text: "tail" }] } });
-      yield sdkMessage({ type: "assistant", uuid: "correction", message: { id: "native-output", content: [{ type: "text", text: "answer" }, { type: "text", text: "tail" }] } });
+      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "native-output", content: [{ type: "text", text: "draft" }] } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } });
+      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "native-output", content: [{ type: "text", text: "answer" }] } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "tail" } } });
+      yield sdkMessage({ type: "assistant", uuid: "second", message: { id: "native-output", content: [{ type: "text", text: "tail" }] } });
+      yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 1 } });
       yield result("thread", { result: "answer\ntail" });
       if (failed) throw new Error("connection after result");
       yield sessionState("idle");
@@ -474,7 +480,7 @@ it("Claude common output keeps block identity and text finality after stream fai
 
 // @test-value v2
 // kind = "contract"
-// claim = "Claude result後の同一native message訂正は古い最終回答証拠を失効させ、同内容・同blockの重複通知では証拠を保持する"
+// claim = "Claude result後の同じ通知UUIDの訂正は古い最終回答証拠を失効させ、同内容・同blockの重複通知では証拠を保持する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/836" }
 // fault = "message件数が同じ訂正で古いresult本文を復活させるか、重複通知だけで最終回答を不明に変える"
 // observable = "訂正後のrunSessionTurn結果のassistantText・lastNonEmptyAssistantMessageText・output.finalityとfinal unit数"
@@ -491,7 +497,7 @@ it("Claude invalidates stale result evidence only after a real same-message chan
       yield sessionState("running");
       yield sdkMessage({ type: "assistant", uuid: "old", message: { id: "native-same", content: [{ type: "text", text: "old answer" }] } });
       yield result("thread", { result: "old answer" });
-      yield sdkMessage({ type: "assistant", uuid: "updated", message: { id: "native-same", content: [
+      yield sdkMessage({ type: "assistant", uuid: "old", message: { id: "native-same", content: [
         ...(update === "changed-block" ? [{ type: "thinking", thinking: "not public" }] : []), { type: "text", text: expected },
       ] } });
       yield sessionState("idle");
@@ -501,6 +507,72 @@ it("Claude invalidates stale result evidence only after a real same-message chan
     assert.equal(completed.lastNonEmptyAssistantMessageText, expected);
     assert.equal(completed.output?.finality, update === "duplicate" ? "identified" : "unknown");
     assert.equal(completed.output?.units.filter((unit) => unit.final).length, update === "duplicate" ? 1 : 0);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claudeのblock単位通知は同じnative message内の同文textも別blockとして保持し、後続tool通知でも本文を失わない"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "native message IDだけで前blockを置換するか、通知内indexをnative indexとして誤って公開する"
+// observable = "runSessionTurn結果またはpartialResultのassistantTextとoutput unitのidentity・blockIndex・本文範囲"
+// observation_boundary = "public-boundary"
+// scope = "Claude SDK block notifications without partial events"
+// lifecycle = "permanent"
+// impact = "通常のtextからtoolへの応答で保存本文と公開execution outputが欠落することを防ぐ"
+// distinction = "既存stream testはnative indexのある通知であり、型検査はSDKの複数block通知の保持を検証できない"
+// @end-test-value
+it("Claude retains separate same-message block notifications through a tool and failure", async () => {
+  for (const failed of [false, true]) {
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      for (const uuid of ["text-one", "text-two"]) yield sdkMessage({ type: "assistant", uuid,
+        message: { id: "native-blocks", content: [{ type: "text", text: "same" }] } });
+      yield sdkMessage({ type: "assistant", uuid: "tool", message: { id: "native-blocks", content: [
+        { type: "tool_use", id: "read", name: "Read", input: { file_path: "example" } },
+      ] } });
+      if (failed) throw new Error("connection after tool");
+      yield result("thread", { result: "" });
+    }) });
+    let completed: RunSessionTurnResult;
+    try { completed = await adapter.runSessionTurn(input()); assert.equal(failed, false); }
+    catch (error) { assert.ok(failed && error instanceof ProviderTurnError); completed = error.partialResult; }
+    assert.equal(completed.assistantText, "same\nsame");
+    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.blockIndex, completed.assistantText.slice(unit.start, unit.end)]), [
+      ["native-blocks", undefined, "same"], ["native-blocks", undefined, "same"],
+    ]);
+    assert.equal(new Set(completed.output?.units.map((unit) => unit.id)).size, 2);
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Claude resultは終端native messageと照合し、同文の古い回答をfinalにせず、終端がtoolならresult独立unitで根拠を保持する"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#streaming-policy" }
+// fault = "全messageから最初の本文一致をfinalにするか、tool後に古いmessageを最終回答と認定する"
+// observable = "runSessionTurn結果の本文順序、final unitのmessageIdとevidence・本文範囲"
+// observation_boundary = "public-boundary"
+// scope = "Claude terminal result identity"
+// lifecycle = "permanent"
+// impact = "保存execution outputの最終回答identityと回答範囲の誤認を防ぐ"
+// distinction = "既存testの異なる本文では最初の一致と終端の一致を区別できず、SDK通信不要の短いfixtureで保証する"
+// @end-test-value
+it("Claude matches repeated final text only to the terminal response", async () => {
+  for (const terminal of ["text", "tool"] as const) {
+    const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
+      yield sdkMessage({ type: "assistant", uuid: "first", message: { id: "A", content: [{ type: "text", text: "Done" }] } });
+      yield sdkMessage({ type: "assistant", uuid: "tool", message: { id: "tool-message", content: [
+        { type: "tool_use", id: "read", name: "Read", input: {} },
+      ] } });
+      if (terminal === "text") yield sdkMessage({ type: "assistant", uuid: "last", message: { id: "B", content: [{ type: "text", text: "Done" }] } });
+      yield result("thread", { uuid: "result", result: "Done" });
+    }) });
+    const completed = await adapter.runSessionTurn(input());
+    assert.equal(completed.assistantText, "Done\n\nDone");
+    assert.equal(completed.output?.finality, "identified");
+    assert.deepEqual(completed.output?.units.map((unit) => [unit.messageId, unit.final]), [["A", false], [terminal === "text" ? "B" : undefined, true]]);
+    const final = completed.output!.units.at(-1)!;
+    assert.equal(final.evidence, terminal === "text" ? "claude.result:matching-assistant-blocks" : "claude.result:success-text");
+    assert.equal(completed.assistantText.slice(final.start, final.end), "Done");
   }
 });
 
@@ -924,9 +996,13 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
   const adapter = new ClaudeAdapter({ query: fakeQuery(async function* () {
     yield sdkMessage({ type: "system", subtype: "init", session_id: "thread-1", model: "claude-opus-5-5" });
     yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-start", parent_tool_use_id: null, event: { type: "message_start", message: { id: "anthropic-msg-1" } } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } } });
     yield sdkMessage({ type: "assistant", session_id: "thread-1", uuid: "sdk-thinking-1", parent_tool_use_id: null, message: { id: "anthropic-msg-1", content: [{ type: "thinking", thinking: "hidden" }] } });
-    yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-delta", parent_tool_use_id: null, event: { type: "content_block_delta", delta: { type: "text_delta", text: "Hello" } } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 0 } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } });
+    yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-delta", parent_tool_use_id: null, event: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hello" } } });
     yield sdkMessage({ type: "assistant", session_id: "thread-1", uuid: "sdk-message-1", parent_tool_use_id: null, message: { id: "anthropic-msg-1", content: [{ type: "text", text: "Hello" }] } });
+    yield sdkMessage({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_stop", index: 1 } });
     yield sdkMessage({ type: "stream_event", session_id: "thread-1", uuid: "event-stop", parent_tool_use_id: null, event: { type: "message_stop" } });
     yield result("thread-1", { result: "Hello" });
     throw new Error("Iterator was advanced after result");

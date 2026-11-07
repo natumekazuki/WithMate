@@ -40,8 +40,9 @@ export type ClaudeAdapterOptions = {
 
 type ClaudeTrace = {
   threadId: string | null;
-  messages: Array<{ id: string; text: string; blocks: { index: number; text: string }[] }>;
+  messages: Array<{ id: string; text: string; deliveries: Array<{ uuid: string; blocks: { index?: number; text: string | null; type: string }[] }> }>;
   streamingBlocks: Map<number, string>;
+  pendingBlockIndexes: number[];
   streamingText: string;
   streamingId: string | null;
   steps: ProviderProgressMap<LiveRunStep>;
@@ -330,7 +331,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
   async invalidateAllSessionThreads(): Promise<void> { /* One process per turn; no cached thread. */ }
 
   private makeTrace(threadId: string | null, redactor = createProviderAgentRuntimeBindingRedactor(null)): ClaudeTrace {
-    return { threadId, messages: [], streamingBlocks: new Map(), streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, resultOutputCurrent: false, errorMessage: "" };
+    return { threadId, messages: [], streamingBlocks: new Map(), pendingBlockIndexes: [], streamingText: "", streamingId: null, steps: new ProviderProgressMap(), backgroundTasks: new ProviderProgressMap(), backgroundTaskInfo: new Map(), backgroundFailure: "", operations: [], redactor, usage: null, result: null, resultOutputCurrent: false, errorMessage: "" };
   }
 
   private receive(message: SDKMessage, trace: ClaudeTrace, resumed = false): void {
@@ -380,28 +381,42 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         trace.streamingId = event.message.id;
         trace.streamingText = "";
         trace.streamingBlocks.clear();
+        trace.pendingBlockIndexes = [];
       }
       if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
         if (event.delta.text) trace.resultOutputCurrent = false;
         trace.streamingBlocks.set(event.index, (trace.streamingBlocks.get(event.index) ?? "") + event.delta.text);
         trace.streamingText = [...trace.streamingBlocks.values()].join("\n");
       }
+      if (event.type === "content_block_start") trace.pendingBlockIndexes.push(event.index);
+      if (event.type === "content_block_stop") trace.pendingBlockIndexes = trace.pendingBlockIndexes.filter((index) => index !== event.index);
       return;
     }
     if (message.type === "assistant" && !message.parent_tool_use_id) {
       const content = message.message.content;
       const text = content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
       const messageId = message.message.id ?? message.uuid;
-      const entry = { id: messageId, text, blocks: content.flatMap((block, index) => block.type === "text" ? [{ index, text: block.text }] : []) };
-      const existing = trace.messages.findIndex((entry) => entry.id === messageId);
-      if (existing >= 0) {
-        const previous = trace.messages[existing];
-        if (previous.blocks.length !== entry.blocks.length || previous.blocks.some((block, index) => block.index !== entry.blocks[index].index || block.text !== entry.blocks[index].text)) trace.resultOutputCurrent = false;
-        trace.messages[existing] = entry;
-      }
-      else if (text) {
-        trace.resultOutputCurrent = false;
+      let entry = trace.messages.find((entry) => entry.id === messageId);
+      if (!entry) {
+        entry = { id: messageId, text: "", deliveries: [] };
         trace.messages.push(entry);
+      }
+      const existing = entry.deliveries.findIndex((delivery) => delivery.uuid === message.uuid);
+      const previous = entry.deliveries[existing];
+      // Each SDK notification contains completed blocks, not a message-wide snapshot.
+      const indexes = trace.streamingId === messageId && !previous ? trace.pendingBlockIndexes.splice(0, content.length) : [];
+      const delivery = { uuid: message.uuid, blocks: content.map((block, localIndex) => ({
+        index: previous?.blocks[localIndex]?.index ?? indexes[localIndex],
+        text: block.type === "text" ? block.text : null, type: block.type,
+      })) };
+      if (!previous || previous.blocks.length !== delivery.blocks.length || previous.blocks.some((block, index) => {
+        const current = delivery.blocks[index];
+        return block.index !== current.index || block.text !== current.text || block.type !== current.type;
+      })) trace.resultOutputCurrent = false;
+      if (previous) entry.deliveries[existing] = delivery;
+      else entry.deliveries.push(delivery);
+      entry.text = entry.deliveries.flatMap((delivery) => delivery.blocks.flatMap((block) => block.text === null ? [] : [block.text])).join("\n");
+      if (text && !previous) {
         trace.operations.push({ id: message.uuid, type: "agent_message", summary: toProviderTextPreview(text, 300) ?? "", details: toProviderTextPreview(text), truncated: text.length > PROVIDER_TEXT_PREVIEW_LIMIT });
       }
       for (const block of content) {
@@ -412,10 +427,9 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
         trace.steps.set(block.id, step);
         trace.operations.push(step);
       }
-      if (text && trace.streamingId === message.message.id) {
-        trace.streamingText = "";
-        trace.streamingBlocks.clear();
-        trace.streamingId = null;
+      if (trace.streamingId === messageId) {
+        for (const block of delivery.blocks) if (block.index !== undefined) trace.streamingBlocks.delete(block.index);
+        trace.streamingText = [...trace.streamingBlocks.values()].join("\n");
       }
       if (message.error) trace.errorMessage = message.error;
       return;
@@ -463,12 +477,13 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const text = liveText(trace);
     const nativeFinal = trace.result?.subtype === "success" && !trace.result.is_error && trace.resultOutputCurrent && !trace.streamingText ? trace.result.result : null;
-    const matched = nativeFinal ? trace.messages.find((message) => message.text === nativeFinal) : undefined;
-    const units: ProviderOutputTextUnit[] = trace.messages.flatMap((message) => message.blocks.map((block) => ({
-      id: `${message.id}:${block.index}`, messageId: message.id, blockIndex: block.index, text: block.text,
+    const terminal = trace.messages.at(-1);
+    const matched = nativeFinal && terminal?.text === nativeFinal && terminal.deliveries.at(-1)?.blocks.at(-1)?.type === "text" ? terminal : undefined;
+    const units: ProviderOutputTextUnit[] = trace.messages.flatMap((message) => message.deliveries.flatMap((delivery) => delivery.blocks.flatMap((block, localIndex) => block.text === null ? [] : [{
+      id: `${message.id}:${delivery.uuid}:${localIndex}`, messageId: message.id, ...(block.index !== undefined ? { blockIndex: block.index } : {}), text: block.text,
       role: matched?.id === message.id ? "answer" : "unclassified", phase: null, completion: "complete", final: matched?.id === message.id,
       evidence: matched?.id === message.id ? "claude.result:matching-assistant-blocks" : null,
-    })));
+    }])));
     if (trace.streamingText) for (const [blockIndex, value] of trace.streamingBlocks) units.push({ id: `${trace.streamingId ?? "stream"}:${blockIndex}`, messageId: trace.streamingId ?? undefined, blockIndex, text: value, role: "unclassified", phase: null, completion: "partial", final: false, evidence: null });
     if (nativeFinal && !matched) units.push({ id: `result:${trace.result!.uuid}`, text: nativeFinal, role: "answer", phase: null, completion: "complete", final: true, evidence: "claude.result:success-text" });
     const projected = projectProviderOutput(units, nativeFinal ? "identified" : units.length ? "unknown" : "none", redactor.sanitizeText, (previous, current) => previous?.messageId && previous.messageId === current.messageId ? "\n" : "\n\n");
