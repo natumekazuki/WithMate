@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { MemoryRuntimeOwnerSelector } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
+import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
 import { assertSessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
@@ -16,6 +17,7 @@ export type AgentRuntimeBindingRecord = {
   bindingId: string;
   bindingReferenceHash: string;
   actorSessionId: string;
+  actorSource?: BackgroundSourceRef;
   providerId: string;
   executionGeneration: string;
   authoritySnapshot: AgentRuntimeAuthoritySnapshot;
@@ -64,6 +66,7 @@ export type AgentRuntimeBindingResolveResult =
 
 export type IssueAgentRuntimeBindingInput = {
   actorSessionId: string;
+  actorSource?: BackgroundSourceRef;
   providerId: string;
   authoritySnapshot?: AgentRuntimeAuthoritySnapshot;
   operationGrants: readonly AgentRuntimeOperation[];
@@ -172,7 +175,9 @@ export class AgentRuntimeBindingRegistry {
     const now = input.now ?? new Date();
     const operationGrants = [...new Set(input.operationGrants)].sort();
     const authoritySnapshot = structuredClone(input.authoritySnapshot ?? {});
-    const nextAuthorityFingerprint = authorityFingerprint(authoritySnapshot);
+    const actorSource = input.actorSource ? structuredClone(input.actorSource) : undefined;
+    if (actorSource && actorSource.sessionId !== actorSessionId) throw new Error("Binding source must identify its real actor Session.");
+    const nextAuthorityFingerprint = authorityFingerprint({ ...authoritySnapshot, actorSource: actorSource ?? null });
     const existing = this.bindingsByKey.get(key);
     if (
       existing
@@ -188,6 +193,7 @@ export class AgentRuntimeBindingRegistry {
       bindingId: randomUUID(),
       bindingReferenceHash: hashBindingReference(bindingReference),
       actorSessionId,
+      ...(actorSource ? { actorSource } : {}),
       providerId,
       executionGeneration: randomUUID(),
       authoritySnapshot,
@@ -277,6 +283,7 @@ export class AgentRuntimeBindingRegistry {
         bindingId: active.record.bindingId,
         bindingIdHash: active.record.bindingReferenceHash,
         actorSessionId: active.record.actorSessionId,
+        ...(active.record.actorSource ? { actorSource: structuredClone(active.record.actorSource) } : {}),
         providerId: active.record.providerId,
         executionGeneration: active.record.executionGeneration,
         authoritySnapshot: structuredClone(active.record.authoritySnapshot),

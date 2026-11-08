@@ -52,6 +52,7 @@ import {
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import type { BackgroundMemoryTarget } from "../../src-shared/agent-runtime/background-execution-scope.js";
+import type { AffectSessionSource } from "../character/character-affect-storage.js";
 import type { BackgroundRegistration } from "../providers/background-registration.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
@@ -103,6 +104,7 @@ export type AgentRuntimeActorSession = {
   providerId: string;
   characterId: string;
   workspacePath?: string;
+  source?: AffectSessionSource;
 };
 
 export type AgentRuntimeExtensionRequest = {
@@ -462,13 +464,13 @@ async function routeCharacterContextRequest(
   route: MemoryV6Route,
   body: unknown,
   transport: CharacterContextTransport,
-  sessionSource?: SessionHistoryReadScope["source"],
+  sessionSource?: AffectSessionSource,
 ): Promise<unknown> {
   if (!service) {
     return memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Character context service is unavailable.");
   }
   if (route === "character_context_get") {
-    return service.getContext(body, transport);
+    return service.getContext(body, transport, undefined, sessionSource);
   }
   if (
     transport === "mcp"
@@ -483,16 +485,16 @@ async function routeCharacterContextRequest(
   }
   const authorizedBody = resolveTransportAuthority(body, route, transport);
   if (route === "character_affect_appraise") {
-    return service.appraise(authorizedBody, transport);
+    return service.appraise(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_inspect") {
     return service.inspectAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_correct") {
-    return service.correctAffect(authorizedBody, transport);
+    return service.correctAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_reset") {
-    return service.resetAffect(authorizedBody, transport);
+    return service.resetAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_memory_search") {
     return service.searchMemory(body, transport, principal);
@@ -1179,7 +1181,7 @@ async function dispatchResolvedRequest(input: {
           input.route,
           bindingResolution.body,
           transport,
-          bindingResolution.backgroundSource,
+          bindingResolution.sessionSource,
         )
       : routeServiceRequest(
           input.options.service,
@@ -1210,7 +1212,7 @@ type RouteBindingResolution =
       principal: MemoryV6Principal | null;
       authority: ProviderAgentRuntimeAuthoritySnapshot | null;
       turnAdmission?: RuntimeTurnAdmission;
-      backgroundSource?: SessionHistoryReadScope["source"];
+      sessionSource?: AffectSessionSource;
       register?: () => Promise<unknown>;
     }
   | { ok: false; error: unknown };
@@ -1403,7 +1405,8 @@ async function resolveRouteAgentRuntimeBinding(input: {
       },
     };
   }
-  const actorSession = await input.options.resolveActorSession?.(binding.actorSessionId, background?.history.source.kind) ?? null;
+  const sessionSource = background?.history.source ?? binding.actorSource;
+  const actorSession = await input.options.resolveActorSession?.(binding.actorSessionId, sessionSource?.kind) ?? null;
   if (
     !actorSession
     || actorSession.id !== resolved.binding.actorSessionId
@@ -1413,6 +1416,9 @@ async function resolveRouteAgentRuntimeBinding(input: {
   }
   const authority = resolveProviderAgentRuntimeAuthority(binding, actorSession);
   if (!authority) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+  }
+  if (binding.actorSource && !matchesActorSource(binding.actorSource, actorSession.source)) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
   }
   const identityField = findCallerIdentityField(input.body, input.route === "character_memory_search");
@@ -1484,7 +1490,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
     principal,
     authority,
     turnAdmission,
-    ...(background ? { backgroundSource: background.history.source } : {}),
+    ...(sessionSource ? { sessionSource } : {}),
     register,
   };
 }
@@ -1500,10 +1506,18 @@ function createSessionBindingMemoryPrincipal(
     sessionId: binding.actorSessionId,
     providerId: binding.providerId,
     characterId: actorSession.characterId,
+    ...(binding.actorSource ? { sourceKind: binding.actorSource.kind } : {}),
     ...(actorSession.workspacePath ? { workspacePath: actorSession.workspacePath } : {}),
     ...(authority ? { allowedProjectIds: authority.allowedProjectIds } : {}),
     permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
+}
+
+function matchesActorSource(captured: AffectSessionSource, current?: AffectSessionSource): boolean {
+  return Boolean(current && captured.kind === current.kind && captured.sessionId === current.sessionId
+    && captured.incarnationId === current.incarnationId && (captured.kind !== "auxiliary"
+      || (current.kind === "auxiliary" && captured.parent.sessionId === current.parent.sessionId
+        && captured.parent.incarnationId === current.parent.incarnationId)));
 }
 
 function capturedMemoryTarget(selector: BackgroundMemoryTarget): MemoryV6ResolvedTarget {

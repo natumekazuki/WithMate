@@ -193,10 +193,10 @@ test("Auxiliaryの途中失効はsaved prefixを残し後続writeを止める", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "Auxiliaryの次の通常turnは本番assemblyの実metadataと親からtrusted sourceを組み立て、保存済みAuxiliary Affectをforeground Providerへ渡す"
+// claim = "Auxiliaryの次の通常turnは本番assemblyの実metadataと親からtrusted sourceを組み立て、通常binding発行とforeground Providerの保存済みAffectへ渡す"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "assemblyがAffect contextを接続しないか同名Mainや親Characterへ解決してProviderへ空または別会話のcontextを渡す"
-// observable = "背景MCPの保存応答とfake foreground Providerが受け取るcharacterContextのeffective target"
+// fault = "assemblyが通常bindingへAuxiliary sourceを渡さないか、Affect contextを同名Main/親Characterへ解決してProviderへ空または別会話のcontextを渡す"
+// observable = "背景MCPの保存応答、通常bindingへ渡すsource kind/ID/incarnation/親identity、fake foreground Providerが受け取るcharacterContextのeffective target"
 // observation_boundary = "consumer"
 // scope = "production Auxiliary runtime assembly and SessionRuntimeService with real Auxiliary metadata, application and DB Worker; foreground conversation writes and Provider are stubs"
 // lifecycle = "permanent"
@@ -241,7 +241,11 @@ test("Auxiliary本番assemblyは次の通常turnのProviderへ保存済みAffect
         resolveProviderCatalog: () => ({ provider: catalog, snapshot: { providers: [catalog] } }) },
       provider: { getProviderCodingAdapter: () => adapter, resetProviderSessionThread: async () => {},
         resolveProviderSession: (session) => session, resolveSessionFolderPath: () => f.directory,
-        issueRuntimeBinding: async (session, provider) => f.bindings.issueOrReuse({ actorSessionId: session.id, providerId: provider.id, operationGrants: [] }) },
+        issueRuntimeBinding: async (session, provider, source) => {
+          assert.deepEqual(source, { kind: "auxiliary", sessionId: "aux", incarnationId: "same-created-at",
+            parent: { sessionId: "main", incarnationId: "inc-main" } });
+          return f.bindings.issueOrReuse({ actorSessionId: session.id, actorSource: source, providerId: provider.id, operationGrants: [] });
+        } },
       memory: { getAppSettings: () => normalizeAppSettings({}), getCharacterContextService: () => f.characterContext,
         onCharacterContextFailure: (_session, error) => { failures.push(error); } },
       turn: { createSessionTurn: (input) => ({ id: 100, ...input }), updateSessionTurn() {} },

@@ -63,6 +63,8 @@ Agent実行終了時の`finish()`は、既存実行管理からbinding・handle�
 
 通常turn内の公開Memory／Affect操作は維持する。Memory二用途とAffectの用途検証を含む背景登録handler、共通設定・Provider port・保存後通知はMain runtimeへ接続済みである。Memory二用途とAffectはcontrollerによるMain／Auxiliaryの本番自動発火と登録・contextへ接続済みである。採用判断と適用範囲は[ADR035](../adr/035-background-execution-binding-and-history-scope.md#背景実行内のmcpcli直接登録)、通常の実行は[Provider Adapter](provider-adapter.md)に従う。
 
+通常のMain／Auxiliary bindingも実会話のkind・ID・incarnationとAuxiliary親identityを`actorSource`に捕捉し、既存authority fingerprintの再発行判定に含める。Memory HTTPは捕捉kindで実actorを解決し、現在sourceとの一致を確認してからAffectのget／inspect／appraise／correct／resetへ同じsourceを渡す。Memory principalとAffect連動episodeの出典も実ownerに揃え、通常Auxiliaryの記録を同名Mainへ保存・投影しない。
+
 ## 背景Memory read
 
 read toolと操作grantの対応は`src-shared/agent-runtime/background-memory-read.ts`を正本とする。`memory.search`、`memory.list_entries`、`memory.get_entry`、`memory.list_tags`、`character_memory.search`と履歴4操作を維持し、MCPの直接tools/callと配布bound CLIも同じ認可へ通す。file復元は以下の独立したfile認可を必要とし、通常readとは区別する。移動・忘却・横断一覧・fallback・Graph／Glossaryは許可しない。

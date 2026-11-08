@@ -8,6 +8,7 @@ import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../sessio
 import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
 import type { CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
 import { resolveRuntimeCharacterContext } from "../character/character-context-runtime.js";
+import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
 
 type AuxiliaryRuntimeOwner = {
   assertActive(operation: string): void;
@@ -41,7 +42,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     endProviderAgentRuntimeTurn?: SessionRuntimeServiceDeps["endProviderAgentRuntimeTurn"];
     resolveProviderSession(session: Session, parentSessionId: string): Session;
     resolveSessionFolderPath(parentSessionId: string): string;
-    issueRuntimeBinding(session: Session, provider: ModelCatalogProvider): Promise<ProviderAgentRuntimeBindingProjection>;
+    issueRuntimeBinding(session: Session, provider: ModelCatalogProvider, source: BackgroundSourceRef): Promise<ProviderAgentRuntimeBindingProjection>;
     beginRuntimeTurn?: SessionRuntimeServiceDeps["beginProviderAgentRuntimeTurn"];
   };
   memory: {
@@ -80,6 +81,13 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     assertOwner(operation);
     return result;
   };
+  const resolveSource = async (session: Session): Promise<BackgroundSourceRef> => {
+    const auxiliary = await deps.auxiliary.getSession(session.id);
+    const parent = auxiliary && await deps.parent.getSession(auxiliary.parentSessionId);
+    if (!auxiliary || !parent) throw new Error("Auxiliary conversation owner is unavailable.");
+    return { kind: "auxiliary", sessionId: session.id, incarnationId: getSessionIncarnationId(session),
+      parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } };
+  };
 
   const runtime: SessionRuntimeServiceDeps = {
     runSessionAdmissionExclusive: (sessionId, operation, signal) =>
@@ -107,7 +115,8 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     getAppSettings: () => guarded("settings read", deps.memory.getAppSettings),
     resolveProviderCatalog: (providerId, revision) => guarded("provider catalog", () => deps.resolution.resolveProviderCatalog(providerId, revision)),
     getProviderCodingAdapter: (providerId) => { assertOwner("provider coding adapter"); return deps.provider.getProviderCodingAdapter(providerId); },
-    getProviderAgentRuntimeBinding: ({ session, provider }) => guarded("provider runtime binding", () => deps.provider.issueRuntimeBinding(session, provider)),
+    getProviderAgentRuntimeBinding: ({ session, provider }) => guarded("provider runtime binding", async () =>
+      deps.provider.issueRuntimeBinding(session, provider, await resolveSource(session))),
     beginProviderAgentRuntimeTurn: ({ session, provider, binding, signal }) => binding && deps.provider.beginRuntimeTurn
       ? guarded("provider runtime turn", () => deps.provider.beginRuntimeTurn!({ session, provider, binding, signal }))
       : undefined,
@@ -117,15 +126,9 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     resolveCharacterContext: (session) => guarded("character context", async () => {
       const service = deps.memory.getCharacterContextService?.();
       if (session.sessionKind !== "default" || !session.characterId || !service) return null;
-      const auxiliary = await deps.auxiliary.getSession(session.id);
-      const parent = auxiliary && await deps.parent.getSession(auxiliary.parentSessionId);
-      if (!auxiliary || !parent) throw new Error("Auxiliary Character context owner is unavailable.");
       return resolveRuntimeCharacterContext({
         session, service,
-        sessionSource: {
-          kind: "auxiliary", sessionId: session.id, incarnationId: getSessionIncarnationId(session),
-          parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) },
-        },
+        sessionSource: await resolveSource(session),
         onFailure: (owner, error) => deps.memory.onCharacterContextFailure?.(owner, error),
       });
     }),

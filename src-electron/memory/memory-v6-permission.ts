@@ -13,7 +13,7 @@ export type MemoryV6SessionBindingPrincipal = {
   type: "session_binding";
   bindingIdHash: string;
   sessionId: string;
-  /** Conversation kind captured by a validated registration handler; omitted for ordinary Main callers. */
+  /** Conversation kind captured by a trusted binding or validated registration handler. */
   sourceKind?: "main" | "auxiliary";
   providerId: string;
   characterId: string;

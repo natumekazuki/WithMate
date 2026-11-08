@@ -26,6 +26,7 @@ import { currentTimestampLabel } from "../src-shared/time-state.js";
 import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-state.js";
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
+import type { BackgroundSourceRef } from "../src-shared/session/background-source-snapshot.js";
 import {
   type DiffPreviewPayload,
   getSessionIncarnationId,
@@ -730,18 +731,23 @@ async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "
       providerId: session.provider,
       characterId: session.characterId,
       workspacePath: session.workspacePath,
+      source: { kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
     };
   }
   if (sourceKind === "main" || !mainStoreContext.auxiliarySessionStorage) {
     return null;
   }
-  const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
-  return auxiliary
+  const service = requireAuxiliarySessionService();
+  const [auxiliary, metadata] = await Promise.all([service.getAuxiliaryRuntimeSession(sessionId), service.getAuxiliarySessionMetadata(sessionId)]);
+  const parent = metadata ? getSession(metadata.parentSessionId) : null;
+  return auxiliary && parent
     ? {
         id: auxiliary.id,
         providerId: auxiliary.provider,
         characterId: auxiliary.characterId,
         workspacePath: auxiliary.workspacePath,
+        source: { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: getSessionIncarnationId(auxiliary),
+          parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } },
       }
     : null;
 }
@@ -965,8 +971,9 @@ function endManagedProviderTurn(handle: unknown): void {
 }
 
 async function issueProviderAgentRuntimeBinding(
-  session: Pick<Session, "id" | "characterId" | "sessionKind" | "workspacePath">,
+  session: Pick<Session, "id" | "incarnationId" | "characterId" | "sessionKind" | "workspacePath">,
   providerId: string,
+  actorSource: BackgroundSourceRef = { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
 ) {
   const memoryAuthority = buildProviderAgentRuntimeAuthoritySnapshot({
     characterId: session.characterId,
@@ -988,6 +995,7 @@ async function issueProviderAgentRuntimeBinding(
   if (!graphSession) throw new Error("Provider runtime binding requires a current Session Graph owner.");
   const binding = agentRuntimeBindingRegistry.issueOrReuse({
     actorSessionId: session.id,
+    actorSource,
     providerId,
     authoritySnapshot: {
       ...memoryAuthority,
@@ -2791,7 +2799,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         endProviderAgentRuntimeTurn: endManagedProviderTurn,
         resolveProviderSession: (session, parentSessionId) => appendSessionFilesDirectoryForSessionId(app.getPath("userData"), session, parentSessionId),
         resolveSessionFolderPath: (parentSessionId) => ensureSessionFilesDirectory(parentSessionId),
-        issueRuntimeBinding: async (session, provider) => await issueProviderAgentRuntimeBinding(session, provider.id),
+        issueRuntimeBinding: async (session, provider, source) => await issueProviderAgentRuntimeBinding(session, provider.id, source),
         beginRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal),
       },
       memory: {

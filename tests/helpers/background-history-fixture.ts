@@ -19,7 +19,7 @@ import { ManagedHttpMcpHost } from "../../src-electron/memory/managed-http-mcp-h
 import { createMemoryV6HttpServer } from "../../src-electron/memory/memory-v6-http-server.js";
 import { MemoryV6WorkerClient } from "../../src-electron/memory/memory-v6-worker-client.js";
 import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory/memory-v6-service.js";
-import { CharacterAffectService } from "../../src-electron/character/character-affect-service.js";
+import { createCharacterAffectServiceWithMemory } from "../../src-electron/character/character-affect-memory-adapter.js";
 import { CharacterContextApplicationService } from "../../src-electron/character/character-context-application-service.js";
 import { GlossaryApplicationService } from "../../src-electron/glossary/glossary-application-service.js";
 import { GlossaryRuntimeService } from "../../src-electron/glossary/glossary-runtime-service.js";
@@ -75,10 +75,8 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const memory = new MemoryV6Service({ storage: memoryWorker.storage,
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath, ...memoryDependencies?.(directory) });
-  const affect = new CharacterAffectService(memoryWorker.affectStorage, { async evaluate() { return []; } }, {
-    async writeEpisode() { throw new Error("History fixture must not write episodes"); },
-    validateEpisode() { throw new Error("History fixture must not validate episodes"); },
-  }, "active");
+  const affect = createCharacterAffectServiceWithMemory({ affectStorage: memoryWorker.affectStorage,
+    memoryStorage: memoryWorker.storage, evaluator: { async evaluate() { return []; } }, mode: "active" });
   const characterContext = new CharacterContextApplicationService({ memoryService: memory, affectService: affect,
     resolveCharacterRuntimeSnapshot: (characterId) => characterId === "character" ? ({ characterId, name: "Character",
       description: "", iconFilePath: "", theme: { main: "#123456", sub: "#abcdef" }, definitionMarkdown: "Character",
@@ -117,11 +115,13 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
           character_id: string; provider_id: string; parent_session_id: string;
         } | undefined;
         return row ? { id, providerId: row.provider_id, characterId: row.character_id,
-          workspacePath: sessions.get(row.parent_session_id)?.workspacePath } : null;
+          workspacePath: sessions.get(row.parent_session_id)?.workspacePath, source: scope(id).history.source } : null;
       }
       if (sourceKind === "main" && !db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ?").get(id)) return null;
       const session = sessions.get(id);
-      return session ? { id, providerId: session.provider, characterId: session.characterId, workspacePath: session.workspacePath } : null;
+      const snapshot = readConversationQuerySnapshot(db, "session_messages_v6", id);
+      return session ? { id, providerId: session.provider, characterId: session.characterId, workspacePath: session.workspacePath,
+        ...(snapshot ? { source: { kind: "main" as const, sessionId: id, incarnationId: snapshot.incarnationId } } : {}) } : null;
     },
     routeAgentRuntimeExtension: async (request) => await history.route(request) ?? await glossary.route(request) ?? await graph.route(request),
   });

@@ -10,6 +10,7 @@ import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtim
 import { BACKGROUND_REGISTRATION_OPERATIONS, backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import { AFFECT_SCHEMA_VERSION } from "../../src-shared/character-affect/affect-contract.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
+import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
 import { MEMORY_V6_SCHEMA_VERSION, type MemoryTargetSelector } from "../../src-shared/memory/memory-contract.js";
 import { createLocalUserMemoryPrincipal } from "../../src-electron/memory/memory-v6-permission.js";
 import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/memory-v6-http-server.js";
@@ -103,6 +104,148 @@ async function unregisteredProject(f: Fixture) {
 function scopeCount(f: Fixture) {
   return f.db.prepare("SELECT COUNT(*) AS count FROM project_scopes_v6").get()!.count;
 }
+
+function ordinaryBinding(f: Fixture, sessionId: string, actorSource: BackgroundSourceRef = f.scope(sessionId).history.source) {
+  const input = { actorSessionId: sessionId, actorSource, providerId: "codex", authoritySnapshot: {
+    userId: "local-user", characterId: "character", allowedProjectIds: [],
+  }, operationGrants: getMemoryV6AgentRuntimeOperations() };
+  const issued = f.bindings.issueOrReuse(input);
+  const handle = f.turns.begin({ actorSessionId: sessionId, providerId: "codex" });
+  const projected = { ...issued, turnCapability: handle.capability, memoryRuntimeOwner: owner };
+  return { input, handle, binding: { ...projected, managedMcp: f.host.issue(projected, handle, new AbortController().signal) } };
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常AuxiliaryのMCP/CLIは同名MainからAffect read/writeとMemoryの保存ownerを分離し、実sourceのcontext・inspect・appraise・correct・resetを同じ状態へ反映する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "通常bindingからAuxiliary sourceが欠落してMainへ読取/保存する、関連mutationだけsourceが届かない、episodeや一般Memoryの出典をMainへstampする"
+// observable = "独立したAux/Main event ID、両入口のcontext/inspect、appraise/correct/reset後の実DB owner、Affect連動episodeと一般Memory/episode出典、Main記録の不変"
+// observation_boundary = "public-boundary"
+// scope = "通常bindingのmanaged MCP/配布CLIからHTTP/Character application/実Memory Worker保存まで"
+// lifecycle = "permanent"
+// impact = "AuxiliaryがAffectを読めないか別会話の状態・保存記録を変更する"
+// distinction = "背景登録testは用途handlerがsourceを補完し、通常Mainのadapter testはAuxiliary物理ownerを扱わない"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("通常AuxiliaryのMemory/Affect公開操作は同名Mainと実ownerを分離する", async () => {
+  const f = await fixture(undefined, undefined, () => new Date("2026-11-01T01:00:00.000Z"));
+  let normal: ReturnType<typeof ordinaryBinding> | undefined;
+  try {
+    f.db.prepare(`INSERT INTO sessions_v6(id,incarnation_id,title,state,provider_id,catalog_revision,model_id,approval_mode,
+      character_id,character_snapshot_json,created_at,updated_at,last_active_at)
+      VALUES ('aux','same-name-main','Main alias','active','codex',1,'test','on-request','character','{}','now','now','now')`).run();
+    const event = { schemaVersion: AFFECT_SCHEMA_VERSION, layer: "session" as const, targetType: "task" as const, targetId: "aux-event",
+      family: "interest" as const, value: { label: "Auxiliary interest", valence: 0.3 }, intensity: 0.8,
+      reason: "saved reason", evidence: "saved evidence", occurredAt: "2026-11-01T00:00:00.000Z", idempotencyKey: "aux-event" };
+    const aux = await f.memoryWorker.affectStorage.recordEvent({ ...event, characterId: "character", userId: "local-user", sessionId: "aux" },
+      { sessionSource: f.scope("aux").history.source });
+    const main = await f.memoryWorker.affectStorage.recordEvent({ ...event, targetId: "main-event", idempotencyKey: "main-event",
+      characterId: "character", userId: "local-user", sessionId: "aux" });
+    const mainBefore = f.db.prepare("SELECT * FROM character_affect_events_v6 WHERE id = ?").get(main.event.id);
+    normal = ordinaryBinding(f, "aux");
+    const { binding } = normal, { client } = await f.connect(binding, "memoryUrl");
+    const read = async () => {
+      const mcp = await client.callTool({ name: "character_affect.inspect", arguments: {} });
+      const child = await cli(f, binding, "affect-inspect", {});
+      assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+      assert.equal(child.code, 0, JSON.stringify(child.value));
+      assert.deepEqual(mcp.structuredContent, child.value);
+      return child.value;
+    };
+    const before = await read();
+    assert.deepEqual(before.events.map((item: { id: string }) => item.id), [aux.event.id]);
+    const contextMcp = await client.callTool({ name: "character_context.get", arguments: { memoryLimit: 0 } });
+    const contextCli = await cli(f, binding, "context-get", { memoryLimit: 0 });
+    assert.equal(contextMcp.isError, undefined, JSON.stringify(contextMcp));
+    assert.equal(contextCli.code, 0, JSON.stringify(contextCli.value));
+    assert.deepEqual(contextMcp.structuredContent, contextCli.value);
+    assert.deepEqual(contextCli.value.affect.effective.map((item: { targetId: string }) => item.targetId), ["aux-event"]);
+    const appended = await client.callTool({ name: "character_affect.appraise", arguments: {
+      expectedVersion: before.version.version, candidates: [
+        { ...event, targetId: "new-aux", idempotencyKey: "new-aux" },
+        { ...event, targetId: "linked-aux", idempotencyKey: "linked-aux", memoryEpisode: { title: "Linked Auxiliary episode",
+          body: "Auxiliary linked observation", preview: "Auxiliary linked observation", salience: 0.8 } },
+      ],
+    } });
+    assert.equal(appended.isError, undefined, JSON.stringify(appended));
+    const afterAppend = await read(), added = afterAppend.events.find((item: { targetId: string }) => item.targetId === "new-aux");
+    assert.ok(added);
+    assert.ok(afterAppend.events.find((item: { targetId: string }) => item.targetId === "linked-aux")?.memoryEntryId);
+    const corrected = await cli(f, binding, "affect-correct", { eventId: added.id, expectedVersion: afterAppend.version.version,
+      explicitUserRequest: true, reason: "Correct Auxiliary observation", replacement: { ...event,
+        targetId: "corrected-aux", occurredAt: "2026-11-01T00:01:00.000Z", idempotencyKey: "corrected-aux" } });
+    assert.equal(corrected.code, 0, JSON.stringify(corrected.value));
+    assert.ok((await read()).events.some((item: { targetId: string }) => item.targetId === "corrected-aux"));
+    const reset = await client.callTool({ name: "character_affect.reset", arguments: { layer: "session",
+      expectedVersion: corrected.value.version, explicitUserRequest: true, reason: "Reset Auxiliary session",
+      resetAt: "2026-11-01T00:02:00.000Z", idempotencyKey: "reset-aux" } });
+    assert.equal(reset.isError, undefined, JSON.stringify(reset));
+    const afterReset = await cli(f, binding, "context-get", { memoryLimit: 0 });
+    assert.equal(afterReset.code, 0, JSON.stringify(afterReset.value));
+    assert.deepEqual(afterReset.value.affect.effective, []);
+    for (const [command, input] of [
+      ["append", { target: { kind: "character" }, kind: "note", title: "Auxiliary note", body: "Auxiliary note body",
+        preview: "Auxiliary note", idempotencyKey: "aux-note" }],
+      ["character-memory-append-episode", { idempotencyKey: "aux-episode", episode: { title: "Auxiliary episode",
+        body: "An Auxiliary observation", preview: "Auxiliary observation", motif: "owner", observedFact: "The Auxiliary completed a check." } }],
+    ] as const) {
+      const saved = await cli(f, binding, command, input);
+      assert.equal(saved.code, 0, JSON.stringify(saved.value));
+      const row = f.db.prepare("SELECT source_session_id,source_auxiliary_session_id FROM memory_entries_v6 WHERE id = ?").get(saved.value.entry.id);
+      assert.deepEqual({ ...row }, { source_session_id: null, source_auxiliary_session_id: "aux" });
+    }
+    assert.deepEqual(f.db.prepare("SELECT * FROM character_affect_events_v6 WHERE id = ?").get(main.event.id), mainBefore);
+    assert.ok(f.db.prepare("SELECT 1 FROM character_affect_resets_v6 WHERE auxiliary_session_id = 'aux' AND session_id IS NULL").get());
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6 WHERE id != ? AND auxiliary_session_id IS NOT 'aux'")
+      .get(main.event.id)!.count, 0);
+    assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6 WHERE source_session_id IS NOT NULL OR source_auxiliary_session_id IS NOT 'aux'").get()!.count, 0);
+    f.turns.end(normal.handle);
+    normal = ordinaryBinding(f, "aux", { kind: "main", sessionId: "aux", incarnationId: "same-name-main" });
+    const mainRead = await cli(f, normal.binding, "affect-inspect", {});
+    assert.equal(mainRead.code, 0, JSON.stringify(mainRead.value));
+    assert.deepEqual(mainRead.value.events.map((item: { id: string }) => item.id), [main.event.id]);
+  } finally { if (normal) f.turns.end(normal.handle); await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "通常Auxiliary bindingは本人/親の再作成と削除を拒否し、sourceが変わった次回発行は旧bindingを再利用しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "通常bindingで現在sourceを検証しない、親identityを無視する、Auxiliary削除後に同名Mainへfallbackする、または古いsourceのbindingを再利用する"
+// observable = "現在sourceでのMCP/CLI成功、DBの本人/親incarnation変更・削除後の両入口拒否、次回binding referenceと旧referenceの失効"
+// observation_boundary = "public-boundary"
+// scope = "通常binding発行/再利用とHTTPの実actor source照合"
+// lifecycle = "permanent"
+// impact = "置換後の会話へ旧Auxiliaryの読取/保存権限を持ち越す"
+// distinction = "背景はscopeを別管理し、既存通常binding testは会話kind/親incarnationを持たない"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("通常Auxiliaryは現在sourceを照合し再作成時にbindingを再発行する", async () => {
+  for (const change of ["self", "parent", "delete"] as const) {
+    const f = await fixture();
+    let normal: ReturnType<typeof ordinaryBinding> | undefined;
+    try {
+      normal = ordinaryBinding(f, "aux");
+      const { binding, input } = normal, { client } = await f.connect(binding, "memoryUrl");
+      assert.equal(f.bindings.issueOrReuse(input).bindingReference, binding.bindingReference);
+      assert.equal((await client.callTool({ name: "character_affect.inspect", arguments: {} })).isError, undefined);
+      assert.equal((await cli(f, binding, "affect-inspect", {})).code, 0);
+      if (change === "self") f.db.prepare("UPDATE auxiliary_sessions SET created_at = 'recreated' WHERE id = 'aux'").run();
+      else if (change === "parent") f.db.prepare("UPDATE sessions_v6 SET incarnation_id = 'recreated' WHERE id = 'main'").run();
+      else f.db.prepare("DELETE FROM auxiliary_sessions WHERE id = 'aux'").run();
+      assert.equal((await client.callTool({ name: "character_affect.inspect", arguments: {} })).isError, true);
+      const child = await cli(f, binding, "affect-inspect", {});
+      assert.notEqual(child.code, 0);
+      assert.equal("events" in child.value, false);
+      if (change !== "delete") {
+        const next = f.bindings.issueOrReuse({ ...input, actorSource: f.scope("aux").history.source });
+        assert.notEqual(next.bindingReference, binding.bindingReference);
+        assert.equal(f.bindings.resolveIdentity(binding.bindingReference).ok, false);
+      }
+    } finally { if (normal) f.turns.end(normal.handle); await f.close(); }
+  }
+});
 
 // @test-value v2
 // kind = "contract"
