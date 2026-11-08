@@ -187,7 +187,7 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
   });
 }
 
-function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps): ProductionSessionRuntimeService {
+function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps, parent: Session): ProductionSessionRuntimeService {
   const writes = {
     getSession: deps.getSession,
     persistRunningTurnStart: deps.persistRunningTurnStart ?? ((session: Session) => deps.upsertSession(session)),
@@ -214,9 +214,13 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     notification: { onBackgroundEvent: deps.onBackgroundEvent, notifySessionTurnTerminal: deps.notifySessionTurnTerminal }, timing: {},
   });
   return createAuxiliarySessionRuntime({ owner, admission,
-    auxiliary: { ...writes, getRuntimeSession: async (id) => deps.getSession(id), getSession: async () => null,
+    auxiliary: { ...writes, getRuntimeSession: async (id) => deps.getSession(id), getSession: async (id) => {
+      const session = await deps.getSession(id);
+      return session ? { ...session, parentSessionId: parent.id, status: "active", runState: "idle",
+        title: session.taskTitle, composerDraft: "", createdAt: session.updatedAt, displayAfterMessageIndex: null, closedAt: "" } : null;
+    },
       persistRunningTurnStart: async (session, count) => writes.persistRunningTurnStart(session, count), isAuxiliarySession: async () => true },
-    parent: { getSession: async () => null }, resolution,
+    parent: { getSession: async (id) => id === parent.id ? parent : null }, resolution,
     provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter, resetProviderSessionThread: async () => {},
       resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture",
       issueRuntimeBinding: async (session, provider) => new AgentRuntimeBindingRegistry().issueOrReuse({ actorSessionId: session.id, providerId: provider.id, operationGrants: [] }) },
@@ -242,6 +246,7 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
 it("本番両assemblyは保存完了後だけ背景terminalを発行する", { timeout: 5000 }, async () => {
   for (const kind of ["main", "auxiliary"] as const) for (const phase of ["completed", "failed", "canceled"] as const) {
     const session = createSession({ id: `${kind}-source` });
+    const parent = createSession({ id: "parent", incarnationId: "parent-inc" });
     const entered = queueGate(), release = queueGate();
     const events: SessionBackgroundEvent[] = [];
     let stored: Session | undefined;
@@ -251,7 +256,7 @@ it("本番両assemblyは保存完了後だけ背景terminalを発行する", { t
       return result;
     }, { appendTerminalSession: async (next) => { entered.resolve(); await release.promise; stored = next; return next; },
       onBackgroundEvent: (event) => { events.push(event); },
-    }, (deps) => assembleBackgroundEventRuntime(kind, deps));
+    }, (deps) => assembleBackgroundEventRuntime(kind, deps, parent));
     const pending = runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
     try {
       await entered.promise;
@@ -316,8 +321,9 @@ it("背景callbackの失敗と未完了は会話保存から隔離し、保存�
 it("実保存イベントからMemoryを発火し背景失敗を会話から隔離する", { timeout: 5000 }, async () => {
   for (const kind of ["main", "auxiliary"] as const) for (const rejectSave of [false, true]) {
     const session = createSession({ id: `${kind}-auto-memory`, incarnationId: "inc" });
+    const parent = createSession({ id: "parent", incarnationId: "parent-inc" });
     const source: BackgroundSourceRef = kind === "main" ? { kind, sessionId: session.id, incarnationId: "inc" }
-      : { kind, sessionId: session.id, incarnationId: "inc", parent: { sessionId: "parent", incarnationId: "parent-inc" } };
+      : { kind, sessionId: session.id, incarnationId: "inc", parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } };
     const captured = { history: { source: { ...source, ownerIdentity: "saved-owner" }, fromMessageSeq: 0, throughMessageSeq: 0 },
       snapshot: { session, ownerIdentity: "saved-owner", turns: Array<CapturedBackgroundSource["snapshot"]["turns"][number]>() } } satisfies CapturedBackgroundSource;
     const settings = normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } });
@@ -325,7 +331,7 @@ it("実保存イベントからMemoryを発火し背景失敗を会話から隔�
       settings.backgroundExecutionSettings[purpose] = { selection: { providerId: "claude", modelId: "test" } };
     }
     settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
-    const agents: string[] = [];
+    const agents: Array<{ purpose: string; sourceKind: string }> = [];
     const executions = new BackgroundExecutionService({ bindings: new AgentRuntimeBindingRegistry(), turns: new ProviderAgentRuntimeTurnCoordinator(), closeConnection() {} });
     const authority = () => ({ userId: "local-user" as const, characterId: session.characterId!, allowedProjectIds: [] });
     const background = new BackgroundProductionRuntime({ executions, getAppSettings: () => settings,
@@ -333,7 +339,7 @@ it("実保存イベントからMemoryを発火し背景失敗を会話から隔�
         models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] }),
       captureSource: async () => structuredClone(captured), resolveAuthority: authority,
       sourceKinds: { "character-memory": [kind], "target-memory": [kind] },
-      runAgent(input) { agents.push(input.scope.purpose); assert.equal(input.scope.history.source.kind, kind); throw new Error("background generation failed"); } });
+      runAgent(input) { agents.push({ purpose: input.scope.purpose, sourceKind: input.scope.history.source.kind }); throw new Error("background generation failed"); } });
     const controller = new MemoryRecordingController({ runtime: background, getSettings: () => settings,
       captureSource: async () => structuredClone(captured), resolveAuthority: authority,
       readCharacterDefinition: async () => "fixture Character definition" });
@@ -348,13 +354,18 @@ it("実保存イベントからMemoryを発火し背景失敗を会話から隔�
         return next;
       },
       onBackgroundEvent(event) { background.publish({ ...event, source }); },
-    }, (deps) => assembleBackgroundEventRuntime(kind, deps));
+    }, (deps) => assembleBackgroundEventRuntime(kind, deps, parent));
     try {
       const pending = normal.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
       if (rejectSave) await assert.rejects(pending, /storage denied/);
       else assert.equal((await pending).runState, "idle");
       await normal.waitForPendingRuns();
-      if (!rejectSave) await waitForCondition(() => agents.length === 2, "both Memory purposes did not start");
+      if (!rejectSave) {
+        await waitForCondition(() => agents.length === 2, "both Memory purposes did not start");
+        assert.deepEqual([...agents].sort((left, right) => left.purpose.localeCompare(right.purpose)), [
+          { purpose: "character-memory", sourceKind: kind }, { purpose: "target-memory", sourceKind: kind },
+        ]);
+      }
       else { await new Promise<void>((done) => setImmediate(done)); assert.deepEqual(agents, []); }
     } finally { background.stop(); }
   }
