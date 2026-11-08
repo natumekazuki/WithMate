@@ -471,7 +471,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する
 - 通常Sessionの起点headerに`Delete Crew`を置く。確認dialogは起点・全通常子孫・各Mainの全Auxiliaryを対象とし、Workspace保持と削除範囲を示す。保存側のCrew全体の削除可否を取得し、未対応Coordinationの理由と対象への移動を表示する。回答・解決・取り下げ後の更新で可否を再取得し、受理済みqueue等の拒否理由も保持する。削除そのものはtransactionで再検証する
-- 自分自身の非実行Standaloneではheaderの`Become Overall Coordinator`から明示確認してRoleを変更できる。実際のIPC送信Window・mainFrame・保存identity・非実行条件をMainで検証し、既存会話・Workspace・Provider threadを維持してTurnを起動しない
+- 自分自身の非実行Standaloneではheaderの`Change Role…`から、アプリ内dialogで対象名・変更先`Overall Coordinator`・子Session作成が可能になることと変更の不可逆性を確認してRoleを変更できる。CancelまたはEscapeでは変更せず、変更中は重複操作を止め、失敗時はdialog内から詳細確認・再試行できる。実際のIPC送信Window・mainFrame・保存identity・非実行条件をMainで検証し、既存会話・Workspace・Provider threadを維持してTurnを起動しない
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - right pane の本文scrollbarはtab直下からpane下端まで共通の高さにし、`Messages`のfilterと`Glossary`の検索欄は本文の上端へ固定して一覧だけを流す

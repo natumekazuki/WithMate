@@ -215,13 +215,17 @@ export function SessionHeader({
                   ) : null}
                   {onPromoteToOverallCoordinator ? (
                     <button
+                      className="session-role-change-action"
                       type="button"
                       role="menuitem"
-                      onClick={() => runSessionAction(onPromoteToOverallCoordinator)}
+                      onClick={() => {
+                        sessionActionsTriggerRef.current?.focus();
+                        runSessionAction(onPromoteToOverallCoordinator);
+                      }}
                       disabled={isRunning || isReadOnly || isRoleChangePending}
                       aria-busy={isRoleChangePending || undefined}
                     >
-                      <ButtonContent busy={isRoleChangePending} busyLabel="Changing session role.">Become Overall Coordinator</ButtonContent>
+                      <ButtonContent busy={isRoleChangePending} busyLabel="Changing session role.">Change Role…</ButtonContent>
                     </button>
                   ) : null}
                   {showDeleteButton ? (

@@ -4503,3 +4503,32 @@
   text-align: left;
   font-weight: 400;
 }
+
+.session-role-change-dialog {
+  width: min(480px, 100%);
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.session-role-change-dialog .launch-panel.minimal {
+  padding-top: 22px;
+}
+
+.session-role-change-dialog h2 {
+  font-family: inherit;
+  font-size: 1.05rem;
+  line-height: 1.45;
+}
+
+.session-role-change-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+}
+
+.session-role-change-dialog .launch-dialog-foot {
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
