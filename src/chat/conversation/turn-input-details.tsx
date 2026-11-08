@@ -8,6 +8,9 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import { ErrorDetailsButton } from "../../ui/error-details.js";
 import { CharacterAvatar } from "../../ui/ui-utils.js";
+import { approvalModeLabel } from "../../../src-shared/settings/approval-mode.js";
+import { reasoningEffortLabel } from "../../../src-shared/settings/model-catalog.js";
+import { codexSandboxModeOptions } from "../../../src-shared/settings/codex-sandbox-mode.js";
 
 const deliveryLabels = {
   pending: "Input Acceptance Pending",
@@ -36,6 +39,24 @@ export function InputDetailRow({ label, children }: { label: string; children: R
 
 export function inputDetailStateLabel(value: string | null | undefined, fallback: string) {
   return value ? value.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : fallback;
+}
+
+function ExecutionSettings({ settings }: { settings: NonNullable<Execution["executionSettings"]> }) {
+  const providerLabel = ({ codex: "Codex", claude: "Claude", copilot: "Copilot", opencode: "OpenCode" } as Record<string, string>)[settings.provider] ?? settings.provider;
+  const supportsReviewerAndSpeed = settings.provider === "codex" || settings.provider === "claude";
+  const rows: [string, string | null][] = [
+    ["provider", providerLabel], ["approval", approvalModeLabel(settings.approvalMode)],
+  ];
+  if (supportsReviewerAndSpeed) rows.push(["reviewer", settings.codexReviewer], ["speed", settings.codexSpeed]);
+  rows.push(["model", settings.model], ["reasoning", settings.reasoningEffort ? reasoningEffortLabel(settings.reasoningEffort) : settings.source === "input" ? "Provider Default" : null]);
+  if (settings.provider === "codex") rows.push(["sandbox", codexSandboxModeOptions.find((option) => option.id === settings.codexSandboxMode)?.label ?? settings.codexSandboxMode]);
+  if (settings.customAgentName) rows.push(["agent", settings.customAgentName]);
+  return <section className="artifact-section compact" aria-label="Execution Settings">
+    <div className="artifact-section-header"><div className="artifact-fold-summary-copy"><strong>Execution Settings</strong><span>{settings.source === "input" ? "Captured With Input" : "Saved With Turn"}</span></div></div>
+    <dl className="check-list turn-input-rows">
+      {rows.map(([label, value]) => <InputDetailRow key={label} label={label}>{value || "Not Recorded"}</InputDetailRow>)}
+    </dl>
+  </section>;
 }
 
 function ComparedText({ text, other, original }: { text: string; other: string; original: boolean }) {
@@ -137,7 +158,7 @@ export function useTurnInputRead({ message, receipt, context }: TurnInputProps) 
   }, [identity]);
   const observed = loadedReference.current === referenceIdentity ? snapshot ?? execution : null;
   const origin = observed?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
-  return { input, observed, origin, statusReference, receiptId, identity, open, setOpen, setSnapshot, readError, setReadError, setRevision };
+  return { input, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, open, setOpen, setSnapshot, readError, setReadError, setRevision };
 }
 
 export function TurnInputDetails(props: TurnInputProps) {
@@ -173,7 +194,7 @@ export function SessionOriginRoute({ origin, target, onError }: { origin: Sessio
 }
 
 export function TurnInputDetailsContent({ message, receipt, context, read, compact = false }: TurnInputProps & { read: ReturnType<typeof useTurnInputRead>; compact?: boolean }) {
-  const { input, observed, origin, statusReference, receiptId, identity, open, setOpen, setSnapshot, readError, setReadError, setRevision } = read;
+  const { input, execution, observed, origin, statusReference, receiptId, identity, open, setOpen, setSnapshot, readError, setReadError, setRevision } = read;
   if (message.role !== "user" || (!statusReference && !input) || (!input && origin?.kind !== "session" && !context)) return null;
   const summary = observed?.inputs;
   const resolvedReceiptId = receiptId ?? observed?.receiptId;
@@ -182,9 +203,14 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
   const entrySummary = summary?.entry ? `${summary.entry.kind === "additional" ? "Additional" : "Start"} Input · ${summary.entry.comparison === "changed" ? "Changed From Original" : summary.entry.comparison === "unchanged" ? "Unchanged From Original" : "Comparison Unknown"}` : null;
   const additionalSummary = summary ? `${summary.additional.confirmedCount} Confirmed Additional Inputs${summary.additional.unresolvedCount ? ` · ${summary.additional.unresolvedCount} Unresolved` : ""}${summary.additional.coverage === "unknown" ? " · Input Coverage Unknown" : ""}` : null;
   const sourceWaitState = getQueuedSourceWaitState(receipt);
+  const captured = receipt?.dispatched ?? receipt?.captured;
+  const settings = execution?.executionSettings ?? (captured ? { source: "input" as const, provider: captured.provider, ...captured.request.executionOptions } : null);
   const hasReferences = resolvedReceiptId || resolvedTurnId || input?.nativeTurnId || origin?.kind === "session";
   const panel = <div className="artifact-block turn-input-panel">
       {compact ? <div className="artifact-section-header"><strong>Input Details</strong></div> : null}
+      {settings ? <ExecutionSettings settings={settings} /> : null}
+      <section className="artifact-section compact" aria-label="Input State">
+      <div className="artifact-section-header"><strong>Input State</strong></div>
       <dl className="check-list turn-input-rows" aria-label="Input State">
         {sourceWaitState ? <InputDetailRow label="Delivery"><span className="turn-input-state">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span></InputDetailRow> : null}
         {observed || receipt ? <><InputDetailRow label="Receipt State">{inputDetailStateLabel(observed?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow><InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow></> : null}
@@ -193,6 +219,7 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
         {entrySummary ? <InputDetailRow label="Input">{entrySummary}</InputDetailRow> : null}
         {additionalSummary ? <InputDetailRow label="Additional Inputs">{additionalSummary}</InputDetailRow> : null}
       </dl>
+      </section>
       {summary?.entry?.kind === "additional" ? <p>Start Input · {summary.startChanged === null ? "Comparison Unknown" : summary.startChanged ? "Changed From Original" : "Unchanged From Original"}</p> : null}
       {summary?.additional.notSentCount ? <p>{summary.additional.notSentCount} Inputs Not Sent · Excluded From Confirmed Inputs</p> : null}
       {input?.state === "pending" ? <p>Acceptance and saving have not been confirmed.</p> : null}

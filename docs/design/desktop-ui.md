@@ -599,7 +599,7 @@ Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表
 
 詳細では同じsnapshotの`Original Input`と予定／固定済み比較入力、添付参照を並べて確認できる。長文は同じsnapshotへの継続参照で取得し、再編集などにより継続できなくなった場合は再読込する。詳細取得後はそのsnapshotの状態・比較結果を表示し、古い状態取得の判定を本文へ使い回さない。変更者や全編集履歴は表示しない。
 
-`Input Details`と送信側の`Delivery Details`は既存の実行結果Detailsと同じ項目行・見出し・開閉表現を使う。受付とTurnの状態、配送タイミング、入力変更・確認済み追加入力を主にし、原文比較と分類別入力を続ける。受付・Session・Turnの内部参照は末尾の`References`から必要時に開く。既存の`Run Checks`／`Operations`は実行結果の詳細として保持し、未開始の入力へ実行結果を補わない。
+`Input Details`と送信側の`Delivery Details`は既存の実行結果Detailsと同じ項目行・見出し・開閉表現を使う。`Input Details`は最初に`Execution Settings`として入力に捕捉されたProvider、Approval、対応ProviderのReviewer／Speed、Model、Reasoning、Sandbox／Agentを表示する。受付のない過去TurnはそのTurnに保存された設定だけを表示し、未記録の値を現在選択や既定値で補わない。捕捉された設定はProviderが実際に適用した結果と区別し、既存の`Run Checks`／`Operations`は実行結果の詳細として保持する。続いて受付とTurnの状態、配送タイミング、入力変更・確認済み追加入力、原文比較と分類別入力を置く。受付・Session・Turnの内部参照は末尾の`References`から必要時に開く。未開始の入力へtokensなどの実行結果を補わない。
 
 追加入力は配送分類ごとの総数を表示し、保存順の参照から個別に開く。参照一覧は必要時に同じ宛先・Turnへ継続取得し、取得失敗でも既読の参照と続きの位置を保持して再試行できる。message sequence未確定の入力は保存済み受付から詳細を開く。`Input Acceptance Pending`、`Additional Input Confirmed`、`Input Delivery Unknown`、`Input Not Sent`を区別し、未送信や未確定は確認済み件数へ含めず、記録の網羅性が不明な場合も示す。受付の配送完了とTurn全体の終端、WithMate TurnとProvider TurnのIDは別に表示する。過去の原文・対応関係が記録されていない場合は推測で補わない。
 

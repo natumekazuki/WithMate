@@ -14,7 +14,8 @@ import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admi
 
 type Result = { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string; effect: "none" };
 type Receipt = { id: string; sequence: number; state: string; captured_json: string; accepted_json: string | null; dispatched_json: string | null; turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; updated_at: string };
-type Turn = { id: number; phase: string; provider_id: string; model_id: string; user_message_seq: number | null; assistant_message_seq: number | null };
+type Turn = { id: number; phase: string; provider_id: string; model_id: string; reasoning_effort: string; approval_mode: string; sandbox_mode: string; user_message_seq: number | null; assistant_message_seq: number | null };
+const turnColumns = "id, phase, provider_id, model_id, reasoning_effort, approval_mode, sandbox_mode, user_message_seq, assistant_message_seq";
 type SavedMessage = { seq: number; role: string; body: string; text_chars?: number };
 const failure = (code: string, message: string): Result => ({ ok: false, code, message, effect: "none" });
 const attachments = (items: ComposerAttachment[]) => items.map(({ id, kind, displayPath, workspaceRelativePath }) => ({ id, kind, name: displayPath.split(/[\\/]/).at(-1) ?? "", reference: workspaceRelativePath ?? id }));
@@ -114,7 +115,7 @@ export class SessionExecutionReadStorage {
       if (!message) throw new Error("Invalid saved execution message.");
       return message;
     };
-    const getTurn = (id: string | null) => id ? this.db.prepare(`SELECT id, phase, provider_id, model_id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND id = ?`).get(target.sessionId, id) as Turn | undefined : undefined;
+    const getTurn = (id: string | null) => id ? this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND id = ?`).get(target.sessionId, id) as Turn | undefined : undefined;
     const hasAssistant = (turn: Turn) => turn.assistant_message_seq !== null && Boolean(this.db.prepare(`SELECT 1 FROM ${table} WHERE ${owner} = ? AND seq = ? AND role = 'assistant'`).get(target.sessionId, turn.assistant_message_seq));
     const inputSummary = (entry: Receipt | undefined, turn: Turn | undefined) => {
       const entryOriginal = entry ? comparisonInput(captured(entry.accepted_json)) : null;
@@ -152,7 +153,7 @@ export class SessionExecutionReadStorage {
       const limit = options.limit ?? 32;
       const total = (options.kind === "turns" ? this.db.prepare(`SELECT COUNT(*) AS count FROM session_turns_v6 WHERE ${turnWhere}`).get(target.sessionId) : this.db.prepare(`SELECT COUNT(*) AS count FROM session_turn_queue_v6 WHERE ${queueWhere} AND incarnation_id = ?`).get(...queueParams)) as { count: number };
       if (offset > total.count) return failure("EXECUTION_INVALID_REQUEST", "Offset is beyond the list.");
-      const items = options.kind === "turns" ? (this.db.prepare(`SELECT id, phase, provider_id, model_id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} ORDER BY id LIMIT ? OFFSET ?`).all(target.sessionId, limit, offset) as Turn[]).map((turn) => describeExecution(undefined, turn)) : (this.db.prepare(`${receiptQuery} ORDER BY sequence LIMIT ? OFFSET ?`).all(...queueParams, limit, offset) as Receipt[]).map((receipt) => describeExecution(receipt, getTurn(receipt.turn_id)));
+      const items = options.kind === "turns" ? (this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} ORDER BY id LIMIT ? OFFSET ?`).all(target.sessionId, limit, offset) as Turn[]).map((turn) => describeExecution(undefined, turn)) : (this.db.prepare(`${receiptQuery} ORDER BY sequence LIMIT ? OFFSET ?`).all(...queueParams, limit, offset) as Receipt[]).map((receipt) => describeExecution(receipt, getTurn(receipt.turn_id)));
       return { ok: true, kind: options.kind ?? "receipts", items, offset, total: total.count, nextOffset: offset + items.length < total.count ? offset + items.length : null };
     }
     const ref = request as { receiptId?: string; turnId?: string; messageSeq?: number; offset?: number; limit?: number; maxChars?: number; seq?: number; stage?: "original" | "comparison"; expectedInput?: string; index?: number; state?: "confirmed" | "unresolved" | "not-sent" };
@@ -168,7 +169,7 @@ export class SessionExecutionReadStorage {
       if (receipt) turn = getTurn(receipt.turn_id);
       else if (message.turnInput) turn = getTurn(message.turnInput.turnId);
       else {
-        const matchingTurns = this.db.prepare(`SELECT id, phase, provider_id, model_id, user_message_seq, assistant_message_seq FROM session_turns_v6 WHERE ${turnWhere} AND (user_message_seq = ? OR assistant_message_seq = ?)`).all(target.sessionId, ref.messageSeq, ref.messageSeq) as Turn[];
+        const matchingTurns = this.db.prepare(`SELECT ${turnColumns} FROM session_turns_v6 WHERE ${turnWhere} AND (user_message_seq = ? OR assistant_message_seq = ?)`).all(target.sessionId, ref.messageSeq, ref.messageSeq) as Turn[];
         if (matchingTurns.length > 1) return failure("EXECUTION_LINK_UNAVAILABLE", "The saved message has ambiguous Turn linkage.");
         turn = matchingTurns[0];
       }
@@ -182,7 +183,13 @@ export class SessionExecutionReadStorage {
     const inputs = inputSummary(receipt, turn);
     const assistant = getMessage(turn?.assistant_message_seq ?? null);
     if (assistant && assistant.role !== "assistant") return failure("EXECUTION_LINK_UNAVAILABLE", "The Turn's result sequence is not an assistant message.");
-    if (operation === "get_execution") return { ok: true, ...description, output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
+    if (operation === "get_execution") {
+      const input = receipt ? captured(receipt.dispatched_json ?? receipt.captured_json) : null;
+      const executionSettings = input ? { source: "input", provider: input.provider, ...input.request.executionOptions }
+        : turn ? { source: "turn", provider: turn.provider_id, model: turn.model_id, reasoningEffort: turn.reasoning_effort,
+          approvalMode: turn.approval_mode, codexSandboxMode: turn.sandbox_mode, codexReviewer: null, codexSpeed: null, customAgentName: null } : null;
+      return { ok: true, ...description, executionSettings, output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
+    }
     if (operation === "list_execution_inputs") {
       const all: object[] = [];
       if ((!ref.state || ref.state === "confirmed") && turn?.user_message_seq !== null && turn?.user_message_seq !== undefined) {

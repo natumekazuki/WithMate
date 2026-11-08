@@ -70,10 +70,10 @@ async function cli(
 }
 // @test-value v2
 // kind = "contract"
-// claim = "Session MCPとbound CLIは同一binding/turn付き操作と拒否を共有し、queue requestIdはUUIDのみ受け付け、送信応答喪失を未適用と偽らない"
+// claim = "Session MCPとbound CLIは保存実行設定を含む同一binding/turn付き操作と結果・拒否を共有し、queue requestIdはUUIDのみ受け付け、送信応答喪失を未適用と偽らない"
 // oracle = { type = "contract", ref = "GitHub #835 MCPとbound CLIの入力・結果・拒否の同一契約" }
-// fault = "CLIが別actorで実行するかenqueue/get_receiptが非UUIDをdispatchするかenqueue通信失敗をeffect noneとして返す"
-// observable = "SDK MCPとCLIのstructured結果、dispatch identity、非UUIDの拒否とdispatch未実行、enqueue effect unknown"
+// fault = "CLIが別actorで実行する、保存実行設定の出典・値を落とす、非UUIDをdispatchするかenqueue通信失敗をeffect noneとして返す"
+// observable = "SDK MCPとCLIのstructured結果と保存実行設定、dispatch identity、非UUIDの拒否とdispatch未実行、enqueue effect unknown"
 // observation_boundary = "public-boundary"
 // scope = "session-cli-mcp"
 // lifecycle = "permanent"
@@ -245,6 +245,10 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       textChars: 5,
       artifactSaved: false,
     };
+    const executionSettings = {
+      source: "input", provider: "codex", model: "captured-model", reasoningEffort: "high",
+      approvalMode: "on-request", codexSandboxMode: "workspace-write", codexReviewer: "auto-review", codexSpeed: "fast", customAgentName: "",
+    };
     const record = {
       id: "consultation",
       crewRootSessionId: "parent",
@@ -276,7 +280,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         items: [description],
         total: 1,
       },
-      get_execution: { ...description, output },
+      get_execution: { ...description, executionSettings, output },
       list_execution_inputs: { ...description, ...page },
       get_execution_input: {
         ...description,
@@ -403,6 +407,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         assert.deepEqual(command.value, tool.structuredContent);
         assert.equal(tool.isError, rejected ? true : undefined, operation);
         assert.equal(command.exit, rejected ? 1 : 0);
+        if (!rejected && operation === "get_execution") assert.deepEqual(command.value.executionSettings, executionSettings);
         if (rejected) assert.equal(command.value.effect, "none");
         assert.deepEqual(calls.at(-1), calls.at(-2));
         assert.deepEqual(calls.at(-1), {

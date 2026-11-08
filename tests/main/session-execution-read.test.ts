@@ -27,6 +27,37 @@ function session() { return buildNewSession({ id: "read-main", taskTitle: "Read"
 
 // @test-value v2
 // kind = "contract"
+// claim = "execution読取は未開始と完了後も入力に捕捉した実行設定を返し、受付のない過去Turnでは保存済み設定と未記録を区別する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user request: 現行のProvider等を保持して改善" }
+// fault = "現在のSession設定で受付を上書きする、完了後の保存message参照で設定を落とす、過去Turnへ未記録Reviewer等を補う"
+// observable = "実SQLiteの共通get_executionを公開schemaでparseしたexecutionSettingsとその出典"
+// observation_boundary = "public-boundary"
+// scope = "receiptと保存messageSeq、receipt-less Turnからの実行設定投影"
+// lifecycle = "permanent"
+// impact = "利用者が指示に指定したProvider・Model・承認設定を取り違える"
+// distinction = "型検査とrenderer固定fixtureでは受付の保存値・現在設定・履歴参照の選択を検証できない。単一SQLite fixtureで必要な3状態を確認する"
+// @end-test-value
+test("execution settings retain the captured selection through queued and saved input reads", async () => {
+  await fixture(({ sessions, queue, turns, read }) => {
+    const saved = sessions.insertSession({ ...session(), model: "captured-model", reasoningEffort: "xhigh", codexReviewer: "auto-review", codexSpeed: "fast", messages: [{ role: "user", text: "instruction" }] });
+    const owner = { sessionId: saved.id, incarnationId: getSessionIncarnationId(saved) }, target = { kind: "main" as const, ...owner };
+    const options = captureSessionExecutionOptions(saved);
+    const receipt = queue.enqueue(owner, { request: { userMessage: "instruction", clientRequestId: randomUUID(), executionOptions: options }, attachments: [], provider: saved.provider, workspacePath: saved.workspacePath });
+    sessions.setSessionExecutionOptions(saved.id, owner.incarnationId, { ...options, model: "next-model", codexSpeed: "standard", approvalMode: "never" });
+    const get = (reference: { receiptId: string } | { messageSeq: number } | { turnId: string }) => executionOperationResultSchemas.get_execution.parse(read.execute({ target, operation: "get_execution", request: { target, ...reference } }));
+    const expected = { source: "input", provider: saved.provider, ...options };
+    assert.deepEqual(get({ receiptId: receipt.id }).executionSettings, expected);
+    const turn = turns.createSessionTurn({ sessionId: saved.id, phase: "completed", provider: saved.provider, model: "resolved-model", reasoningEffort: "high", approvalMode: "on-request", threadId: "", errorMessage: "", userMessageSeq: 0, createdAt: "2026-11-08T00:00:00Z" });
+    queue.claimNext(owner); queue.markStarted(owner, receipt.id, { turnId: String(turn.id), userMessageSeq: 0 }); queue.settle(owner, receipt.id, "completed");
+    assert.equal(queue.listActive(owner).length, 0);
+    assert.deepEqual(get({ messageSeq: 0 }).executionSettings, expected);
+    const historical = turns.createSessionTurn({ sessionId: saved.id, phase: "completed", provider: "codex", model: "historical-model", reasoningEffort: "low", approvalMode: "untrusted", threadId: "", errorMessage: "", createdAt: "2026-11-07T00:00:00Z" });
+    assert.deepEqual(get({ turnId: String(historical.id) }).executionSettings, { source: "turn", provider: "codex", model: "historical-model", reasoningEffort: "low", approvalMode: "untrusted", codexSandboxMode: "", codexReviewer: null, codexSpeed: null, customAgentName: null });
+  });
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "送信時のCharacterとSession名は保存済みoriginから取得し、名称変更・編集・終端後も過去の送信者を入れ替えない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/837" }
 // fault = "execution読取のschemaが表示snapshotを落とすか、入力編集・終端で保存済み送信者を置き換える"

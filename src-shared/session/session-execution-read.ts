@@ -37,6 +37,11 @@ const ok = { ok: z.literal(true) };
 const publicAttachments = z.array(z.object({ id: z.string(), kind: z.enum(["file", "folder", "image"]), name: z.string(), reference: z.string() }));
 const inputPiece = z.object({ ...ok, ...textPiece, attachments: publicAttachments });
 const outputUnit = providerOutputSchema.shape.units.element;
+const executionSettings = z.object({
+  source: z.enum(["input", "turn"]), provider: z.string(), model: z.string(),
+  approvalMode: z.string(), reasoningEffort: z.string(), codexSandboxMode: z.string(),
+  codexReviewer: z.string().nullable(), codexSpeed: z.string().nullable(), customAgentName: z.string().nullable(),
+});
 export const executionOperationResultSchemas = {
   list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, textPreview: z.string(), textChars: z.number().int().nonnegative() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_messages: z.object({ ...ok, window: z.object({ fromSeq: z.number(), toSeq: z.number() }), ...resultPage }).passthrough(),
@@ -44,7 +49,7 @@ export const executionOperationResultSchemas = {
   list_operations: z.object({ ...ok, seq: z.number(), section: z.string(), artifactDetailSaved: z.boolean(), ...resultPage }).passthrough(),
   get_operation_detail: z.union([z.object({ ...ok, seq: z.number(), kind: z.string(), index: z.number(), ...textPiece }).passthrough(), z.object({ ...ok, seq: z.number(), kind: z.literal("changed_file"), index: z.number(), rows: z.array(z.unknown()), offset: z.number(), nextOffset: z.number().nullable(), totalRows: z.number() }).passthrough()]),
   list_executions: z.object({ ...ok, kind: z.enum(["receipts", "turns"]), ...resultPage, items: z.array(description) }).passthrough(),
-  get_execution: description.extend({ ...ok, output: z.object({ finality: z.enum(["identified", "none", "unknown"]), unitCount: z.number().int().nonnegative(), textChars: z.number().int().nonnegative(), artifactSaved: z.boolean() }).nullable() }).passthrough(),
+  get_execution: description.extend({ ...ok, executionSettings: executionSettings.nullable(), output: z.object({ finality: z.enum(["identified", "none", "unknown"]), unitCount: z.number().int().nonnegative(), textChars: z.number().int().nonnegative(), artifactSaved: z.boolean() }).nullable() }).passthrough(),
   list_execution_inputs: description.extend({ ...ok, ...resultPage, items: z.array(z.object({ seq: z.number().int().nonnegative().nullable(), kind: z.enum(["start", "additional"]), textChars: z.number().int().nonnegative().nullable(), attachments: publicAttachments.nullable(), queueId: nullableId.optional(), state: z.enum(["confirmed", "pending", "unknown", "not-sent"]).optional() })) }).passthrough(),
   get_execution_input: description.extend({ ...ok, ...textPiece, attachments: publicAttachments, expectedInput: z.string(), originalKnown: z.boolean(), inputPair: z.object({ original: inputPiece.nullable(), comparison: inputPiece.nullable() }) }).passthrough(),
   list_execution_outputs: description.extend({ ...ok, ...resultPage, items: z.array(outputUnit.extend({ index: z.number().int().nonnegative(), textChars: z.number().int().nonnegative() })), finality: z.enum(["identified", "none", "unknown"]) }).passthrough(),
@@ -62,7 +67,7 @@ export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, st
   list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",
   get_operation_detail: "Read an exact saved message's artifact or elicitation detail with shared saved-history text/row paging. Unsaved details are explicit failures, not regenerated content.",
   list_executions: "List saved receipts or WithMate Turns of an exact Session in any Crew, including receipt-less historical Turns and receipts without a Turn. Page with offset/limit.",
-  get_execution: "Read one exact receipt, WithMate Turn or saved messageSeq, its saved state, input comparison/additional-input coverage and output/artifact references. messageSeq resolves only recorded receipt/Turn/input linkage; unlinked historical messages remain unknown. Never substitutes the latest result. A Steer receipt references the entire same Turn, not its own answer.",
+  get_execution: "Read one exact receipt, WithMate Turn or saved messageSeq, its saved state, input comparison/additional-input coverage, captured execution settings and output/artifact references. Settings are the input's captured selection, or the saved Turn settings when no receipt exists; they are not proof of Provider-applied settings. Missing historical settings stay unknown. messageSeq resolves only recorded receipt/Turn/input linkage; unlinked historical messages remain unknown. Never substitutes the latest result. A Steer receipt references the entire same Turn, not its own answer.",
   list_execution_inputs: "List the exact Turn's start input and confirmed additional inputs in saved sequence order; unresolved/not-sent records are separate. Missing historical linkage is unknown, never zero-confirmed proof of no additions.",
   get_execution_input: "Read original or current comparison input with attachments and comparison state. No seq selects the entry receipt input; seq selects one linked input. For paging send expectedInput returned on the first page; changed input requires a fresh read. Offsets are UTF-16 code units.",
   list_execution_outputs: "List ordered saved output boundaries, native phase, text completion and final-answer evidence separately from execution outcome. Historical unclassified text remains available without inventing finality.",

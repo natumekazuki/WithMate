@@ -32,10 +32,10 @@ test("input details distinguish delivery states and WithMate/native identities",
 
 // @test-value v2
 // kind = "contract"
-// claim = "入力詳細は同じ受付のsnapshotから配送状態・原文比較・添付を主に表示し、内部参照を必要時に開ける補助情報として区別する"
+// claim = "入力詳細は保存された実行設定を配送状態・同じ受付snapshotの原文比較・添付と共に表示し、内部参照を必要時に開ける補助情報として区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user request: 今のDetailsの延長線上で再設計して修正" }
-// fault = "会話本文や別取得でsnapshotを上書きし、添付や不明入力を失うか、内部参照を比較より先に展開して本題の判別を妨げる"
-// observable = "共通読取request、配送状態と原文比較DOM、添付、変更label、比較の後で開閉できるReferencesと受付値"
+// fault = "実行設定を省略する、入力snapshot読取で失う、会話本文で比較を上書きするか、内部参照を比較より先に展開する"
+// observable = "共通読取request、設定の出典とProvider等の値・順序、配送状態と原文比較DOM、添付、比較の後で開閉できるReferencesと受付値"
 // observation_boundary = "consumer"
 // scope = "TurnInputDetailsとreadSessionExecutionのrenderer境界。保存serviceは固定snapshotで代替"
 // lifecycle = "permanent"
@@ -55,7 +55,7 @@ test("input details render the common paired snapshot rather than message text",
   const piece = (text: string, reference: string) => ({ ok: true, text, offset: 0, nextOffset: null, totalChars: text.length, attachments: [{ id: reference, kind: "file", name: "input.md", reference }] });
   Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async (_owner: string, operation: string, request: unknown) => {
     requests.push({ operation, request });
-    return operation === "get_execution" ? { ...description, output: null, inputs: { ...description.inputs, entry: { ...description.inputs.entry, comparison: "unchanged" } } } : { ...description, ...piece("saved changed input", "after/input.md"), expectedInput: "snapshot", originalKnown: true, inputPair: { original: piece("saved original input", "before/input.md"), comparison: piece("saved changed input", "after/input.md") } };
+    return operation === "get_execution" ? { ...description, executionSettings: { source: "input", provider: "codex", model: "captured-model", approvalMode: "on-request", codexReviewer: "auto-review", codexSpeed: "fast", reasoningEffort: "xhigh", codexSandboxMode: "workspace-write", customAgentName: "" }, output: null, inputs: { ...description.inputs, entry: { ...description.inputs.entry, comparison: "unchanged" } } } : { ...description, ...piece("saved changed input", "after/input.md"), expectedInput: "snapshot", originalKnown: true, inputPair: { original: piece("saved original input", "before/input.md"), comparison: piece("saved changed input", "after/input.md") } };
   } } });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
@@ -68,6 +68,13 @@ test("input details render the common paired snapshot rather than message text",
     assert.match(text, /1 Unresolved.*Input Coverage Unknown/);
     assert.match(text, /before\/input.md/); assert.match(text, /after\/input.md/);
     const inputState = dom.window.document.querySelector('dl[aria-label="Input State"]')!;
+    const settings = dom.window.document.querySelector('section[aria-label="Execution Settings"]')!;
+    assert.match(settings.textContent!, /Captured With Input/);
+    assert.deepEqual([...settings.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]), [
+      ["provider", "Codex"], ["approval", "Provider Controlled"], ["reviewer", "auto-review"], ["speed", "fast"],
+      ["model", "captured-model"], ["reasoning", "X High"], ["sandbox", "Workspace Write"],
+    ]);
+    assert.ok(settings.compareDocumentPosition(inputState) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
     const stateRows = new Map([...inputState.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]));
     assert.equal(stateRows.get("Receipt State"), "Queued");
     assert.equal(stateRows.get("Turn State"), "Not Confirmed");
