@@ -43,9 +43,7 @@ export function SessionRoleChangeDialog({ title, pending, error, onClose, onConf
         </button>
       </>}
     >
-      <h2>Change Session Role</h2>
       <p>Make “{title}” an <strong>Overall Coordinator</strong>?</p>
-      <p>It will be able to create child Sessions. Its conversation and Workspace will stay unchanged. This change cannot be undone.</p>
     </LaunchDialogShell>, document.body,
   );
 }

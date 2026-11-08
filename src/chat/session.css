@@ -4514,12 +4514,6 @@
   padding-top: 22px;
 }
 
-.session-role-change-dialog h2 {
-  font-family: inherit;
-  font-size: 1.05rem;
-  line-height: 1.45;
-}
-
 .session-role-change-error {
   display: flex;
   align-items: center;
