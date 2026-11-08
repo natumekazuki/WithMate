@@ -234,6 +234,7 @@ Validation:
   validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
 
 Registration inputs:
+  Background affect-appraise candidates use sourceMessageSeq from a saved user/assistant message; the app resolves the terminal Turn and time. Alternatively use sourceTurnId, never both.
   append accepts a target and either the single-entry fields or entries[]. Each entry has its own idempotencyKey.
   character-memory-append-episode accepts either episode/idempotencyKey or episodes[] of those pairs.
   Registration arrays have no fixed item-count maximum; per-item text and attachment limits still apply.

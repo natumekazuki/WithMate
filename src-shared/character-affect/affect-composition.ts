@@ -19,10 +19,15 @@ export const backgroundAffectCandidateSchema = z.object({
   intensity: z.number().finite().min(0).max(1),
   reason: text,
   evidence: text,
-  sourceTurnId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  sourceMessageSeq: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
+    .describe("The exact seq of the saved user or assistant message returned by session_history; the app resolves its terminal Turn. Supply either sourceMessageSeq or sourceTurnId, never both."),
+  sourceTurnId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
+    .describe("A saved terminal Turn ID, as an alternative to sourceMessageSeq. Supply exactly one source reference."),
 }).strict().refine((candidate) => candidate.layer !== "relationship"
   || candidate.targetType === "user" || candidate.targetType === "relationship", {
   message: "Relationship affect may only target the user or relationship.", path: ["targetType"],
+}).refine((candidate) => (candidate.sourceMessageSeq !== undefined) !== (candidate.sourceTurnId !== undefined), {
+  message: "Supply exactly one of sourceMessageSeq or sourceTurnId.", path: ["sourceMessageSeq"],
 });
 
 export const AFFECT_COMPOSITION_INSTRUCTIONS = [
@@ -33,8 +38,8 @@ export const AFFECT_COMPOSITION_INSTRUCTIONS = [
   "対話による追加確認や承認を求めず、指定された材料で処理する。",
   "主会話Agentの非公開の内面を復元・診断したとは扱わない。",
   "会話を基本材料とし、作業結果の裏付けが必要な場合だけ操作の成否と必要な詳細を参照する。欠落した情報は補完しない。",
-  "原因・感情の対象・sourceTurnIdを保ち、作業上の失敗を根拠なくユーザーへの敵意へ変換しない。",
-  "character_affect.appraiseのcandidatesへ判断した変化とreason・evidence・保存済みTurnのsourceTurnIdを渡し、各操作の応答で保存結果を確認して終了する。必要な変化がなければ登録せず終了する。",
+  "原因・感情の対象・根拠となる会話の位置を保ち、作業上の失敗を根拠なくユーザーへの敵意へ変換しない。",
+  "character_affect.appraiseのcandidatesへ判断した変化とreason・evidence・根拠の保存済みmessageのseqをsourceMessageSeqとして渡す。Turnと時刻はアプリが解決する。各操作の応答で保存結果を確認して終了する。必要な変化がなければ登録せず終了する。",
 ].join("\n");
 
 export type AffectCompositionInput = {
@@ -52,7 +57,7 @@ export function buildAffectCompositionInput(input: AffectCompositionInput, scope
     "## 既存Affect（参照材料）", JSON.stringify(input.currentAffect),
     "## tool利用説明",
     "保存済み会話とTurnはsession_historyのtoolで実行範囲内を取得できる。",
-    "背景のcharacter_affect.appraiseはcandidatesにdomain値と保存済みTurnのsourceTurnIdを受け取る。時刻・保存identity・keyはアプリが確定する。入力項目と許可操作は公開tool schemaとruntime bindingを参照する。",
+    "背景のcharacter_affect.appraiseはcandidatesにdomain値とsourceMessageSeqを受け取る。session_historyが返した根拠のuserまたはassistant messageのseqをそのまま指定し、Turn対応のないmessageや未完了Turnを指定しない。対応するTurn・時刻・保存identity・keyはアプリが確定する。sourceTurnIdによる直接指定も可能だが、sourceMessageSeqと併用しない。入力項目と許可操作は公開tool schemaとruntime bindingを参照する。",
     "保存の成否は各tool応答で確認する。自然文の最終応答は保存処理ではない。",
   ].join("\n\n");
 }

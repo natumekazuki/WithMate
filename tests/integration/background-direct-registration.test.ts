@@ -669,3 +669,82 @@ test("途中失敗と保存応答喪失でも先行Affectを保持し後続を�
     } finally { await f.close(); }
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliaryの背景Affectは公開履歴のuser/assistant seqから過去終端Turnと時刻を解決し、対応なし・未完了・範囲外・曖昧な参照入力では保存しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#affect登録入力と会話owner" }
+// fault = "seqをTurn IDと扱う、最新Turnへ代用する、user seq 0を失う、または根拠参照の欠落/併用・履歴外・Turn対応なしを保存する"
+// observable = "実履歴MCPのseq/Turn対応、登録MCP/配布CLI/直接HTTPの成否、SQLiteのowner・occurred_at・保存件数"
+// observation_boundary = "public-boundary"
+// scope = "Main/Auxiliaryの実Storage Worker source read・managed MCP・配布CLIからproduction Affect登録とSQLite保存まで"
+// lifecycle = "permanent"
+// impact = "感情記録が別の出来事の時刻や会話ownerへ結び付く"
+// distinction = "既存Turn ID入力testとschema/型検査ではmessage位置から実保存Turnを解決する経路と公開両入口の接続を確認できない"
+// @end-test-value
+test("背景Affectは履歴message位置から実sourceの過去Turnを解決する", async () => {
+  const f = await fixture(undefined, handlers, undefined, { affect: ["main", "auxiliary"] });
+  try {
+    for (const [id, table, column, firstTurnId] of [
+      ["main", "session_messages_v6", "session_id", 101],
+      ["aux", "auxiliary_session_messages", "auxiliary_session_id", 201],
+    ] as const) {
+      for (const seq of (id === "main" ? [2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6])) {
+        f.db.prepare(`INSERT INTO ${table}(${column},seq,role,body,created_at) VALUES (?,?,?,?,'now')`)
+          .run(id, seq, [1, 4, 6].includes(seq) ? "assistant" : "user", JSON.stringify({ text: `saved ${seq}` }));
+      }
+      for (const [offset, phase, userSeq, assistantSeq, at] of [
+        [0, "completed", 0, 1, completedAt], [1, "completed", 3, 4, "2026-11-02T01:00:00.000Z"],
+        [2, "running", 5, 6, null],
+      ] as const) {
+        f.db.prepare(`INSERT INTO session_turns_v6(id,${column},phase,user_message_seq,assistant_message_seq,started_at,completed_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,?)`).run(firstTurnId + offset, id, phase, userSeq, assistantSeq, completedAt, at, completedAt);
+      }
+      const initial = f.scope(id);
+      const execution = f.executions.begin({ actorSessionId: id, providerId: "claude", session: f.sessions.get(id)!,
+        scope: { ...initial, history: { ...initial.history, throughMessageSeq: 6 } },
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+        operationGrants: [...getSessionHistoryAgentRuntimeOperations(), BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
+      const binding = f.project(execution);
+      const { client } = await f.connect(binding, "memoryUrl");
+      const { client: history } = await f.connect(binding, "sessionHistoryUrl");
+      const messages = (await history.callTool({ name: "session_history.list_messages", arguments: {} })).structuredContent as {
+        items: { seq: number; turn: { id: number } | null }[];
+      };
+      const user = messages.items.find((message) => message.seq === 0)!;
+      const assistant = messages.items.find((message) => message.seq === 1)!;
+      assert.equal(user.turn!.id, firstTurnId); assert.equal(assistant.turn!.id, firstTurnId);
+      assert.equal(messages.items.find((message) => message.seq === 2)!.turn, null);
+      const op = operation("affect", "message-source");
+      const { sourceTurnId: _sourceTurnId, ...domain } = op.input.candidates[0];
+      const input = (reference: Record<string, unknown>, suffix = "ref") => ({ candidates: [{ ...domain, targetId: `${id}-${suffix}`, ...reference }] });
+      const mcp = await client.callTool({ name: op.tool, arguments: input({ sourceMessageSeq: user.seq }, "user") });
+      assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+      assert.equal((await cli(f, binding, { ...op, input: input({ sourceMessageSeq: assistant.seq }, "assistant") })).code, 0);
+      const saved = f.db.prepare("SELECT occurred_at, session_id, auxiliary_session_id FROM character_affect_events_v6 WHERE target_id LIKE ? ORDER BY target_id")
+        .all(`${id}-%`).map((row) => ({ ...row }));
+      assert.deepEqual(saved, [0, 1].map(() => ({ occurred_at: completedAt,
+        session_id: id === "main" ? id : null, auxiliary_session_id: id === "aux" ? id : null })));
+      const count = Number(f.db.prepare("SELECT COUNT(*) AS n FROM character_affect_events_v6").get()!.n);
+      for (const reference of [{ sourceMessageSeq: 2 }, { sourceMessageSeq: 5 }, { sourceMessageSeq: 99 }, {},
+        { sourceMessageSeq: 1, sourceTurnId: firstTurnId }, { sourceMessageSeq: -1 }, { sourceMessageSeq: 1.5 }]) {
+        const rejected = { ...op, input: input(reference) };
+        assert.equal((await client.callTool({ name: op.tool, arguments: rejected.input })).isError, true, JSON.stringify(reference));
+        assert.ok(((await direct(f, binding, rejected)).value as Record<string, unknown>).error, JSON.stringify(reference));
+      }
+      assert.notEqual((await cli(f, binding, { ...op, input: input({ sourceMessageSeq: 99 }) })).code, 0);
+      assert.equal(Number(f.db.prepare("SELECT COUNT(*) AS n FROM character_affect_events_v6").get()!.n), count);
+      f.executions.finish(execution);
+      const narrowed = f.executions.begin({ actorSessionId: id, providerId: "claude", session: f.sessions.get(id)!,
+        scope: { ...initial, history: { ...initial.history, fromMessageSeq: 1, throughMessageSeq: 6 } },
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+        operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
+      const narrowedBinding = f.project(narrowed);
+      const { client: narrowClient } = await f.connect(narrowedBinding, "memoryUrl");
+      assert.equal((await narrowClient.callTool({ name: op.tool, arguments: input({ sourceMessageSeq: 0 }) })).isError, true);
+      assert.notEqual((await cli(f, narrowedBinding, { ...op, input: input({ sourceMessageSeq: 0 }) })).code, 0);
+      assert.equal(Number(f.db.prepare("SELECT COUNT(*) AS n FROM character_affect_events_v6").get()!.n), count);
+      f.executions.finish(narrowed);
+    }
+  } finally { await f.close(); }
+});

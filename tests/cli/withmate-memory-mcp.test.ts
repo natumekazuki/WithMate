@@ -157,7 +157,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
   // kind = "contract"
   // claim = "tools/listは全Memory公開操作のstrict actor-relative input、通常と背景のAffect候補、identity-free Character context projection、effect contractを公開する"
   // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md 公開操作契約" }
-  // fault = "caller identityやowner/scope schemaが再公開される、Affect候補のfamilyや背景sourceTurnIdが欠落する、context private fieldが露出する、annotationが欠落・不正になる、またはappendの必須入力が誤る"
+  // fault = "caller identityやowner/scope schemaが再公開される、Affect候補のfamilyや背景のmessage/Turn参照が欠落する、context private fieldが露出する、annotationが欠落・不正になる、またはappendの必須入力が誤る"
   // observable = "MCP clientが取得するtools/listのschema、annotationと操作説明"
   // observation_boundary = "public-boundary"
   // scope = "withmate-memory-mcp-tools-list"
@@ -261,8 +261,9 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
           "concern", "frustration", "disappointment", "regret", "determination", "other",
         ]);
       }
-      const backgroundCandidate = affectCandidateItems.items.anyOf.find((candidate) => candidate.required.includes("sourceTurnId"));
+      const backgroundCandidate = affectCandidateItems.items.anyOf.find((candidate) => Object.hasOwn(candidate.properties, "sourceMessageSeq"));
       assert.ok(backgroundCandidate);
+      assert.ok(Object.hasOwn(backgroundCandidate.properties, "sourceTurnId"));
       assert.equal(Object.hasOwn(backgroundCandidate.properties, "occurredAt"), false);
       assert.equal(Object.hasOwn(backgroundCandidate.properties, "idempotencyKey"), false);
       assert.equal(Object.hasOwn(backgroundCandidate.properties, "memoryEpisode"), false);

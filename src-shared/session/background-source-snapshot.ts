@@ -9,7 +9,7 @@ export type BackgroundSourceRef = Omit<Extract<SessionHistorySource, { kind: "ma
 export type BackgroundSourceSnapshot = {
   session: Pick<Session, "id" | "incarnationId" | "characterId" | "accessMode" | "sourceSchemaVersion" | "sessionKind">;
   ownerIdentity: string;
-  turns: readonly (Pick<SessionTurnRecord, "id" | "phase" | "completedAt" | "assistantMessageSeq"> & {
+  turns: readonly (Pick<SessionTurnRecord, "id" | "phase" | "completedAt" | "userMessageSeq" | "assistantMessageSeq"> & {
     /** Saved owner columns are preserved: exactly one conversation owner is populated. */
     sessionId: string | null;
     auxiliarySessionId?: string;

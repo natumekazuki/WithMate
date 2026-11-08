@@ -23924,10 +23924,14 @@ var backgroundAffectCandidateSchema = object$1({
 	intensity: number().finite().min(0).max(1),
 	reason: text,
 	evidence: text,
-	sourceTurnId: number().int().positive().max(Number.MAX_SAFE_INTEGER)
+	sourceMessageSeq: number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().describe("The exact seq of the saved user or assistant message returned by session_history; the app resolves its terminal Turn. Supply either sourceMessageSeq or sourceTurnId, never both."),
+	sourceTurnId: number().int().positive().max(Number.MAX_SAFE_INTEGER).optional().describe("A saved terminal Turn ID, as an alternative to sourceMessageSeq. Supply exactly one source reference.")
 }).strict().refine((candidate) => candidate.layer !== "relationship" || candidate.targetType === "user" || candidate.targetType === "relationship", {
 	message: "Relationship affect may only target the user or relationship.",
 	path: ["targetType"]
+}).refine((candidate) => candidate.sourceMessageSeq !== void 0 !== (candidate.sourceTurnId !== void 0), {
+	message: "Supply exactly one of sourceMessageSeq or sourceTurnId.",
+	path: ["sourceMessageSeq"]
 });
 [
 	"Character定義・現在Affectを確認し、許可された保存済み会話から必要な箇所を自分で選んで取得して、そのCharacterにとって出来事がどう受け取られ、感情がどう変化したかを判断する。",
@@ -23937,8 +23941,8 @@ var backgroundAffectCandidateSchema = object$1({
 	"対話による追加確認や承認を求めず、指定された材料で処理する。",
 	"主会話Agentの非公開の内面を復元・診断したとは扱わない。",
 	"会話を基本材料とし、作業結果の裏付けが必要な場合だけ操作の成否と必要な詳細を参照する。欠落した情報は補完しない。",
-	"原因・感情の対象・sourceTurnIdを保ち、作業上の失敗を根拠なくユーザーへの敵意へ変換しない。",
-	"character_affect.appraiseのcandidatesへ判断した変化とreason・evidence・保存済みTurnのsourceTurnIdを渡し、各操作の応答で保存結果を確認して終了する。必要な変化がなければ登録せず終了する。"
+	"原因・感情の対象・根拠となる会話の位置を保ち、作業上の失敗を根拠なくユーザーへの敵意へ変換しない。",
+	"character_affect.appraiseのcandidatesへ判断した変化とreason・evidence・根拠の保存済みmessageのseqをsourceMessageSeqとして渡す。Turnと時刻はアプリが解決する。各操作の応答で保存結果を確認して終了する。必要な変化がなければ登録せず終了する。"
 ].join("\n");
 new Set(MEMORY_ENTRY_KINDS);
 new Set(MEMORY_APPEND_FILE_ROLES);
@@ -25331,7 +25335,7 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
 	"For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
 	"Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
-	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Normal-turn candidates need an explicit target, timestamp and idempotency key. Background Affect candidates instead supply sourceTurnId; the app supplies timestamp, identity and key, and linked episodes are unavailable.",
+	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Normal-turn candidates need an explicit target, timestamp and idempotency key. Background Affect candidates supply sourceMessageSeq from a saved user or assistant message to resolve its terminal Turn, or alternatively sourceTurnId, never both; the app supplies timestamp, identity and key, and linked episodes are unavailable.",
 	"Use character_memory.append_episode for explicit remember requests during a normal turn, or for the current background registration task. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
 	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
 	"Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",
@@ -25354,7 +25358,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_affect.appraise",
-		description: "Validate and record one or multiple candidates for the Character's own affect; this does not diagnose the user. In normal turns, an episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry. Background Affect instead accepts domain values and sourceTurnId only; the app supplies timestamp, identity and a new key for each call. Background calls cannot include memoryEpisode or expectedVersion and are not idempotent retries.",
+		description: "Validate and record one or multiple candidates for the Character's own affect; this does not diagnose the user. In normal turns, an episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry. Background Affect accepts domain values and exactly one of sourceMessageSeq (the exact saved user or assistant message seq from session_history, resolved to its terminal Turn) or sourceTurnId. The app supplies timestamp, identity and a new key for each call. Background calls cannot include memoryEpisode or expectedVersion and are not idempotent retries.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: false,
@@ -26032,6 +26036,7 @@ Validation:
   validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
 
 Registration inputs:
+  Background affect-appraise candidates use sourceMessageSeq from a saved user/assistant message; the app resolves the terminal Turn and time. Alternatively use sourceTurnId, never both.
   append accepts a target and either the single-entry fields or entries[]. Each entry has its own idempotencyKey.
   character-memory-append-episode accepts either episode/idempotencyKey or episodes[] of those pairs.
   Registration arrays have no fixed item-count maximum; per-item text and attachment limits still apply.

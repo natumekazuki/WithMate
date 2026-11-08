@@ -198,3 +198,9 @@ completed／failed／canceledはAgent呼出・開始処理・取消の終了状�
 既存専用JSONLへ、実行自体の失敗または操作エラーがある呼出の終端診断だけを一度記録する。開始済みのkindをbackground.execution.diagnosticとし、実行自体の失敗はerror、操作エラーを含む正常終了・取消はwarnで終了状態と操作列を併記する。旧行・append-only・rotationなし・秘匿化を維持し、正常実行全履歴や新規DB・台帳・回復判定・再送queueは追加しない。
 
 前回材料も実行終了状態と操作診断を分け、completedだけで操作エラーを捨てない。次回の正常終了かつ操作エラーなしで直近診断を解放する。既存のnative文脈・sourceとProviderの寿命、onAdmittedの発火位置、認可・失効・確定済み保存保持は変更しない。現行契約は[Background Execution](../design/background-execution.md#失敗の記録)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)を正本とする。
+
+## Affectの根拠messageからのTurn解決
+
+2026-11-08に採用。AIが根拠となる保存済みmessageのseqを`sourceMessageSeq`で指定し、アプリが実sourceのTurnのuser／assistant message位置との完全一致からTurnと完了時刻を解決する。過去Turnの再検討を維持し、対応なしmessageを周辺・最新Turnへ補完しない。同一source・許可history・終端状態・失効・保存時刻の既存境界を保つ。
+
+この判断は候補へ内部Turn IDを直接指定することを必須とした部分を置き換える。公開済みの`sourceTurnId`入力は代替参照として維持し、両参照の併用と参照なしは拒否する。新しい参照台帳・DB・本文推定は持たず、既存Turn列を使う。AIの意味上の誤参照はseqでも残るため、その根絶や元ログの拒否原因の確定とは扱わない。現行契約は[Background Execution](../design/background-execution.md#affect登録入力と会話owner)を正本とする。
