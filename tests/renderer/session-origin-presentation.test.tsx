@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
 import { SentDeliveryRow } from "../../src/chat/conversation/sent-delivery-row.js";
+import { SessionOriginRoute } from "../../src/chat/conversation/turn-input-details.js";
 import type { SentDelivery } from "../../src/chat/conversation/use-sent-deliveries.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 
@@ -19,10 +20,10 @@ const item: SentDelivery = { receiptId: "receipt", sequence: 1, sourceTurnId: "4
 
 // @test-value v2
 // kind = "contract"
-// claim = "受信指示は保存送信者snapshotとSession名を本文に結び付け、snapshotのない既存入力へ現在Characterを代用しない"
-// oracle = { type = "contract", ref = "docs/design/database-schema.md#現行DBと正本" }
-// fault = "受信rowに現在の受信Characterを出す、保存送信者名を失う、またはsnapshot欠落を現在identityで埋める"
-// observable = "受信rowのCharacter名、Session名、本文、Unknown Sender表示"
+// claim = "受信指示は保存送信者・送信元Session・@宛先を区別して本文に結び付け、snapshotのない既存入力へ現在Characterを代用しない"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md#現行DBと正本; docs/design/desktop-ui.md#turn-input-details" }
+// fault = "受信rowの発言者と@宛先を取り違える、保存送信者名を失う、またはsnapshot欠落を現在identityで埋める"
+// observable = "受信rowの発言者名、@宛先、送信元Sessionリンク、本文、Unknown SenderとUnknown Recipient表示"
 // observation_boundary = "component-behavior"
 // scope = "SessionTurnQueueRowの送信者snapshot投影"
 // lifecycle = "permanent"
@@ -34,17 +35,60 @@ test("incoming rows use saved sender identity and retain unknown legacy identity
   const document = render(receipt);
   assert.equal(document.querySelector(".message-character-name")?.textContent, "Saved Sender");
   assert.equal(document.querySelector(".related-session-title")?.textContent, "Saved Sender Title");
+  assert.equal(document.querySelector(".session-message-mention")?.textContent, "@Saved Target");
+  assert.equal(document.querySelector(".related-session-direction")?.textContent, "From");
   assert.match(document.querySelector(".message-card")!.textContent!, /Saved Instruction/);
-  const legacy = render({ ...receipt, captured: { ...receipt.captured, origin: { ...origin, actorSnapshot: undefined } } });
+  const legacy = render({ ...receipt, captured: { ...receipt.captured, origin: { ...origin, actorSnapshot: undefined, targetSnapshot: undefined } } });
   assert.equal(legacy.querySelector(".message-character-name")?.textContent, "Unknown Sender");
+  assert.equal(legacy.querySelector(".session-message-mention")?.textContent, "@Unknown Recipient");
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "送信表示は正確な宛先とreceiptで原文を継続取得し、既読本文を保持したまま配送状態を通知と再展開で更新する"
+// claim = "送受信とも@は保存宛先Characterを示し、独立したSessionリンクは送信側で宛先Auxiliary、受信側で送信元Auxiliaryを正確に開く"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user: @キャラ名とSession名を分け、両セッションを揃える" }
+// fault = "@に発言者や現在Characterを使う、From/Toと実際の移動先を取り違える、または省略されたSession名の全文を失う"
+// observable = "@文字列、方向label、Session buttonのtitleとaccessible name、click時のopenSession引数"
+// observation_boundary = "consumer"
+// scope = "SessionOriginRouteの保存snapshotから送受信ヘッダーとSession移動への接続"
+// lifecycle = "permanent"
+// impact = "同Characterの複数Sessionで誰への指示か・どの会話かを取り違える"
+// distinction = "storageや型検査では表示方向と移動先IDの接続を検証できない。小さな2方向fixtureで確認し、狭幅の省略描画は実画面で確認する"
+// @end-test-value
+test("session address separates the shared recipient mention from directional Session links", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
+  const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = new Map(keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of [["window", dom.window], ["document", dom.window.document], ["IS_REACT_ACT_ENVIRONMENT", true]] as const) Object.defineProperty(globalThis, key, { value, configurable: true });
+  const opened: string[][] = [];
+  Object.defineProperty(dom.window, "withmate", { value: { openSession: async (...ids: string[]) => { opened.push(ids); } } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const target = { kind: "auxiliary", mainSessionId: "recipient-main", mainIncarnationId: "main-inc", sessionId: "recipient-aux", incarnationId: "recipient-inc" } as const;
+  try {
+    for (const outbound of [true, false]) {
+      await act(async () => root.render(<SessionOriginRoute origin={origin} target={outbound ? target : undefined} onError={assert.fail} />));
+      assert.equal(dom.window.document.querySelector(".session-message-mention")?.textContent, "@Saved Target");
+      const link = dom.window.document.querySelector("button")!;
+      assert.equal(link.contains(dom.window.document.querySelector(".session-message-mention")), false);
+      const title = outbound ? "Saved Target Title" : "Saved Sender Title";
+      assert.equal(link.querySelector(".related-session-direction")?.textContent, outbound ? "To" : "From");
+      assert.equal(link.title, title);
+      assert.equal(link.getAttribute("aria-label"), `${outbound ? "Open Recipient" : "Open Sender"}: ${title}`);
+      await act(async () => link.click());
+    }
+    assert.deepEqual(opened, [["recipient-main", "recipient-aux"], ["sender-main", "sender-aux"]]);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "送信表示は保存宛先を示し、正確な宛先とreceiptで原文を継続取得し、既読本文を保持したまま配送状態を通知と再展開で更新する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
 // fault = "別宛先へ照会する、続きや状態更新で既読本文を置換する、取得失敗を全文取得済みにする、または配送状態を初回値のまま固定する"
-// observable = "読取requestのtarget・receipt・offsetとsnapshot、表示本文、再読操作、通知と再展開後の配送とTurn状態"
+// observable = "@宛先とTo表示、読取requestのtarget・receipt・offsetとsnapshot、表示本文、再読操作、通知と再展開後の配送とTurn状態"
 // observation_boundary = "consumer"
 // scope = "SentDeliveryRowのbounded previewから共通execution原文読取への接続"
 // lifecycle = "permanent"
@@ -84,6 +128,8 @@ test("sent messages retain input pages while refreshing exact delivery state", a
     await act(async () => root.render(<SentDeliveryRow item={item} context={context} />));
     assert.equal(requests.length, 0);
     assert.match(dom.window.document.body.textContent!, /Saved Target.*Saved Target Title/);
+    assert.equal(dom.window.document.querySelector(".session-message-mention")?.textContent, "@Saved Target");
+    assert.equal(dom.window.document.querySelector(".related-session-direction")?.textContent, "To");
     await click("Read Full Message");
     assert.equal(requests[0].receiptId, "receipt"); assert.deepEqual(requests[0].target, item.target);
     fail = true; await click("Load More Message");

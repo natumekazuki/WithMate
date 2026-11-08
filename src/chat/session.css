@@ -1114,11 +1114,13 @@
 .message-row.session-origin .message-avatar-stack > .artifact-toggle-icon { width: 24px; justify-self: center; }
 .message-card.session-origin { border-color: rgba(148, 163, 184, 0.28); background: rgba(255, 255, 255, 0.9); box-shadow: inset -4px 0 0 rgba(148, 163, 184, 0.48); }
 .session-page .message-card.session-origin { border-color: rgba(203, 213, 225, 0.18); background: rgba(20, 27, 40, 0.98); }
-.related-session-route { display: inline-flex; align-items: center; justify-self: start; gap: 5px; min-width: 0; max-width: 100%; padding: 0; border: 0; background: transparent; color: var(--orange); font: inherit; font-size: 0.78rem; text-align: left; cursor: pointer; }
+.session-message-address { display: flex; align-items: baseline; justify-content: space-between; gap: 8px 24px; min-width: 0; }
+.session-message-mention { min-width: 0; max-width: 45%; overflow: hidden; color: var(--orange); font-size: 0.82rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.related-session-route { display: inline-flex; align-items: baseline; justify-self: start; gap: 8px; min-width: 0; max-width: 55%; padding: 0; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 0.72rem; text-align: left; cursor: pointer; }
 .related-session-route:hover .related-session-title { text-decoration: underline; text-underline-offset: 3px; }
 .related-session-route:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; border-radius: 2px; }
 .related-session-route:disabled { color: var(--muted); cursor: default; }
-.related-session-character { min-width: 0; max-width: 45%; overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.related-session-direction { flex: 0 0 auto; }
 .related-session-title { min-width: 0; overflow: hidden; color: var(--muted); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 
 .message-avatar-stack {

@@ -194,15 +194,19 @@ export function TurnInputStatus({ message }: { message: Message }) {
 export function SessionOriginRoute({ origin, target, onError }: { origin: SessionTurnQueueOrigin; target?: SessionTarget; onError: (message: string) => void }) {
   const outbound = target !== undefined;
   const snapshot = outbound ? origin.targetSnapshot : origin.actorSnapshot;
+  const recipient = origin.targetSnapshot?.character.name ?? "Unknown Recipient";
+  const sessionTitle = snapshot?.sessionTitle ?? "Unknown Session";
   const route = target ? target.kind === "auxiliary" ? [target.mainSessionId, target.sessionId] as const : [target.sessionId] as const : origin.actorKind === "auxiliary"
     ? origin.actorMainSessionId && origin.actorSessionId ? [origin.actorMainSessionId, origin.actorSessionId] as const : null
     : origin.actorSessionId ? [origin.actorSessionId] as const : null;
-  return <button type="button" className="related-session-route" disabled={!route || !getWithMateApi()?.openSession}
-    title={outbound ? "Recipient Session" : "Open Sender"} aria-label={outbound ? "Recipient Session" : `Open Sender: ${snapshot?.sessionTitle ?? "Unknown Session"}`}
+  return <div className="session-message-address">
+    <span className="session-message-mention" title={`Recipient: ${recipient}`}>@{recipient}</span>
+    <button type="button" className="related-session-route" disabled={!route || !getWithMateApi()?.openSession}
+    title={sessionTitle} aria-label={`${outbound ? "Open Recipient" : "Open Sender"}: ${sessionTitle}`}
     onClick={() => { if (route) void getWithMateApi()!.openSession(route[0], route[1]).catch((failure) => onError(failure instanceof Error ? failure.message : "Could not open sender Session.")); }}>
-    {outbound ? <><span aria-hidden="true">@</span><span className="related-session-character">{snapshot?.character.name ?? "Unknown Recipient"}</span><span aria-hidden="true">·</span></> : null}
-    <span className="related-session-title">{snapshot?.sessionTitle ?? "Unknown Session"}</span>
-  </button>;
+    <span className="related-session-direction" aria-hidden="true">{outbound ? "To" : "From"}</span>
+    <span className="related-session-title">{sessionTitle}</span>
+  </button></div>;
 }
 
 function TurnInputDetailsContent({ message, receipt, context, read, hasRunChecks = false, inputMessages = [] }: TurnInputProps & { read: ReturnType<typeof useTurnInputRead>; hasRunChecks?: boolean; inputMessages?: readonly Message[] }) {
