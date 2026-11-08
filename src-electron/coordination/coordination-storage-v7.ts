@@ -63,7 +63,9 @@ export class CoordinationStorageV7 {
     return JSON.parse(row.payload_json) as CoordinationRecord;
   }
   private caller(actor: CoordinationIdentity & { turnId: string }): { caller: CoordinationIdentity | null; receiptId: string | null } {
-    const origin = this.db.prepare(`SELECT id,accepted_json FROM session_turn_queue_v6 WHERE turn_id=? AND COALESCE(auxiliary_session_id,session_id)=? AND incarnation_id=? ORDER BY sequence LIMIT 1`).get(actor.turnId, actor.sessionId, actor.incarnationId) as { id: string; accepted_json: string | null } | undefined;
+    const origin = this.db.prepare(`SELECT id,accepted_json FROM session_turn_queue_v6 WHERE turn_id=? AND COALESCE(auxiliary_session_id,session_id)=? AND incarnation_id=?
+      AND input_turn_id IS NULL AND user_message_seq=(SELECT user_message_seq FROM session_turns_v6 WHERE id=?)
+      ORDER BY sequence LIMIT 1`).get(actor.turnId, actor.sessionId, actor.incarnationId, actor.turnId) as { id: string; accepted_json: string | null } | undefined;
     const saved = origin?.accepted_json ? JSON.parse(origin.accepted_json).origin as { kind: string; actorSessionId?: string; actorIncarnationId?: string; actorKind?: "main" | "auxiliary" } | undefined : undefined;
     let caller: CoordinationIdentity | null = null;
     if (saved?.kind === "session" && saved.actorSessionId && saved.actorIncarnationId) {

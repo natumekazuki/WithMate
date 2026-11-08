@@ -20,6 +20,8 @@ import { sessionSummaryToSession } from "../../src-electron/session/session-summ
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
+import { SessionExecutionReadStorage } from "../../src-electron/storage/session-execution-read.js";
+import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
 
 const record = (result: CoordinationResult): CoordinationRecord => { assert.ok("record" in result); return result.record; };
 
@@ -147,12 +149,12 @@ test("Coordination escalation retains original initiator and exact saved caller"
   const actor = (session: typeof a, turnId: string) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session), turnId });
   const caller = actor(a, "1"), initiator = actor(b, "2"), other = actor(stranger, "3");
   const db = new DatabaseSync(dbPath);
-  for (const value of [caller, initiator, other]) db.prepare("INSERT INTO session_turns_v6(id,session_id,phase,started_at,updated_at) VALUES(?,?,'completed','now','now')").run(value.turnId, value.sessionId);
+  for (const value of [caller, initiator, other]) db.prepare("INSERT INTO session_turns_v6(id,session_id,phase,user_message_seq,started_at,updated_at) VALUES(?,?,'completed',0,'now','now')").run(value.turnId, value.sessionId);
   const captured = (session: typeof a, operationId: string) => ({ request: { clientRequestId: operationId, userMessage: "request", executionOptions: captureSessionExecutionOptions(session) }, attachments: [], provider: session.provider, workspacePath: session.workspacePath });
   const queue = new SessionTurnQueueStorageV6(dbPath);
   const originId = randomUUID();
   const origin = queue.enqueue(initiator, { ...captured(b, originId), origin: { kind: "session", actorKind: "main", actorSessionId: a.id, actorIncarnationId: caller.incarnationId, actorTurnId: caller.turnId, operation: "send", targetSessionId: b.id, targetIncarnationId: initiator.incarnationId } });
-  db.prepare("UPDATE session_turn_queue_v6 SET state='completed',turn_id='2' WHERE id=?").run(origin.id);
+  db.prepare("UPDATE session_turn_queue_v6 SET state='completed',turn_id='2',user_message_seq=0 WHERE id=?").run(origin.id);
   const store = new CoordinationStorageV7(dbPath);
   try {
     const operationId = randomUUID();
@@ -173,6 +175,110 @@ test("Coordination escalation retains original initiator and exact saved caller"
     assert.equal(response.record.originReceiptId, origin.id);
     assert.equal(response.record.caller?.sessionId, a.id);
   } finally { store.close(); queue.close(); sessions.close(); db.close(); await rm(temporary, { recursive: true, force: true }); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Coordinationの既定相談先と元受付はTurn開始入力の保存originに一致し、受付順を逆転したGUI Steerも独立した追加入力として取得できる"
+// oracle = { type = "contract", ref = "GitHub Issue #929 目的と影響・受入条件" }
+// fault = "受付sequenceの早い追加入力を開始受付と取り違え、親から開始した依頼をユーザー担当へ変更する"
+// observable = "deliveryTarget、保存recordのcaller/respondent/originReceiptId、配送receiptのSession、追加receiptのTurn対応と保存原文、異なる回答担当の拒否"
+// observation_boundary = "public-boundary"
+// scope = "実SQLiteのreorderQueued・claimNext・appendRunningTurnStart・claimForInput・appendSessionSteerからCoordination起票と実行入力読取まで"
+// lifecycle = "permanent"
+// impact = "実呼出元への相談の不達と不要なユーザー対応待ちを防ぎ、追加依頼の原文を保持する"
+// distinction = "既存のCoordination testは正常順の手動Turn関連付けであり、Queue実行順と受付順の逆転を通らない。少量の隔離SQLiteで三つの開始条件を比較する"
+// @end-test-value
+test("Coordination uses the Turn start receipt after reordered GUI Steer", async () => {
+  const temporary = await mkdtemp(join(os.tmpdir(), "withmate-coordination-start-"));
+  const dbPath = join(temporary, "withmate-v6.db");
+  const sessions = new SessionStorageV6(dbPath);
+  const queue = new SessionTurnQueueStorageV6(dbPath);
+  const store = new CoordinationStorageV7(dbPath);
+  const executions = new SessionExecutionReadStorage(dbPath);
+  const create = (id: string, parentSessionId?: string) => sessions.insertSession({ ...buildNewSession({ id, taskTitle: id,
+    workspaceLabel: "Workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown", character: "Unknown",
+    characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#234567" }, approvalMode: DEFAULT_APPROVAL_MODE }),
+    ...(parentSessionId ? { parentSessionId, rootSessionId: parentSessionId, createdBySessionId: parentSessionId,
+      sessionRole: "executor" as const } : { sessionRole: "overall-coordinator" as const }) });
+  const identity = (session: ReturnType<typeof create>) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
+  const captured = (session: ReturnType<typeof create>, text: string, operationId = randomUUID()) => ({
+    request: { clientRequestId: operationId, userMessage: text, executionOptions: captureSessionExecutionOptions(session) },
+    attachments: [], provider: session.provider, workspacePath: session.workspacePath });
+  const start = (session: ReturnType<typeof create>, receiptId: string) => {
+    const claimed = queue.claimNext(identity(session))!;
+    assert.equal(claimed.id, receiptId);
+    const input = claimed.dispatched!;
+    const options = input.request.executionOptions;
+    const started = sessions.appendRunningTurnStart({ ...identity(session), expectedMessageCount: 0,
+      userMessage: { role: "user", text: input.request.userMessage }, updatedAt: "2026-11-08T00:00:00.000Z",
+      queuedTurn: { queueId: claimed.id, turn: { sessionId: session.id, phase: "running", provider: input.provider,
+        model: options.model, reasoningEffort: options.reasoningEffort, approvalMode: options.approvalMode,
+        sandboxMode: options.codexSandboxMode, userMessageSeq: 0, threadId: "", errorMessage: "", createdAt: "2026-11-08T00:00:00.000Z" } } });
+    return { ...identity(session), turnId: String(started.queuedTurn!.id) };
+  };
+  try {
+    const parent = create("parent"), stranger = create("stranger");
+    const parentActor = start(parent, queue.enqueue(identity(parent), captured(parent, "Parent task")).id);
+    for (const scenario of ["parent", "reordered-steer", "gui"] as const) {
+      const child = create(`child-${scenario}`, parent.id);
+      const target = identity(child);
+      const guiInput = captured(child, "G: additional GUI request");
+      const gui = scenario === "reordered-steer" ? queue.enqueue(target, guiInput) : null;
+      const origin = scenario === "gui" ? { kind: "gui" as const, operation: "send" as const,
+        targetSessionId: child.id, targetIncarnationId: target.incarnationId } : {
+        kind: "session" as const, actorKind: "main" as const, actorSessionId: parent.id,
+        actorIncarnationId: parentActor.incarnationId, actorTurnId: parentActor.turnId, operation: "send" as const,
+        targetSessionId: child.id, targetIncarnationId: target.incarnationId };
+      const initial = queue.enqueue(target, { ...captured(child, "D: start request"), origin });
+      if (gui) {
+        assert.equal(initial.sequence, gui.sequence + 1);
+        assert.equal(queue.reorderQueued(target, [gui.id, initial.id], [initial.id, gui.id]).outcome, "reordered");
+      }
+      const actor = start(child, initial.id);
+      const request = { operation: "create" as const, operationId: randomUUID(), kind: "escalation" as const,
+        body: "Which approach?", choices: [], deliver: true };
+      const expectedCaller = scenario === "gui" ? null : identity(parent);
+      assert.deepEqual(store.deliveryTarget({ actor, request }), expectedCaller);
+      if (gui) {
+        const nativeTurnId = "provider-steer-turn";
+        queue.claimForInput(target, gui.id, nativeTurnId);
+        sessions.appendSessionSteer({ ...target, expectedMessageCount: 1, turnId: Number(actor.turnId),
+          userMessage: { role: "user", text: guiInput.request.userMessage }, updatedAt: "2026-11-08T00:00:01.000Z",
+          queuedInput: { queueId: gui.id, inputTurnId: nativeTurnId } });
+        const savedGui = queue.getReceiptById(target, gui.id)!;
+        const savedStart = queue.getReceiptById(target, initial.id)!;
+        assert.equal(savedGui.turnId, savedStart.turnId);
+        assert.equal(savedStart.inputTurnId, null);
+        assert.equal(savedGui.inputTurnId, nativeTurnId);
+        assert.equal(savedGui.userMessageSeq, 1);
+        assert.deepEqual(savedGui.accepted, guiInput);
+        const additional = executionOperationResultSchemas.get_execution_input.parse(executions.execute({ target,
+          operation: "get_execution_input", request: { target, receiptId: gui.id, stage: "original" } }));
+        assert.equal(additional.text, guiInput.request.userMessage);
+        const inputs = executionOperationResultSchemas.list_execution_inputs.parse(executions.execute({ target,
+          operation: "list_execution_inputs", request: { target, turnId: actor.turnId } }));
+        assert.deepEqual(inputs.items.map((item) => [item.seq, item.kind]), [[0, "start"], [1, "additional"]]);
+      }
+      assert.deepEqual(store.deliveryTarget({ actor, request }), expectedCaller);
+      assert.throws(() => store.execute({ actor, request: { ...request, operationId: randomUUID(),
+        respondent: identity(stranger), deliver: false } }), /saved actual caller/);
+      const created = store.execute({ actor, request, ...(expectedCaller ? {
+        delivery: { target: expectedCaller, captured: captured(parent, "notification", request.operationId) } } : {}) });
+      assert.ok("record" in created);
+      assert.deepEqual(created.record.caller, expectedCaller);
+      assert.deepEqual(created.record.respondent, expectedCaller ?? { kind: "user" });
+      assert.equal(created.record.originReceiptId, initial.id);
+      if (expectedCaller) {
+        assert.ok("receipt" in created && created.receipt);
+        assert.equal(created.receipt.sessionId, parent.id);
+        assert.throws(() => store.execute({ actor: { kind: "user" }, request: { operation: "answer", operationId: randomUUID(),
+          id: created.record.id, body: "Unauthorized", selectedChoices: [], expectedAnswerRevision: 0, send: false } }), /assigned respondent/);
+      }
+      const saved = record(store.execute({ actor, request: { operation: "get", id: created.record.id } }));
+      assert.deepEqual(saved, created.record);
+    }
+  } finally { executions.close(); store.close(); queue.close(); sessions.close(); await rm(temporary, { recursive: true, force: true }); }
 });
 
 // @test-value v2
