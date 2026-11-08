@@ -32,10 +32,10 @@ test("input details distinguish delivery states and WithMate/native identities",
 
 // @test-value v2
 // kind = "contract"
-// claim = "入力詳細は同じ受付の共通読取snapshotの原文・比較対象と添付参照を表示し、入力の変更と未確定追加入力を区別する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/836#queueの指示差分を取得する契約" }
-// fault = "会話本文や別取得の原文でsnapshotを上書きし、同名添付を識別できなくするか不明入力を追加なしとする"
-// observable = "共通読取の受付request、原文・比較対象DOM、添付参照、変更labelと未確定coverage"
+// claim = "入力詳細は同じ受付のsnapshotから配送状態・原文比較・添付を主に表示し、内部参照を必要時に開ける補助情報として区別する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user request: 今のDetailsの延長線上で再設計して修正" }
+// fault = "会話本文や別取得でsnapshotを上書きし、添付や不明入力を失うか、内部参照を比較より先に展開して本題の判別を妨げる"
+// observable = "共通読取request、配送状態と原文比較DOM、添付、変更label、比較の後で開閉できるReferencesと受付値"
 // observation_boundary = "consumer"
 // scope = "TurnInputDetailsとreadSessionExecutionのrenderer境界。保存serviceは固定snapshotで代替"
 // lifecycle = "permanent"
@@ -67,6 +67,19 @@ test("input details render the common paired snapshot rather than message text",
     assert.match(text, /Changed From Original/);
     assert.match(text, /1 Unresolved.*Input Coverage Unknown/);
     assert.match(text, /before\/input.md/); assert.match(text, /after\/input.md/);
+    const inputState = dom.window.document.querySelector('dl[aria-label="Input State"]')!;
+    const stateRows = new Map([...inputState.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]));
+    assert.equal(stateRows.get("Receipt State"), "Queued");
+    assert.equal(stateRows.get("Turn State"), "Not Confirmed");
+    assert.equal(stateRows.get("Input"), "Start Input · Changed From Original");
+    assert.equal(stateRows.get("Additional Inputs"), "0 Confirmed Additional Inputs · 1 Unresolved · Input Coverage Unknown");
+    const comparison = dom.window.document.querySelector('section[aria-label="Input Comparison"]')!;
+    const references = dom.window.document.querySelector<HTMLDetailsElement>('details[aria-label="References"]')!;
+    assert.equal(references.open, false);
+    assert.ok(comparison.compareDocumentPosition(references) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
+    await act(async () => { references.open = true; references.dispatchEvent(new dom.window.Event("toggle")); });
+    const receiptTerm = [...references.querySelectorAll("dt")].find((term) => term.textContent === "Receipt")!;
+    assert.equal(receiptTerm.nextElementSibling?.textContent, "receipt-2");
     assert.deepEqual(requests.map(({ operation }) => operation), ["get_execution", "get_execution_input"]);
     assert.equal((requests[0].request as { messageSeq: number }).messageSeq, 7);
     assert.equal((requests[1].request as { receiptId: string }).receiptId, "receipt-2");

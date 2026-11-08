@@ -93,15 +93,15 @@ test("sent messages retain input pages while refreshing exact delivery state", a
     assert.match(dom.window.document.body.textContent!, /full text/);
     await click("Show Delivery Details");
     const state = (label: string) => [...dom.window.document.querySelectorAll("dt")].find((term) => term.textContent === label)?.nextElementSibling?.textContent;
-    assert.equal(state("Receipt State"), "queued");
-    assert.equal(state("Turn State"), "running");
+    assert.equal(state("Receipt State"), "Queued");
+    assert.equal(state("Turn State"), "Running");
     assert.deepEqual(statusRequests[0], { target: item.target, receiptId: item.receiptId });
     receiptState = "completed";
     await act(async () => root.render(<SentDeliveryRow item={{ ...item, state: "completed" }} context={context} />));
-    assert.equal(state("Receipt State"), "completed");
+    assert.equal(state("Receipt State"), "Completed");
     turnState = "completed";
     await act(async () => turnUpdated?.("target"));
-    assert.equal(state("Turn State"), "completed");
+    assert.equal(state("Turn State"), "Completed");
     assert.match(dom.window.document.body.textContent!, /full text/);
     const readCount = statusRequests.length;
     await act(async () => queueChanged?.("unrelated-target"));
@@ -114,7 +114,7 @@ test("sent messages retain input pages while refreshing exact delivery state", a
     assert.match(dom.window.document.body.textContent!, /full text/);
     statusFail = false; turnState = "failed";
     await click("Retry Delivery Details");
-    assert.equal(state("Turn State"), "failed");
+    assert.equal(state("Turn State"), "Failed");
     assert.match(dom.window.document.body.textContent!, /full text/);
     assert.equal(requests.length, 3, "state refresh does not reread or replace input pages");
   } finally {

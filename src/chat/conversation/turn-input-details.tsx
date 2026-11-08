@@ -30,6 +30,14 @@ type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true
 type InputList = Extract<SessionExecutionReadResult<"list_execution_inputs">, { ok: true }>;
 type InputReference = { receiptId: string; turnId?: never } | { turnId: string; receiptId?: never };
 
+export function InputDetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return <div className="check-item"><dt><span>{label}</span></dt><dd><strong>{children}</strong></dd></div>;
+}
+
+export function inputDetailStateLabel(value: string | null | undefined, fallback: string) {
+  return value ? value.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase()) : fallback;
+}
+
 function ComparedText({ text, other, original }: { text: string; other: string; original: boolean }) {
   let start = 0;
   while (start < text.length && start < other.length && text[start] === other[start]) ++start;
@@ -77,13 +85,16 @@ function InputSnapshot({ context, reference, seq, onSnapshot }: { context: TurnI
     {busy ? <LoadingIndicator inline label="Loading saved input" /> : null}
     {error ? <p role="alert">{error} <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load(null)}>Reload Input</button></p> : null}
     {detail ? <>
-      <p>{detail.inputs.entry?.stage === "planned" ? "Planned Input" : detail.inputs.entry?.stage === "fixed" ? "Fixed Input — Provider Delivery Is Separate" : "Input Was Not Confirmed Fixed"}</p>
+      {detail.inputs.entry?.stage !== "planned" ? <p>{detail.inputs.entry?.stage === "fixed" ? "Fixed Input — Provider Delivery Is Separate" : "Input Was Not Confirmed Fixed"}</p> : null}
+      <section className="artifact-section compact" aria-label="Input Comparison">
+      <div className="artifact-section-header"><strong>Input Comparison</strong></div>
       <div className="turn-input-comparison">
         {([{ label: "Original Input", value: original }, { label: detail.inputs.entry?.stage === "planned" ? "Planned Input" : "Comparison Input", value: comparison }] as const).map(({ label, value }) => <section key={label}>
           <h4>{label}</h4>
           {value ? <><pre>{!more && original && comparison ? <ComparedText text={value.text} other={label === "Original Input" ? comparison.text : original.text} original={label === "Original Input"} /> : value.text}</pre>{value.attachments.length ? <ul aria-label={`${label} Attachments`}>{value.attachments.map((attachment) => <li key={attachment.id}>{attachment.kind}: {attachment.name} <code>{attachment.reference}</code></li>)}</ul> : null}</> : <p>Not Recorded</p>}
         </section>)}
       </div>
+      </section>
       {more ? <button type="button" className="drawer-toggle compact secondary" disabled={busy || !!error} onClick={() => void load(detail)}>Load More Input</button> : null}
     </> : null}
   </div>;
@@ -168,23 +179,19 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
   const resolvedReceiptId = receiptId ?? observed?.receiptId;
   const resolvedTurnId = input?.turnId ?? receipt?.turnId ?? observed?.turnId;
   const detailReference: InputReference | null = resolvedReceiptId ? { receiptId: resolvedReceiptId } : resolvedTurnId ? { turnId: resolvedTurnId } : null;
-  return <>
-    {compact && input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
-    <section className={`turn-input-details${compact ? " is-origin-details" : ""}`} aria-label="Input Details" hidden={compact && !open}>
-    {!compact && origin?.kind === "session" ? <SessionOriginRoute origin={origin} onError={setReadError} /> : null}
-    {!compact && input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
-    {summary?.entry ? <p>{summary.entry.kind === "additional" ? "Additional" : "Start"} Input · {summary.entry.comparison === "changed" ? "Changed From Original" : summary.entry.comparison === "unchanged" ? "Unchanged From Original" : "Comparison Unknown"}</p> : null}
-    {summary ? <p>{summary.additional.confirmedCount} Confirmed Additional Inputs{summary.additional.unresolvedCount ? ` · ${summary.additional.unresolvedCount} Unresolved` : ""}{summary.additional.coverage === "unknown" ? " · Input Coverage Unknown" : ""}</p> : null}
-    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>Input Details</summary>
-      {getQueuedSourceWaitState(receipt) === "waiting" ? <p className="turn-input-state">Waiting For Sender Turn</p> : null}
-      <dl className="turn-input-references">
-        {resolvedReceiptId ? <><dt>Receipt</dt><dd><code>{resolvedReceiptId}</code></dd></> : null}
-        {observed ? <><dt>Receipt State</dt><dd>{observed.receiptState ?? "No Receipt"}</dd><dt>Turn State</dt><dd>{observed.turnState ?? "Not Confirmed"}</dd></> : null}
-        {resolvedTurnId ? <><dt>WithMate Turn</dt><dd><code>{resolvedTurnId}</code></dd></> : null}
-        {input?.nativeTurnId ? <><dt>Provider Turn</dt><dd><code>{input.nativeTurnId}</code></dd></> : null}
-        {origin?.kind === "session" && origin.deliveryTiming === "after_source_turn" ? <><dt>Delivery Timing</dt><dd>After Sender Turn</dd>{origin.sourceTurnPhase ? <><dt>Sender Turn Outcome</dt><dd>{origin.sourceTurnPhase === "completed" ? "Completed" : origin.sourceTurnPhase === "failed" ? "Failed" : "Canceled"}</dd></> : null}</> : null}
-        {origin?.kind === "session" ? <><dt>Sender Session</dt><dd><code>{origin.actorSessionId}</code></dd><dt>Sender Incarnation</dt><dd><code>{origin.actorIncarnationId}</code></dd><dt>Sender Turn</dt><dd><code>{origin.actorTurnId}</code></dd><dt>Target Session</dt><dd><code>{origin.targetSessionId}</code></dd></> : null}
+  const entrySummary = summary?.entry ? `${summary.entry.kind === "additional" ? "Additional" : "Start"} Input · ${summary.entry.comparison === "changed" ? "Changed From Original" : summary.entry.comparison === "unchanged" ? "Unchanged From Original" : "Comparison Unknown"}` : null;
+  const additionalSummary = summary ? `${summary.additional.confirmedCount} Confirmed Additional Inputs${summary.additional.unresolvedCount ? ` · ${summary.additional.unresolvedCount} Unresolved` : ""}${summary.additional.coverage === "unknown" ? " · Input Coverage Unknown" : ""}` : null;
+  const sourceWaitState = getQueuedSourceWaitState(receipt);
+  const hasReferences = resolvedReceiptId || resolvedTurnId || input?.nativeTurnId || origin?.kind === "session";
+  const panel = <div className="artifact-block turn-input-panel">
+      {compact ? <div className="artifact-section-header"><strong>Input Details</strong></div> : null}
+      <dl className="check-list turn-input-rows" aria-label="Input State">
+        {sourceWaitState ? <InputDetailRow label="Delivery"><span className="turn-input-state">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span></InputDetailRow> : null}
+        {observed || receipt ? <><InputDetailRow label="Receipt State">{inputDetailStateLabel(observed?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow><InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow></> : null}
+        {origin?.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
+        {origin?.kind === "session" && origin.sourceTurnPhase ? <InputDetailRow label="Sender Turn Outcome">{inputDetailStateLabel(origin.sourceTurnPhase, "Not Confirmed")}</InputDetailRow> : null}
+        {entrySummary ? <InputDetailRow label="Input">{entrySummary}</InputDetailRow> : null}
+        {additionalSummary ? <InputDetailRow label="Additional Inputs">{additionalSummary}</InputDetailRow> : null}
       </dl>
       {summary?.entry?.kind === "additional" ? <p>Start Input · {summary.startChanged === null ? "Comparison Unknown" : summary.startChanged ? "Changed From Original" : "Unchanged From Original"}</p> : null}
       {summary?.additional.notSentCount ? <p>{summary.additional.notSentCount} Inputs Not Sent · Excluded From Confirmed Inputs</p> : null}
@@ -196,7 +203,27 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
       {open && context && detailReference && (resolvedReceiptId || message.historyIndex !== undefined) ? <InputSnapshot key={`${identity}:entry`} context={context} reference={detailReference} seq={!resolvedReceiptId ? message.historyIndex : undefined} onSnapshot={setSnapshot} /> : null}
       {open && input && !receiptId && message.historyIndex === undefined ? <p>The exact saved input reference is not yet available.</p> : null}
       {open && context && detailReference && summary ? <InputReferences key={`${identity}:${JSON.stringify(summary.additional)}`} context={context} reference={resolvedTurnId ? { turnId: resolvedTurnId } : detailReference} additional={summary.additional} /> : null}
-    </details>
+      {hasReferences ? <details className="artifact-fold" aria-label="References">
+        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>References</strong></span></summary>
+        <dl className="check-list turn-input-rows artifact-fold-body" aria-label="Input References">
+          {resolvedReceiptId ? <InputDetailRow label="Receipt"><code>{resolvedReceiptId}</code></InputDetailRow> : null}
+          {resolvedTurnId ? <InputDetailRow label="WithMate Turn"><code>{resolvedTurnId}</code></InputDetailRow> : null}
+          {input?.nativeTurnId ? <InputDetailRow label="Provider Turn"><code>{input.nativeTurnId}</code></InputDetailRow> : null}
+          {origin?.kind === "session" ? <><InputDetailRow label="Sender Session"><code>{origin.actorSessionId}</code></InputDetailRow><InputDetailRow label="Sender Incarnation"><code>{origin.actorIncarnationId}</code></InputDetailRow><InputDetailRow label="Sender Turn"><code>{origin.actorTurnId}</code></InputDetailRow><InputDetailRow label="Target Session"><code>{origin.targetSessionId}</code></InputDetailRow></> : null}
+        </dl>
+      </details> : null}
+    </div>;
+  return <>
+    {compact && input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
+    <section className={`turn-input-details${compact ? " is-origin-details" : ""}`} aria-label="Input Details" hidden={compact && !open}>
+    {!compact && origin?.kind === "session" ? <SessionOriginRoute origin={origin} onError={setReadError} /> : null}
+    {!compact && input ? <p className="turn-input-state" role={input.state === "pending" ? "status" : undefined}>{deliveryLabels[input.state]}</p> : null}
+    {!open && entrySummary ? <p className="turn-input-summary">{entrySummary}</p> : null}
+    {!open && additionalSummary ? <p className="turn-input-summary">{additionalSummary}</p> : null}
+    {compact ? open ? panel : null : <details className="artifact-fold" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Input Details</strong></span></summary>
+      {panel}
+    </details>}
   </section></>;
 }
 
@@ -238,11 +265,14 @@ function InputReferenceList({ context, reference, state, initial, nextOffset }: 
     } finally { if (active.current) setBusy(false); }
   };
   if (!items.length && next == null) return null;
-  return <section aria-label={label} aria-busy={busy || undefined}>
-    <ul aria-label={label}>{items.map((item, index) => <li key={item.queueId ?? item.seq ?? index}>
-      <details>
-        <summary>{item.state && item.state !== "confirmed" ? deliveryLabels[item.state] : "Additional Input"} · {item.seq !== null ? `Message ${item.seq}` : `Receipt ${item.queueId ?? "Reference Unknown"}`}</summary>
+  return <section className="artifact-section compact" aria-label={label} aria-busy={busy || undefined}>
+    <div className="artifact-section-header"><strong>{label}</strong></div>
+    <ul className="turn-input-list" aria-label={label}>{items.map((item, index) => <li className="artifact-operation-item" key={item.queueId ?? item.seq ?? index}>
+      <details className="artifact-operation-fold">
+        <summary className="artifact-operation-summary">{item.state && item.state !== "confirmed" ? deliveryLabels[item.state] : "Additional Input"} · {item.seq !== null ? `Message ${item.seq}` : `Receipt ${item.queueId ?? "Reference Unknown"}`}</summary>
+        <div className="artifact-operation-body">
         {item.seq !== null || item.queueId ? <AdditionalInput context={context} reference={item.queueId ? { receiptId: item.queueId } : reference} seq={item.queueId ? undefined : item.seq ?? undefined} /> : <p>The exact saved input reference is not yet available.</p>}
+        </div>
       </details>
     </li>)}</ul>
     {busy ? <span role="status" className="visually-hidden">Loading {label}</span> : null}

@@ -4,7 +4,7 @@ import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { CharacterAvatar } from "../../ui/ui-utils.js";
 import { MessageRichText } from "../../ui/markdown/MessageRichText.js";
 import { LoadingIndicator } from "../../ui/loading-indicator.js";
-import { SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { InputDetailRow, inputDetailStateLabel, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import type { SentDelivery } from "./use-sent-deliveries.js";
 
 type Input = Extract<SessionExecutionReadResult<"get_execution_input">, { ok: true }>;
@@ -86,16 +86,23 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
       {incomplete ? <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load(text !== null)}>{text === null ? `Read Full Message · ${item.textChars.toLocaleString("en-US")} Characters` : `Load More Message · ${text.length.toLocaleString("en-US")} / ${item.textChars.toLocaleString("en-US")} Characters`}</button> : null}
       {busy ? <LoadingIndicator inline label="Loading sent message" /> : null}
       {error ? <p role="alert">{error} <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load()}>Reload Message</button></p> : null}
-      {open ? <section className="turn-input-details" aria-label="Delivery Details">
+      {open ? <section className="artifact-block turn-input-details turn-input-panel" aria-label="Delivery Details">
+      <div className="artifact-section-header"><strong>Delivery Details</strong></div>
       {statusBusy ? <LoadingIndicator inline label="Loading delivery state" /> : null}
       {statusError ? <p role="alert">{statusError} <button type="button" className="drawer-toggle compact secondary" disabled={statusBusy} onClick={() => setStatusRevision((value) => value + 1)}>Retry Delivery Details</button></p> : null}
-      <dl className="turn-input-references">
-        <dt>Receipt</dt><dd><code>{item.receiptId}</code></dd>
-        <dt>Receipt State</dt><dd>{execution?.receiptState ?? item.state}</dd>
-        <dt>Turn State</dt><dd>{execution?.turnState ?? "Not Confirmed"}</dd>
-        <dt>Source WithMate Turn</dt><dd><code>{item.sourceTurnId}</code></dd>
-        {execution?.turnId ? <><dt>Recipient WithMate Turn</dt><dd><code>{execution.turnId}</code></dd></> : null}
-      </dl></section> : null}
+      <dl className="check-list turn-input-rows" aria-label="Delivery State">
+        <InputDetailRow label="Receipt State">{inputDetailStateLabel(execution?.receiptState ?? item.state, "No Receipt")}</InputDetailRow>
+        <InputDetailRow label="Turn State">{inputDetailStateLabel(execution?.turnState, "Not Confirmed")}</InputDetailRow>
+        <InputDetailRow label="Delivery Timing">{item.origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow>
+      </dl>
+      <details className="artifact-fold" aria-label="References">
+        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>References</strong></span></summary>
+        <dl className="check-list turn-input-rows artifact-fold-body" aria-label="Delivery References">
+          <InputDetailRow label="Receipt"><code>{item.receiptId}</code></InputDetailRow>
+          <InputDetailRow label="Source WithMate Turn"><code>{item.sourceTurnId}</code></InputDetailRow>
+          {execution?.turnId ? <InputDetailRow label="Recipient WithMate Turn"><code>{execution.turnId}</code></InputDetailRow> : null}
+        </dl>
+      </details></section> : null}
     </div></div>
   </article>;
 }
