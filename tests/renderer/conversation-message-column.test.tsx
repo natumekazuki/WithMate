@@ -1315,6 +1315,105 @@ test("queue move retains focus across the active queued head and tail", async ()
   }
 });
 
+// @test-value v2
+// kind = "contract"
+// claim = "保存済み・実行中の送信本文はMain/Auxiliaryそれぞれの会話のhandlerと画像・HTML・PDF contextを使い、全文取得後も宛先へ切り替えない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/930" }
+// fault = "送信行へMarkdown contextを渡さない、別会話または宛先のSessionで資源を読む、または全文取得後にcontextを失う"
+// observable = "送信行のlink click、画像inspect/read・HTML読取/mount・PDF inspect/readのSession IDとtarget、画像DOMと全文"
+// observation_boundary = "consumer"
+// scope = "SessionMessageColumnから保存済み/live SentDeliveryRowと共有Markdown資源loaderへの接続"
+// lifecycle = "permanent"
+// impact = "Session間の依頼・報告に添えた資料と成果物を送信履歴から確認できなくなる"
+// distinction = "通常会話の画像・HTML/PDF単体testは送信行へのoptional propsの渡し漏れを検出しない。小さい資源を4つの表示経路で確認する"
+// @end-test-value
+test("sent deliveries keep the source conversation file context before and after full reads", async () => {
+  for (const sessionId of ["sender-main", "sender-aux"]) for (const saved of [true, false]) {
+    const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+    const values = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement,
+      Node: dom.window.Node, navigator: dom.window.navigator, MutationObserver: dom.window.MutationObserver, IS_REACT_ACT_ENVIRONMENT: true };
+    const previous = new Map(Object.keys(values).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+    for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, value });
+    dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+    dom.window.HTMLElement.prototype.scrollTo = () => {};
+    Object.defineProperties(dom.window.HTMLElement.prototype, {
+      offsetHeight: { get: () => 600 }, offsetWidth: { get: () => 800 },
+      clientHeight: { get: () => 600 }, clientWidth: { get: () => 800 },
+    });
+    const intersection = installIntersectionObserver();
+    const imageBytes = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" width="2" height="2"/>');
+    const requests: Array<{ kind: string; request: { sessionId: string; target: string } }> = [];
+    const links: string[] = [];
+    const preview = "[Source File](src/foo.ts)\n\n![Local Diagram](docs/diagram.svg)";
+    const text = `${preview}\n\nvisualize{"path":"C:/workspace/docs/report.html"}\n\nvisualize{"path":"C:/workspace/docs/report.pdf"}`;
+    const origin = { kind: "session", actorKind: sessionId === "sender-main" ? "main" : "auxiliary", actorSessionId: sessionId,
+      actorMainSessionId: "sender-main", actorIncarnationId: "source-inc", actorTurnId: "42", operation: "send",
+      targetSessionId: "recipient", targetIncarnationId: "recipient-inc" };
+    const record = (kind: string, request: { sessionId: string; target: string }) => { requests.push({ kind, request }); };
+    Object.defineProperty(dom.window, "withmate", { value: {
+      readSessionExecution: async (_owner: string, operation: string) => operation === "list_sent_deliveries"
+        ? { ok: true, items: [{ receiptId: "outgoing", sequence: 1, sourceTurnId: "42", sourceMessageSeq: saved ? 3 : null,
+          target: { kind: "main", sessionId: "recipient", incarnationId: "recipient-inc" }, state: "queued", origin, textPreview: preview, textChars: text.length }], nextCursor: null }
+        : { ok: true, inputPair: { original: { text, offset: 0, nextOffset: null }, comparison: null } },
+      inspectSessionImage: async (request: SessionImageResourceRequest) => {
+        record("image-inspect", request);
+        return { kind: "svg", byteLength: imageBytes.byteLength, mimeType: "image/svg+xml", revision: "image" };
+      },
+      readSessionImageChunk: async (request: SessionImageResourceRequest) => {
+        record("image-read", request);
+        return { data: imageBytes.buffer, offset: 0, nextOffset: imageBytes.byteLength, totalBytes: imageBytes.byteLength, done: true, revision: "image" };
+      },
+      readSessionHtmlPreview: async (request: { sessionId: string; target: string }) => {
+        record("html-read", request); return { html: "<h1>Report</h1>", fileName: "report.html" };
+      },
+      mountHtmlPreview: async ({ source }: HtmlPreviewMountRequest) => {
+        assert.equal(source.kind, "link");
+        if (source.kind === "link") record("html-mount", source.request);
+        return { url: "withmate-html-preview://test/", partition: "test" };
+      },
+      disposeHtmlPreview: async () => {},
+      subscribeHtmlPreviewEvents: () => () => {},
+      inspectSessionPdf: async (request: { sessionId: string; target: string }) => {
+        record("pdf-inspect", request); return { byteLength: 5, revision: "pdf" };
+      },
+      readSessionPdfChunk: async (request: { sessionId: string; target: string }) => {
+        record("pdf-read", request); return { data: new Uint8Array(5).buffer, offset: 0, nextOffset: 5, totalBytes: 5, done: true, revision: "pdf" };
+      },
+    } });
+    const root = createRoot(dom.window.document.getElementById("root")!);
+    try {
+      await act(async () => root.render(<SessionMessageColumn {...createBaseProps(sessionId)} provider="codex"
+        inputReadContext={{ ownerSessionId: "sender-main", target: sessionId === "sender-main"
+          ? { kind: "main", sessionId, incarnationId: "source-inc" }
+          : { kind: "auxiliary", sessionId, mainSessionId: "sender-main", mainIncarnationId: "main-inc", incarnationId: "source-inc" } }}
+        liveWithMateTurnId={saved ? undefined : "42"} messages={saved ? [{ role: "assistant", text: "Result", historyIndex: 3 }] : [{ role: "user", text: "Request", historyIndex: 2 }]}
+        messageKeys={saved ? ["result"] : ["request"]} onOpenPath={(target) => links.push(target)} />));
+      const row = dom.window.document.querySelector<HTMLElement>(".session-outbound")!;
+      assert.ok(row, `${sessionId} ${saved ? "saved" : "live"}`);
+      const image = row.querySelector<HTMLImageElement>('img[alt="Local Diagram"]');
+      assert.ok(image); assert.match(image.src, /^blob:/);
+      assert.equal(await (await fetch(image.src)).text(), new TextDecoder().decode(imageBytes));
+      await act(async () => row.querySelector<HTMLAnchorElement>('a[href="src/foo.ts"]')!.click());
+      assert.deepEqual(links, ["src/foo.ts"]);
+      const full = [...row.querySelectorAll("button")].find((button) => button.textContent?.includes("Read Full Message"));
+      assert.ok(full); await act(async () => full.click());
+      assert.deepEqual(requests.map(({ kind, request }) => [kind, request.sessionId, request.target]).sort(), [
+        ["image-inspect", sessionId, "docs/diagram.svg"], ["image-read", sessionId, "docs/diagram.svg"],
+        ["html-read", sessionId, "C:/workspace/docs/report.html"], ["pdf-inspect", sessionId, "C:/workspace/docs/report.pdf"],
+        ["html-mount", sessionId, "C:/workspace/docs/report.html"], ["pdf-read", sessionId, "C:/workspace/docs/report.pdf"],
+      ].sort());
+      assert.ok(row.querySelector("iframe"));
+      assert.equal(row.querySelector('[role="alert"]'), null);
+      assert.equal([...row.querySelectorAll("button")].some((button) => button.textContent?.includes("Read Full Message")), false);
+    } finally {
+      await act(async () => root.unmount()); intersection.restore(); dom.window.close();
+      for (const [key, descriptor] of previous) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+      }
+    }
+  }
+});
+
 function createBaseProps(id: string): SessionMessageColumnProps {
   return {
     sessionId: id,

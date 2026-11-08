@@ -593,6 +593,9 @@ export function SessionMessageColumn({
   const openFind = useCallback(() => {
     if (isContentActive) setFindOpen(true);
   }, [isContentActive]);
+  const sentMessageContext = { onOpenPath, markdownLinkFileContext, markdownImageContext: markdownLinkFileContext,
+    resolveImageSource, displayMode: messageViewMode, responseProvider: provider, onFind: openFind,
+    onCopyText: onCopyMessageText, onQuoteText: onQuoteMessageText };
   useShortcutCommandHandler(
     SHORTCUT_COMMAND_IDS.messageFind,
     () => {
@@ -1752,14 +1755,14 @@ export function SessionMessageColumn({
                 </div>
                 </article>;
               }}</TurnInputReadBoundary>
-                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} />) : null}
+                {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq !== null && item.sourceMessageSeq === message.historyIndex).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
                 {shouldRenderGroupedPending ? renderPendingResponse("auxiliary-message-group-item auxiliary-message-group-end") : null}
               </div>
             );
           })}
             </div>
             {(isRunning || responsePending || submissionError) && pendingResponseMessageIndex < 0 && !canRenderGroupedPending ? renderPendingResponse() : null}
-            {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === null && item.sourceTurnId === liveWithMateTurnId).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} />) : null}
+            {inputReadContext ? sentDeliveries.items.filter((item) => item.sourceMessageSeq === null && item.sourceTurnId === liveWithMateTurnId).map((item) => <SentDeliveryRow key={item.receiptId} item={item} context={inputReadContext} {...sentMessageContext} />) : null}
             {renderQueueTail?.(resolveImageSource, markdownLinkFileContext)}
             {sentDeliveries.error ? <p role="alert">{sentDeliveries.error} <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.retry}>Retry Sent Messages</button></p> : null}
             {sentDeliveries.nextCursor !== null ? <button type="button" className="drawer-toggle compact secondary" disabled={sentDeliveries.busy} onClick={sentDeliveries.loadMore}>Load More Sent Messages</button> : null}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
 import { CharacterAvatar } from "../../ui/ui-utils.js";
@@ -9,9 +9,12 @@ import type { SentDelivery } from "./use-sent-deliveries.js";
 
 type Input = Extract<SessionExecutionReadResult<"get_execution_input">, { ok: true }>;
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
+type SentMessageContext = Pick<ComponentProps<typeof MessageRichText>,
+  "onOpenPath" | "markdownLinkFileContext" | "markdownImageContext" | "resolveImageSource" | "displayMode"
+  | "responseProvider" | "onFind" | "onCopyText" | "onQuoteText">;
 
 /** A source Turn summary; receipts do not record an exact position inside its output. */
-export function SentDeliveryRow({ item, context }: { item: SentDelivery; context: TurnInputReadContext }) {
+export function SentDeliveryRow({ item, context, ...messageContext }: { item: SentDelivery; context: TurnInputReadContext } & SentMessageContext) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState<Input | null>(null);
   const [text, setText] = useState<string | null>(null);
@@ -79,7 +82,7 @@ export function SentDeliveryRow({ item, context }: { item: SentDelivery; context
     <div className="message-character-name">{character.name}</div>
     <div className="message-card assistant session-outbound"><div className="message-card-content">
       <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
-      <MessageRichText text={text ?? item.textPreview} />
+      <MessageRichText {...messageContext} text={text ?? item.textPreview} />
       {incomplete ? <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load(text !== null)}>{text === null ? `Read Full Message · ${item.textChars.toLocaleString("en-US")} Characters` : `Load More Message · ${text.length.toLocaleString("en-US")} / ${item.textChars.toLocaleString("en-US")} Characters`}</button> : null}
       {busy ? <LoadingIndicator inline label="Loading sent message" /> : null}
       {error ? <p role="alert">{error} <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load()}>Reload Message</button></p> : null}
