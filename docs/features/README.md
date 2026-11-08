@@ -10,6 +10,7 @@ WithMateの利用者向け機能ガイドです。機能ごとの使い方をま
 
 ## Sessionと画面操作
 
+- [親子Session連携の推奨ルールサンプル](parent-child-session-rules.md)
 - [Git履歴とcommit preview](git-history-and-commit-preview.md)
 - [Messageの縮小表示とnavigator](session-message-collapse-and-navigation.md)
 - [Messageのブックマークとnavigator絞り込み](message-bookmark-filter.md)
