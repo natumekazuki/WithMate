@@ -7,7 +7,9 @@ import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 import { buildWithMateMemoryCli, buildWithMateGlossaryCli, buildWithMateSessionGraphCli } from "../../scripts/build/build-withmate-memory-cli.js";
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { BACKGROUND_REGISTRATION_OPERATIONS, backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import { AFFECT_SCHEMA_VERSION } from "../../src-shared/character-affect/affect-contract.js";
+import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
 import { MEMORY_V6_SCHEMA_VERSION, type MemoryTargetSelector } from "../../src-shared/memory/memory-contract.js";
 import { createLocalUserMemoryPrincipal } from "../../src-electron/memory/memory-v6-permission.js";
 import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory/memory-v6-http-server.js";
@@ -101,6 +103,127 @@ async function unregisteredProject(f: Fixture) {
 function scopeCount(f: Fixture) {
   return f.db.prepare("SELECT COUNT(*) AS count FROM project_scopes_v6").get()!.count;
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景AffectのinspectはMCP/CLIで実Main/Auxiliaryのsession記録と同Characterのrelationshipだけを読み、caller identity・別用途・訂正/resetを拒否して保存状態を変えない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memory-read" }
+// fault = "inspectの公開とgrantが食い違う、AuxiliaryをMainとして読む、別Character/会話のsession記録を返す、広いgrantで用途やmutation制限を迂回する"
+// observable = "公開tool、独立した保存済みtarget ID集合、MCP/CLI応答一致、拒否応答、Affect保存table snapshot"
+// observation_boundary = "public-boundary"
+// scope = "managed MCP/配布CLIから用途binding、HTTP、実Affect application/Workerまで"
+// lifecycle = "permanent"
+// impact = "背景Affectが履歴を読めないか、他会話/Characterの記録を漏らし、読取で保存状態を変える"
+// distinction = "通常inspectとstorage単体testでは背景tool公開・用途grant・trusted sourceの伝播を通らない。共用fixtureとCLI buildで両入口を検証する"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("背景Affect inspectはMain/Auxiliaryの実ownerをMCP/CLIで読み権限境界を保つ", async () => {
+  const f = await fixture();
+  try {
+    f.db.prepare("INSERT INTO characters(id,name,created_at,updated_at) VALUES ('private-character','Private','now','now')").run();
+    f.db.prepare(`INSERT INTO sessions_v6(id,incarnation_id,title,state,provider_id,catalog_revision,model_id,approval_mode,
+      character_id,character_snapshot_json,created_at,updated_at,last_active_at)
+      VALUES ('aux','private-inc','Same-name Main','active','codex',1,'test','on-request','private-character','{}','now','now','now')`).run();
+    for (const [sessionId, targetId, layer, characterId, auxiliary] of [
+      ["main", "main-event", "session", "character", false],
+      ["aux", "aux-event", "session", "character", true],
+      ["other", "other-session-event", "session", "character", false],
+      ["other", "shared-relationship", "relationship", "character", false],
+      ["aux", "private-event", "session", "private-character", false],
+    ] as const) {
+      await f.memoryWorker.affectStorage.recordEvent({ schemaVersion: AFFECT_SCHEMA_VERSION, characterId, userId: "local-user",
+        sessionId, layer, targetType: layer === "relationship" ? "user" : "task", targetId, family: "interest",
+        value: { label: targetId, valence: 0.3 }, intensity: 0.4, reason: "saved reason", evidence: "saved evidence",
+        occurredAt: "2026-11-01T00:00:00.000Z", idempotencyKey: targetId },
+        auxiliary ? { sessionSource: f.scope("aux").history.source } : undefined);
+    }
+    const snapshot = () => ["events", "resets", "mutations", "observations", "idempotency"].map((name) =>
+      f.db.prepare(`SELECT * FROM character_affect_${name}_v6 ORDER BY rowid`).all());
+    const before = snapshot();
+    for (const sessionId of ["main", "aux"]) {
+      // Deliberately broad grants still cannot authorize correction/reset or another purpose's inspect.
+      const binding = f.project(f.started(sessionId, "claude", "affect", undefined, getMemoryV6AgentRuntimeOperations()));
+      const { client, transport } = await f.connect(binding, "memoryUrl");
+      assert.ok((await client.listTools()).tools.some((tool) => tool.name === "character_affect.inspect"));
+      const mcp = await client.callTool({ name: "character_affect.inspect", arguments: {} });
+      const child = await cli(f, binding, "affect-inspect", {});
+      assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+      assert.equal(child.code, 0, JSON.stringify(child.value));
+      assert.deepEqual(mcp.structuredContent, child.value);
+      assert.deepEqual(child.value.events.map((event: { targetId: string }) => event.targetId).sort(),
+        [`${sessionId}-event`, "shared-relationship"].sort());
+      for (const input of [{ characterId: "private-character" }, { sessionId: "other" }]) {
+        assert.equal((await client.callTool({ name: "character_affect.inspect", arguments: input })).isError, true);
+        assert.notEqual((await cli(f, binding, "affect-inspect", input)).code, 0);
+      }
+      for (const operation of ["correct", "reset"]) {
+        assert.equal((await f.request(binding, binding.managedMcp!.memoryUrl, `character_affect.${operation}`, transport.sessionId, {})).status, 403);
+        assert.notEqual((await cli(f, binding, `affect-${operation}`, {})).code, 0);
+      }
+    }
+    for (const purpose of ["character-memory", "target-memory"] as const) {
+      const binding = f.project(f.started("main", "claude", purpose, undefined, getMemoryV6AgentRuntimeOperations()));
+      const { client, transport } = await f.connect(binding, "memoryUrl");
+      assert.equal((await client.listTools()).tools.some((tool) => tool.name === "character_affect.inspect"), false);
+      assert.equal((await f.request(binding, binding.managedMcp!.memoryUrl, "character_affect.inspect", transport.sessionId, {})).status, 403);
+      assert.notEqual((await cli(f, binding, "affect-inspect", {})).code, 0);
+    }
+    assert.deepEqual(snapshot(), before);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景inspectはsource incarnation/owner/親identityの不一致を拒否し、完了後は遅延応答も配布CLIも履歴を返さない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memory-read" }
+// fault = "inspectがcapture済みsourceを検証せず現在行を読む、返却前の失効確認を迂回して遅延履歴を公開する"
+// observable = "不一致sourceのMCP/CLI拒否、読取完了後に実行を終了したHTTP応答と旧CLIの拒否"
+// observation_boundary = "public-boundary"
+// scope = "背景bindingからAffect Workerのsource検証とHTTP返却境界"
+// lifecycle = "permanent"
+// impact = "置換後または権限終了後の会話履歴が背景実行へ渡る"
+// distinction = "既存Memory read寿命testはinspectのCharacter dispatchとAffect source検証を通らない"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("背景Affect inspectはsource identityと返却前失効を検証する", async () => {
+  const f = await fixture();
+  let release!: () => void;
+  try {
+    const scope = f.scope("aux", "affect");
+    assert.equal(scope.history.source.kind, "auxiliary");
+    if (scope.history.source.kind !== "auxiliary") throw new Error("Expected Auxiliary fixture");
+    const source = scope.history.source;
+    for (const invalid of [{ ...source, incarnationId: "replaced" }, { ...source, ownerIdentity: "replaced" },
+      { ...source, parent: { ...source.parent, incarnationId: "replaced" } }]) {
+      const execution = f.executions.begin({ actorSessionId: "aux", providerId: "claude",
+        session: { ...f.sessions.get("aux")!, incarnationId: invalid.incarnationId },
+        scope: { ...scope, history: { ...scope.history, source: invalid } },
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+        operationGrants: Object.values(backgroundMemoryToolOperations("affect", false)) });
+      const binding = f.project(execution), { client } = await f.connect(binding, "memoryUrl");
+      const mcp = await client.callTool({ name: "character_affect.inspect", arguments: {} });
+      const child = await cli(f, binding, "affect-inspect", {});
+      assert.equal(mcp.isError, true, JSON.stringify(mcp));
+      assert.notEqual(child.code, 0);
+      assert.equal("events" in child.value, false);
+    }
+    const execution = f.started("main", "claude", "affect", undefined, Object.values(backgroundMemoryToolOperations("affect", false)));
+    const binding = f.project(execution);
+    let entered!: () => void;
+    const reading = new Promise<void>((done) => { entered = done; });
+    const gate = new Promise<void>((done) => { release = done; });
+    const inspect = f.characterContext.inspectAffect.bind(f.characterContext);
+    f.characterContext.inspectAffect = async (...args) => { const result = await inspect(...args); entered(); await gate; return result; };
+    const pending = direct(f, binding, "character_affect/inspect", { schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION });
+    await reading;
+    f.executions.finish(execution);
+    release();
+    const result = (await pending).value as Record<string, unknown>;
+    assert.ok(result.error, JSON.stringify(result));
+    assert.equal("events" in result, false);
+    assert.notEqual((await cli(f, binding, "affect-inspect", {})).code, 0);
+  } finally { release?.(); await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

@@ -462,6 +462,7 @@ async function routeCharacterContextRequest(
   route: MemoryV6Route,
   body: unknown,
   transport: CharacterContextTransport,
+  sessionSource?: SessionHistoryReadScope["source"],
 ): Promise<unknown> {
   if (!service) {
     return memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Character context service is unavailable.");
@@ -485,7 +486,7 @@ async function routeCharacterContextRequest(
     return service.appraise(authorizedBody, transport);
   }
   if (route === "character_affect_inspect") {
-    return service.inspectAffect(authorizedBody, transport);
+    return service.inspectAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_correct") {
     return service.correctAffect(authorizedBody, transport);
@@ -1178,6 +1179,7 @@ async function dispatchResolvedRequest(input: {
           input.route,
           bindingResolution.body,
           transport,
+          bindingResolution.backgroundSource,
         )
       : routeServiceRequest(
           input.options.service,
@@ -1208,6 +1210,7 @@ type RouteBindingResolution =
       principal: MemoryV6Principal | null;
       authority: ProviderAgentRuntimeAuthoritySnapshot | null;
       turnAdmission?: RuntimeTurnAdmission;
+      backgroundSource?: SessionHistoryReadScope["source"];
       register?: () => Promise<unknown>;
     }
   | { ok: false; error: unknown };
@@ -1481,6 +1484,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
     principal,
     authority,
     turnAdmission,
+    ...(background ? { backgroundSource: background.history.source } : {}),
     register,
   };
 }

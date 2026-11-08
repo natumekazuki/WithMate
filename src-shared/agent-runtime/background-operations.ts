@@ -21,6 +21,7 @@ export function backgroundMemoryToolOperations(purpose: BackgroundPurpose, regis
   fileAccess?: BackgroundMemoryFileAccess): Readonly<Record<string, string>> {
   const registration = BACKGROUND_REGISTRATION_OPERATIONS[purpose];
   return { ...BACKGROUND_MEMORY_READ_TOOL_OPERATIONS,
+    ...(purpose === "affect" ? { "character_affect.inspect": "memory.route.character_affect_inspect" } : {}),
     ...(fileAccess?.exportRoot ? BACKGROUND_MEMORY_FILE_TOOL_OPERATIONS : {}),
     ...(registrationConnected ? { [registration.tool]: registration.operation } : {}) };
 }

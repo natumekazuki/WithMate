@@ -3,12 +3,10 @@ import type { MemoryRuntimeOwnerSelector } from "../../src-shared/agent-runtime/
 import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { assertSessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
-import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS, getBackgroundMemoryFileOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
 
-const backgroundReadOperations = new Set([...getSessionHistoryAgentRuntimeOperations(), ...getBackgroundMemoryReadOperations()]);
-const backgroundFileOperations = new Set(getBackgroundMemoryFileOperations());
+const backgroundHistoryOperations = new Set(getSessionHistoryAgentRuntimeOperations());
 
 export type AgentRuntimeOperation = string;
 
@@ -249,9 +247,9 @@ export class AgentRuntimeBindingRegistry {
   ): AgentRuntimeBindingResolveResult {
     const result = this.resolveIdentity(bindingReference, now);
     if (!result.ok) return result;
-    if (result.binding.backgroundScope && !backgroundReadOperations.has(operation)
-      && !(backgroundFileOperations.has(operation) && result.binding.backgroundScope.fileAccess?.exportRoot)
-      && BACKGROUND_REGISTRATION_OPERATIONS[result.binding.backgroundScope.purpose].operation !== operation) {
+    const scope = result.binding.backgroundScope;
+    if (scope && !backgroundHistoryOperations.has(operation)
+      && !Object.values(backgroundMemoryToolOperations(scope.purpose, true, scope.fileAccess)).includes(operation)) {
       return { ok: false, code: "SESSION_BINDING_FORBIDDEN" };
     }
     return result.binding.operationGrants.includes(operation)

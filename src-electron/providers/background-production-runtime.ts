@@ -1,6 +1,5 @@
 import type { BackgroundExecutionScope, BackgroundPurpose } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS, getBackgroundMemoryFileOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
@@ -167,9 +166,8 @@ export class BackgroundProductionRuntime {
     const scope = { ...buildBackgroundExecutionScope(captured, input), ...(fileAccess ? { fileAccess } : {}) };
     return { status: "ready", instructionText: configured.instructionText, call: {
       context: { session, actorSessionId: session.id, authoritySnapshot, scope,
-        operationGrants: [...getSessionHistoryAgentRuntimeOperations(), ...getBackgroundMemoryReadOperations(),
-          ...(fileAccess?.exportRoot ? getBackgroundMemoryFileOperations() : []),
-          BACKGROUND_REGISTRATION_OPERATIONS[input.purpose].operation] },
+        operationGrants: [...getSessionHistoryAgentRuntimeOperations(),
+          ...Object.values(backgroundMemoryToolOperations(input.purpose, true, fileAccess))] },
       selection: { ...configured.selection },
     } };
   }

@@ -55,6 +55,36 @@ function gate() {
 
 // @test-value v2
 // kind = "contract"
+// claim = "本番prepareはAffect用途だけにinspect grantを発行し、同じruntimeが開始する実bindingでも認可される"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memory-read" }
+// fault = "tool公開定義だけを変更して本番prepareのgrantを更新しない、または他用途にもinspectを許可する"
+// observable = "用途ごとのprepared grantと実Agent呼出中のbinding解決結果"
+// observation_boundary = "consumer"
+// scope = "BackgroundProductionRuntime.prepare/runOnceと実binding registry"
+// lifecycle = "permanent"
+// impact = "本番の背景Affectだけinspectが拒否され続ける"
+// distinction = "MCP/CLI fixtureの手動grantでは本番prepareによるgrant発行を検証できない"
+// @end-test-value
+test("本番prepareはAffect用途だけにinspectを認可する", async () => {
+  const f = await backgroundHistoryFixture();
+  try {
+    seed(f);
+    const operation = "memory.route.character_affect_inspect";
+    const { runtime, input } = setup(f, async (agent) => {
+      assert.equal(f.bindings.resolve(agent.binding.bindingReference, operation).ok, agent.scope.purpose === "affect");
+    });
+    for (const purpose of ["affect", "character-memory", "target-memory"] as const) {
+      const prepared = await runtime.prepare({ ...input, purpose });
+      assert.equal(prepared.status, "ready", JSON.stringify(prepared));
+      assert.equal(prepared.call.context.operationGrants.includes(operation), purpose === "affect");
+      assert.deepEqual(await runtime.calls.runOnce({ ...prepared.call, userInput: "inspect material", onAdmitted() {} }), { kind: "completed" });
+    }
+    runtime.stop();
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "準備失敗は同じ継続寿命の次呼出へ渡し、source解放・停止後の遅延失敗は診断だけに残して新しい失敗材料を上書きしない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#native文脈の継続と失敗情報" }
 // fault = "prepare待機中の寿命変更を無視して破棄済み失敗を新stateへ保存するか、現行prepare失敗の引継ぎや診断を失う"
