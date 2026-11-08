@@ -9,7 +9,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputDetailsContent, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { useTurnInputRead, TurnInputDetailsContent, TurnInputOriginAvatar, SessionOriginRoute, getQueuedSourceWaitState, type TurnInputReadContext } from "./turn-input-details.js";
 
 export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
   return <><article className="message-row user" data-message-source="turn-submission">
@@ -58,14 +58,13 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
     };
   }, []);
   const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
-  const delayed = receipt.captured.origin?.deliveryTiming === "after_source_turn";
-  const sourcePhase = receipt.sourceTurnPhase;
-  const waitingForSource = delayed && (receipt.sourceTurnPendingRelease || sourcePhase !== "completed" && sourcePhase !== "failed" && sourcePhase !== "canceled");
+  const sourceWaitState = getQueuedSourceWaitState(receipt);
+  const waitingForSource = sourceWaitState !== null;
   return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} aria-label={label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
     {label ? <span>{label}</span> : null}
-    {receipt.state === "queued" && waitingForSource ? <span className="session-turn-queue-reason">{receipt.sourceTurnPendingRelease || sourcePhase === "running" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span> : null}
+    {sourceWaitState === "unknown" ? <span className="session-turn-queue-reason">Source Turn State Unknown</span> : null}
     {receipt.state === "queued" && onMove && position !== undefined && queueSize !== undefined ? <span className="session-turn-queue-move" role="group" aria-label="Change execution order">
       {(["up", "down"] as const).map((direction) => <button key={direction} className="drawer-toggle compact secondary session-turn-queue-move-button" type="button"
         title={direction === "up" ? "Move Up" : "Move Down"} aria-label={`Move queued turn ${position} ${direction}`} data-queue-move={direction}

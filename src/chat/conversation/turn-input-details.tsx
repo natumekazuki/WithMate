@@ -16,6 +16,14 @@ const deliveryLabels = {
   "not-sent": "Input Not Sent",
 } as const;
 
+export function getQueuedSourceWaitState(receipt?: SessionTurnQueueReceipt): "waiting" | "unknown" | null {
+  const origin = receipt?.accepted?.origin ?? receipt?.captured.origin;
+  if (receipt?.state !== "queued" || origin?.deliveryTiming !== "after_source_turn") return null;
+  const phase = receipt.sourceTurnPhase;
+  if (phase === undefined || phase === "unknown") return "unknown";
+  return receipt.sourceTurnPendingRelease || phase === "running" ? "waiting" : null;
+}
+
 export type TurnInputReadContext = { ownerSessionId: string; target: SessionTarget };
 type InputDetail = Extract<SessionExecutionReadResult<"get_execution_input">, { ok: true }>;
 type Execution = Extract<SessionExecutionReadResult<"get_execution">, { ok: true }>;
@@ -169,6 +177,7 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
     {summary ? <p>{summary.additional.confirmedCount} Confirmed Additional Inputs{summary.additional.unresolvedCount ? ` · ${summary.additional.unresolvedCount} Unresolved` : ""}{summary.additional.coverage === "unknown" ? " · Input Coverage Unknown" : ""}</p> : null}
     <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>Input Details</summary>
+      {getQueuedSourceWaitState(receipt) === "waiting" ? <p className="turn-input-state">Waiting For Sender Turn</p> : null}
       <dl className="turn-input-references">
         {resolvedReceiptId ? <><dt>Receipt</dt><dd><code>{resolvedReceiptId}</code></dd></> : null}
         {observed ? <><dt>Receipt State</dt><dd>{observed.receiptState ?? "No Receipt"}</dd><dt>Turn State</dt><dd>{observed.turnState ?? "Not Confirmed"}</dd></> : null}
