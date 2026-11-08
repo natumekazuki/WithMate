@@ -21,7 +21,7 @@ import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { InlineResponseContent, LiveRequestSurface, type LiveElicitationDrafts } from "../runtime/live-request-surface.js";
 import { SessionTurnQueueStatus } from "./session-turn-queue-row.js";
 import { SessionRunFailure } from "./session-run-failure.js";
-import { TurnInputReadBoundary, TurnInputDetailsContent, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
+import { TurnInputReadBoundary, TurnExecutionDetails, TurnInputStatus, TurnInputOriginAvatar, SessionOriginRoute, type TurnInputReadContext } from "./turn-input-details.js";
 import { useSentDeliveries } from "./use-sent-deliveries.js";
 import { SentDeliveryRow } from "./sent-delivery-row.js";
 import type { SessionTurnQueueActionKind } from "./use-session-turn-queue.js";
@@ -1453,6 +1453,8 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
+            const executionTurnId = isAssistant && messageKey === pendingResponseMessageKey ? liveWithMateTurnId : undefined;
+            const hasExecutionDetails = isAssistant && inputReadContext && (message.historyIndex !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
             const isAwaitingSavedResponse = isAssistant && turnQueueMetadata?.get(messageKey)?.state === "completed";
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
@@ -1510,12 +1512,12 @@ export function SessionMessageColumn({
                 {isAssistant ? (
                   <div className="message-avatar-stack">
                     <CharacterAvatar character={character} size="small" className="message-avatar" />
-                    {artifact ? (
+                    {artifact || hasExecutionDetails ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
                         type="button"
                         onClick={() => {
-                          if (!artifactExpanded) {
+                          if (artifact && !artifactExpanded) {
                             loadArtifactDetail(artifactKey, absoluteIndex, message.artifact);
                           }
                           onToggleArtifact(artifactKey);
@@ -1533,8 +1535,7 @@ export function SessionMessageColumn({
                 {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
                 <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
                   <div className="message-card-content">
-                    {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={(error) => { read.setReadError(error); read.setOpen(true); }} /> : null}
-                    {!isSessionOrigin ? <TurnInputDetailsContent message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} read={read} /> : null}
+                    {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
                     {artifact && !isAssistant ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -1635,9 +1636,10 @@ export function SessionMessageColumn({
                         )}
                       </div>
                     </div>
-                    {isSessionOrigin ? <TurnInputDetailsContent message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} read={read} compact /> : null}
+                    <TurnInputStatus message={message} />
+                    {isSessionOrigin && read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
                     {isAssistant && message.runFailure !== undefined ? <SessionRunFailure reason={message.runFailure} /> : null}
-                    {artifact ? (
+                    {artifact || hasExecutionDetails ? (
                       <section className="artifact-shell">
                       {artifactExpanded ? (
                         <div
@@ -1652,12 +1654,11 @@ export function SessionMessageColumn({
                             </div>
                           ) : null}
                           {artifactDetailError ? <p className="pending-run-error-note" role="alert">{artifactDetailError}</p> : null}
-                          <div className="artifact-grid artifact-grid-single">
+                          {artifact?.runChecks.length ? <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
-                              <div className="artifact-section-header">
-                                <strong>Run Checks</strong>
-                              </div>
-                              <div className="check-list">
+                              <details className="artifact-fold" aria-label="Run Checks" open>
+                              <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Run Checks</strong></span></summary>
+                              <div className="check-list artifact-fold-body">
                                 {artifact.runChecks.map((check) => (
                                   <div key={check.label} className="check-item">
                                     <span>{check.label}</span>
@@ -1665,8 +1666,11 @@ export function SessionMessageColumn({
                                   </div>
                                 ))}
                               </div>
+                              </details>
                             </section>
-                          </div>
+                          </div> : null}
+
+                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!artifact?.runChecks.length} inputMessages={messages} /> : null}
 
                           {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">

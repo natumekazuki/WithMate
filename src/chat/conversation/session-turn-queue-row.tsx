@@ -9,7 +9,7 @@ import { LoadingIndicator } from "../../ui/loading-indicator.js";
 import type { CharacterVisual } from "../../../src-shared/character/character-state.js";
 import { SessionRunFailureRow } from "./session-run-failure.js";
 import { useQueuedTurnEditContext } from "./use-queued-turn-edit.js";
-import { useTurnInputRead, TurnInputDetailsContent, TurnInputOriginAvatar, SessionOriginRoute, getQueuedSourceWaitState, type TurnInputReadContext } from "./turn-input-details.js";
+import { useTurnInputRead, TurnInputOriginAvatar, SessionOriginRoute, getQueuedSourceWaitState, type TurnInputReadContext } from "./turn-input-details.js";
 
 export function SessionTurnSubmissionRow({ submission, resolveImageSource, markdownImageContext, character }: { submission: SessionTurnSubmission; character: CharacterVisual; resolveImageSource?: MarkdownImageResolver; markdownImageContext?: MarkdownImageContext }) {
   return <><article className="message-row user" data-message-source="turn-submission">
@@ -64,7 +64,7 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
     {label ? <span>{label}</span> : null}
-    {sourceWaitState === "unknown" ? <span className="session-turn-queue-reason">Source Turn State Unknown</span> : null}
+    {sourceWaitState ? <span className="session-turn-queue-reason">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span> : null}
     {receipt.state === "queued" && onMove && position !== undefined && queueSize !== undefined ? <span className="session-turn-queue-move" role="group" aria-label="Change execution order">
       {(["up", "down"] as const).map((direction) => <button key={direction} className="drawer-toggle compact secondary session-turn-queue-move-button" type="button"
         title={direction === "up" ? "Move Up" : "Move Down"} aria-label={`Move queued turn ${position} ${direction}`} data-queue-move={direction}
@@ -88,10 +88,9 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
   return <><article className={`message-row ${role}`} data-message-source="turn-queue">
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
     <div className={`message-card ${role}`}><div className="message-card-content">
-      {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={(error) => { read.setReadError(error); read.setOpen(true); }} /> : null}
-      {!isSessionOrigin ? <TurnInputDetailsContent message={message} receipt={props.receipt} context={props.inputReadContext} read={read} /> : null}
+      {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
       <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
-      {isSessionOrigin ? <TurnInputDetailsContent message={message} receipt={props.receipt} context={props.inputReadContext} read={read} compact /> : null}
+      {read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
       <SessionTurnQueueStatus {...props} />
     </div></div>
   </article>

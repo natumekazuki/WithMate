@@ -4,40 +4,40 @@ import React, { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import { TurnInputDetails } from "../../src/chat/conversation/turn-input-details.js";
+import { TurnExecutionDetails, TurnInputStatus } from "../../src/chat/conversation/turn-input-details.js";
 import type { TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
 
 // @test-value v2
 // kind = "contract"
-// claim = "追加入力のpending・confirmed・unknown・not-sentを配送状態として表示し、WithMate TurnとProvider Turnの参照を混同しない"
+// claim = "追加入力のpending・confirmed・unknown・not-sentを入力枠の配送状態として表示する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/837#追加入力の表示と取得" }
-// fault = "不明や未送信を確認済み追加と表示する、または異なるTurn identityを同じ参照で表示する"
-// observable = "入力詳細DOMの配送label、WithMate Turn・Provider Turnの対応する値"
+// fault = "不明や未送信を確認済み追加と表示する"
+// observable = "入力枠の配送labelと不明・未送信の説明"
 // observation_boundary = "component-behavior"
-// scope = "TurnInputDetailsの保存済み追加入力表示"
+// scope = "TurnInputStatusの保存済み追加入力表示"
 // lifecycle = "permanent"
-// impact = "利用者が未送信の指示を実行済みと誤認したり、異なるTurnの結果を参照する"
-// distinction = "型検査と保存testでは利用者向けlabelとIDの表示対応を確認しない。小さいSSRで4状態を検証する"
+// impact = "利用者が未送信や配送不明の指示を確認済み追加と誤認する"
+// distinction = "型検査と保存testでは入力枠の利用者向けlabelと説明を確認しない。小さいSSRで4状態を検証する"
 // @end-test-value
-test("input details distinguish delivery states and WithMate/native identities", () => {
+test("input rows distinguish additional input delivery states", () => {
   const cases: [TurnInputDeliveryState, string][] = [["pending", "Input Acceptance Pending"], ["confirmed", "Additional Input Confirmed"], ["unknown", "Input Delivery Unknown"], ["not-sent", "Input Not Sent"]];
   for (const [state, label] of cases) {
-    const markup = renderToStaticMarkup(<TurnInputDetails message={{ role: "user", text: "instruction", turnInput: { turnId: "42", nativeTurnId: "native-turn-9", state, attachments: [] } }} />);
+    const markup = renderToStaticMarkup(<TurnInputStatus message={{ role: "user", text: "instruction", turnInput: { turnId: "42", nativeTurnId: "native-turn-9", state, attachments: [] } }} />);
     const document = new JSDOM(markup).window.document;
     assert.equal(document.querySelector(".turn-input-state")?.textContent, label);
-    const refs = [...document.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]);
-    assert.deepEqual(refs, [["WithMate Turn", "42"], ["Provider Turn", "native-turn-9"]]);
+    if (state === "unknown") assert.match(document.body.textContent!, /not a confirmed addition/);
+    if (state === "not-sent") assert.match(document.body.textContent!, /not delivered to the Turn/);
   }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "入力詳細は保存実行設定と入力状態を独立して開閉でき、同じ受付snapshotの原文比較・添付と補助の内部参照を保持する"
+// claim = "応答側の詳細は正確な保存応答から開始入力を解決し、保存設定・入力状態・同じ受付snapshotの比較と添付・同一TurnのProvider参照を表示する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user request: 今のDetailsの延長線上で再設計して修正" }
-// fault = "設定や入力状態を独立して閉じられない、実行設定を省略する、会話本文で比較を上書きするか、内部参照を比較より先に展開する"
-// observable = "共通読取request、設定と状態のnative開閉状態・Provider等の値と順序、原文比較DOM、添付、補助Referencesと受付値"
+// fault = "応答と異なる入力へ結び付ける、保存設定や状態を失う、会話本文で比較を上書きするか、補助参照を比較より先に展開する"
+// observable = "共通読取request、設定と状態のnative開閉状態・Provider等の値と順序、比較DOM、添付、Referencesの受付・WithMate/Provider Turn値"
 // observation_boundary = "consumer"
-// scope = "TurnInputDetailsとreadSessionExecutionのrenderer境界。保存serviceは固定snapshotで代替"
+// scope = "TurnExecutionDetailsとreadSessionExecutionのrenderer境界。保存serviceは固定snapshotで代替"
 // lifecycle = "permanent"
 // impact = "利用者が編集された指示や添付の変更を見落とし、配送不明を追加なしと誤認する"
 // distinction = "storageのsnapshot testや型検査ではlazy読取から実DOMへの接続を確認しない"
@@ -50,18 +50,20 @@ test("input details render the common paired snapshot rather than message text",
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true });
   const requests: { operation: string; request: unknown }[] = [];
-  const description = { ok: true, origin: null, receiptId: "receipt-2", receiptState: "queued", turnId: null, turnState: null, resultState: "not-started", userMessageSeq: null, assistantMessageSeq: null,
+  const description = { ok: true, origin: null, receiptId: "receipt-2", receiptState: "completed", turnId: "42", turnState: "completed", resultState: "saved", userMessageSeq: 6, assistantMessageSeq: 7,
     inputs: { entry: { receiptId: "receipt-2", inputSeq: null, kind: "start", stage: "planned", comparison: "changed", detail: { operation: "get_execution_input", receiptId: "receipt-2" } }, startChanged: null, additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [{ seq: 7, state: "unknown" }], unresolvedCount: 1, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "unknown" } } };
   const piece = (text: string, reference: string) => ({ ok: true, text, offset: 0, nextOffset: null, totalChars: text.length, attachments: [{ id: reference, kind: "file", name: "input.md", reference }] });
   Object.defineProperty(dom.window, "withmate", { value: { readSessionExecution: async (_owner: string, operation: string, request: unknown) => {
     requests.push({ operation, request });
+    if (operation === "get_execution" && (request as { messageSeq?: number }).messageSeq === 7) return { ...description, receiptId: null };
     return operation === "get_execution" ? { ...description, executionSettings: { source: "input", provider: "codex", model: "captured-model", approvalMode: "on-request", codexReviewer: "auto-review", codexSpeed: "fast", reasoningEffort: "xhigh", codexSandboxMode: "workspace-write", customAgentName: "" }, output: null, inputs: { ...description.inputs, entry: { ...description.inputs.entry, comparison: "unchanged" } } } : { ...description, ...piece("saved changed input", "after/input.md"), expectedInput: "snapshot", originalKnown: true, inputPair: { original: piece("saved original input", "before/input.md"), comparison: piece("saved changed input", "after/input.md") } };
   } } });
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
-    await act(async () => { root.render(<TurnInputDetails context={{ ownerSessionId: "main", target: { kind: "main", sessionId: "main", incarnationId: "inc" } }} message={{ role: "user", text: "not the saved snapshot", historyIndex: 7 }} />); });
-    const details = dom.window.document.querySelector("details")!;
-    await act(async () => { details.open = true; details.dispatchEvent(new dom.window.Event("toggle")); });
+    await act(async () => { root.render(<TurnExecutionDetails context={{ ownerSessionId: "main", target: { kind: "main", sessionId: "main", incarnationId: "inc" } }} message={{ role: "assistant", text: "response, not the saved input", historyIndex: 7 }} inputMessages={[
+      { role: "user", text: "additional", turnInput: { turnId: "42", nativeTurnId: "native-turn-9", state: "confirmed", attachments: [] } },
+      { role: "user", text: "other", turnInput: { turnId: "other", nativeTurnId: "other-native", state: "confirmed", attachments: [] } },
+    ]} />); });
     assert.deepEqual([...dom.window.document.querySelectorAll("pre")].map((element) => element.textContent), ["saved original input", "saved changed input"]);
     const text = dom.window.document.body.textContent!;
     assert.match(text, /Changed From Original/);
@@ -77,8 +79,8 @@ test("input details render the common paired snapshot rather than message text",
     ]);
     assert.ok(settings.compareDocumentPosition(inputState) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
     const stateRows = new Map([...inputState.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]));
-    assert.equal(stateRows.get("Receipt State"), "Queued");
-    assert.equal(stateRows.get("Turn State"), "Not Confirmed");
+    assert.equal(stateRows.get("Receipt State"), "Completed");
+    assert.equal(stateRows.get("Turn State"), "Completed");
     assert.equal(stateRows.get("Input"), "Start Input · Changed From Original");
     assert.equal(stateRows.get("Additional Inputs"), "0 Confirmed Additional Inputs · 1 Unresolved · Input Coverage Unknown");
     const comparison = dom.window.document.querySelector('section[aria-label="Input Comparison"]')!;
@@ -86,7 +88,7 @@ test("input details render the common paired snapshot rather than message text",
     assert.equal(settings.open, false); assert.equal(stateDetails.open, true);
     await act(async () => { stateDetails.open = false; stateDetails.dispatchEvent(new dom.window.Event("toggle")); });
     assert.equal(stateDetails.open, false); assert.equal(settings.open, false);
-    assert.equal(comparison.parentElement!.closest("details"), details);
+    assert.equal(comparison.closest("details"), null);
     await act(async () => { settings.open = true; settings.dispatchEvent(new dom.window.Event("toggle")); });
     assert.equal(settings.open, true); assert.equal(stateDetails.open, false);
     const references = dom.window.document.querySelector<HTMLDetailsElement>('details[aria-label="References"]')!;
@@ -95,9 +97,14 @@ test("input details render the common paired snapshot rather than message text",
     await act(async () => { references.open = true; references.dispatchEvent(new dom.window.Event("toggle")); });
     const receiptTerm = [...references.querySelectorAll("dt")].find((term) => term.textContent === "Receipt")!;
     assert.equal(receiptTerm.nextElementSibling?.textContent, "receipt-2");
-    assert.deepEqual(requests.map(({ operation }) => operation), ["get_execution", "get_execution_input"]);
+    const turnTerm = [...references.querySelectorAll("dt")].find((term) => term.textContent === "WithMate Turn")!;
+    assert.equal(turnTerm.nextElementSibling?.textContent, "42");
+    const nativeTerm = [...references.querySelectorAll("dt")].find((term) => term.textContent === "Provider Turn")!;
+    assert.equal(nativeTerm.nextElementSibling?.textContent, "native-turn-9");
+    assert.deepEqual(requests.map(({ operation }) => operation), ["get_execution", "get_execution", "get_execution_input"]);
     assert.equal((requests[0].request as { messageSeq: number }).messageSeq, 7);
-    assert.equal((requests[1].request as { receiptId: string }).receiptId, "receipt-2");
+    assert.equal((requests[1].request as { messageSeq: number }).messageSeq, 6);
+    assert.equal((requests[2].request as { receiptId: string }).receiptId, "receipt-2");
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
@@ -112,7 +119,7 @@ test("input details render the common paired snapshot rather than message text",
 // fault = "summary配列長を総数にする、開始入力を含むoffsetをずらす、失敗で既読を失う、またはseq未確定の受付を別入力として読む"
 // observable = "総件数DOM、分類別継続requestと再試行offset、追加された入力行、受付から取得した原文DOM"
 // observation_boundary = "consumer"
-// scope = "TurnInputDetailsとreadSessionExecution。100件summaryと継続pageを固定fixtureで返す"
+// scope = "TurnExecutionDetailsとreadSessionExecution。100件summaryと継続pageを固定fixtureで返す"
 // lifecycle = "permanent"
 // impact = "多数の指示を含むTurnで保存済み入力へ到達できず、配送状況の件数を誤認する"
 // distinction = "storage testはrendererのoffset引継ぎや失敗からの継続操作を検証しない。3分類を単一component fixtureで確認する"
@@ -152,11 +159,9 @@ test("input details page all delivery groups and retry without losing saved refe
   const click = async (button: Element) => act(async () => { button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
   const buttonNamed = (text: string) => [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === text)!;
   try {
-    await act(async () => { root.render(<TurnInputDetails context={{ ownerSessionId: "main", target }} message={{ role: "user", text: "start", historyIndex: 0 }} />); });
+    await act(async () => { root.render(<TurnExecutionDetails context={{ ownerSessionId: "main", target }} message={{ role: "assistant", text: "response", historyIndex: 1 }} />); });
     assert.match(dom.window.document.body.textContent!, /102 Confirmed Additional Inputs · 101 Unresolved/);
     assert.match(dom.window.document.body.textContent!, /101 Inputs Not Sent/);
-    const details = dom.window.document.querySelector("details")!;
-    await act(async () => { details.open = true; details.dispatchEvent(new dom.window.Event("toggle")); });
     const confirmed = dom.window.document.querySelector('section[aria-label="Confirmed Inputs"]')!;
     await click(buttonNamed("Load More Confirmed Inputs"));
     assert.equal(confirmed.querySelectorAll("li").length, 100);

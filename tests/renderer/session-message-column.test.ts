@@ -808,6 +808,56 @@ test("artifactは再openで最新取得し閉じた間の遅いdetailを適用�
 
 // @test-value v2
 // kind = "contract"
+// claim = "保存応答の既存Detailsを開くと同じTurnの入力詳細を取得し、設定と入力状態を独立開閉しながら操作・入力比較をその応答内で確認できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user: プロンプト枠は本文、詳細はレスポンス側へ集約" }
+// fault = "応答Detailsから入力詳細へ到達できない、別の応答seqで取得する、または既存の実行設定・操作を失う"
+// observable = "実SessionMessageColumnのDetails展開前後の取得request、assistant行内のRun Checks・Operations・比較本文"
+// observation_boundary = "consumer"
+// scope = "SessionMessageColumnからTurnExecutionDetailsへの接続。共通read APIは保存snapshot fixtureで代替"
+// lifecycle = "permanent"
+// impact = "どの入力で得た応答かを実行設定と同じ場所で確認できなくなる"
+// distinction = "単体の入力比較testや型検査では既存レスポンスDetailsへの接続と取得契機を検出できない。短い1会話の開閉だけを検証する"
+// @end-test-value
+test("応答Detailsに実行設定と入力比較を集約する", async () => {
+  const response = { ...createArtifactMessage(), historyIndex: 9 };
+  response.artifact!.runChecks = [{ label: "provider", value: "Codex" }, { label: "model", value: "saved-model" }];
+  const mounted = await mountSessionMessageColumn({ messages: [{ role: "user", text: "prompt" }, response], messageKeys: ["prompt", "response"] });
+  const requests: Array<{ operation: string; request: Record<string, unknown> }> = [];
+  const summary = { entry: { receiptId: "start", inputSeq: 8, kind: "start", stage: "fixed", comparison: "changed" }, startChanged: true,
+    additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } };
+  const piece = (text: string) => ({ ok: true, text, offset: 0, nextOffset: null, totalChars: text.length, attachments: [] });
+  Object.defineProperty(mounted.dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, operation: string, request: Record<string, unknown>) => {
+    requests.push({ operation, request });
+    if (operation === "list_sent_deliveries") return { ok: true, items: [], nextCursor: null };
+    const execution = { ok: true, receiptId: "start", turnId: "42", userMessageSeq: 8, assistantMessageSeq: 9, inputs: summary };
+    return operation === "get_execution" ? execution : { ...execution, expectedInput: "snapshot", inputPair: { original: piece("original"), comparison: piece("fixed") } };
+  } } });
+  try {
+    const context = { ownerSessionId: "main", target: { kind: "main", sessionId: "main", incarnationId: "inc" } } as const;
+    await mounted.rerender({ inputReadContext: context });
+    assert.equal(requests.filter((read) => read.operation === "get_execution").length, 0);
+    await mounted.rerender({ inputReadContext: context, expandedArtifacts: { response: true } });
+    const assistant = mounted.container.querySelector(".message-row.assistant")!;
+    assert.match(assistant.textContent!, /Run Checks.*Codex.*saved-model/s);
+    assert.match(assistant.textContent!, /Operations.*updated file/s);
+    assert.deepEqual([...assistant.querySelectorAll("pre")].map((node) => node.textContent), ["original", "fixed", "details for operation"]);
+    assert.deepEqual(requests.filter((read) => read.operation === "get_execution").map((read) => read.request.messageSeq), [9]);
+    assert.equal(requests.find((read) => read.operation === "get_execution_input")?.request.receiptId, "start");
+    assert.equal(mounted.container.querySelector(".message-row.user")?.textContent, "prompt");
+    const checks = assistant.querySelector<HTMLDetailsElement>('details[aria-label="Run Checks"]')!;
+    const state = assistant.querySelector<HTMLDetailsElement>('details[aria-label="Input State"]')!;
+    assert.equal(checks.open, true); assert.equal(state.open, true);
+    await act(async () => { checks.open = false; checks.dispatchEvent(new mounted.dom.window.Event("toggle")); });
+    assert.equal(checks.open, false); assert.equal(state.open, true);
+    assert.equal(assistant.querySelector('[aria-label="Input Comparison"]')?.closest("details"), null);
+    await mounted.rerender({ inputReadContext: context, expandedArtifacts: {} });
+    await mounted.rerender({ inputReadContext: context, expandedArtifacts: { response: true } });
+    assert.equal(requests.filter((read) => read.operation === "get_execution").length, 2);
+  } finally { await mounted.cleanup(); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "artifactのnullと取得失敗は同じ展開・表示期間で一度だけ取得し、再open・再表示・page復帰で再取得できる。本文と失敗の説明を維持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md: assistant message ごとのTurn Summary; docs/design/auxiliary-session.md: Persistence" }
 // fault = "本文更新で欠落・失敗済みdetailを再取得するか、取得試行を解放せず再openでも最新detailを取得できない"
@@ -970,6 +1020,7 @@ type MountedSessionMessageColumn = {
   root: Root;
   rerender: (callbacks: {
     sessionId?: string;
+    inputReadContext?: SessionMessageColumnProps["inputReadContext"];
     isContentActive?: boolean;
     expandedArtifacts?: Record<string, boolean>;
     artifactDetailsEnabled?: boolean;
@@ -998,6 +1049,7 @@ type MountedSessionMessageColumn = {
 
 async function mountSessionMessageColumn(options: {
   sessionId?: string;
+  inputReadContext?: SessionMessageColumnProps["inputReadContext"];
   messages: Message[];
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
@@ -1170,6 +1222,7 @@ async function mountSessionMessageColumn(options: {
   const expandedArtifacts = options.expandedArtifacts ?? {};
   const renderMessageColumn = async (callbacks: {
     sessionId?: string;
+    inputReadContext?: SessionMessageColumnProps["inputReadContext"];
     isContentActive?: boolean;
     expandedArtifacts?: Record<string, boolean>;
     artifactDetailsEnabled?: boolean;
@@ -1196,6 +1249,7 @@ async function mountSessionMessageColumn(options: {
     await act(async () => {
       const messageColumn = React.createElement(MessageColumn, {
           sessionId: callbacks.sessionId ?? options.sessionId ?? "session-1",
+          inputReadContext: callbacks.inputReadContext ?? options.inputReadContext,
           character,
           messages: callbacks.messages ?? options.messages,
           messageKeys: callbacks.messageKeys ?? options.messageKeys,

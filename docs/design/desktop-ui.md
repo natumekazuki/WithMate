@@ -593,15 +593,17 @@ Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表
 
 ### Turn Input Details
 
-会話の`Input Details`は保存済みの受付・WithMate Turn参照から共通execution読取を利用する。通常表示では開始入力の原文との差と確認済み追加入力件数を分ける。Agent由来の入力は予約・保存済み会話とも、受付時に保存したCharacter avatarを右側、名前を本文上に置き、本文先頭のSession名から送信元を開く。avatar下のinfo入口から同じ読取結果のInput Detailsを開く。Auxiliary送信元は保存した所属MainとAuxiliary IDを指定する。未記録の表示snapshotは不明と示し、現在のCharacterや画面選択で過去の送信者を補わない。
+入力のチャット枠は送信者・送信した本文・添付を表示し、実行詳細の入口を持たない。Agent由来の入力は予約・保存済み会話とも、受付時に保存したCharacter avatarを右側、名前を本文上に置き、本文先頭のSession名から送信元を開く。Auxiliary送信元は保存した所属MainとAuxiliary IDを指定する。未記録の表示snapshotは不明と示し、現在のCharacterや画面選択で過去の送信者を補わない。応答前の予約・配送不明・失敗の理由と、編集・取消・Steer等の必要な状態・操作は対象入力の近くに残す。送信元Turn終了待ちは未開始のqueueに表示し、不明状態と区別する。
+
+実行設定・入力状態・原文比較・追加入力の詳細は、対応するassistantレスポンスの既存Detailsへ集約する。Detailsの展開時だけ保存応答のmessage sequenceまたは明示された実行中WithMate Turnから共通execution読取を行い、保存されたuser message sequenceから正確な開始入力の受付へつなぐ。会話内の隣接関係や現在選択から対応を推測しない。再展開時には取得し直し、閉じた後の古い読取を後の表示へ適用しない。本文・送信者表示のための入力origin読取とは取得契機を分ける。
 
 送信側は既存receiptを表示中のsource WithMate Turnから一括取得し、自身の保存Character avatarを左側、`@Character · Session名`と送信本文を同じまとまりに置く。出力内の厳密な送信位置は記録されないためsource Turn単位にまとめ、複数assistant messageへ重複表示しない。最初は320字までと全文文字数を示し、必要時に正確な宛先とreceiptから原文を継続取得する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別する。送信表示のための別台帳や本文コピーは持たない。詳細の配送・Turn状態は再展開と宛先の通知で再取得し、取得済み原文とは分ける。
 
 詳細では同じsnapshotの`Original Input`と予定／固定済み比較入力、添付参照を並べて確認できる。長文は同じsnapshotへの継続参照で取得し、再編集などにより継続できなくなった場合は再読込する。詳細取得後はそのsnapshotの状態・比較結果を表示し、古い状態取得の判定を本文へ使い回さない。変更者や全編集履歴は表示しない。
 
-`Input Details`と送信側の`Delivery Details`は既存の実行結果Detailsと同じ項目行・見出し・開閉表現を使う。`Input Details`は最初に`Execution Settings`として入力に捕捉されたProvider、Approval、対応ProviderのReviewer／Speed、Model、Reasoning、Sandbox／Agentを表示する。`Execution Settings`と、受付・Turnの状態、配送タイミング、入力変更・確認済み追加入力をまとめる`Input State`は、初期展開から個別に開閉できる。設定の出典を繰り返す補助labelは付けない。受付のない過去TurnはそのTurnに保存された設定だけを表示し、未記録の値を現在選択や既定値で補わない。捕捉された設定はProviderが実際に適用した結果と区別し、既存の`Run Checks`／`Operations`は実行結果の詳細として保持する。原文比較と分類別入力を続け、設定・状態を閉じても参照できるようにする。受付・Session・Turnの内部参照は末尾の`References`から必要時に開く。未開始の入力へtokensなどの実行結果を補わない。
+レスポンスDetailsは既存の`Run Checks`にあるProvider・Model等の実行情報と`Operations`を保持し、同じ設定を別の`Execution Settings`へ重複表示しない。Run Checksが記録されていない場合だけ、保存された設定を`Execution Settings`へ表示する。受付のない過去TurnはそのTurnに保存された設定だけを表示し、未記録の値を現在選択や既定値で補わない。捕捉された設定はProviderが実際に適用した結果とは扱わない。受付・Turnの状態、配送タイミング、入力変更・確認済み追加入力をまとめる`Input State`と、`Run Checks`または`Execution Settings`は初期展開から個別に開閉できる。原文比較と分類別入力はその外に置き、設定・状態を閉じても参照できるようにする。受付・Session・Turnの内部参照は末尾の`References`から必要時に開く。送信側の`Delivery Details`も既存Detailsと同じ項目行・見出し・開閉表現を使う。
 
-追加入力は配送分類ごとの総数を表示し、保存順の参照から個別に開く。参照一覧は必要時に同じ宛先・Turnへ継続取得し、取得失敗でも既読の参照と続きの位置を保持して再試行できる。message sequence未確定の入力は保存済み受付から詳細を開く。`Input Acceptance Pending`、`Additional Input Confirmed`、`Input Delivery Unknown`、`Input Not Sent`を区別し、未送信や未確定は確認済み件数へ含めず、記録の網羅性が不明な場合も示す。受付の配送完了とTurn全体の終端、WithMate TurnとProvider TurnのIDは別に表示する。過去の原文・対応関係が記録されていない場合は推測で補わない。
+追加入力は配送分類ごとの総数を表示し、保存順の参照から個別に開く。参照一覧は必要時に同じ宛先・Turnへ継続取得し、取得失敗でも既読の参照と続きの位置を保持して再試行できる。message sequence未確定の入力は保存済み受付から詳細を開く。`Input Acceptance Pending`、`Additional Input Confirmed`、`Input Delivery Unknown`、`Input Not Sent`を区別し、未送信や未確定は確認済み件数へ含めず、記録の網羅性が不明な場合も示す。受付の配送完了とTurn全体の終端は別に表示する。読み込まれた保存追加入力に同一WithMate TurnのProvider Turn参照がある場合は、レスポンスDetailsのReferencesで両IDを区別する。過去の原文・対応関係が記録されていない場合は推測で補わない。
 
 ## Diff Window
 

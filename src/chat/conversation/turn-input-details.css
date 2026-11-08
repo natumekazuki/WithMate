@@ -4,8 +4,6 @@
 .turn-input-details summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .turn-input-origin, .turn-input-state { font-weight: 600; }
 .turn-input-origin { overflow-wrap: anywhere; }
-.turn-input-summary { color: var(--muted); font-size: 0.78rem; }
-.turn-input-panel { margin-top: 10px; }
 .turn-input-rows { margin: 0; }
 .turn-input-rows.artifact-fold-body { margin-top: 10px; }
 .turn-input-rows .check-item { min-width: 0; gap: 8px 16px; }
