@@ -27,6 +27,7 @@ import { createDefaultSessionMemory } from "../src-shared/memory/session-memory-
 import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../src-shared/memory/session-memory-state.js";
 import type { SessionCharacterUsage, SessionSummaryPageRequest, HomeSessionSummaryPageResult } from "../src-shared/session/session-state.js";
 import type { BackgroundSourceRef } from "../src-shared/session/background-source-snapshot.js";
+import type { SessionHistoryReadScope } from "../src-shared/session/session-history-read-scope.js";
 import {
   type DiffPreviewPayload,
   getSessionIncarnationId,
@@ -81,6 +82,7 @@ import {
 } from "./auxiliary/auxiliary-session-storage.js";
 import { CharacterService } from "./character/character-service.js";
 import { refreshSessionCharacterRuntimeSnapshot } from "./character/character-runtime-service.js";
+import { resolveBackgroundPromptContext } from "./providers/background-prompt-context.js";
 import { CharacterWorkspaceOperationCoordinator } from "./character/character-workspace-operation-coordinator.js";
 import { CharacterStorage } from "./character/character-storage.js";
 import {
@@ -775,6 +777,16 @@ const backgroundRuntime = new BackgroundProductionRuntime({
     getAppSettings: () => requireAppSettingsStorage().getSettings(),
     getProviderCodingAdapter,
     getModelCatalog: (input) => getModelCatalog({ providerId: input.selection.providerId, workspacePath: input.session.workspacePath }),
+    resolvePromptContext: (input, settings) => resolveBackgroundPromptContext(input, settings, {
+      userDataPath: app.getPath("userData"),
+      refreshSnapshot: (characterId, previous) => requireCharacterService().refreshRuntimeSnapshot(characterId, previous),
+      characterContextService: memoryV6RuntimeApi?.characterContextService,
+      getTimingSnapshot: async (sessionId, observedAt) => requireSessionTurnStorage().getConversationTimingSnapshot(sessionId, observedAt),
+      onCharacterContextFailure: (owner, result) => writeAppLog({ level: "warn",
+            kind: "character-context.lifecycle.read-failed", process: "main",
+            message: "Character context was unavailable for a background turn",
+            data: { sessionId: owner.id, code: result.error.code } }),
+    }),
     projectBinding: (input) => {
       const runtime = memoryV6RuntimeApi;
       if (!runtime?.managedMcp) throw new Error("Background managed MCP runtime is unavailable.");
@@ -791,10 +803,19 @@ const backgroundRuntime = new BackgroundProductionRuntime({
     if (!worker || databaseMaintenanceRequested) throw new Error("Background source storage is unavailable.");
     return worker.stores.session.captureBackgroundSource(source);
   },
-  resolveAuthority: (session) => buildProviderAgentRuntimeAuthoritySnapshot({
-    characterId: session.characterId, workspacePath: session.workspacePath,
-    resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
-  }),
+  resolveAuthority: async (session, source) => {
+    const memoryAuthority = buildProviderAgentRuntimeAuthoritySnapshot({
+      characterId: session.characterId, workspacePath: session.workspacePath,
+      resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
+    });
+    const graph = await resolveSessionGraphSession(session.id, source.kind);
+    if (!memoryAuthority || !graph) return null;
+    let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
+    try { glossaryAuthority = projectGlossaryCheckoutAuthority(await glossaryApplicationService.resolvePrimaryCheckout(session.workspacePath)); }
+    catch { /* Non-Git workspaces have no glossary authority. */ }
+    return { ...memoryAuthority, sessionKind: session.sessionKind, sessionGraphOwner: graph.owner,
+      ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}) };
+  },
   sourceKinds: backgroundSourceKinds,
   resolveSessionFolderPath: (source) => resolveSessionFilesDirectory(app.getPath("userData"),
     source.kind === "auxiliary" ? source.parent.sessionId : source.sessionId),
@@ -823,11 +844,6 @@ const memoryRecordingController = new MemoryRecordingController({
   getSettings: () => requireAppSettingsStorage().getSettings(),
   resolveAuthority: (session) => buildProviderAgentRuntimeAuthoritySnapshot({ characterId: session.characterId,
     workspacePath: session.workspacePath, resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id }),
-  readCharacterDefinition: async (characterId) => {
-    const snapshot = await requireCharacterService().createRuntimeSnapshot(characterId);
-    if (!snapshot) throw new Error("Memory Character definition is unavailable.");
-    return snapshot.definitionMarkdown;
-  },
 });
 const backgroundAffectController = new BackgroundAffectController({
   runtime: backgroundRuntime,
@@ -835,18 +851,6 @@ const backgroundAffectController = new BackgroundAffectController({
     const worker = mainStoreContext.storageWorker;
     if (!worker || databaseMaintenanceRequested) throw new Error("Affect source storage is unavailable.");
     return worker.stores.session.captureBackgroundSource(source);
-  },
-  readMaterials: async (session, source) => {
-    const runtime = memoryV6RuntimeApi;
-    if (!runtime) throw new Error("Affect runtime is unavailable.");
-    const characterId = source.snapshot.session.characterId;
-    const snapshot = await requireCharacterService().createRuntimeSnapshot(characterId);
-    if (!snapshot) throw new Error("Affect Character definition is unavailable.");
-    const currentAffect = await runtime.affectStorage.getEffectiveState({
-      characterId, userId: "local-user", sessionId: session.id,
-      sessionSource: source.history.source,
-    });
-    return { characterDefinition: snapshot.definitionMarkdown, currentAffect };
   },
 });
 
@@ -863,12 +867,12 @@ async function publishBackgroundConversationEvent(event: SessionBackgroundEvent,
   backgroundRuntime.publish({ ...event, source: { kind, ...identity,
     parent: { sessionId: auxiliary.parentSessionId, incarnationId: getSessionIncarnationId(parent.summary) } } });
 }
-async function resolveSessionGraphSession(sessionId: string): Promise<ResolvedSessionGraphSession | null> {
+async function resolveSessionGraphSession(sessionId: string, sourceKind?: "main" | "auxiliary"): Promise<ResolvedSessionGraphSession | null> {
   const generation = mainStoreContext.storageWorker;
   const sessions = requireSessionStorage();
   if (!generation || databaseMaintenanceRequested || !sessions.getSessionMetadata) return null;
-  const main = await sessions.getSessionMetadata(sessionId);
-  const auxiliary = main ? null : await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
+  const main = sourceKind === "auxiliary" ? null : await sessions.getSessionMetadata(sessionId);
+  const auxiliary = sourceKind === "main" || main ? null : await requireAuxiliarySessionService().getAuxiliarySessionMetadata(sessionId);
   const parentMetadata = main ?? (auxiliary ? await sessions.getSessionMetadata(auxiliary.parentSessionId) : null);
   if (mainStoreContext.storageWorker !== generation || databaseMaintenanceRequested || !parentMetadata) return null;
   const parent = parentMetadata.summary;
@@ -917,10 +921,17 @@ const sessionGraphWindowService = new SessionGraphWindowService<BrowserWindow>({
     if (!window.webContents.isDestroyed() && !window.webContents.isCrashed()) window.webContents.send(WITHMATE_SESSION_GRAPH_CHANGED_EVENT, sessionId);
   },
 });
+async function validateBackgroundSource(scope: SessionHistoryReadScope): Promise<boolean> {
+  const generation = mainStoreContext.storageWorker;
+  if (!generation || databaseMaintenanceRequested) return false;
+  const source = await generation.stores.session.readBackgroundSource(scope);
+  return source !== null && mainStoreContext.storageWorker === generation && !databaseMaintenanceRequested;
+}
 const sessionGraphRuntimeService = new SessionGraphRuntimeService({
   applicationService: sessionGraphApplicationService,
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
+  validateBackgroundSource,
 });
 const sessionHistoryRuntimeService = new SessionHistoryRuntimeService({
   read: async (input) => {
@@ -949,6 +960,7 @@ const glossaryRuntimeService = new GlossaryRuntimeService({
   resolveActorSession: resolveAgentRuntimeActorSession,
   getProactiveCreateLimit: getGlossaryProactiveCreateLimit,
   providerAgentRuntimeTurns,
+  validateBackgroundSource,
 });
 
 async function beginManagedProviderTurn(

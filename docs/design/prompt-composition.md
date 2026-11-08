@@ -27,6 +27,10 @@ Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。
 
 ## 設定とSession種別
 
+背景のCharacter Memory・対象Memory・Affectも同じ`composeProviderPrompt()`を利用する。`resolveBackgroundPromptContext()`が実sourceのsnapshotを通常と同じ更新規則で解決し、設定が有効なら同じCharacter context resolverからAffectを取得する。MainのTimingは元Mainの保存済み情報を使い、Auxiliaryは通常turnと同じく独立したTiming投影を持たない。SessionFolderはMain自身、Auxiliaryでは親Mainのものを解決し、通常と同じmanaged additional directoryとしてProviderへ渡す。
+
+背景のsystem側には非対話channel・固定scope・final出力の破棄という実行条件を加え、用途指示はinput側へ置く。用途の管理責務と必要な行動方針は編集可能なpreset本文に集約する。Character定義と既存Affectを用途材料へ二重に入れず、context設定を迂回する別注入は行わない。通常threadとは独立した`executionTarget`を使い、元会話のtranscriptをpromptへ全文コピーしない。共通promptの利用は管理toolの認可範囲を広げず、実source・owner・targetと用途別writeの境界は[Background Execution](background-execution.md)に従う。
+
 `AppSettings`の`characterDefinitionEnabled`、`characterAffectContextEnabled`、`conversationTimingEnabled`、`toolCallPresenceEnabled`は個別に対象sectionを切り替える。欠損した既存保存値では既定の`true`を使い、保存後の次turnから反映する。AffectとTimingをOFFにした通常Sessionでは、それぞれのturn開始時resolverも呼ばない。通常turn内のMemory／Affect MCPの利用説明やprovider自身の指示は、このcontext設定では切り替わらない。
 
 `character-authoring` Sessionは`character.md`と`character-notes.md`自体を成果物として編集する。turn開始時にcanonical `character.md`からsnapshotを作り直す一方、通常Session向けの`Output Boundary`、`Tool Call Presence`、Affect、Timingは注入しない。authoring workspaceと管理Skillの指示は別経路として保持する。

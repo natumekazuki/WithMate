@@ -22,6 +22,7 @@ V6 foundationは次を成立させる。
 - V6 Memory に紐づく暗号化 file object / quota / export / GC の拡張設計は`docs/design/v6-memory-protected-objects.md`を参照する。
 - provider runtime boundaryは`docs/design/provider-adapter.md`へ反映する。
 - current保存構造の棚卸しは`docs/design/database-schema.md`を参照する。
+- 背景AgentによるMemory管理・発火・用途別権限は[Background Execution](background-execution.md)を参照する。参照は通常認可範囲、訂正・忘却を含む書込は捕捉した用途別target内で既存操作を利用する。
 
 ## Product Principles
 
@@ -38,8 +39,6 @@ foundationでは次を扱わない。
 - Memoryの毎turn prompt常設注入
 - mutableなSession working state管理
 - session summary / next actionsの自動更新
-- turn完了後の自動Memory抽出
-- background Memory generation
 - Mate Profile / Growthの復活
 - Character definitionの自動更新
 - Character Stream / Monologue連携

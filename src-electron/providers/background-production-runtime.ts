@@ -1,5 +1,5 @@
 import type { BackgroundExecutionScope, BackgroundPurpose } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import { backgroundMemoryToolOperations, getBackgroundReadOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
@@ -59,7 +59,8 @@ export class BackgroundProductionRuntime {
     getAppSettings(): AppSettings | Promise<AppSettings>;
     getModelCatalog(session: Session, providerId: string): ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
-    resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
+    resolveAuthority(session: Session, source: BackgroundSourceRef): (ProviderAgentRuntimeAuthoritySnapshot & Record<string, unknown>) | null
+      | Promise<(ProviderAgentRuntimeAuthoritySnapshot & Record<string, unknown>) | null>;
     resolveSessionFolderPath?(source: BackgroundSourceRef): string;
     sourceKinds: BackgroundRegistration["sourceKinds"];
     onFailure?: (event: BackgroundFailureEvent) => void;
@@ -158,7 +159,7 @@ export class BackgroundProductionRuntime {
       || session.sessionKind === "character-authoring") {
       return { status: "unavailable", code: "BACKGROUND_SOURCE_INVALID", reason: "The saved source conversation is no longer eligible." };
     }
-    const authoritySnapshot = this.deps.resolveAuthority(session);
+    const authoritySnapshot = await this.deps.resolveAuthority(session, captured.history.source);
     if (!authoritySnapshot) return { status: "unavailable", code: "BACKGROUND_AUTHORITY_UNAVAILABLE", reason: "The source Character authority is unavailable." };
     const sessionFolderPath = this.deps.resolveSessionFolderPath?.(input.source);
     const fileAccess = sessionFolderPath === undefined ? undefined : await captureBackgroundMemoryFileAccess({
@@ -169,7 +170,7 @@ export class BackgroundProductionRuntime {
     const scope = { ...buildBackgroundExecutionScope(captured, input), ...(fileAccess ? { fileAccess } : {}) };
     return { status: "ready", instructionText: configured.instructionText, call: {
       context: { session, actorSessionId: session.id, authoritySnapshot, scope,
-        operationGrants: [...getSessionHistoryAgentRuntimeOperations(),
+        operationGrants: [...getSessionHistoryAgentRuntimeOperations(), ...getBackgroundReadOperations(),
           ...Object.values(backgroundMemoryToolOperations(input.purpose, true, fileAccess))] },
       selection: { ...configured.selection },
     } };

@@ -13,7 +13,9 @@ function managedServerUrls(binding: ProviderAgentRuntimeBindingProjection): [str
   if (binding.background) {
     if (!connection.sessionHistoryUrl) throw new Error("Background execution requires its session-history MCP endpoint.");
     return [[WITHMATE_MANAGED_SESSION_HISTORY_MCP_NAME, connection.sessionHistoryUrl],
-      [WITHMATE_MANAGED_MEMORY_MCP_NAME, connection.memoryUrl]];
+      [WITHMATE_MANAGED_MEMORY_MCP_NAME, connection.memoryUrl],
+      [WITHMATE_MANAGED_GLOSSARY_MCP_NAME, connection.glossaryUrl],
+      [WITHMATE_MANAGED_SESSION_GRAPH_MCP_NAME, connection.sessionGraphUrl]];
   }
   return [
     [WITHMATE_MANAGED_MEMORY_MCP_NAME, connection.memoryUrl],

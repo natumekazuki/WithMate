@@ -5,7 +5,7 @@ import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/ba
 import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
 import { assertSessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
-import { backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import { backgroundMemoryToolOperations, getBackgroundReadOperations } from "../../src-shared/agent-runtime/background-operations.js";
 
 const backgroundHistoryOperations = new Set(getSessionHistoryAgentRuntimeOperations());
 
@@ -254,7 +254,7 @@ export class AgentRuntimeBindingRegistry {
     const result = this.resolveIdentity(bindingReference, now);
     if (!result.ok) return result;
     const scope = result.binding.backgroundScope;
-    if (scope && !backgroundHistoryOperations.has(operation)
+    if (scope && !backgroundHistoryOperations.has(operation) && !getBackgroundReadOperations().includes(operation)
       && !Object.values(backgroundMemoryToolOperations(scope.purpose, true, scope.fileAccess)).includes(operation)) {
       return { ok: false, code: "SESSION_BINDING_FORBIDDEN" };
     }

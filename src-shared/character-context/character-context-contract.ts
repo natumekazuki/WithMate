@@ -11,6 +11,7 @@ export const CHARACTER_CONTEXT_SCHEMA_VERSION = "withmate-character-context-v1" 
 
 export type CharacterOperationAuthority =
   | { kind: "conversation" }
+  | { kind: "background_management"; reason: string }
   | { kind: "explicit_user_instruction"; reason: string }
   | { kind: "operator"; reason: string };
 

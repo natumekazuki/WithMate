@@ -4,6 +4,8 @@
 
 Accepted
 
+2026-11-08の[共通promptと用途別管理役](#共通promptと用途別管理役)により、専用prompt材料、登録のみの用途操作、Graph／Glossaryの一律除外、背景Affect訂正の明示要求必須は当該管理用途で適用対象外とする。元の判断本文を保持し、source・target・失効・resetの明示要求境界は維持する。
+
 背景のfile／exportを許可しない従前の範囲は、[背景Memoryの添付と必要時復元](#背景memoryの添付と必要時復元)の後継判断で置き換える。Memory target認可と呼出ごとのfile認可は維持・分離する。
 
 登録を一件の公開入力へ限定する範囲とAffectの候補件数上限は、[一括登録と件数上限](#一括登録と件数上限)の後継判断で置き換える。既存項目単位の保存・認可・原子性は維持する。
@@ -204,3 +206,13 @@ completed／failed／canceledはAgent呼出・開始処理・取消の終了状�
 2026-11-08に採用。AIが根拠となる保存済みmessageのseqを`sourceMessageSeq`で指定し、アプリが実sourceのTurnのuser／assistant message位置との完全一致からTurnと完了時刻を解決する。過去Turnの再検討を維持し、対応なしmessageを周辺・最新Turnへ補完しない。同一source・許可history・終端状態・失効・保存時刻の既存境界を保つ。
 
 この判断は候補へ内部Turn IDを直接指定することを必須とした部分を置き換える。公開済みの`sourceTurnId`入力は代替参照として維持し、両参照の併用と参照なしは拒否する。新しい参照台帳・DB・本文推定は持たず、既存Turn列を使う。AIの意味上の誤参照はseqでも残るため、その根絶や元ログの拒否原因の確定とは扱わない。現行契約は[Background Execution](../design/background-execution.md#affect登録入力と会話owner)を正本とする。
+
+## 共通promptと用途別管理役
+
+2026-11-08、ユーザー承認により採用。三用途は通常のsystem prompt composerと設定を共用し、実Character snapshot・Affect context・元MainのSessionFolderを供給する。Auxiliaryは自身のCharacter／Affectと親Main共有folderを使う。用途別材料に定義・Affectを再投入せず、編集可能な指示本文で管理責務を示す。非対話channelとfinal破棄は技術条件として伝える。保存済み編集本文を自動置換しない。
+
+WithMate管理readは通常と同じ認可範囲へ揃える。Memoryはuser-global・実Character・許可Project、Graphは元Main共有Graph、Glossaryは許可checkoutを参照し、背景専用Session／Graphを作らない。Graph applyとGlossary mutationは付与しない。元会話と異なるProviderを認めても、実source kind・incarnation・ownerIdentity・親・Character・checkout・Graph owner、呼出しごとのbinding／turn失効は維持する。Provider native capabilityは設定済みsandboxに従い、一律無効化を加えない。
+
+Character Memoryは既存append／correct／forget、対象Memoryはappend＋supersedes／forgetを捕捉した書込target内で利用する。Affectは既存appraiseに加え、誤eventのcorrectを背景管理権限で実行できる。通常correctの明示要求契約を弱めず、背景が`explicitUserRequest=true`を捏造する方式を採らない。自然な感情変化は新appraisalと区別し、session／relationship resetは明示指示のまま背景へ付与しない。
+
+従前の登録のみの操作上限、専用の定義／Affect材料取得、Graph／Glossaryの一律除外、背景訂正の明示要求必須はこの範囲で置き換える。汎用上書きAPI、新DB／台帳、既存データの再生成は追加しない。保存済みデータ保護、添付の独立file認可、通常turnの認可、取消後の未確定write拒否を維持する。現行契約は[Background Execution](../design/background-execution.md)と[Prompt Composition](../design/prompt-composition.md)を正本とする。

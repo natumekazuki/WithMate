@@ -480,7 +480,7 @@ export class CharacterContextApplicationService {
   async correctAffect(request: unknown, transport: CharacterContextTransport = "internal", sessionSource?: AffectSessionSource): Promise<unknown> {
     return this.measure("character_affect.correct", transport, "unknown", async () => {
       const input = validateCharacterAffectCorrectRequest(request);
-      const authorityError = requireExplicitAuthority(input.authority);
+      const authorityError = input.authority.kind === "background_management" ? null : requireExplicitAuthority(input.authority);
       if (authorityError) {
         return authorityError;
       }

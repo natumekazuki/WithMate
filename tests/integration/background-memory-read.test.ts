@@ -7,7 +7,7 @@ import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 import { buildWithMateMemoryCli, buildWithMateGlossaryCli, buildWithMateSessionGraphCli } from "../../scripts/build/build-withmate-memory-cli.js";
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS, backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
+import { BACKGROUND_REGISTRATION_OPERATIONS, backgroundMemoryToolOperations, getBackgroundReadOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import { AFFECT_SCHEMA_VERSION } from "../../src-shared/character-affect/affect-contract.js";
 import { CHARACTER_CONTEXT_SCHEMA_VERSION } from "../../src-shared/character-context/character-context-contract.js";
 import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
@@ -69,7 +69,7 @@ async function seed(f: Fixture) {
 
 function start(f: Fixture, purpose: "affect" | "target-memory" | "character-memory" = "target-memory") {
   return f.started("main", "claude", purpose, undefined, getBackgroundMemoryReadOperations(), {
-    memoryTargets: [projectTarget, characterTarget], allowedProjectIds: ["project-a", "project-b"],
+    memoryTargets: [projectTarget, characterTarget], allowedProjectIds: ["project-a"],
   });
 }
 
@@ -249,7 +249,7 @@ test("通常Auxiliaryは現在sourceを照合し再作成時にbindingを再発�
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景AffectのinspectはMCP/CLIで実Main/Auxiliaryのsession記録と同Characterのrelationshipだけを読み、caller identity・別用途・訂正/resetを拒否して保存状態を変えない"
+// claim = "背景全用途のinspectはMCP/CLIで実Main/Auxiliaryのsession記録と同Characterのrelationshipだけを読み、caller identityと未接続mutationを拒否して保存状態を変えない"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memory-read" }
 // fault = "inspectの公開とgrantが食い違う、AuxiliaryをMainとして読む、別Character/会話のsession記録を返す、広いgrantで用途やmutation制限を迂回する"
 // observable = "公開tool、独立した保存済みtarget ID集合、MCP/CLI応答一致、拒否応答、Affect保存table snapshot"
@@ -284,7 +284,7 @@ test("背景Affect inspectはMain/Auxiliaryの実ownerをMCP/CLIで読み権限�
       f.db.prepare(`SELECT * FROM character_affect_${name}_v6 ORDER BY rowid`).all());
     const before = snapshot();
     for (const sessionId of ["main", "aux"]) {
-      // Deliberately broad grants still cannot authorize correction/reset or another purpose's inspect.
+      // Broad grants cannot make unconnected management mutations available.
       const binding = f.project(f.started(sessionId, "claude", "affect", undefined, getMemoryV6AgentRuntimeOperations()));
       const { client, transport } = await f.connect(binding, "memoryUrl");
       assert.ok((await client.listTools()).tools.some((tool) => tool.name === "character_affect.inspect"));
@@ -306,10 +306,10 @@ test("背景Affect inspectはMain/Auxiliaryの実ownerをMCP/CLIで読み権限�
     }
     for (const purpose of ["character-memory", "target-memory"] as const) {
       const binding = f.project(f.started("main", "claude", purpose, undefined, getMemoryV6AgentRuntimeOperations()));
-      const { client, transport } = await f.connect(binding, "memoryUrl");
-      assert.equal((await client.listTools()).tools.some((tool) => tool.name === "character_affect.inspect"), false);
-      assert.equal((await f.request(binding, binding.managedMcp!.memoryUrl, "character_affect.inspect", transport.sessionId, {})).status, 403);
-      assert.notEqual((await cli(f, binding, "affect-inspect", {})).code, 0);
+      const { client } = await f.connect(binding, "memoryUrl");
+      assert.equal((await client.listTools()).tools.some((tool) => tool.name === "character_affect.inspect"), true);
+      assert.equal((await client.callTool({ name: "character_affect.inspect", arguments: {} })).isError, undefined);
+      assert.equal((await cli(f, binding, "affect-inspect", {})).code, 0);
     }
     assert.deepEqual(snapshot(), before);
   } finally { await f.close(); }
@@ -521,7 +521,7 @@ test("通常と背景の未登録Project初回保存はMCP/CLIで同じadmission
 
 // @test-value v2
 // kind = "contract"
-// claim = "元会話と異なる背景Providerの許可5 readはmanaged MCPと配布CLIから実Memory Workerの同じ保存内容を返す"
+// claim = "元会話と異なる背景Providerの通常認可readはmanaged MCPと配布CLIから実Memory Workerの同じ保存内容を返す"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
 // fault = "別Provider背景readを拒否する、入口間で異なるtargetや本文を返す、forgotten本文を通常readへ戻す"
 // observable = "MCP公開tool名、MCPとCLIのJSON一致、seed済みentry ID・本文・tag、検索のforgotten除外"
@@ -529,7 +529,7 @@ test("通常と背景の未登録Project初回保存はMCP/CLIで同じadmission
 // scope = "managed HTTP MCP and bundled child-process CLI through application authorization to MemoryV6WorkerClient.storage"
 // lifecycle = "permanent"
 // impact = "許可された生成材料を取得できないか、忘却済み本文を背景Providerへ公開する"
-// distinction = "通常Memory単体testやhistory固定範囲testでは背景bindingから両公開入口と実Workerの接続を検証できない。推論なしの固定fixtureで5操作をまとめる"
+// distinction = "通常Memory単体testやhistory固定範囲testでは背景bindingから両公開入口と実Workerの接続を検証できない。推論なしの固定fixtureで読取操作をまとめる"
 // @end-test-value
 test("別Provider背景のMemory readが実MCPと配布CLIで一致する", async () => {
   const f = await fixture();
@@ -539,7 +539,9 @@ test("別Provider背景のMemory readが実MCPと配布CLIで一致する", asyn
     const { client } = await f.connect(binding, "memoryUrl");
     assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [
       "character_memory.search", "memory.get_entry", "memory.list_entries", "memory.list_tags", "memory.search",
-    ]);
+      "character_affect.inspect", "character_context.get", "character_context.metrics", "memory.audit", "memory.characters",
+      "memory.file_usage", "memory.instances", "memory.list_targets", "memory.status",
+    ].sort());
     const operations = [
       { tool: "memory.search", command: "search", input: { targets: [publicProject], query: "needle" } },
       { tool: "memory.list_entries", command: "list-entries", input: { target: publicProject, includeBody: true } },
@@ -566,13 +568,122 @@ test("別Provider背景のMemory readが実MCPと配布CLIで一致する", asyn
 });
 
 // @test-value v2
-// kind = "security"
-// claim = "背景readのtarget集合・実entry所属・identity・grant・handleは両公開入口とapplicationで強制される"
+// kind = "contract"
+// claim = "背景三用途は通常scopeのMemory・診断・元Main Graph・許可checkout Glossaryを異ProviderのMCP/CLIから読み、Graph/Glossary変更とsource置換後の読取を拒否する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "scopeをauthority全体やglobalへ拡張する、IDだけで外部entryを返す、広いissued grantやcapability省略で背景readの上限を突破する"
+// fault = "捕捉write targetへreadまで狭める、通常Provider一致を背景readへ適用する、同名MainとAuxiliaryのGraph ownerを混同する、Graph/Glossary mutationを公開する、失効sourceからデータを返す"
+// observable = "MCPと配布CLIの保存済み本文・Graph topic・Glossary定義・診断成功、公開tool集合、変更拒否とsource置換後のerror"
+// observation_boundary = "public-boundary"
+// scope = "Mainと同名Mainを持つAuxiliaryの背景managed MCP/配布CLIからMemory Worker、Session Graph runtime、Glossary filesystem applicationまで"
+// lifecycle = "permanent"
+// impact = "管理役が必要な現在情報を読めないか、別用途の管理データを無断変更し、再作成済み会話へ旧権限を持ち越す"
+// distinction = "各serviceの通常binding testでは異Provider背景turnとwrite捕捉targetに独立したread scopeを確認できない"
+// risk_tags = ["authorization", "privacy"]
+// @end-test-value
+test("背景三用途の通常readとGraph・Glossary readをMCPと配布CLIで提供する", async () => {
+  const f = await fixture(undefined, undefined, () => new Date("2026-11-01T01:00:00.000Z"));
+  try {
+    await seed(f);
+    await execFileAsync("git", ["init", "--quiet", "--initial-branch=main", f.directory], { windowsHide: true });
+    const glossary = new GlossaryApplicationService();
+    const checkout = await glossary.resolvePrimaryCheckout(f.directory);
+    await glossary.create(checkout, { mode: "explicit", entry: { term: "Background", definition: "Shared glossary definition" } });
+    await f.worker.stores.sessionGraph.execute({ sessionId: "main", incarnationId: "inc-main" }, "apply", {
+      expectedRevision: 0, topics: [{ id: "management", title: "Shared graph topic" }],
+    }, { sessionId: "main", sessionTitle: "Main", role: "main", character: { id: "character", name: "Character" } });
+    for (const purpose of ["target-memory", "character-memory", "affect"] as const) {
+      const binding = f.project(f.started("main", "claude", purpose, undefined,
+        [...getBackgroundMemoryReadOperations(), ...getBackgroundReadOperations()], {
+          memoryTargets: [], allowedProjectIds: ["project-a"], authoritySnapshot: {
+            glossaryPrimaryCheckout: projectGlossaryCheckoutAuthority(checkout), sessionGraphOwner: { sessionId: "main", incarnationId: "inc-main" },
+          },
+        }));
+      const { client } = await f.connect(binding, "memoryUrl");
+      for (const op of [
+        { tool: "memory.search", command: "search", input: { targets: [{ kind: "user-global" }], query: "needle" } },
+        { tool: "memory.list_targets", command: "list-targets", input: {} },
+        { tool: "memory.audit", command: "audit", input: { allTargets: true } },
+        { tool: "memory.characters", command: "characters", input: {} },
+        { tool: "memory.file_usage", command: "file-usage", input: {} },
+        { tool: "memory.status", command: "status", input: {} },
+        { tool: "memory.instances", command: "instances", input: {} },
+        { tool: "character_context.metrics", command: "character-metrics", input: {} },
+        { tool: "character_context.get", command: "context-get", input: { memoryLimit: 0 } },
+      ]) {
+        const mcp = await client.callTool({ name: op.tool, arguments: op.input });
+        const child = await cli(f, binding, op.command, op.input);
+        assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+        assert.equal(child.code, 0, JSON.stringify(child.value));
+        if (op.command === "search") {
+          assert.deepEqual(mcp.structuredContent, child.value);
+          assert.equal(child.value.items[0].title, "private global needle");
+        }
+      }
+      const graph = await f.connect(binding, "sessionGraphUrl"), terms = await f.connect(binding, "glossaryUrl");
+      assert.deepEqual((await graph.client.listTools()).tools.map((tool) => tool.name).sort(), [
+        "session_graph.context", "session_graph.get", "session_graph.list_topics", "session_graph.recent", "session_graph.search",
+      ]);
+      assert.deepEqual((await terms.client.listTools()).tools.map((tool) => tool.name).sort(), [
+        "glossary.get", "glossary.list", "glossary.list_targets", "glossary.search", "glossary.validate",
+      ]);
+      const graphMcp = await graph.client.callTool({ name: "session_graph.list_topics", arguments: {} });
+      const graphChild = await cli(f, binding, "list-topics", {}, {}, graphCli);
+      assert.equal(graphMcp.isError, undefined, JSON.stringify(graphMcp));
+      assert.equal(graphChild.code, 0, JSON.stringify(graphChild.value));
+      assert.deepEqual(graphMcp.structuredContent, graphChild.value);
+      assert.equal(graphChild.value.items[0].title, "Shared graph topic");
+      const termMcp = await terms.client.callTool({ name: "glossary.get", arguments: { termOrAlias: "Background" } });
+      const termChild = await cli(f, binding, "get", { termOrAlias: "Background" }, {}, glossaryCli);
+      assert.equal(termMcp.isError, undefined, JSON.stringify(termMcp));
+      assert.equal(termChild.code, 0, JSON.stringify(termChild.value));
+      assert.deepEqual(termMcp.structuredContent, termChild.value);
+      assert.match(JSON.stringify(termChild.value), /Shared glossary definition/);
+      for (const [route, input] of [["session-graph/apply", { expectedRevision: 1 }],
+        ["glossary/create", { mode: "explicit", entry: { term: "Denied", definition: "Denied" } }]] as const) {
+        assert.notEqual((await direct(f, binding, route, input)).status, 200);
+      }
+      f.db.prepare("UPDATE sessions_v6 SET incarnation_id = 'replacement' WHERE id = 'main'").run();
+      assert.equal((await terms.client.callTool({ name: "glossary.get", arguments: { termOrAlias: "Background" } })).isError, true);
+      assert.equal((await graph.client.callTool({ name: "session_graph.list_topics", arguments: {} })).isError, true);
+      assert.notEqual((await cli(f, binding, "list-topics", {}, {}, graphCli)).code, 0);
+      assert.notEqual((await cli(f, binding, "get", { termOrAlias: "Background" }, {}, glossaryCli)).code, 0);
+      f.db.prepare("UPDATE sessions_v6 SET incarnation_id = 'inc-main' WHERE id = 'main'").run();
+    }
+    f.db.prepare(`INSERT INTO sessions_v6(id,incarnation_id,title,state,provider_id,catalog_revision,model_id,approval_mode,
+      character_id,character_snapshot_json,created_at,updated_at,last_active_at)
+      VALUES ('aux','same-created-at','Unrelated Main','active','codex',1,'test','on-request','character','{}','now','now','now')`).run();
+    const unrelatedOwner = { sessionId: "aux", incarnationId: "same-created-at" };
+    await f.worker.stores.sessionGraph.execute(unrelatedOwner, "apply", { expectedRevision: 0,
+      topics: [{ id: "unrelated", title: "Unrelated Main private graph" }] },
+    { sessionId: "aux", sessionTitle: "Unrelated Main", role: "main", character: { id: "character", name: "Character" } });
+    const auxiliaryBinding = f.project(f.started("aux", "claude", "affect", undefined, getBackgroundReadOperations(), {
+      authoritySnapshot: { sessionGraphOwner: { sessionId: "main", incarnationId: "inc-main" } },
+    }));
+    const auxiliaryGraph = await f.connect(auxiliaryBinding, "sessionGraphUrl");
+    const auxiliaryMcp = await auxiliaryGraph.client.callTool({ name: "session_graph.list_topics", arguments: {} });
+    const auxiliaryChild = await cli(f, auxiliaryBinding, "list-topics", {}, {}, graphCli);
+    assert.equal(auxiliaryMcp.isError, undefined, JSON.stringify(auxiliaryMcp));
+    assert.equal(auxiliaryChild.code, 0, JSON.stringify(auxiliaryChild.value));
+    assert.deepEqual(auxiliaryMcp.structuredContent, auxiliaryChild.value);
+    assert.equal(auxiliaryChild.value.items[0].title, "Shared graph topic");
+    assert.doesNotMatch(JSON.stringify(auxiliaryChild.value), /Unrelated Main/);
+    const wrongOwnerBinding = f.project(f.started("aux", "claude", "affect", undefined, getBackgroundReadOperations(), {
+      authoritySnapshot: { sessionGraphOwner: unrelatedOwner },
+    }));
+    const wrongOwnerGraph = await f.connect(wrongOwnerBinding, "sessionGraphUrl");
+    assert.equal((await wrongOwnerGraph.client.callTool({ name: "session_graph.list_topics", arguments: {} })).isError, true);
+    assert.notEqual((await cli(f, wrongOwnerBinding, "list-topics", {}, {}, graphCli)).code, 0);
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "背景readの通常認可target・実entry所属・identity・grant・handleは両公開入口とapplicationで強制される"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "許可Projectや現在Characterを越えて読む、IDだけで外部entryを返す、広いissued grantやcapability省略で用途writeの上限を突破する"
 // observable = "MCP直接HTTP拒否、CLI非zeroとerror、runtime認可error、拒否後も許可readの保存本文"
 // observation_boundary = "public-boundary"
-// scope = "captured Memory targets and binding authorization across MCP, bundled CLI and direct authenticated runtime calls"
+// scope = "normal read authority and captured write targets across MCP, bundled CLI and direct authenticated runtime calls"
 // lifecycle = "permanent"
 // impact = "許可外Memory・Characterの漏えい、背景からの変更・file export・別機能の権限逸脱"
 // distinction = "tool一覧は直接呼出の拒否を証明しない。既存の通常認可testでは異Providerの背景例外と通常Provider一致の同時維持を検証しない"
@@ -586,7 +697,6 @@ test("背景Memoryの範囲拡大・直接write・他identityとbindingを拒否
     const { client, transport } = await f.connect(binding, "memoryUrl");
     const outside = [
       { tool: "memory.search", command: "search", route: "search", input: { targets: [publicOtherProject], query: "needle" } },
-      { tool: "memory.search", command: "search", route: "search", input: { targets: [{ kind: "user-global" }], query: "needle" } },
       { tool: "memory.list_entries", command: "list-entries", route: "list_entries", input: { target: publicOtherProject } },
       { tool: "memory.list_tags", command: "list-tags", route: "list_tags", input: { targets: [publicOtherProject] } },
       { tool: "memory.get_entry", command: "get-entry", route: "get_entry", input: { target: publicProject, entryId: ids.outside } },
@@ -597,10 +707,10 @@ test("背景Memoryの範囲拡大・直接write・他identityとbindingを拒否
       const child = await cli(f, binding, op.command, op.input);
       assert.equal(mcp.isError, true, op.tool);
       assert.notEqual(child.code, 0);
-      assert.equal(child.value.error.code, "MEMORY_FORBIDDEN");
+      assert.match(child.value.error.code, /^MEMORY_(FORBIDDEN|INVALID_FIELD)$/);
       assert.deepEqual(mcp.structuredContent, child.value);
       const raw = await direct(f, binding, op.route, op.input);
-      assert.partialDeepStrictEqual(raw.value, { error: { code: "MEMORY_FORBIDDEN" } });
+      assert.partialDeepStrictEqual(raw.value, { error: { code: child.value.error.code } });
     }
     const forbidden = [
       { tool: "memory.append", command: "append", route: "append", input: { target: publicProject, kind: "note", title: "denied", body: "denied", preview: "denied", tags: [], idempotencyKey: "denied" } },
@@ -608,7 +718,6 @@ test("背景Memoryの範囲拡大・直接write・他identityとbindingを拒否
       { tool: "memory.move_entry", command: "move-entry", route: "move_entry", input: { entryId: ids.project, from: publicProject, to: publicOtherProject, reason: "denied", idempotencyKey: "denied" } },
       { tool: "memory.get_file", command: "get-file", route: "get_file", input: { target: publicProject, objectId: "object", outputPath: join(f.directory, "denied.txt") } },
       { tool: "memory.export_files", command: "export-files", route: "export_files", input: { target: publicProject, entryId: ids.project, outputDirectoryPath: f.directory } },
-      { tool: "memory.list_targets", command: "list-targets", route: "list_targets", input: {} },
     ];
     for (const op of forbidden) {
       assert.equal((await f.request(binding, binding.managedMcp!.memoryUrl, op.tool, transport.sessionId, op.input)).status, 403);
@@ -616,15 +725,6 @@ test("背景Memoryの範囲拡大・直接write・他identityとbindingを拒否
       assert.notEqual(child.code, 0, op.command);
       assert.equal(child.value.error.code, "MEMORY_FORBIDDEN", JSON.stringify(child.value));
       assert.partialDeepStrictEqual((await direct(f, binding, op.route, op.input)).value, { error: { code: "MEMORY_FORBIDDEN" } });
-    }
-    for (const [url, tool, artifact, command] of [
-      [binding.managedMcp!.glossaryUrl, "glossary.list", glossaryCli, "list"],
-      [binding.managedMcp!.sessionGraphUrl, "session_graph.list_topics", graphCli, "list-topics"],
-    ]) {
-      assert.equal((await f.request(binding, url, tool, undefined, {})).status, 403);
-      const child = await cli(f, binding, command, {}, {}, artifact);
-      assert.notEqual(child.code, 0);
-      assert.match(JSON.stringify(child.value), /SESSION_BINDING_FORBIDDEN/);
     }
     const forged = { targets: [publicProject], query: "needle", characterId: "other-character" };
     assert.equal((await client.callTool({ name: "memory.search", arguments: forged })).isError, true);
@@ -650,12 +750,14 @@ test("背景Memoryの範囲拡大・直接write・他identityとbindingを拒否
         assert.equal(child.value.error.code, "MEMORY_FORBIDDEN");
       }
       for (const [artifact, command, route, errorCode] of [
-        [glossaryCli, "list", "glossary/list", "GLOSSARY_SESSION_BINDING_FORBIDDEN"],
-        [graphCli, "list-topics", "session-graph/list-topics", "SESSION_BINDING_FORBIDDEN"],
+        [glossaryCli, "create", "glossary/create", "GLOSSARY_SESSION_BINDING_FORBIDDEN"],
+        [graphCli, "apply", "session-graph/apply", "SESSION_BINDING_FORBIDDEN"],
       ]) {
-        const raw = await direct(f, broad, route, {}, broad.bindingReference, capability);
+        const mutation = command === "create" ? { mode: "explicit", entry: { term: "Denied", definition: "Denied" } }
+          : { expectedRevision: 0 };
+        const raw = await direct(f, broad, route, mutation, broad.bindingReference, capability);
         assert.partialDeepStrictEqual(raw.value, { ok: false, code: errorCode });
-        const child = await cli(f, broad, command, {}, { WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: capability }, artifact);
+        const child = await cli(f, broad, command, mutation, { WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: capability }, artifact);
         assert.notEqual(child.code, 0);
         assert.equal(child.value.code, errorCode);
       }

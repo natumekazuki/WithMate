@@ -75,7 +75,7 @@ function authority(value: unknown, field = "authority"): CharacterOperationAutho
     }
     return { kind: "conversation" };
   }
-  if (input.kind === "explicit_user_instruction" || input.kind === "operator") {
+  if (input.kind === "explicit_user_instruction" || input.kind === "operator" || input.kind === "background_management") {
     return { kind: input.kind, reason: text(input.reason, `${field}.reason`) };
   }
   throw new CharacterContextValidationError(`${field}.kind is not supported.`, `${field}.kind`);

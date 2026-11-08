@@ -127,7 +127,7 @@ test("背景添付の登録と三用途の必要時復元がMCPと配布CLIで�
   try {
     const execution = start(s); const binding = f.project(execution);
     const { client } = await f.connect(binding, "memoryUrl");
-    assert.match(client.getInstructions()!, /published file operations within the captured file scope/);
+    assert.match(client.getInstructions()!, /File restoration is a local write and is available only when its tools are published/);
     assert.match(client.getInstructions()!, /No other write or fallback authority is provided/);
     const tools = (await client.listTools()).tools;
     assert.ok(tools.some((tool) => tool.name === "memory.append" && JSON.stringify(tool.inputSchema).includes('"files"')));

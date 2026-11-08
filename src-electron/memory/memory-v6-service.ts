@@ -1055,6 +1055,11 @@ export class MemoryV6Service {
       return toMemoryErrorResponse(resolved.error);
     }
 
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !principal.writeTargets?.some((target) => sameTarget(target, resolved.target))) {
+      return toMemoryErrorResponse(memoryForbiddenError());
+    }
+
     try {
       const requestFingerprint = buildForgetRequestFingerprint({
         request: validated.value,

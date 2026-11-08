@@ -241,6 +241,10 @@ Registration inputs:
   Batch results use input index, saved/failed/unknown/not_run and the existing single-item result.
   Processing stops at the first failure; confirmed items remain saved. Do not automatically retry a whole batch.
 
+Affect management:
+  affect-correct requires reason and expectedVersion. Normal turns also require explicitUserRequest=true; the app-managed background Affect task derives correction authority from its binding.
+  affect-reset always requires an explicit user request and is not available to background tasks.
+
 Examples:
   withmate-memory instances
   withmate-memory status --all

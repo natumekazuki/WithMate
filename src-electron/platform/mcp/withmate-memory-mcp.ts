@@ -194,7 +194,7 @@ class MemoryMcpServer extends McpServer {
   ) {
     super(
       { name: fallbackAdmission ? "withmate-character-context" : "withmate-memory", version: "1.0.0" },
-      { instructions: fallbackAdmission ? CHARACTER_MCP_SERVER_INSTRUCTIONS : "Use only the published reads, purpose-specific registration, and published file operations within the captured file scope for this background execution. File restoration is a local write and is available only when its tools are published. Final text is not proof of saving. No other write or fallback authority is provided." },
+      { instructions: fallbackAdmission ? CHARACTER_MCP_SERVER_INSTRUCTIONS : "Use the published reads and purpose-specific management operations within this background execution's captured authority. File restoration is a local write and is available only when its tools are published. Final text is not proof of saving. No other write or fallback authority is provided." },
     );
   }
 
@@ -1073,13 +1073,13 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
     { name: "memory.instances", command: "instances", path: "/v1/runtime_instances", schema: z.object({}).strict(), write: false },
     { name: "character_context.metrics", command: "character_metrics", path: "/v1/character_context/metrics", schema: z.object({}).strict(), write: false },
     { name: "character_affect.inspect", command: "affect_inspect", path: "/v1/character_affect/inspect", schema: z.object({}).strict(), write: false },
-    { name: "character_affect.correct", command: "affect_correct", path: "/v1/character_affect/correct", schema: z.object({ eventId: z.string().min(1), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true), reason: z.string().min(1), replacement: affectCandidateSchema.omit({ memoryEpisode: true }) }).strict(), write: true },
+    { name: "character_affect.correct", command: "affect_correct", path: "/v1/character_affect/correct", schema: z.object({ eventId: z.string().min(1), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true).optional(), reason: z.string().min(1), replacement: affectCandidateSchema.omit({ memoryEpisode: true }) }).strict(), write: true },
     { name: "character_affect.reset", command: "affect_reset", path: "/v1/character_affect/reset", schema: z.object({ layer: z.enum(["session", "relationship"]), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true), reason: z.string().min(1), resetAt: z.string().min(1), idempotencyKey: z.string().min(1) }).strict(), write: true },
   ] as const;
   for (const definition of extraTools) {
     server.registerTool(definition.name, {
       description: definition.name.startsWith("character_affect.") || definition.command === "characters"
-        ? `Run ${definition.name} for the Character and Session selected by a valid Session binding.${definition.write ? " Requires explicitUserRequest=true, a concrete reason, and the current expectedVersion." : ""}`
+        ? `Run ${definition.name} for the Character and Session selected by a valid Session binding.${definition.write ? " Requires a concrete reason and the current expectedVersion. An explicit user request (explicitUserRequest=true) is required except for correction by the app-managed background Affect task. Reset always requires an explicit user request." : ""}`
         : definition.command === "audit"
         ? "Audit explicit user-global or Project targets using local runtime authentication. Character targets and allTargets require a valid Session binding. A supplied binding always limits authority."
         : `Read ${definition.name} using local runtime authentication. A Session binding is not required, but any supplied binding is validated and limits authority.`,

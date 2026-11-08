@@ -55,28 +55,28 @@ function gate() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "本番prepareはAffect用途だけにinspect grantを発行し、同じruntimeが開始する実bindingでも認可される"
+// claim = "本番prepareは三用途へinspect grantを発行し、同じruntimeが開始する実bindingでも認可される"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memory-read" }
-// fault = "tool公開定義だけを変更して本番prepareのgrantを更新しない、または他用途にもinspectを許可する"
+// fault = "tool公開定義だけを変更して本番prepareのread grantを更新しない"
 // observable = "用途ごとのprepared grantと実Agent呼出中のbinding解決結果"
 // observation_boundary = "consumer"
 // scope = "BackgroundProductionRuntime.prepare/runOnceと実binding registry"
 // lifecycle = "permanent"
-// impact = "本番の背景Affectだけinspectが拒否され続ける"
+// impact = "本番の背景管理役が必要なAffect状態を参照できない"
 // distinction = "MCP/CLI fixtureの手動grantでは本番prepareによるgrant発行を検証できない"
 // @end-test-value
-test("本番prepareはAffect用途だけにinspectを認可する", async () => {
+test("本番prepareは三用途へAffect inspectを認可する", async () => {
   const f = await backgroundHistoryFixture();
   try {
     seed(f);
     const operation = "memory.route.character_affect_inspect";
     const { runtime, input } = setup(f, async (agent) => {
-      assert.equal(f.bindings.resolve(agent.binding.bindingReference, operation).ok, agent.scope.purpose === "affect");
+      assert.equal(f.bindings.resolve(agent.binding.bindingReference, operation).ok, true);
     });
     for (const purpose of ["affect", "character-memory", "target-memory"] as const) {
       const prepared = await runtime.prepare({ ...input, purpose });
       assert.equal(prepared.status, "ready", JSON.stringify(prepared));
-      assert.equal(prepared.call.context.operationGrants.includes(operation), purpose === "affect");
+      assert.equal(prepared.call.context.operationGrants.includes(operation), true);
       assert.deepEqual(await runtime.calls.runOnce({ ...prepared.call, userInput: "inspect material", onAdmitted() {} }), { kind: "completed" });
     }
     runtime.stop();
@@ -362,9 +362,7 @@ test("本番設定から三用途consumerへ接続し、bound MCPで実保存す
       assert.equal(prepared.status, "ready");
       assert.equal(prepared.instructionText, settings.backgroundExecutionSettings[purpose].instructionText);
       const result = purpose === "affect"
-        ? await runBackgroundAffectCall(runtime.calls, { ...prepared.call, onAdmitted() {}, instructionBody: prepared.instructionText,
-          characterDefinition: "Character", currentAffect: { schemaVersion: "withmate-affect-v1", characterId: "character", userId: "local-user",
-            sessionId: "main", evaluatedAt: "2026-11-01T01:00:00Z", layers: [], components: [] } })
+        ? await runBackgroundAffectCall(runtime.calls, { ...prepared.call, onAdmitted() {}, instructionBody: prepared.instructionText })
         : await runBackgroundMemoryRegistration(runtime.calls, { ...prepared.call,
           context: { ...prepared.call.context, scope: { ...prepared.call.context.scope, purpose } },
           onAdmitted() {}, materials: "saved answer", instructionText: prepared.instructionText });

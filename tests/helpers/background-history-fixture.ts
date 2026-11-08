@@ -83,10 +83,10 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
       definitionSha256: "fixture", definitionByteSize: 9, snapshotAt: "2026-11-01T00:00:00.000Z" }) : null });
   const worker = createV6StorageWorkerBundle({ dbPath, userDataPath: directory, diagnosticSink });
   await worker.initialize();
-  const backgroundRegistration: BackgroundRegistration | undefined = registrationHandlers ? {
-    handlers: registrationHandlers, readBackgroundSource: (scope) => worker.stores.session.readBackgroundSource(scope),
+  const backgroundRegistration: BackgroundRegistration = {
+    handlers: registrationHandlers ?? {}, readBackgroundSource: (scope) => worker.stores.session.readBackgroundSource(scope),
     sourceKinds,
-  } : undefined;
+  };
   let readGate: (() => Promise<void>) | undefined;
   const history = new SessionHistoryRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     read: async (input) => {
@@ -95,11 +95,14 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     } });
   const glossary = new GlossaryRuntimeService({ applicationService: new GlossaryApplicationService(),
     bindingRegistry: bindings, providerAgentRuntimeTurns: turns, getProactiveCreateLimit: () => 1,
+    validateBackgroundSource: async (scope) => Boolean(await worker.stores.session.readBackgroundSource(scope)),
     resolveActorSession: (id) => sessions.has(id) ? { id, providerId: "codex", characterId: "character", workspacePath: directory } : null });
   const graph = new SessionGraphRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
+    validateBackgroundSource: async (scope) => Boolean(await worker.stores.session.readBackgroundSource(scope)),
     applicationService: new SessionGraphApplicationService({ getStore: () => worker.stores.sessionGraph,
-      resolveSession: (id) => sessions.has(id) ? { owner: { sessionId: id, incarnationId: sessions.get(id)!.incarnationId! },
-        providerId: "codex", generation: "fixture", identity: { sessionId: id, sessionTitle: id, role: "main",
+      resolveSession: (id, kind) => sessions.has(id) ? { owner: kind === "auxiliary"
+        ? { sessionId: "main", incarnationId: "inc-main" } : { sessionId: id, incarnationId: sessions.get(id)!.incarnationId! },
+        providerId: "codex", generation: "fixture", identity: { sessionId: id, sessionTitle: id, role: kind ?? "main",
           character: { id: "character", name: "Character" } } } : null }) });
   const runtime = createMemoryV6HttpServer({ ...owner, apiSecret: "api", mcpApiSecret: "mcp", operatorApiSecret: "operator",
     service: memory, characterContextService: characterContext, agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
@@ -157,7 +160,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     const binding = { ...execution.binding, memoryRuntimeOwner: owner };
     return { ...binding, managedMcp: host.issue(binding, execution.handle, execution.signal) };
   }
-  async function connect(binding: ProviderAgentRuntimeBindingProjection, endpoint: "sessionHistoryUrl" | "glossaryUrl" | "memoryUrl" = "sessionHistoryUrl") {
+  async function connect(binding: ProviderAgentRuntimeBindingProjection, endpoint: "sessionHistoryUrl" | "glossaryUrl" | "memoryUrl" | "sessionGraphUrl" = "sessionHistoryUrl") {
     const client = new Client({ name: "background-test", version: "1" });
     clients.push(client);
     const transport = new StreamableHTTPClientTransport(new URL(binding.managedMcp![endpoint]!), {

@@ -173,7 +173,8 @@ function realAdapters(capture: NativeCapture, interaction?: "approval" | "elicit
         form: { cancel: async () => { permissionAnswered(); } },
         prompt: async (value: SessionPromptInput) => { request = value; capture.prompt = value.text; return { id: value.id, sessionID: root.id }; },
       },
-      mcp: { add: async (value: { server: string }) => { registrations.push({ name: value.server }); capture.binding = value; },
+      mcp: { add: async (value: { server: string }) => { registrations.push({ name: value.server });
+        capture.binding = { ...(capture.binding as Record<string, unknown> | undefined), [value.server]: value }; },
         list: async () => ({ data: registrations.map((value) => ({ ...value, status: { status: "connected" } })) }) },
       permission: { reply: async (value: unknown) => { capture.permissionReply = value; permissionAnswered(); } },
       event: { subscribe: () => ({ async *[Symbol.asyncIterator]() {
@@ -217,11 +218,16 @@ test("background dispatch resumes all four real adapters with current binding cr
       { owner: "character", scope: "character", character: { type: "id", id: "character" } },
     ] satisfies BackgroundAgentInput["scope"]["memoryTargets"] };
     const agentInput = { ...f.input, scope, userInput: buildMemoryRegistrationInput({ scope,
-      instructionText, characterDefinition, materials: "保存済み会話は接続されたsession_historyから読む。" }) };
+      instructionText, materials: "保存済み会話は接続されたsession_historyから読む。" }) };
     assert.equal(f.input.session.approvalMode, "untrusted");
     const capture: NativeCapture = { resumed: 0, closed: 0, observerUpdates: [] };
     const adapters = realAdapters(capture);
     const run = createBackgroundProviderAgent({ ...f.deps,
+      resolvePromptContext: async (input) => ({ session: { ...input.session, characterRuntimeSnapshot: {
+        characterId: input.session.characterId, name: "Character", description: "", iconFilePath: "",
+        theme: input.session.characterThemeColors, definitionMarkdown: characterDefinition,
+        definitionSha256: "definition", definitionByteSize: 128, snapshotAt: "2026-11-08T00:00:00.000Z",
+      } } }),
       getProviderCodingAdapter: (id) => resolveProviderCodingAdapter({ providerId: id, ...adapters }),
     });
     assert.equal(await run(agentInput), undefined);
@@ -231,7 +237,7 @@ test("background dispatch resumes all four real adapters with current binding cr
     assert.equal(capture.env!.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY, "capability", providerId);
     assert.ok(capture.binding, providerId);
     assert.ok(capture.prompt?.includes(instructionText), providerId);
-    assert.ok(capture.prompt?.includes("一人称は私。成果を一緒に喜び、出来事と自分の感想は区別する。"), providerId);
+    assert.ok(`${capture.system ?? ""}\n${capture.prompt ?? ""}`.includes("一人称は私。成果を一緒に喜び、出来事と自分の感想は区別する。"), providerId);
     assert.match(`${capture.system ?? ""}\n${capture.prompt ?? ""}`, /no human approval or answer channel/, providerId);
     assert.equal(capture.resumed, 0, providerId);
     assert.ok(capture.closed > 0, providerId);

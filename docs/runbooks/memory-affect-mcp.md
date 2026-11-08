@@ -31,7 +31,7 @@ Characterのget/search/inspectと一般Memoryの検索・取得・一覧・診�
 
 Character Memoryのcorrect/forgetと一般Memoryのforget/move_entryをユーザーの代理として実行できる。条件は明示target、具体的な理由、idempotency key、変更後のread-backである。一般Memoryのbulk forgetは実行前にdry-runする。
 
-Affectのcorrect/resetは `explicitUserRequest: true` と具体的な `reason` を必要とし、expectedVersionによる競合検証を維持する。
+Affectの通常turnのcorrectと、すべてのresetは `explicitUserRequest: true` と具体的な `reason` を必要とし、expectedVersionによる競合検証を維持する。背景Affectのcorrectは、有効な用途bindingから管理権限を解決するため`explicitUserRequest`を省略できる。通常turnでの省略は拒否し、背景resetは公開・認可しない。
 
 ### 認証とSession binding
 
@@ -111,7 +111,7 @@ title/previewは検索・一覧で本文取得前にも表示されるため、�
 | `context-get` | `character_context.get` | binding必須。任意query、memoryLimit既定3 |
 | `affect-appraise` | `character_affect.appraise` | binding必須。通常はcandidates、任意expectedVersion。背景Affectはdomain値とsourceMessageSeqまたはsourceTurnIdの一方を持つcandidates |
 | `affect-inspect` | `character_affect.inspect` | binding必須。現在Character / Sessionのevent・reset・version |
-| `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/explicitUserRequest/reason/replacement |
+| `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/reason/replacement、通常turnはexplicitUserRequest必須、背景Affect管理では省略可 |
 | `affect-reset` | `character_affect.reset` | binding必須。layer/expectedVersion/explicitUserRequest/reason/resetAt/idempotencyKey |
 | `character-memory-search` | `character_memory.search` | binding必須。query、明示scope、limit既定5 |
 | `character-memory-append-episode` | `character_memory.append_episode` | binding必須。episode/idempotencyKeyまたはepisodes。一括はindex別結果 |
@@ -133,7 +133,7 @@ Session bindingを受け継いだprocessでは、通常CLIをMCP障害の有無�
 '{}' | withmate-memory affect-inspect --stdin
 ```
 
-`affect-correct` / `affect-reset` は明示指示の `explicitUserRequest:true`、具体的なreason、最新expectedVersionを渡す。authorityやCharacter/Session IDは渡さない。`character-memory-correct`のreasonは自由記述、`character-memory-forget`は `user_request`、`incorrect`、`outdated`、`privacy`、`other` のいずれかである。
+通常turnの`affect-correct`と`affect-reset`は明示指示の `explicitUserRequest:true`、具体的なreason、最新expectedVersionを渡す。背景Affectの`affect-correct`は明示指示を捏造せず、管理権限をbindingから解決する。authorityやCharacter/Session IDは渡さない。`character-memory-correct`のreasonは自由記述、`character-memory-forget`は `user_request`、`incorrect`、`outdated`、`privacy`、`other` のいずれかである。
 
 `--fallback-from mcp` は通常CLIの開始条件ではなく、MCPの実transport障害後に同じ要求を明示的に再照合する限定経路である。MCP initializeと `tools/list` の正常送出後、serverが `details.fallbackEligible:true` を返した場合だけ使用する。同じruntime generation、binding、current turn、method/path/bodyへ発行された短命admissionをconsumeし、接続selectorやcaller identityを受け付けない。
 

@@ -50,8 +50,8 @@ test("通常次turnと同Provider・別Providerの背景が同じ保存sourceを
     }
     assert.equal(f.turns.admit({ actorSessionId: "main", providerId: "codex", turnCapability: next.capability }).ok, true);
     assert.equal(f.bindings.getExecutionGeneration("main", "codex"), nextBinding.executionGeneration);
-    assert.deepEqual(Object.keys(buildManagedHttpMcpServers(codexBinding)!), ["withmate-session-history", "withmate-memory"]);
-    assert.deepEqual(Object.keys(buildCodexManagedHttpMcpConfig(codexBinding)), ["withmate-session-history-http", "withmate-memory-http"]);
+    assert.deepEqual(Object.keys(buildManagedHttpMcpServers(codexBinding)!), ["withmate-session-history", "withmate-memory", "withmate-glossary", "withmate-session-graph"]);
+    assert.deepEqual(Object.keys(buildCodexManagedHttpMcpConfig(codexBinding)), ["withmate-session-history-http", "withmate-memory-http", "withmate-glossary-http", "withmate-session-graph-http"]);
     assert.match(buildCodexManagedHttpMcpArguments(codexBinding).join(" "), /mcp_servers.withmate-session-history-http=/);
     assert.equal(f.sessions.get("main")!.provider, "codex");
     f.executions.finish(codex);

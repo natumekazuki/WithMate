@@ -40,14 +40,8 @@ function setup() {
       models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] };
   }, captureSource: capture, resolveAuthority: authority,
     sourceKinds: { "character-memory": ["main", "auxiliary"], "target-memory": ["main", "auxiliary"] } });
-  const definitionReads: string[] = [];
-  let failDefinition = false;
   const controller = new MemoryRecordingController({ runtime, captureSource: capture, getSettings: () => settings,
-    resolveAuthority: authority, readCharacterDefinition: async (characterId) => {
-      definitionReads.push(characterId);
-      if (failDefinition) throw new Error("Character definition unavailable");
-      return `Definition of ${characterId}: 一人称はうち。`;
-    }, clock });
+    resolveAuthority: authority, clock });
   runtime.start(); controller.start();
   function source(kind: "main" | "auxiliary", id: string, characterId = "character") {
     const session = { ...buildNewSession({ taskTitle: id, workspaceLabel: "fixture", workspacePath: "C:/fixture", branch: "test",
@@ -72,9 +66,8 @@ function setup() {
       running(running: boolean) { runtime.publish({ kind: "run_state", source: ref, session, running }); },
       terminal(id: number, phase?: "completed" | "failed" | "canceled") { runtime.publish(add(id, phase)); } };
   }
-  return { settings, runtime, controller, executions, source, agents, errors, timers, definitionReads,
+  return { settings, runtime, controller, executions, source, agents, errors, timers,
     releaseAgents() { for (const release of releases.splice(0)) release(); },
-    setFailDefinition(value: boolean) { failDefinition = value; },
     setFailAgent(value: boolean) { failAgent = value; }, setFailCatalog(value: boolean) { failCatalog = value; },
     blockCatalog() { let release!: () => void; catalogGate = new Promise<void>((done) => { release = done; }); return () => { catalogGate = undefined; release(); }; },
     async advance(ms: number) { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.callback(); } await settle(); },
@@ -83,40 +76,33 @@ function setup() {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Character Memoryは実Main/AuxiliaryのCharacter定義を開始入力へ渡し、取得失敗時は開始せず未開始範囲を保持する"
+// claim = "Character Memoryの管理targetと履歴sourceは実Main/AuxiliaryのCharacterに一致する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
-// fault = "親Characterの定義をAuxiliaryへ渡すか、取得失敗を空材料へ救済し範囲を消費する"
-// observable = "AgentのCharacter定義・target・history、定義取得ID、materials段階の失敗"
+// fault = "親CharacterをAuxiliaryの管理targetとして渡すか履歴sourceを親へ代用する"
+// observable = "AgentのCharacter targetとhistory source"
 // observation_boundary = "consumer"
 // scope = "Memory controller through real background runtime with distinct Main/Auxiliary Characters"
 // lifecycle = "permanent"
-// impact = "別人格の語りで経験を保存することと定義欠落による経験の取りこぼしを防ぐ"
-// distinction = "型検査と単体入力組立てでは実sourceのCharacter選択と開始位置を検証できない"
+// impact = "別Characterの記憶へ管理操作を行うことを防ぐ"
+// distinction = "型検査と単体入力組立てではcontrollerの実sourceからtargetへの対応を検証できない"
 // @end-test-value
-test("実Characterの定義を渡し取得失敗では開始位置を進めない", async () => {
+test("実Characterの管理targetと履歴sourceをMainとAuxiliaryで分ける", async () => {
   const f = setup();
   try {
     f.settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
     const main = f.source("main", "parent", "main-character");
     const aux = f.source("auxiliary", "aux", "aux-character");
-    f.setFailDefinition(true);
     main.terminal(10); aux.terminal(20); await settle();
-    assert.equal(f.agents.length, 2);
-    assert.ok(f.agents.every((agent) => agent.scope.purpose === "target-memory"));
-    assert.equal(f.errors.length, 2);
-    assert.ok(f.errors.every((error) => (error as { stage: string }).stage === "materials"));
-    f.setFailDefinition(false);
-    f.runtime.publish({ kind: "settings_changed", settings: f.settings }); await settle();
+    assert.equal(f.agents.length, 4);
+    assert.equal(f.errors.length, 0);
     const memories = f.agents.filter((agent) => agent.scope.purpose === "character-memory");
     assert.equal(memories.length, 2);
     for (const agent of memories) {
       const isMain = agent.scope.history.source.kind === "main";
       const characterId = isMain ? "main-character" : "aux-character";
-      assert.ok(agent.userInput.includes(`Definition of ${characterId}: 一人称はうち。`));
       assert.deepEqual(agent.scope.memoryTargets, [{ owner: "character", scope: "character", character: { type: "id", id: characterId } }]);
       assert.equal(agent.scope.history.source.sessionId, isMain ? "parent" : "aux");
     }
-    assert.deepEqual(f.definitionReads.sort(), ["aux-character", "aux-character", "main-character", "main-character"]);
   } finally { await f.close(); }
 });
 

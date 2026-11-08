@@ -59,6 +59,8 @@ recordの作成・更新時には何の要求・判断・活動・観測に関�
 
 両入口とも既存Session bindingから呼出元と親scopeを解決し、bindingなし・無効・失効を別Sessionや無bindingアクセスへ置き換えない。入力で親Session、呼出元、記録者、Character、権限を選ばせない。書込みは有効なturnに限り、同じturn capabilityを使用し、Workerのtransactionでownerのincarnation・actorの所属・turn失効を再確認してcommitする。
 
+背景三用途にも元Mainの共有Graphのread操作を公開する。背景用のSessionやGraphは作らず、`apply`は付与しない。元会話と異なるProviderを使えても、実sourceのkind・incarnation・storage ownerIdentity・Auxiliaryの親identityと捕捉Graph ownerは維持し、activeな背景binding／turnを必須とする。返却前にもsourceと失効を確認する。詳細は[Background Execution](background-execution.md#背景memory-read)を参照する。
+
 | MCP tool | CLI command | 用途 |
 | --- | --- | --- |
 | `session_graph.list_topics` | `list-topics` / `list_topics` | 話題を列挙する |
