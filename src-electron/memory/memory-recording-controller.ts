@@ -2,7 +2,7 @@ import { setTimeout, clearTimeout } from "node:timers";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
-import type { MemoryTargetSelector } from "../../src-shared/memory/memory-contract.js";
+import type { BackgroundMemoryTarget } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { getMemoryRecordingTrigger, type MemoryRecordingPurpose } from "../../src-shared/memory-recording/memory-recording-frequency.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { BackgroundProductionRuntime, BackgroundRuntimeEvent } from "../providers/background-production-runtime.js";
@@ -157,9 +157,9 @@ export class MemoryRecordingController {
       this.deps.runtime.reportFailure({ purpose, source: state.source, stage: "prepare", error: { code: "BACKGROUND_AUTHORITY_UNAVAILABLE" } });
       return;
     }
-    const character: MemoryTargetSelector = { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
-    const memoryTargets: MemoryTargetSelector[] = purpose === "character-memory" ? [character]
-      : [character, ...authority.allowedProjectIds.map((id): MemoryTargetSelector => ({ owner: "project", scope: "project", project: { type: "id", id } }))];
+    const character: BackgroundMemoryTarget = { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
+    const memoryTargets: BackgroundMemoryTarget[] = purpose === "character-memory" ? [character]
+      : [character, ...authority.allowedProjectIds.map((id): BackgroundMemoryTarget => ({ owner: "project", scope: "project", project: { type: "id", id } }))];
     const lastTerminalId = pending.reduce((latest, turn) => Math.max(latest, turn.id), 0);
     const prepared = await this.deps.runtime.prepare({ purpose, source: state.source, session: state.session,
       memoryTargets });

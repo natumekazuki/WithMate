@@ -50,7 +50,8 @@ import {
   WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
 } from "../platform/memory/memory-runtime-exchange.js";
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
-import { resolveMemoryV6Target } from "./memory-v6-context-resolver.js";
+import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
+import type { BackgroundMemoryTarget } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import type { BackgroundRegistration } from "../providers/background-registration.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
@@ -1416,28 +1417,14 @@ async function resolveRouteAgentRuntimeBinding(input: {
     return { ok: false, error: agentInputError(input.route, identityField, "Caller identity is not accepted.") };
   }
   if (turnAdmission) runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
-  const targetOptions = background
-    ? { ...input.options, resolveProjectByPath: input.options.resolveKnownProjectByPath }
-    : input.options;
-  const body = await resolveAgentBoundRequestBody(targetOptions, input.route, input.body, actorSession, authority);
+  const body = await resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority);
   if (!body.ok) {
     return { ok: false, error: body.error };
   }
   const principal = createSessionBindingMemoryPrincipal(binding, actorSession, authority);
   let register: (() => Promise<unknown>) | undefined;
   if (background && principal.type === "session_binding") {
-    const readTargets = [];
-    for (const captured of background.memoryTargets) {
-      let selector = captured;
-      if (captured.scope === "project") {
-        const project = await resolveAllowedProject(targetOptions, captured.project, authority);
-        if (!project) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
-        selector = { ...captured, project: project.ref };
-      }
-      const target = await resolveMemoryV6Target(selector, principal, input.options, { projectPathResolution: "known" });
-      if (!target.ok) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
-      readTargets.push(target.target);
-    }
+    const readTargets = background.memoryTargets.map(capturedMemoryTarget);
     principal.readTargets = readTargets;
     principal.fileAccess = background.fileAccess;
     principal.permissions = ["memory.search", "memory.list_entries", "memory.get_entry", "memory.list_tags",
@@ -1509,9 +1496,21 @@ function createSessionBindingMemoryPrincipal(
     sessionId: binding.actorSessionId,
     providerId: binding.providerId,
     characterId: actorSession.characterId,
+    ...(actorSession.workspacePath ? { workspacePath: actorSession.workspacePath } : {}),
     ...(authority ? { allowedProjectIds: authority.allowedProjectIds } : {}),
     permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
+}
+
+function capturedMemoryTarget(selector: BackgroundMemoryTarget): MemoryV6ResolvedTarget {
+  if (selector.owner === "user") {
+    return { owner: { type: "user", id: "local-user" }, scope: { type: "global", id: "global" } };
+  }
+  if (selector.owner === "project") {
+    return { owner: { type: "project", id: selector.project.id }, scope: { type: "project", id: selector.project.id } };
+  }
+  return { owner: { type: "character", id: selector.character.id }, scope: selector.scope === "project"
+    ? { type: "project", id: selector.project.id } : { type: "character", id: selector.character.id } };
 }
 
 function validateMcpGeneralMutationPolicy(

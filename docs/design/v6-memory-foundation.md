@@ -626,6 +626,8 @@ V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmat
 
 projectの絶対pathはruntime側でGit repositoryへ解決する。repository subdirectoryでも、root / common dir / remoteからproject scopeを決定する。同じrepositoryの別worktreeは同一project scopeとして扱う。relative pathを受け付けない。owner / scopeのallowlist、entry access、mutation permissionはapplication serviceで再検証する。
 
+Projectの許可とDB登録済み状態を区別する。未登録のpath readはrepositoryから算出したIDへ解決して空として返し、scope行を作らない。bindingで許可された未登録IDは、実actor SessionのWorkspaceから同じIDを解決できる場合だけ既存candidateを使う。成功した初回append/moveはそのadmissionを既存保存transactionへ渡す。任意IDの不存在や許可外targetを、空の正常結果へ置換しない。
+
 Session bindingによるtarget inventory・audit・largest entry詳細の権限絞り込みはpaginationとcursor生成より前に行う。bound scopeは現在Character・許可Project・共有user-globalであり、記憶を作成したSessionだけに狭めない。`characters`は現在Characterのid/name/descriptionのみを返し、renderer metadataは返さない。
 
 - status、instances、metrics、quota / usage集計はbindingなしでも利用できる。

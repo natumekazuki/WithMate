@@ -41,10 +41,10 @@ export type ProjectTargetRef =
 
 export type CharacterTargetRef = { type: "id"; id: string };
 
-export type MemoryTargetSelector =
-  | { owner: "project"; project: ProjectTargetRef; scope: "project" }
+export type MemoryTargetSelector<ProjectRef extends ProjectTargetRef = ProjectTargetRef> =
+  | { owner: "project"; project: ProjectRef; scope: "project" }
   | { owner: "character"; character: CharacterTargetRef; scope: "character" }
-  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectTargetRef }
+  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectRef }
   | { owner: "user"; scope: "global" };
 
 export type MemoryTag = {

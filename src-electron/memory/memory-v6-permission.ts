@@ -18,6 +18,8 @@ export type MemoryV6SessionBindingPrincipal = {
   providerId: string;
   characterId: string;
   allowedProjectIds?: readonly string[];
+  /** Trusted actor Workspace, used to resolve an authorized Project before its first save. */
+  workspacePath?: string;
   /** Present only for captured background reads; an empty set permits no target. */
   readTargets?: readonly MemoryV6ResolvedTarget[];
   fileAccess?: BackgroundMemoryFileAccess;
