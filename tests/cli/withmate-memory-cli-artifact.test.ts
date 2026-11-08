@@ -353,12 +353,12 @@ it("schema は helper 単体で capability を返す", async () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "standalone CLIはinvalid kindをpublic validation errorとfieldを示すmessageで返す"
-  // oracle = { type = "contract", ref = "withmate-memory CLI validation contract" }
+  // claim = "standalone CLIはinvalid kindをpublic validation errorとfieldを示すissueで返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#Errorと再試行" }
   // scope = "bundled-memory-cli-validation"
   // lifecycle = "permanent"
   // fault = "配布CLIのvalidatorがinvalid kindを受理するか非canonical errorへ変換する"
-  // observable = "execError.code, 3);; error.code, \"WITHMATE_MEMORY_INVALID_INPUT\");; error.message, /kind/);"
+  // observable = "process終了code 3、error.code、invalid_valueのkind path"
   // observation_boundary = "public-boundary"
   // @end-test-value
   it("validate は helper 単体で request を検証する", async () => {
@@ -373,7 +373,7 @@ it("schema は helper 単体で capability を返す", async () => {
     });
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "validate", "--command", "append", "--json", request], {
       env: process.env,
-    }).catch((error: unknown) => {
+    }).then(() => assert.fail("invalid input must exit with code 3"), (error: unknown) => {
       const execError = error as { code?: number; stdout?: string };
       assert.equal(execError.code, 3);
       return { stdout: execError.stdout ?? "" };
@@ -381,17 +381,17 @@ it("schema は helper 単体で capability を返す", async () => {
 
     const error = JSON.parse(stdout).error;
     assert.equal(error.code, "WITHMATE_MEMORY_INVALID_INPUT");
-    assert.match(error.message, /kind/);
+    assert.ok(error.details.issues.some((issue: { path: string[]; code: string }) => issue.path[0] === "kind" && issue.code === "invalid_value"));
   });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "standalone CLI validatorはruntimeと同じunknown field、target、required field制約を拒否する"
-  // oracle = { type = "contract", ref = "withmate-memory request validation contract" }
+  // claim = "standalone CLI validatorは公開契約のunknown field、target、required field制約を拒否し、codeとfield位置を返す"
+  // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#Errorと再試行" }
   // scope = "bundled-memory-cli-validation-parity"
   // lifecycle = "permanent"
   // fault = "CLIとruntimeのvalidationが分裂し、CLI経由だけ不正requestを受理する"
-  // observable = "execError.code, 3, testCase.name);; response.error.code, testCase.code, testCase.name);; response.error.message.includes(testCase.field), testCase.name);"
+  // observable = "process終了code 3、response.error.code、issuesの検証code・path・余剰key"
   // observation_boundary = "public-boundary"
   // @end-test-value
   it("validate は helper 側でも runtime validation と同じ失敗ケースを拒否する", async () => {
@@ -410,7 +410,7 @@ it("schema は helper 単体で capability を返す", async () => {
           extra: true,
         },
         code: "WITHMATE_MEMORY_INVALID_INPUT",
-        field: "extra",
+        issueCode: "unrecognized_keys", path: [], key: "extra",
       },
       {
         name: "invalid target shape",
@@ -425,7 +425,7 @@ it("schema は helper 単体で capability を返す", async () => {
       idempotencyKey: "artifact-append-a",
         },
         code: "WITHMATE_MEMORY_INVALID_INPUT",
-        field: "id",
+        issueCode: "too_small", path: ["target", "project", "id"],
       },
       {
         name: "empty title",
@@ -440,7 +440,7 @@ it("schema は helper 単体で capability を返す", async () => {
       idempotencyKey: "artifact-append-a",
         },
         code: "WITHMATE_MEMORY_INVALID_INPUT",
-        field: "title",
+        issueCode: "too_small", path: ["title"],
       },
       {
         name: "invalid tag object",
@@ -454,7 +454,7 @@ it("schema は helper 単体で capability を返す", async () => {
           tags: [{ type: "Topic", value: "CLI", extra: true }],
         },
         code: "WITHMATE_MEMORY_INVALID_INPUT",
-        field: "extra",
+        issueCode: "unrecognized_keys", path: ["tags", 0], key: "extra",
       },
       {
         name: "forget requires target",
@@ -463,7 +463,7 @@ it("schema は helper 単体で capability を返す", async () => {
               entryIds: ["entry-a"],
         },
         code: "WITHMATE_MEMORY_INVALID_INPUT",
-        field: "target",
+        issueCode: "invalid_type", path: ["target"],
       },
       {
         name: "get-entry requires target",
@@ -472,7 +472,7 @@ it("schema は helper 単体で capability を返す", async () => {
               entryId: "entry-a",
         },
         code: "WITHMATE_MEMORY_INVALID_INPUT",
-        field: "target",
+        issueCode: "invalid_type", path: ["target"],
       },
     ];
 
@@ -486,7 +486,7 @@ it("schema は helper 単体で capability を返す", async () => {
         JSON.stringify(testCase.request),
       ], {
         env: process.env,
-      }).catch((error: unknown) => {
+      }).then(() => assert.fail(`${testCase.name} must exit with code 3`), (error: unknown) => {
         const execError = error as { code?: number; stdout?: string };
         assert.equal(execError.code, 3, testCase.name);
         return { stdout: execError.stdout ?? "" };
@@ -494,7 +494,10 @@ it("schema は helper 単体で capability を返す", async () => {
 
       const response = JSON.parse(stdout);
       assert.equal(response.error.code, testCase.code, testCase.name);
-      assert.ok(response.error.message.includes(testCase.field), testCase.name);
+      assert.ok(response.error.details.issues.some((issue: { code: string; path: Array<string | number>; keys?: string[] }) =>
+        issue.code === testCase.issueCode
+        && JSON.stringify(issue.path) === JSON.stringify(testCase.path)
+        && (testCase.key === undefined || issue.keys?.includes(testCase.key))), testCase.name);
     }
   });
 

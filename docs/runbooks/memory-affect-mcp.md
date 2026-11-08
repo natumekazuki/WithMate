@@ -143,6 +143,37 @@ writeの `effect:unknown` は保存結果不明を表す。idempotent writeは�
 
 ## Errorと再試行
 
+MCPとCLIは、公開入力schemaでの拒否を`withmate-memory-v1`の`WITHMATE_MEMORY_INVALID_INPUT`で返す。`error.details.tool`は公開tool名、`error.details.issues`は検証code・fieldの`path`（object keyとarray indexの配列）・message・必要な制約を示す。型は`expected`、範囲は`minimum` / `maximum`と`inclusive`、選択値は`values`、余剰fieldは`keys`で確認する。入力値全体、secret、stackは返さない。schemaの診断messageへ入力値を埋め込まない。
+
+unionの`invalid_union`は`alternatives`に各候補の`issues`を持つ。各候補内の条件はすべて満たす必要があり、候補間は代替関係である。子issueの`path`も入力rootからの絶対位置で、どちらも必須という意味にはしない。判別fieldがどの候補にも一致しない場合は、`discriminator`と`options`でfield名と選択値を示す。例えばCharacter episodeで`observedFact`と`characterObservation`が両方ない場合は次の診断になる。
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "error": {
+    "code": "WITHMATE_MEMORY_INVALID_INPUT",
+    "message": "Invalid arguments for tool character_memory.append_episode. See error.details.issues.",
+    "retryable": false,
+    "conversationMayContinue": true,
+    "effect": "none",
+    "details": {
+      "tool": "character_memory.append_episode",
+      "issues": [{
+        "code": "invalid_union",
+        "path": ["episode"],
+        "message": "Input must satisfy one of the alternatives.",
+        "alternatives": [
+          { "issues": [{ "code": "invalid_type", "path": ["episode", "observedFact"], "message": "Invalid input: expected string, received undefined", "expected": "string" }] },
+          { "issues": [{ "code": "invalid_type", "path": ["episode", "characterObservation"], "message": "Invalid input: expected string, received undefined", "expected": "string" }] }
+        ]
+      }]
+    }
+  }
+}
+```
+
+MCPでは同じJSONをtextと`structuredContent`に入れ、`isError:true`を返す。CLIの終了codeはapiError（3）。この拒否ではruntimeへdispatchせず、保存効果もfallback権限も発生しない。入力を修正して呼び直す。未知・非公開toolやJSON-RPC自体の不正はMCP protocolの拒否として扱い、domain・authority・storageの失敗は各operationの既存errorを確認する。
+
 - `invalid_input`、`unknown_character`、`unknown_scope`、`authority_denied`: request、保存済みidentity、authorityを直してから再試行する。
 - `version_conflict`: `character_context.get`または`affect-inspect`で最新versionを読み、意図を再評価して新しい`expectedVersion`を使う。状態全体を上書きしない。
 - `idempotent_replay`: 同一eventの再送として扱う。motifが同じでも別eventなら新しいidempotency keyを使う。

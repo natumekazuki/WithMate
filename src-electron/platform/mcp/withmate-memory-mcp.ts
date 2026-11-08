@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage, MessageExtraInfo, RequestId } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, type JSONRPCMessage, type MessageExtraInfo, type RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { backgroundAffectCandidateSchema } from "../../../src-shared/character-affect/affect-composition.js";
 
@@ -52,6 +52,7 @@ import {
   memoryTargetSchema,
 } from "./withmate-memory-mcp-general.js";
 import { buildWithMateMemoryMcpRuntimeBody } from "./withmate-memory-mcp-operation.js";
+import { createMemoryInputValidationError, memoryInputErrorSchema } from "./withmate-memory-input-error.js";
 
 export type McpRuntimeDeps = {
   adapter?: "mcp" | "cli";
@@ -100,7 +101,7 @@ export type McpFallbackAdmission = {
   markEligible(operation: WithMateMemoryRuntimeOperation): Promise<boolean>;
 };
 
-class ToolsListTrackingTransport implements Transport {
+class MemoryMcpTransport implements Transport {
   readonly #pendingToolsList = new Set<RequestId>();
   #toolsListSendQueue = Promise.resolve();
   onclose?: () => void;
@@ -109,13 +110,31 @@ class ToolsListTrackingTransport implements Transport {
 
   constructor(
     readonly delegate: Transport,
-    readonly onToolsListStart: McpFallbackAdmission["markListed"],
+    readonly inputSchemas: ReadonlyMap<string, z.ZodType>,
+    readonly onToolsListStart?: McpFallbackAdmission["markListed"],
     readonly toolsListDelivery?: (requestId: RequestId) => Promise<void>,
   ) {
     delegate.onclose = () => this.onclose?.();
     delegate.onerror = (error) => this.onerror?.(error);
     delegate.onmessage = (message, extra) => {
-      if ("method" in message && message.method === "tools/list" && "id" in message && message.id !== undefined) {
+      if ("method" in message && message.method === "tools/call" && "id" in message && message.id !== undefined) {
+        const request = CallToolRequestSchema.safeParse(message);
+        const schema = request.success ? this.inputSchemas.get(request.data.params.name) : undefined;
+        if (request.success && schema) {
+          const input = schema.safeParse(request.data.params.arguments ?? {});
+          if (!input.success) {
+            // The SDK reduces union failures to text before invoking tool handlers.
+            // Reject here using the same published schema, without dispatching to the runtime.
+            void this.send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: toolResult(createMemoryInputValidationError(request.data.params.name, input.error)),
+            }, { relatedRequestId: message.id }).catch((error: Error) => this.onerror?.(error));
+            return;
+          }
+        }
+      }
+      if (this.onToolsListStart && "method" in message && message.method === "tools/list" && "id" in message && message.id !== undefined) {
         this.#pendingToolsList.add(message.id);
       }
       this.onmessage?.(message, extra);
@@ -143,7 +162,7 @@ class ToolsListTrackingTransport implements Transport {
       return;
     }
     const send = this.#toolsListSendQueue.then(async () => {
-      const registration = await this.onToolsListStart();
+      const registration = await this.onToolsListStart!();
       try {
         await this.delegate.send(message, options);
         await this.toolsListDelivery?.(message.id as RequestId);
@@ -166,21 +185,24 @@ class ToolsListTrackingTransport implements Transport {
   }
 }
 
-class FallbackAwareMcpServer extends McpServer {
+class MemoryMcpServer extends McpServer {
+  readonly inputSchemas = new Map<string, z.ZodType>();
+
   constructor(
-    readonly fallbackAdmission: McpFallbackAdmission,
+    readonly fallbackAdmission?: McpFallbackAdmission,
     readonly toolsListDelivery?: (requestId: RequestId) => Promise<void>,
   ) {
     super(
-      { name: "withmate-character-context", version: "1.0.0" },
-      { instructions: CHARACTER_MCP_SERVER_INSTRUCTIONS },
+      { name: fallbackAdmission ? "withmate-character-context" : "withmate-memory", version: "1.0.0" },
+      { instructions: fallbackAdmission ? CHARACTER_MCP_SERVER_INSTRUCTIONS : "Use only the published reads, purpose-specific registration, and published file operations within the captured file scope for this background execution. File restoration is a local write and is available only when its tools are published. Final text is not proof of saving. No other write or fallback authority is provided." },
     );
   }
 
   override connect(transport: Transport): Promise<void> {
-    return super.connect(new ToolsListTrackingTransport(
+    return super.connect(new MemoryMcpTransport(
       transport,
-      () => this.fallbackAdmission.markListed(),
+      this.inputSchemas,
+      this.fallbackAdmission ? () => this.fallbackAdmission!.markListed() : undefined,
       this.toolsListDelivery,
     ));
   }
@@ -655,25 +677,32 @@ const mutationOutputSchema = z.union([
   characterErrorSchema,
 ]);
 
+const toolErrorOutputBranch = {
+  required: ["error"],
+  oneOf: [z.toJSONSchema(characterErrorSchema), z.toJSONSchema(memoryInputErrorSchema)],
+};
+const toolSchemaVersion = z.union([characterErrorSchema.shape.schemaVersion, memoryInputErrorSchema.shape.schemaVersion]);
+const toolErrorSchema = z.union([characterErrorSchema.shape.error, memoryInputErrorSchema.shape.error]);
+
 function createToolOutputSchema<T extends z.ZodRawShape>(
   successSchema: z.ZodObject<T>,
   requiredSuccessKeys: string[],
 ) {
   return successSchema.partial().extend({
-    schemaVersion: z.literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
-    error: characterErrorSchema.shape.error.optional(),
+    schemaVersion: toolSchemaVersion,
+    error: toolErrorSchema.optional(),
   }).strict().superRefine((value, context) => {
-    if (successSchema.safeParse(value).success || characterErrorSchema.safeParse(value).success) {
+    if (successSchema.safeParse(value).success || characterErrorSchema.safeParse(value).success || memoryInputErrorSchema.safeParse(value).success) {
       return;
     }
     context.addIssue({
       code: "custom",
-      message: "Result must match either the tool success contract or the Character context error contract.",
+      message: "Result must match the tool success, Character context error or public input error contract.",
     });
   }).meta({
     oneOf: [
-      { required: requiredSuccessKeys, not: { required: ["error"] } },
-      { required: ["error"] },
+      { required: requiredSuccessKeys, properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } }, not: { required: ["error"] } },
+      toolErrorOutputBranch,
     ],
   });
 }
@@ -706,17 +735,17 @@ const appendEpisodesOutputSchema = z.object({
 }).strict();
 
 const appendEpisodeToolOutputSchema = mutationOutputSchema.options[0].partial().extend({
-  schemaVersion: z.literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
+  schemaVersion: toolSchemaVersion,
   results: appendEpisodesOutputSchema.shape.results.optional(),
-  error: characterErrorSchema.shape.error.optional(),
+  error: toolErrorSchema.optional(),
 }).strict().superRefine((value, context) => {
-  if (!mutationOutputSchema.safeParse(value).success && !appendEpisodesOutputSchema.safeParse(value).success) {
-    context.addIssue({ code: "custom", message: "Result must match a single episode result, batch results or Character error." });
+  if (!mutationOutputSchema.safeParse(value).success && !appendEpisodesOutputSchema.safeParse(value).success && !memoryInputErrorSchema.safeParse(value).success) {
+    context.addIssue({ code: "custom", message: "Result must match a single episode result, batch results, Character error or public input error." });
   }
 }).meta({ oneOf: [
-  { required: ["characterId", "operation", "entry", "readBack", "sourceVersion"], not: { anyOf: [{ required: ["results"] }, { required: ["error"] }] } },
-  { required: ["results"], not: { required: ["characterId"] } },
-  { required: ["error"], not: { anyOf: [{ required: ["results"] }, { required: ["characterId"] }] } },
+  { required: ["characterId", "operation", "entry", "readBack", "sourceVersion"], properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } }, not: { anyOf: [{ required: ["results"] }, { required: ["error"] }] } },
+  { required: ["results"], properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } }, not: { required: ["characterId"] } },
+  toolErrorOutputBranch,
 ] });
 
 const appendEpisodeInputSchema = z.object({
@@ -1013,16 +1042,13 @@ function toolResult(value: unknown) {
 
 export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}, allowedTools?: readonly string[]): McpServer {
   const fallbackAdmission = allowedTools === undefined ? deps.fallbackAdmission ?? createMcpFallbackAdmission(deps) : undefined;
-  const server = fallbackAdmission
-    ? new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery)
-    : new McpServer({ name: "withmate-memory", version: "1.0.0" }, {
-        instructions: "Use only the published reads, purpose-specific registration, and published file operations within the captured file scope for this background execution. File restoration is a local write and is available only when its tools are published. Final text is not proof of saving. No other write or fallback authority is provided.",
-      });
+  const server = new MemoryMcpServer(fallbackAdmission, deps.toolsListDelivery);
   const registerTool = server.registerTool.bind(server);
   const publication: Pick<McpServer, "registerTool"> = {
     registerTool(name, config, callback) {
       const tool = registerTool(name, config, callback);
       if (allowedTools !== undefined && !allowedTools.includes(name)) tool.remove();
+      else if (config.inputSchema) server.inputSchemas.set(name, config.inputSchema as z.ZodType);
       return tool;
     },
   };
@@ -1194,8 +1220,11 @@ export function describeWithMateMemoryPublicTools(): unknown {
 }
 
 export function validateWithMateMemoryPublicInput(command: string, input: unknown): unknown {
-  const tool = createWithMateMemoryPublicTools().get(withMateMemoryToolName(command));
+  const name = withMateMemoryToolName(command);
+  const tool = createWithMateMemoryPublicTools().get(name);
   const result = tool?.inputSchema.safeParse(input);
-  if (!result?.success) return createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", result ? result.error.message : "Unknown Memory command.", { retryable: false, conversationMayContinue: true, effect: "none" });
+  if (!result?.success) return result
+    ? createMemoryInputValidationError(name, result.error)
+    : createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", "Unknown Memory command.", { retryable: false, conversationMayContinue: true, effect: "none" });
   return { schemaVersion: "withmate-memory-v1", valid: true, command, value: result.data };
 }

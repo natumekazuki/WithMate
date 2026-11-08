@@ -17,6 +17,142 @@ const env = {
 
 // @test-value v2
 // kind = "contract"
+// claim = "公開入力の拒否は通常・背景MCP、CLIとlocal validateで同じcode・field位置・制約・union代替条件を返し、入力本文を公開せずdispatchしない"
+// oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#Errorと再試行" }
+// fault = "SDKがunion枝を落とす、batch位置を失う、ORを両必須にする、CLIだけ別診断にする、入力値を漏らす、又は不正入力をdispatchする"
+// observable = "両MCP modeとCLIのerror envelope、text/structuredContent、issuesの絶対path・制約・alternatives、runtime/fallback呼出件数"
+// observation_boundary = "public-boundary"
+// scope = "Memory/Character公開入力エラー"
+// lifecycle = "permanent"
+// impact = "Agentが修正条件を特定できず同じ拒否を繰り返すか、拒否時に秘密情報を露出する"
+// distinction = "schema単体ではSDKのhandler前縮約とCLI表示差を検出できない。正常dispatchとdomain拒否は既存parity testが担う"
+// risk_tags = ["privacy"]
+// @end-test-value
+it("入力エラーのfieldと代替条件をMCPとCLIで同じに返す", async () => {
+  const secret = "private-input-must-not-appear";
+  const episode = { title: secret, body: secret, preview: secret };
+  const cases: Array<{ command: string; input: Record<string, unknown>; check: (issues: any[]) => void }> = [
+    { command: "character_memory_append_episode", input: { idempotencyKey: secret, episode }, check: (issues) => {
+      assert.equal(issues[0].code, "invalid_union");
+      assert.deepEqual(issues[0].path, ["episode"]);
+      assert.deepEqual(issues[0].alternatives.map((alternative: any) => alternative.issues.map((issue: any) => ({ code: issue.code, path: issue.path, expected: issue.expected }))), [
+        [{ code: "invalid_type", path: ["episode", "observedFact"], expected: "string" }],
+        [{ code: "invalid_type", path: ["episode", "characterObservation"], expected: "string" }],
+      ]);
+    } },
+    { command: "character_memory_append_episode", input: { idempotencyKey: secret, episode: { title: secret, preview: secret, observedFact: secret } }, check: (issues) => {
+      assert.ok(issues[0].alternatives.every((alternative: any) => alternative.issues.some((issue: any) => issue.code === "invalid_type" && JSON.stringify(issue.path) === '["episode","body"]')));
+    } },
+    { command: "character_memory_append_episode", input: { episodes: [{ idempotencyKey: secret, episode }] }, check: (issues) => {
+      assert.deepEqual(issues[0].path, ["episodes", 0, "episode"]);
+      assert.deepEqual(issues[0].alternatives[0].issues[0].path, ["episodes", 0, "episode", "observedFact"]);
+    } },
+    { command: "character_memory_append_episode", input: { idempotencyKey: secret, episode: { ...episode, observedFact: secret }, salience: secret }, check: (issues) => {
+      assert.deepEqual(issues.map(({ code, path, keys }) => ({ code, path, keys })), [{ code: "unrecognized_keys", path: [], keys: ["salience"] }]);
+    } },
+    { command: "search", input: { targets: [{ kind: "user-global" }], query: secret, limit: 201 }, check: (issues) => {
+      assert.ok(issues.some((issue) => issue.code === "too_big" && issue.path[0] === "limit" && issue.maximum === 50 && issue.inclusive === true));
+    } },
+    { command: "search", input: { targets: [{ kind: secret }], query: secret }, check: (issues) => {
+      assert.equal(issues[0].code, "invalid_union");
+      assert.deepEqual(issues[0].path, ["targets", 0, "kind"]);
+      assert.equal(issues[0].discriminator, "kind");
+      assert.deepEqual(issues[0].options, ["user-global", "project", "character", "character+project"]);
+      assert.equal(issues[0].message, "Discriminator must match one of the options.");
+    } },
+    { command: "append", input: { target: { kind: "user-global" }, body: secret, title: secret, preview: secret, idempotencyKey: secret }, check: (issues) => {
+      assert.ok(issues.some((issue) => issue.code === "invalid_value" && issue.path[0] === "kind" && issue.values.includes("note")));
+    } },
+    { command: "file_usage", input: { limit: 1 }, check: (issues) => {
+      assert.ok(issues.some((issue) => issue.code === "custom" && issue.message === "limit requires largest=true"));
+    } },
+  ];
+  for (const background of [false, true]) {
+    let dispatchCount = 0;
+    let fallbackCount = 0;
+    const runtimeCall = async () => { dispatchCount++; return { ok: true, status: 200, value: {} }; };
+    const server = createWithMateMemoryMcpServer({ env, runtimeCall, fallbackAdmission: {
+      async markListed() { return { async commit() {}, async rollback() {} }; },
+      async markEligible() { fallbackCount++; return false; },
+    } }, background ? [...new Set(cases.map(({ command }) => withMateMemoryToolName(command)))] : undefined);
+    const client = new Client({ name: "validation-parity-test", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.listTools();
+      for (const { command, input, check } of cases) {
+        const mcp = await client.callTool({ name: withMateMemoryToolName(command), arguments: input });
+        let output = "";
+        const exit = await runWithMateMemoryCli([command.replaceAll("_", "-"), "--json", JSON.stringify(input)], { env, runtimeCall, stdout: { write(value) { output += value; return true; } } });
+        assert.equal(exit, 3);
+        assert.equal(mcp.isError, true);
+        assert.deepEqual(JSON.parse(output), mcp.structuredContent);
+        assert.deepEqual(JSON.parse((mcp.content as Array<{ text: string }>)[0].text), mcp.structuredContent);
+        const value = mcp.structuredContent as any;
+        assert.equal(value.schemaVersion, "withmate-memory-v1");
+        assert.equal(value.error.code, "WITHMATE_MEMORY_INVALID_INPUT");
+        assert.equal(value.error.effect, "none");
+        assert.equal(value.error.retryable, false);
+        assert.equal(value.error.conversationMayContinue, true);
+        assert.equal(value.error.details.tool, withMateMemoryToolName(command));
+        assert.ok(!JSON.stringify(mcp).includes(secret));
+        check(value.error.details.issues);
+        if (!background) {
+          const local = await client.callTool({ name: "memory.validate", arguments: { command, input } });
+          assert.deepEqual(local.structuredContent, value);
+        }
+      }
+      assert.equal(dispatchCount, 0);
+      assert.equal(fallbackCount, 0);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "背景の公開toolだけが入力診断を受け、未知・非公開toolはprotocol拒否され、正常入力のdomain拒否は変更せず一度だけdispatchする"
+// oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md#Errorと再試行" }
+// fault = "入力診断が非公開toolを扱う、toolの公開制限を外す、正常入力のdomain errorを入力拒否へ変える、又はdispatchを重複させる"
+// observable = "tools/list、未知・非公開toolのisError/text、正常toolのdomain codeとdispatch件数"
+// observation_boundary = "public-boundary"
+// scope = "背景Memory MCPの公開境界"
+// lifecycle = "permanent"
+// distinction = "通常parityには公開toolの絞り込みがなく、schemaは非公開toolのdispatch阻止を保証しない"
+// risk_tags = ["authorization"]
+// @end-test-value
+it("入力診断を背景の公開toolだけへ限定する", async () => {
+  let dispatchCount = 0;
+  const domainError = { schemaVersion: "withmate-memory-v1", error: { code: "MEMORY_FORBIDDEN", message: "denied", effect: "none" } };
+  const server = createWithMateMemoryMcpServer({ env, runtimeCall: async () => { dispatchCount++; return { ok: false, status: 403, value: domainError }; } }, ["memory.search"]);
+  const client = new Client({ name: "validation-publication-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    assert.deepEqual((await client.listTools()).tools.map(({ name }) => name), ["memory.search"]);
+    for (const name of ["character_memory.append_episode", "unknown.tool"]) {
+      const rejected = await client.callTool({ name, arguments: {} });
+      assert.equal(rejected.isError, true);
+      assert.equal(rejected.structuredContent, undefined);
+      assert.match((rejected.content as Array<{ text: string }>)[0].text, /not found/);
+    }
+    assert.equal(dispatchCount, 0);
+    const result = await client.callTool({ name: "memory.search", arguments: { targets: [{ kind: "user-global" }], query: "query" } });
+    assert.equal(result.isError, true);
+    assert.deepEqual(result.structuredContent, domainError);
+    assert.equal(dispatchCount, 1);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "raw JSONのproject pathは両入口で元入力の絶対path条件と1000文字上限を検証し、local validateは元表記を保持、dispatch時だけ共通正規化する"
 // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
 // fault = "CLIが公開schema前にpathを短縮して上限超過を受理するか、validate結果又は通常dispatchがMCPと異なる"

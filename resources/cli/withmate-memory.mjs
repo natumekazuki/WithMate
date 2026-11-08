@@ -24250,11 +24250,7 @@ var appendInputSchema = object$1({
 	});
 	else {
 		const parsed = appendItemSchema.safeParse(item);
-		if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({
-			code: "custom",
-			path: issue.path,
-			message: issue.message
-		});
+		if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue });
 	}
 }).meta({ oneOf: [{
 	required: ["entries"],
@@ -24679,6 +24675,77 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 		operationKind: "read"
 	}));
 }
+// src-electron/platform/mcp/withmate-memory-input-error.ts
+var memoryInputErrorSchema = object$1({
+	schemaVersion: literal("withmate-memory-v1"),
+	error: object$1({
+		code: literal("WITHMATE_MEMORY_INVALID_INPUT"),
+		message: string(),
+		retryable: literal(false),
+		conversationMayContinue: literal(true),
+		effect: literal("none"),
+		details: object$1({
+			tool: string(),
+			issues: array(record(string(), unknown()))
+		}).strict()
+	}).strict()
+}).strict();
+function publicIssue(issue, parentPath = []) {
+	const path = [...parentPath, ...issue.path];
+	const result = {
+		code: issue.code,
+		path: path.filter((part) => typeof part === "string" || typeof part === "number"),
+		message: issue.message
+	};
+	switch (issue.code) {
+		case "invalid_type":
+			result.expected = issue.expected;
+			break;
+		case "too_small":
+		case "too_big": {
+			const bound = issue.code === "too_small" ? issue.minimum : issue.maximum;
+			result[issue.code === "too_small" ? "minimum" : "maximum"] = typeof bound === "bigint" ? String(bound) : bound;
+			result.origin = issue.origin;
+			if (issue.inclusive !== void 0) result.inclusive = issue.inclusive;
+			if (issue.exact !== void 0) result.exact = issue.exact;
+			break;
+		}
+		case "invalid_value":
+			result.values = issue.values.map((value) => typeof value === "bigint" ? String(value) : value);
+			break;
+		case "unrecognized_keys":
+			result.keys = issue.keys;
+			break;
+		case "invalid_format":
+			result.format = issue.format;
+			if (issue.pattern !== void 0) result.pattern = issue.pattern;
+			break;
+		case "not_multiple_of":
+			result.divisor = issue.divisor;
+			break;
+		case "invalid_union":
+			result.message = issue.discriminator !== void 0 ? "Discriminator must match one of the options." : "Input must satisfy one of the alternatives.";
+			result.alternatives = issue.errors.map((issues) => ({ issues: issues.map((child) => publicIssue(child, path)) }));
+			if (issue.discriminator !== void 0) result.discriminator = issue.discriminator;
+			if ("options" in issue) result.options = issue.options;
+			break;
+		case "invalid_key":
+		case "invalid_element": result.issues = issue.issues.map((child) => publicIssue(child, path));
+	}
+	return result;
+}
+/** Public schemas use schema-defined messages, not messages interpolated from input values. */
+function createMemoryInputValidationError(tool, error) {
+	return createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", `Invalid arguments for tool ${tool}. See error.details.issues.`, {
+		retryable: false,
+		conversationMayContinue: true,
+		effect: "none",
+		details: {
+			tool,
+			issues: error.issues.map((issue) => publicIssue(issue))
+		}
+	});
+}
 // src-electron/platform/mcp/withmate-memory-mcp.ts
 var DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS$1 = 3e5;
 var GENERAL_MEMORY_FILE_OPERATION_PATHS = /* @__PURE__ */ new Set([
@@ -24687,8 +24754,9 @@ var GENERAL_MEMORY_FILE_OPERATION_PATHS = /* @__PURE__ */ new Set([
 	"/v1/export_files"
 ]);
 var NON_RETRYABLE_FALLBACK_PATHS = /* @__PURE__ */ new Set(["/v1/get_file", "/v1/export_files"]);
-var ToolsListTrackingTransport = class {
+var MemoryMcpTransport = class {
 	delegate;
+	inputSchemas;
 	onToolsListStart;
 	toolsListDelivery;
 	#pendingToolsList = /* @__PURE__ */ new Set();
@@ -24696,14 +24764,30 @@ var ToolsListTrackingTransport = class {
 	onclose;
 	onerror;
 	onmessage;
-	constructor(delegate, onToolsListStart, toolsListDelivery) {
+	constructor(delegate, inputSchemas, onToolsListStart, toolsListDelivery) {
 		this.delegate = delegate;
+		this.inputSchemas = inputSchemas;
 		this.onToolsListStart = onToolsListStart;
 		this.toolsListDelivery = toolsListDelivery;
 		delegate.onclose = () => this.onclose?.();
 		delegate.onerror = (error) => this.onerror?.(error);
 		delegate.onmessage = (message, extra) => {
-			if ("method" in message && message.method === "tools/list" && "id" in message && message.id !== void 0) this.#pendingToolsList.add(message.id);
+			if ("method" in message && message.method === "tools/call" && "id" in message && message.id !== void 0) {
+				const request = CallToolRequestSchema.safeParse(message);
+				const schema = request.success ? this.inputSchemas.get(request.data.params.name) : void 0;
+				if (request.success && schema) {
+					const input = schema.safeParse(request.data.params.arguments ?? {});
+					if (!input.success) {
+						this.send({
+							jsonrpc: "2.0",
+							id: message.id,
+							result: toolResult(createMemoryInputValidationError(request.data.params.name, input.error))
+						}, { relatedRequestId: message.id }).catch((error) => this.onerror?.(error));
+						return;
+					}
+				}
+			}
+			if (this.onToolsListStart && "method" in message && message.method === "tools/list" && "id" in message && message.id !== void 0) this.#pendingToolsList.add(message.id);
 			this.onmessage?.(message, extra);
 		};
 	}
@@ -24739,19 +24823,20 @@ var ToolsListTrackingTransport = class {
 		this.delegate.setProtocolVersion?.(version);
 	}
 };
-var FallbackAwareMcpServer = class extends McpServer {
+var MemoryMcpServer = class extends McpServer {
 	fallbackAdmission;
 	toolsListDelivery;
+	inputSchemas = /* @__PURE__ */ new Map();
 	constructor(fallbackAdmission, toolsListDelivery) {
 		super({
-			name: "withmate-character-context",
+			name: fallbackAdmission ? "withmate-character-context" : "withmate-memory",
 			version: "1.0.0"
-		}, { instructions: CHARACTER_MCP_SERVER_INSTRUCTIONS });
+		}, { instructions: fallbackAdmission ? CHARACTER_MCP_SERVER_INSTRUCTIONS : "Use only the published reads, purpose-specific registration, and published file operations within the captured file scope for this background execution. File restoration is a local write and is available only when its tools are published. Final text is not proof of saving. No other write or fallback authority is provided." });
 		this.fallbackAdmission = fallbackAdmission;
 		this.toolsListDelivery = toolsListDelivery;
 	}
 	connect(transport) {
-		return super.connect(new ToolsListTrackingTransport(transport, () => this.fallbackAdmission.markListed(), this.toolsListDelivery));
+		return super.connect(new MemoryMcpTransport(transport, this.inputSchemas, this.fallbackAdmission ? () => this.fallbackAdmission.markListed() : void 0, this.toolsListDelivery));
 	}
 };
 async function resolveFallbackAdmissionSecret(deps, connection) {
@@ -25217,20 +25302,27 @@ var mutationOutputSchema = union([object$1({
 	]),
 	sourceVersion: string().nullable()
 }).strict(), characterErrorSchema]);
+var toolErrorOutputBranch = {
+	required: ["error"],
+	oneOf: [toJSONSchema(characterErrorSchema), toJSONSchema(memoryInputErrorSchema)]
+};
+var toolSchemaVersion = union([characterErrorSchema.shape.schemaVersion, memoryInputErrorSchema.shape.schemaVersion]);
+var toolErrorSchema = union([characterErrorSchema.shape.error, memoryInputErrorSchema.shape.error]);
 function createToolOutputSchema(successSchema, requiredSuccessKeys) {
 	return successSchema.partial().extend({
-		schemaVersion: literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
-		error: characterErrorSchema.shape.error.optional()
+		schemaVersion: toolSchemaVersion,
+		error: toolErrorSchema.optional()
 	}).strict().superRefine((value, context) => {
-		if (successSchema.safeParse(value).success || characterErrorSchema.safeParse(value).success) return;
+		if (successSchema.safeParse(value).success || characterErrorSchema.safeParse(value).success || memoryInputErrorSchema.safeParse(value).success) return;
 		context.addIssue({
 			code: "custom",
-			message: "Result must match either the tool success contract or the Character context error contract."
+			message: "Result must match the tool success, Character context error or public input error contract."
 		});
 	}).meta({ oneOf: [{
 		required: requiredSuccessKeys,
+		properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } },
 		not: { required: ["error"] }
-	}, { required: ["error"] }] });
+	}, toolErrorOutputBranch] });
 }
 var contextToolOutputSchema = createToolOutputSchema(contextOutputSchema.options[0], [
 	"schemaVersion",
@@ -25283,13 +25375,13 @@ var appendEpisodesOutputSchema = object$1({
 	error: characterErrorSchema.shape.error.optional()
 }).strict();
 var appendEpisodeToolOutputSchema = mutationOutputSchema.options[0].partial().extend({
-	schemaVersion: literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
+	schemaVersion: toolSchemaVersion,
 	results: appendEpisodesOutputSchema.shape.results.optional(),
-	error: characterErrorSchema.shape.error.optional()
+	error: toolErrorSchema.optional()
 }).strict().superRefine((value, context) => {
-	if (!mutationOutputSchema.safeParse(value).success && !appendEpisodesOutputSchema.safeParse(value).success) context.addIssue({
+	if (!mutationOutputSchema.safeParse(value).success && !appendEpisodesOutputSchema.safeParse(value).success && !memoryInputErrorSchema.safeParse(value).success) context.addIssue({
 		code: "custom",
-		message: "Result must match a single episode result, batch results or Character error."
+		message: "Result must match a single episode result, batch results, Character error or public input error."
 	});
 }).meta({ oneOf: [
 	{
@@ -25300,16 +25392,15 @@ var appendEpisodeToolOutputSchema = mutationOutputSchema.options[0].partial().ex
 			"readBack",
 			"sourceVersion"
 		],
+		properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } },
 		not: { anyOf: [{ required: ["results"] }, { required: ["error"] }] }
 	},
 	{
 		required: ["results"],
+		properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } },
 		not: { required: ["characterId"] }
 	},
-	{
-		required: ["error"],
-		not: { anyOf: [{ required: ["results"] }, { required: ["characterId"] }] }
-	}
+	toolErrorOutputBranch
 ] });
 var appendEpisodeInputSchema = object$1({
 	idempotencyKey: string().min(1).optional(),
@@ -25656,14 +25747,12 @@ function toolResult(value) {
 }
 function createWithMateMemoryMcpServer(deps = {}, allowedTools) {
 	const fallbackAdmission = allowedTools === void 0 ? deps.fallbackAdmission ?? createMcpFallbackAdmission(deps) : void 0;
-	const server = fallbackAdmission ? new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery) : new McpServer({
-		name: "withmate-memory",
-		version: "1.0.0"
-	}, { instructions: "Use only the published reads, purpose-specific registration, and published file operations within the captured file scope for this background execution. File restoration is a local write and is available only when its tools are published. Final text is not proof of saving. No other write or fallback authority is provided." });
+	const server = new MemoryMcpServer(fallbackAdmission, deps.toolsListDelivery);
 	const registerTool = server.registerTool.bind(server);
 	registerWithMateMemoryTools({ registerTool(name, config, callback) {
 		const tool = registerTool(name, config, callback);
 		if (allowedTools !== void 0 && !allowedTools.includes(name)) tool.remove();
+		else if (config.inputSchema) server.inputSchemas.set(name, config.inputSchema);
 		return tool;
 	} }, {
 		...deps,
@@ -25882,8 +25971,9 @@ function describeWithMateMemoryPublicTools() {
 	};
 }
 function validateWithMateMemoryPublicInput(command, input) {
-	const result = createWithMateMemoryPublicTools().get(withMateMemoryToolName(command))?.inputSchema.safeParse(input);
-	if (!result?.success) return createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", result ? result.error.message : "Unknown Memory command.", {
+	const name = withMateMemoryToolName(command);
+	const result = createWithMateMemoryPublicTools().get(name)?.inputSchema.safeParse(input);
+	if (!result?.success) return result ? createMemoryInputValidationError(name, result.error) : createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", "Unknown Memory command.", {
 		retryable: false,
 		conversationMayContinue: true,
 		effect: "none"
