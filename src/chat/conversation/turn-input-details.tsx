@@ -51,12 +51,12 @@ function ExecutionSettings({ settings }: { settings: NonNullable<Execution["exec
   rows.push(["model", settings.model], ["reasoning", settings.reasoningEffort ? reasoningEffortLabel(settings.reasoningEffort) : settings.source === "input" ? "Provider Default" : null]);
   if (settings.provider === "codex") rows.push(["sandbox", codexSandboxModeOptions.find((option) => option.id === settings.codexSandboxMode)?.label ?? settings.codexSandboxMode]);
   if (settings.customAgentName) rows.push(["agent", settings.customAgentName]);
-  return <section className="artifact-section compact" aria-label="Execution Settings">
-    <div className="artifact-section-header"><div className="artifact-fold-summary-copy"><strong>Execution Settings</strong><span>{settings.source === "input" ? "Captured With Input" : "Saved With Turn"}</span></div></div>
-    <dl className="check-list turn-input-rows">
+  return <details className="artifact-fold" aria-label="Execution Settings" open>
+    <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Execution Settings</strong></span></summary>
+    <dl className="check-list turn-input-rows artifact-fold-body">
       {rows.map(([label, value]) => <InputDetailRow key={label} label={label}>{value || "Not Recorded"}</InputDetailRow>)}
     </dl>
-  </section>;
+  </details>;
 }
 
 function ComparedText({ text, other, original }: { text: string; other: string; original: boolean }) {
@@ -209,9 +209,9 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
   const panel = <div className="artifact-block turn-input-panel">
       {compact ? <div className="artifact-section-header"><strong>Input Details</strong></div> : null}
       {settings ? <ExecutionSettings settings={settings} /> : null}
-      <section className="artifact-section compact" aria-label="Input State">
-      <div className="artifact-section-header"><strong>Input State</strong></div>
-      <dl className="check-list turn-input-rows" aria-label="Input State">
+      <details className="artifact-fold" aria-label="Input State" open>
+      <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Input State</strong></span></summary>
+      <dl className="check-list turn-input-rows artifact-fold-body" aria-label="Input State">
         {sourceWaitState ? <InputDetailRow label="Delivery"><span className="turn-input-state">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span></InputDetailRow> : null}
         {observed || receipt ? <><InputDetailRow label="Receipt State">{inputDetailStateLabel(observed?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow><InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow></> : null}
         {origin?.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
@@ -219,7 +219,7 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
         {entrySummary ? <InputDetailRow label="Input">{entrySummary}</InputDetailRow> : null}
         {additionalSummary ? <InputDetailRow label="Additional Inputs">{additionalSummary}</InputDetailRow> : null}
       </dl>
-      </section>
+      </details>
       {summary?.entry?.kind === "additional" ? <p>Start Input · {summary.startChanged === null ? "Comparison Unknown" : summary.startChanged ? "Changed From Original" : "Unchanged From Original"}</p> : null}
       {summary?.additional.notSentCount ? <p>{summary.additional.notSentCount} Inputs Not Sent · Excluded From Confirmed Inputs</p> : null}
       {input?.state === "pending" ? <p>Acceptance and saving have not been confirmed.</p> : null}

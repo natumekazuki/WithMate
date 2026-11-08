@@ -32,10 +32,10 @@ test("input details distinguish delivery states and WithMate/native identities",
 
 // @test-value v2
 // kind = "contract"
-// claim = "入力詳細は保存された実行設定を配送状態・同じ受付snapshotの原文比較・添付と共に表示し、内部参照を必要時に開ける補助情報として区別する"
+// claim = "入力詳細は保存実行設定と入力状態を独立して開閉でき、同じ受付snapshotの原文比較・添付と補助の内部参照を保持する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user request: 今のDetailsの延長線上で再設計して修正" }
-// fault = "実行設定を省略する、入力snapshot読取で失う、会話本文で比較を上書きするか、内部参照を比較より先に展開する"
-// observable = "共通読取request、設定の出典とProvider等の値・順序、配送状態と原文比較DOM、添付、比較の後で開閉できるReferencesと受付値"
+// fault = "設定や入力状態を独立して閉じられない、実行設定を省略する、会話本文で比較を上書きするか、内部参照を比較より先に展開する"
+// observable = "共通読取request、設定と状態のnative開閉状態・Provider等の値と順序、原文比較DOM、添付、補助Referencesと受付値"
 // observation_boundary = "consumer"
 // scope = "TurnInputDetailsとreadSessionExecutionのrenderer境界。保存serviceは固定snapshotで代替"
 // lifecycle = "permanent"
@@ -68,8 +68,9 @@ test("input details render the common paired snapshot rather than message text",
     assert.match(text, /1 Unresolved.*Input Coverage Unknown/);
     assert.match(text, /before\/input.md/); assert.match(text, /after\/input.md/);
     const inputState = dom.window.document.querySelector('dl[aria-label="Input State"]')!;
-    const settings = dom.window.document.querySelector('section[aria-label="Execution Settings"]')!;
-    assert.match(settings.textContent!, /Captured With Input/);
+    const settings = dom.window.document.querySelector<HTMLDetailsElement>('details[aria-label="Execution Settings"]')!;
+    const stateDetails = dom.window.document.querySelector<HTMLDetailsElement>('details[aria-label="Input State"]')!;
+    assert.equal(settings.open, true); assert.equal(stateDetails.open, true);
     assert.deepEqual([...settings.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]), [
       ["provider", "Codex"], ["approval", "Provider Controlled"], ["reviewer", "auto-review"], ["speed", "fast"],
       ["model", "captured-model"], ["reasoning", "X High"], ["sandbox", "Workspace Write"],
@@ -81,6 +82,13 @@ test("input details render the common paired snapshot rather than message text",
     assert.equal(stateRows.get("Input"), "Start Input · Changed From Original");
     assert.equal(stateRows.get("Additional Inputs"), "0 Confirmed Additional Inputs · 1 Unresolved · Input Coverage Unknown");
     const comparison = dom.window.document.querySelector('section[aria-label="Input Comparison"]')!;
+    await act(async () => { settings.open = false; settings.dispatchEvent(new dom.window.Event("toggle")); });
+    assert.equal(settings.open, false); assert.equal(stateDetails.open, true);
+    await act(async () => { stateDetails.open = false; stateDetails.dispatchEvent(new dom.window.Event("toggle")); });
+    assert.equal(stateDetails.open, false); assert.equal(settings.open, false);
+    assert.equal(comparison.parentElement!.closest("details"), details);
+    await act(async () => { settings.open = true; settings.dispatchEvent(new dom.window.Event("toggle")); });
+    assert.equal(settings.open, true); assert.equal(stateDetails.open, false);
     const references = dom.window.document.querySelector<HTMLDetailsElement>('details[aria-label="References"]')!;
     assert.equal(references.open, false);
     assert.ok(comparison.compareDocumentPosition(references) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING);
