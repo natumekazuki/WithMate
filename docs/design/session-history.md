@@ -14,6 +14,8 @@
 
 `get_execution_input`は不変受付原文と予定／dispatch固定入力の`inputPair`を一つのsnapshotで返す。原文不明は`null`である。本文は`maxChars`と`offset`で分割し、各pieceの実offset・続き・全長を返す。続きは最初の応答の`expectedInput`を指定し、予定入力が編集された場合は`EXECUTION_INPUT_RESTART_REQUIRED`として先頭からの再取得を要求する。cursorには既存の更新時刻と参照identityを使い、本文全体・独自hash・別revision台帳は保持しない。添付はID・種類・名前の参照だけを返し、内部の絶対pathを公開しない。
 
+`list_sent_deliveries`は表示中の保存message seqまたは明示live WithMate Turnに属する送信を、既存の不変receipt originから一括逆引きする。受付順のcursor、20件までのpage、原文320文字previewと全文文字数を返す。保存metadataがCoordinationを示す通知には、`coordination.id`と相談／回答の`coordination.textPreview`を併記する。元の`textPreview`は原文のままとし、通常本文をJSONらしい形だけでCoordination扱いしない。本文の完全取得と入力比較は`get_execution_input`を使う。
+
 `list_execution_outputs`／`get_execution_output`は保存messageの`output`が持つidentity・順序・本文range・phase・本文確定・最終回答根拠を返す。分類がない既存本文は未分類／確定不明で取得でき、最終回答は捏造しない。`list_execution_operations`／`get_execution_operation_detail`は以下の既存artifact読取・pagingを再利用し、大きい詳細は一覧へ常時混ぜない。追加watch、raw event replay、結果コピーDBは持たない。
 
 以下は背景実行向けの固定範囲履歴読取契約である。

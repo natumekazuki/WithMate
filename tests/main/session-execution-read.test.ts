@@ -89,10 +89,10 @@ test("saved sender display survives edits and completion without adopting curren
 
 // @test-value v2
 // kind = "contract"
-// claim = "表示範囲の送信はsource Turnと実actorを一致させて一度だけ返し、受付順のbounded pageで原文previewと配送状態を保持する"
+// claim = "表示範囲の送信はsource Turnと実actorを一致させて一度だけ返し、受付順のbounded pageで原文previewと配送状態を保持し、保存済みCoordination通知だけに人向け本文を併記する"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/837" }
 // fault = "同じTurnのuserとassistant参照で送信を重複させる、他actorの受付を混ぜる、編集本文を原文へ置換する、またはcursorで送信を欠落する"
-// observable = "共通list_sent_deliveriesのreceipt ID順、source anchor、原文preview長、原状態、続きcursor"
+// observable = "共通list_sent_deliveriesのreceipt ID順、source anchor、原文preview長、原状態、続きcursor、Coordination投影と原文の分離"
 // observation_boundary = "public-boundary"
 // scope = "既存receiptからの送信側一括execution読取"
 // lifecycle = "permanent"
@@ -127,6 +127,15 @@ test("outgoing deliveries batch exact source Turns with bounded immutable previe
     const live = call({ messageSeqs: [], liveTurnIds: [String(first.id)], limit: 20 });
     assert.deepEqual(live.items.map((item) => [item.receiptId, item.sourceMessageSeq]), [[a.id, null], [b.id, null]]);
     assert.deepEqual(call({ messageSeqs: [2, 3] }).items.map((item) => item.textPreview), ["later"]);
+    const notification = JSON.stringify({ consultation: "Saved question", answer: { body: "Saved answer" } });
+    const ordinary = send(notification);
+    const coordinated = queue.enqueue(recipientOwner, { request: { userMessage: notification, clientRequestId: randomUUID(), submitSource: "composer", executionOptions: captureSessionExecutionOptions(recipient) }, attachments: [], provider: recipient.provider, workspacePath: recipient.workspacePath, origin,
+      coordination: { id: "coordination", operation: "answer", actor: { kind: "main", sessionId: sender.id, incarnationId: getSessionIncarnationId(sender), turnId: String(first.id) } } });
+    const projected = call({ limit: 20 });
+    const item = projected.items.find((entry) => entry.receiptId === coordinated.id)!;
+    assert.deepEqual(item.coordination, { id: "coordination", textPreview: "Saved answer" });
+    assert.equal(item.textPreview, notification);
+    assert.equal(projected.items.find((entry) => entry.receiptId === ordinary.id)?.coordination, undefined);
   });
 });
 

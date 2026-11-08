@@ -10,7 +10,7 @@ type OutputPage = Extract<SessionExecutionReadResult<"list_execution_outputs">, 
 type Output = Extract<SessionExecutionReadResult<"get_execution_output">, { ok: true }>;
 type ReadContext = { ownerSessionId: string; target: SessionTarget; receiptId: string };
 
-function receiptStateLabel(state: string | null) {
+export function receiptStateLabel(state: string | null) {
   return ({ queued: "Queued", starting: "Starting", running: "In Progress", completed: "Completed", failed: "Failed", canceled: "Canceled", interrupted: "Interrupted — Outcome Unknown" })[state ?? ""] ?? "Unknown";
 }
 function turnStateLabel(state: string | null) {
@@ -117,18 +117,15 @@ export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId }
     return () => { queueChanged?.(); turnUpdated?.(); };
   }, [identity, open]);
   if (!receiptId) return <p className="coordination-parties">Saved · Not Sent</p>;
-  return <details className="coordination-answer-delivery" aria-busy={loading || undefined} onToggle={(event) => { if (event.target === event.currentTarget) { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setResultOpen(false); } }}>
-    <summary>Saved · Delivery Details</summary>
+  return <details className="artifact-fold coordination-answer-delivery" aria-busy={loading || undefined} onToggle={(event) => { if (event.target === event.currentTarget) { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setResultOpen(false); } }}>
+    <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Saved · Delivery Details</strong></span></summary>
     {open ? <>
       {loading ? <LoadingIndicator inline label="Loading answer delivery" /> : null}
       {error ? <><p className="coordination-parties">{result ? "Delivery Refresh Failed · Last Read Below" : "Delivery Unknown"}</p><LoadError message={error} onRetry={() => setRevision((value) => value + 1)} /></> : null}
-      {result ? <dl className="coordination-references">
-        <dt>Receipt Delivery</dt><dd>{receiptStateLabel(result.receiptState)}</dd>
-        <dt>Recipient Turn</dt><dd>{turnStateLabel(result.turnState)}</dd>
-        <dt>Saved Result</dt><dd>{({ "not-started": "Not Started", unknown: "Unknown", running: "Running", "not-saved": "Not Saved", saved: "Saved", partial: "Partial" })[result.resultState]}</dd>
-        <dt>Recipient Session</dt><dd>{target?.sessionId}</dd>
-        <dt>Receipt</dt><dd>{receiptId}</dd>
-        <dt>WithMate Turn</dt><dd>{result.turnId ?? "Not Confirmed"}</dd>
+      {result ? <dl className="check-list">
+        <div className="check-item"><dt>Receipt Delivery</dt><dd><strong>{receiptStateLabel(result.receiptState)}</strong></dd></div>
+        <div className="check-item"><dt>Recipient Turn</dt><dd><strong>{turnStateLabel(result.turnState)}</strong></dd></div>
+        <div className="check-item"><dt>Saved Result</dt><dd><strong>{({ "not-started": "Not Started", unknown: "Unknown", running: "Running", "not-saved": "Not Saved", saved: "Saved", partial: "Partial" })[result.resultState]}</strong></dd></div>
       </dl> : null}
       {result?.turnId && target ? <details onToggle={(event) => { if (event.target === event.currentTarget) setResultOpen(event.currentTarget.open); }}>
         <summary>Read Recipient Turn Result</summary>

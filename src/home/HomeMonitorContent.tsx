@@ -309,6 +309,9 @@ export function HomeMonitorContent({
       >
         <div className="home-monitor-parent-row">
           <div className="home-monitor-parent-identity" role="group" aria-label={`Main session: ${title}`}>
+            <span className="home-monitor-status-cluster" aria-label={`Main status: ${entry.mainState.label}`}>
+              <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
+            </span>
             <button
               className={`home-monitor-parent-button${mainUnread ? " has-unread-result" : ""}`}
               type="button"
@@ -323,15 +326,8 @@ export function HomeMonitorContent({
                 size="tiny"
                 className="home-monitor-avatar"
               />
-              <span className="home-monitor-parent-copy">
-                <strong className="home-monitor-parent-title">{title}</strong>
-                <span className="home-monitor-parent-workspace">{entry.session.workspaceLabel || entry.session.workspacePath || "Workspace not set"}</span>
-              </span>
+              <strong className="home-monitor-parent-title">{title}</strong>
             </button>
-            <span className={`home-monitor-status-cluster home-monitor-main-status ${entry.mainState.kind}`} aria-label={`Main status: ${entry.mainState.label}`}>
-              <MonitorStatusIcon kind={entry.mainState.kind} label={`Main ${entry.mainState.label}`} />
-              {entry.mainState.label}
-            </span>
           </div>
           {canExpand ? (
             <button
@@ -457,10 +453,15 @@ export function HomeMonitorContent({
           <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
             {coordination.loading ? <LoadingIndicator label="Loading Coordination" /> : null}
             {coordination.error ? <LoadError message={coordination.error} onRetry={coordination.retry} /> : null}
-            <div className="coordination-monitor-list">{coordination.groups.map((group) => <button type="button" className="coordination-monitor-row" key={group.session.id} onClick={() => void coordination.open(group)} aria-label={`Open Coordination for ${group.session.taskTitle}: ${group.items.length} items requiring response`}>
-              <CharacterAvatar character={{ name: group.session.character, iconPath: group.session.characterIconPath }} size="tiny" />
-              <strong>{group.session.taskTitle || group.session.id}</strong><span>{group.items.length}</span>
-            </button>)}</div>
+            <div className="coordination-monitor-list">{coordination.groups.map((group) => <div className="home-monitor-card" key={group.session.id}>
+              <div className="home-monitor-parent-row">
+                <button type="button" className="home-monitor-parent-button" onClick={() => void coordination.open(group)} aria-label={`Open Coordination for ${group.session.taskTitle}: ${group.items.length} items requiring response`} title={group.session.taskTitle}>
+                  <CharacterAvatar character={{ name: group.session.character, iconPath: group.session.characterIconPath }} size="tiny" className="home-monitor-avatar" />
+                  <strong className="home-monitor-parent-title">{group.session.taskTitle || "Untitled Session"}</strong>
+                </button>
+                <span className="home-monitor-count" aria-label={`${group.items.length} items requiring response`}>{group.items.length}</span>
+              </div>
+            </div>)}</div>
           </div>
         </section>
 

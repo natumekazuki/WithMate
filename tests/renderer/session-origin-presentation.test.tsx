@@ -168,3 +168,36 @@ test("sent messages retain input pages while refreshing exact delivery state", a
     for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
 });
+
+// @test-value v2
+// kind = "contract"
+// claim = "保存Coordination通知は相談本文の投影を読み、明示操作から正確な宛先のCoordination詳細を開ける"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details; user: Coordinationを理解しやすいUIへ改修" }
+// fault = "通知の内部JSONを通常本文として読むか、別Sessionや別相談の詳細を開く"
+// observable = "送信rowの本文とOpen Coordination clickがopenCoordinationへ渡す対象identityと相談ID"
+// observation_boundary = "consumer"
+// scope = "SentDeliveryRowから保存済みCoordination表示・既存詳細navigationへの接続"
+// lifecycle = "permanent"
+// impact = "利用者が相談を読めず、対応先を取り違える"
+// distinction = "storage schemaや型検査では共通APIの投影が本文・詳細操作へ正しく接続されることを保証できない"
+// @end-test-value
+test("Coordination notifications show readable text and open their exact consultation", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
+  const keys = ["window", "document", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const previous = new Map(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of [["window", dom.window], ["document", dom.window.document], ["IS_REACT_ACT_ENVIRONMENT", true]] as const) Object.defineProperty(globalThis, key, { value, configurable: true });
+  const opened: unknown[] = [];
+  Object.defineProperty(dom.window, "withmate", { value: { openCoordination: async (request: unknown) => { opened.push(request); } } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(<SentDeliveryRow item={{ ...item, textPreview: '{"coordinationId":"consultation"}', textChars: 700, coordination: { id: "consultation", textPreview: "Which approach should we use?" } }} context={context} />));
+    assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, "Which approach should we use?");
+    const button = [...dom.window.document.querySelectorAll("button")].find(node => node.textContent === "Open Coordination")!;
+    assert.ok(button);
+    await act(async () => button.click());
+    assert.deepEqual(opened, [{ ...item.target, id: "consultation" }]);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});

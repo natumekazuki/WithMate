@@ -11,13 +11,6 @@
 .turn-input-rows dd { min-width: 0; margin: 0; text-align: end; overflow-wrap: anywhere; }
 .turn-input-rows dd strong { font-size: 0.82rem; }
 .turn-input-rows dd .turn-input-state { color: inherit; font-size: inherit; letter-spacing: normal; }
-.turn-input-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.turn-input-comparison { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); gap: 1rem; }
-.turn-input-comparison > section { min-width: 0; }
-.turn-input-comparison pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 0.82rem; line-height: 1.6; }
-.turn-input-comparison h4 { margin-block: 0 0.5rem; color: var(--muted); font-size: 0.72rem; font-weight: 400; }
-.turn-input-comparison del { background: var(--editor-delete); }
-.turn-input-comparison ins { background: var(--editor-add); text-decoration: underline; }
 @media (max-width: 1080px) {
   .turn-input-rows dd { text-align: start; }
 }

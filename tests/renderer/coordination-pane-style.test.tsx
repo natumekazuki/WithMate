@@ -21,8 +21,9 @@ import { readStylesheet } from "../support/read-stylesheet.js";
 test("Coordination toolbar uses the Session button surface and starts at the pane top", async () => {
   const html = renderToStaticMarkup(createElement(CoordinationPane, { sessionId: "main", active: true, navigation: null }));
   const document = new JSDOM(html).window.document;
-  const refresh = [...document.querySelectorAll<HTMLButtonElement>(".coordination-toolbar button")].find((button) => button.textContent === "Refresh")!;
-  assert.equal(refresh.textContent, "Refresh");
+  const refresh = document.querySelector<HTMLButtonElement>('button[aria-label="Refresh Coordination"]')!;
+  assert.equal(refresh.title, "Refresh Coordination");
+  assert.equal(refresh.querySelector('[aria-hidden="true"]')?.textContent, "↻");
   assert.ok(refresh.classList.contains("drawer-toggle"));
   assert.ok(refresh.classList.contains("compact"));
   assert.ok(refresh.classList.contains("secondary"));

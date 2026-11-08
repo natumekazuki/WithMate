@@ -5919,7 +5919,11 @@ var executionOperationResultSchemas = {
 			]),
 			origin,
 			textPreview: string(),
-			textChars: number().int().nonnegative()
+			textChars: number().int().nonnegative(),
+			coordination: object({
+				id: id$1,
+				textPreview: string()
+			}).optional()
 		})),
 		nextCursor: number().int().nonnegative().nullable()
 	}),
@@ -6057,7 +6061,7 @@ var executionOperationResultSchemas = {
 	}).passthrough()])
 };
 var EXECUTION_OPERATION_DESCRIPTIONS = {
-	list_sent_deliveries: "Read bounded outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor; get_execution_input on each returned exact target/receipt reads its original full input. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
+	list_sent_deliveries: "Read bounded outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor; get_execution_input on each returned exact target/receipt reads its original full input. Stored Coordination notifications also include coordination.id and a human-readable coordination.textPreview; textPreview still contains the original input. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
 	list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",
 	get_message: "Read one exact saved message in bounded UTF-16 text pieces. Its saved Turn linkage may be null; no latest-message or inferred Turn fallback.",
 	list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",

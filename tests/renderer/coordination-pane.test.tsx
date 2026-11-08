@@ -264,6 +264,7 @@ test("Coordination distinguishes transient reads from terminal deletion without 
     updatedAt: "2026-11-07T00:00:00Z",
   };
   let mode: "ready" | "transient" | "pending" | "deleted" = "ready";
+  let changed = () => {};
   let resolveOld!: (value: { record: CoordinationRecord }) => void;
   const oldRead = new Promise<{ record: CoordinationRecord }>((resolve) => {
     resolveOld = resolve;
@@ -271,7 +272,8 @@ test("Coordination distinguishes transient reads from terminal deletion without 
   dom.window.withmate = {
     async getCoordinationIdentity() { return { title: "Origin Session", character: { name: "Origin Character", iconPath: "" } }; },
     subscribeSessionInvalidation() { return () => {}; },
-    subscribeCoordinationChanged() {
+    subscribeCoordinationChanged(listener) {
+      changed = () => listener({ id: record.id, crewRootSessionId: record.crewRootSessionId, initiator: record.initiator });
       return () => {};
     },
     async executeCoordination(request) {
@@ -309,9 +311,7 @@ test("Coordination distinguishes transient reads from terminal deletion without 
       );
     await act(async () => checkbox()!.click());
     const refresh = () =>
-      [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === "Refresh")!
-        .click();
+      dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Refresh Coordination"]')!.click();
     mode = "transient";
     await act(async () => refresh());
     assert.match(
@@ -326,7 +326,8 @@ test("Coordination distinguishes transient reads from terminal deletion without 
     mode = "pending";
     await act(async () => refresh());
     mode = "deleted";
-    await act(async () => refresh());
+    assert.equal(dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Refresh Coordination"]')!.disabled, true);
+    await act(async () => changed());
     assert.ok(
       dom.window.document.querySelector('[aria-label="Deleted Coordination"]'),
     );

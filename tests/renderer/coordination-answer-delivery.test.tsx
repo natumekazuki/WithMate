@@ -71,7 +71,6 @@ test("saved answer delivery lazily reloads exact receipt after remount and separ
     const pairs = [...h.dom.window.document.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]);
     assert.ok(pairs.some(([label, value]) => label === "Receipt Delivery" && value === "Completed"));
     assert.ok(pairs.some(([label, value]) => label === "Recipient Turn" && value === "Running"));
-    assert.ok(pairs.some(([label, value]) => label === "WithMate Turn" && value === "42"));
     assert.deepEqual(h.requests[0], { owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } });
     await act(async () => { for (const listener of h.listeners) listener("other-session"); });
     assert.equal(h.requests.length, 1);

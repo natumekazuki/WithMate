@@ -176,23 +176,23 @@
   flex-wrap: wrap;
   gap: 4px;
 }
-.coordination-filter-tabs button {
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 8px 12px;
-  color: var(--muted);
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-}
-.coordination-filter-tabs button.active {
-  border-color: var(--line);
-  color: var(--ink);
+.coordination-filter-tabs .drawer-toggle.active {
   background: var(--orange-soft);
-}
-.coordination-filter-tabs button:hover {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.06);
+}
+.coordination-pane .drawer-toggle.coordination-toolbar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  flex: 0 0 auto;
+}
+.coordination-toolbar-icon .button-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .coordination-answer-form {
   padding-top: 16px;
@@ -203,7 +203,7 @@
   border-radius: 10px;
   padding: 10px;
 }
-.coordination-pane .coordination-primary-action {
+.coordination-pane .drawer-toggle.coordination-primary-action {
   justify-self: start;
   background: var(--character-main);
   color: var(--character-main-ink);
@@ -225,15 +225,6 @@
   white-space: pre-wrap;
   margin-block: 6px 0;
 }
-.coordination-references {
-  display: grid;
-  gap: 4px;
-}
-.coordination-references dd {
-  margin: 0 0 8px;
-  overflow-wrap: anywhere;
-  font-family: monospace;
-}
 .coordination-history {
   padding-inline-start: 20px;
 }
@@ -250,25 +241,10 @@
   display: grid;
   align-content: start;
   flex: 1 1 auto;
-  min-height: 0;
   overflow-y: auto;
-  gap: 8px;
-  padding: 8px;
+  min-height: 0;
+  gap: 4px;
 }
-.coordination-monitor-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  text-align: left;
-  width: 100%;
-  color: inherit;
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 10px;
-  cursor: pointer;
-}
-.coordination-monitor-row strong {
-  flex: 1;
-  overflow-wrap: anywhere;
-}
+.coordination-monitor-list .home-monitor-parent-row { min-height: 36px; }
+.coordination-monitor-list .home-monitor-parent-button { padding-inline-start: 8px; }
+.coordination-monitor-list .home-monitor-count { margin-inline: 8px; }

@@ -73,7 +73,7 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
   };
   const character = item.origin.actorSnapshot?.character ?? { name: "Unknown Sender", iconPath: "" };
   const original = input?.inputPair.original;
-  const incomplete = text === null ? item.textChars > item.textPreview.length : original?.nextOffset != null;
+  const incomplete = !item.coordination && (text === null ? item.textChars > item.textPreview.length : original?.nextOffset != null);
   return <article className="message-row assistant session-outbound" aria-label={`Sent Message: ${item.origin.targetSnapshot?.sessionTitle ?? "Unknown Session"}`} data-source-turn-id={item.sourceTurnId} aria-busy={busy || (open && statusBusy) || undefined}>
     <div className="message-avatar-stack">
       <CharacterAvatar character={character} size="small" className="message-avatar" />
@@ -82,10 +82,14 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
     <div className="message-character-name">{character.name}</div>
     <div className="message-card assistant session-outbound"><div className="message-card-content">
       <SessionOriginRoute origin={item.origin} target={item.target} onError={setError} />
-      <MessageRichText {...messageContext} text={text ?? item.textPreview} />
+      <MessageRichText {...messageContext} text={item.coordination?.textPreview ?? text ?? item.textPreview} />
+      {item.coordination ? <button type="button" className="drawer-toggle compact secondary" disabled={!getWithMateApi()?.openCoordination} onClick={() => {
+        const api = getWithMateApi();
+        if (api) void api.openCoordination({ kind: item.target.kind, sessionId: item.target.sessionId, incarnationId: item.target.incarnationId, id: item.coordination!.id }).catch((failure) => setError(failure instanceof Error ? failure.message : "Could not open Coordination."));
+      }}>Open Coordination</button> : null}
       {incomplete ? <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load(text !== null)}>{text === null ? `Read Full Message · ${item.textChars.toLocaleString("en-US")} Characters` : `Load More Message · ${text.length.toLocaleString("en-US")} / ${item.textChars.toLocaleString("en-US")} Characters`}</button> : null}
       {busy ? <LoadingIndicator inline label="Loading sent message" /> : null}
-      {error ? <p role="alert">{error} <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load()}>Reload Message</button></p> : null}
+      {error ? <p role="alert">{error} {!item.coordination ? <button type="button" className="drawer-toggle compact secondary" disabled={busy} onClick={() => void load()}>Reload Message</button> : null}</p> : null}
       {open ? <section className="artifact-block turn-input-details turn-input-panel" aria-label="Delivery Details">
       <div className="artifact-section-header"><strong>Delivery Details</strong></div>
       {statusBusy ? <LoadingIndicator inline label="Loading delivery state" /> : null}
@@ -95,14 +99,7 @@ export function SentDeliveryRow({ item, context, ...messageContext }: { item: Se
         <InputDetailRow label="Turn State">{inputDetailStateLabel(execution?.turnState, "Not Confirmed")}</InputDetailRow>
         <InputDetailRow label="Delivery Timing">{item.origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow>
       </dl>
-      <details className="artifact-fold" aria-label="References">
-        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>References</strong></span></summary>
-        <dl className="check-list turn-input-rows artifact-fold-body" aria-label="Delivery References">
-          <InputDetailRow label="Receipt"><code>{item.receiptId}</code></InputDetailRow>
-          <InputDetailRow label="Source WithMate Turn"><code>{item.sourceTurnId}</code></InputDetailRow>
-          {execution?.turnId ? <InputDetailRow label="Recipient WithMate Turn"><code>{execution.turnId}</code></InputDetailRow> : null}
-        </dl>
-      </details></section> : null}
+      </section> : null}
     </div></div>
   </article>;
 }

@@ -1457,6 +1457,7 @@ export function SessionMessageColumn({
             const hasExecutionDetails = isAssistant && inputReadContext && (message.historyIndex !== undefined || executionTurnId || turnQueueMetadata?.get(messageKey));
             const isAwaitingSavedResponse = isAssistant && turnQueueMetadata?.get(messageKey)?.state === "completed";
             const artifact = artifactExpanded ? loadedArtifactDetails.current.get(artifactKey) ?? message.artifact : message.artifact;
+            const visibleRunChecks = artifact?.runChecks.filter((check) => check.label !== "thread") ?? [];
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactDetailError = artifactDetailErrors[artifactKey];
             const artifactOperations: import("../../../src-shared/session/runtime-state.js").MessageOperation[] =
@@ -1654,12 +1655,12 @@ export function SessionMessageColumn({
                             </div>
                           ) : null}
                           {artifactDetailError ? <p className="pending-run-error-note" role="alert">{artifactDetailError}</p> : null}
-                          {artifact?.runChecks.length ? <div className="artifact-grid artifact-grid-single">
+                          {visibleRunChecks.length ? <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
                               <details className="artifact-fold" aria-label="Run Checks" open>
                               <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Run Checks</strong></span></summary>
                               <div className="check-list artifact-fold-body">
-                                {artifact.runChecks.map((check) => (
+                                {visibleRunChecks.map((check) => (
                                   <div key={check.label} className="check-item">
                                     <span>{check.label}</span>
                                     <strong>{displayRunCheckValue(check)}</strong>
@@ -1670,7 +1671,7 @@ export function SessionMessageColumn({
                             </section>
                           </div> : null}
 
-                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!artifact?.runChecks.length} inputMessages={messages} /> : null}
+                          {hasExecutionDetails ? <TurnExecutionDetails message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext} turnId={executionTurnId ?? undefined} active={isContentActive && artifactDetailsEnabled} hasRunChecks={!!visibleRunChecks.length} /> : null}
 
                           {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">

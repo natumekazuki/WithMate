@@ -9,10 +9,9 @@ import type { OpenCoordinationRequest } from "../../src-shared/coordination/coor
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 import { ButtonContent } from "../ui/button-content.js";
 import { LoadError } from "../ui/load-error.js";
-import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { useCoordinationQuery } from "./use-coordination-query.js";
-import { CoordinationAnswerDelivery } from "./CoordinationAnswerDelivery.js";
+import { CoordinationAnswerDelivery, receiptStateLabel } from "./CoordinationAnswerDelivery.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
 import { coordinationIdentityKey, useCoordinationIdentities } from "./use-coordination-identities.js";
 
@@ -165,7 +164,7 @@ export function CoordinationPane({
           ...(current[key] ?? draft),
           pendingRequest: undefined,
           feedback: receipt
-            ? `Saved · Delivery ${receipt.state} · Receipt ${receipt.id}${receipt.turnId ? ` · Turn ${receipt.turnId}` : ""}`
+            ? `Saved · Delivery ${receiptStateLabel(receipt.state)}`
             : "Saved",
         },
       }));
@@ -203,10 +202,7 @@ export function CoordinationPane({
         <span className={`coordination-state coordination-state-${item.state}`}>{stateLabel(item.state)}</span>
         <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time>
       </div>
-      <p className="coordination-parties">
-        Respondent:{" "}
-        {item.respondent.kind === "user" ? "User" : identityTitle(item.respondent)}
-      </p>
+      {item.respondent.kind !== "user" ? <p className="coordination-parties">Assigned To: {identityTitle(item.respondent)}</p> : null}
       <MessageRichText text={item.body} embeddedMedia="text" />
       {item.state === "withdrawn" ? (
         <div className="coordination-withdrawal" role="status">
@@ -302,8 +298,8 @@ export function CoordinationPane({
           </fieldset>
         </form>
       ) : null}
-      <details className="coordination-actions">
-        <summary>Resolution And Withdrawal</summary>
+      <details className="artifact-fold coordination-actions">
+        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Resolve Or Withdraw</strong></span></summary>
         <button
           type="button"
           className="drawer-toggle compact secondary"
@@ -343,27 +339,14 @@ export function CoordinationPane({
           Withdraw
         </button>
       </details>
-      <details>
-        <summary>References And History</summary>
-        <dl className="coordination-references">
-          <dt>Coordination</dt>
-          <dd>{item.id}</dd>
-          <dt>Origin Turn</dt>
-          <dd>{item.initiatorTurnId}</dd>
-          {item.originReceiptId ? (
-            <>
-              <dt>Origin Receipt</dt>
-              <dd>{item.originReceiptId}</dd>
-            </>
-          ) : null}
-        </dl>
+      {item.history.length ? <details className="artifact-fold">
+        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>History</strong></span></summary>
         <ol className="coordination-history">
           {item.history.map((entry) => (
             <li key={entry.operationId}>
-              <strong>{entry.operation}</strong> ·{" "}
+              <strong>{({ create: "Created", deliver: "Sent", escalate: "Escalated", answer: "Answered", resolve: "Resolved", consume: "Answer Used", withdraw: "Withdrawn", correct: "Corrected" } as Record<string, string>)[entry.operation] ?? entry.operation}</strong> ·{" "}
               {new Date(entry.at).toLocaleString("en-US")}
               {entry.body ? <p>{entry.body}</p> : null}
-              {entry.receiptId ? <p>Receipt {entry.receiptId}</p> : null}
               {entry.correctionId ? (
                 <button
                   type="button"
@@ -376,36 +359,37 @@ export function CoordinationPane({
             </li>
           ))}
         </ol>
-      </details>
+      </details> : null}
     </>
   );
   return (
-    <div className="coordination-pane" hidden={!active}>
+    <div className="coordination-pane" hidden={!active} aria-busy={(selectedId ? detail.loading : list.loading) || undefined}>
       <div className="coordination-toolbar">
         {selectedId ? (
           <button
             type="button"
-            className="drawer-toggle compact secondary"
+            className="drawer-toggle compact secondary coordination-toolbar-icon"
+            title="Back To List" aria-label="Back To List"
             onClick={() => setSelectedId(null)}
           >
-            Back To List
+            <span aria-hidden="true">‹</span>
           </button>
         ) : (
           <div className="coordination-filter-tabs" role="group" aria-label="Coordination filter">
-            {([[true, "Needs Your Response"], [false, "All Records"]] as const).map(([pending, label]) => <button key={String(pending)} type="button" aria-pressed={pendingOnly === pending} className={pendingOnly === pending ? "active" : ""} onClick={() => { setPendingOnly(pending); setOffset(0); }}>{label}</button>)}
+            {([[true, "Needs Your Response"], [false, "All Records"]] as const).map(([pending, label]) => <button key={String(pending)} type="button" aria-pressed={pendingOnly === pending} className={`drawer-toggle compact secondary${pendingOnly === pending ? " active" : ""}`} onClick={() => { setPendingOnly(pending); setOffset(0); }}>{label}</button>)}
           </div>
         )}
         {!(selectedId ? detail.deleted : list.deleted) ? <button
           type="button"
-          className="drawer-toggle compact secondary"
+          className="drawer-toggle compact secondary coordination-toolbar-icon"
+          title="Refresh Coordination" aria-label="Refresh Coordination"
+          disabled={selectedId ? detail.loading : list.loading}
+          aria-busy={selectedId ? detail.loading : list.loading}
           onClick={() => { (selectedId ? detail.refresh : list.refresh)(); identities.refresh(); }}
         >
-          Refresh
+          <ButtonContent busy={selectedId ? detail.loading : list.loading} busyLabel="Refreshing Coordination"><span aria-hidden="true">↻</span></ButtonContent>
         </button> : null}
       </div>
-      {(selectedId ? detail.loading : list.loading) ? (
-        <LoadingIndicator label="Loading Coordination" />
-      ) : null}
       {(selectedId ? detail.deleted : list.deleted) ? (
         <section
           className="coordination-deleted"

@@ -43,7 +43,7 @@ const executionSettings = z.object({
   codexReviewer: z.string().nullable(), codexSpeed: z.string().nullable(), customAgentName: z.string().nullable(),
 });
 export const executionOperationResultSchemas = {
-  list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, textPreview: z.string(), textChars: z.number().int().nonnegative() })), nextCursor: z.number().int().nonnegative().nullable() }),
+  list_sent_deliveries: z.object({ ...ok, items: z.array(z.object({ receiptId: id, sequence: z.number().int().nonnegative(), sourceTurnId: id, sourceMessageSeq: z.number().nullable(), target: sessionTargetSchema, state: z.enum(["queued", "starting", "running", "completed", "failed", "canceled", "interrupted"]), origin, textPreview: z.string(), textChars: z.number().int().nonnegative(), coordination: z.object({ id, textPreview: z.string() }).optional() })), nextCursor: z.number().int().nonnegative().nullable() }),
   list_messages: z.object({ ...ok, window: z.object({ fromSeq: z.number(), toSeq: z.number() }), ...resultPage }).passthrough(),
   get_message: z.object({ ...ok, seq: z.number(), role: z.enum(["user", "assistant"]), turn: z.unknown(), ...textPiece }).passthrough(),
   list_operations: z.object({ ...ok, seq: z.number(), section: z.string(), artifactDetailSaved: z.boolean(), ...resultPage }).passthrough(),
@@ -61,7 +61,7 @@ export const executionOperationResultSchemas = {
   ]),
 } as const;
 export const EXECUTION_OPERATION_DESCRIPTIONS: Record<ExecutionReadOperation, string> = {
-  list_sent_deliveries: "Read bounded outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor; get_execution_input on each returned exact target/receipt reads its original full input. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
+  list_sent_deliveries: "Read bounded outgoing accepted deliveries for the exact source Session's recorded Turns linked to the specified saved messageSeqs or explicit live WithMate Turn. Uses immutable receipt origin, not native IDs or guessed output positions. Page by receipt sequence cursor; get_execution_input on each returned exact target/receipt reads its original full input. Stored Coordination notifications also include coordination.id and a human-readable coordination.textPreview; textPreview still contains the original input. Delivery state is not whole-Turn completion. Missing display snapshots remain unknown.",
   list_messages: "Read ordered saved conversation previews of an exact Session in any Crew, including messages without Turn linkage. Uses the shared saved-history paging, not background history authorization.",
   get_message: "Read one exact saved message in bounded UTF-16 text pieces. Its saved Turn linkage may be null; no latest-message or inferred Turn fallback.",
   list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",
