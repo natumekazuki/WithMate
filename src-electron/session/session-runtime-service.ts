@@ -488,6 +488,7 @@ export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
   private readonly startingSessionRuns = new Set<string>();
   private readonly terminatingSessionRuns = new Map<string, Set<Promise<unknown>>>();
+  private readonly unreleasedTurnIds = new Map<string, string>();
   private readonly waitingSessionRunAdmissions = new Set<string>();
   private readonly pendingSessionRunCancels = new Set<string>();
   private readonly sessionRunControllers = new Map<string, AbortController>();
@@ -499,6 +500,10 @@ export class SessionRuntimeService {
   private readonly pendingRuns = new Set<Promise<Session>>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
+
+  getUnreleasedTurnIds(): string[] {
+    return [...this.unreleasedTurnIds.values()];
+  }
 
   hasInFlightRuns(): boolean {
     return this.inFlightSessionRuns.size > 0
@@ -543,6 +548,7 @@ export class SessionRuntimeService {
     if (this.isRunInFlight(sessionId) || this.waitingSessionRunAdmissions.has(sessionId)) {
       return;
     }
+    this.unreleasedTurnIds.delete(sessionId);
     const liveState = this.deps.getLiveSessionRun(sessionId);
     if (liveState?.cancellationState) {
       const { cancellationState: _cancellationState, ...rest } = liveState;
@@ -1032,6 +1038,7 @@ export class SessionRuntimeService {
           buildRunningTurn({ sessionId, createdAt: new Date().toISOString(), session: runningSession, executionOptions }));
         runningSession = started.session;
         runningTurn = started.turn;
+        this.unreleasedTurnIds.set(sessionId, String(runningTurn.id));
         if (typeof runningTurn.userMessageSeq !== "number") throw new Error("The queued turn message identity was not persisted.");
         await queued.onStarted({ turnId: String(runningTurn.id), userMessageSeq: runningTurn.userMessageSeq });
       } else {
@@ -1060,6 +1067,7 @@ export class SessionRuntimeService {
         runningTurn = await this.deps.createSessionTurn(buildRunningTurn({
           sessionId, createdAt: new Date().toISOString(), session: runningSession, executionOptions,
         }));
+        this.unreleasedTurnIds.set(sessionId, String(runningTurn.id));
         initialLiveState = { ...initialLiveState, sessionTurnId: String(runningTurn.id) };
         this.setRuntimeLiveState(sessionId, initialLiveState);
       }

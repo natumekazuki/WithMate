@@ -1039,10 +1039,13 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
       if (savedOrigin && (savedOrigin.kind !== "session" || savedOrigin.actorKind !== actor.kind || savedOrigin.actorSessionId !== actor.id || savedOrigin.actorIncarnationId !== actor.incarnationId)) {
         throw new SessionManagementError("SESSION_FORBIDDEN", "This request identity belongs to a different sender.");
       }
+      if (savedOrigin && (savedOrigin.deliveryTiming ?? "immediate") !== (input.deliveryTiming ?? "immediate")) {
+        throw new SessionManagementError("SESSION_INVALID_REQUEST", "This request identity was already used with different delivery timing.");
+      }
       const sender = savedOrigin ? null : actor.kind === "main" ? await getRuntimeSession(actor.id) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.id);
       if (!savedOrigin && (!sender || getSessionIncarnationId(sender) !== actor.incarnationId)) throw new Error("The sender Session is unavailable or changed.");
       const origin = savedOrigin ?? { kind: "session" as const, actorKind: actor.kind, actorSessionId: actor.id, actorIncarnationId: actor.incarnationId, actorTurnId: turnId,
-        actorSnapshot: captureSessionTurnQueueDisplay(sender!), operation: "send" as const, targetSessionId: target.id, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session) };
+        deliveryTiming: input.deliveryTiming ?? "immediate", actorSnapshot: captureSessionTurnQueueDisplay(sender!), operation: "send" as const, targetSessionId: target.id, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session) };
       try {
         return await facade.enqueueSessionTurn(target.id,
           { incarnationId: target.incarnationId, clientRequestId: input.requestId, userMessage: input.message, submitSource: "composer", executionOptions },
@@ -2757,6 +2760,15 @@ async function resolveQueueSessionRuntime(sessionId: string) {
   return { runtime, auxiliary };
 }
 
+function wakeSessionQueueAfterRunReleased(sessionId: string): void {
+  sessionTurnQueueService?.wake(sessionId);
+  void sessionTurnQueueService?.wakeSourceTurnDependents(sessionId).catch((error) => writeAppLog({
+    level: "warn", kind: "session-queue.source-turn-wake-failed", process: "main",
+    message: "Could not resume messages waiting for the sender Turn.",
+    data: { sessionId, error: error instanceof Error ? error.message : String(error) },
+  }));
+}
+
 function requireMainSessionTurnQueueService(): SessionTurnQueueService {
   if (!sessionTurnQueueService) {
     const owner = requireActivePersistentStoreOwnerForFactory("Session turn queue");
@@ -2764,6 +2776,7 @@ function requireMainSessionTurnQueueService(): SessionTurnQueueService {
     if (!store) throw new Error("The Session turn queue is unavailable for this database.");
     sessionTurnQueueService = new SessionTurnQueueService({
       store,
+      getUnreleasedSourceTurnIds: () => sessionRuntimeService?.getUnreleasedTurnIds() ?? [],
       isRunInFlight: async (sessionId) => {
         const session = await getQueueRuntimeSession(sessionId);
         return databaseMaintenanceRequested || requireSessionWindowBridge().isQuitPending()
@@ -2806,6 +2819,7 @@ function requireMainSessionTurnQueueFacade(): MainSessionTurnQueueFacade {
     const store = owner.storageWorker?.stores.queue;
     if (!store) throw new Error("The Session turn queue is unavailable for this database.");
     mainSessionTurnQueueFacade = new MainSessionTurnQueueFacade({
+      getUnreleasedSourceTurnIds: () => sessionRuntimeService?.getUnreleasedTurnIds() ?? [],
       assertActive: () => assertPersistentStoreOwnerIsActive(owner, "Queue acceptance"),
       assertAccepting: () => {
         assertPersistentStoreOwnerIsActive(owner, "Queue acceptance");
@@ -2896,7 +2910,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       notification: {
         onBackgroundEvent: (event) => publishBackgroundConversationEvent(event, "main"),
         notifySessionTurnTerminal: async (notification) => { await requireSessionTurnNotificationService().notifyTurnTerminal(notification); },
-        onSessionRunReleased: (sessionId) => sessionTurnQueueService?.wake(sessionId),
+        onSessionRunReleased: wakeSessionQueueAfterRunReleased,
       },
       timing: { currentTimestampLabel },
     });

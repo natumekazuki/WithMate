@@ -13,6 +13,7 @@ export type SessionTurnQueueDispatchResult = {
 export type SessionTurnQueueServiceDeps = {
   store: SessionTurnQueueStore;
   isRunInFlight(sessionId: string): boolean | Promise<boolean>;
+  getUnreleasedSourceTurnIds?(): readonly string[];
   sendInput?(receipt: SessionTurnQueueReceipt, expectedTurnId: string): Promise<unknown>;
   dispatch(
     receipt: SessionTurnQueueReceipt,
@@ -77,6 +78,19 @@ export class SessionTurnQueueService {
     // Receipt reads can wake recovered work, but must not invalidate the read
     // itself through another queue-change notification.
     this.wake(receipt.sessionId);
+  }
+
+  async wakeSourceTurnDependents(sourceSessionId: string): Promise<void> {
+    if (this.closing || this.closed) return;
+    await this.track((async () => {
+      const owners = await this.deps.store.listPendingOwners(sourceSessionId);
+      if (this.closing || this.closed) return;
+      for (const owner of owners) {
+        this.adoptOwner(owner);
+        this.notify(owner);
+        this.wake(owner.sessionId);
+      }
+    })());
   }
 
   cancelQueued(owner: SessionTurnQueueOwner, id: string, assertAuthorized?: () => void | Promise<void>): Promise<SessionTurnQueueReceipt> {
@@ -174,7 +188,7 @@ export class SessionTurnQueueService {
         if (candidate.captured.coordination) throw new Error("Coordination delivery cannot be sent as additional input.");
         let claimed: SessionTurnQueueReceipt;
         try {
-          claimed = await this.deps.store.claimForInput(owner, id, expectedTurnId);
+          claimed = await this.deps.store.claimForInput(owner, id, expectedTurnId, this.deps.getUnreleasedSourceTurnIds?.());
         } catch (error) {
           try {
             const canonical = await this.deps.store.getReceipt(owner, candidate.requestId);
@@ -337,7 +351,7 @@ export class SessionTurnQueueService {
           await this.deps.store.releaseInterrupted(owner, released.id, { runReleased: true });
           if (this.closing || !this.isCurrentOwner(owner) || await this.deps.isRunInFlight(sessionId)) return null;
         }
-        return this.deps.store.claimNext(owner);
+        return this.deps.store.claimNext(owner, this.deps.getUnreleasedSourceTurnIds?.());
       });
       if (!receipt || !this.isCurrentOwner(owner)) return;
       this.lastClaim.set(sessionId, receipt);

@@ -2,6 +2,8 @@ import type { ComposerAttachment, RunSessionTurnRequest } from "./runtime-state.
 import type { Session } from "./session-state.js";
 
 export type SessionTurnQueueOwner = { sessionId: string; incarnationId: string };
+export type SessionMessageDeliveryTiming = "immediate" | "after_source_turn";
+export type SessionMessageSourceTurnPhase = "running" | "completed" | "failed" | "canceled" | "unknown";
 export type SessionTurnQueueDisplaySnapshot = {
   sessionTitle: string;
   character: { id: string; name: string; iconPath: string };
@@ -18,6 +20,8 @@ export type SessionTurnQueueOrigin = {
   actorKind?: "main" | "auxiliary";
   actorIncarnationId?: string;
   actorTurnId?: string;
+  deliveryTiming?: SessionMessageDeliveryTiming;
+  sourceTurnPhase?: Exclude<SessionMessageSourceTurnPhase, "running" | "unknown">;
   actorMainSessionId?: string;
   actorSnapshot?: SessionTurnQueueDisplaySnapshot;
   operation: "send";
@@ -40,6 +44,8 @@ export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   sequence: number;
   queuePosition: number;
   state: SessionTurnQueueState;
+  sourceTurnPhase?: SessionMessageSourceTurnPhase;
+  sourceTurnPendingRelease?: boolean;
   captured: SessionTurnQueueCapturedInput;
   /** Immutable acceptance input; absent/null means the original was not recorded. */
   accepted?: SessionTurnQueueCapturedInput | null;
@@ -68,9 +74,9 @@ export type SessionTurnQueueStore = {
   getReceiptById(owner: SessionTurnQueueOwner, id: string): Promise<SessionTurnQueueReceipt | null>;
   listActive(owner: SessionTurnQueueOwner): Promise<SessionTurnQueueReceipt[]>;
   listReceipts(owner: SessionTurnQueueOwner, options?: { cursor?: number; limit?: number }): Promise<SessionTurnQueueReceiptPage>;
-  listPendingOwners(): Promise<SessionTurnQueueOwner[]>;
-  claimNext(owner: SessionTurnQueueOwner): Promise<SessionTurnQueueReceipt | null>;
-  claimForInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string): Promise<SessionTurnQueueReceipt>;
+  listPendingOwners(sourceSessionId?: string): Promise<SessionTurnQueueOwner[]>;
+  claimNext(owner: SessionTurnQueueOwner, unreleasedSourceTurnIds?: readonly string[]): Promise<SessionTurnQueueReceipt | null>;
+  claimForInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string, unreleasedSourceTurnIds?: readonly string[]): Promise<SessionTurnQueueReceipt>;
   restoreQueuedInput(owner: SessionTurnQueueOwner, id: string, expectedTurnId: string): Promise<SessionTurnQueueReceipt>;
   markStarted(owner: SessionTurnQueueOwner, id: string, input: { turnId: string; userMessageSeq: number }): Promise<SessionTurnQueueReceipt>;
   settle(owner: SessionTurnQueueOwner, id: string, state: Extract<SessionTurnQueueState, "completed" | "failed" | "canceled" | "interrupted">, reason?: string): Promise<SessionTurnQueueReceipt>;

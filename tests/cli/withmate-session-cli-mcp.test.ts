@@ -455,6 +455,81 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
 
 // @test-value v2
 // kind = "contract"
+// claim = "MCPとCLIはenqueueの明示配送タイミングを保持し、不正値は送信前に拒否し、遅延receiptの送信元状態を返す"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "片側入口がdeliveryTimingを削除または不正値をdispatchし、sourceTurnPhaseを欠落させる"
+// observable = "両入口のdispatch body、receipt.sourceTurnPhase、不正値でのdispatch件数不変、公開schemaとhelp"
+// observation_boundary = "public-boundary"
+// scope = "SDK MCPとbound CLIのenqueue/get_receipt入力・結果・利用説明"
+// lifecycle = "permanent"
+// distinction = "型検査だけでは外部JSONの不正値や実入口によるfield欠落を検出できない"
+// @end-test-value
+test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", async () => {
+  const calls: unknown[] = [];
+  const target = { kind: "main", sessionId: "child", incarnationId: "child-v1" };
+  const requestId = randomUUID();
+  let phase = "running";
+  const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, request) => {
+    calls.push(request.body);
+    return {
+      ok: true,
+      status: 200,
+      value: { ok: true, receipt: { id: "receipt", requestId, sessionId: "child", incarnationId: "child-v1", state: "queued", turnId: null, sourceTurnPhase: phase } },
+    };
+  };
+  const server = createWithMateSessionMcpServer({ env, connection, runtimeCall });
+  const client = new Client({ name: "delivery-timing-parity", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b);
+    await client.connect(a);
+    const tools = await client.listTools();
+    const schema = await cli("schema", {}, runtimeCall);
+    const cliInput = (schema.value.operations as Record<string, { input: { properties: Record<string, unknown>; required: string[] } }>).enqueue.input;
+    const mcpInput = tools.tools.find((tool) => tool.name === "session.enqueue")!.inputSchema;
+    assert.deepEqual(cliInput.properties.deliveryTiming, { type: "string", enum: ["immediate", "after_source_turn"] });
+    assert.deepEqual(mcpInput.properties?.deliveryTiming, cliInput.properties.deliveryTiming);
+    assert.equal(cliInput.required.includes("deliveryTiming"), false);
+    assert.equal(mcpInput.required?.includes("deliveryTiming"), false);
+    let help = "";
+    assert.equal(await runWithMateSessionCli(["help"], { stdout: { write: (value) => { help += String(value); return true; } } }), 0);
+    assert.match(help, /deliveryTiming.*immediate.*after_source_turn/);
+    for (const deliveryTiming of [undefined, "immediate", "after_source_turn"]) {
+      const input = { target, requestId, message: "report", ...(deliveryTiming ? { deliveryTiming } : {}) };
+      const command = await cli("enqueue", input, runtimeCall);
+      const tool = await client.callTool({ name: "session.enqueue", arguments: input });
+      assert.equal(command.exit, 0);
+      assert.equal(tool.isError, undefined);
+      assert.deepEqual(command.value, tool.structuredContent);
+      assert.deepEqual(calls.slice(-2), [input, input]);
+      assert.equal((command.value.receipt as { sourceTurnPhase: string }).sourceTurnPhase, "running");
+    }
+    for (phase of ["completed", "failed", "canceled", "unknown"]) {
+      const input = { target, requestId };
+      const command = await cli("get-receipt", input, runtimeCall);
+      const tool = await client.callTool({ name: "session.get_receipt", arguments: input });
+      assert.equal(command.exit, 0);
+      assert.deepEqual(command.value, tool.structuredContent);
+      assert.equal((command.value.receipt as { sourceTurnPhase: string }).sourceTurnPhase, phase);
+    }
+    for (const deliveryTiming of ["later", null, 1]) {
+      const before = calls.length;
+      const input = { target, requestId, message: "report", deliveryTiming };
+      const command = await cli("enqueue", input, runtimeCall);
+      const tool = await client.callTool({ name: "session.enqueue", arguments: input });
+      assert.equal(command.exit, 2);
+      assert.equal(command.value.effect, "none");
+      assert.equal(tool.isError, true);
+      assert.equal(calls.length, before);
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "実保存のCoordination詳細はMain/Auxiliary起票元のexact targetを失わずMCPとbound CLIで取得できる"
 // oracle = { type = "contract", ref = "GitHub #835 全Crew保存読取とMCP/CLI同一結果 / #838 Coordination詳細" }
 // fault = "実storageのinitiatorTarget追加を公開schemaが拒否するかAuxiliary所属Main identityを削除する"

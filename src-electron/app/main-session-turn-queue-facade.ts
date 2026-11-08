@@ -5,7 +5,7 @@ import { getSessionIncarnationId, type Session } from "../../src-shared/session/
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { assertModelEnabled } from "../../src-shared/settings/model-availability.js";
-import type { QueuedSessionTurnEditRequest, UpdateQueuedSessionTurnRequest, ReorderQueuedSessionTurnsRequest, SessionTurnQueueOwner, SessionTurnQueueStore, SessionTurnQueueOrigin, SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
+import type { QueuedSessionTurnEditRequest, UpdateQueuedSessionTurnRequest, ReorderQueuedSessionTurnsRequest, SessionTurnQueueOwner, SessionTurnQueueStore, SessionTurnQueueOrigin, SessionTurnQueueCapturedInput, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import type { SessionTurnQueueService } from "../session/session-turn-queue-service.js";
 
 export type MainSessionTurnQueueFacadeDeps = {
@@ -19,6 +19,7 @@ export type MainSessionTurnQueueFacadeDeps = {
   preview(session: Session, userMessage: string): Promise<ComposerPreview>;
   store: SessionTurnQueueStore;
   service: SessionTurnQueueService;
+  getUnreleasedSourceTurnIds?(): readonly string[];
 };
 
 export class SessionTurnQueuePreflightRejectedError extends Error {}
@@ -29,7 +30,14 @@ export class MainSessionTurnQueueFacade {
   constructor(private readonly deps: MainSessionTurnQueueFacadeDeps) {}
 
   async enqueueSessionTurn(sessionId: string, input: RunSessionTurnRequest & { incarnationId: string }, origin?: SessionTurnQueueOrigin, assertActorCurrent?: () => void | Promise<void>) {
-    return this.withAcceptanceLock(sessionId, () => this.accept(sessionId, input, origin, assertActorCurrent));
+    return this.withAcceptanceLock(sessionId, async () => this.projectSourceRelease(await this.accept(sessionId, input, origin, assertActorCurrent)));
+  }
+
+  private projectSourceRelease<T extends SessionTurnQueueReceipt | null>(receipt: T): T {
+    const origin = receipt?.accepted?.origin;
+    return receipt && receipt.state === "queued" && origin?.deliveryTiming === "after_source_turn"
+      && this.deps.getUnreleasedSourceTurnIds?.().includes(origin.actorTurnId!)
+      ? { ...receipt, sourceTurnPendingRelease: true } : receipt;
   }
 
   private async accept(sessionId: string, input: RunSessionTurnRequest & { incarnationId: string }, origin?: SessionTurnQueueOrigin, assertActorCurrent?: () => void | Promise<void>) {
@@ -124,15 +132,17 @@ export class MainSessionTurnQueueFacade {
     const receipt = await this.deps.store.getReceipt(owner, normalizedId);
     this.deps.assertActive();
     if (receipt) this.deps.service.reconcileKnownReceipt(receipt);
-    return receipt;
+    return this.projectSourceRelease(receipt);
   }
 
   async listSessionTurnQueue(sessionId: string) {
-    return this.deps.store.listActive(this.owner(await this.readSession(sessionId)));
+    const receipts = await this.deps.store.listActive(this.owner(await this.readSession(sessionId)));
+    return receipts.map((receipt) => this.projectSourceRelease(receipt));
   }
 
   async listSessionTurnQueueReceipts(sessionId: string, options?: { cursor?: number; limit?: number }) {
-    return this.deps.store.listReceipts(this.owner(await this.readSession(sessionId)), options);
+    const page = await this.deps.store.listReceipts(this.owner(await this.readSession(sessionId)), options);
+    return { ...page, receipts: page.receipts.map((receipt) => this.projectSourceRelease(receipt)) };
   }
 
   async cancelQueuedSessionTurn(sessionId: string, id: string) {
@@ -206,7 +216,7 @@ export class MainSessionTurnQueueFacade {
     if (!input || input.incarnationId !== owner.incarnationId) throw new Error("The Session identity changed. Reopen it before reordering.");
     const result = await this.deps.service.reorderQueued(owner, input.expectedQueuedIds, input.queuedIds);
     this.deps.assertActive();
-    return result;
+    return { ...result, receipts: result.receipts.map((receipt) => this.projectSourceRelease(receipt)) };
   }
 
   async releaseInterruptedSessionTurn(sessionId: string, id: string) {

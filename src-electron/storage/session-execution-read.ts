@@ -140,7 +140,7 @@ export class SessionExecutionReadStorage {
       };
     };
     const describeExecution = (entry: Receipt | undefined, turn: Turn | undefined) => ({
-      origin: entry ? captured(entry.accepted_json)?.origin ?? null : null,
+      origin: entry ? captured(entry.dispatched_json)?.origin ?? captured(entry.accepted_json)?.origin ?? null : null,
       receiptId: entry?.id ?? null, receiptState: entry?.state ?? null, turnId: turn ? String(turn.id) : entry?.turn_id ?? null,
       turnState: turn?.phase ?? null, resultState: !turn ? entry?.dispatched_json ? "unknown" : "not-started" : !hasAssistant(turn) ? turn.phase === "running" ? "running" : "not-saved" : turn.phase === "completed" ? "saved" : "partial",
       userMessageSeq: turn?.user_message_seq ?? null, assistantMessageSeq: turn?.assistant_message_seq ?? null,

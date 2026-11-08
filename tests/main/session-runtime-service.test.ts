@@ -811,10 +811,10 @@ it("queued runtimeは保存turn IDとnative turn IDをlive stateで区別する"
 
 // @test-value v2
 // kind = "contract"
-// claim = "queued実行は候補一覧にない捕捉model/depthと開始時threadで原子的開始しterminal ACK後だけ確定しcleanup guard解放まで次runを許可しない"
+// claim = "queued実行は捕捉設定で原子的開始しterminal ACK後だけ確定しcleanup実解放までexact保存Turn IDと再送guardを保持する"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md Session Run Cancel; src-electron/session/session-running-turn-start.ts" }
-// fault = "本文を再previewするか捕捉設定を現在選択で置換し、開始を分割保存するかterminal応答でcleanup guardを解放する"
-// observable = "atomic開始payload・Provider request・onStarted identity・terminal待機中の返却と実guard/release通知"
+// fault = "本文を再previewするか捕捉設定を現在選択で置換し、開始を分割保存するかterminal応答でcleanup guardやexact Turn IDを解放する"
+// observable = "atomic開始payload・Provider request・onStarted identity・terminal待機中の返却と実guard/release通知・getUnreleasedTurnIds"
 // observation_boundary = "public-boundary"
 // scope = "queued runtime captured start terminal and real guard"
 // lifecycle = "permanent"
@@ -868,11 +868,12 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
       await commit.promise;
       return next;
     },
-    onSessionRunReleased: () => { assert.equal(runtime.isRunInFlight(session.id), false); releases += 1; },
+    onSessionRunReleased: () => { assert.equal(runtime.isRunInFlight(session.id), false); assert.deepEqual(runtime.getUnreleasedTurnIds(), []); releases += 1; },
   });
   let returned = false;
   const running = runtime.runQueuedSessionTurn(receipt, async (start) => { starts.push(start); }).then((result) => { returned = true; return result; });
   await terminalEntered.promise;
+  assert.deepEqual(runtime.getUnreleasedTurnIds(), ["41"]);
   assert.equal(returned, false);
   assert.equal(runtime.isRunInFlight(session.id), true);
   commit.resolve();
@@ -881,6 +882,7 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
   assert.deepEqual(starts, [{ turnId: "41", userMessageSeq: 0 }]);
   assert.equal(runtime.isRunInFlight(session.id), true);
   assert.equal(releases, 0);
+  assert.deepEqual(runtime.getUnreleasedTurnIds(), ["41"]);
   let drained = false;
   const draining = runtime.waitForPendingRuns().then(() => { drained = true; });
   assert.equal(drained, false);
@@ -888,6 +890,7 @@ it("queued runtimeは捕捉入力・atomic開始・terminal ACK・実cleanup解�
   await draining;
   assert.equal(runtime.isRunInFlight(session.id), false);
   assert.ok(releases > 0);
+  assert.deepEqual(runtime.getUnreleasedTurnIds(), []);
   assert.deepEqual(receipt.captured.request.executionOptions, capturedOptions);
 });
 
@@ -1957,10 +1960,10 @@ describe("SessionRuntimeService", () => {
   });
   // @test-value v2
   // kind = "contract"
-  // claim = "取消はsetup・provider・終端保存の終了待ちをliveへ投影し、実終了後だけ再送と連続履歴を許可する"
+  // claim = "取消はsetup・provider・終端保存の終了待ちをliveへ投影し、保存済みexact Turn IDを実解放まで保持してから次Turn IDへ切り替える"
   // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#session-run-cancel" }
-  // fault = "取消連打で状態通知を二重化する、未終了中にSendを許可する、終了通知が欠ける、または次turnへ旧応答を混入する"
-  // observable = "live取消状態とbroadcast、Send結果、provider呼出件数、保存message列"
+  // fault = "取消連打で通知を二重化する、未終了中にSendやexact Turn ID解放を許可する、終了通知が欠ける、または次turnへ旧応答/IDを混入する"
+  // observable = "live取消状態とbroadcast、Send結果、provider呼出件数、保存message列、getUnreleasedTurnIdsの保持・解放・次ID"
   // observation_boundary = "public-boundary"
   // scope = "SessionRuntimeService cancellation lifecycle"
   // lifecycle = "permanent"
@@ -2007,6 +2010,8 @@ describe("SessionRuntimeService", () => {
         let firstAdmission = true;
         let firstSetup = true;
         let firstTerminal = true;
+        let nextTurnId = 1;
+        const savedPhases: Array<UpdateSessionTurnInput["phase"]> = [];
         const service = createTestRuntime({
           providerCancelGraceMs: 5,
           async runSessionAdmissionExclusive(_id, operation) {
@@ -2015,9 +2020,10 @@ describe("SessionRuntimeService", () => {
           },
           getSession: () => stored,
           upsertSession: (next) => { stored = next; return next; },
-          async upsertTerminalSession(next) {
+          async upsertTerminalSession(next, terminal) {
             if (phase === "terminal" && firstTerminal) { firstTerminal = false; announceGate(); await gate; }
             stored = next;
+            savedPhases.push(terminal.phase);
             return next;
           },
           async resolveComposerPreview() {
@@ -2027,8 +2033,8 @@ describe("SessionRuntimeService", () => {
           getAppSettings: () => normalizeAppSettings({}),
           resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
           getProviderCodingAdapter: () => adapter,
-          createSessionTurn: createSessionTurnBase,
-          updateSessionTurn() {},
+          createSessionTurn: (input) => ({ ...createSessionTurnBase(input), id: nextTurnId++ }),
+          updateSessionTurn(_id, input) { savedPhases.push(input.phase); },
           setLiveSessionRun: (_id, next) => { live = next; },
           getLiveSessionRun: () => live,
           async waitForApprovalDecision() { return "approve" as const; },
@@ -2060,6 +2066,11 @@ describe("SessionRuntimeService", () => {
           assert.equal(broadcasts.at(-1)?.cancellationState, "requested", "terminal persistence retains cancellation after grace");
         }
         assert.equal(service.isRunInFlight(stored.id), true);
+        assert.deepEqual(service.getUnreleasedTurnIds(), phase === "provider" || phase === "terminal" ? ["1"] : [], phase);
+        if (phase === "provider") {
+          assert.ok(savedPhases.includes("canceled"), "canceled terminal is saved while the Provider promise remains unsettled");
+          assert.match(stored.messages.at(-1)?.text ?? "", /Run canceled/);
+        }
         await assert.rejects(service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "too early" }), /already running/);
         if (phase === "provider") {
           if (lateOutcome === "resolve") { resolveProvider(createPartialResult({ assistantText: "old late answer" })); }
@@ -2067,15 +2078,18 @@ describe("SessionRuntimeService", () => {
         } else { releaseGate(); }
         await firstOutcome;
         await waitForCondition(() => !service.isRunInFlight(stored.id), "original run must finish");
+        assert.deepEqual(service.getUnreleasedTurnIds(), []);
         assert.equal(broadcasts.at(-1)?.cancellationState, undefined);
         const historyBeforeNext = [...stored.messages];
         const secondRun = service.runSessionTurn(stored.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "next request" });
         await nextReady;
+        assert.deepEqual(service.getUnreleasedTurnIds(), [phase === "provider" || phase === "terminal" ? "2" : "1"]);
         emitLateProgress?.();
         assert.equal(readLive()?.assistantText.includes("old late"), false);
         assert.equal(readLive()?.cancellationState, undefined);
         finishNext(createPartialResult({ assistantText: "completed answer" }));
         const second = await secondRun;
+        assert.deepEqual(service.getUnreleasedTurnIds(), []);
         assert.deepEqual(stored.messages.slice(0, historyBeforeNext.length), historyBeforeNext);
         assert.equal(second.messageCount, stored.messages.length);
         assert.equal(second.messages.at(-2)?.text, "next request");

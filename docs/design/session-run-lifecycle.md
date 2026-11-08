@@ -87,9 +87,14 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvider Turnから解決し、Main／Auxiliaryの同名IDを読み替えない。対象も会話種別・incarnationを固定し、Auxiliaryでは所属Mainのidentityも確認する。公開保存情報の全Crew読取は送信・取消・停止の権限を与えない。通常送信は実際の直属親子だけ、取消・停止は親から直属子だけに許可し、Auxiliary所属を通常親子として扱わない。GUI限定のRole変更、待機中指示編集、Steer、ユーザー回答・承認はこのAPIから公開しない。
 
+`enqueue.deliveryTiming`は`immediate`（省略時も同じ）または`after_source_turn`を送信者が明示選択し、本文から分類しない。両方ともdurable receiptを直ちに返す。`after_source_turn`は、その送信を行った正確なSession／incarnation／Turnの終端と結果保存が確定してから宛先の通常新Turnを開始可能にする。`completed`／`failed`／`canceled`はいずれも待機を解除するが、結果不明は完了扱いしない。送信元Session全体のidleは待たず、待機中の配送が宛先の即時相談・GUI入力を塞がない。自動Steerは行わない。配送先へ渡すoriginは`deliveryTiming`と、遅延配送を解除した`sourceTurnPhase`を保持し、receipt照会でも送信元の`running`／`completed`／`failed`／`canceled`／`unknown`を区別する。同じUUIDの受付内容は配送タイミングを含め不変であり、再起動後も保存済み送信元Turnから条件を再評価する。
+
+取消grace後に終端を保存しても元Provider処理がterminating guardへ残る場合は、exact送信元Turnの実解放まで配送を開始しない。receiptの`sourceTurnPendingRelease`と待機表示で区別し、Steerでも迂回しない。保存済み終端だけを元処理の停止完了と同一視しない。
+
 通常子の作成は`create_child`から共通lifecycleへ接続する。OはM／W、MはWを作成でき、Provider／Model／Depth／Approval／Workspaceを明示する。Sandboxは対応するCodexのみ明示必須で、他Providerの非対応値を受け付けない。`get_catalog`は既存catalogとnative設定optionsを返す。Characterは同Crewの通常Main使用数から共通作成ownerが選定し、同一request keyの再確認で子・Character・実行設定を変えない。Workspaceの準備と選定方針は親AgentのProvider管理runbookへ委ね、WithMateはWorktreeの作成・merge・削除やProvider設定同期を行わない。
 
 `coordination_*`は相談の起票・保存済み実呼出元への明示配送・ユーザーへの引継ぎ・Agent回答・取り下げ・参照・解決・consumeを共通Coordination applicationへ接続する。作成／配送／回答に伴う保存とqueue受付は同applicationのatomic操作を呼び、adapterで別々に保存・enqueueしない。実ユーザーとしての回答作成・変更はtrusted GUIへ分離する。
+Coordinationの配送は送信元Turnの終了を待たない即時経路を使う。
 
 `self`は自Crew、明示対象の`get`は対象CrewのCrew Folder公開参照を返す。他Crewを指定したpathの読取はdirectoryの自動mountや書込権限を与えず、一覧へ全Crewのfilesystem rootを配布しない。Providerの既定additional directoryは自Crewだけを使う。
 

@@ -174,6 +174,7 @@ export function TurnInputDetailsContent({ message, receipt, context, read, compa
         {observed ? <><dt>Receipt State</dt><dd>{observed.receiptState ?? "No Receipt"}</dd><dt>Turn State</dt><dd>{observed.turnState ?? "Not Confirmed"}</dd></> : null}
         {resolvedTurnId ? <><dt>WithMate Turn</dt><dd><code>{resolvedTurnId}</code></dd></> : null}
         {input?.nativeTurnId ? <><dt>Provider Turn</dt><dd><code>{input.nativeTurnId}</code></dd></> : null}
+        {origin?.kind === "session" && origin.deliveryTiming === "after_source_turn" ? <><dt>Delivery Timing</dt><dd>After Sender Turn</dd>{origin.sourceTurnPhase ? <><dt>Sender Turn Outcome</dt><dd>{origin.sourceTurnPhase === "completed" ? "Completed" : origin.sourceTurnPhase === "failed" ? "Failed" : "Canceled"}</dd></> : null}</> : null}
         {origin?.kind === "session" ? <><dt>Sender Session</dt><dd><code>{origin.actorSessionId}</code></dd><dt>Sender Incarnation</dt><dd><code>{origin.actorIncarnationId}</code></dd><dt>Sender Turn</dt><dd><code>{origin.actorTurnId}</code></dd><dt>Target Session</dt><dd><code>{origin.targetSessionId}</code></dd></> : null}
       </dl>
       {summary?.entry?.kind === "additional" ? <p>Start Input · {summary.startChanged === null ? "Comparison Unknown" : summary.startChanged ? "Changed From Original" : "Unchanged From Original"}</p> : null}

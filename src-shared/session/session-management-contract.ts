@@ -89,6 +89,7 @@ export const sessionOperationRequestSchemas = {
       target: sessionTargetSchema,
       requestId: queueRequestId,
       message: z.string().trim().min(1).max(100000),
+      deliveryTiming: z.enum(["immediate", "after_source_turn"]).optional(),
     })
     .strict(),
   get_receipt: z
@@ -171,6 +172,10 @@ const receiptSchema = z
       "interrupted",
     ]),
     turnId: z.string().nullable(),
+    sourceTurnPhase: z
+      .enum(["running", "completed", "failed", "canceled", "unknown"])
+      .optional(),
+    sourceTurnPendingRelease: z.boolean().optional(),
   })
   .passthrough();
 export const sessionOperationSuccessSchemas = {
@@ -371,9 +376,9 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     update_metadata:
       "Update only this actor's title and/or description. This does not change Role, execution settings or another Session's metadata.",
     enqueue:
-      "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. requestId must be a UUID and identifies the immutable acceptance; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
+      "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. deliveryTiming defaults to immediate; explicitly choose after_source_turn to start the recipient's normal new Turn only after this exact sending Session/incarnation/Turn is terminal and saved (completed, failed or canceled). Both modes return a durable acceptance receipt immediately, never auto-Steer. Unknown source state does not release delayed delivery. Delayed messages do not block immediate consultation or GUI input. requestId must be a UUID and identifies the immutable acceptance, including deliveryTiming; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
     get_receipt:
-      "Recover this sender's receipt by its original UUID requestId and exact target. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
+      "Recover this sender's receipt by its original UUID requestId and exact target. Delayed receipts expose sourceTurnPhase (running, completed, failed, canceled or unknown); sourceTurnPendingRelease marks execution still releasing even when a terminal phase is saved. Source failure or cancellation is not successful work. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
     cancel_receipt:
       "Cancel one exact pending receipt of a direct child. Parent authority does not depend on who sent the receipt. If started, report its actual state without stopping its Turn.",
     stop_turn:

@@ -58,10 +58,14 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
     };
   }, []);
   const label = receipt.state === "interrupted" ? "Interrupted" : undefined;
+  const delayed = receipt.captured.origin?.deliveryTiming === "after_source_turn";
+  const sourcePhase = receipt.sourceTurnPhase;
+  const waitingForSource = delayed && (receipt.sourceTurnPendingRelease || sourcePhase !== "completed" && sourcePhase !== "failed" && sourcePhase !== "canceled");
   return <div ref={statusRef} className="session-turn-queue-status" data-queue-receipt-id={receipt.id} tabIndex={onMove ? -1 : undefined} role={label ? "status" : "group"} aria-label={label ?? (position === undefined ? "Queued turn" : `Queued turn ${position}${queueSize === undefined ? "" : ` of ${queueSize}`}`)}>
     {receipt.reason ? <span className="session-turn-queue-reason">{receipt.reason}</span> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <span className="session-turn-queue-reason">Execution outcome is unknown. Later turns are held.</span> : null}
     {label ? <span>{label}</span> : null}
+    {receipt.state === "queued" && waitingForSource ? <span className="session-turn-queue-reason">{receipt.sourceTurnPendingRelease || sourcePhase === "running" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span> : null}
     {receipt.state === "queued" && onMove && position !== undefined && queueSize !== undefined ? <span className="session-turn-queue-move" role="group" aria-label="Change execution order">
       {(["up", "down"] as const).map((direction) => <button key={direction} className="drawer-toggle compact secondary session-turn-queue-move-button" type="button"
         title={direction === "up" ? "Move Up" : "Move Down"} aria-label={`Move queued turn ${position} ${direction}`} data-queue-move={direction}
@@ -70,7 +74,7 @@ function SessionTurnQueueControls({ receipt, position, queueSize, busy, busyKind
         <ButtonContent busy={busyKind === `move-${direction}`}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false"><path d={direction === "up" ? "M12 20V4m-6 6 6-6 6 6" : "M12 4v16m-6-6 6 6 6-6"} /></svg></ButtonContent>
       </button>)}
     </span> : null}
-    {receipt.state === "queued" && editableInput && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
+    {receipt.state === "queued" && editableInput && onSendInput ? <button className="drawer-toggle compact secondary" type="button" title="Send this message to the current turn" disabled={busy || waitingForSource || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "input" || undefined} onClick={() => onSendInput(receipt)}><ButtonContent busy={busyKind === "input"}>Steer</ButtonContent></button> : null}
     {receipt.state === "queued" && editableInput && editor ? <button className="drawer-toggle compact secondary" type="button" title="Edit queued message" disabled={busy || moveDisabled || !!editing} onClick={() => editor.begin(receipt)}>Edit</button> : null}
     {receipt.state === "queued" ? <button className="drawer-toggle compact secondary" type="button" aria-label={position === undefined ? "Cancel queued turn" : `Cancel queued turn ${position}`} disabled={busy || !!editing && editing.receipt.id === receipt.id} aria-busy={busyKind === "cancel" || undefined} onClick={() => onCancel(receipt)}><ButtonContent busy={busyKind === "cancel"}>Cancel</ButtonContent></button> : null}
     {receipt.state === "interrupted" && receipt.releasedAt === null ? <button className="drawer-toggle compact secondary" type="button" disabled={busy} aria-busy={busyKind === "release" || undefined} onClick={() => onRelease(receipt)}><ButtonContent busy={busyKind === "release"}>Release Later Turns</ButtonContent></button> : null}
