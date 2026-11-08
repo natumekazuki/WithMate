@@ -22,15 +22,17 @@ sourceは既存`isReadOnlySession`の対象とcharacter-authoringを除外する
 
 順序は`begin → onAdmitted → runAgent → finish`。Agent実行全体に同じ`RuntimeTurnAdmission`を適用する。完了・失敗・取消のいずれでもfinallyでfinishし、専用の保存phaseは設けない。実行中も通常turnを予約・終了せず、主会話を待機させない。
 
-beginのsource／authority不備と停止runtimeは`failed`を返し、開始callbackを呼ばず、setup失敗として報告する。事前取消・実行中取消は`canceled`、AgentまたはonAdmittedの失敗は`failed`、正常終了は`completed`を返す。既知の操作失敗がある場合は、後続の正常終了や取消より失敗を優先する。これらは実行の結果であり、保存成功・保存件数・全件未保存を意味しない。自然文の完了宣言も保存成功の証明にしない。
+beginのsource／authority不備と停止runtimeは`failed`を返し、開始callbackを呼ばず、setup失敗として報告する。事前取消・実行中取消は`canceled`、AgentまたはonAdmittedの失敗は`failed`、正常終了は`completed`を返す。操作の拒否応答はこの終了状態を変更せず、既存操作列へ残す。Provider／Agent自体の失敗はその直接原因を使い、先行する操作拒否で上書きしない。これらは実行の結果であり、保存成功・保存件数・全件未保存を意味しない。全操作が拒否されてもAgentが正常終了したなら`completed`と操作エラー診断を併記し、保存成功や正常な登録不要とは判定しない。
 
 ## native文脈の継続と失敗情報
 
-`BackgroundCallService`は実sourceのkind・ID・incarnation・Auxiliaryの親identityと用途ごとに、独立したnative実行ID、native thread ID、前回失敗、実行中Promiseをruntime内だけで保持する。保存済みownerIdentityまたはCharacterが変わった場合も新しい文脈とする。元会話の通常threadと三用途のthreadは共有しない。同じキーの次回呼出は前回のnative cleanupまで待ち、新しいbinding／handle／credentialで既存threadをresumeする。
+`BackgroundCallService`は実sourceのkind・ID・incarnation・Auxiliaryの親identityと用途ごとに、独立したnative実行ID、native thread ID、前回診断、実行中Promiseをruntime内だけで保持する。保存済みownerIdentityまたはCharacterが変わった場合も新しい文脈とする。元会話の通常threadと三用途のthreadは共有しない。同じキーの次回呼出は前回のnative cleanupまで待ち、新しいbinding／handle／credentialで既存threadをresumeする。
 
 Provider選択変更は旧stateを取消し、未確定writeと接続権限を失効させ、cleanup後に新Providerの新threadへ進む。旧stateのthread更新callbackは新stateへ反映しない。異なるProviderへthreadを移植せず、旧選択の準備済み要求も実行しない。source削除・再作成とruntime停止は継続・待機状態を破棄する。再起動時にthread ID・失敗範囲・待機処理を復元せず、新しい会話Turnによる発火から新threadを作る。保存済みMemory／Affectは変更しない。
 
-Provider実行や登録に失敗しても取得済みの利用可能なthread IDは保持し、直後の自動再試行は行わない。次の会話Turnで用途の発火条件を満たした呼出へ、前回失敗のcode・段階・選別済み原因と新しい入力材料を渡す。準備・材料取得の失敗も保持する。準備開始時の継続状態がsource解放・runtime停止・Provider切替で破棄された場合、その準備の遅延失敗は診断だけに渡し、新しい継続状態へ保持しない。失敗情報は指示本文を置換する追加方針ではなくアプリ提供の参照材料である。AIが現在の既存記録・Affectと必要な過去履歴を確認して再検討対象を選ぶ。正常な登録不要終了を含む次回の正常完了後は、その失敗情報を繰り返し渡さない。
+Provider実行や操作に失敗しても取得済みの利用可能なthread IDは保持し、直後の自動再試行は行わない。次の会話Turnで用途の発火条件を満たした呼出へ、前回の終了状態、実行自体のfailure、操作エラー応答と登録応答の選別済みreceiptを新しい入力材料とともに渡す。準備・材料取得の失敗も保持する。正常終了だけで操作エラーを捨てず、後続成功だけで回復済みとも判定しない。保持するのは直近呼出の診断であり、未解決操作台帳や全履歴は作らない。
+
+準備開始時の継続状態がsource解放・runtime停止・Provider切替で破棄された場合、その準備の遅延失敗は診断だけに渡し、新しい継続状態へ保持しない。前回診断は指示本文を置換する追加方針ではなくアプリ提供の参照材料である。AIが現在の既存記録・Affectと必要な過去履歴を確認して再検討対象を選ぶ。次回の正常終了かつ操作エラーなしの呼出後は古い診断を解放し、取消を正常解消とは扱わない。
 
 ## 登録と保存効果
 
@@ -137,9 +139,9 @@ Codex・Claude・OpenCodeは既存の新process＋現在env／MCP構成を用い
 
 ## 失敗の記録
 
-準備・材料取得・起動・Agentの失敗は共通runtimeの`onFailure`へ安全な診断項目として渡す。未設定による正常な非実行、通常取消、正常な保存対象なしは失敗ログにしない。戻り値の`failed`も対象とし、例外だけを捕まえる経路にしない。
+開始前の準備・材料取得・setup失敗は共通runtimeの`onFailure`へ渡す。開始済みの実行は、実行自体の失敗または操作エラーがある場合に`onExecutionDiagnostic`へ終了状態と既存操作列を渡す。操作エラーのない正常終了・登録不要終了・通常取消、未設定による正常な非実行は専用ログへ追加しない。
 
-bound MCP／CLIの既知の操作失敗は既存の実行寿命へ保持し、Agentが通常returnしても`completed`にしない。最初の失敗を全体結果の原因とし、操作列には後続の失敗と保存成功も残す。元のtool応答と保存効果は保持し、応答配送を止めるための即時失効や、成功確認済みwriteの取消への上書きは行わない。実行終了時の失敗記録は呼出境界が一度だけ行い、用途controllerが再記録しない。独立した重複排除台帳・保存証明・復旧queueは持たない。
+bound MCP／CLIの既知の操作失敗と後続の保存成功は既存操作列へ残し、終了状態をfirst-failureへ固定しない。実行自体の失敗はerror、操作エラーを含む正常終了・取消はwarnの診断とする。元のtool応答と保存効果は保持し、応答配送を止めるための即時失効や、成功確認済みwriteの取消への上書きは行わない。終端診断は呼出境界が一度だけ行い、用途controllerが再記録しない。独立した重複排除台帳・保存証明・回復判定・復旧queueは持たない。
 
 HTTPのMemory／履歴操作では、有効なbinding identityと同じ背景turn capabilityから診断の帰属を確定し、operationの許可判定とは分離する。用途外・grant不足の拒否も該当実行へ報告するが、その操作を許可しない。不明・失効reference、欠落・別実行のturn capabilityは有効な実行へ帰属させない。
 
@@ -147,7 +149,7 @@ HTTPのMemory／履歴操作では、有効なbinding identityと同じ背景tur
 
 Character／Affect applicationが保存例外を公開エラーへ変換する場合は、変換前の例外を現在の`RuntimeTurnAdmission.onOperationError`へ診断用途だけで報告する。HTTPは同じadmission内で受け取り、その操作の失敗原因へ選別・秘匿化して含める。公開応答へcauseを追加せず、診断callbackの失敗も保存効果・公開エラーを変更しない。
 
-Mainは`userData/logs/background-failures.jsonl`へ失敗だけを追記し、回転・切詰め・自動削除をしない。用途・元会話kind／ID・Provider／Model／Depth・解決できた権限に加え、開始済みなら実行識別子・scope・開始／終了時刻・失敗結果・操作列を残す。実エラーのcode／message、field・検証path／期待条件、cause／stackは診断用項目だけを選び、認証情報・接続secretを除く。登録応答から保存ID・owner／scope・effect等を選び、本文・prompt・tool引数や応答本文をdumpしない。準備・材料取得失敗には未発行の実行IDを捏造しない。正常実行の操作列は永続記録せず解放する。書込み失敗は既存診断出力へ渡し、元の失敗や通常会話を変更しない。詳細は[App Log Base](app-log-base.md#background-failure-log-policy)を参照する。
+Mainは`userData/logs/background-failures.jsonl`へ該当診断を追記し、回転・切詰め・自動削除をしない。開始前失敗は`background.execution.failed`、開始済みの終端診断は`background.execution.diagnostic`とし、既存行を再分類しない。用途・元会話kind／ID・Provider／Model／Depth・解決できた権限に加え、開始済みなら実行識別子・scope・開始／終了時刻・`execution.outcome`・実行自体のfailure・操作列を残す。実エラーのcode／message、field・検証path／期待条件、cause／stackは診断用項目だけを選び、認証情報・接続secretを除く。登録応答から保存ID・owner／scope・effect等を選び、本文・prompt・tool引数や応答本文をdumpしない。準備・材料取得失敗には未発行の実行IDを捏造しない。操作エラーのない正常実行の操作列は永続記録せず解放する。書込み失敗は既存診断出力へ渡し、実行結果・保存効果・通常会話を変更しない。詳細は[App Log Base](app-log-base.md#background-failure-log-policy)を参照する。
 
 ## 共通設定と用途controllerへの通知
 

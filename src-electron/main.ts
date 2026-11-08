@@ -804,6 +804,13 @@ const backgroundRuntime = new BackgroundProductionRuntime({
         process: "main", message: reason, data });
     } catch (error) { console.warn("Background failure log write failed", error); }
   },
+  onExecutionDiagnostic: ({ timestamp, level, ...data }) => {
+    try {
+      backgroundFailureLogService.write({ timestamp, level,
+        kind: "background.execution.diagnostic", process: "main",
+        message: data.execution.failure?.reason ?? "Background execution ended with operation errors.", data });
+    } catch (error) { console.warn("Background execution diagnostic log write failed", error); }
+  },
 });
 
 const memoryRecordingController = new MemoryRecordingController({
@@ -1055,7 +1062,6 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
           return generation.stores.session.readBackgroundSource(scope);
         },
       },
-      onBackgroundOperationFailure: (bindingId, failure) => backgroundExecutions.reportOperationFailure(bindingId, failure),
       onBackgroundOperation: (bindingId, observation) => backgroundExecutions.observeOperation(bindingId, observation),
       routeAgentRuntimeExtension: async (request) => await sessionGraphRuntimeService.route(request) ?? await sessionHistoryRuntimeService.route(request) ?? glossaryRuntimeService.route(request),
       log: writeAppLog,

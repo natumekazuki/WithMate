@@ -28,6 +28,7 @@ async function fixture(runAgent: (input: BackgroundAgentInput) => Promise<void>)
   const failureObserver = { onFailure: (error: unknown) => { failures.push(error); } };
   const runtime = new BackgroundProductionRuntime({ executions: f.executions, runAgent, getAppSettings: () => settings,
     onFailure: (failure) => failureObserver.onFailure(failure),
+    onExecutionDiagnostic: (diagnostic) => failureObserver.onFailure(diagnostic),
     getModelCatalog: () => catalog, captureSource: (source) => f.worker.stores.session.captureBackgroundSource(source),
     resolveAuthority: () => ({ userId: "local-user", characterId: "character", allowedProjectIds: [] }),
     sourceKinds: { affect: ["main", "auxiliary"] } });

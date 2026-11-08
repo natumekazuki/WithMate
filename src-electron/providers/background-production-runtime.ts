@@ -12,7 +12,8 @@ import type { SessionBackgroundEvent } from "../session/session-background-event
 import { BackgroundCallService, type BackgroundAgentPort, type BackgroundCallInput } from "./background-call-service.js";
 import type { BackgroundExecutionService } from "./background-execution-service.js";
 import type { BackgroundRegistration } from "./background-registration.js";
-import { classifyBackgroundFailure, projectBackgroundFailure, type BackgroundFailureEvent, type BackgroundFailureInput } from "./background-failure.js";
+import { classifyBackgroundFailure, projectBackgroundFailure, projectBackgroundExecutionDiagnostic, type BackgroundFailureEvent,
+  type BackgroundFailureInput, type BackgroundExecutionDiagnosticEvent } from "./background-failure.js";
 import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
 import { captureBackgroundMemoryFileAccess } from "../memory/background-memory-file-access.js";
 
@@ -62,9 +63,11 @@ export class BackgroundProductionRuntime {
     resolveSessionFolderPath?(source: BackgroundSourceRef): string;
     sourceKinds: BackgroundRegistration["sourceKinds"];
     onFailure?: (event: BackgroundFailureEvent) => void;
+    onExecutionDiagnostic?: (event: BackgroundExecutionDiagnosticEvent) => void;
   }) {
     this.calls = new BackgroundCallService({ executions: deps.executions, runAgent: deps.runAgent,
-      onFailure: (failure) => this.reportFailure(failure, false) });
+      onFailure: (failure) => this.reportFailure(failure, false),
+      onExecutionDiagnostic: (diagnostic) => deps.onExecutionDiagnostic?.(projectBackgroundExecutionDiagnostic(diagnostic)) });
   }
 
   reportFailure(input: BackgroundFailureInput, remember = true): void {

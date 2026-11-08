@@ -8,18 +8,24 @@ import type { BackgroundExecutionScope } from "../../src-shared/agent-runtime/ba
 
 export type BackgroundFailureStage = "prepare" | "capture" | "materials" | "setup" | "admission" | "agent" | "registration" | "history" | "read" | "file";
 export type BackgroundFailure = Readonly<{ code: string; reason: string; stage: BackgroundFailureStage; diagnostic?: unknown }>;
-export type BackgroundFailureEvent = BackgroundFailure & Readonly<{
+type BackgroundDiagnosticIdentity = Readonly<{
   timestamp: string; purpose: BackgroundPurpose; sourceKind: BackgroundSourceRef["kind"]; sourceSessionId: string;
   providerId?: string; modelId?: string;
-  depth?: string; execution?: BackgroundFailureInput["execution"];
+  depth?: string;
   permissions?: Readonly<{ approvalMode: string; codexReviewer?: string; codexSandboxMode?: string }>;
 }>;
-export type BackgroundFailureInput = Readonly<{
-  purpose: BackgroundPurpose; source: BackgroundSourceRef; stage: BackgroundFailureStage;
-  error: unknown; selection?: BackgroundExecutionSelection;
-  execution?: Readonly<{ executionId: string; bindingId: string; startedAt: string; endedAt: string; outcome: "failed";
+export type BackgroundFailureEvent = BackgroundFailure & BackgroundDiagnosticIdentity;
+type BackgroundDiagnosticContext = Readonly<{
+  purpose: BackgroundPurpose; source: BackgroundSourceRef; selection?: BackgroundExecutionSelection;
+}>;
+export type BackgroundExecutionDiagnosticInput = BackgroundDiagnosticContext & Readonly<{
+  execution: Readonly<{ executionId: string; bindingId: string; startedAt: string; endedAt: string;
+    outcome: "completed" | "failed" | "canceled"; failure?: BackgroundFailure;
     scope: BackgroundExecutionScope; operations: readonly (BackgroundOperationObservation & { sequence: number })[] }>;
 }>;
+export type BackgroundExecutionDiagnosticEvent = BackgroundDiagnosticIdentity & Pick<BackgroundExecutionDiagnosticInput, "execution">
+  & Readonly<{ level: "error" | "warn" }>;
+export type BackgroundFailureInput = BackgroundDiagnosticContext & Readonly<{ stage: BackgroundFailureStage; error: unknown }>;
 
 const causes: Record<string, string> = {
   BACKGROUND_SETTINGS_UNAVAILABLE: "Background settings could not be retrieved.",
@@ -85,16 +91,10 @@ export function classifyBackgroundFailure(error: unknown, stage: BackgroundFailu
     diagnostic: backgroundErrorDiagnostic(error && typeof error === "object" && "diagnostic" in error ? error.diagnostic : error) };
 }
 
-export function projectBackgroundFailure(input: BackgroundFailureInput): BackgroundFailureEvent {
-  const fallback = input.stage === "agent" ? "BACKGROUND_AGENT_FAILED" : input.stage === "admission" ? "BACKGROUND_ADMISSION_CALLBACK_FAILED"
-    : input.stage === "capture" ? "BACKGROUND_CAPTURE_FAILED" : input.stage === "materials" ? "BACKGROUND_MATERIALS_FAILED"
-    : input.stage === "prepare" ? "BACKGROUND_PREPARE_FAILED" : "BACKGROUND_SETUP_FAILED";
-  const event: BackgroundFailureEvent = { timestamp: new Date().toISOString(), purpose: input.purpose,
+function projectDiagnosticIdentity(input: BackgroundDiagnosticContext): BackgroundDiagnosticIdentity {
+  const event: BackgroundDiagnosticIdentity = { timestamp: new Date().toISOString(), purpose: input.purpose,
     sourceKind: input.source.kind, sourceSessionId: input.source.sessionId,
-    ...classifyBackgroundFailure(input.error, input.stage, fallback),
     ...(input.selection ? { providerId: input.selection.providerId, modelId: input.selection.modelId } : {}),
-    ...(input.execution ? { execution: { ...input.execution, scope: { purpose: input.execution.scope.purpose,
-      history: input.execution.scope.history, memoryTargets: input.execution.scope.memoryTargets } } } : {}),
   };
   if (!input.selection) return event;
   try {
@@ -103,4 +103,17 @@ export function projectBackgroundFailure(input: BackgroundFailureInput): Backgro
       ...(getApprovalReviewerOptionsForProvider(input.selection.providerId, options.approvalMode).length ? { codexReviewer: options.codexReviewer } : {}),
       ...(getSandboxOptionsForProvider(input.selection.providerId).length ? { codexSandboxMode: options.codexSandboxMode } : {}) } };
   } catch { return event; }
+}
+
+export function projectBackgroundFailure(input: BackgroundFailureInput): BackgroundFailureEvent {
+  const fallback = input.stage === "agent" ? "BACKGROUND_AGENT_FAILED" : input.stage === "admission" ? "BACKGROUND_ADMISSION_CALLBACK_FAILED"
+    : input.stage === "capture" ? "BACKGROUND_CAPTURE_FAILED" : input.stage === "materials" ? "BACKGROUND_MATERIALS_FAILED"
+    : input.stage === "prepare" ? "BACKGROUND_PREPARE_FAILED" : "BACKGROUND_SETUP_FAILED";
+  return { ...projectDiagnosticIdentity(input), ...classifyBackgroundFailure(input.error, input.stage, fallback) };
+}
+
+export function projectBackgroundExecutionDiagnostic(input: BackgroundExecutionDiagnosticInput): BackgroundExecutionDiagnosticEvent {
+  return { ...projectDiagnosticIdentity(input), level: input.execution.outcome === "failed" ? "error" : "warn",
+    execution: { ...input.execution, scope: { purpose: input.execution.scope.purpose,
+    history: input.execution.scope.history, memoryTargets: input.execution.scope.memoryTargets } } };
 }

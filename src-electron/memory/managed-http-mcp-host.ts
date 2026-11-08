@@ -52,7 +52,6 @@ export type ManagedHttpMcpHostOptions = {
   turns: Pick<ProviderAgentRuntimeTurnCoordinator, "admit" | "end">;
   sessionHistory?: SessionHistoryMcpRegistration;
   backgroundRegistration?: BackgroundRegistration;
-  onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
   onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
 };
 
@@ -273,10 +272,10 @@ export class ManagedHttpMcpHost {
           failure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
             [context.token, context.binding.bindingReference, context.handle.capability, this.#options.connection.api.apiSecret,
               this.#options.connection.credential.adapterSecret, this.#options.fallbackAdmissionSecret]) };
-          this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
         }
-        if (call && responseId !== undefined) {
-          this.#options.onBackgroundOperation?.(context.binding.bindingId, { ...call, requestId: responseId, transport: "mcp",
+        if ((call || failure) && responseId !== undefined) {
+          this.#options.onBackgroundOperation?.(context.binding.bindingId, { operation: call?.operation ?? "unknown",
+            ...(call?.toolName ? { toolName: call.toolName } : {}), requestId: responseId, transport: "mcp",
             boundary: "mcp", phase: "response", timestamp: new Date().toISOString(), outcome: failure ? "failure" : "success", failure,
             ...("result" in message ? { result: backgroundOperationResult((message.result as { structuredContent?: unknown }).structuredContent) } : {}) });
           calls.delete(responseId);
@@ -335,7 +334,6 @@ export class ManagedHttpMcpHost {
           if (!operation || !this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok) {
             reply(response, 403, "Background operation is not granted or connected.");
             const failure = classifyBackgroundFailure({ code: "SESSION_BINDING_FORBIDDEN", message: "Background operation is not granted or connected." }, pathname === "/mcp/session-history" ? "history" : "registration");
-            this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
             const metadata = { requestId: typeof call.id === "string" || typeof call.id === "number" ? call.id : "invalid-id",
               operation: operation ?? "unknown", toolName: typeof call.params?.name === "string" ? call.params.name : "unknown",
               transport: "mcp", boundary: "mcp" as const, timestamp: new Date().toISOString() };

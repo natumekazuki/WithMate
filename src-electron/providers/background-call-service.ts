@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { BackgroundExecutionSelection } from "../../src-shared/settings/background-settings.js";
-import { classifyBackgroundFailure, type BackgroundFailure, type BackgroundFailureInput } from "./background-failure.js";
+import { classifyBackgroundFailure, type BackgroundFailure, type BackgroundFailureInput, type BackgroundExecutionDiagnosticInput } from "./background-failure.js";
 import type { BackgroundExecutionScope, BackgroundPurpose } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
 import { runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
@@ -40,6 +40,13 @@ export type BackgroundCallResult =
   | { kind: "failed" | "canceled"; code: string }
   | { kind: "completed" };
 
+type ContinuationDiagnostic = {
+  providerId?: string;
+  modelId?: string;
+  failure?: BackgroundFailure;
+  execution?: Pick<BackgroundExecutionDiagnosticInput["execution"], "outcome" | "operations">;
+};
+
 type Continuation = {
   id: string;
   source: BackgroundSourceRef;
@@ -48,7 +55,7 @@ type Continuation = {
   ownerIdentity?: string;
   characterId?: string;
   threadId: string | null;
-  previousFailure?: BackgroundFailure & { providerId?: string; modelId?: string };
+  previousDiagnostic?: ContinuationDiagnostic;
   abort: AbortController;
   running?: Promise<BackgroundCallResult>;
   preceding?: Promise<void>;
@@ -70,6 +77,7 @@ export class BackgroundCallService {
     executions: BackgroundExecutionService;
     runAgent: BackgroundAgentPort;
     onFailure?: (input: BackgroundFailureInput) => void;
+    onExecutionDiagnostic?: (input: BackgroundExecutionDiagnosticInput) => void;
   }) {}
 
   setProvider(purpose: BackgroundPurpose, providerId: string | undefined): void {
@@ -80,7 +88,7 @@ export class BackgroundCallService {
       state.abort.abort();
       this.#continuations.set(key, { id: randomUUID(), source: state.source, purpose, providerId,
         ownerIdentity: state.ownerIdentity, characterId: state.characterId, threadId: null,
-        previousFailure: state.previousFailure, abort: new AbortController(),
+        previousDiagnostic: state.previousDiagnostic, abort: new AbortController(),
         preceding: state.running?.then(() => undefined, () => undefined) ?? state.preceding });
     }
   }
@@ -110,7 +118,7 @@ export class BackgroundCallService {
       if (this.#continuations.get(key) !== state || state.abort.signal.aborted) return;
       if (failure.selection && state.providerId !== undefined && state.providerId !== failure.selection.providerId) return;
       state.providerId ??= failure.selection?.providerId;
-      state.previousFailure = { ...classifyBackgroundFailure(failure.error, failure.stage, "BACKGROUND_PREPARE_FAILED"),
+      state.previousDiagnostic = { failure: classifyBackgroundFailure(failure.error, failure.stage, "BACKGROUND_PREPARE_FAILED"),
         ...(failure.selection ? { providerId: failure.selection.providerId, modelId: failure.selection.modelId } : {}) };
     };
   }
@@ -147,40 +155,34 @@ export class BackgroundCallService {
   }
 
   private async runInvocation(input: BackgroundCallInput, key: string, state: Continuation): Promise<BackgroundCallResult> {
-    let execution: BackgroundExecution | undefined;
+    let execution: BackgroundExecution;
     const signal = input.context.signal ? AbortSignal.any([input.context.signal, state.abort.signal]) : state.abort.signal;
-    const failed = (error: unknown, stage: BackgroundFailureInput["stage"]): BackgroundCallResult => {
-      const failure = classifyBackgroundFailure(error, stage, stage === "admission" ? "BACKGROUND_ADMISSION_CALLBACK_FAILED" : stage === "setup" ? "BACKGROUND_SETUP_FAILED" : "BACKGROUND_AGENT_FAILED");
-      if (this.#continuations.get(key) === state && !state.abort.signal.aborted) {
-        state.previousFailure = { ...failure, providerId: input.selection.providerId, modelId: input.selection.modelId };
-      }
-      this.deps.onFailure?.({ purpose: input.context.scope.purpose, source: input.context.scope.history.source,
-        selection: input.selection, stage: failure.stage, error: failure,
-        ...(execution ? { execution: { executionId: execution.binding.bindingId, bindingId: execution.binding.bindingId,
-          startedAt: execution.startedAt, endedAt: new Date().toISOString(), outcome: "failed",
-          scope: input.context.scope, operations: [...execution.operations] } } : {}) });
-      return { kind: "failed", code: failure.code };
-    };
     try {
       execution = this.deps.executions.begin({ ...input.context, signal, providerId: input.selection.providerId });
       state.activeBindingId = execution.binding.bindingId;
     } catch (error) {
       if (signal.aborted && error === signal.reason) return canceled();
-      return failed(error, "setup");
+      const failure = classifyBackgroundFailure(error, "setup", "BACKGROUND_SETUP_FAILED");
+      if (this.#continuations.get(key) === state && !state.abort.signal.aborted) {
+        state.previousDiagnostic = { failure, providerId: input.selection.providerId, modelId: input.selection.modelId };
+      }
+      try { this.deps.onFailure?.({ purpose: input.context.scope.purpose, source: input.context.scope.history.source,
+        selection: input.selection, stage: "setup", error: failure }); }
+      catch { console.warn("Background failure diagnostic could not be written."); }
+      return { kind: "failed", code: failure.code };
     }
+    let result: BackgroundCallResult = { kind: "completed" };
+    let failure: BackgroundFailure | undefined;
+    let stage: "admission" | "agent" = "admission";
     try {
       try {
         input.onAdmitted();
-      } catch (error) {
-        return failed(error, "admission");
-      }
-
-      try {
+        stage = "agent";
         execution.signal.throwIfAborted();
         await runWithRuntimeTurnAdmission(execution.admission, () => this.deps.runAgent({
           session: input.context.session, scope: input.context.scope, selection: input.selection,
-          userInput: state.previousFailure === undefined ? input.userInput : [input.userInput,
-            "# 前回の背景実行の失敗（アプリ提供の参照材料）", JSON.stringify(state.previousFailure)].join("\n\n"),
+          userInput: state.previousDiagnostic === undefined ? input.userInput : [input.userInput,
+            "# 前回の背景実行の診断（アプリ提供の参照材料）", JSON.stringify(state.previousDiagnostic)].join("\n\n"),
           binding: execution.binding, handle: execution.handle, signal: execution.signal,
           continuation: { id: state.id, threadId: state.threadId, onThreadId: (threadId) => {
             if (threadId && this.#continuations.get(key) === state && state.activeBindingId === execution!.binding.bindingId
@@ -188,16 +190,30 @@ export class BackgroundCallService {
           } },
         }));
       } catch (error) {
-        if (execution.failure) return failed(execution.failure, execution.failure.stage);
-        return execution.signal.aborted
-          ? { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" }
-          : failed(error, "agent");
+        if (stage === "agent" && execution.signal.aborted) result = canceled();
+        else {
+          failure = classifyBackgroundFailure(error, stage, stage === "admission" ? "BACKGROUND_ADMISSION_CALLBACK_FAILED" : "BACKGROUND_AGENT_FAILED");
+          result = { kind: "failed", code: failure.code };
+        }
       }
-      if (execution.failure) return failed(execution.failure, execution.failure.stage);
-      if (execution.signal.aborted) return { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" };
-
-      if (this.#continuations.get(key) === state) state.previousFailure = undefined;
-      return { kind: "completed" };
+      if (!failure && execution.signal.aborted) result = canceled();
+      const operations = [...execution.operations];
+      if (failure || operations.some((operation) => operation.failure)) {
+        const diagnostic: BackgroundExecutionDiagnosticInput = { purpose: input.context.scope.purpose,
+          source: input.context.scope.history.source, selection: input.selection,
+          execution: { executionId: execution.binding.bindingId, bindingId: execution.binding.bindingId,
+            startedAt: execution.startedAt, endedAt: new Date().toISOString(), outcome: result.kind,
+            ...(failure ? { failure } : {}), scope: input.context.scope, operations } };
+        if (this.#continuations.get(key) === state && !state.abort.signal.aborted) {
+          state.previousDiagnostic = { providerId: input.selection.providerId, modelId: input.selection.modelId,
+            ...(failure ? { failure } : {}), execution: { outcome: result.kind,
+              operations: operations.filter((operation) => operation.phase === "response"
+                && (operation.failure || (operation.boundary === "registration" && operation.result !== undefined))) } };
+        }
+        try { this.deps.onExecutionDiagnostic?.(diagnostic); }
+        catch { console.warn("Background execution diagnostic could not be written."); }
+      } else if (result.kind === "completed" && this.#continuations.get(key) === state) state.previousDiagnostic = undefined;
+      return result;
     } finally {
       this.deps.executions.finish(execution);
       if (state.activeBindingId === execution.binding.bindingId) state.activeBindingId = undefined;

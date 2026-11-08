@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { AppLogService, type AppLogServiceOptions } from "../../src-electron/app/app-log-service.js";
-import { projectBackgroundFailure } from "../../src-electron/providers/background-failure.js";
+import { projectBackgroundFailure, projectBackgroundExecutionDiagnostic, classifyBackgroundFailure } from "../../src-electron/providers/background-failure.js";
 
 function createService(logsPath: string, options: Partial<AppLogServiceOptions> = {}): AppLogService {
   return new AppLogService({
@@ -150,7 +150,7 @@ test("AppLogService は循環 data を安全に記録する", () => {
 
 // @test-value v2
 // kind = "contract"
-// claim = "背景専用JSONLは実原因の長いmessage・stack・causeを保持し、通常loggerと他kindの上限は維持する"
+// claim = "背景専用JSONLは開始前失敗と操作エラーを含む正常終了の長い原因を保持し、通常loggerと他kindの上限は維持する"
 // oracle = { type = "contract", ref = "docs/design/app-log-base.md#background-failure-log-policy" }
 // fault = "背景診断の原因を4000字または12000字で失うか、専用optionが通常ログの上限も解除する"
 // observable = "実ファイルから読み直した背景eventのdiagnosticと通常eventのtruncated data"
@@ -178,10 +178,30 @@ test("AppLogService は背景診断だけを原因情報の長さで切り詰め
     assert.equal(saved.data.diagnostic.message, longMessage.replace("REAL_SECRET", "[REDACTED]"));
     assert.equal(saved.data.diagnostic.cause.code, "REMOTE_REJECTED");
     assert.equal(JSON.stringify(saved).includes("REAL_SECRET"), false);
+    const diagnostic = projectBackgroundExecutionDiagnostic({ purpose: "affect",
+      source: { kind: "main", sessionId: "source", incarnationId: "incarnation" },
+      execution: { executionId: "execution", bindingId: "execution", startedAt: "2026-11-08T00:00:00.000Z",
+        endedAt: "2026-11-08T00:00:01.000Z", outcome: "completed",
+        scope: { purpose: "affect", history: { source: { kind: "main", sessionId: "source", incarnationId: "incarnation", ownerIdentity: "owner" },
+          fromMessageSeq: 0, throughMessageSeq: 1 }, memoryTargets: [] },
+        operations: [{ requestId: 1, operation: "memory.route.character_affect_appraise", transport: "mcp", boundary: "registration",
+          phase: "response", timestamp: "2026-11-08T00:00:00.500Z", sequence: 1, outcome: "failure",
+          failure: classifyBackgroundFailure(error, "registration") }] } });
+    const diagnosticInput = { ...input, level: diagnostic.level, kind: "background.execution.diagnostic", data: diagnostic };
+    service.write(diagnosticInput);
+    const lines = readFileSync(path.join(logsPath, fileName), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(lines.length, 2);
+    assert.deepEqual(lines[0], saved);
+    assert.deepEqual(lines[1].data, diagnostic);
+    assert.equal(lines[1].level, "warn");
+    assert.equal(lines[1].data.execution.outcome, "completed");
+    assert.match(lines[1].data.execution.operations[0].failure.diagnostic.stack, /terminal frame token=\[REDACTED\]$/);
+    assert.equal(JSON.stringify(lines).includes("REAL_SECRET"), false);
     const other = service.write({ ...input, kind: "ipc.error" });
     assert.equal((other.data as { truncated: boolean }).truncated, true);
     const normal = createService(logsPath).write(input);
     assert.equal((normal.data as { truncated: boolean }).truncated, true);
+    assert.equal((createService(logsPath).write(diagnosticInput).data as { truncated: boolean }).truncated, true);
   } finally { rmSync(logsPath, { recursive: true, force: true }); }
 });
 

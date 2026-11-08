@@ -14,6 +14,7 @@ import { validateCharacterMemoryAppendEpisodeRequest } from "../../src-shared/ch
 import { registerBackgroundAffect } from "../../src-electron/character/background-affect-registration.js";
 import { runBackgroundAffectCall } from "../../src-electron/character/background-affect-call.js";
 import { BackgroundCallService } from "../../src-electron/providers/background-call-service.js";
+import type { BackgroundExecutionDiagnosticInput } from "../../src-electron/providers/background-failure.js";
 import { AFFECT_COMPOSITION_INSTRUCTIONS } from "../../src-shared/character-affect/affect-composition.js";
 import { AFFECT_SCHEMA_VERSION, type EffectiveAffectState } from "../../src-shared/character-affect/affect-contract.js";
 import { validateMemoryAppendRequest } from "../../src-shared/memory/memory-validation.js";
@@ -534,9 +535,9 @@ test("新しいTurnがあっても過去terminal Turnを選び保存できる", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "Affect用途入力は未設定時だけpresetを使い、編集本文・材料を同一runOnceのAgentへ渡し、既知の登録失敗は後続取消でも失敗として先行保存を保持する"
-// oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#登録指示のプリセットと本文編集" }
-// fault = "編集本文へpresetを重ねる、別実行で保存する、既知の登録拒否を取消や正常終了へ潰すか確定済み保存を失う"
+// claim = "Affect用途入力は未設定時だけpresetを使い、編集本文・材料を同一Agentへ渡し、後続失敗と取消を区別して登録拒否と先行保存を保持する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "編集本文へpresetを重ねる、別実行で保存する、登録拒否で後続の実行失敗や取消を上書きするか確定済み保存を失う"
 // observable = "Agentが受ける本文とscope・材料、runOnce結果、MCP/CLI保存・拒否応答、後続失敗／取消への到達、通常contextと実DB件数"
 // observation_boundary = "public-boundary"
 // scope = "purpose input through real BackgroundCallService, MCP/CLI handler and normal context read"
@@ -572,10 +573,11 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
       assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
     }
     for (const ending of ["failure", "cancel"] as const) {
+      const diagnostics: BackgroundExecutionDiagnosticInput[] = [];
       let rejectedExitCode: number | undefined;
       let canceledExitCode: number | undefined;
       let reachedEnding = false;
-      const service = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
+      const service = new BackgroundCallService({ executions: f.executions, onExecutionDiagnostic: (diagnostic) => diagnostics.push(diagnostic), runAgent: async (agent) => {
         const binding = { ...agent.binding, memoryRuntimeOwner: owner,
           managedMcp: f.host.issue({ ...agent.binding, memoryRuntimeOwner: owner }, agent.handle, agent.signal) };
         const { client } = await f.connect(binding, "memoryUrl");
@@ -596,7 +598,11 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
       assert.equal(reachedEnding, true);
       assert.ok(rejectedExitCode !== undefined); assert.notEqual(rejectedExitCode, 0);
       if (ending === "cancel") { assert.ok(canceledExitCode !== undefined); assert.notEqual(canceledExitCode, 0); }
-      assert.deepEqual(result, { kind: "failed", code: "invalid_input" });
+      assert.deepEqual(result, ending === "failure" ? { kind: "failed", code: "BACKGROUND_AGENT_FAILED" }
+        : { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" });
+      assert.equal(diagnostics.length, 1);
+      assert.equal(diagnostics[0]!.execution.outcome, result.kind);
+      assert.ok(diagnostics[0]!.execution.operations.some((operation) => operation.failure?.code === "invalid_input"));
     }
     const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex",
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants: getMemoryV6AgentRuntimeOperations() });

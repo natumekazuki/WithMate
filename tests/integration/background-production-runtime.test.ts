@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { mkdir, realpath } from "node:fs/promises";
 import { BackgroundProductionRuntime, buildBackgroundExecutionScope, type BackgroundRuntimeEvent, type PrepareBackgroundCallInput } from "../../src-electron/providers/background-production-runtime.js";
 import type { BackgroundAgentInput, BackgroundAgentPort } from "../../src-electron/providers/background-call-service.js";
-import type { BackgroundFailureEvent } from "../../src-electron/providers/background-failure.js";
+import type { BackgroundFailureEvent, BackgroundExecutionDiagnosticEvent } from "../../src-electron/providers/background-failure.js";
 import { backgroundMemoryRegistrationHandlers, runBackgroundMemoryRegistration } from "../../src-electron/memory/background-memory-registration.js";
 import { registerBackgroundAffect } from "../../src-electron/character/background-affect-registration.js";
 import { runBackgroundAffectCall } from "../../src-electron/character/background-affect-call.js";
@@ -176,11 +176,11 @@ test("背景file scopeは現在rootと用途の書込設定を呼出ごとに固
     await mkdir(sessionFolder);
     await mkdir(extra);
     const { deps, settings, input } = setup(f, () => {});
-    const failures: BackgroundFailureEvent[] = [];
+    const failures: BackgroundExecutionDiagnosticEvent[] = [];
     const runtime = new BackgroundProductionRuntime({ ...deps,
       resolveSessionFolderPath: () => sessionFolder,
       runAgent: async () => { throw new Error("fixture agent failure"); },
-      onFailure: (event) => { failures.push(event); },
+      onExecutionDiagnostic: (event) => { failures.push(event); },
       getModelCatalog: async () => ({ providers: [...catalog.providers,
         { ...catalog.providers[0]!, id: "codex", label: "Codex" }] }),
     });
@@ -210,7 +210,7 @@ test("背景file scopeは現在rootと用途の書込設定を呼出ごとに固
       }
       f.executions.finish(execution);
       assert.equal((await runtime.calls.runOnce({ ...prepared.call, userInput: "fixture", onAdmitted() {} })).kind, "failed");
-      assert.equal(failures.at(-1)!.stage, "agent");
+      assert.equal(failures.at(-1)!.execution.failure!.stage, "agent");
       assert.deepEqual(failures.at(-1)!.execution!.scope, { purpose: input.purpose,
         history: prepared.call.context.scope.history, memoryTargets: input.memoryTargets });
       assert.ok(!JSON.stringify(failures.at(-1)).includes(sessionFolder));

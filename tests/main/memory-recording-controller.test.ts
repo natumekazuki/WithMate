@@ -30,7 +30,8 @@ function setup() {
   let failAgent = false;
   const capture = async (source: BackgroundSourceRef) => structuredClone(sources.get(JSON.stringify([source.kind, source.sessionId])) ?? null);
   const authority = (session: { characterId: string }) => ({ userId: "local-user" as const, characterId: session.characterId, allowedProjectIds: ["project"] });
-  const runtime = new BackgroundProductionRuntime({ executions, onFailure: (failure) => errors.push(failure), runAgent: async (input) => {
+  const runtime = new BackgroundProductionRuntime({ executions, onFailure: (failure) => errors.push(failure),
+    onExecutionDiagnostic: (diagnostic) => errors.push(diagnostic), runAgent: async (input) => {
     agents.push(input); if (failAgent) throw new Error("Agent failed"); await new Promise<void>((done) => releases.push(done));
   }, getAppSettings: () => settings, getModelCatalog: async () => {
     await catalogGate;

@@ -59,7 +59,7 @@ import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../..
 import { getSessionIncarnationId, isReadOnlySession } from "../../src-shared/session/session-state.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
-import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
+import { backgroundOperationFailure, classifyBackgroundFailure } from "../providers/background-failure.js";
 import { sessionHistoryRuntimeOperationByPath } from "../../src-shared/session-history/session-history-contract.js";
 import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
 
@@ -67,7 +67,6 @@ export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
   characterContextService?: CharacterContextApplicationService;
   backgroundRegistration?: BackgroundRegistration;
-  onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
   onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
   apiSecret: string;
   operatorApiSecret: string;
@@ -1121,14 +1120,12 @@ async function routeResolvedRequest(input: {
     if (failure && operationError !== undefined) {
       failure = { ...failure, diagnostic: backgroundErrorDiagnostic({ errors: failure.diagnostic, cause: operationError }, secrets) };
     }
-    if (binding && failure) input.options.onBackgroundOperationFailure?.(binding.bindingId, failure);
     observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(result) });
     return result;
   } catch (error) {
     const failure = classifyBackgroundFailure(error, stage, "BACKGROUND_OPERATION_FAILED");
     const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
       secrets) };
-    if (binding) input.options.onBackgroundOperationFailure?.(binding.bindingId, safeFailure);
     observe({ phase: "response", outcome: "failure", failure: safeFailure });
     throw error;
   }
@@ -2041,13 +2038,11 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           const failure = classifyBackgroundFailure(error, "history", "BACKGROUND_OPERATION_FAILED");
           const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
             [apiSecret, operatorApiSecret, mcpApiSecret, payload.bindingReference ?? "", payload.turnCapability ?? ""]) };
-          if (backgroundBinding) options.onBackgroundOperationFailure?.(backgroundBinding.bindingId, safeFailure);
           observe({ phase: "response", outcome: "failure", failure: safeFailure });
           throw error;
         }
         if (historyOperation) {
           const failure = backgroundOperationFailure(extensionResponse?.value, "history");
-          if (backgroundBinding && failure) options.onBackgroundOperationFailure?.(backgroundBinding.bindingId, failure);
           observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(extensionResponse?.value) });
         }
         if (!extensionResponse) {

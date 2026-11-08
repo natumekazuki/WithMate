@@ -188,3 +188,13 @@ Memory targetの許可だけではElectron側のfile I/O権限を証明しない
 2026-11-06の追加要求により採用。通常MemoryとCharacter Memoryは同じ既存公開操作へ非空のentry／episode配列を渡せるようにし、Affect候補の最大10件を撤廃する。登録件数・呼出回数に別の固定上限を設けず、記録の粒度と必要件数はAIが判断する。本文・添付等の項目単位制約と通信・Provider・認可の制限は維持する。
 
 公開tagで成立している単件入力／応答は保持し、同じ操作の代替配列形式として追加する。項目入力を事前検証し、入力順に既存単件保存を利用する。失敗・結果不明・共通実行条件喪失で停止し、indexごとに確定済・失敗・未実行・結果不明を返す。既存item idempotencyとentry添付原子性を維持し、先行確定分を巻き戻さず、新batch DB・台帳・永続queue・全件transaction・即時全体再送を設けない。現行契約は[Background Execution](../design/background-execution.md#一括登録と項目別結果)を正本とする。
+
+## 実行終了状態と操作診断の分離
+
+2026-11-08に採用。入力拒否後に同じAgent実行内で登録できた呼出も、一度の操作失敗によって全体がfailedになる記録では、実行終了と操作成否を区別できない。このため「登録内容と失敗診断」の途中失敗後も全体失敗を維持する判断は、本項の適用対象では置き換える。当時の本文は履歴として保持する。
+
+completed／failed／canceledはAgent呼出・開始処理・取消の終了状態とし、操作拒否を全体failedへ固定しない。既存の操作列と登録応答の選別済みreceiptを正本に、拒否・部分保存・後続成功を保持する。全拒否でAgentが正常終了しても保存成功や登録不要とは判定せず、後続成功だけで回復済みとも判定しない。Provider自体の実原因と取消を先行する操作拒否で上書きしない。
+
+既存専用JSONLへ、実行自体の失敗または操作エラーがある呼出の終端診断だけを一度記録する。開始済みのkindをbackground.execution.diagnosticとし、実行自体の失敗はerror、操作エラーを含む正常終了・取消はwarnで終了状態と操作列を併記する。旧行・append-only・rotationなし・秘匿化を維持し、正常実行全履歴や新規DB・台帳・回復判定・再送queueは追加しない。
+
+前回材料も実行終了状態と操作診断を分け、completedだけで操作エラーを捨てない。次回の正常終了かつ操作エラーなしで直近診断を解放する。既存のnative文脈・sourceとProviderの寿命、onAdmittedの発火位置、認可・失効・確定済み保存保持は変更しない。現行契約は[Background Execution](../design/background-execution.md#失敗の記録)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)を正本とする。
