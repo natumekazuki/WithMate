@@ -72,6 +72,7 @@ CLI/MCPの公開操作、input schema、handler、errorは`src-electron/platform
 
 - provider共通MCPをagent-facing entrypointとし、initialize instructionsと`tools/list`でoperation contractを公開する。
 - agent-facing targetはactor-relative schemaを使い、user / Character / Session identityを受け付けない。runtime bindingがactor Session、Character、user、許可Projectを解決する。
+  - 通常binding、背景authority、Memory管理targetのProject IDは、Memory storage WorkerでworkspaceのProject keyから解決する。既存keyには保存済みIDを使い、新規Gitには初回保存用のcandidate IDを使う。参照だけではProjectを登録せず、非Git workspaceにはProject authorityを付与しない。MainはDBを直接開かず、解決中のruntime generation切替・maintenanceでは旧結果を利用しない。
 - `withmate-memory` Skillは配布、同期、検査しない。Memory運用方針をprovider instructionやsystem promptへ複製しない。
 - CLIもMCPもlocalhost APIを呼ぶthin adapterであり、ローカルruntime認証を維持する。通常CLIはMCP障害の有無に依存しない。
 - Character context / Affect / Character所有Memoryはbindingを要求し、現在Character / Sessionと許可Projectを解決する。一般user-global / Project Memoryは明示targetがあればbindingなしでも利用できる。binding提示時は許可範囲・失効を検証し、無効bindingを無視してunboundへ降格しない。

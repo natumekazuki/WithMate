@@ -2,6 +2,7 @@ import type {
   ProviderUsage,
   LiveRunStep,
   AssistantQuestionRange,
+  MessageOperation,
 } from "../../../src-shared/session/runtime-state.js";
 import {
   PROVIDER_TEXT_PREVIEW_LIMIT,
@@ -10,7 +11,7 @@ import {
 } from "../../session/provider-payload-limits.js";
 import { ProviderProgressMap } from "../provider-progress.js";
 
-// The fields consumed here follow Codex App Server 0.159.0's ThreadItem schema.
+// The fields consumed here follow Codex App Server 0.166.0's ThreadItem schema.
 export type CodexFileChange = {
   path: string;
   kind: { type: "add" | "delete" | "update"; move_path?: string | null };
@@ -54,6 +55,11 @@ export type CodexTurnItem =
       status: string;
     }
   | { type: "webSearch"; id: string; query?: string; action?: unknown }
+  | { type: "imageView"; id: string; path: string }
+  | { type: "sleep"; id: string; durationMs: number }
+  | { type: "contextCompaction"; id: string }
+  | { type: "subAgentActivity"; id: string; kind: "started" | "interacted" | "interrupted" | "completed";
+      agentThreadId: string; agentPath: string; model?: string | null; reasoningEffort?: string | null }
   | { type: "userMessage"; id: string; content: unknown[] };
 export type CodexNativeNotification = { method: string; params?: unknown };
 export type CodexTurnStreamState = {
@@ -269,7 +275,27 @@ export function getCodexMcpResultPreview(
   );
 }
 
-function liveStep(item: CodexTurnItem): LiveRunStep | null {
+/** Non-text activities share the same summary/details in live and saved Operations. */
+export function getCodexActivityOperation(item: CodexTurnItem): MessageOperation | null {
+  switch (item.type) {
+    case "imageView":
+      return { id: item.id, type: "image_view", summary: toProviderTextPreview(item.path.replace(/\\/g, "/").split("/").at(-1)) ?? "Image",
+        details: toProviderTextPreview(item.path) };
+    case "sleep":
+      return { id: item.id, type: "sleep", summary: `Wait ${item.durationMs / 1000} s` };
+    case "contextCompaction":
+      return { id: item.id, type: "context_compaction", summary: "Compact conversation" };
+    case "subAgentActivity":
+      return { id: item.id, type: "subagent_activity", summary: toProviderTextPreview(`${item.kind}: ${item.agentPath}`) ?? item.kind,
+        details: stringifyBoundedProviderValue({ agentThreadId: item.agentThreadId, model: item.model, reasoningEffort: item.reasoningEffort }) };
+    default:
+      return null;
+  }
+}
+
+function liveStep(item: CodexTurnItem, lifecycle: "in_progress" | "completed"): LiveRunStep | null {
+  const activity = getCodexActivityOperation(item);
+  if (activity) return { ...activity, id: item.id, status: lifecycle };
   const status = "status" in item ? item.status : "completed";
   const liveStatus = status === "inProgress" ? "in_progress" : status === "declined" ? "failed" : status;
   switch (item.type) {
@@ -339,7 +365,7 @@ function setLiveStep(state: CodexTurnStreamState, step: LiveRunStep): boolean {
   state.liveSteps.set(step.id, step);
   return true;
 }
-function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput = false): void {
+function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput = false, lifecycle: "in_progress" | "completed" = "completed"): void {
   const raw = record(value);
   if (typeof raw.id !== "string" || typeof raw.type !== "string")
     throw new Error("Invalid Codex App Server item");
@@ -368,7 +394,7 @@ function acceptItem(state: CodexTurnStreamState, value: unknown, boundedOutput =
     && (previousItem?.type !== "agentMessage" || previousItem.delivery !== "async" || !previousItem.questions?.length)) changed = true;
   changed = cache.reasoning.set(item.id, order,
     item.type === "reasoning" ? [...item.summary, ...item.content].join("\n") : "") || changed;
-  const step = liveStep(item);
+  const step = liveStep(item, lifecycle);
   if (step) changed = setLiveStep(state, step) || changed;
   if (!state.turnCompleted && state.streamErrorMessage) {
     state.streamErrorMessage = "";
@@ -407,7 +433,7 @@ export function applyCodexTurnEvent(
       break;
     case "item/started":
     case "item/completed":
-      acceptItem(state, params.item);
+      acceptItem(state, params.item, false, event.method === "item/started" ? "in_progress" : "completed");
       break;
     case "item/agentMessage/delta": {
       if (typeof params.itemId !== "string" || typeof params.delta !== "string")

@@ -1454,9 +1454,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
       payload: { message: diagnostics.cleanupError },
     });
     for (const metadata of providerMetadata) {
+      const unsupported = metadata.kind === "unsupported_response" || metadata.kind === "unsupported_event";
       this.writeLog({
-        level: "warn",
-        kind: "provider.unsupported-response",
+        level: metadata.kind === "withmate.accepted_steer" ? "info" : "warn",
+        kind: unsupported ? "provider.unsupported-response" : "provider.diagnostic",
         message: redactor.sanitizeText(metadata.summary),
         data: redactor.sanitize(toProviderMetadataLogData(metadata)),
       });

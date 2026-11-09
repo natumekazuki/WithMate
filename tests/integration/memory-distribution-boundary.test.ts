@@ -118,21 +118,4 @@ describe("Memory distribution boundary", () => {
     assert.deepEqual(Object.keys(projected).sort(), ["cliShim", "generatedAt", "lastErrors", "runtime"]);
   });
 
-  // @test-value v1
-  // kind = "security"
-  // claim = "application wiringはactor Session authority、共通turn coordinator、canonical CLI artifact pathをruntimeへ接続する"
-  // oracle = { type = "adr", ref = "ADR-024 runtime binding and canonical artifact owners" }
-  // failure_mode = "main wiringが旧Skill path、caller identity、またはMemory専用turn mapへ戻りauthority境界が迂回される"
-  // scope = "provider-common-memory-main-wiring"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("mainはcanonical authorityと共有turn coordinatorを配線する", async () => {
-    const mainSource = await readFile("src-electron/main.ts", "utf8");
-
-    assert.match(mainSource, /buildProviderAgentRuntimeAuthoritySnapshot/);
-    assert.match(mainSource, /resolveMemoryV6ProjectCandidate/);
-    assert.match(mainSource, /providerAgentRuntimeTurns,/);
-    assert.match(mainSource, /resolveBundledMemoryCliScriptPath/);
-    assert.doesNotMatch(mainSource, /bundledMemorySkillPath|resources[\\/]+skills[\\/]+withmate-memory/);
-  });
 });

@@ -91,6 +91,7 @@ export type MemoryV6RuntimeApiHandle = {
   memoryStorage: MemoryV6StorageAccess;
   affectStorage: CharacterAffectStorageAccess;
   managedMcp: ManagedHttpMcpHost | null;
+  resolveKnownProjectByPath: MemoryV6WorkerClient["resolveKnownProjectByPath"];
   stop(): Promise<void>;
 };
 
@@ -1716,6 +1717,7 @@ export async function startMemoryV6RuntimeApi(
       characterContextService,
       memoryStorage: storage,
       affectStorage,
+      resolveKnownProjectByPath: projectResolver.resolveKnownProjectByPath,
       managedMcp,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];

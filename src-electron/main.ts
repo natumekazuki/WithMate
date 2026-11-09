@@ -252,7 +252,6 @@ import type { SessionBackgroundEvent } from "./session/session-background-events
 import type { BackgroundRegistration } from "./providers/background-registration.js";
 import { registerBackgroundAffect } from "./character/background-affect-registration.js";
 import { buildProviderAgentRuntimeAuthoritySnapshot } from "./providers/provider-agent-runtime-binding.js";
-import { resolveMemoryV6ProjectCandidate } from "./memory/memory-v6-project-resolver.js";
 import { resolveBundledMemoryCliScriptPath } from "./platform/cli-runtime-paths.js";
 import { GlossarySessionProjectionService } from "./glossary/glossary-session-projection-service.js";
 import { SessionGlossaryWindowSubscriptionCoordinator } from "./session/session-glossary-window-subscription.js";
@@ -804,10 +803,7 @@ const backgroundRuntime = new BackgroundProductionRuntime({
     return worker.stores.session.captureBackgroundSource(source);
   },
   resolveAuthority: async (session, source) => {
-    const memoryAuthority = buildProviderAgentRuntimeAuthoritySnapshot({
-      characterId: session.characterId, workspacePath: session.workspacePath,
-      resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id,
-    });
+    const memoryAuthority = await resolveSessionMemoryAuthority(session);
     const graph = await resolveSessionGraphSession(session.id, source.kind);
     if (!memoryAuthority || !graph) return null;
     let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
@@ -842,8 +838,7 @@ const memoryRecordingController = new MemoryRecordingController({
     return worker.stores.session.captureBackgroundSource(source);
   },
   getSettings: () => requireAppSettingsStorage().getSettings(),
-  resolveAuthority: (session) => buildProviderAgentRuntimeAuthoritySnapshot({ characterId: session.characterId,
-    workspacePath: session.workspacePath, resolveCanonicalProjectId: (path) => resolveMemoryV6ProjectCandidate(path)?.id }),
+  resolveAuthority: resolveSessionMemoryAuthority,
 });
 const backgroundAffectController = new BackgroundAffectController({
   runtime: backgroundRuntime,
@@ -989,16 +984,24 @@ function endManagedProviderTurn(handle: unknown): void {
   glossaryRuntimeService.endProviderTurn(turn);
 }
 
+async function resolveSessionMemoryAuthority(session: Pick<Session, "characterId" | "workspacePath">) {
+  const runtime = memoryV6RuntimeApi;
+  if (!runtime || databaseMaintenanceRequested) throw new Error("Memory authority storage is unavailable.");
+  const authority = await buildProviderAgentRuntimeAuthoritySnapshot({
+    characterId: session.characterId,
+    workspacePath: session.workspacePath,
+    resolveCanonicalProjectId: async (workspacePath) => (await runtime.resolveKnownProjectByPath(workspacePath))?.id,
+  });
+  if (memoryV6RuntimeApi !== runtime || databaseMaintenanceRequested) throw new Error("Memory authority storage changed during resolution.");
+  return authority;
+}
+
 async function issueProviderAgentRuntimeBinding(
   session: Pick<Session, "id" | "incarnationId" | "characterId" | "sessionKind" | "workspacePath">,
   providerId: string,
   actorSource: BackgroundSourceRef = { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
 ) {
-  const memoryAuthority = buildProviderAgentRuntimeAuthoritySnapshot({
-    characterId: session.characterId,
-    workspacePath: session.workspacePath,
-    resolveCanonicalProjectId: (workspacePath) => resolveMemoryV6ProjectCandidate(workspacePath)?.id,
-  });
+  const memoryAuthority = await resolveSessionMemoryAuthority(session);
   if (!memoryAuthority) {
     throw new Error("Provider runtime binding requires a canonical Character authority.");
   }

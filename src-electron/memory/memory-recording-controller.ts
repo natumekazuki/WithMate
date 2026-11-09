@@ -30,7 +30,7 @@ export class MemoryRecordingController {
     runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure" | "forgetSource">;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     getSettings(): AppSettings | Promise<AppSettings>;
-    resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
+    resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null | Promise<ProviderAgentRuntimeAuthoritySnapshot | null>;
     clock?: Clock;
   }) {
     this.clock = deps.clock ?? { now: Date.now, setTimeout: (callback, delay) => setTimeout(callback, delay), clearTimeout: (timer) => clearTimeout(timer) };
@@ -151,7 +151,8 @@ export class MemoryRecordingController {
       }
       return;
     }
-    const authority = this.deps.resolveAuthority(state.session);
+    const authority = await this.deps.resolveAuthority(state.session);
+    if (!this.current(state) || position.dirty) return;
     if (!authority) {
       this.deps.runtime.reportFailure({ purpose, source: state.source, stage: "prepare", error: { code: "BACKGROUND_AUTHORITY_UNAVAILABLE" } });
       return;

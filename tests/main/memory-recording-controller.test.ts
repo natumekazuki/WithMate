@@ -15,6 +15,7 @@ async function settle() { for (let i = 0; i < 12; i++) await setImmediate(); }
 function setup() {
   let now = 0, failCatalog = false;
   let catalogGate: Promise<void> | undefined;
+  let authorityGate: Promise<void> | undefined;
   const timers = new Map<ReturnType<typeof setTimeout>, { at: number; callback(): void }>();
   const clock = { now: () => now,
     setTimeout(callback: () => void, delay: number) {
@@ -29,7 +30,10 @@ function setup() {
   const agents: BackgroundAgentInput[] = [], releases: (() => void)[] = [], errors: unknown[] = [];
   let failAgent = false;
   const capture = async (source: BackgroundSourceRef) => structuredClone(sources.get(JSON.stringify([source.kind, source.sessionId])) ?? null);
-  const authority = (session: { characterId: string }) => ({ userId: "local-user" as const, characterId: session.characterId, allowedProjectIds: ["project"] });
+  const authority = async (session: { characterId: string }) => {
+    await authorityGate;
+    return { userId: "local-user" as const, characterId: session.characterId, allowedProjectIds: ["project"] };
+  };
   const runtime = new BackgroundProductionRuntime({ executions, onFailure: (failure) => errors.push(failure),
     onExecutionDiagnostic: (diagnostic) => errors.push(diagnostic), runAgent: async (input) => {
     agents.push(input); if (failAgent) throw new Error("Agent failed"); await new Promise<void>((done) => releases.push(done));
@@ -70,9 +74,45 @@ function setup() {
     releaseAgents() { for (const release of releases.splice(0)) release(); },
     setFailAgent(value: boolean) { failAgent = value; }, setFailCatalog(value: boolean) { failCatalog = value; },
     blockCatalog() { let release!: () => void; catalogGate = new Promise<void>((done) => { release = done; }); return () => { catalogGate = undefined; release(); }; },
+    blockAuthority() { let release!: () => void; authorityGate = new Promise<void>((done) => { release = done; }); return () => { authorityGate = undefined; release(); }; },
     async advance(ms: number) { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.callback(); } await settle(); },
     async close() { runtime.stop(); for (const release of releases) release(); await settle(); } };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "非同期authority解決中に解放したsourceを実行せず、存続sourceは解決されたProject IDを管理targetへ渡す"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
+// fault = "未awaitのauthorityを使うか、source解放後の遅延結果で背景実行を開始する"
+// observable = "実背景runtimeのAgent開始sourceとmemoryTargets、解放sourceの開始件数"
+// observation_boundary = "consumer"
+// scope = "Memory controller async authority and source lifecycle"
+// lifecycle = "permanent"
+// impact = "Project記憶管理が失敗するか削除済み会話から管理操作を開始する"
+// distinction = "既存頻度testの即時authorityではDB Worker応答待ち中のsource解放を確認できない"
+// @end-test-value
+test("authority待機中のsource解放を守り正規Project targetを渡す", async () => {
+  const f = setup();
+  const release = f.blockAuthority();
+  try {
+    f.settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
+    const removed = f.source("main", "removed");
+    const active = f.source("main", "active");
+    removed.terminal(1); active.terminal(2); await settle();
+    assert.equal(f.agents.length, 0);
+    f.controller.forget("main", "removed");
+    release(); await settle();
+    assert.equal(f.errors.length, 0);
+    assert.equal(f.agents.length, 2);
+    assert.ok(f.agents.every((agent) => agent.scope.history.source.sessionId === "active"));
+    const target = f.agents.find((agent) => agent.scope.purpose === "target-memory")!;
+    assert.ok(target.scope.purpose === "target-memory");
+    assert.deepEqual(target.scope.memoryTargets, [
+      { owner: "character", scope: "character", character: { type: "id", id: "character" } },
+      { owner: "project", scope: "project", project: { type: "id", id: "project" } },
+    ]);
+  } finally { release(); await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"
