@@ -142,14 +142,15 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - `Coordination`: Attentionに該当せず、Main／配下Auxiliaryに保存済みのユーザー対応待ち相談がある親Session
     - `Running`: Attention／Coordinationに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
     - `Stopped`: 他の3枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
-  - `Attention`、`Coordination`、`Running`、`Stopped`の順に表示し、この優先順位で同じ親Sessionを一か所だけに分類する。Coordinationは保存queryで取得した対象を通常の監視対象と統合し、開いているWindowだけに限定しない。Provider要求と相談が同時にある場合はAttentionの共通カードに相談への補助リンクと件数を残し、双方への導線を保持する。最後の要求や相談が解消すると残る条件で再分類する。分類は表示用の投影であり、内部の`runState`を変更しない
-  - 初期縦配分は1:1:2:2とし、Attention領域とCoordination領域へ同じ面積を配分する。各枠の一覧を独立してscrollする。隣接枠間の共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている枠は48pxの最小領域へ補正する。開閉・Window resizeによる一時的な高さ配分で、保持する分類比率を変更しない
-  - Coordinationの見出しはMain単位のグループ数、各行はそのMainと所属Auxiliaryの要対応item数を示す。保存queryの軽量summaryをページング取得し、本文や回答履歴は取得しない。Window close・アプリ再起動後も未対応項目を確認できる。通常の進捗やAgent担当の相談はユーザー対応待ちへ昇格させない
-  - Coordinationカードの親title、またはAttentionカードの相談補助リンクは保存identityを使って起票元の通常Session Windowを明示openし、Auxiliaryなら所属Main内の対象会話を選択する。右ペインを展開してCoordinationを選び、一件なら詳細、複数ならMainと全Auxiliaryの未対応一覧を開く。Monitor内では本文・回答・取り下げ操作を扱わない
-  - Monitor本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体ではなくHomeの分割後の幅で判定する。2列は前半を左、後半を右へ上から順に積み、Auxiliary展開で反対列の親行を押し下げない。分類ごとのscrollは共用し、狭幅では左列から右列の順に1列へ戻す。幅の切替や他Sessionの追加・除去・再分類で一覧を再mountせず、同じ分類に残るSessionのAuxiliary展開・focus・scrollを保持する
-  - 分類splitterのclickは隣接2枠のMainグループ件数が少ない側の一覧を閉じる。同数では後の枠を閉じる。Auxiliary数やCoordination item数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は前の枠を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
+  - `Attention`、`Coordination`、`Running`、`Stopped`の優先順位で同じ親Sessionを一か所だけに分類する。全分類で通常の監視対象と共通検索語の条件を共有し、保存相談があるだけでは監視対象外のSessionを追加しない。Provider要求と相談が同時にある場合はAttentionの通常カードからSessionを開き、相談はそのSessionの既存Coordination入口から参照する。カードに相談専用の補助行を追加しない。最後の要求や相談が解消すると残る条件で再分類する。分類は表示用の投影であり、内部の`runState`を変更しない
+  - 上段は`Attention | Coordination`の左右等分とし、同じ一段の高さを共有する。その下に全幅のRunning、Stoppedを置き、三段の初期縦配分は1:1:1とする。各分類の一覧を独立してscrollする。上下二つの共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている段は48pxの最小領域へ補正する。開閉・Window resizeによる一時的な高さ配分で、保持する段の比率を変更しない。左右の境界は区切りのみとし、狭幅でも縦積みへ切り替えない
+  - Coordinationの見出しは表示対象のMainグループ数、各行はそのMainと所属Auxiliaryの要対応item数を示す。保存queryの軽量summaryをページング取得し、本文や回答履歴は取得しない。Main/Auxiliaryの表示情報は通常の監視summaryを使い、相談queryで別取得しない。保存相談はMonitorの表示対象から外れても削除・自動終了しない。通常の進捗やAgent担当の相談はユーザー対応待ちへ昇格させない
+  - Coordinationカードの親titleは保存identityを使って起票元の通常Session Windowを明示openし、Auxiliaryなら所属Main内の対象会話を選択する。右ペインを展開してCoordinationを選び、一件なら詳細、複数ならMainと全Auxiliaryの未対応一覧を開く。Monitor内では本文・回答・取り下げ操作を扱わない
+  - 各分類の本文幅が740px以上ならその分類の親行を2列、それ未満は1列にする。WindowやMonitor全体ではなく、左右分割後の各分類の幅で判定する。2列は前半を左、後半を右へ上から順に積み、Auxiliary展開で反対列の親行を押し下げない。分類ごとのscrollは共用し、狭幅では左列から右列の順に1列へ戻す。幅の切替や他Sessionの追加・除去・再分類で一覧を再mountせず、同じ分類に残るSessionのAuxiliary展開・focus・scrollを保持する
+  - 上下splitterのclickは隣接2段のMainグループ件数が少ない側の一覧を閉じる。上段はAttentionとCoordinationのMainグループ件数を合算し、二つの一覧を一緒に開閉する。同数では後の段を閉じる。Auxiliary数やCoordination item数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は前の段を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
   - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行を表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
   - 全分類で同じSessionカードの描画・状態icon・Main／Auxiliary識別・展開・context menuを共有する。親行はMain状態icon、24pxのCharacter avatar、通常weightのSession titleをまとめる。workspaceの副行や状態文字、provider / command / transcriptは常設しない。親titleとAuxiliary previewは既存の省略表示規則を使う。Coordinationの要対応件数は親identity内の小さい件数badgeとし、右端のAuxiliary開閉欄とは分ける
+  - 分類幅320px以下では共通カードのAuxiliary開閉欄を親identityの次行へ回し、カード幅いっぱいに配置する。文字・avatarを縮小せず、Auxiliaryの状態と操作を保持する。Coordinationの初回取得と背景再取得を区別し、取得済み一覧は背景更新中に読込行で押し下げず、busy状態を通知する。取得成功の0件と失敗を区別し、失敗時も直前の成功snapshotを保持する
   - 通常の親titleは親Window、Coordinationの親titleは相談への移動を行う。disclosureでAuxiliary一覧を展開し、展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - 親行の右クリック、またはfocus中のShift+F10／Context Menu keyで共通のnative menuを開く。`Copy Session ID`は親Session ID、`Copy Session Title`は選択時に取得した現在のタイトル全文をコピーする。表示の省略はコピー内容へ適用せず、取得・コピー失敗はMonitor内へ表示する。Homeと独立Monitorで同じ操作を使い、`Close`は対象Windowが開いている場合だけ有効とする
   - Main／Auxiliaryの新しい終了結果は、未読の間だけMain title、Aux状態集約、対象Auxiliary previewを青で示す。実行状態とは分け、件数ラベル・未読dot・未読による並べ替えは追加しない。成功・失敗・取消の結果を対象とし、OS通知の設定や配送とは独立する
@@ -290,12 +291,12 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
   - Homeと同じ監視対象と保持条件を使い、閉鎖後も監視中のSessionを表示する
   - `Attention` / `Coordination` / `Running` / `Stopped` の4枠を、0件でも常に表示する
-  - 親SessionはHomeと共通のcompactな行で表示し、Main状態iconをavatarの前、Aux状態集約と展開操作を右端へ分ける。4枠はHomeと共通の高さ調整・件数/優先順位によるclick開閉・個別scrollを使う。Attention／Running／Stoppedは本文幅740px以上で各分類を2列にする。Coordinationは同じカード表現で保存済みユーザー対応待ちのMain集約行とitem数を表示する。文字の縮小だけで件数を詰め込まない
+  - 親SessionはHomeと共通のcompactな行で表示し、Main状態iconをavatarの前、Aux状態集約と展開操作を右端へ分ける。上段のAttentionとCoordinationを左右等分にし、全幅のRunning、Stoppedを下へ置く。三段はHomeと共通の高さ調整・件数/優先順位によるclick開閉、各分類は個別scrollを使う。各分類の本文幅740px以上で親行を2列にする。Coordinationは同じカード表現で保存済みユーザー対応待ちのMain集約行とitem数を表示する。文字の縮小だけで件数を詰め込まない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running`はaccent色のspinner、承認・入力待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
   - Auxiliaryが存在する親だけ、右端に状態集約を含むdisclosureを表示する。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
   - Auxiliaryの状態集約では`Attention`、`Running`、取消状態、`Error`、`Idle`を別々に数える。Idleは中空円とし、interruptedとerrorは別の形状で表示する
-  - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Main／Auxiliaryの有効な承認・入力待ちを優先して親card groupを`Attention`へ分類し、それ以外は実行・取消待ちがあれば`Running`、残りは`Stopped`へ分類する。個々のMain／Auxiliaryの状態は分離して保持する
+  - section countは親card group数とし、Auxiliaryをtop-level rowとして重複表示しない。Homeと同じ`Attention`→`Coordination`→`Running`→`Stopped`の優先順位と監視対象条件を使う。個々のMain／Auxiliaryの状態は分離して保持する
   - 親titleは既存の親Windowを開き、Auxiliary rowは同じ親Windowを指定したstable Auxiliary IDで開いて選択する。対象が消えた、親が一致しない、Windowを開けない場合はfallbackせずMonitor内へ失敗を返す
   - 展開状態は親kindとstable IDごとのWindow local stateとし、複数親を同時に展開できる。再描画、状態更新、section移動で失わず、Homeと独立Monitor Windowの間で永続化・同期しない
 - window 内の `Home` button から通常の `Home Window` を前面へ戻せる

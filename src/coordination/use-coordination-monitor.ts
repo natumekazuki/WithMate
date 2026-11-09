@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoordinationSummary } from "../../src-shared/coordination/coordination-contract.js";
-import type { SessionSummary } from "../../src-shared/session/session-state.js";
-import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 
 export type CoordinationMonitorGroup = {
-  session: SessionSummary;
-  auxiliarySessions: AuxiliarySessionSummary[];
+  mainSessionId: string;
   items: CoordinationSummary[];
 };
 export function useCoordinationMonitor() {
-  const [groups, setGroups] = useState<CoordinationMonitorGroup[]>([]);
+  const [groups, setGroups] = useState<CoordinationMonitorGroup[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
@@ -51,20 +48,8 @@ export function useCoordinationMonitor() {
         existing.push(item);
         grouped.set(item.initiatorMainSessionId, existing);
       }
-      const next = await Promise.all(
-        [...grouped].map(async ([id, entries]) => {
-          const [session, auxiliarySessions] = await Promise.all([
-            api.getSessionSummary(id), api.listAuxiliarySessions(id),
-          ]);
-          if (!session)
-            throw new Error(
-              "A Coordination Session is no longer available. Refresh to check the saved state.",
-            );
-          return { session, auxiliarySessions, items: entries };
-        }),
-      );
       if (generation.current === current) {
-        setGroups(next);
+        setGroups([...grouped].map(([mainSessionId, items]) => ({ mainSessionId, items })));
         setError("");
       }
     })()
@@ -109,5 +94,5 @@ export function useCoordinationMonitor() {
       );
     }
   };
-  return { groups, loading, error, retry, open };
+  return { groups: groups ?? [], loading: loading && groups === null, refreshing: loading && groups !== null, error, retry, open };
 }

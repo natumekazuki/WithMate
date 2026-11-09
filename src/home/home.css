@@ -399,7 +399,6 @@
 
 .home-page .home-monitor-sections {
   --session-dock-splitter-size: 20px;
-  container: monitor-content / inline-size;
   display: grid;
   flex: 1 1 auto;
   min-height: 0;
@@ -407,14 +406,32 @@
   padding-right: 6px;
 }
 
-.home-page .home-monitor-sections > .home-monitor-section {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.home-page .home-monitor-top-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--session-dock-splitter-size) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
-.home-page .home-monitor-sections > .home-monitor-section.is-closed {
+.home-page .home-monitor-top-row > .session-dock-splitter.home-monitor-top-divider {
+  display: block;
+  width: var(--session-dock-splitter-size);
+  min-height: 0;
+  pointer-events: none;
+}
+
+.home-page .home-monitor-sections .home-monitor-section {
+  container: monitor-section / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.home-page .home-monitor-sections .home-monitor-section.is-closed {
   gap: 0;
 }
 
@@ -757,11 +774,6 @@
   margin-inline-end: 8px;
 }
 
-.home-page .home-monitor-coordination-link {
-  margin: 0 8px 6px 26px;
-  justify-self: start;
-}
-
 .home-page .home-monitor-parent-button:focus-visible,
 .home-page .home-monitor-disclosure:focus-visible,
 .home-page .home-monitor-auxiliary-row:focus-visible {
@@ -813,9 +825,21 @@
   flex: 0 0 auto;
 }
 
-@container monitor-content (min-width: 740px) {
+@container monitor-section (min-width: 740px) {
   .home-page .home-monitor-list-items {
     --home-monitor-columns: 2;
+  }
+}
+
+@container monitor-section (max-width: 320px) {
+  .home-page .home-monitor-parent-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-page .home-monitor-disclosure {
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid rgba(203, 213, 225, 0.1);
   }
 }
 

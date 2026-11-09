@@ -50,12 +50,12 @@ async function withMonitor(run: (context: { dom: JSDOM; root: ReturnType<typeof 
 
 // @test-value v2
 // kind = "contract"
-// claim = "4分類の境界は隣接Main group件数が少ない側を閉じ、同数は前の分類を残し、閉じた側の復帰を優先する。件数更新だけでは開閉しない"
+// claim = "AttentionとCoordinationは同じ上段を共有し、上下境界は隣接する段のMain group件数が少ない側を閉じ、同数は前の段を残し、閉じた側の復帰を優先する。件数更新だけでは開閉しない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
-// fault = "多い側を閉じる、同数で前の分類を閉じる、いずれかの分類を閉じられない、両側closedから後の分類を開く、または更新で自動開閉する"
+// fault = "AttentionとCoordinationを別の段にする、上段の片方だけを上下境界で閉じる、多い側を閉じる、同数で前の段を閉じる、両側closedから後の段を開く、または更新で自動開閉する"
 // observable = "境界click前後と件数更新後のcontentのinert/aria-hidden、closed行指定、DOM同一性、scrollTop、focus"
 // observation_boundary = "component-behavior"
-// scope = "HomeMonitorContentの分類境界clickと保持する一覧状態"
+// scope = "HomeMonitorContentの左右分割上段・三段構成と上下境界clickで保持する一覧状態"
 // lifecycle = "permanent"
 // impact = "限られた監視面積を必要な分類へ配分し、閉じた一覧へkeyboard focusが迷い込まず同じ位置へ復帰できる"
 // distinction = "componentの利用操作と更新を跨ぐ状態保持はCSS検査や型checkでは確認できない"
@@ -66,60 +66,64 @@ test("Monitor分類のclickは件数と優先度に従いDOMを保持して開�
     let changed = () => {};
     Object.defineProperty(dom.window, "withmate", { value: {
       executeCoordination: async () => ({ items: Array.from({ length: coordinationCount }, (_, i) => coordinationItem(`item-${i}`, `coordination-${i}`)), nextOffset: null }),
-      getSessionSummary: async (id: string) => entry(id).session,
-      listAuxiliarySessions: async () => [],
       subscribeCoordinationChanged: (callback: () => void) => { changed = callback; return () => {}; },
     } });
     const render = (counts: number[], key = "monitor") => { coordinationCount = counts[1]!; changed(); root.render(createElement(HomeMonitorContent, {
       key, approvalEntries: Array.from({ length: counts[0]! }, (_, i) => entry(`approval-${i}`)),
       runningEntries: Array.from({ length: counts[2]! }, (_, i) => entry(`running-${i}`)),
-      nonRunningEntries: Array.from({ length: counts[3]! }, (_, i) => entry(`stopped-${i}`)),
+      nonRunningEntries: [...Array.from({ length: counts[1]! }, (_, i) => entry(`coordination-${i}`)), ...Array.from({ length: counts[3]! }, (_, i) => entry(`stopped-${i}`))],
       onOpenSession() {}, onShowContextMenu() {},
     })); };
     const doc = dom.window.document;
     const contents = () => [...doc.querySelectorAll<HTMLElement>(".home-monitor-section-content")];
     const closed = () => contents().map((content) => content.getAttribute("aria-hidden") === "true");
     const click = async (index: number) => { await act(async () => doc.querySelectorAll<HTMLButtonElement>(".home-monitor-splitter")[index]!.click()); };
-    for (const [counts, boundary, target] of [ [[1, 3, 2, 2], 0, 0], [[3, 1, 2, 2], 0, 1], [[2, 3, 1, 2], 1, 2], [[2, 1, 3, 2], 1, 1], [[2, 2, 3, 1], 2, 3], [[2, 2, 1, 3], 2, 2], [[1, 1, 1, 1], 0, 1], [[1, 1, 1, 1], 1, 2], [[1, 1, 1, 1], 2, 3] ] as const) {
+    for (const [counts, boundary, target] of [ [[1, 1, 3, 2], 0, 0], [[2, 3, 1, 2], 0, 1], [[1, 1, 2, 1], 0, 1], [[2, 2, 3, 1], 1, 2], [[2, 2, 1, 3], 1, 1], [[1, 1, 1, 1], 1, 2] ] as const) {
       await act(async () => render([...counts], `${counts}-${boundary}`));
-      const content = contents()[target]!;
+      const groups = [[0, 1], [2], [3]];
+      const indices = groups[target]!;
+      const content = contents()[indices[0]!]!;
+      const rows = doc.querySelectorAll(":scope .home-monitor-sections > .home-monitor-row");
+      assert.equal(rows.length, 3);
+      assert.deepEqual([...rows[0]!.querySelectorAll("h3")].map(heading => heading.textContent), ["Attention", "Coordination"]);
+      assert.equal(doc.querySelectorAll(".home-monitor-splitter").length, 2);
       const list = content.querySelector<HTMLElement>(".home-monitor-list")!;
       list.scrollTop = 42;
       list.querySelector<HTMLButtonElement>(".home-monitor-parent-button")!.focus();
       await click(boundary);
-      assert.deepEqual(closed(), [0, 1, 2, 3].map((i) => i === target));
+      assert.deepEqual(closed(), [0, 1, 2, 3].map((i) => indices.includes(i)));
       assert.equal(content.hasAttribute("inert"), true);
-      assert.equal(doc.activeElement, doc.querySelectorAll(".home-monitor-splitter")[Math.min(target, 2)]);
+      assert.equal(doc.activeElement, doc.querySelectorAll(".home-monitor-splitter")[indices[0]! < 2 ? 0 : 1]);
       assert.ok(doc.querySelector<HTMLElement>(".home-monitor-sections")!.style.gridTemplateRows.includes("max-content"));
       await act(async () => render([5, 5, 5, 5], `${counts}-${boundary}`));
-      assert.equal(contents()[target], content);
-      assert.equal(closed()[target], true);
+      assert.equal(contents()[indices[0]!], content);
+      assert.equal(closed()[indices[0]!], true);
       await click(boundary);
       assert.deepEqual(closed(), [false, false, false, false]);
       assert.equal(list.scrollTop, 42);
       assert.equal(content.hasAttribute("inert"), false);
     }
-    await act(async () => render([1, 2, 3, 4], "both-closed"));
-    await click(0); // Attention closes (fewer than Coordination).
-    await click(1); // Coordination closes (fewer than Running).
-    assert.deepEqual(closed(), [true, true, false, false]);
-    await click(0); // Both closed: restore Attention first.
-    assert.deepEqual(closed(), [false, true, false, false]);
-    await click(0); // One closed: restore Coordination irrespective of count.
+    await act(async () => render([1, 1, 3, 4], "both-closed"));
+    await click(0); // The shared top row has fewer Main groups than Running.
+    await click(1); // Running has fewer Main groups than Stopped.
+    assert.deepEqual(closed(), [true, true, true, false]);
+    await click(0); // Both rows closed: restore the shared top row first.
+    assert.deepEqual(closed(), [false, false, true, false]);
+    await click(0); // One closed: restore Running irrespective of count.
     assert.deepEqual(closed(), [false, false, false, false]);
   });
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは保存済みユーザー対応待ちqueryをページングし、共通SessionカードでMainとAuxiliaryを扱い、表示グループ数と相談数を区別して正確な相談へ移動する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: 共通カードとAttention→Coordination→Running→Stoppedの排他分類への修正" }
-// fault = "開いているSessionだけを対象にする、後続pageや同じMainのAuxiliary相談を落とす、項目数を見出しに使う、または複数項目を一件へ限定して開く"
+// claim = "Monitorは通常の監視対象だけに保存相談を集約し、閉鎖後も監視中のMainとAuxiliaryを保持してグループ数・相談数と移動先を区別する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: 通常Monitorの対象集合へ統一しCoordination右ペインUI以外を修正" }
+// fault = "保存相談だけで監視対象外Sessionを追加する、監視継続中の親を落とす、後続pageやAuxiliary相談を落とす、または複数項目を一件へ限定して開く"
 // observable = "保存query引数、4分類の見出しと件数、カード内の相談件数、相談open identity、共通Auxiliary開閉と子Session open引数"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentから保存summary queryとCoordination navigation APIまで。実Window生成と保存coreは対象外"
 // lifecycle = "permanent"
-// impact = "Windowを閉じたSessionの未対応相談を見落とさず、MainとAuxiliaryを含めて正しい対象へ到達できる"
+// impact = "Monitor全分類で同じ監視対象を扱い、監視継続中のMainとAuxiliaryの正しい相談へ到達できる"
 // distinction = "splitter testは件数配分のみを扱い、queryの保存境界・ページングとidentity付き移動を検証しない"
 // @end-test-value
 test("Monitorは保存済みCoordinationのグループ件数と項目別移動先を区別する", async () => {
@@ -127,6 +131,7 @@ test("Monitorは保存済みCoordinationのグループ件数と項目別移動�
     const a = coordinationItem("a", "closed-main");
     const auxiliary = { ...coordinationItem("aux", "closed-main"), initiator: { kind: "auxiliary" as const, sessionId: "saved-aux", incarnationId: "aux-incarnation" } };
     const single = { ...coordinationItem("single", "other-main"), initiator: { kind: "auxiliary" as const, sessionId: "other-aux", incarnationId: "other-incarnation" } };
+    const outside = coordinationItem("outside", "unmonitored-main");
     const queries: unknown[] = [], opened: unknown[] = [];
     const closed = entry("closed-main");
     closed.auxiliarySessions = [{ id: "saved-aux", parentSessionId: "closed-main", runState: "idle", preview: "Saved child",
@@ -135,22 +140,20 @@ test("Monitorは保存済みCoordinationのグループ件数と項目別移動�
     Object.defineProperty(dom.window, "withmate", { value: {
       executeCoordination: async (request: { offset: number }) => {
         queries.push(request);
-        return request.offset === 0 ? { items: [a], total: 3, nextOffset: 1 } : { items: [auxiliary, single], total: 3, nextOffset: null };
+        return request.offset === 0 ? { items: [a], total: 4, nextOffset: 1 } : { items: [auxiliary, single, outside], total: 4, nextOffset: null };
       },
-      getSessionSummary: async (id: string) => entry(id).session,
-      listAuxiliarySessions: async (id: string) => id === "closed-main" ? closed.auxiliarySessions : [],
       subscribeCoordinationChanged: () => () => {},
       openCoordination: async (target: unknown) => { opened.push(target); },
     } });
     await act(async () => root.render(createElement(HomeMonitorContent, {
-      approvalEntries: [entry("other-main")], runningEntries: [], nonRunningEntries: [], onOpenSession: (...args) => sessionsOpened.push(args), onShowContextMenu() {},
+      approvalEntries: [], runningEntries: [], nonRunningEntries: [closed, entry("other-main")], onOpenSession: (...args) => sessionsOpened.push(args), onShowContextMenu() {},
     })));
     assert.deepEqual(queries, [0, 1].map((offset) => ({ operation: "list", allCrews: true, userPending: true, offset, limit: 100 })));
     const doc = dom.window.document;
     assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head h3")].map((node) => node.textContent), ["Attention", "Coordination", "Running", "Stopped"]);
-    assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head .home-monitor-count")].map((node) => node.textContent), ["1", "1", "0", "0"]);
+    assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head .home-monitor-count")].map((node) => node.textContent), ["0", "2", "0", "0"]);
+    assert.deepEqual([...doc.querySelectorAll(".home-monitor-parent-title")].map(node => node.textContent), ["closed-main", "other-main"]);
     assert.equal(doc.querySelector('[aria-labelledby="home-monitor-coordination"] .home-monitor-parent-identity .home-monitor-count')?.textContent, "2");
-    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-approval"] .home-monitor-coordination-link')?.textContent, "Coordination · 1↗");
     assert.deepEqual(opened, [], "new saved summaries do not open a Window automatically");
     await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for closed-main: 2 items requiring response"]')!.click());
     await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for other-main: 1 items requiring response"]')!.click());
@@ -165,9 +168,9 @@ test("Monitorは保存済みCoordinationのグループ件数と項目別移動�
 
 // @test-value v2
 // kind = "contract"
-// claim = "SessionカードはAttention→Coordination→Running→Stoppedの一か所へ分類され、同時要求の両導線と相談解消後の再分類を保持する"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: 共通カード・排他分類・同時要求の両導線を保って修正" }
-// fault = "相談をStoppedやRunningにも重複表示する、Provider要求または相談への導線を失う、または相談解消後も分類が残る"
+// claim = "SessionカードはAttention→Coordination→Running→Stoppedの一か所へ分類され、Attentionの通常Session移動とCoordinationの相談移動、解消後の再分類を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: 未相談のAttention配置追加を戻しCoordination右ペインUI以外を修正" }
+// fault = "相談をStoppedやRunningにも重複表示する、AttentionのSession移動を相談移動へ替える、Coordinationの起票元を誤る、または相談解消後も分類が残る"
 // observable = "更新ごとの4分類内のカード名、共通カードからのSession/相談open引数、解消・再発時の表示先"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentの保存相談通知と既存分類入力を統合した投影と移動"
@@ -175,15 +178,13 @@ test("Monitorは保存済みCoordinationのグループ件数と項目別移動�
 // impact = "対応対象を二重に数えず、両方の要求を見落とさず、解消したSessionの現在状態を把握できる"
 // distinction = "型検査や個別query testでは分類横断の一意性・通知による再分類・同時要求の操作接続を検出できない"
 // @end-test-value
-test("MonitorはSessionを一か所に分類して同時要求の両導線を保つ", async () => {
+test("MonitorはSessionを一か所に分類して分類に応じた移動先を保つ", async () => {
   await withMonitor(async ({ dom, root }) => {
     let pending = true;
     let changed = () => {};
     const opened: unknown[][] = [], consultations: unknown[] = [];
     Object.defineProperty(dom.window, "withmate", { value: {
       executeCoordination: async () => ({ items: pending ? [coordinationItem("question", "same")] : [], nextOffset: null }),
-      getSessionSummary: async () => entry("same").session,
-      listAuxiliarySessions: async () => [],
       subscribeCoordinationChanged: (callback: () => void) => { changed = callback; return () => {}; },
       openCoordination: async (target: unknown) => { consultations.push(target); },
     } });
@@ -196,11 +197,12 @@ test("MonitorはSessionを一か所に分類して同時要求の両導線を保
     await act(async () => render("approval"));
     assert.deepEqual(sections(), [["same"], [], [], []]);
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Open session: same"]')!.click());
-    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".home-monitor-coordination-link")!.click());
     assert.deepEqual(opened, [["same"]]);
-    assert.deepEqual(consultations, [{ ...coordinationItem("question", "same").initiator, id: "question" }]);
+    assert.deepEqual(consultations, []);
     await act(async () => render("running"));
     assert.deepEqual(sections(), [[], ["same"], [], []]);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for same: 1 items requiring response"]')!.click());
+    assert.deepEqual(consultations, [{ ...coordinationItem("question", "same").initiator, id: "question" }]);
     pending = false;
     await act(async () => changed());
     assert.deepEqual(sections(), [[], [], ["same"], []]);
@@ -209,6 +211,69 @@ test("MonitorはSessionを一か所に分類して同時要求の両導線を保
     pending = true;
     await act(async () => changed());
     assert.deepEqual(sections(), [[], ["same"], [], []]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Monitorの相談再取得は取得済み一覧と操作focusを保ちbusyを通知し、成功0件と更新失敗を区別して反映する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: focus再取得でカードが一瞬ずれる不具合を修正" }
+// fault = "背景更新で初回読込へ戻す、取得済みカードを外す、成功0件を反映しない、または更新失敗を正常0件として扱う"
+// observable = "focus更新中と完了後のaria-busy、card DOM identity、activeElement、分類件数、更新エラー"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentとuseCoordinationMonitorのfocus再取得・直前成功snapshot・error反映。実寸法はbrowserで確認する"
+// lifecycle = "permanent"
+// impact = "他Windowへ移動するためのクリック中も対象とfocusを見失わず、相談解消や更新失敗を取り違えない"
+// distinction = "既存分類通知testは再取得を保留せず、成功空snapshot後の背景更新や失敗を通らない。型検査では非同期中の表示保持を確認できない"
+// @end-test-value
+test("Monitorは相談の背景再取得で操作対象を保持し成功0件と失敗を分ける", async () => {
+  await withMonitor(async ({ dom, root }) => {
+    let hold = false, fail = false;
+    let items = [coordinationItem("question", "same")];
+    let release = () => {};
+    Object.defineProperty(dom.window, "withmate", { value: {
+      executeCoordination: async () => {
+        if (hold) await new Promise<void>(resolve => { release = resolve; });
+        if (fail) throw new Error("Saved consultations unavailable");
+        return { items, total: items.length, nextOffset: null };
+      },
+      subscribeCoordinationChanged: () => () => {},
+    } });
+    await act(async () => root.render(createElement(HomeMonitorContent, {
+      approvalEntries: [], runningEntries: [], nonRunningEntries: [entry("same")], onOpenSession() {}, onShowContextMenu() {},
+    })));
+    const doc = dom.window.document;
+    const card = doc.querySelector(".home-monitor-card")!;
+    const button = card.querySelector<HTMLButtonElement>(".home-monitor-parent-button")!;
+    button.focus();
+    hold = true;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
+    assert.equal(doc.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), "true");
+    assert.equal(doc.querySelector(".home-monitor-card"), card);
+    assert.equal(doc.activeElement, button);
+    assert.equal(doc.querySelector('[aria-label="Loading Coordination"]'), null);
+    fail = true;
+    await act(async () => release());
+    assert.equal(doc.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), "false");
+    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-coordination"] .home-monitor-card'), card);
+    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-coordination"] .home-monitor-count')?.textContent, "1");
+    assert.ok(doc.body.textContent?.includes("Saved consultations unavailable"));
+    fail = false;
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
+    items = [];
+    await act(async () => release());
+    assert.equal(doc.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), "false");
+    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-coordination"] .home-monitor-count')?.textContent, "0");
+    const stopped = doc.querySelector('[aria-labelledby="home-monitor-inactive"] .home-monitor-card')!;
+    assert.equal(stopped.querySelector(".home-monitor-parent-title")?.textContent, "same");
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
+    assert.equal(doc.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), "true");
+    assert.equal(doc.querySelector('[aria-label="Loading Coordination"]'), null);
+    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-inactive"] .home-monitor-card'), stopped);
+    await act(async () => release());
+    assert.equal(doc.querySelector(".home-monitor-body")?.getAttribute("aria-busy"), "false");
+    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-inactive"] .home-monitor-card'), stopped);
+    assert.equal(doc.body.textContent?.includes("Saved consultations unavailable"), false);
   });
 });
 
@@ -227,10 +292,10 @@ test("MonitorはSessionを一か所に分類して同時要求の両導線を保
 test("Monitorは隣接分類の高さを調整しdrag後clickを開閉にしない", async () => {
   await withMonitor(async ({ dom, root }) => {
     dom.window.HTMLElement.prototype.getBoundingClientRect = function (): DOMRect {
-      const height = this.classList.contains("home-monitor-sections") ? 1020 : this.classList.contains("home-monitor-splitter") ? 20 : 0;
+      const height = this.classList.contains("home-monitor-sections") ? 1000 : this.classList.contains("home-monitor-splitter") ? 20 : 0;
       return { x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) };
     };
-    for (const boundary of [0, 1, 2]) for (const ending of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    for (const boundary of [0, 1]) for (const ending of ["pointerup", "pointercancel", "lostpointercapture"]) {
       await act(async () => root.render(createElement(HomeMonitorContent, {
         key: `${boundary}-${ending}`, approvalEntries: [], runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
       })));
@@ -248,11 +313,11 @@ test("Monitorは隣接分類の高さを調整しdrag後clickを開閉にしな�
         await act(async () => splitter.dispatchEvent(event));
       };
       const key = async (value: string) => { await act(async () => splitter.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: value, bubbles: true }))); };
-      assert.deepEqual(heights(), [160, 160, 320, 320]);
+      assert.deepEqual(heights(), [320, 320, 320]);
       await pointer("pointerdown", 400);
       await pointer("pointermove", 496);
       await pointer("pointermove", 592);
-      const expected = [160, 160, 320, 320];
+      const expected = [320, 320, 320];
       const pairHeight = expected[boundary]! + expected[boundary + 1]!;
       const delta = Math.min(192, expected[boundary + 1]! - 48);
       expected[boundary]! += delta; expected[boundary + 1]! -= delta;
@@ -319,8 +384,8 @@ test("Monitorは外側resizeで最小高と小領域一覧のfocusを保つ", as
     await act(async () => notifyResize());
     const heights = [...doc.querySelector<HTMLElement>(".home-monitor-sections")!.style.gridTemplateRows.matchAll(/minmax\(48px, ([\d.]+)fr\)/g)].map((match) => Number(match[1]));
     assert.ok(heights.every((height) => height >= 48));
-    assert.equal(heights.length, 4);
-    assert.ok(Math.abs(heights.reduce((sum, height) => sum + height, 0) - 280) < 0.001);
+    assert.equal(heights.length, 3);
+    assert.ok(Math.abs(heights.reduce((sum, height) => sum + height, 0) - 300) < 0.001);
     assert.equal(content.hasAttribute("inert"), true);
     assert.equal(content.getAttribute("aria-hidden"), "true");
     assert.equal(doc.activeElement, splitter);
@@ -338,7 +403,7 @@ test("Monitorは外側resizeで最小高と小領域一覧のfocusを保つ", as
 // claim = "Monitorは縮小後の最初のkeyboardとdragを、現在の高さで補正した境界位置から動かす"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window" }
 // fault = "縮小前の高さを入力の起点に使い、最初の操作で境界を表示位置から跳ばす"
-// observable = "3境界それぞれの操作後のgrid row配分とseparatorのaria-valuenow"
+// observable = "2つの上下境界それぞれの操作後のgrid row配分とseparatorのaria-valuenow"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentの外側resize直後のkeyboard・pointer入力"
 // lifecycle = "permanent"
@@ -352,7 +417,7 @@ test("Monitorは縮小直後の最初の入力を現在の高さへ合わせる"
       const height = this.classList.contains("home-monitor-sections") ? containerHeight : this.classList.contains("home-monitor-splitter") ? 20 : 0;
       return { x: 0, y: 0, top: 0, left: 0, right: 300, bottom: height, width: 300, height, toJSON: () => ({}) };
     };
-    for (const index of [0, 1, 2]) for (const direction of [1, -1]) for (const input of ["keyboard", "pointer"]) {
+    for (const index of [0, 1]) for (const direction of [1, -1]) for (const input of ["keyboard", "pointer"]) {
       containerHeight = 1020;
       await act(async () => root.render(createElement(HomeMonitorContent, {
         key: `${index}-${direction}-${input}`, approvalEntries: [], runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
@@ -369,7 +434,7 @@ test("Monitorは縮小直後の最初の入力を現在の高さへ合わせる"
         await act(async () => splitter.dispatchEvent(event));
       };
       containerHeight = 540;
-      const start = [80, 160, 320][index]!;
+      const start = [500 / 3, 1000 / 3][index]!;
       if (input === "keyboard") await key(splitter, direction === 1 ? "ArrowDown" : "ArrowUp");
       else {
         await pointer("pointerdown", 400);
@@ -379,7 +444,7 @@ test("Monitorは縮小直後の最初の入力を現在の高さへ合わせる"
       const boundary = heights.slice(0, index + 1).reduce((sum, height) => sum + height, 0);
       const expected = start + direction * (input === "keyboard" ? 24 : 30);
       assert.ok(Math.abs(boundary - expected) < 0.001);
-      assert.equal(splitter.getAttribute("aria-valuenow"), String(Math.round(expected / 480 * 100)));
+      assert.equal(splitter.getAttribute("aria-valuenow"), String(Math.round(expected / 500 * 100)));
       if (input === "pointer") await pointer("pointerup", 400 + direction * 30);
     }
   });
@@ -422,7 +487,7 @@ test("Monitorは反復開閉と縮小拡大で分類比率を失わない", asyn
     await key(0, "ArrowDown");
     const expected = heights();
     const assertHeights = (values: number[]) => heights().forEach((value, index) => assert.ok(Math.abs(value - values[index]!) < 0.001));
-    for (let i = 0; i < 12; i++) for (const boundary of [0, 1, 2]) {
+    for (let i = 0; i < 12; i++) for (const boundary of [0, 1]) {
       await click(boundary);
       await act(async () => notifyResize());
       await click(boundary);
@@ -435,13 +500,13 @@ test("Monitorは反復開閉と縮小拡大で分類比率を失わない", asyn
     height = 1000;
     await act(async () => notifyResize());
     assertHeights(expected);
-    await click(2);
+    await click(1);
     await key(0, "ArrowDown");
-    await click(2);
-    const openHeight = 940 - 28;
-    const openWeight = expected[0]! + expected[1]! + expected[2]!;
+    await click(1);
+    const openHeight = 960 - 28;
+    const openWeight = expected[0]! + expected[1]!;
     const restoredDelta = 24 * openWeight / openHeight;
-    assertHeights([expected[0]! + restoredDelta, expected[1]! - restoredDelta, expected[2]!, expected[3]!]);
+    assertHeights([expected[0]! + restoredDelta, expected[1]! - restoredDelta, expected[2]!]);
   });
 });
 
