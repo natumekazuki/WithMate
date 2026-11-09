@@ -4,6 +4,7 @@ import type {
   CoordinationRequest,
   CoordinationSummary,
   CoordinationIdentity,
+  CoordinationAnswer,
 } from "../../src-shared/coordination/coordination-contract.js";
 import type { OpenCoordinationRequest } from "../../src-shared/coordination/coordination-window-contract.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
@@ -36,6 +37,12 @@ function stateLabel(state: CoordinationSummary["state"]): string {
     corrected: "Corrected",
   }[state];
 }
+function responseLabel(item: CoordinationSummary | CoordinationRecord): string {
+  if (item.state === "open" && item.respondent.kind === "user") {
+    return item.answerRevision ? "Answer Saved" : "Needs Answer";
+  }
+  return stateLabel(item.state);
+}
 type Draft = {
   body: string;
   choices: string[];
@@ -65,7 +72,7 @@ export function CoordinationPane({
   const updateDraft = (change: Partial<Draft>) =>
     setDrafts((current) => ({
       ...current,
-      [draftKey]: { ...draft, ...change },
+      [draftKey]: { ...draft, feedback: undefined, ...change },
     }));
   useEffect(() => {
     setOffset(0);
@@ -187,23 +194,35 @@ export function CoordinationPane({
   };
   const buttonsDisabled =
     busyId !== null || Boolean(draft.pendingRequest) || Boolean(detail.error);
+  const renderAnswer = (answer: CoordinationAnswer) => (
+    <article key={answer.id}>
+      <div className="coordination-detail-heading">
+        <strong>{answer.actor.kind === "user" ? "Your Answer" : identityTitle(answer.actor)}</strong>
+        <span>Revision {answer.revision}</span>
+      </div>
+      <MessageRichText text={answer.body} embeddedMedia="text" />
+      {answer.selectedChoices.length ? <p>{answer.selectedChoices.join(" · ")}</p> : null}
+      <CoordinationAnswerDelivery
+        ownerSessionId={sessionId}
+        target={initiatorTarget}
+        receiptId={answer.receiptId}
+      />
+      {answer.consumedByOperationId ? <p className="coordination-parties">Consumed By Originating Session</p> : null}
+    </article>
+  );
   const renderDetail = (item: CoordinationRecord) => (
     <>
       <div className="coordination-origin">
         <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${identityTitle(item.initiator)}`} onClick={() => void openOrigin()}>
           {identityAvatar(item.initiator)}
-          <span><strong>{identityRead(item.initiator)?.identity?.character.name ?? "Session"}</strong><span className="coordination-session-title">{identityTitle(item.initiator)}</span></span>
+          <span><strong>{identityRead(item.initiator)?.identity?.character.name ?? "Session"}<span className="coordination-origin-role"> · {item.initiator.kind === "main" ? "Main" : "Auxiliary"}</span></strong><span className="coordination-session-title" title={identityTitle(item.initiator)}>{identityTitle(item.initiator)}</span></span>
         </button>
         {identityRead(item.initiator)?.error ? <LoadError message={identityRead(item.initiator)!.error!} onRetry={identities.refresh} /> : null}
         {originError?.id === item.id ? <LoadError message={originError.message} onRetry={() => void openOrigin()} /> : null}
       </div>
-      <div className="coordination-event-meta">
-        <span className={`coordination-kind coordination-kind-${item.kind}`}>{coordinationKindLabel(item.kind)}</span>
-        <span className={`coordination-state coordination-state-${item.state}`}>{stateLabel(item.state)}</span>
-        <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time>
-      </div>
+      {item.state !== "open" && item.state !== "withdrawn" ? <p className="coordination-response-state">{stateLabel(item.state)}</p> : null}
       {item.respondent.kind !== "user" ? <p className="coordination-parties">Assigned To: {identityTitle(item.respondent)}</p> : null}
-      <MessageRichText text={item.body} embeddedMedia="text" />
+      <section className="coordination-body" aria-label="Consultation"><MessageRichText text={item.body} embeddedMedia="text" /></section>
       {item.state === "withdrawn" ? (
         <div className="coordination-withdrawal" role="status">
           <strong>Withdrawn</strong>
@@ -212,32 +231,11 @@ export function CoordinationPane({
       ) : null}
       {item.answers.length ? (
         <section className="coordination-answers" aria-label="Saved answers">
-          {item.answers.map((answer) => (
-            <article key={answer.id}>
-              <div className="coordination-detail-heading">
-                <strong>Answer {answer.revision}</strong>
-                <span>
-                  {answer.actor.kind === "user"
-                    ? "User"
-                    : identityTitle(answer.actor)}
-                </span>
-              </div>
-              <MessageRichText text={answer.body} embeddedMedia="text" />
-              {answer.selectedChoices.length ? (
-                <p>{answer.selectedChoices.join(" · ")}</p>
-              ) : null}
-              <CoordinationAnswerDelivery
-                ownerSessionId={sessionId}
-                target={initiatorTarget}
-                receiptId={answer.receiptId}
-              />
-              {answer.consumedByOperationId ? (
-                <p className="coordination-parties">
-                  Consumed By Originating Session
-                </p>
-              ) : null}
-            </article>
-          ))}
+          {renderAnswer(item.answers[item.answers.length - 1])}
+          {item.answers.length > 1 ? <details className="artifact-fold coordination-previous-answers">
+            <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Previous Answers ({item.answers.length - 1})</strong></span></summary>
+            {item.answers.slice(0, -1).map(renderAnswer)}
+          </details> : null}
         </section>
       ) : null}
       {item.respondent.kind === "user" ? (
@@ -259,7 +257,7 @@ export function CoordinationPane({
           }}
         >
           <fieldset disabled={buttonsDisabled}>
-            <legend>{item.answerRevision ? "Change Answer" : "Answer"}</legend>
+            <legend>{item.answerRevision ? "Change Your Answer" : "Your Answer"}</legend>
             {item.choices.map((choice) => (
               <label key={choice} className={`coordination-choice${draft.choices.includes(choice) ? " selected" : ""}`}>
                 <input
@@ -278,7 +276,7 @@ export function CoordinationPane({
             ))}
             <textarea
               aria-label="Coordination answer"
-              rows={5}
+              rows={3}
               value={draft.body}
               onChange={(event) => updateDraft({ body: event.target.value })}
             />
@@ -292,12 +290,30 @@ export function CoordinationPane({
                 busy={busyId === item.id}
                 busyLabel="Saving answer"
               >
-                Save And Send Answer
+                Save And Send
               </ButtonContent>
             </button>
           </fieldset>
         </form>
       ) : null}
+      {draft.feedback ? <p className="coordination-operation-feedback" role="status">{draft.feedback}</p> : null}
+      {draft.pendingRequest && busyId === null ? (
+        <div className="coordination-recovery">
+          <button className="drawer-toggle compact secondary" type="button" onClick={() => void mutate(draft.pendingRequest!)}>Retry Same Operation</button>
+          <button type="button" className="drawer-toggle compact secondary" onClick={() => {
+            detail.refresh();
+            updateDraft({ pendingRequest: undefined, feedback: "Operation retained no longer. Check the saved answers before submitting a new operation." });
+          }}>Keep Draft And Check Saved State</button>
+        </div>
+      ) : null}
+      <details className="artifact-fold coordination-record-details">
+        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Consultation Details</strong></span></summary>
+        <dl className="coordination-record-metadata">
+          <dt>Kind</dt><dd>{coordinationKindLabel(item.kind)}</dd>
+          <dt>State</dt><dd>{stateLabel(item.state)}</dd>
+          <dt>Updated</dt><dd><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time></dd>
+        </dl>
+      </details>
       <details className="artifact-fold coordination-actions">
         <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Resolve Or Withdraw</strong></span></summary>
         <button
@@ -364,7 +380,7 @@ export function CoordinationPane({
   );
   return (
     <div className="coordination-pane" hidden={!active} aria-busy={(selectedId ? detail.loading : list.loading) || undefined}>
-      <div className="coordination-toolbar">
+      <div className="coordination-toolbar coordination-navigation">
         {selectedId ? (
           <button
             type="button"
@@ -372,11 +388,11 @@ export function CoordinationPane({
             title="Back To List" aria-label="Back To List"
             onClick={() => setSelectedId(null)}
           >
-            <span aria-hidden="true">‹</span>
+            <span aria-hidden="true">‹</span><span className="coordination-back-label">List</span>
           </button>
         ) : (
           <div className="coordination-filter-tabs" role="group" aria-label="Coordination filter">
-            {([[true, "Needs Your Response"], [false, "All Records"]] as const).map(([pending, label]) => <button key={String(pending)} type="button" aria-pressed={pendingOnly === pending} className={`drawer-toggle compact secondary${pendingOnly === pending ? " active" : ""}`} onClick={() => { setPendingOnly(pending); setOffset(0); }}>{label}</button>)}
+            {([[true, "For You", "Open Consultations For You"], [false, "All", "All Records"]] as const).map(([pending, label, accessibleLabel]) => <button key={String(pending)} type="button" aria-label={accessibleLabel} title={accessibleLabel} aria-pressed={pendingOnly === pending} className={`drawer-toggle compact secondary${pendingOnly === pending ? " active" : ""}`} onClick={() => { setPendingOnly(pending); setOffset(0); }}>{label}</button>)}
           </div>
         )}
         {!(selectedId ? detail.deleted : list.deleted) ? <button
@@ -434,12 +450,8 @@ export function CoordinationPane({
                 {identityAvatar(item.initiator)}
                 <span className="coordination-event-copy">
                   <strong className="coordination-list-preview">{item.bodyPreview}</strong>
-                  <span className="coordination-session-title">{identityRead(item.initiator)?.identity?.character.name ?? "Session"} · {identityTitle(item.initiator)}</span>
-                  <span className="coordination-event-meta">
-                    <span className={`coordination-kind coordination-kind-${item.kind}`}>{coordinationKindLabel(item.kind)}</span>
-                    <span className={`coordination-state coordination-state-${item.state}`}>{stateLabel(item.state)}</span>
-                    <time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time>
-                  </span>
+                  <span className="coordination-session-title" title={`${identityRead(item.initiator)?.identity?.character.name ?? "Session"} · ${identityTitle(item.initiator)}`}>{identityRead(item.initiator)?.identity?.character.name ?? "Session"} · {item.initiator.kind === "main" ? "Main" : "Auxiliary"} · {identityTitle(item.initiator)}</span>
+                  <span className="coordination-list-status"><span>{responseLabel(item)}</span><time dateTime={item.updatedAt} title={new Date(item.updatedAt).toLocaleString("en-US")}>{new Date(item.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</time></span>
                 </span>
               </button>
             ))}
@@ -472,36 +484,6 @@ export function CoordinationPane({
           ) : null}
         </>
       )}
-      {draft.feedback && !detail.deleted ? (
-        <p className="coordination-operation-feedback" role="status">
-          {draft.feedback}
-        </p>
-      ) : null}
-      {draft.pendingRequest && busyId === null && !detail.deleted ? (
-        <div className="coordination-toolbar">
-          <button
-            className="drawer-toggle compact secondary"
-            type="button"
-            onClick={() => void mutate(draft.pendingRequest!)}
-          >
-            Retry Same Operation
-          </button>
-          <button
-            type="button"
-            className="drawer-toggle compact secondary"
-            onClick={() => {
-              detail.refresh();
-              updateDraft({
-                pendingRequest: undefined,
-                feedback:
-                  "Operation retained no longer. Check the saved answers before submitting a new operation.",
-              });
-            }}
-          >
-            Keep Draft And Check Saved State
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }

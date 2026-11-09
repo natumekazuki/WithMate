@@ -467,9 +467,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Approval / Elicitation の解決中は既存 pending item 内の spinner と `aria-busy` で待機を示し、同じ対象の状態文を重複表示しない
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
-- `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、未対応／全履歴のページング一覧から詳細へ開く。本文、回答revision、取り下げ理由と後着回答、操作日時・訂正履歴を読み、ユーザー担当の回答・回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の保存、通常queueへの配送、実際の消費・解決を別々に表示する。受付・Session・Turnの内部IDは通常UIへ並べない
-- Coordinationの一覧は34pxのCharacter avatar、本文preview、Character名とSession title、種別・状態・日時を同じ行のまとまりで示す。詳細にも起票元のavatarと名前を置き、`Open Origin`で正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxと明示的な`Save And Send`を使い、選択だけでは送信しない
-- filterはSession共通button表現の選択状態を使い、更新と一覧へ戻る操作はaccessible nameを持つiconにする。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。回答本文と回答操作を主内容とし、解決・取り下げと操作履歴は共通の折りたたみ表現に置く
+- `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、ユーザー担当のopen記録／全記録のページング一覧から詳細へ開く。本文、回答revision、取り下げ理由と後着回答、操作日時・訂正履歴を読み、ユーザー担当の回答・回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の保存、通常queueへの配送、実際の消費・解決を別々に表示する。受付・Session・Turnの内部IDは通常UIへ並べない
+- Coordinationの一覧は本文previewを主にし、34pxのCharacter avatar、Character名・Main／Auxiliary・Session title、回答状態と短い更新日を添える。openかつuser担当は回答revisionが0なら`Needs Answer`、保存済みなら`Answer Saved`とし、保存を配送・消費・解決と同一視しない。詳細にも起票元のavatarと名前を置き、`Open Origin`で正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxと明示的な`Save And Send`を使い、選択だけでは送信しない
+- 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameを持つiconを使い、戻る操作には`List`も添える。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・直近の保存済み回答・回答操作を主内容にし、以前の回答、種別・正確な日時、解決・取り下げ、操作履歴は共通の折りたたみ表現から確認する。操作結果と結果不明時の回復は回答操作の近くに置く
 - 保存済み回答の`Delivery Details`から、その回答receiptと保存済み起票元identityに対応する受付配送・受信Turn・保存結果を必要時に再取得する。受付completedをTurn全体の完了と同一視せず、`Read Recipient Turn Result`から同じ受付の保存応答をページング取得できる。通常表示へ全回答の実行履歴を常設取得しない
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する

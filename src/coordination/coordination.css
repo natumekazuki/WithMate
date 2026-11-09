@@ -19,6 +19,10 @@
   justify-content: space-between;
   gap: 8px;
 }
+.coordination-navigation {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
 .coordination-pane textarea {
   color: var(--ink);
   background: var(--surface-deep);
@@ -35,13 +39,27 @@
 }
 .coordination-parties,
 .coordination-session-title,
-.coordination-event-meta {
+.coordination-list-status,
+.coordination-origin-role,
+.coordination-response-state {
   font-size: 12px;
   color: var(--muted);
   overflow-wrap: anywhere;
 }
 .coordination-parties {
   margin: 0;
+}
+.coordination-response-state {
+  margin: -6px 0 0;
+}
+.coordination-origin-role {
+  font-weight: 400;
+}
+.coordination-body > :first-child {
+  margin-top: 0;
+}
+.coordination-body > :last-child {
+  margin-bottom: 0;
 }
 .coordination-list {
   display: grid;
@@ -58,7 +76,7 @@
   background: transparent;
   border: 0;
   border-bottom: 1px solid var(--line);
-  padding: 14px 4px;
+  padding: 12px 4px;
   cursor: pointer;
 }
 .coordination-list-row:hover {
@@ -69,6 +87,15 @@
   gap: 16px;
   border-top: 1px solid var(--line);
   padding-top: 14px;
+}
+.coordination-detail-heading {
+  font-size: 12px;
+}
+.coordination-detail-heading > span {
+  color: var(--muted);
+}
+.coordination-previous-answers > article {
+  margin-top: 14px;
 }
 .coordination-answer-form fieldset {
   display: grid;
@@ -86,7 +113,7 @@
   display: flex;
   align-items: start;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
@@ -112,6 +139,8 @@
 }
 .coordination-event-copy > strong {
   color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -120,36 +149,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.coordination-event-meta {
+.coordination-list-status {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  justify-content: space-between;
   gap: 6px;
-  font-size: 11.5px;
 }
-.coordination-kind,
-.coordination-state {
-  display: inline-flex;
-  padding: 2px 7px;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.07);
-}
-.coordination-state-open {
-  border-color: rgba(246, 200, 112, 0.22);
-  color: #f6c870;
-  background: rgba(246, 200, 112, 0.12);
-}
-.coordination-state-resolved {
-  border-color: rgba(125, 211, 168, 0.22);
-  color: #7dd3a8;
-  background: rgba(125, 211, 168, 0.12);
-}
-.coordination-kind-user_decision_required,
-.coordination-kind-blocker {
-  border-color: rgba(255, 124, 124, 0.22);
-  color: #ff9b9b;
-  background: rgba(255, 124, 124, 0.12);
+.coordination-list-status time {
+  flex-shrink: 0;
 }
 .coordination-detail-origin {
   display: grid;
@@ -173,8 +180,13 @@
 }
 .coordination-filter-tabs {
   display: flex;
-  flex-wrap: wrap;
+  min-width: 0;
   gap: 4px;
+}
+.coordination-filter-tabs .drawer-toggle {
+  padding: 5px 10px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .coordination-filter-tabs .drawer-toggle.active {
   background: var(--orange-soft);
@@ -194,6 +206,12 @@
   align-items: center;
   justify-content: center;
 }
+.coordination-pane .drawer-toggle.coordination-toolbar-icon:has(.coordination-back-label) {
+  width: auto;
+  gap: 6px;
+  padding-inline: 10px;
+  font-size: 12px;
+}
 .coordination-answer-form {
   padding-top: 16px;
   border-top: 1px solid var(--line);
@@ -204,9 +222,28 @@
   padding: 10px;
 }
 .coordination-pane .drawer-toggle.coordination-primary-action {
-  justify-self: start;
+  justify-self: end;
   background: var(--character-main);
   color: var(--character-main-ink);
+}
+.coordination-record-metadata {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 12px;
+  font-size: 12px;
+  margin-block: 10px 0;
+}
+.coordination-record-metadata dt {
+  color: var(--muted);
+}
+.coordination-record-metadata dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.coordination-recovery {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
 }
 .coordination-actions label {
   display: grid;
@@ -216,6 +253,10 @@
 .coordination-pane summary {
   cursor: pointer;
   padding-block: 5px;
+}
+.coordination-pane .artifact-fold-summary-copy strong {
+  font-size: 12px;
+  font-weight: 500;
 }
 .coordination-withdrawal {
   border-inline-start: 3px solid var(--muted);
@@ -236,4 +277,8 @@
 .coordination-operation-feedback {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.coordination-operation-feedback {
+  margin: 0;
+  font-size: 12px;
 }

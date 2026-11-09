@@ -147,10 +147,10 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
 
 // @test-value v2
 // kind = "contract"
-// claim = "一覧と詳細は起票者の現在CharacterとSession titleを表示し、明示Open OriginはAuxiliaryの所属Mainと対象Auxiliaryを開く"
+// claim = "一覧と詳細は起票者の現在Character・Main/Auxiliary・Session titleを示し、一覧の回答状態を区別して正確なAuxiliaryへ移動する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordination; Session Graph v7-ui-v64-authority" }
-// fault = "現在表示中Sessionを起票者として表示する、内部IDをtitleに使う、またはAuxiliaryの親を誤って開く"
-// observable = "一覧・詳細のCharacter/title、avatar画像、openSessionのMain/Auxiliary引数、filter変更後list request"
+// fault = "起票者を取り違える、保存済み回答を未回答と表示する、またはAuxiliaryの親を誤って開く"
+// observable = "一覧・詳細のCharacter/role/title、一覧の回答状態、avatar画像、openSessionのMain/Auxiliary引数、filter変更後list request"
 // observation_boundary = "component-behavior"
 // scope = "CoordinationPaneのidentity投影と明示origin移動。metadataとcoordination APIはfixture"
 // lifecycle = "permanent"
@@ -185,7 +185,7 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
       requests.push(request);
       return request.operation === "get"
         ? { record, initiatorTarget: { ...initiator, mainSessionId: "origin-main", mainIncarnationId: "main-inc" } }
-        : { items: [summary], total: 1, nextOffset: null };
+        : { items: [summary, { ...summary, id: "answered", answerRevision: 1 }], total: 2, nextOffset: null };
     },
   } as Pick<WithMateWindowApi, "executeCoordination" | "subscribeCoordinationChanged" | "subscribeSessionInvalidation" | "getCoordinationIdentity" | "openSession"> as WithMateWindowApi;
   const root = createRoot(dom.window.document.getElementById("root")!);
@@ -193,14 +193,16 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
     await act(async () => root.render(createElement(CoordinationPane, { sessionId: "viewer-main", active: true, navigation: null })));
     const row = dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!;
     assert.match(row.textContent!, /Which approach\?.*Origin Character.*Origin Task/s);
+    assert.match(row.textContent!, /Auxiliary.*Needs Answer/s);
+    assert.match(dom.window.document.querySelectorAll(".coordination-list-row")[1].textContent!, /Answer Saved/);
     assert.equal(row.querySelector("img")?.getAttribute("src"), "data:image/png;base64,AQ==");
-    const all = [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "All Records")!;
+    const all = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="All Records"]')!;
     await act(async () => all.click());
     assert.equal(all.getAttribute("aria-pressed"), "true");
     assert.ok(requests.some((request) => request.operation === "list" && request.mainSessionId === "viewer-main" && request.userPending === false));
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!.click());
     const origin = dom.window.document.querySelector<HTMLButtonElement>(".coordination-detail-origin")!;
-    assert.match(origin.textContent!, /Origin Character.*Origin Task/s);
+    assert.match(origin.textContent!, /Origin Character.*Auxiliary.*Origin Task/s);
     await act(async () => origin.click());
     assert.deepEqual(opened, [["origin-main", "origin-aux"]]);
     const checks = [...dom.window.document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
