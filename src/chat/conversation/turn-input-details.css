@@ -1,4 +1,4 @@
-.turn-input-details { margin-block: 0.35rem 0.65rem; }
+.turn-input-details { display: grid; gap: 14px; margin-block: 0.35rem 0.65rem; }
 .turn-input-details p { margin-block: 0.35rem; }
 .turn-input-details summary { cursor: pointer; }
 .turn-input-details summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
@@ -11,6 +11,8 @@
 .turn-input-rows dd { min-width: 0; margin: 0; text-align: end; overflow-wrap: anywhere; }
 .turn-input-rows dd strong { font-size: 0.82rem; }
 .turn-input-rows dd .turn-input-state { color: inherit; font-size: inherit; letter-spacing: normal; }
+.sent-delivery-related-link { display: flex; justify-content: flex-end; }
+.sent-delivery-related-link .related-session-route { max-width: 100%; }
 @media (max-width: 1080px) {
   .turn-input-rows dd { text-align: start; }
 }

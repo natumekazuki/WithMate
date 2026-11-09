@@ -143,7 +143,7 @@ test("Monitorは保存済みCoordinationのグループ件数と項目別移動�
     const doc = dom.window.document;
     assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head h3")].map((node) => node.textContent), ["Attention", "Coordination", "Running", "Stopped"]);
     assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head .home-monitor-count")].map((node) => node.textContent), ["1", "2", "0", "0"]);
-    assert.deepEqual([...doc.querySelectorAll(".coordination-monitor-list .home-monitor-count")].map((node) => node.textContent), ["2", "1"]);
+    assert.deepEqual([...doc.querySelectorAll(".coordination-monitor-list .home-monitor-coordination-count")].map((node) => node.textContent), ["2", "1"]);
     assert.deepEqual(opened, [], "new saved summaries do not open a Window automatically");
     const rows = [...doc.querySelectorAll<HTMLButtonElement>(".coordination-monitor-list button")];
     assert.deepEqual(rows.map((row) => row.getAttribute("aria-label")), ["Open Coordination for closed-main: 2 items requiring response", "Open Coordination for other-main: 1 items requiring response"]);

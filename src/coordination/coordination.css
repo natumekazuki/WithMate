@@ -237,14 +237,4 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.coordination-monitor-list {
-  display: grid;
-  align-content: start;
-  flex: 1 1 auto;
-  overflow-y: auto;
-  min-height: 0;
-  gap: 4px;
-}
-.coordination-monitor-list .home-monitor-parent-row { min-height: 36px; }
-.coordination-monitor-list .home-monitor-parent-button { padding-inline-start: 8px; }
-.coordination-monitor-list .home-monitor-count { margin-inline: 8px; }
+.home-page .home-monitor-coordination-count { grid-template-columns: minmax(0, 1fr); justify-items: center; }

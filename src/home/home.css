@@ -760,13 +760,7 @@
   outline-offset: -2px;
 }
 
-.home-page .home-monitor-avatar.character-avatar {
-  width: 32px;
-  height: 32px;
-  border-width: 1px;
-  box-shadow: none;
-}
-
+.home-page .home-monitor-avatar.character-avatar,
 .home-page .home-monitor-auxiliary-avatar.character-avatar {
   width: 24px;
   height: 24px;
@@ -786,12 +780,6 @@
   color: #f8fbff;
   font-size: 0.82rem;
   font-weight: 400;
-}
-
-.home-page .home-monitor-list-items .home-monitor-parent-title,
-.home-page .coordination-monitor-list .home-monitor-parent-title {
-  font-size: 0.86rem;
-  font-weight: 700;
 }
 
 .home-page .has-unread-result .home-monitor-parent-title,

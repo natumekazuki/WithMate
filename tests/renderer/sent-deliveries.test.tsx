@@ -8,7 +8,7 @@ import type { TurnInputReadContext } from "../../src/chat/conversation/turn-inpu
 import type { Message } from "../../src-shared/session/session-state.js";
 
 const context = (sessionId: string): TurnInputReadContext => ({ ownerSessionId: sessionId, target: { kind: "main", sessionId, incarnationId: `${sessionId}-inc` } });
-const delivery = (sequence: number, state: SentDelivery["state"] = "queued"): SentDelivery => ({ receiptId: `receipt-${sequence}`, sequence, sourceTurnId: "47", sourceMessageSeq: 1, target: context("recipient").target, state, origin: { kind: "session", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "47", operation: "send", targetSessionId: "recipient", targetIncarnationId: "recipient-inc" }, textPreview: `instruction ${sequence}`, textChars: 14 });
+const delivery = (sequence: number, state: SentDelivery["state"] = "queued"): SentDelivery => ({ receiptId: `receipt-${sequence}`, sequence, sourceTurnId: "47", sourceMessageSeq: 1, target: context("recipient").target, state, origin: { kind: "session", actorKind: "main", actorSessionId: "sender", actorIncarnationId: "sender-inc", actorTurnId: "47", operation: "send", targetSessionId: "recipient", targetIncarnationId: "recipient-inc" }, text: `instruction ${sequence}` });
 type ReadRequest = { target: { sessionId: string }; messageSeqs: number[]; liveTurnIds: string[]; cursor?: number; limit: number };
 type Page = { ok: true; items: SentDelivery[]; nextCursor: number | null };
 

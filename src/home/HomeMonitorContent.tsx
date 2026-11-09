@@ -13,7 +13,7 @@ import { CharacterAvatar } from "../ui/ui-utils.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
 import { LoadError } from "../ui/load-error.js";
 import { ButtonContent } from "../ui/button-content.js";
-import { getHomeAuxiliarySessionState } from "./home-session-projection.js";
+import { getHomeAuxiliarySessionState, getHomeSessionState } from "./home-session-projection.js";
 import { ChatDockSplitter } from "../chat/chat-window.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { useCoordinationMonitor } from "../coordination/use-coordination-monitor.js";
@@ -453,15 +453,21 @@ export function HomeMonitorContent({
           <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
             {coordination.loading ? <LoadingIndicator label="Loading Coordination" /> : null}
             {coordination.error ? <LoadError message={coordination.error} onRetry={coordination.retry} /> : null}
-            <div className="coordination-monitor-list">{coordination.groups.map((group) => <div className="home-monitor-card" key={group.session.id}>
+            <div className="home-monitor-list"><div className="home-monitor-list-items coordination-monitor-list">{coordination.groups.map((group) => {
+              const state = getHomeSessionState(group.session);
+              return <div className="home-monitor-card" key={group.session.id}>
               <div className="home-monitor-parent-row">
+                <div className="home-monitor-parent-identity" role="group" aria-label={`Main session: ${group.session.taskTitle}`}>
+                <span className="home-monitor-status-cluster" aria-label={`Main status: ${state.label}`}><MonitorStatusIcon kind={state.kind} label={`Main ${state.label}`} /></span>
                 <button type="button" className="home-monitor-parent-button" onClick={() => void coordination.open(group)} aria-label={`Open Coordination for ${group.session.taskTitle}: ${group.items.length} items requiring response`} title={group.session.taskTitle}>
                   <CharacterAvatar character={{ name: group.session.character, iconPath: group.session.characterIconPath }} size="tiny" className="home-monitor-avatar" />
                   <strong className="home-monitor-parent-title">{group.session.taskTitle || "Untitled Session"}</strong>
                 </button>
-                <span className="home-monitor-count" aria-label={`${group.items.length} items requiring response`}>{group.items.length}</span>
+                </div>
+                <span className="home-monitor-disclosure home-monitor-coordination-count" title="Items Requiring Response" aria-label={`${group.items.length} items requiring response`}>{group.items.length}</span>
               </div>
-            </div>)}</div>
+            </div>;
+            })}</div></div>
           </div>
         </section>
 

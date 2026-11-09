@@ -79,8 +79,6 @@ test("Monitorは4分類の境界と分類内scrollと内容幅に応じた列数
   const sectionsRule = readCssRule(stylesSource, ".home-page .home-monitor-sections");
   assert.match(sectionsRule, /overflow:\s*hidden;/);
   assert.match(readCssRule(stylesSource, ".home-page .home-monitor-list"), /overflow-y:\s*auto;/);
-  assert.match(readCssRule(stylesSource, ".coordination-monitor-list"), /overflow-y:\s*auto;/);
-  assert.match(readCssRule(stylesSource, ".coordination-monitor-list"), /min-height:\s*0;/);
   assert.match(sectionsRule, /container:\s*monitor-content \/ inline-size;/);
   const columns = readCssAtRuleBlocks(stylesSource, "@container monitor-content (min-width: 740px)")[0];
   assert.ok(columns);
