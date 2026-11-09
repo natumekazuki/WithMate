@@ -147,10 +147,10 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
 
 // @test-value v2
 // kind = "contract"
-// claim = "一覧と詳細は起票者の現在Character・Main/Auxiliary・Session titleを示し、一覧の回答状態を区別して正確なAuxiliaryへ移動する"
+// claim = "起票元と回答状態を識別でき、icon操作の名前と詳細情報の開閉・Escape復帰を保ち、正確なAuxiliaryへ移動する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordination; Session Graph v7-ui-v64-authority" }
-// fault = "起票者を取り違える、保存済み回答を未回答と表示する、またはAuxiliaryの親を誤って開く"
-// observable = "一覧・詳細のCharacter/role/title、一覧の回答状態、avatar画像、openSessionのMain/Auxiliary引数、filter変更後list request"
+// fault = "起票者や保存済み回答を取り違える、icon操作の名前を落とす、詳細からkeyboardで戻れない、またはAuxiliaryの親を誤って開く"
+// observable = "起票者名/role iconのaccessible name/回答状態、avatar画像、送信iconの操作名、詳細のhidden/expandedとEscape後focus・選択値、openSession引数とfilter request"
 // observation_boundary = "component-behavior"
 // scope = "CoordinationPaneのidentity投影と明示origin移動。metadataとcoordination APIはfixture"
 // lifecycle = "permanent"
@@ -193,7 +193,8 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
     await act(async () => root.render(createElement(CoordinationPane, { sessionId: "viewer-main", active: true, navigation: null })));
     const row = dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!;
     assert.match(row.textContent!, /Which approach\?.*Origin Character.*Origin Task/s);
-    assert.match(row.textContent!, /Auxiliary.*Needs Answer/s);
+    assert.ok(row.querySelector('[role="img"][aria-label="Auxiliary"]'));
+    assert.match(row.textContent!, /Needs Answer/);
     assert.match(dom.window.document.querySelectorAll(".coordination-list-row")[1].textContent!, /Answer Saved/);
     assert.equal(row.querySelector("img")?.getAttribute("src"), "data:image/png;base64,AQ==");
     const all = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="All Records"]')!;
@@ -202,13 +203,33 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
     assert.ok(requests.some((request) => request.operation === "list" && request.mainSessionId === "viewer-main" && request.userPending === false));
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!.click());
     const origin = dom.window.document.querySelector<HTMLButtonElement>(".coordination-detail-origin")!;
-    assert.match(origin.textContent!, /Origin Character.*Auxiliary.*Origin Task/s);
+    assert.match(origin.textContent!, /Origin Character.*Origin Task/s);
+    assert.match(origin.getAttribute("aria-label")!, /Origin Task.*Auxiliary/);
+    assert.ok(origin.querySelector('[role="img"][aria-label="Auxiliary"]'));
     await act(async () => origin.click());
     assert.deepEqual(opened, [["origin-main", "origin-aux"]]);
     const checks = [...dom.window.document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
     await act(async () => { checks[0].click(); checks[1].click(); });
     assert.ok(checks.every((checkbox) => checkbox.checked));
     assert.equal(requests.filter((request) => request.operation === "answer").length, 0);
+    const submit = dom.window.document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    assert.equal(submit.getAttribute("aria-label"), "Save And Send Answer");
+    assert.equal(submit.title, "Save And Send Answer");
+    assert.ok(submit.querySelector('svg[aria-hidden="true"]'));
+    const info = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Consultation Details"]')!;
+    const metadata = dom.window.document.getElementById(info.getAttribute("aria-controls")!)!;
+    assert.equal(info.getAttribute("aria-expanded"), "false");
+    assert.equal(metadata.hidden, true);
+    await act(async () => info.click());
+    assert.equal(info.getAttribute("aria-expanded"), "true");
+    assert.equal(metadata.hidden, false);
+    assert.equal(metadata.querySelector("time")?.getAttribute("datetime"), record.updatedAt);
+    info.blur();
+    await act(async () => metadata.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.equal(metadata.hidden, true);
+    assert.equal(info.getAttribute("aria-expanded"), "false");
+    assert.equal(dom.window.document.activeElement, info);
+    assert.ok(checks.every((checkbox) => checkbox.checked));
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

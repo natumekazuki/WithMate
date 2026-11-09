@@ -338,7 +338,7 @@ export function HomeMonitorContent({
               onClick={openParent}
               onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
               aria-haspopup="menu"
-              aria-label={coordinationPrimary ? `Open Coordination for ${title}: ${pending.items.length} items requiring response` : `Open session: ${title}${mainUnread ? "; Unread Result" : ""}`}
+              aria-label={coordinationPrimary ? `Open Coordination for ${title}` : `Open session: ${title}${mainUnread ? "; Unread Result" : ""}`}
               title={title}
             >
               <CharacterAvatar
@@ -348,7 +348,6 @@ export function HomeMonitorContent({
               />
               <strong className="home-monitor-parent-title">{title}</strong>
             </button>
-            {coordinationPrimary ? <span className="home-monitor-count" aria-label={`${pending.items.length} items requiring response`} title="Items Requiring Response">{pending.items.length}</span> : null}
           </div>
           {canExpand ? (
             <button

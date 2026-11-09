@@ -5,7 +5,8 @@
   gap: 14px;
   align-content: start;
 }
-.coordination-pane[hidden] {
+.coordination-pane[hidden],
+.coordination-record-metadata[hidden] {
   display: none;
 }
 .command-monitor-stack.coordination {
@@ -40,7 +41,6 @@
 .coordination-parties,
 .coordination-session-title,
 .coordination-list-status,
-.coordination-origin-role,
 .coordination-response-state {
   font-size: 12px;
   color: var(--muted);
@@ -52,8 +52,36 @@
 .coordination-response-state {
   margin: -6px 0 0;
 }
-.coordination-origin-role {
-  font-weight: 400;
+.coordination-origin-heading,
+.coordination-origin-name,
+.coordination-session-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+.coordination-origin-heading {
+  justify-content: space-between;
+  gap: 10px;
+}
+.coordination-origin-heading > .coordination-detail-origin {
+  flex: 1 1 auto;
+}
+.coordination-session-kind {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.coordination-session-kind .composer-icon {
+  width: 16px;
+  height: 16px;
+}
+.coordination-session-identity > .coordination-session-title {
+  min-width: 0;
+}
+.coordination-origin-heading > .coordination-info-toggle {
+  flex: 0 0 auto;
+  width: 24px;
 }
 .coordination-body > :first-child {
   margin-top: 0;
@@ -105,10 +133,6 @@
   padding: 0;
   margin: 0;
 }
-.coordination-answer-form legend {
-  padding: 0 0 8px;
-  font-weight: 600;
-}
 .coordination-choice {
   display: flex;
   align-items: start;
@@ -148,15 +172,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.coordination-list-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-.coordination-list-status time {
-  flex-shrink: 0;
 }
 .coordination-detail-origin {
   display: grid;
@@ -206,12 +221,6 @@
   align-items: center;
   justify-content: center;
 }
-.coordination-pane .drawer-toggle.coordination-toolbar-icon:has(.coordination-back-label) {
-  width: auto;
-  gap: 6px;
-  padding-inline: 10px;
-  font-size: 12px;
-}
 .coordination-answer-form {
   padding-top: 16px;
   border-top: 1px solid var(--line);
@@ -221,7 +230,7 @@
   border-radius: 10px;
   padding: 10px;
 }
-.coordination-pane .drawer-toggle.coordination-primary-action {
+.coordination-pane .coordination-primary-action {
   justify-self: end;
   background: var(--character-main);
   color: var(--character-main-ink);

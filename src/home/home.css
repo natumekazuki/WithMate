@@ -769,11 +769,6 @@
   color: var(--ink);
 }
 
-.home-page .home-monitor-parent-identity > .home-monitor-count {
-  flex: 0 0 auto;
-  margin-inline-end: 8px;
-}
-
 .home-page .home-monitor-parent-button:focus-visible,
 .home-page .home-monitor-disclosure:focus-visible,
 .home-page .home-monitor-auxiliary-row:focus-visible {

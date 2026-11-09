@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   CoordinationRecord,
   CoordinationRequest,
@@ -14,6 +14,7 @@ import { MessageRichText } from "../ui/markdown/MessageRichText.js";
 import { useCoordinationQuery } from "./use-coordination-query.js";
 import { CoordinationAnswerDelivery, receiptStateLabel } from "./CoordinationAnswerDelivery.js";
 import { CharacterAvatar } from "../ui/ui-utils.js";
+import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { coordinationIdentityKey, useCoordinationIdentities } from "./use-coordination-identities.js";
 
 export function coordinationKindLabel(
@@ -66,6 +67,9 @@ export function CoordinationPane({
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [originError, setOriginError] = useState<{ id: string; message: string } | null>(null);
+  const [detailsOpenId, setDetailsOpenId] = useState<string | null>(null);
+  const detailsId = useId();
+  const detailsTriggerRef = useRef<HTMLButtonElement>(null);
   const operationInFlight = useRef(false);
   const draftKey = `${sessionId}:${selectedId ?? ""}`;
   const draft = drafts[draftKey] ?? { body: "", choices: [], reason: "" };
@@ -119,6 +123,13 @@ export function CoordinationPane({
   };
   const identityAvatar = (identity: CoordinationIdentity) => (
     <CharacterAvatar key={coordinationIdentityKey(identity)} character={identityRead(identity)?.identity?.character ?? { name: "?", iconPath: "" }} size="tiny" />
+  );
+  const identityKind = (identity: CoordinationIdentity) => (
+    <span className="coordination-session-kind" role="img"
+      aria-label={identity.kind === "main" ? "Main" : "Auxiliary"}
+      title={identity.kind === "main" ? "Main" : "Auxiliary"}>
+      <ComposerIcon name={identity.kind} />
+    </span>
   );
   const openOrigin = async () => {
     if (!record || !initiatorTarget) return;
@@ -212,11 +223,33 @@ export function CoordinationPane({
   );
   const renderDetail = (item: CoordinationRecord) => (
     <>
-      <div className="coordination-origin">
-        <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${identityTitle(item.initiator)}`} onClick={() => void openOrigin()}>
-          {identityAvatar(item.initiator)}
-          <span><strong>{identityRead(item.initiator)?.identity?.character.name ?? "Session"}<span className="coordination-origin-role"> · {item.initiator.kind === "main" ? "Main" : "Auxiliary"}</span></strong><span className="coordination-session-title" title={identityTitle(item.initiator)}>{identityTitle(item.initiator)}</span></span>
-        </button>
+      <div className="coordination-origin" onKeyDown={(event) => {
+        if (event.key !== "Escape" || detailsOpenId !== item.id) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDetailsOpenId(null);
+        detailsTriggerRef.current?.focus();
+      }}>
+        <div className="coordination-origin-heading">
+          <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${identityTitle(item.initiator)} (${item.initiator.kind === "main" ? "Main" : "Auxiliary"})`} onClick={() => void openOrigin()}>
+            {identityAvatar(item.initiator)}
+            <span>
+              <strong className="coordination-origin-name">{identityRead(item.initiator)?.identity?.character.name ?? "Session"}{identityKind(item.initiator)}</strong>
+              <span className="coordination-session-title" title={identityTitle(item.initiator)}>{identityTitle(item.initiator)}</span>
+            </span>
+          </button>
+          <button ref={detailsTriggerRef} type="button" className="artifact-toggle artifact-toggle-icon coordination-info-toggle"
+            aria-label="Consultation Details" title="Consultation Details"
+            aria-expanded={detailsOpenId === item.id} aria-controls={detailsId}
+            onClick={() => setDetailsOpenId(detailsOpenId === item.id ? null : item.id)}>
+            <span aria-hidden="true">i</span>
+          </button>
+        </div>
+        <dl id={detailsId} className="coordination-record-metadata" hidden={detailsOpenId !== item.id}>
+          <dt>Kind</dt><dd>{coordinationKindLabel(item.kind)}</dd>
+          <dt>State</dt><dd>{stateLabel(item.state)}</dd>
+          <dt>Updated</dt><dd><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time></dd>
+        </dl>
         {identityRead(item.initiator)?.error ? <LoadError message={identityRead(item.initiator)!.error!} onRetry={identities.refresh} /> : null}
         {originError?.id === item.id ? <LoadError message={originError.message} onRetry={() => void openOrigin()} /> : null}
       </div>
@@ -256,8 +289,7 @@ export function CoordinationPane({
             });
           }}
         >
-          <fieldset disabled={buttonsDisabled}>
-            <legend>{item.answerRevision ? "Change Your Answer" : "Your Answer"}</legend>
+          <fieldset disabled={buttonsDisabled} aria-label={item.answerRevision ? "Change Your Answer" : "Your Answer"}>
             {item.choices.map((choice) => (
               <label key={choice} className={`coordination-choice${draft.choices.includes(choice) ? " selected" : ""}`}>
                 <input
@@ -282,7 +314,9 @@ export function CoordinationPane({
             />
             <button
               type="submit"
-              className="drawer-toggle compact secondary coordination-primary-action"
+              className="drawer-toggle composer-icon-button coordination-primary-action"
+              aria-label="Save And Send Answer"
+              title="Save And Send Answer"
               disabled={!draft.body.trim() && !draft.choices.length}
               aria-busy={busyId === item.id}
             >
@@ -290,7 +324,7 @@ export function CoordinationPane({
                 busy={busyId === item.id}
                 busyLabel="Saving answer"
               >
-                Save And Send
+                <ComposerIcon name="send" />
               </ButtonContent>
             </button>
           </fieldset>
@@ -306,14 +340,6 @@ export function CoordinationPane({
           }}>Keep Draft And Check Saved State</button>
         </div>
       ) : null}
-      <details className="artifact-fold coordination-record-details">
-        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Consultation Details</strong></span></summary>
-        <dl className="coordination-record-metadata">
-          <dt>Kind</dt><dd>{coordinationKindLabel(item.kind)}</dd>
-          <dt>State</dt><dd>{stateLabel(item.state)}</dd>
-          <dt>Updated</dt><dd><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time></dd>
-        </dl>
-      </details>
       <details className="artifact-fold coordination-actions">
         <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Resolve Or Withdraw</strong></span></summary>
         <button
@@ -388,7 +414,7 @@ export function CoordinationPane({
             title="Back To List" aria-label="Back To List"
             onClick={() => setSelectedId(null)}
           >
-            <span aria-hidden="true">‹</span><span className="coordination-back-label">List</span>
+            <span aria-hidden="true">‹</span>
           </button>
         ) : (
           <div className="coordination-filter-tabs" role="group" aria-label="Coordination filter">
@@ -450,8 +476,11 @@ export function CoordinationPane({
                 {identityAvatar(item.initiator)}
                 <span className="coordination-event-copy">
                   <strong className="coordination-list-preview">{item.bodyPreview}</strong>
-                  <span className="coordination-session-title" title={`${identityRead(item.initiator)?.identity?.character.name ?? "Session"} · ${identityTitle(item.initiator)}`}>{identityRead(item.initiator)?.identity?.character.name ?? "Session"} · {item.initiator.kind === "main" ? "Main" : "Auxiliary"} · {identityTitle(item.initiator)}</span>
-                  <span className="coordination-list-status"><span>{responseLabel(item)}</span><time dateTime={item.updatedAt} title={new Date(item.updatedAt).toLocaleString("en-US")}>{new Date(item.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</time></span>
+                  <span className="coordination-session-identity">
+                    {identityKind(item.initiator)}
+                    <span className="coordination-session-title" title={`${identityRead(item.initiator)?.identity?.character.name ?? "Session"} · ${identityTitle(item.initiator)}`}>{identityRead(item.initiator)?.identity?.character.name ?? "Session"} · {identityTitle(item.initiator)}</span>
+                  </span>
+                  <span className="coordination-list-status">{responseLabel(item)}</span>
                 </span>
               </button>
             ))}

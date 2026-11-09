@@ -116,10 +116,10 @@ test("Monitor分類のclickは件数と優先度に従いDOMを保持して開�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは通常の監視対象だけに保存相談を集約し、閉鎖後も監視中のMainとAuxiliaryを保持してグループ数・相談数と移動先を区別する"
+// claim = "Monitorは通常の監視対象だけに保存相談を集約し、閉鎖後も監視中のMainとAuxiliaryを保持してグループ数と項目別の移動先を区別する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: 通常Monitorの対象集合へ統一しCoordination右ペインUI以外を修正" }
 // fault = "保存相談だけで監視対象外Sessionを追加する、監視継続中の親を落とす、後続pageやAuxiliary相談を落とす、または複数項目を一件へ限定して開く"
-// observable = "保存query引数、4分類の見出しと件数、カード内の相談件数、相談open identity、共通Auxiliary開閉と子Session open引数"
+// observable = "保存query引数、4分類の見出しと件数、相談open identity、共通Auxiliary開閉と子Session open引数"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentから保存summary queryとCoordination navigation APIまで。実Window生成と保存coreは対象外"
 // lifecycle = "permanent"
@@ -153,10 +153,9 @@ test("Monitorは保存済みCoordinationのグループ件数と項目別移動�
     assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head h3")].map((node) => node.textContent), ["Attention", "Coordination", "Running", "Stopped"]);
     assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head .home-monitor-count")].map((node) => node.textContent), ["0", "2", "0", "0"]);
     assert.deepEqual([...doc.querySelectorAll(".home-monitor-parent-title")].map(node => node.textContent), ["closed-main", "other-main"]);
-    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-coordination"] .home-monitor-parent-identity .home-monitor-count')?.textContent, "2");
     assert.deepEqual(opened, [], "new saved summaries do not open a Window automatically");
-    await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for closed-main: 2 items requiring response"]')!.click());
-    await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for other-main: 1 items requiring response"]')!.click());
+    await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for closed-main"]')!.click());
+    await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for other-main"]')!.click());
     assert.deepEqual(opened, [a.initiator, { ...single.initiator, id: single.id }]);
     const disclosure = doc.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for closed-main"]')!;
     await act(async () => disclosure.click());
@@ -201,7 +200,7 @@ test("MonitorはSessionを一か所に分類して分類に応じた移動先を
     assert.deepEqual(consultations, []);
     await act(async () => render("running"));
     assert.deepEqual(sections(), [[], ["same"], [], []]);
-    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for same: 1 items requiring response"]')!.click());
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for same"]')!.click());
     assert.deepEqual(consultations, [{ ...coordinationItem("question", "same").initiator, id: "question" }]);
     pending = false;
     await act(async () => changed());

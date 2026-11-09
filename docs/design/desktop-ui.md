@@ -144,12 +144,12 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
     - `Stopped`: 他の3枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
   - `Attention`、`Coordination`、`Running`、`Stopped`の優先順位で同じ親Sessionを一か所だけに分類する。全分類で通常の監視対象と共通検索語の条件を共有し、保存相談があるだけでは監視対象外のSessionを追加しない。Provider要求と相談が同時にある場合はAttentionの通常カードからSessionを開き、相談はそのSessionの既存Coordination入口から参照する。カードに相談専用の補助行を追加しない。最後の要求や相談が解消すると残る条件で再分類する。分類は表示用の投影であり、内部の`runState`を変更しない
   - 上段は`Attention | Coordination`の左右等分とし、同じ一段の高さを共有する。その下に全幅のRunning、Stoppedを置き、三段の初期縦配分は1:1:1とする。各分類の一覧を独立してscrollする。上下二つの共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている段は48pxの最小領域へ補正する。開閉・Window resizeによる一時的な高さ配分で、保持する段の比率を変更しない。左右の境界は区切りのみとし、狭幅でも縦積みへ切り替えない
-  - Coordinationの見出しは表示対象のMainグループ数、各行はそのMainと所属Auxiliaryの要対応item数を示す。保存queryの軽量summaryをページング取得し、本文や回答履歴は取得しない。Main/Auxiliaryの表示情報は通常の監視summaryを使い、相談queryで別取得しない。保存相談はMonitorの表示対象から外れても削除・自動終了しない。通常の進捗やAgent担当の相談はユーザー対応待ちへ昇格させない
+  - Coordinationの見出しは表示対象のMainグループ数を示す。保存queryの軽量summaryをページング取得し、本文や回答履歴は取得しない。Main/Auxiliaryの表示情報は通常の監視summaryを使い、相談queryで別取得しない。保存相談はMonitorの表示対象から外れても削除・自動終了しない。通常の進捗やAgent担当の相談はユーザー対応待ちへ昇格させない
   - Coordinationカードの親titleは保存identityを使って起票元の通常Session Windowを明示openし、Auxiliaryなら所属Main内の対象会話を選択する。右ペインを展開してCoordinationを選び、一件なら詳細、複数ならMainと全Auxiliaryの未対応一覧を開く。Monitor内では本文・回答・取り下げ操作を扱わない
   - 各分類の本文幅が740px以上ならその分類の親行を2列、それ未満は1列にする。WindowやMonitor全体ではなく、左右分割後の各分類の幅で判定する。2列は前半を左、後半を右へ上から順に積み、Auxiliary展開で反対列の親行を押し下げない。分類ごとのscrollは共用し、狭幅では左列から右列の順に1列へ戻す。幅の切替や他Sessionの追加・除去・再分類で一覧を再mountせず、同じ分類に残るSessionのAuxiliary展開・focus・scrollを保持する
   - 上下splitterのclickは隣接2段のMainグループ件数が少ない側の一覧を閉じる。上段はAttentionとCoordinationのMainグループ件数を合算し、二つの一覧を一緒に開閉する。同数では後の段を閉じる。Auxiliary数やCoordination item数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は前の段を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
   - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行を表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
-  - 全分類で同じSessionカードの描画・状態icon・Main／Auxiliary識別・展開・context menuを共有する。親行はMain状態icon、24pxのCharacter avatar、通常weightのSession titleをまとめる。workspaceの副行や状態文字、provider / command / transcriptは常設しない。親titleとAuxiliary previewは既存の省略表示規則を使う。Coordinationの要対応件数は親identity内の小さい件数badgeとし、右端のAuxiliary開閉欄とは分ける
+  - 全分類で同じSessionカードの描画・状態icon・Main／Auxiliary識別・展開・context menuを共有する。親行はMain状態icon、24pxのCharacter avatar、通常weightのSession titleをまとめる。workspaceの副行や状態文字、provider / command / transcriptは常設しない。親titleとAuxiliary previewは既存の省略表示規則を使う
   - 分類幅320px以下では共通カードのAuxiliary開閉欄を親identityの次行へ回し、カード幅いっぱいに配置する。文字・avatarを縮小せず、Auxiliaryの状態と操作を保持する。Coordinationの初回取得と背景再取得を区別し、取得済み一覧は背景更新中に読込行で押し下げず、busy状態を通知する。取得成功の0件と失敗を区別し、失敗時も直前の成功snapshotを保持する
   - 通常の親titleは親Window、Coordinationの親titleは相談への移動を行う。disclosureでAuxiliary一覧を展開し、展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - 親行の右クリック、またはfocus中のShift+F10／Context Menu keyで共通のnative menuを開く。`Copy Session ID`は親Session ID、`Copy Session Title`は選択時に取得した現在のタイトル全文をコピーする。表示の省略はコピー内容へ適用せず、取得・コピー失敗はMonitor内へ表示する。Homeと独立Monitorで同じ操作を使い、`Close`は対象Windowが開いている場合だけ有効とする
@@ -291,7 +291,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 表示内容は Home 右ペインの `Monitor` と同じ truth source を使う
   - Homeと同じ監視対象と保持条件を使い、閉鎖後も監視中のSessionを表示する
   - `Attention` / `Coordination` / `Running` / `Stopped` の4枠を、0件でも常に表示する
-  - 親SessionはHomeと共通のcompactな行で表示し、Main状態iconをavatarの前、Aux状態集約と展開操作を右端へ分ける。上段のAttentionとCoordinationを左右等分にし、全幅のRunning、Stoppedを下へ置く。三段はHomeと共通の高さ調整・件数/優先順位によるclick開閉、各分類は個別scrollを使う。各分類の本文幅740px以上で親行を2列にする。Coordinationは同じカード表現で保存済みユーザー対応待ちのMain集約行とitem数を表示する。文字の縮小だけで件数を詰め込まない
+  - 親SessionはHomeと共通のcompactな行で表示し、Main状態iconをavatarの前、Aux状態集約と展開操作を右端へ分ける。上段のAttentionとCoordinationを左右等分にし、全幅のRunning、Stoppedを下へ置く。三段はHomeと共通の高さ調整・件数/優先順位によるclick開閉、各分類は個別scrollを使う。各分類の本文幅740px以上で親行を2列にする。Coordinationは同じカード表現で保存済みユーザー対応待ちのMain集約行を表示する。文字の縮小で情報を詰め込まない
   - workspace、provider、command、transcriptなどの常設情報は表示しない。titleとAuxiliary previewは既存の省略表示規則を使う
   - `running`はaccent色のspinner、承認・入力待ちは静止した黄色系の丸囲み`!`、待機と終了はsubduedな中空円、errorはwarning triangleで表す。状態はアイコンのみとし、cardの点滅や状態別の面色変更は行わない。reduced motionではspinnerを停止する
   - Auxiliaryが存在する親だけ、右端に状態集約を含むdisclosureを表示する。展開時は親card内へ、実行中を先頭グループとし各グループを`updatedAt DESC, id DESC`で並べたAuxiliary rowを追加し、各rowのicon、preview、省略状態を表示する。Auxiliary rowの表示領域は約5行分に制限するが、6件目以降も一覧領域内をスクロールして全件へ到達できる
@@ -468,8 +468,8 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、ユーザー担当のopen記録／全記録のページング一覧から詳細へ開く。本文、回答revision、取り下げ理由と後着回答、操作日時・訂正履歴を読み、ユーザー担当の回答・回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の保存、通常queueへの配送、実際の消費・解決を別々に表示する。受付・Session・Turnの内部IDは通常UIへ並べない
-- Coordinationの一覧は本文previewを主にし、34pxのCharacter avatar、Character名・Main／Auxiliary・Session title、回答状態と短い更新日を添える。openかつuser担当は回答revisionが0なら`Needs Answer`、保存済みなら`Answer Saved`とし、保存を配送・消費・解決と同一視しない。詳細にも起票元のavatarと名前を置き、`Open Origin`で正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxと明示的な`Save And Send`を使い、選択だけでは送信しない
-- 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameを持つiconを使い、戻る操作には`List`も添える。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・直近の保存済み回答・回答操作を主内容にし、以前の回答、種別・正確な日時、解決・取り下げ、操作履歴は共通の折りたたみ表現から確認する。操作結果と結果不明時の回復は回答操作の近くに置く
+- Coordinationの一覧は本文previewを主にし、34pxのCharacter avatar、Main／Auxiliaryの共通pane icon、Character名・Session title、回答状態を添える。openかつuser担当は回答revisionが0なら`Needs Answer`、保存済みなら`Answer Saved`とし、保存を配送・消費・解決と同一視しない。詳細にも起票元のavatar・名前・pane iconを置き、`Open Origin`で正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxを使い、通常質問と共通の送信icon（`Save And Send Answer`）を明示操作した時だけ保存・送信する。操作名はtooltipとaccessible name、入力groupの名前はaccessible nameに保持する
+- 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameとtooltipを持つiconを使う。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・直近の保存済み回答・回答操作を主内容にする。起票元行の情報iconから種別・状態・正確な更新日時を展開し、Escapeで閉じて入口へfocusを戻す。以前の回答、解決・取り下げ、操作履歴は共通の折りたたみ表現から確認する。操作結果と結果不明時の回復は回答操作の近くに置く
 - 保存済み回答の`Delivery Details`から、その回答receiptと保存済み起票元identityに対応する受付配送・受信Turn・保存結果を必要時に再取得する。受付completedをTurn全体の完了と同一視せず、`Read Recipient Turn Result`から同じ受付の保存応答をページング取得できる。通常表示へ全回答の実行履歴を常設取得しない
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する

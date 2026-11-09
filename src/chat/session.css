@@ -3537,6 +3537,7 @@
 .composer .composer-icon-button,
 .session-recovery-actions .composer-icon-button,
 .live-elicitation-card .live-approval-actions .composer-icon-button,
+.coordination-answer-form .composer-icon-button,
 .session-action-dock-compact-actions .composer-icon-button {
   display: inline-flex;
   flex: 0 0 auto;
