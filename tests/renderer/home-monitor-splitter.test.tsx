@@ -67,6 +67,7 @@ test("Monitor分類のclickは件数と優先度に従いDOMを保持して開�
     Object.defineProperty(dom.window, "withmate", { value: {
       executeCoordination: async () => ({ items: Array.from({ length: coordinationCount }, (_, i) => coordinationItem(`item-${i}`, `coordination-${i}`)), nextOffset: null }),
       getSessionSummary: async (id: string) => entry(id).session,
+      listAuxiliarySessions: async () => [],
       subscribeCoordinationChanged: (callback: () => void) => { changed = callback; return () => {}; },
     } });
     const render = (counts: number[], key = "monitor") => { coordinationCount = counts[1]!; changed(); root.render(createElement(HomeMonitorContent, {
@@ -82,9 +83,9 @@ test("Monitor分類のclickは件数と優先度に従いDOMを保持して開�
     for (const [counts, boundary, target] of [ [[1, 3, 2, 2], 0, 0], [[3, 1, 2, 2], 0, 1], [[2, 3, 1, 2], 1, 2], [[2, 1, 3, 2], 1, 1], [[2, 2, 3, 1], 2, 3], [[2, 2, 1, 3], 2, 2], [[1, 1, 1, 1], 0, 1], [[1, 1, 1, 1], 1, 2], [[1, 1, 1, 1], 2, 3] ] as const) {
       await act(async () => render([...counts], `${counts}-${boundary}`));
       const content = contents()[target]!;
-      const list = content.querySelector<HTMLElement>(".home-monitor-list, .coordination-monitor-list")!;
+      const list = content.querySelector<HTMLElement>(".home-monitor-list")!;
       list.scrollTop = 42;
-      list.querySelector<HTMLButtonElement>(".home-monitor-parent-button, .coordination-monitor-row")!.focus();
+      list.querySelector<HTMLButtonElement>(".home-monitor-parent-button")!.focus();
       await click(boundary);
       assert.deepEqual(closed(), [0, 1, 2, 3].map((i) => i === target));
       assert.equal(content.hasAttribute("inert"), true);
@@ -111,10 +112,10 @@ test("Monitor分類のclickは件数と優先度に従いDOMを保持して開�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Monitorは保存済みユーザー対応待ちqueryをページングし、Main単位のグループ数と項目数を区別して一件は詳細・複数は一覧へ移動する"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/839" }
+// claim = "Monitorは保存済みユーザー対応待ちqueryをページングし、共通SessionカードでMainとAuxiliaryを扱い、表示グループ数と相談数を区別して正確な相談へ移動する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: 共通カードとAttention→Coordination→Running→Stoppedの排他分類への修正" }
 // fault = "開いているSessionだけを対象にする、後続pageや同じMainのAuxiliary相談を落とす、項目数を見出しに使う、または複数項目を一件へ限定して開く"
-// observable = "保存query引数、4分類の見出しと件数、Coordination行の項目数、および選択時のopenCoordination引数"
+// observable = "保存query引数、4分類の見出しと件数、カード内の相談件数、相談open identity、共通Auxiliary開閉と子Session open引数"
 // observation_boundary = "component-behavior"
 // scope = "HomeMonitorContentから保存summary queryとCoordination navigation APIまで。実Window生成と保存coreは対象外"
 // lifecycle = "permanent"
@@ -127,29 +128,87 @@ test("Monitorは保存済みCoordinationのグループ件数と項目別移動�
     const auxiliary = { ...coordinationItem("aux", "closed-main"), initiator: { kind: "auxiliary" as const, sessionId: "saved-aux", incarnationId: "aux-incarnation" } };
     const single = { ...coordinationItem("single", "other-main"), initiator: { kind: "auxiliary" as const, sessionId: "other-aux", incarnationId: "other-incarnation" } };
     const queries: unknown[] = [], opened: unknown[] = [];
+    const closed = entry("closed-main");
+    closed.auxiliarySessions = [{ id: "saved-aux", parentSessionId: "closed-main", runState: "idle", preview: "Saved child",
+      title: "", provider: "codex", catalogRevision: 1, model: "model", reasoningEffort: "medium", approvalMode: "never", codexSandboxMode: "workspace-write", codexSpeed: "standard", codexReviewer: "user", customAgentName: "", threadId: "", displayAfterMessageIndex: null, createdAt: "aux-incarnation", updatedAt: "now" }];
+    const sessionsOpened: unknown[][] = [];
     Object.defineProperty(dom.window, "withmate", { value: {
       executeCoordination: async (request: { offset: number }) => {
         queries.push(request);
         return request.offset === 0 ? { items: [a], total: 3, nextOffset: 1 } : { items: [auxiliary, single], total: 3, nextOffset: null };
       },
       getSessionSummary: async (id: string) => entry(id).session,
+      listAuxiliarySessions: async (id: string) => id === "closed-main" ? closed.auxiliarySessions : [],
       subscribeCoordinationChanged: () => () => {},
       openCoordination: async (target: unknown) => { opened.push(target); },
     } });
     await act(async () => root.render(createElement(HomeMonitorContent, {
-      approvalEntries: [entry("other-main")], runningEntries: [], nonRunningEntries: [], onOpenSession() {}, onShowContextMenu() {},
+      approvalEntries: [entry("other-main")], runningEntries: [], nonRunningEntries: [], onOpenSession: (...args) => sessionsOpened.push(args), onShowContextMenu() {},
     })));
     assert.deepEqual(queries, [0, 1].map((offset) => ({ operation: "list", allCrews: true, userPending: true, offset, limit: 100 })));
     const doc = dom.window.document;
     assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head h3")].map((node) => node.textContent), ["Attention", "Coordination", "Running", "Stopped"]);
-    assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head .home-monitor-count")].map((node) => node.textContent), ["1", "2", "0", "0"]);
-    assert.deepEqual([...doc.querySelectorAll(".coordination-monitor-list .home-monitor-coordination-count")].map((node) => node.textContent), ["2", "1"]);
+    assert.deepEqual([...doc.querySelectorAll(".home-monitor-section-head .home-monitor-count")].map((node) => node.textContent), ["1", "1", "0", "0"]);
+    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-coordination"] .home-monitor-parent-identity .home-monitor-count')?.textContent, "2");
+    assert.equal(doc.querySelector('[aria-labelledby="home-monitor-approval"] .home-monitor-coordination-link')?.textContent, "Coordination · 1↗");
     assert.deepEqual(opened, [], "new saved summaries do not open a Window automatically");
-    const rows = [...doc.querySelectorAll<HTMLButtonElement>(".coordination-monitor-list button")];
-    assert.deepEqual(rows.map((row) => row.getAttribute("aria-label")), ["Open Coordination for closed-main: 2 items requiring response", "Open Coordination for other-main: 1 items requiring response"]);
-    await act(async () => rows[0]!.click());
-    await act(async () => rows[1]!.click());
+    await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for closed-main: 2 items requiring response"]')!.click());
+    await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Coordination for other-main: 1 items requiring response"]')!.click());
     assert.deepEqual(opened, [a.initiator, { ...single.initiator, id: single.id }]);
+    const disclosure = doc.querySelector<HTMLButtonElement>('[aria-label="Show Auxiliary sessions for closed-main"]')!;
+    await act(async () => disclosure.click());
+    assert.equal(disclosure.getAttribute("aria-expanded"), "true");
+    await act(async () => doc.querySelector<HTMLButtonElement>('[aria-label="Open Auxiliary: Saved child"]')!.click());
+    assert.deepEqual(sessionsOpened, [["closed-main", "saved-aux"]]);
+  });
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "SessionカードはAttention→Coordination→Running→Stoppedの一か所へ分類され、同時要求の両導線と相談解消後の再分類を保持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#home-window; user: 共通カード・排他分類・同時要求の両導線を保って修正" }
+// fault = "相談をStoppedやRunningにも重複表示する、Provider要求または相談への導線を失う、または相談解消後も分類が残る"
+// observable = "更新ごとの4分類内のカード名、共通カードからのSession/相談open引数、解消・再発時の表示先"
+// observation_boundary = "component-behavior"
+// scope = "HomeMonitorContentの保存相談通知と既存分類入力を統合した投影と移動"
+// lifecycle = "permanent"
+// impact = "対応対象を二重に数えず、両方の要求を見落とさず、解消したSessionの現在状態を把握できる"
+// distinction = "型検査や個別query testでは分類横断の一意性・通知による再分類・同時要求の操作接続を検出できない"
+// @end-test-value
+test("MonitorはSessionを一か所に分類して同時要求の両導線を保つ", async () => {
+  await withMonitor(async ({ dom, root }) => {
+    let pending = true;
+    let changed = () => {};
+    const opened: unknown[][] = [], consultations: unknown[] = [];
+    Object.defineProperty(dom.window, "withmate", { value: {
+      executeCoordination: async () => ({ items: pending ? [coordinationItem("question", "same")] : [], nextOffset: null }),
+      getSessionSummary: async () => entry("same").session,
+      listAuxiliarySessions: async () => [],
+      subscribeCoordinationChanged: (callback: () => void) => { changed = callback; return () => {}; },
+      openCoordination: async (target: unknown) => { consultations.push(target); },
+    } });
+    const render = (state: "approval" | "running" | "neutral") => {
+      const current = entry("same");
+      current.state = current.mainState = { kind: state, label: state };
+      root.render(createElement(HomeMonitorContent, { approvalEntries: state === "approval" ? [current] : [], runningEntries: state === "running" ? [current] : [], nonRunningEntries: state === "neutral" ? [current] : [], onOpenSession: (...args) => opened.push(args), onShowContextMenu() {} }));
+    };
+    const sections = () => [...dom.window.document.querySelectorAll(".home-monitor-section")].map(section => [...section.querySelectorAll(".home-monitor-parent-title")].map(title => title.textContent));
+    await act(async () => render("approval"));
+    assert.deepEqual(sections(), [["same"], [], [], []]);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('[aria-label="Open session: same"]')!.click());
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".home-monitor-coordination-link")!.click());
+    assert.deepEqual(opened, [["same"]]);
+    assert.deepEqual(consultations, [{ ...coordinationItem("question", "same").initiator, id: "question" }]);
+    await act(async () => render("running"));
+    assert.deepEqual(sections(), [[], ["same"], [], []]);
+    pending = false;
+    await act(async () => changed());
+    assert.deepEqual(sections(), [[], [], ["same"], []]);
+    await act(async () => render("neutral"));
+    assert.deepEqual(sections(), [[], [], [], ["same"]]);
+    pending = true;
+    await act(async () => changed());
+    assert.deepEqual(sections(), [[], ["same"], [], []]);
   });
 });
 

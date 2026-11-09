@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CoordinationSummary } from "../../src-shared/coordination/coordination-contract.js";
 import type { SessionSummary } from "../../src-shared/session/session-state.js";
+import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxiliary-session-state.js";
 import { getWithMateApi } from "../app/renderer-withmate-api.js";
 
 export type CoordinationMonitorGroup = {
   session: SessionSummary;
+  auxiliarySessions: AuxiliarySessionSummary[];
   items: CoordinationSummary[];
 };
 export function useCoordinationMonitor() {
@@ -51,12 +53,14 @@ export function useCoordinationMonitor() {
       }
       const next = await Promise.all(
         [...grouped].map(async ([id, entries]) => {
-          const session = await api.getSessionSummary(id);
+          const [session, auxiliarySessions] = await Promise.all([
+            api.getSessionSummary(id), api.listAuxiliarySessions(id),
+          ]);
           if (!session)
             throw new Error(
               "A Coordination Session is no longer available. Refresh to check the saved state.",
             );
-          return { session, items: entries };
+          return { session, auxiliarySessions, items: entries };
         }),
       );
       if (generation.current === current) {

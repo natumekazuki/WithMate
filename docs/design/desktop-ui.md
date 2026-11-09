@@ -135,21 +135,22 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 初期表示は `Monitor`
   - 共通`HomeMonitorContent`の先頭に有効providerの詳細icon・名前・期間別残率をcompactな横並びで表示し、幅に応じて折り返す。直下のclick専用splitterで残量一覧だけを開閉し、閉じてもcomponentとcache購読を維持する。監視一覧のscrollとは独立し、独立Monitorにも同じ構成を適用する。詳細は既存のprovider別popupで開き、表示中のloading・取得失敗・前回値を区別する。[Provider Usage Telemetry](provider-usage-telemetry.md#共通の残量表示)に従う
   - 親Sessionは1行にまとめ、左側で`Main`状態をavatarと親titleへ近接させる。右端はSession Windowと共通のAuxiliary icon・状態別件数・展開矢印を一つのbuttonへまとめ、配下の一覧との関係を示す。列見出しは置かず、Auxiliaryがない親には右端のbuttonを表示しない。Auxの複数状態は必要に応じて折り返し、承認・error・実行有無を落とさない。状態と操作のaccessible name・tooltipは維持する
-  - source は `src-electron/windows/session-window-bridge.ts` が所有する監視対象Session IDと、共通検索語に一致するSession summaryの交差集合を使う。対象は開いているWindowと、Main／Auxiliaryの実行後に保持したSessionであり、Recent／Pinnedの取得範囲に依存しない。親を最大100件ずつ取得し、全pageの親・Auxiliary summaryを投影する
+  - 実行状態のsourceは `src-electron/windows/session-window-bridge.ts` が所有する監視対象Session IDと、共通検索語に一致するSession summaryの交差集合を使う。対象は開いているWindowと、Main／Auxiliaryの実行後に保持したSessionであり、Recent／Pinnedの取得範囲に依存しない。親を最大100件ずつ取得し、全pageの親・Auxiliary summaryを投影する
   - Running／Attention／取消終了待ちでWindowを閉じても監視を継続し、閉鎖後に完了してもStoppedへ移すだけで除外しない。同じSessionを再openし、Mainと全AuxiliaryがStoppedに属する状態で通常closeした時に監視を終了する。確認・draft flush中の完了をStopped closeへ読み替えず、その間の新規実行も保持する。監視の保持はMainの生存期間内だけで、アプリ再起動へ永続化しない。未実行Windowは通常の開閉に追従する
   - section
     - `Attention`: Main／Auxiliaryのいずれかに有効な承認待ち、質問・MCP form／URLの入力待ちがある親Session。Codexのblocking／nonblocking／async質問を含む。会話単位では取消状態を承認・入力待ちより優先するが、別の会話が承認・入力待ちなら親はこの枠へ入る
-    - `Running`: Attentionに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
-    - `Stopped`: 他の2枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
-  - `Attention`、`Coordination`、`Running`、`Stopped`の順に表示する。Attention／Running／Stoppedは親Sessionの排他分類を保ち、Coordinationは保存済みのユーザー対応待ちから独立して取得する。同じSessionがCoordinationと他の枠に現れてよい。最後の承認・入力待ちが回答・拒否・Close・要求失効・turn終了で解消すると現在の実行状態で再分類する。承認・入力待ちは表示用のlive状態であり、内部の`runState`を変更しない
+    - `Coordination`: Attentionに該当せず、Main／配下Auxiliaryに保存済みのユーザー対応待ち相談がある親Session
+    - `Running`: Attention／Coordinationに該当せず、`running` またはMain／Auxiliaryのlive取消待ち（`requested`／`terminating`）
+    - `Stopped`: 他の3枠に該当しない`interrupted` / `error` / `neutral`を含むnon-running
+  - `Attention`、`Coordination`、`Running`、`Stopped`の順に表示し、この優先順位で同じ親Sessionを一か所だけに分類する。Coordinationは保存queryで取得した対象を通常の監視対象と統合し、開いているWindowだけに限定しない。Provider要求と相談が同時にある場合はAttentionの共通カードに相談への補助リンクと件数を残し、双方への導線を保持する。最後の要求や相談が解消すると残る条件で再分類する。分類は表示用の投影であり、内部の`runState`を変更しない
   - 初期縦配分は1:1:2:2とし、Attention領域とCoordination領域へ同じ面積を配分する。各枠の一覧を独立してscrollする。隣接枠間の共通splitterをdragまたは上下キーで調整し、Home／Endは境界の限界へ動かす。開いている枠は48pxの最小領域へ補正する。開閉・Window resizeによる一時的な高さ配分で、保持する分類比率を変更しない
   - Coordinationの見出しはMain単位のグループ数、各行はそのMainと所属Auxiliaryの要対応item数を示す。保存queryの軽量summaryをページング取得し、本文や回答履歴は取得しない。Window close・アプリ再起動後も未対応項目を確認できる。通常の進捗やAgent担当の相談はユーザー対応待ちへ昇格させない
-  - Coordination行は保存identityを使って起票元の通常Session Windowを明示openし、Auxiliaryなら所属Main内の対象会話を選択する。右ペインを展開してCoordinationを選び、一件なら詳細、複数ならMainと全Auxiliaryの未対応一覧を開く。Monitor内では本文・回答・取り下げ操作を扱わない
+  - Coordinationカードの親title、またはAttentionカードの相談補助リンクは保存identityを使って起票元の通常Session Windowを明示openし、Auxiliaryなら所属Main内の対象会話を選択する。右ペインを展開してCoordinationを選び、一件なら詳細、複数ならMainと全Auxiliaryの未対応一覧を開く。Monitor内では本文・回答・取り下げ操作を扱わない
   - Monitor本文幅が740px以上なら各分類の親行を2列、それ未満は1列にする。Window全体ではなくHomeの分割後の幅で判定する。2列は前半を左、後半を右へ上から順に積み、Auxiliary展開で反対列の親行を押し下げない。分類ごとのscrollは共用し、狭幅では左列から右列の順に1列へ戻す。幅の切替や他Sessionの追加・除去・再分類で一覧を再mountせず、同じ分類に残るSessionのAuxiliary展開・focus・scrollを保持する
   - 分類splitterのclickは隣接2枠のMainグループ件数が少ない側の一覧を閉じる。同数では後の枠を閉じる。Auxiliary数やCoordination item数は比較へ足さない。片側が閉じている場合はその側を開き、両側が閉じている場合は前の枠を開く。件数変化だけで自動開閉しない。矢印とaccessible nameは操作対象を示す
   - 閉じた分類は見出しと件数を残し、一覧のDOM・展開・scrollを保持したまま非表示・操作不可にする。領域が狭く親行を表示できない場合も一覧だけを非表示にし、広げると戻す。隠れる一覧内にfocusがある場合は隣接splitterへ移す。開閉は表示領域だけでありSessionを終了・停止しない
-  - 親行はMain状態icon、24pxのCharacter avatar、通常weightのSession titleをまとめる。workspaceの副行や状態文字、provider / command / transcriptは常設しない。親titleとAuxiliary previewは既存の省略表示規則を使う。Coordinationも同じカードsurface、avatar、title、列構成を使い、要対応件数を右端の補助領域へ置く
-  - 親titleのクリックで親Windowを開き、disclosureでAuxiliary一覧を展開する。展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
+  - 全分類で同じSessionカードの描画・状態icon・Main／Auxiliary識別・展開・context menuを共有する。親行はMain状態icon、24pxのCharacter avatar、通常weightのSession titleをまとめる。workspaceの副行や状態文字、provider / command / transcriptは常設しない。親titleとAuxiliary previewは既存の省略表示規則を使う。Coordinationの要対応件数は親identity内の小さい件数badgeとし、右端のAuxiliary開閉欄とは分ける
+  - 通常の親titleは親Window、Coordinationの親titleは相談への移動を行う。disclosureでAuxiliary一覧を展開し、展開行のクリックはstable Auxiliary IDを指定して同じ親Window内の対象を選択する
   - 親行の右クリック、またはfocus中のShift+F10／Context Menu keyで共通のnative menuを開く。`Copy Session ID`は親Session ID、`Copy Session Title`は選択時に取得した現在のタイトル全文をコピーする。表示の省略はコピー内容へ適用せず、取得・コピー失敗はMonitor内へ表示する。Homeと独立Monitorで同じ操作を使い、`Close`は対象Windowが開いている場合だけ有効とする
   - Main／Auxiliaryの新しい終了結果は、未読の間だけMain title、Aux状態集約、対象Auxiliary previewを青で示す。実行状態とは分け、件数ラベル・未読dot・未読による並べ替えは追加しない。成功・失敗・取消の結果を対象とし、OS通知の設定や配送とは独立する
   - 対象Session Windowがfocus中で、その会話の保存済み最新結果が表示領域内に見えていると自動で既読にする。本文なしの結果は失敗理由、または取得済みDetailsの展開表示で判定し、Detailsの読込中・取得失敗だけでは既読にしない。Windowの単なる表示・最前面固定、過去履歴・別会話の閲覧、Auxiliary一覧の展開だけでは既読にしない。Main／Auxiliaryを独立に扱い、古い結果の既読要求で新しい結果を既読にしない

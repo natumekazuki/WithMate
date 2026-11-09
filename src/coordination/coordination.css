@@ -237,4 +237,3 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.home-page .home-monitor-coordination-count { grid-template-columns: minmax(0, 1fr); justify-items: center; }

@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 
 import type {
   SessionMonitorContextMenuPoint,
@@ -151,6 +151,25 @@ export function HomeMonitorContent({
 }: HomeMonitorContentProps) {
   const [expandedEntryKeys, setExpandedEntryKeys] = useState<Set<string>>(() => new Set());
   const coordination = useCoordinationMonitor();
+  const { entriesBySection, coordinationBySession } = useMemo(() => {
+    const entries = new Map([...approvalEntries, ...runningEntries, ...nonRunningEntries].map(entry => [entry.session.id, entry]));
+    const attentionIds = new Set(approvalEntries.map(entry => entry.session.id));
+    const runningIds = new Set(runningEntries.map(entry => entry.session.id));
+    const pending = new Map(coordination.groups.map(group => [group.session.id, group]));
+    for (const group of coordination.groups) {
+      if (entries.has(group.session.id)) continue;
+      const state = getHomeSessionState(group.session, group.auxiliarySessions);
+      entries.set(group.session.id, { kind: "agent", session: group.session, auxiliarySessions: group.auxiliarySessions, state, mainState: getHomeSessionState(group.session) });
+      if (state.kind === "approval") attentionIds.add(group.session.id);
+    }
+    const sections: HomeMonitorEntry[][] = [[], [], [], []];
+    for (const entry of entries.values()) {
+      const sessionId = entry.session.id;
+      const section = attentionIds.has(sessionId) ? 0 : pending.has(sessionId) ? 1 : runningIds.has(sessionId) ? 2 : 3;
+      sections[section]!.push(entry);
+    }
+    return { entriesBySection: sections, coordinationBySession: pending };
+  }, [approvalEntries, runningEntries, nonRunningEntries, coordination.groups]);
   const [closedSections, setClosedSections] = useState([false, false, false, false]);
   const [smallSections, setSmallSections] = useState([false, false, false, false]);
   const [sectionWeights, setSectionWeights] = useState([0.5, 0.5, 1, 1]);
@@ -160,7 +179,7 @@ export function HomeMonitorContent({
   const dragStartRef = useRef<number[] | null>(null);
   const id = useId();
   const sectionLabels = ["Attention", "Coordination", "Running", "Stopped"];
-  const sectionCounts = [approvalEntries.length, coordination.groups.length, runningEntries.length, nonRunningEntries.length];
+  const sectionCounts = entriesBySection.map(entries => entries.length);
 
   const getAvailableHeight = () => {
     const container = sectionsRef.current;
@@ -290,6 +309,8 @@ export function HomeMonitorContent({
   };
 
   const renderMonitorEntries = (entries: HomeMonitorEntry[]) => entries.map((entry) => {
+    const pending = coordinationBySession.get(entry.session.id);
+    const coordinationPrimary = pending && !entriesBySection[0]!.some(candidate => candidate.session.id === entry.session.id);
     const auxiliarySessions = entry.auxiliarySessions;
     const entryKey = getEntryKey(entry);
     const isExpanded = expandedEntryKeys.has(entryKey);
@@ -298,7 +319,8 @@ export function HomeMonitorContent({
     const mainUnread = entry.session.hasUnreadResult === true;
     const auxiliaryUnread = auxiliarySessions.some((summary) => summary.hasUnreadResult);
     const openParent = () => {
-      onOpenSession(entry.session.id);
+      if (coordinationPrimary) void coordination.open(pending);
+      else onOpenSession(entry.session.id);
     };
 
     return (
@@ -318,7 +340,7 @@ export function HomeMonitorContent({
               onClick={openParent}
               onKeyDown={(event) => showEntryContextMenuFromKeyboard(event, entry)}
               aria-haspopup="menu"
-              aria-label={`Open session: ${title}${mainUnread ? "; Unread Result" : ""}`}
+              aria-label={coordinationPrimary ? `Open Coordination for ${title}: ${pending.items.length} items requiring response` : `Open session: ${title}${mainUnread ? "; Unread Result" : ""}`}
               title={title}
             >
               <CharacterAvatar
@@ -328,6 +350,7 @@ export function HomeMonitorContent({
               />
               <strong className="home-monitor-parent-title">{title}</strong>
             </button>
+            {coordinationPrimary ? <span className="home-monitor-count" aria-label={`${pending.items.length} items requiring response`} title="Items Requiring Response">{pending.items.length}</span> : null}
           </div>
           {canExpand ? (
             <button
@@ -344,6 +367,7 @@ export function HomeMonitorContent({
             </button>
           ) : null}
         </div>
+        {pending && !coordinationPrimary ? <button type="button" className="home-monitor-coordination-link related-session-route" aria-label={`Open Coordination for ${title}: ${pending.items.length} items requiring response`} onClick={() => void coordination.open(pending)}>Coordination · {pending.items.length}<span aria-hidden="true">↗</span></button> : null}
         {isExpanded ? (
           <div className="home-monitor-auxiliary-list" aria-label={`Auxiliary sessions for ${title}`}>
             {auxiliarySessions.map((summary, index) => {
@@ -436,10 +460,10 @@ export function HomeMonitorContent({
         <section className={`home-monitor-section${closedSections[0] ? " is-closed" : ""}`} aria-labelledby="home-monitor-approval">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-approval">Attention</h3>
-            <span className="home-monitor-count">{approvalEntries.length}</span>
+            <span className="home-monitor-count">{sectionCounts[0]}</span>
           </div>
           <div id={`${id}-content-0`} className={`home-monitor-section-content${closedSections[0] || smallSections[0] ? " is-hidden" : ""}`} inert={closedSections[0] || smallSections[0]} aria-hidden={closedSections[0] || smallSections[0]}>
-            {renderMonitorList(approvalEntries)}
+            {renderMonitorList(entriesBySection[0]!)}
           </div>
         </section>
 
@@ -448,26 +472,12 @@ export function HomeMonitorContent({
         <section className={`home-monitor-section${closedSections[1] ? " is-closed" : ""}`} aria-labelledby="home-monitor-coordination">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-coordination">Coordination</h3>
-            <span className="home-monitor-count" aria-label={`${coordination.groups.length} Main session groups`}>{coordination.groups.length}</span>
+            <span className="home-monitor-count" aria-label={`${sectionCounts[1]} Main session groups`}>{sectionCounts[1]}</span>
           </div>
           <div id={`${id}-content-1`} className={`home-monitor-section-content${closedSections[1] || smallSections[1] ? " is-hidden" : ""}`} inert={closedSections[1] || smallSections[1]} aria-hidden={closedSections[1] || smallSections[1]}>
             {coordination.loading ? <LoadingIndicator label="Loading Coordination" /> : null}
             {coordination.error ? <LoadError message={coordination.error} onRetry={coordination.retry} /> : null}
-            <div className="home-monitor-list"><div className="home-monitor-list-items coordination-monitor-list">{coordination.groups.map((group) => {
-              const state = getHomeSessionState(group.session);
-              return <div className="home-monitor-card" key={group.session.id}>
-              <div className="home-monitor-parent-row">
-                <div className="home-monitor-parent-identity" role="group" aria-label={`Main session: ${group.session.taskTitle}`}>
-                <span className="home-monitor-status-cluster" aria-label={`Main status: ${state.label}`}><MonitorStatusIcon kind={state.kind} label={`Main ${state.label}`} /></span>
-                <button type="button" className="home-monitor-parent-button" onClick={() => void coordination.open(group)} aria-label={`Open Coordination for ${group.session.taskTitle}: ${group.items.length} items requiring response`} title={group.session.taskTitle}>
-                  <CharacterAvatar character={{ name: group.session.character, iconPath: group.session.characterIconPath }} size="tiny" className="home-monitor-avatar" />
-                  <strong className="home-monitor-parent-title">{group.session.taskTitle || "Untitled Session"}</strong>
-                </button>
-                </div>
-                <span className="home-monitor-disclosure home-monitor-coordination-count" title="Items Requiring Response" aria-label={`${group.items.length} items requiring response`}>{group.items.length}</span>
-              </div>
-            </div>;
-            })}</div></div>
+            {renderMonitorList(entriesBySection[1]!)}
           </div>
         </section>
 
@@ -476,10 +486,10 @@ export function HomeMonitorContent({
         <section className={`home-monitor-section${closedSections[2] ? " is-closed" : ""}`} aria-labelledby="home-monitor-running">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-running">Running</h3>
-            <span className="home-monitor-count">{runningEntries.length}</span>
+            <span className="home-monitor-count">{sectionCounts[2]}</span>
           </div>
           <div id={`${id}-content-2`} className={`home-monitor-section-content${closedSections[2] || smallSections[2] ? " is-hidden" : ""}`} inert={closedSections[2] || smallSections[2]} aria-hidden={closedSections[2] || smallSections[2]}>
-            {renderMonitorList(runningEntries, runningEmptyMessage)}
+            {renderMonitorList(entriesBySection[2]!, runningEmptyMessage)}
           </div>
         </section>
 
@@ -488,10 +498,10 @@ export function HomeMonitorContent({
         <section className={`home-monitor-section${closedSections[3] ? " is-closed" : ""}`} aria-labelledby="home-monitor-inactive">
           <div className="home-monitor-section-head">
             <h3 id="home-monitor-inactive">Stopped</h3>
-            <span className="home-monitor-count">{nonRunningEntries.length}</span>
+            <span className="home-monitor-count">{sectionCounts[3]}</span>
           </div>
           <div id={`${id}-content-3`} className={`home-monitor-section-content${closedSections[3] || smallSections[3] ? " is-hidden" : ""}`} inert={closedSections[3] || smallSections[3]} aria-hidden={closedSections[3] || smallSections[3]}>
-            {renderMonitorList(nonRunningEntries, nonRunningEmptyMessage)}
+            {renderMonitorList(entriesBySection[3]!, nonRunningEmptyMessage)}
           </div>
         </section>
       </div>
