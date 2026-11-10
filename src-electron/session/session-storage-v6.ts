@@ -876,6 +876,14 @@ export class SessionStorageV6 {
     if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
   }
 
+  setSessionAdditionalDirectories(sessionId: string, incarnationId: string, directories: string[]): SessionSummary {
+    assertRuntimeTurnAdmission();
+    const result = this.db.prepare("UPDATE sessions_v6 SET allowed_additional_directories_json = ? WHERE id = ? AND incarnation_id = ?")
+      .run(JSON.stringify(directories), sessionId, incarnationId);
+    if (Number(result.changes) !== 1) throw new SessionNotFoundError(sessionId);
+    return this.getSessionSummary(sessionId)!;
+  }
+
   getSessionLifecycleOperation(operationId: string): SessionLifecycleOperation | null {
     return readSessionLifecycleOperation(this.db, operationId);
   }

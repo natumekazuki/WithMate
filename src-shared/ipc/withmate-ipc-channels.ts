@@ -89,6 +89,7 @@ export const WITHMATE_SAVE_AUXILIARY_DRAFT_CHANNEL = "withmate:save-auxiliary-dr
 export const WITHMATE_GET_AUXILIARY_SESSION_STATUS_CHANNEL = "withmate:get-auxiliary-session-status";
 export const WITHMATE_CREATE_SESSION_CHANNEL = "withmate:create-session";
 export const WITHMATE_UPDATE_SESSION_CHANNEL = "withmate:update-session";
+export const WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL = "withmate:change-session-additional-directory";
 export const WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL = "withmate:set-session-execution-options";
 export const WITHMATE_SET_SESSION_TITLE_CHANNEL = "withmate:set-session-title";
 export const WITHMATE_PROMOTE_SESSION_ROLE_CHANNEL = "withmate:promote-session-role";

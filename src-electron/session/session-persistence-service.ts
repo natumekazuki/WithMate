@@ -1,3 +1,4 @@
+import path from "node:path";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { assertSameSessionRelationship, normalizeSessionRelationship } from "../../src-shared/session/session-role.js";
 import { validateSessionMetadataPatch, type SessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
@@ -25,6 +26,9 @@ import {
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
 import { normalizeAllowedAdditionalDirectories } from "../files/additional-directories.js";
+import { WorkspaceDirectoryValidationService } from "../files/workspace-directory-validation-service.js";
+import { addAllowedAdditionalDirectory, removeAllowedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
+import type { ChangeSessionAdditionalDirectoryRequest } from "../../src-shared/session/session-mutation-contract.js";
 import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
 import { resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
@@ -80,6 +84,7 @@ export type SessionPersistenceServiceDeps = {
   promoteStoredSessionToOverallCoordinator?(sessionId: string, incarnationId: string): Awaitable<SessionSummary>;
   setStoredSessionMessageBookmark?(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Awaitable<void>;
   setStoredSessionExecutionOptions?(sessionId: string, incarnationId: string, options: SessionExecutionOptions): Awaitable<void>;
+  setStoredSessionAdditionalDirectories?(sessionId: string, incarnationId: string, directories: string[]): Awaitable<SessionSummary>;
   overlayCurrentExecutionOptions?(session: Session): Session;
   rememberExecutionOptions?(session: Session, options: SessionExecutionOptions): void;
   updateStoredSessionThreadIfMatches?(input: SessionThreadPatchInput): Awaitable<SessionThreadPatchResult | null>;
@@ -142,6 +147,8 @@ function assertSessionWritable(session: Session): void {
     throw new Error("Read-only sessions cannot be updated. Create a new session.");
   }
 }
+
+export class AdditionalDirectoryValidationError extends Error {}
 
 type CommittedSessionDeletion = {
   result: DeleteSessionsResult;
@@ -344,6 +351,36 @@ export class SessionPersistenceService {
     }
 
     return updatedSession;
+  }
+
+  async changeAdditionalDirectory(request: ChangeSessionAdditionalDirectoryRequest, assertCurrent?: () => void): Promise<SessionSummary> {
+    const { sessionId, incarnationId, operation, directoryPath } = request;
+    if ((operation !== "add" && operation !== "remove") || typeof directoryPath !== "string"
+      || !directoryPath.trim() || directoryPath.length > 32768 || !path.isAbsolute(directoryPath)
+      || (process.platform === "win32" && path.parse(directoryPath).root.length === 1)) {
+      throw new AdditionalDirectoryValidationError("An absolute additional directory path is required.");
+    }
+    if (operation === "add") {
+      const validation = await new WorkspaceDirectoryValidationService().validate(directoryPath);
+      if (!validation.valid) throw new AdditionalDirectoryValidationError(`The additional directory is invalid: ${validation.reason}.`);
+    }
+    return this.enqueueSessionMutation(async () => {
+      const current = this.deps.getSession(sessionId);
+      if (!current || getSessionIncarnationId(current) !== incarnationId) throw new SessionNotFoundError(sessionId);
+      assertSessionWritable(current);
+      const stored = await this.deps.getStoredSessionSummary?.(sessionId) ?? await this.deps.getStoredSession?.(sessionId) ?? current;
+      if (getSessionIncarnationId(stored) !== incarnationId) throw new SessionNotFoundError(sessionId);
+      const directories = operation === "add"
+        ? addAllowedAdditionalDirectory(stored.allowedAdditionalDirectories, directoryPath)
+        : removeAllowedAdditionalDirectory(stored.allowedAdditionalDirectories, directoryPath);
+      if (!this.deps.setStoredSessionAdditionalDirectories) throw new Error("Session additional directory storage is unavailable.");
+      assertCurrent?.();
+      const summary = await this.deps.setStoredSessionAdditionalDirectories(sessionId, incarnationId, normalizeAllowedAdditionalDirectories(stored.workspacePath, directories));
+      this.runCommittedProjectionBestEffort("additional directory", "cache update", () => this.deps.setSessions(this.deps.getSessions().map((session) =>
+        session.id === sessionId && getSessionIncarnationId(session) === incarnationId ? { ...session, allowedAdditionalDirectories: summary.allowedAdditionalDirectories } : session)));
+      this.runCommittedProjectionBestEffort("additional directory", "broadcast", () => this.deps.broadcastSessions([sessionId]));
+      return summary;
+    });
   }
 
   async promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string, assertCurrent?: () => void): Promise<SessionSummary> {

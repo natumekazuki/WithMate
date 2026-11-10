@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -23,6 +23,9 @@ import { CoordinationStorageV7 } from "../../src-electron/coordination/coordinat
 import { CoordinationApplicationService } from "../../src-electron/coordination/coordination-application-service.js";
 import { SessionManagementApplication } from "../../src-electron/session/session-management-application.js";
 import { SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
+import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
+import { manageSessionDirectories } from "../../src-electron/session/session-directory-management.js";
+import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
 import { resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
@@ -127,6 +130,9 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       self: {},
       list: { allCrews: true, limit: 2 },
       get: { target },
+      list_directories: { target },
+      add_directory: { target, directoryPath: "C:/shared" },
+      remove_directory: { target, directoryPath: "C:/shared" },
       update_metadata: { title: "updated" },
       enqueue: body,
       get_receipt: { target, requestId },
@@ -266,6 +272,9 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
         session,
         crewFolder: { rootSessionId: "parent", path: "crew-files/parent" },
       },
+      list_directories: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: ["C:/shared"] } },
+      add_directory: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: ["C:/shared"] } },
+      remove_directory: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: [] } },
       update_metadata: {
         metadata: { id: "child", taskTitle: "updated", description: "full" },
       },
@@ -540,6 +549,103 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
 
 // @test-value v2
 // kind = "contract"
+// claim = "bound CLIとMCPは実保存の自己・直属子Directoryを同じ契約で追加・読取・解除し、無効pathと無関係Sessionを拒否する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api; docs/runbooks/development-workflow.md MCPとCLIの機能・操作契約" }
+// fault = "片入口が別Sessionを操作する、追加・解除がDBへ届かない、無効pathを受け入れる、または実ファイルを削除する"
+// observable = "両入口の結果と拒否、DBから再読込したMain別一覧、解除後の実ファイル"
+// observation_boundary = "public-boundary"
+// scope = "SessionStorageV6 → directory management → Session runtime → SDK MCP/bound CLI"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "手製の全操作parity fixtureやservice単体では実保存と両入口の結合を確認できない"
+// @end-test-value
+test("directory management crosses persisted Session runtime, MCP and CLI", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "withmate-directory-api-"));
+  const workspace = join(directory, "workspace"), extra = join(directory, "extra");
+  await mkdir(workspace);
+  await mkdir(extra);
+  const retained = join(extra, "retained.txt");
+  await writeFile(retained, "keep");
+  const storage = new SessionStorageV6(join(directory, "sessions.db"));
+  const create = (id: string, parentSessionId?: string) => storage.insertSession(buildNewSession({
+    id, taskTitle: id, workspaceLabel: "Workspace", workspacePath: workspace, branch: "main",
+    characterId: "unknown", character: "Unknown", characterIconPath: "",
+    characterThemeColors: { main: "#123456", sub: "#234567" }, approvalMode: "untrusted",
+    sessionRole: parentSessionId ? "executor" : "overall-coordinator", rootSessionId: parentSessionId ?? id,
+    parentSessionId: parentSessionId ?? null, createdBySessionId: parentSessionId ?? null,
+  }));
+  const parent = create("dir-parent"), child = create("dir-child", parent.id), other = create("other");
+  let cached = [parent, child, other];
+  const persistence = new SessionPersistenceService({
+    getSessions: () => cached, setSessions: (next) => { cached = next; },
+    getSession: (id) => cached.find((entry) => entry.id === id) ?? null,
+    getStoredSession: (id) => storage.getSession(id),
+    isSessionRunInFlight: () => false,
+    upsertStoredSession: (session) => storage.updateSession(session),
+    setStoredSessionAdditionalDirectories: (id, incarnation, directories) => storage.setSessionAdditionalDirectories(id, incarnation, directories),
+    replaceStoredSessions: (sessions) => { storage.replaceSessions(sessions); },
+    listStoredSessions: () => storage.listSessions(),
+    getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: () => ({ providers: [] }),
+    syncSessionDependencies: () => undefined, clearSessionContextTelemetry: () => undefined,
+    clearSessionBackgroundActivities: () => undefined, invalidateProviderSessionThread: () => undefined,
+    closeSessionWindow: () => undefined, broadcastSessions: () => undefined,
+  });
+  const bindings = new AgentRuntimeBindingRegistry();
+  const turns = new ProviderAgentRuntimeTurnCoordinator();
+  const target = (session: typeof parent) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
+  const binding = bindings.issueOrReuse({ actorSessionId: parent.id, providerId: parent.provider,
+    authoritySnapshot: { sessionIdentity: target(parent) }, operationGrants: getSessionAgentRuntimeOperations() });
+  const turn = turns.begin({ actorSessionId: parent.id, providerId: parent.provider });
+  const boundEnv = { WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference, WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: turn.capability };
+  const unused = async () => { throw new Error("Unexpected operation"); };
+  const application = new SessionManagementApplication({
+    listSessions: async () => resolveRelatedSessions(storage.listSessionSummaries(), []),
+    directories: (session, change, assertCurrent) => manageSessionDirectories(persistence, directory, session, change, assertCurrent),
+    currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
+    updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused,
+    readExecution: unused, createChild: unused, catalog: unused, coordinate: unused,
+  });
+  const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
+  const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, operation, options) => {
+    const response = await runtime.route({ method: operation.method, path: operation.path, body: operation.body, transport: "mcp",
+      bindingReference: options.bindingReference, turnCapability: options.turnCapability });
+    assert.ok(response);
+    return { ok: response.status >= 200 && response.status < 300, status: response.status, value: response.value };
+  };
+  const server = createWithMateSessionMcpServer({ env: boundEnv, connection, runtimeCall });
+  const client = new Client({ name: "directory-parity", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b);
+    await client.connect(a);
+    assert.equal((await cli("add-directory", { target: target(child), directoryPath: extra }, runtimeCall, boundEnv)).exit, 0);
+    const listed = await client.callTool({ name: "session.list_directories", arguments: { target: target(child) } });
+    assert.deepEqual((listed.structuredContent as { directories: { additionalDirectories: string[] } }).directories.additionalDirectories, [extra]);
+    assert.equal((await client.callTool({ name: "session.add_directory", arguments: { target: target(parent), directoryPath: extra } })).isError, undefined);
+    const own = await cli("list-directories", { target: target(parent) }, runtimeCall, boundEnv);
+    assert.deepEqual((own.value.directories as { additionalDirectories: string[] }).additionalDirectories, [extra]);
+    assert.equal((await client.callTool({ name: "session.remove_directory", arguments: { target: target(child), directoryPath: extra } })).isError, undefined);
+    assert.deepEqual(storage.getSession(child.id)?.allowedAdditionalDirectories, []);
+    assert.deepEqual(storage.getSession(parent.id)?.allowedAdditionalDirectories, [extra]);
+    await access(retained);
+    const forbidden = await cli("add-directory", { target: target(other), directoryPath: extra }, runtimeCall, boundEnv);
+    assert.equal(forbidden.value.code, "SESSION_FORBIDDEN");
+    assert.equal(forbidden.value.effect, "none");
+    const invalid = await cli("add-directory", { target: target(child), directoryPath: "relative" }, runtimeCall, boundEnv);
+    assert.equal(invalid.value.code, "SESSION_REJECTED");
+    assert.equal(invalid.value.effect, "none");
+    assert.deepEqual(storage.getSession(other.id)?.allowedAdditionalDirectories, []);
+  } finally {
+    await client.close();
+    await server.close();
+    turns.end(turn);
+    storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "実保存のCoordination詳細はMCPとbound CLIで同じtargetと回答を返し、起票元だけの取得で回答を確定する"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md#coordination; docs/runbooks/development-workflow.md MCPとCLIの機能・操作契約" }
 // fault = "片方の入口で取得を確定しない、他Sessionの取得で確定する、またはAuxiliary所属Main identityを失う"
@@ -619,6 +725,7 @@ test("saved Coordination details cross the real application and both public sche
     listSessions: async () => resolveRelatedSessions([source], []),
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
     crewFolder: async () => ({ rootSessionId: source.id, path: directory }),
+    directories: unused,
     updateMetadata: unused,
     enqueue: unused,
     getReceipt: unused,

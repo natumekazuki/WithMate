@@ -42,6 +42,7 @@ import type {
   SessionSummary,
 } from "../../src-shared/session/session-state.js";
 import type {
+  ChangeSessionAdditionalDirectoryRequest,
   SetExecutionOptionsResult,
   SetAuxiliaryExecutionOptionsRequest,
   SetAuxiliaryMessageBookmarkRequest,
@@ -619,6 +620,7 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
     ): Awaitable<void>;
     createSession(input: CreateSessionRequest): Awaitable<Session>;
     updateSession(session: Session): Awaitable<Session>;
+    changeSessionAdditionalDirectory(request: ChangeSessionAdditionalDirectoryRequest): Awaitable<void>;
     setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Awaitable<SetExecutionOptionsResult>;
     setSessionTitle(request: SetSessionTitleRequest): Awaitable<SetSessionTitleResult>;
     setSessionMessageBookmark(request: SetSessionMessageBookmarkRequest): Awaitable<void>;

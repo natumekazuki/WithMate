@@ -27,10 +27,7 @@ import { runMainSessionTurnOperation } from "./run-main-session-turn-operation.j
 import { SessionTurnAcceptance } from "./session-turn-acceptance.js";
 import type { AuxiliaryDraftPersistenceOwner } from "../auxiliary-draft-persistence-owner.js";
 import { startConversationDetailSubscription } from "./session-summary-subscription.js";
-import {
-  persistMainSession,
-  toggleMainSessionPin,
-} from "./main-session-mutation-operations.js";
+import { toggleMainSessionPin } from "./main-session-mutation-operations.js";
 
 export function useMainSessionRuntime({
   api,
@@ -48,7 +45,6 @@ export function useMainSessionRuntime({
     | "enqueueSessionTurn"
     | "getSessionTurnQueueReceipt"
     | "getLiveSessionRun"
-    | "updateSession"
     | "setSessionPinned"
     | "setSessionExecutionOptions"
   > | null;
@@ -222,19 +218,6 @@ export function useMainSessionRuntime({
     };
   }, [api, selectedId, setAuthoritativeSessions, readRevision]);
 
-  const persistSession = useCallback(
-    async (session: Session, isReadOnly: boolean) => {
-      const savedSession = await persistMainSession({
-        api,
-        session,
-        isReadOnly,
-      });
-      setAuthoritativeSessions(() => [savedSession]);
-      return savedSession;
-    },
-    [api, setAuthoritativeSessions],
-  );
-
   const toggleSessionPin = useCallback(
     async (session: Session) => {
       if (isSessionPinPending) return null;
@@ -340,7 +323,6 @@ export function useMainSessionRuntime({
     pendingSubmitSessionId,
     forceComposerBlockedFeedback,
     setForceComposerBlockedFeedback,
-    persistSession,
     toggleSessionPin,
     isSessionPinPending,
     runMainSessionTurn,

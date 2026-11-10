@@ -48,7 +48,7 @@ const STORE_METHODS = {
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
     "listSessionIdsLastActiveBefore", "upsertSession", "updateSessionThreadIfMatches",
-    "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
+    "listSessionCredentialThreads", "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
     "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
     "getSessionLifecycleOperation", "listPendingSessionLifecycleOperations", "getCrewDeletionStatus", "beginSessionLifecycleOperation", "prepareSessionLifecycleCreation", "advanceSessionLifecycleOperation", "deleteSessionCrewForLifecycle",
     "updateSessionRuntimeMetadataIfMatches", "updateSession", "upsertTerminalSession", "updateTerminalSession",
@@ -91,7 +91,7 @@ const MUTATIONS = new Set([
   "reorderQueued", "updateQueued",
   "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "recoverInterrupted", "releaseInterrupted",
   "pinSessionFile", "unpinSessionFile",
-  "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions",
+  "setSessionTitle", "setSessionMessageBookmark", "setSessionExecutionOptions", "setSessionAdditionalDirectories",
   "patchSessionMetadata", "promoteSessionToOverallCoordinator", "beginSessionSteer", "settleSessionSteer",
   "beginSessionLifecycleOperation", "prepareSessionLifecycleCreation", "advanceSessionLifecycleOperation", "deleteSessionCrewForLifecycle",
   "beginAuxiliarySteer", "settleAuxiliarySteer", "patchAuxiliarySessionMetadata",
@@ -178,7 +178,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
+      if ((input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
         if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }
@@ -238,7 +238,7 @@ export function createV6StorageWorkerBundle(options: {
             ? args[0] as { request: { operation: string }; actor: { kind: string } } : null;
           const coordinationMutation = coordinationInput !== null && coordinationInput.request.operation !== "list"
             && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
-          const needsTurnAdmission = graphMutation || store === "coordination" || store === "execution" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
+          const needsTurnAdmission = graphMutation || store === "coordination" || store === "execution" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
           const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"

@@ -14,7 +14,7 @@ import {
   SessionManagementApplication,
   SessionManagementError,
 } from "./session-management-application.js";
-import { runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 export class SessionManagementRuntimeService {
   constructor(
@@ -111,10 +111,10 @@ export class SessionManagementRuntimeService {
           actor: actor.data,
           assertCurrent,
         });
-      // Reads and atomic Coordination operations carry admission into Worker.
+      // Reads, Coordination, and directory changes carry admission into Worker.
       // Coordination detaches its postcommit queue wake from this sender scope.
       const result = await (SESSION_READ_OPERATIONS.includes(operation) ||
-      operation.startsWith("coordination_")
+      operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory"
         ? runWithRuntimeTurnAdmission(
             {
               state: admission.handle.revocationState,
@@ -134,6 +134,7 @@ export class SessionManagementRuntimeService {
       if (SESSION_READ_OPERATIONS.includes(operation)) assertCurrent();
       return { status: result.ok ? 200 : 400, value: result };
     } catch (error) {
+      if (error instanceof RuntimeTurnInactiveError) return failure(401, "SESSION_BINDING_INVALID", "The captured provider Turn ended before the operation was applied.");
       if (SESSION_READ_OPERATIONS.includes(operation)) {
         try {
           assertCurrent();

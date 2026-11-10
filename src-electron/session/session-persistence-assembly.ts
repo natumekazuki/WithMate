@@ -76,6 +76,11 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
       return identities;
     }))).flat(),
     upsertStoredSession: storageCommands.upsertStoredSession,
+    setStoredSessionAdditionalDirectories: (sessionId, incarnationId, directories) => {
+      assertOwner("additional directory update");
+      if (!deps.storage.setSessionAdditionalDirectories) throw new Error("Session additional directory storage is unavailable.");
+      return deps.storage.setSessionAdditionalDirectories(sessionId, incarnationId, directories);
+    },
     appendStoredSessionSteer: (input) => {
       assertOwner("Session steer append");
       if (!deps.storage.appendSessionSteer) throw new Error("Incremental Session input storage is unavailable.");

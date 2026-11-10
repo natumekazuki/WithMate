@@ -8,6 +8,7 @@ import type { CreateTerminalRequest, CreateTerminalResult, TerminalEvent } from 
 import type { CharacterProfile } from "../character/character-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, SessionCharacterUsage, Session, SessionSummaryInvalidation, SessionSummaryPageRequest, HomeSessionSummaryPageResult, SessionSummary, SetSessionPinnedRequest } from "../session/session-state.js";
 import type {
+  ChangeSessionAdditionalDirectoryRequest,
   SetExecutionOptionsResult,
   SetAuxiliaryExecutionOptionsRequest,
   SetAuxiliaryMessageBookmarkRequest,
@@ -243,6 +244,7 @@ export type WithMateWindowSessionApi = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
+  changeSessionAdditionalDirectory(request: ChangeSessionAdditionalDirectoryRequest): Promise<void>;
   setSessionExecutionOptions(request: SetSessionExecutionOptionsRequest): Promise<SetExecutionOptionsResult>;
   setSessionTitle(request: SetSessionTitleRequest): Promise<SetSessionTitleResult>;
   promoteSessionToOverallCoordinator(sessionId: string, incarnationId: string): Promise<SessionSummary>;

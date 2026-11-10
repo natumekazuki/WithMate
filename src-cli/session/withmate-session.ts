@@ -34,6 +34,7 @@ Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join("
 Connection: --api-url <loopback-url> --discovery-file <path> --instance <id> --generation <id>
 The active binding and provider Turn come from the environment; there is no actor override or unbound administrator mode.
 Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. Targets always require saved sessionId and incarnationId.
+Directory operations target your own Session or its direct child. Main and Auxiliary share their list; changes affect subsequent Turns, not the running Turn. Removal unregisters a path and never deletes files.
 Normal messages enqueue only between actual direct parents and children, including mixed Providers. A receipt is not a completed Turn.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.
 Only direct parents cancel pending child receipts or stop a specified child Turn (including additional inputs). No Steer, queue editing, Role promotion, user answering or approval is exposed.

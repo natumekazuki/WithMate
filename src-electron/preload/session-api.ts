@@ -236,6 +236,9 @@ export function createSessionApi(
         session,
       );
     },
+    changeSessionAdditionalDirectory(request) {
+      return ipcRenderer.invoke(channels.WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL, request);
+    },
     setSessionExecutionOptions(request) {
       return ipcRenderer.invoke(
         channels.WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
@@ -82,6 +82,67 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("SessionPersistenceService", () => {
+  // @test-value v2
+  // kind = "invariant"
+  // claim = "MainごとのDirectory変更は並行追加を保持し、他Mainと実ファイルを変更せず、無効pathと旧incarnationや失効した実行元を拒否する"
+  // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api; docs/design/database-schema.md#additional-directory" }
+  // fault = "古い一覧で上書きする、他Sessionや実ファイルを削除する、無効pathまたは旧owner・失効実行元を保存する"
+  // observable = "保存一覧、通知対象、実ファイルの存在と拒否結果"
+  // observation_boundary = "component-behavior"
+  // scope = "session-additional-directory-mutation"
+  // lifecycle = "permanent"
+  // impact = "同時操作が失われる、他Sessionの設定が変わる、または無効pathを後続Turnへ渡す"
+  // distinction = "正規化helper単体では保存queueとSession identity、実directory検証を確認できない"
+  // @end-test-value
+  it("serializes directory updates per saved Main and only unregisters paths", async () => {
+    const temp = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-mutation-"));
+    const workspace = path.join(temp, "workspace"), first = path.join(temp, "first"), second = path.join(temp, "second");
+    await Promise.all([mkdir(workspace), mkdir(first), mkdir(second)]);
+    const file = path.join(first, "retained.txt");
+    await writeFile(file, "retained");
+    try {
+      const parent = createSession({ id: "directory-parent", incarnationId: "parent-v1", provider: "copilot", workspacePath: workspace, allowedAdditionalDirectories: [] });
+      const child = createSession({ id: "directory-child", incarnationId: "child-v1", provider: "claude", workspacePath: workspace, allowedAdditionalDirectories: [] });
+      let cached = [parent, child];
+      const stored = new Map(cached.map((session) => [session.id, session]));
+      const broadcasts: string[] = [];
+      const service = new SessionPersistenceService({
+        getSessions: () => cached, setSessions: (next) => { cached = next; },
+        getSession: (id) => cached.find((session) => session.id === id) ?? null,
+        getStoredSession: (id) => stored.get(id) ?? null,
+        isSessionRunInFlight: () => true,
+        upsertStoredSession: async (session) => { await Promise.resolve(); stored.set(session.id, session); return session; },
+        setStoredSessionAdditionalDirectories: async (id, _incarnation, directories) => {
+          await Promise.resolve();
+          const session = { ...stored.get(id)!, allowedAdditionalDirectories: directories };
+          stored.set(id, session);
+          return projectSessionSummary(session);
+        },
+        replaceStoredSessions: () => undefined, listStoredSessions: () => [...stored.values()],
+        getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: createSnapshot,
+        syncSessionDependencies: () => undefined, clearSessionContextTelemetry: () => undefined,
+        clearSessionBackgroundActivities: () => undefined, invalidateProviderSessionThread: () => undefined,
+        closeSessionWindow: () => undefined, broadcastSessions: (ids) => broadcasts.push(...(ids ?? [])),
+      });
+      const change = (sessionId: string, incarnationId: string, operation: "add" | "remove", directoryPath: string) =>
+        service.changeAdditionalDirectory({ sessionId, incarnationId, operation, directoryPath });
+      await Promise.all([change(parent.id, "parent-v1", "add", first), change(parent.id, "parent-v1", "add", second), change(child.id, "child-v1", "add", second)]);
+      assert.deepEqual(stored.get(parent.id)?.allowedAdditionalDirectories, [first, second].sort((a, b) => a.localeCompare(b)));
+      assert.deepEqual(stored.get(child.id)?.allowedAdditionalDirectories, [second]);
+      await change(parent.id, "parent-v1", "remove", first);
+      assert.deepEqual(stored.get(parent.id)?.allowedAdditionalDirectories, [second]);
+      assert.deepEqual(stored.get(child.id)?.allowedAdditionalDirectories, [second]);
+      await access(file);
+      await assert.rejects(change(parent.id, "old", "remove", second), /could not be found/i);
+      await assert.rejects(change(parent.id, "parent-v1", "add", file), /invalid/i);
+      await assert.rejects(change(parent.id, "parent-v1", "add", "relative"), /absolute/i);
+      await assert.rejects(service.changeAdditionalDirectory({ sessionId: parent.id, incarnationId: "parent-v1", operation: "remove", directoryPath: second }, () => { throw new Error("turn expired"); }), /turn expired/);
+      assert.deepEqual(stored.get(parent.id)?.allowedAdditionalDirectories, [second]);
+      assert.deepEqual(broadcasts, [parent.id, parent.id, child.id, parent.id]);
+    } finally {
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
   // @test-value v2
   // kind = "invariant"
   // claim = "metadataとturn内messageだけを持つruntimeのsteer/terminal保存は全履歴件数とturn identityをstorageへ渡し、確定ACKのtitle/pin/設定を投影する"

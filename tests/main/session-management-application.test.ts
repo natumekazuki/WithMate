@@ -42,6 +42,11 @@ function setup(entries: RelatedSession[]) {
       rootSessionId: "parent",
       path: "crew-files/parent",
     }),
+    directories: async (target, change, assertCurrent) => {
+      assertCurrent();
+      calls.push(`directories:${target.id}:${target.mainSessionId}:${target.mainIncarnationId}:${change?.operation ?? "list"}:${change?.directoryPath ?? ""}`);
+      return { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: [] };
+    },
     updateMetadata: async () => {
       calls.push("metadata");
       return {};
@@ -69,6 +74,47 @@ function setup(entries: RelatedSession[]) {
   };
   return { application: new SessionManagementApplication(deps), deps, calls };
 }
+
+// @test-value v2
+// kind = "security"
+// claim = "追加Directoryの一覧・追加・解除は実actor自身と直属子だけを対象とし、Auxiliary自身は所属Mainの識別を保持する"
+// oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "親、兄弟、別Crew、旧incarnationを許可するか、Auxiliaryの所有Mainを誤認する"
+// observable = "許可対象と拒否コード、Directory callbackに渡る正確な対象と変更"
+// observation_boundary = "public-boundary"
+// scope = "session-directory-authorization"
+// lifecycle = "permanent"
+// risk_tags = ["authorization", "privacy"]
+// distinction = "一般Session metadataの読取や親子送信のtestではDirectory固有の対象制限を検証しない"
+// @end-test-value
+test("directory operations admit self and direct children with exact identities", async () => {
+  const parent = main("parent"), child = main("child", "parent"), grandchild = main("grandchild", "child"), sibling = main("sibling", "parent");
+  const other = { ...main("other"), rootSessionId: "other" };
+  const auxiliary: RelatedSession = { ...child, id: "aux", incarnationId: "aux-v1", kind: "auxiliary", role: "auxiliary", parentSessionId: null };
+  const auxReference = { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: auxiliary.incarnationId, mainSessionId: child.id, mainIncarnationId: child.incarnationId };
+  const { application, calls } = setup([parent, child, grandchild, sibling, other, auxiliary]);
+  const context = { actor: reference(child), assertCurrent() {} };
+  for (const operation of ["list_directories", "add_directory", "remove_directory"] as const) {
+    const path = operation === "list_directories" ? {} : { directoryPath: "C:/shared" };
+    for (const allowed of [child, grandchild]) {
+      assert.equal((await application.execute(operation, { target: reference(allowed), ...path }, context)).ok, true);
+    }
+    for (const denied of [parent, sibling, other]) {
+      await assert.rejects(application.execute(operation, { target: reference(denied), ...path }, context),
+        (error) => error instanceof SessionManagementError && error.code === "SESSION_FORBIDDEN");
+    }
+    await assert.rejects(application.execute(operation, { target: { ...reference(child), incarnationId: "old" }, ...path }, context),
+      (error) => error instanceof SessionManagementError && error.code === "SESSION_REPLACED");
+    assert.equal((await application.execute(operation, { target: auxReference, ...path }, { actor: auxReference, assertCurrent() {} })).ok, true);
+    await assert.rejects(application.execute(operation, { target: reference(child), ...path }, { actor: auxReference, assertCurrent() {} }),
+      (error) => error instanceof SessionManagementError && error.code === "SESSION_FORBIDDEN");
+  }
+  assert.deepEqual(calls, [
+    "directories:child:child:child-v1:list:", "directories:grandchild:grandchild:grandchild-v1:list:", "directories:aux:child:child-v1:list:",
+    "directories:child:child:child-v1:add:C:/shared", "directories:grandchild:grandchild:grandchild-v1:add:C:/shared", "directories:aux:child:child-v1:add:C:/shared",
+    "directories:child:child:child-v1:remove:C:/shared", "directories:grandchild:grandchild:grandchild-v1:remove:C:/shared", "directories:aux:child:child-v1:remove:C:/shared",
+  ]);
+});
 // @test-value v2
 // kind = "invariant"
 // claim = "通常送信は実親子の双方向だけを受理し兄弟宛と自己宛を拒否する"

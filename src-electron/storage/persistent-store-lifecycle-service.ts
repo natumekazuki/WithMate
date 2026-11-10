@@ -99,6 +99,7 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   setSessionTitle?(sessionId: string, incarnationId: string, title: string): Awaitable<void>;
   setSessionMessageBookmark?(sessionId: string, incarnationId: string, messageIndex: number, isBookmarked: boolean): Awaitable<void>;
   setSessionExecutionOptions?(sessionId: string, incarnationId: string, options: import("../../src-shared/session/session-execution-options.js").SessionExecutionOptions): Awaitable<void>;
+  setSessionAdditionalDirectories?: AwaitableStorageMethods<SessionStorageV6, "setSessionAdditionalDirectories">["setSessionAdditionalDirectories"];
   updateTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;

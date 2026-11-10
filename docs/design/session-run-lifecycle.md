@@ -98,6 +98,8 @@ Coordinationの配送は送信元Turnの終了を待たない即時経路を使�
 
 `self`は自Crew、明示対象の`get`は対象CrewのCrew Folder公開参照を返す。他Crewを指定したpathの読取はdirectoryの自動mountや書込権限を与えず、一覧へ全Crewのfilesystem rootを配布しない。Providerの既定additional directoryは自Crewだけを使う。
 
+`list_directories`／`add_directory`／`remove_directory`は実行元自身または保存済みの直属子Mainを対象とし、正確なSession incarnationを要求する。Mainと配下Auxiliaryは追加Directory一覧を共有し、別のMainは親子でも独立する。Workspace、Session Folder、Crew Folderは追加登録一覧と分けて返す。追加は実在する絶対directoryを検証し、削除は登録解除のみでファイルを消さない。更新は開始済みTurnを変更せず、後から開始するTurnへ反映する。実際のfilesystemアクセスはProviderの権限設定とOS権限にも依存する。
+
 MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布する。背景実行の限定履歴scopeを通常Agentに流用しない。受付成功とTurn完了を区別し、送信後の応答喪失は`effect: unknown`とする。enqueueの再確認は元request keyを使い、保存された送信元・操作・対象に照合する。取消は開始済み受付をTurn停止へ自動変換せず、Turn停止も最新Turnへ付け替えない。
 
 ## Ownership

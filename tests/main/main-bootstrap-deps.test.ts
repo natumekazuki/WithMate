@@ -250,6 +250,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         resolveLiveElicitation: () => {},
         createSession: () => ({}) as never,
         updateSession: () => ({}) as never,
+        changeSessionAdditionalDirectory: () => {},
         setSessionExecutionOptions: () => { throw new Error("not used"); },
         setSessionTitle: () => { throw new Error("not used"); },
         setSessionMessageBookmark: () => { throw new Error("not used"); },

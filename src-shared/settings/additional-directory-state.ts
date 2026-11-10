@@ -18,10 +18,6 @@ function toAdditionalDirectoryComparisonKey(directoryPath: string): string {
   return normalizedPath;
 }
 
-type AdditionalDirectorySessionLike = {
-  allowedAdditionalDirectories?: readonly string[] | null;
-};
-
 export function resolveAdditionalDirectoryPickerBase(
   ...directoryPaths: Array<string | null | undefined>
 ): string | null {
@@ -86,29 +82,4 @@ export function removeAllowedAdditionalDirectory(
   return (directories ?? [])
     .map(normalizeAdditionalDirectoryPath)
     .filter((entry) => toAdditionalDirectoryComparisonKey(entry) !== removableKey);
-}
-
-export function buildSessionWithAddedAdditionalDirectory<TSession extends AdditionalDirectorySessionLike>(
-  session: TSession,
-  directoryPath: string,
-): TSession & { allowedAdditionalDirectories: string[] } {
-  return {
-    ...session,
-    allowedAdditionalDirectories: addAllowedAdditionalDirectory(session.allowedAdditionalDirectories, directoryPath),
-  };
-}
-
-export function buildSessionWithRemovedAdditionalDirectory<TSession extends AdditionalDirectorySessionLike>(
-  session: TSession,
-  directoryPath: string,
-): (TSession & { allowedAdditionalDirectories: string[] }) | null {
-  const currentDirectories = session.allowedAdditionalDirectories ?? [];
-  const nextDirectories = removeAllowedAdditionalDirectory(currentDirectories, directoryPath);
-  if (nextDirectories.length === currentDirectories.length) {
-    return null;
-  }
-  return {
-    ...session,
-    allowedAdditionalDirectories: nextDirectories,
-  };
 }

@@ -50,6 +50,9 @@ export type SessionManagementApplicationDeps = {
   crewFolder(
     actor: RelatedSession,
   ): Promise<{ rootSessionId: string; path: string }>;
+  directories(target: RelatedSession, change: { operation: "add" | "remove"; directoryPath: string } | null, assertCurrent: () => void): Promise<{
+    workspacePath: string; sessionFolderPath: string; crewFolder: { rootSessionId: string; path: string }; additionalDirectories: string[];
+  }>;
   updateMetadata(
     actor: RelatedSession,
     patch: SessionOperationRequest<"update_metadata">,
@@ -314,6 +317,26 @@ export class SessionManagementApplication {
           session: destination,
           crewFolder: await this.deps.crewFolder(destination),
         };
+      }
+      case "list_directories":
+      case "add_directory":
+      case "remove_directory": {
+        const request = parsed.data as SessionOperationRequest<"list_directories"> | SessionOperationRequest<"add_directory"> | SessionOperationRequest<"remove_directory">;
+        const destination = target(request.target);
+        const self = actor.kind === destination.kind && actor.id === destination.id && actor.incarnationId === destination.incarnationId;
+        if (!self) {
+          try {
+            assertDirectChildSessionControl(actor, destination);
+          } catch {
+            throw new SessionManagementError("SESSION_FORBIDDEN", "Directory management requires the actual Session or its direct child.");
+          }
+        }
+        context.assertCurrent();
+        const change = operation === "list_directories" ? null : {
+          operation: operation === "add_directory" ? "add" as const : "remove" as const,
+          directoryPath: (request as SessionOperationRequest<"add_directory">).directoryPath,
+        };
+        return { ok: true, directories: await this.deps.directories(destination, change, context.assertCurrent) };
       }
       case "update_metadata": {
         context.assertCurrent();

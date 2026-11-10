@@ -16,8 +16,6 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import type { DiscoveredCustomAgent, DiscoveredSkill, RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
 import { getAuxiliarySessionIdFromLocation, getSessionIdFromLocation } from "./session-location.js";
 import {
-  buildSessionWithAddedAdditionalDirectory,
-  buildSessionWithRemovedAdditionalDirectory,
   resolveAdditionalDirectoryPickerBase,
   runAdditionalDirectoryRemovalOperation,
   runPickedAdditionalDirectoryOperation,
@@ -338,7 +336,6 @@ export default function AgentSessionWindowApp() {
     pendingSubmitSessionId,
     forceComposerBlockedFeedback,
     setForceComposerBlockedFeedback,
-    persistSession: persistMainSessionState,
     toggleSessionPin,
     isSessionPinPending,
     runMainSessionTurn: runMainSessionTurnFromRuntime,
@@ -709,16 +706,6 @@ export default function AgentSessionWindowApp() {
   const isRetryDraftReplacePending = !!retryRequestKey && retryDraftReplaceRequestKey === retryRequestKey;
   const setIsRetryDraftReplacePending = (pending: boolean) => setRetryDraftReplaceRequestKey(pending ? retryRequestKey : null);
   useEffect(() => { setRetryDraftReplaceRequestKey(null); }, [retryRequestKey]);
-  const persistSession = useCallback(async (nextSession: Session) => {
-    const current = getCurrentMainSession();
-    if (!current || current.id !== nextSession.id) {
-      throw new Error("Wait for the conversation to load before changing this session.");
-    }
-    const withCurrentSelection = current?.id === nextSession.id && getSessionIncarnationId(current) === getSessionIncarnationId(nextSession)
-      ? { ...nextSession, ...captureSessionExecutionOptions(current) }
-      : nextSession;
-    return persistMainSessionState(withCurrentSelection, isSelectedSessionReadOnly);
-  }, [getCurrentMainSession, isSelectedSessionReadOnly, persistMainSessionState]);
   const sessionHeader = useSessionHeaderOperations({
     api: withmateApi,
     selectedSession,
@@ -1853,12 +1840,11 @@ export default function AgentSessionWindowApp() {
         if (!current || current.id !== selectedSession.id || getSessionIncarnationId(current) !== getSessionIncarnationId(selectedSession)) {
           throw new Error("Wait for the conversation to load before changing this session.");
         }
-        const nextSession: Session = buildSessionWithAddedAdditionalDirectory(current, selectedPath);
         applyPickedAdditionalDirectoryUiStateCommand({
           selectedPath,
           setPickerBaseDirectory,
         });
-        await persistSession(nextSession);
+        await withmateApi!.changeSessionAdditionalDirectory({ sessionId: current.id, incarnationId: getSessionIncarnationId(current), operation: "add", directoryPath: selectedPath });
       },
     });
   };
@@ -1868,8 +1854,7 @@ export default function AgentSessionWindowApp() {
       directoryPath,
       canRemoveDirectory: () => !!selectedSession &&
         !composerRegistry.isFrozen &&
-        !isSelectedSessionReadOnly &&
-        selectedSession.provider === "codex",
+        !isSelectedSessionReadOnly,
       removeDirectory: async (targetPath) => {
         if (!selectedSession) {
           return false;
@@ -1878,11 +1863,8 @@ export default function AgentSessionWindowApp() {
         if (!current || current.id !== selectedSession.id || getSessionIncarnationId(current) !== getSessionIncarnationId(selectedSession)) {
           throw new Error("Wait for the conversation to load before changing this session.");
         }
-        const nextSession = buildSessionWithRemovedAdditionalDirectory(current, targetPath);
-        if (!nextSession) {
-          return false;
-        }
-        await persistSession(nextSession);
+        if (!withmateApi) return false;
+        await withmateApi.changeSessionAdditionalDirectory({ sessionId: current.id, incarnationId: getSessionIncarnationId(current), operation: "remove", directoryPath: targetPath });
         return true;
       },
     });
@@ -2112,7 +2094,7 @@ export default function AgentSessionWindowApp() {
   const chatComposerFeature = composerFeature.buildSurface({
     session: activeQueuedTurnEdit ? { ...renderedSession, ...activeQueuedTurnEdit.receipt.captured.request.executionOptions } : renderedSession,
     directoryScopeLabel,
-    canRemoveAdditionalDirectories: selectedSession.provider === "codex",
+    canRemoveAdditionalDirectories: true,
     isCharacterAuthoringSession: renderedSession.sessionKind === "character-authoring",
     target: auxiliaryWorkspace.target,
     runtime: {

@@ -39,6 +39,7 @@ import {
   WITHMATE_SEND_QUEUED_SESSION_INPUT_CHANNEL,
   WITHMATE_RELEASE_INTERRUPTED_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL,
   WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
   WITHMATE_SET_SESSION_TITLE_CHANNEL,
   WITHMATE_SET_SESSION_MESSAGE_BOOKMARK_CHANNEL,
@@ -56,6 +57,7 @@ import type {
   MainIpcWorkspaceValidationDeps,
 } from "./contracts.js";
 import type {
+  ChangeSessionAdditionalDirectoryRequest,
   SetSessionExecutionOptionsRequest,
   SetSessionMessageBookmarkRequest,
   SetSessionTitleRequest,
@@ -272,6 +274,12 @@ export function registerSessionRuntimeHandlers(
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) =>
     deps.updateSession(session),
   );
+  ipcMain.handle(WITHMATE_CHANGE_SESSION_ADDITIONAL_DIRECTORY_CHANNEL, (event, request: ChangeSessionAdditionalDirectoryRequest) => {
+    if (!request || typeof request.sessionId !== "string" || !request.sessionId
+      || typeof request.incarnationId !== "string" || !request.incarnationId) throw new TypeError("Session identity is invalid.");
+    assertOwningSessionWindowSender(event, request.sessionId, deps);
+    return deps.changeSessionAdditionalDirectory(request);
+  });
   ipcMain.handle(
     WITHMATE_SET_SESSION_EXECUTION_OPTIONS_CHANNEL,
     (event, request: SetSessionExecutionOptionsRequest) => {

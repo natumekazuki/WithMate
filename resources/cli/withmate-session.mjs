@@ -6299,6 +6299,15 @@ var sessionOperationRequestSchemas = {
 		...page
 	}).strict(),
 	get: object({ target: sessionTargetSchema }).strict(),
+	list_directories: object({ target: sessionTargetSchema }).strict(),
+	add_directory: object({
+		target: sessionTargetSchema,
+		directoryPath: string().min(1).max(32768)
+	}).strict(),
+	remove_directory: object({
+		target: sessionTargetSchema,
+		directoryPath: string().min(1).max(32768)
+	}).strict(),
 	update_metadata: object({
 		title: string().trim().min(1).max(500).optional(),
 		description: string().max(1e4).optional()
@@ -6358,6 +6367,12 @@ var relatedSessionSchema = object({
 var crewFolderSchema = object({
 	rootSessionId: id,
 	path: string().min(1)
+}).strict();
+var directoriesSchema = object({
+	workspacePath: string(),
+	sessionFolderPath: string(),
+	crewFolder: crewFolderSchema,
+	additionalDirectories: array(string())
 }).strict();
 var receiptSchema = object({
 	id,
@@ -6444,6 +6459,18 @@ var sessionOperationSuccessSchemas = {
 		session: relatedSessionSchema,
 		crewFolder: crewFolderSchema
 	}).strict(),
+	list_directories: object({
+		ok: literal(true),
+		directories: directoriesSchema
+	}).strict(),
+	add_directory: object({
+		ok: literal(true),
+		directories: directoriesSchema
+	}).strict(),
+	remove_directory: object({
+		ok: literal(true),
+		directories: directoriesSchema
+	}).strict(),
 	update_metadata: object({
 		ok: literal(true),
 		metadata: union([object({
@@ -6487,6 +6514,7 @@ var SESSION_READ_OPERATIONS = [
 	"self",
 	"list",
 	"get",
+	"list_directories",
 	"get_receipt",
 	"get_catalog",
 	"coordination_list",
@@ -6500,6 +6528,9 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	self: "Read the actual bound actor, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
 	list: "List saved Session metadata across the current Crew by default. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
 	get: "Read metadata, saved relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
+	list_directories: "Read the Workspace, managed Session and Crew Folders, and user-added directories of your own Session or an exact direct child. Main and its Auxiliary Sessions share the user-added list; different Main Sessions have independent lists.",
+	add_directory: "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
+	remove_directory: "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",
 	update_metadata: "Update only this actor's title and/or description. This does not change Role, execution settings or another Session's metadata.",
 	enqueue: "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. deliveryTiming defaults to immediate; explicitly choose after_source_turn to start the recipient's normal new Turn only after this exact sending Session/incarnation/Turn is terminal and saved (completed, failed or canceled). Both modes return a durable acceptance receipt immediately, never auto-Steer. Unknown source state does not release delayed delivery. Delayed messages do not block immediate consultation or GUI input. requestId must be a UUID and identifies the immutable acceptance, including deliveryTiming; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
 	get_receipt: "Recover this sender's receipt by its original UUID requestId and exact target. Delayed receipts expose sourceTurnPhase (running, completed, failed, canceled or unknown); sourceTurnPendingRelease marks execution still releasing even when a terminal phase is saved. Source failure or cancellation is not successful work. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
@@ -8725,6 +8756,7 @@ Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join("
 Connection: --api-url <loopback-url> --discovery-file <path> --instance <id> --generation <id>
 The active binding and provider Turn come from the environment; there is no actor override or unbound administrator mode.
 Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. Targets always require saved sessionId and incarnationId.
+Directory operations target your own Session or its direct child. Main and Auxiliary share their list; changes affect subsequent Turns, not the running Turn. Removal unregisters a path and never deletes files.
 Normal messages enqueue only between actual direct parents and children, including mixed Providers. A receipt is not a completed Turn.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.
 Only direct parents cancel pending child receipts or stop a specified child Turn (including additional inputs). No Steer, queue editing, Role promotion, user answering or approval is exposed.

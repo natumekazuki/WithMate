@@ -114,6 +114,7 @@ import { SessionTurnQueueService } from "./session/session-turn-queue-service.js
 import { createAuxiliarySessionRuntime } from "./auxiliary/auxiliary-session-runtime-assembly.js";
 import { SessionTurnNotificationService } from "./session/session-turn-notification-service.js";
 import { SessionPersistenceService } from "./session/session-persistence-service.js";
+import { manageSessionDirectories } from "./session/session-directory-management.js";
 import { createSessionStorageCommandAdapter } from "./session/session-storage-command-adapter.js";
 import { createSessionPersistenceAssembly } from "./session/session-persistence-assembly.js";
 import { readSessionFileExplorerContext } from "./files/session-file-explorer-context.js";
@@ -1004,6 +1005,7 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
       }
     },
     crewFolder: async (actor) => ({ rootSessionId: actor.rootSessionId, path: resolveCrewFilesDirectory(app.getPath("userData"), actor.rootSessionId) }),
+    directories: (target, change, assertCurrent) => manageSessionDirectories(requireSessionPersistenceService(), app.getPath("userData"), target, change, assertCurrent),
     listSessions: async () => {
       const owner = requireActivePersistentStoreOwnerForFactory("Session relationships");
       const mains = await owner.sessionStorage.listSessionSummaries();
@@ -2107,6 +2109,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
                 updateSession: async (session) => toConversationView(await requireMainSessionCommandFacade().updateSession(session)),
+                changeSessionAdditionalDirectory: async (request) => { await requireSessionPersistenceService().changeAdditionalDirectory(request); },
                 setSessionTitle: (request) => requireSessionPersistenceService().setSessionTitle(request.sessionId, request.incarnationId, request.title),
                 setSessionMessageBookmark: (request) => requireSessionPersistenceService().setSessionMessageBookmark(request.sessionId, request.incarnationId, request.messageIndex, request.isBookmarked),
                 setSessionExecutionOptions: (request) => requireSessionPersistenceService().setSessionExecutionOptions(request.sessionId, request.incarnationId, request.executionOptions, request.confirmedReviewerChange),

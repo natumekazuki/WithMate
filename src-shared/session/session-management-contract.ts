@@ -74,6 +74,9 @@ export const sessionOperationRequestSchemas = {
     })
     .strict(),
   get: z.object({ target: sessionTargetSchema }).strict(),
+  list_directories: z.object({ target: sessionTargetSchema }).strict(),
+  add_directory: z.object({ target: sessionTargetSchema, directoryPath: z.string().min(1).max(32768) }).strict(),
+  remove_directory: z.object({ target: sessionTargetSchema, directoryPath: z.string().min(1).max(32768) }).strict(),
   update_metadata: z
     .object({
       title: z.string().trim().min(1).max(500).optional(),
@@ -156,6 +159,12 @@ const relatedSessionSchema = z
 const crewFolderSchema = z
   .object({ rootSessionId: id, path: z.string().min(1) })
   .strict();
+const directoriesSchema = z.object({
+  workspacePath: z.string(),
+  sessionFolderPath: z.string(),
+  crewFolder: crewFolderSchema,
+  additionalDirectories: z.array(z.string()),
+}).strict();
 const receiptSchema = z
   .object({
     id,
@@ -264,6 +273,9 @@ export const sessionOperationSuccessSchemas = {
       crewFolder: crewFolderSchema,
     })
     .strict(),
+  list_directories: z.object({ ok: z.literal(true), directories: directoriesSchema }).strict(),
+  add_directory: z.object({ ok: z.literal(true), directories: directoriesSchema }).strict(),
+  remove_directory: z.object({ ok: z.literal(true), directories: directoriesSchema }).strict(),
   update_metadata: z
     .object({
       ok: z.literal(true),
@@ -347,6 +359,7 @@ export const SESSION_READ_OPERATIONS: readonly SessionOperation[] = [
   "self",
   "list",
   "get",
+  "list_directories",
   "get_receipt",
   "get_catalog",
   "coordination_list",
@@ -372,6 +385,9 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     self: "Read the actual bound actor, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
     list: "List saved Session metadata across the current Crew by default. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
     get: "Read metadata, saved relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
+    list_directories: "Read the Workspace, managed Session and Crew Folders, and user-added directories of your own Session or an exact direct child. Main and its Auxiliary Sessions share the user-added list; different Main Sessions have independent lists.",
+    add_directory: "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
+    remove_directory: "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",
     update_metadata:
       "Update only this actor's title and/or description. This does not change Role, execution settings or another Session's metadata.",
     enqueue:

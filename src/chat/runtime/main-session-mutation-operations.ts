@@ -116,22 +116,6 @@ export async function runMainRuntimeOptionOperation(input: {
   return persist(buildSessionWithReasoningEffort(session, providerCatalog, option.value, createTimestampLabel()));
 }
 
-export async function persistMainSession(input: {
-  api: Pick<WithMateWindowApi, "updateSession"> | null;
-  session: Session;
-  isReadOnly: boolean;
-}): Promise<Session> {
-  const { api, session, isReadOnly } = input;
-  if (!api || isReadOnly) {
-    throw new Error(
-      isReadOnly
-        ? "Read-only sessions cannot be updated. Create a new session."
-        : "Open the Session Window from Electron.",
-    );
-  }
-  return api.updateSession(session);
-}
-
 export async function toggleMainSessionPin(input: {
   api: Pick<WithMateWindowApi, "setSessionPinned"> | null;
   session: Session;
