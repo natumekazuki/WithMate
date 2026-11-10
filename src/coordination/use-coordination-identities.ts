@@ -16,7 +16,10 @@ export function useCoordinationIdentities(identities: CoordinationIdentity[], ac
   const [reads, setReads] = useState<Record<string, CoordinationIdentityRead>>({});
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
-  const unique = [...new Map(identities.map((identity) => [coordinationIdentityKey(identity), identity])).values()];
+  const unique = [...new Map(identities.map(({ kind, sessionId, incarnationId }) => {
+    const identity = { kind, sessionId, incarnationId };
+    return [coordinationIdentityKey(identity), identity];
+  })).values()];
   const key = JSON.stringify(unique);
   useEffect(() => {
     if (!active) return;

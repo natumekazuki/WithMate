@@ -147,10 +147,10 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
 
 // @test-value v2
 // kind = "contract"
-// claim = "起票元と回答状態を識別でき、icon操作の名前と詳細情報の開閉・Escape復帰を保ち、正確なAuxiliaryへ移動する"
+// claim = "起票元と記録された回答を識別でき、補助操作からEscapeで戻れ、正確なAuxiliaryへ移動する"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordination; Session Graph v7-ui-v64-authority" }
-// fault = "起票者や保存済み回答を取り違える、icon操作の名前を落とす、詳細からkeyboardで戻れない、またはAuxiliaryの親を誤って開く"
-// observable = "起票者名/role iconのaccessible name/回答状態、avatar画像、送信iconの操作名、詳細のhidden/expandedとEscape後focus・選択値、openSession引数とfilter request"
+// fault = "起票者や記録された回答を取り違える、icon操作の名前を落とす、補助操作からkeyboardで戻れない、またはAuxiliaryの親を誤って開く"
+// observable = "起票者名/role iconのaccessible name/回答表示、avatar画像、送信iconの操作名、補助操作のEscape後focus・選択値、openSession引数とfilter request"
 // observation_boundary = "component-behavior"
 // scope = "CoordinationPaneのidentity投影と明示origin移動。metadataとcoordination APIはfixture"
 // lifecycle = "permanent"
@@ -192,10 +192,10 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
   try {
     await act(async () => root.render(createElement(CoordinationPane, { sessionId: "viewer-main", active: true, navigation: null })));
     const row = dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!;
-    assert.match(row.textContent!, /Which approach\?.*Origin Character.*Origin Task/s);
+    assert.equal(row.querySelector(".coordination-session-title")?.textContent, "Origin Task");
+    assert.match(row.querySelector(".visually-hidden")!.textContent!, /Origin Character/);
     assert.ok(row.querySelector('[role="img"][aria-label="Auxiliary"]'));
-    assert.match(row.textContent!, /Needs Answer/);
-    assert.match(dom.window.document.querySelectorAll(".coordination-list-row")[1].textContent!, /Answer Saved/);
+    assert.ok(dom.window.document.querySelectorAll(".coordination-list-row")[1].querySelector('[role="img"][aria-label="Reply Recorded"]'));
     assert.equal(row.querySelector("img")?.getAttribute("src"), "data:image/png;base64,AQ==");
     const all = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="All Records"]')!;
     await act(async () => all.click());
@@ -203,8 +203,8 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
     assert.ok(requests.some((request) => request.operation === "list" && request.mainSessionId === "viewer-main" && request.userPending === false));
     await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!.click());
     const origin = dom.window.document.querySelector<HTMLButtonElement>(".coordination-detail-origin")!;
-    assert.match(origin.textContent!, /Origin Character.*Origin Task/s);
-    assert.match(origin.getAttribute("aria-label")!, /Origin Task.*Auxiliary/);
+    assert.match(origin.textContent!, /Origin Task/);
+    assert.match(origin.getAttribute("aria-label")!, /Origin Character.*Origin Task.*Auxiliary/);
     assert.ok(origin.querySelector('[role="img"][aria-label="Auxiliary"]'));
     await act(async () => origin.click());
     assert.deepEqual(opened, [["origin-main", "origin-aux"]]);
@@ -216,19 +216,14 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
     assert.equal(submit.getAttribute("aria-label"), "Save And Send Answer");
     assert.equal(submit.title, "Save And Send Answer");
     assert.ok(submit.querySelector('svg[aria-hidden="true"]'));
-    const info = dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Consultation Details"]')!;
-    const metadata = dom.window.document.getElementById(info.getAttribute("aria-controls")!)!;
-    assert.equal(info.getAttribute("aria-expanded"), "false");
-    assert.equal(metadata.hidden, true);
-    await act(async () => info.click());
-    assert.equal(info.getAttribute("aria-expanded"), "true");
-    assert.equal(metadata.hidden, false);
-    assert.equal(metadata.querySelector("time")?.getAttribute("datetime"), record.updatedAt);
-    info.blur();
-    await act(async () => metadata.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    assert.equal(metadata.hidden, true);
-    assert.equal(info.getAttribute("aria-expanded"), "false");
-    assert.equal(dom.window.document.activeElement, info);
+    const actions = dom.window.document.querySelector<HTMLDetailsElement>(".coordination-actions")!;
+    const trigger = actions.querySelector<HTMLElement>("summary")!;
+    actions.open = true;
+    const resolve = actions.querySelector<HTMLButtonElement>("button")!;
+    resolve.focus();
+    await act(async () => resolve.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    assert.equal(actions.open, false);
+    assert.equal(dom.window.document.activeElement, trigger);
     assert.ok(checks.every((checkbox) => checkbox.checked));
   } finally {
     await act(async () => root.unmount());
@@ -380,5 +375,80 @@ test("Coordination distinguishes transient reads from terminal deletion without 
       if (descriptor) Object.defineProperty(globalThis, name, descriptor);
       else Reflect.deleteProperty(globalThis, name);
     });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Agent回答の起票元を正しく読み、引き継がれた相談へユーザーが回答でき、回答変更中の背景更新でもdraftを失わない"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの回答・下書き" }
+// fault = "Agent回答のturnIdをidentity IPCへ渡す、Agent回答revisionをユーザー回答済みと扱う、または背景更新で回答変更の入力を隠す"
+// observable = "identity request、回答formの表示、送信request、保存回答、背景更新と再編集後の選択値・focus"
+// observation_boundary = "component-behavior"
+// scope = "CoordinationPaneの回答前・保存後・変更中の遷移。保存と配送読取はfixture"
+// lifecycle = "permanent"
+// impact = "ユーザーが相談に答えられない、または編集中の判断を失う"
+// distinction = "保存coreのrevision検証や型検査ではpaneの編集状態と表示の保持を確認できない"
+// @end-test-value
+test("Coordination preserves answer editing across saved and background states", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  globals.forEach((name) => Object.defineProperty(globalThis, name, { configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name] }));
+  const initiator = { kind: "main" as const, sessionId: "main", incarnationId: "inc" };
+  let record: CoordinationRecord = {
+    id: "escalated", crewRootSessionId: "main", kind: "blocker", initiator, initiatorTurnId: "turn", originReceiptId: null, caller: null,
+    body: "Choose a direction", choices: ["Choice A", "Choice B"], respondent: { kind: "user" }, state: "open", answerRevision: 1,
+    answers: [{ id: "agent-answer", revision: 1, actor: { ...initiator, turnId: "agent-turn" }, body: "Agent recommendation", selectedChoices: [], createdAt: "2026-11-07T00:00:00Z" }],
+    history: [], createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z",
+  };
+  let changed = () => {};
+  const sent: CoordinationRequest[] = [];
+  const identityRequests: unknown[] = [];
+  dom.window.withmate = {
+    getCoordinationIdentity: async (value: unknown) => { identityRequests.push(value); return { title: "Origin Session", character: { name: "Origin Character", iconPath: "" } }; },
+    subscribeSessionInvalidation: () => () => {},
+    subscribeCoordinationChanged: (listener: (summary: unknown) => void) => { changed = () => listener({ id: record.id, crewRootSessionId: "main", initiator }); return () => {}; },
+    readSessionExecution: async () => ({ ok: true, receiptState: "queued", turnState: null }),
+    executeCoordination: async (request: CoordinationRequest) => {
+      if (request.operation === "get") return { record, initiatorTarget: initiator };
+      if (request.operation === "answer") {
+        sent.push(request);
+        record = { ...record, answerRevision: 2, answers: [...record.answers, { id: request.operationId, revision: 2, actor: { kind: "user" }, body: request.body, selectedChoices: request.selectedChoices, receiptId: "receipt", createdAt: "2026-11-07T00:01:00Z" }] };
+        return { record };
+      }
+      return { items: [], total: 0, nextOffset: null };
+    },
+  } as unknown as WithMateWindowApi;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(createElement(CoordinationPane, { sessionId: "main", active: true, navigation: { ...initiator, id: record.id } })));
+    assert.deepEqual(identityRequests[0], initiator);
+    assert.ok(dom.window.document.querySelector('fieldset[aria-label="Your Answer"]'));
+    await act(async () => dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    await act(async () => dom.window.document.querySelector("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })));
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].operation === "answer" && sent[0].expectedAnswerRevision, 1);
+    assert.equal(dom.window.document.querySelector("form"), null);
+    const answerText = dom.window.document.querySelector('[aria-label="Saved answers"]')!.textContent!;
+    assert.equal(answerText.split("Choice A").length - 1, 1);
+    assert.match(answerText, /Delivery Queued/);
+    const edit = () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Change Answer"]')!;
+    await act(async () => edit().click());
+    const checks = [...dom.window.document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    assert.equal(checks[0].checked, true);
+    await act(async () => checks[1].click());
+    checks[1].focus();
+    record = { ...record, answerRevision: 3, answers: [...record.answers, { id: "external-answer", revision: 3, actor: { kind: "user" }, body: "Another saved answer", selectedChoices: [], createdAt: "2026-11-07T00:02:00Z" }] };
+    await act(async () => changed());
+    assert.equal(checks[1].checked, true);
+    assert.equal(dom.window.document.activeElement, checks[1]);
+    await act(async () => [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Cancel")!.click());
+    await act(async () => edit().click());
+    assert.equal(dom.window.document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1].checked, true);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((name, index) => { const descriptor = saved[index]; if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); });
   }
 });

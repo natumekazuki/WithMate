@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   CoordinationRecord,
   CoordinationRequest,
@@ -17,19 +17,6 @@ import { CharacterAvatar } from "../ui/ui-utils.js";
 import { ComposerIcon } from "../chat/composer/composer-icon.js";
 import { coordinationIdentityKey, useCoordinationIdentities } from "./use-coordination-identities.js";
 
-export function coordinationKindLabel(
-  kind: CoordinationSummary["kind"],
-): string {
-  return {
-    progress: "Progress",
-    decision: "Decision",
-    escalation: "Escalation",
-    user_decision_required: "User Decision",
-    blocker: "Blocker",
-    result: "Result",
-    correction: "Correction",
-  }[kind];
-}
 function stateLabel(state: CoordinationSummary["state"]): string {
   return {
     open: "Open",
@@ -38,11 +25,11 @@ function stateLabel(state: CoordinationSummary["state"]): string {
     corrected: "Corrected",
   }[state];
 }
-function responseLabel(item: CoordinationSummary | CoordinationRecord): string {
+function responseLabel(item: CoordinationSummary): string | null {
   if (item.state === "open" && item.respondent.kind === "user") {
-    return item.answerRevision ? "Answer Saved" : "Needs Answer";
+    return item.answerRevision ? "Reply Recorded" : null;
   }
-  return stateLabel(item.state);
+  return item.state === "open" ? null : stateLabel(item.state);
 }
 type Draft = {
   body: string;
@@ -50,6 +37,8 @@ type Draft = {
   reason: string;
   pendingRequest?: CoordinationRequest;
   feedback?: string;
+  editing?: boolean;
+  confirmedAnswer?: CoordinationAnswer;
 };
 
 export function CoordinationPane({
@@ -67,9 +56,7 @@ export function CoordinationPane({
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [originError, setOriginError] = useState<{ id: string; message: string } | null>(null);
-  const [detailsOpenId, setDetailsOpenId] = useState<string | null>(null);
-  const detailsId = useId();
-  const detailsTriggerRef = useRef<HTMLButtonElement>(null);
+  const actionsTriggerRef = useRef<HTMLElement>(null);
   const operationInFlight = useRef(false);
   const draftKey = `${sessionId}:${selectedId ?? ""}`;
   const draft = drafts[draftKey] ?? { body: "", choices: [], reason: "" };
@@ -104,8 +91,12 @@ export function CoordinationPane({
     active,
   );
   const page = list.result && "items" in list.result ? list.result : null;
-  const record =
+  const fetchedRecord =
     detail.result && "record" in detail.result ? detail.result.record : null;
+  const confirmedAnswer = draft.confirmedAnswer;
+  const record = fetchedRecord && confirmedAnswer && confirmedAnswer.revision > fetchedRecord.answerRevision
+    ? { ...fetchedRecord, answerRevision: confirmedAnswer.revision, answers: [...fetchedRecord.answers, confirmedAnswer] }
+    : fetchedRecord;
   const initiatorTarget =
     detail.result && "record" in detail.result
       ? detail.result.initiatorTarget
@@ -121,6 +112,7 @@ export function CoordinationPane({
     const read = identityRead(identity);
     return read?.identity?.title ?? (read?.error ? "Session Identity Unavailable" : read ? "Session Unavailable" : "Loading Session");
   };
+  const identityName = (identity: CoordinationIdentity) => identityRead(identity)?.identity?.character.name ?? "Session";
   const identityAvatar = (identity: CoordinationIdentity) => (
     <CharacterAvatar key={coordinationIdentityKey(identity)} character={identityRead(identity)?.identity?.character ?? { name: "?", iconPath: "" }} size="tiny" />
   );
@@ -176,14 +168,16 @@ export function CoordinationPane({
         return;
       }
       const receipt = "record" in result ? result.receipt : undefined;
+      const confirmed = request.operation === "answer" && "record" in result
+        ? result.record.answers.find((answer) => answer.id === request.operationId)
+        : undefined;
       setDrafts((current) => ({
         ...current,
         [key]: {
           ...(current[key] ?? draft),
           pendingRequest: undefined,
-          feedback: receipt
-            ? `Saved · Delivery ${receiptStateLabel(receipt.state)}`
-            : "Saved",
+          ...(confirmed ? { confirmedAnswer: confirmed, editing: false } : {}),
+          feedback: confirmed ? undefined : receipt ? `Saved · Delivery ${receiptStateLabel(receipt.state)}` : "Saved",
         },
       }));
       detail.refresh();
@@ -205,51 +199,60 @@ export function CoordinationPane({
   };
   const buttonsDisabled =
     busyId !== null || Boolean(draft.pendingRequest) || Boolean(detail.error);
-  const renderAnswer = (answer: CoordinationAnswer) => (
+  const renderAnswer = (answer: CoordinationAnswer, historical = false, onEdit?: () => void) => (
     <article key={answer.id}>
       <div className="coordination-detail-heading">
         <strong>{answer.actor.kind === "user" ? "Your Answer" : identityTitle(answer.actor)}</strong>
-        <span>Revision {answer.revision}</span>
+        {historical ? <span>Revision {answer.revision}</span> : onEdit ? <button type="button" className="drawer-toggle compact secondary coordination-edit-answer" aria-label="Change Answer" title="Change Answer" onClick={onEdit}><ComposerIcon name="edit" /></button> : null}
       </div>
       <MessageRichText text={answer.body} embeddedMedia="text" />
-      {answer.selectedChoices.length ? <p>{answer.selectedChoices.join(" · ")}</p> : null}
-      <CoordinationAnswerDelivery
+      {answer.selectedChoices.length && answer.body !== answer.selectedChoices.join("\n") ? <p>{answer.selectedChoices.join(" · ")}</p> : null}
+      {!historical ? <CoordinationAnswerDelivery
         ownerSessionId={sessionId}
         target={initiatorTarget}
         receiptId={answer.receiptId}
-      />
-      {answer.consumedByOperationId ? <p className="coordination-parties">Consumed By Originating Session</p> : null}
+        consumed={Boolean(answer.consumedByOperationId)}
+        active={active}
+      /> : null}
     </article>
   );
-  const renderDetail = (item: CoordinationRecord) => (
+  const renderDetail = (item: CoordinationRecord) => {
+    const latestUserAnswer = [...item.answers].reverse().find((answer) => answer.actor.kind === "user");
+    const showEditor = item.respondent.kind === "user" && (!latestUserAnswer || draft.editing || Boolean(draft.pendingRequest));
+    const history = item.history.filter((entry) => entry.operation !== "create");
+    const editAnswer = latestUserAnswer && item.respondent.kind === "user" && !showEditor ? () => updateDraft({
+      editing: true,
+      ...(draft.editing === undefined ? {
+        body: latestUserAnswer.body === latestUserAnswer.selectedChoices.join("\n") ? "" : latestUserAnswer.body,
+        choices: latestUserAnswer.selectedChoices,
+      } : {}),
+    }) : undefined;
+    return (
     <>
-      <div className="coordination-origin" onKeyDown={(event) => {
-        if (event.key !== "Escape" || detailsOpenId !== item.id) return;
-        event.preventDefault();
-        event.stopPropagation();
-        setDetailsOpenId(null);
-        detailsTriggerRef.current?.focus();
-      }}>
+      <div className="coordination-origin">
         <div className="coordination-origin-heading">
-          <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${identityTitle(item.initiator)} (${item.initiator.kind === "main" ? "Main" : "Auxiliary"})`} onClick={() => void openOrigin()}>
+          <button type="button" className="coordination-detail-origin" disabled={!initiatorTarget} aria-label={`Open Origin: ${identityName(item.initiator)} · ${identityTitle(item.initiator)} (${item.initiator.kind === "main" ? "Main" : "Auxiliary"})`} onClick={() => void openOrigin()}>
             {identityAvatar(item.initiator)}
-            <span>
-              <strong className="coordination-origin-name">{identityRead(item.initiator)?.identity?.character.name ?? "Session"}{identityKind(item.initiator)}</strong>
+            <span className="coordination-session-identity">
+              {identityKind(item.initiator)}
               <span className="coordination-session-title" title={identityTitle(item.initiator)}>{identityTitle(item.initiator)}</span>
             </span>
           </button>
-          <button ref={detailsTriggerRef} type="button" className="artifact-toggle artifact-toggle-icon coordination-info-toggle"
-            aria-label="Consultation Details" title="Consultation Details"
-            aria-expanded={detailsOpenId === item.id} aria-controls={detailsId}
-            onClick={() => setDetailsOpenId(detailsOpenId === item.id ? null : item.id)}>
-            <span aria-hidden="true">i</span>
-          </button>
+          <details key={item.id} className="coordination-actions" onKeyDown={(event) => {
+            if (event.key !== "Escape" || !event.currentTarget.open) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.currentTarget.open = false;
+            actionsTriggerRef.current?.focus();
+          }}>
+            <summary ref={actionsTriggerRef} className="drawer-toggle compact secondary coordination-actions-trigger" aria-label="Consultation Actions" title="Consultation Actions"><span aria-hidden="true">⋯</span></summary>
+            <div className="coordination-actions-menu">
+              <button type="button" className="drawer-toggle compact secondary" disabled={buttonsDisabled || item.state !== "open"} onClick={() => void mutate({ operation: "resolve", id: item.id, operationId: crypto.randomUUID() })}>Resolve</button>
+              <label>Withdrawal Reason<textarea rows={2} value={draft.reason} disabled={buttonsDisabled} onChange={(event) => updateDraft({ reason: event.target.value })} /></label>
+              <button type="button" className="drawer-toggle compact secondary" disabled={buttonsDisabled || item.state === "withdrawn"} onClick={() => void mutate({ operation: "withdraw", id: item.id, operationId: crypto.randomUUID(), reason: draft.reason })}>Withdraw</button>
+            </div>
+          </details>
         </div>
-        <dl id={detailsId} className="coordination-record-metadata" hidden={detailsOpenId !== item.id}>
-          <dt>Kind</dt><dd>{coordinationKindLabel(item.kind)}</dd>
-          <dt>State</dt><dd>{stateLabel(item.state)}</dd>
-          <dt>Updated</dt><dd><time dateTime={item.updatedAt}>{new Date(item.updatedAt).toLocaleString("en-US")}</time></dd>
-        </dl>
         {identityRead(item.initiator)?.error ? <LoadError message={identityRead(item.initiator)!.error!} onRetry={identities.refresh} /> : null}
         {originError?.id === item.id ? <LoadError message={originError.message} onRetry={() => void openOrigin()} /> : null}
       </div>
@@ -264,16 +267,13 @@ export function CoordinationPane({
       ) : null}
       {item.answers.length ? (
         <section className="coordination-answers" aria-label="Saved answers">
-          {renderAnswer(item.answers[item.answers.length - 1])}
-          {item.answers.length > 1 ? <details className="artifact-fold coordination-previous-answers">
-            <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Previous Answers ({item.answers.length - 1})</strong></span></summary>
-            {item.answers.slice(0, -1).map(renderAnswer)}
-          </details> : null}
+          {renderAnswer(item.answers[item.answers.length - 1], false, editAnswer)}
         </section>
       ) : null}
-      {item.respondent.kind === "user" ? (
+      {showEditor ? (
         <form
           className="coordination-answer-form"
+          onFocus={() => { if (!draft.editing) updateDraft({ editing: true }); }}
           onSubmit={(event) => {
             event.preventDefault();
             const body = draft.body.trim() || draft.choices.join("\n");
@@ -289,7 +289,7 @@ export function CoordinationPane({
             });
           }}
         >
-          <fieldset disabled={buttonsDisabled} aria-label={item.answerRevision ? "Change Your Answer" : "Your Answer"}>
+          <fieldset disabled={buttonsDisabled} aria-label={latestUserAnswer ? "Change Your Answer" : "Your Answer"}>
             {item.choices.map((choice) => (
               <label key={choice} className={`coordination-choice${draft.choices.includes(choice) ? " selected" : ""}`}>
                 <input
@@ -297,6 +297,7 @@ export function CoordinationPane({
                   checked={draft.choices.includes(choice)}
                   onChange={(event) =>
                     updateDraft({
+                      editing: true,
                       choices: event.target.checked
                         ? [...draft.choices, choice]
                         : draft.choices.filter((value) => value !== choice),
@@ -310,9 +311,11 @@ export function CoordinationPane({
               aria-label="Coordination answer"
               rows={3}
               value={draft.body}
-              onChange={(event) => updateDraft({ body: event.target.value })}
+              onChange={(event) => updateDraft({ body: event.target.value, editing: true })}
             />
-            <button
+            <div className="coordination-answer-actions">
+              {latestUserAnswer ? <button type="button" className="drawer-toggle compact secondary" onClick={() => updateDraft({ editing: false })}>Cancel</button> : null}
+              <button
               type="submit"
               className="drawer-toggle composer-icon-button coordination-primary-action"
               aria-label="Save And Send Answer"
@@ -326,7 +329,8 @@ export function CoordinationPane({
               >
                 <ComposerIcon name="send" />
               </ButtonContent>
-            </button>
+              </button>
+            </div>
           </fieldset>
         </form>
       ) : null}
@@ -340,55 +344,15 @@ export function CoordinationPane({
           }}>Keep Draft And Check Saved State</button>
         </div>
       ) : null}
-      <details className="artifact-fold coordination-actions">
-        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>Resolve Or Withdraw</strong></span></summary>
-        <button
-          type="button"
-          className="drawer-toggle compact secondary"
-          disabled={buttonsDisabled || item.state !== "open"}
-          onClick={() =>
-            void mutate({
-              operation: "resolve",
-              id: item.id,
-              operationId: crypto.randomUUID(),
-            })
-          }
-        >
-          Resolve
-        </button>
-        <label>
-          Withdrawal Reason
-          <textarea
-            rows={2}
-            value={draft.reason}
-            disabled={buttonsDisabled}
-            onChange={(event) => updateDraft({ reason: event.target.value })}
-          />
-        </label>
-        <button
-          type="button"
-          className="drawer-toggle compact secondary"
-          disabled={buttonsDisabled || item.state === "withdrawn"}
-          onClick={() =>
-            void mutate({
-              operation: "withdraw",
-              id: item.id,
-              operationId: crypto.randomUUID(),
-              reason: draft.reason,
-            })
-          }
-        >
-          Withdraw
-        </button>
-      </details>
-      {item.history.length ? <details className="artifact-fold">
+      {history.length || item.answers.length > 1 ? <details className="artifact-fold">
         <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>History</strong></span></summary>
+        {item.answers.slice(0, -1).map((answer) => renderAnswer(answer, true))}
         <ol className="coordination-history">
-          {item.history.map((entry) => (
+          {history.map((entry) => (
             <li key={entry.operationId}>
               <strong>{({ create: "Created", deliver: "Sent", escalate: "Escalated", answer: "Answered", resolve: "Resolved", consume: "Answer Used", withdraw: "Withdrawn", correct: "Corrected" } as Record<string, string>)[entry.operation] ?? entry.operation}</strong> ·{" "}
               {new Date(entry.at).toLocaleString("en-US")}
-              {entry.body ? <p>{entry.body}</p> : null}
+              {entry.body && entry.operation !== "answer" && entry.operation !== "create" ? <p>{entry.body}</p> : null}
               {entry.correctionId ? (
                 <button
                   type="button"
@@ -403,7 +367,8 @@ export function CoordinationPane({
         </ol>
       </details> : null}
     </>
-  );
+    );
+  };
   return (
     <div className="coordination-pane" hidden={!active} aria-busy={(selectedId ? detail.loading : list.loading) || undefined}>
       <div className="coordination-toolbar coordination-navigation">
@@ -478,9 +443,12 @@ export function CoordinationPane({
                   <strong className="coordination-list-preview">{item.bodyPreview}</strong>
                   <span className="coordination-session-identity">
                     {identityKind(item.initiator)}
-                    <span className="coordination-session-title" title={`${identityRead(item.initiator)?.identity?.character.name ?? "Session"} · ${identityTitle(item.initiator)}`}>{identityRead(item.initiator)?.identity?.character.name ?? "Session"} · {identityTitle(item.initiator)}</span>
+                    <span className="visually-hidden">{identityName(item.initiator)} · </span>
+                    <span className="coordination-session-title" title={`${identityName(item.initiator)} · ${identityTitle(item.initiator)}`}>{identityTitle(item.initiator)}</span>
+                    {responseLabel(item) ? item.state === "open" ? (
+                      <span className="coordination-list-status" role="img" aria-label="Reply Recorded" title="Reply Recorded"><ComposerIcon name="submit" /></span>
+                    ) : <span className="coordination-list-status">{responseLabel(item)}</span> : null}
                   </span>
-                  <span className="coordination-list-status">{responseLabel(item)}</span>
                 </span>
               </button>
             ))}

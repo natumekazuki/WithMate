@@ -10,12 +10,7 @@ import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { ExecutionReadOperation } from "../../src-shared/session/session-execution-read.js";
 
 const target: SessionTarget = { kind: "auxiliary", sessionId: "actual-aux", incarnationId: "actual-aux-inc", mainSessionId: "actual-parent", mainIncarnationId: "actual-parent-inc" };
-const description = {
-  ok: true, origin: null, receiptId: "saved-receipt", receiptState: "completed", turnId: "42", turnState: "running", resultState: "running", userMessageSeq: 10, assistantMessageSeq: null,
-  inputs: { entry: null, startChanged: false, additional: { confirmedCount: 0, references: [], referencesNextOffset: null, unresolved: [], unresolvedCount: 0, unresolvedNextOffset: null, notSent: [], notSentCount: 0, notSentNextOffset: null, coverage: "recorded" } },
-  output: null,
-};
-const unit = { id: "saved-output", start: 0, end: 10, role: "answer", phase: "final", completion: "complete", final: true, evidence: "native-final" };
+const description = { ok: true, origin: null, receiptId: "saved-receipt", receiptState: "completed", turnId: "42", turnState: "running", resultState: "running", userMessageSeq: 10, assistantMessageSeq: null };
 
 function harness(read: (operation: ExecutionReadOperation, request: unknown) => Promise<unknown>, extraApi: Record<string, unknown> = {}) {
   const dom = new JSDOM("<div id='root'></div>", { url: "http://localhost" });
@@ -35,24 +30,23 @@ function harness(read: (operation: ExecutionReadOperation, request: unknown) => 
   } });
   const root = createRoot(dom.window.document.getElementById("root")!);
   return { dom, root, requests, listeners,
-    toggle: async (details: HTMLDetailsElement, open = true) => { await act(async () => { details.open = open; details.dispatchEvent(new dom.window.Event("toggle")); }); },
     close: async () => { await act(async () => root.unmount()); dom.window.close(); for (const key of keys) { const descriptor = previous.get(key); if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } },
   };
 }
 
 // @test-value v2
 // kind = "contract"
-// claim = "保存済みCoordination回答は再mount後も展開時だけ実receiptを読み、配送完了と受信Turn実行中を分けて表示し開いている間だけ更新を読む"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/839; docs/design/desktop-ui.md Coordination Delivery Details" }
-// fault = "receipt IDだけを状態扱いする、completed受付をTurn完了に読み替える、閉鎖中に履歴を先読みする"
-// observable = "実component DOMのReceipt Delivery/Recipient Turn、共通readの呼出時点・実target/receipt、再mount後と通知後の読取"
+// claim = "保存回答の実receiptを起票元へ照会し、配送完了を受信Turn完了や回答利用と混同せずに表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの保存・配送・利用" }
+// fault = "別のSessionやreceiptを読み、受付完了をTurn完了や回答利用として表示する"
+// observable = "実paneの配送statusとexact target/receiptの読取、対象通知後の状態、pane非表示中の購読解除"
 // observation_boundary = "consumer"
-// scope = "実CoordinationPaneの保存回答からCoordinationAnswerDeliveryとexecution GUI APIへの接続、保存serviceは状態fixture"
+// scope = "CoordinationPaneの最新保存回答からexecution読取まで。storageとIPCはfixture"
 // lifecycle = "permanent"
-// impact = "利用者が保存回答の配送と実反映を再表示で確かめられず誤って作業完了と判断する"
-// distinction = "保存serviceと型検査はdisclosure/lifecycleと利用者向け状態投影を保証しない。小さいDOM consumerで境界を確認する"
+// impact = "利用者が別の応答を確認する、または未完了の処理を完了と誤認する"
+// distinction = "保存serviceと型検査だけではrendererのtarget固定と表示を確認できない"
 // @end-test-value
-test("saved answer delivery lazily reloads exact receipt after remount and separates Turn state", async () => {
+test("saved answer reads the exact delivery without claiming the recipient turn is complete", async () => {
   let turnState = "running";
   const record: CoordinationRecord = { id: "actual-consultation", crewRootSessionId: "actual-parent", kind: "blocker", initiator: { kind: "auxiliary", sessionId: target.sessionId, incarnationId: target.incarnationId }, initiatorTurnId: "origin-turn", originReceiptId: null, caller: null, body: "Need a decision", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 1, answers: [{ id: "answer-1", revision: 1, actor: { kind: "user" }, body: "Use the agreed approach", selectedChoices: [], createdAt: "2026-11-07T00:00:00Z", receiptId: "saved-receipt" }], history: [], createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z" };
   const h = harness(async () => ({ ...description, turnState }), {
@@ -62,70 +56,46 @@ test("saved answer delivery lazily reloads exact receipt after remount and separ
     subscribeCoordinationChanged: () => () => {},
   });
   const navigation = { ...record.initiator, id: record.id };
-  const renderPane = (key: string) => h.root.render(<CoordinationPane key={key} sessionId="viewer-main" active navigation={navigation} />);
+  const renderPane = (active: boolean) => h.root.render(<CoordinationPane sessionId="viewer-main" active={active} navigation={navigation} />);
   try {
-    await act(async () => renderPane("first"));
-    assert.equal(h.requests.length, 0);
-    assert.equal(h.dom.window.document.querySelector(".coordination-answer-delivery summary")?.textContent, "Saved · Delivery Details");
-    await h.toggle(h.dom.window.document.querySelector<HTMLDetailsElement>(".coordination-answer-delivery")!);
-    const pairs = [...h.dom.window.document.querySelectorAll("dt")].map((term) => [term.textContent, term.nextElementSibling?.textContent]);
-    assert.ok(pairs.some(([label, value]) => label === "Receipt Delivery" && value === "Completed"));
-    assert.ok(pairs.some(([label, value]) => label === "Recipient Turn" && value === "Running"));
+    await act(async () => renderPane(true));
+    assert.match(h.dom.window.document.body.textContent!, /Delivery Completed/);
+    assert.doesNotMatch(h.dom.window.document.body.textContent!, /Turn Completed|Answer Used/);
     assert.deepEqual(h.requests[0], { owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } });
     await act(async () => { for (const listener of h.listeners) listener("other-session"); });
     assert.equal(h.requests.length, 1);
-    turnState = "completed";
+    turnState = "failed";
     await act(async () => { for (const listener of h.listeners) listener(target.sessionId); });
-    assert.equal(h.requests.length, 2);
-    await act(async () => renderPane("reopened"));
-    assert.equal(h.requests.length, 2);
+    assert.match(h.dom.window.document.body.textContent!, /Delivery Completed · Turn Failed/);
+    await act(async () => renderPane(false));
     assert.equal(h.listeners.size, 0);
-    await h.toggle(h.dom.window.document.querySelector<HTMLDetailsElement>(".coordination-answer-delivery")!);
+    await act(async () => renderPane(true));
     assert.equal(h.requests.length, 3);
-    assert.match(h.dom.window.document.body.textContent!, /Recipient TurnCompleted/);
   } finally { await h.close(); }
 });
 
 // @test-value v2
 // kind = "contract"
-// claim = "回答配送の失敗・不明と保存結果の取得を実受付の同じ宛先へ接続し、閲覧失敗時も別Sessionや最新Turnへfallbackしない"
-// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/836#Session・受付・Turnの読取入口; https://github.com/natumekazuki/WithMate/issues/839" }
-// fault = "存在しない受付を配送済みに見せる、回答結果を現在Sessionから取得する、一覧表示だけで全出力本文を先読みする"
-// observable = "Delivery Unknown/Failed表示、明示操作までのread件数、出力paging requestのtarget/receipt/index/offsetと連結本文"
+// claim = "回答配送を確認できない時は不明と示し、同じreceiptの再読取で失敗を判別する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの保存・配送・回復" }
+// fault = "取得失敗を配送成功に見せる、または再確認時に別のSessionやreceiptへfallbackする"
+// observable = "Delivery Unknown/Failedと明示retry後のexact target/receiptへの読取"
 // observation_boundary = "consumer"
-// scope = "保存回答のexecution/出力一覧/本文の必要時取得。storageとIPC認可はfixture境界"
+// scope = "保存回答の配送状態の読取と再試行。storageとIPC認可はfixture"
 // lifecycle = "permanent"
-// impact = "利用者が別Turnの答えを回答の実反映と誤認するか、未確認の配送を成功扱いする"
-// distinction = "共通reader単体はCoordination回答から出力の明示読取までの宛先固定と表示を確認しない"
+// impact = "未確認の配送を成功と誤認し、相談を放置する"
+// distinction = "共通reader単体はCoordination回答からの宛先固定と利用者向け不明表示を確認しない"
 // @end-test-value
-test("answer delivery keeps unknown failures and lazily pages only the exact recipient result", async () => {
+test("answer delivery preserves unknown and failure for the exact receipt", async () => {
   let unavailable = true;
-  const h = harness(async (operation, request) => {
-    if (operation === "get_execution") return unavailable ? { ok: false, code: "EXECUTION_NOT_FOUND", message: "Exact receipt unavailable.", effect: "none" } : { ...description, receiptState: "failed", turnState: "failed", resultState: "partial" };
-    if (operation === "list_execution_outputs") return { ...description, resultState: "partial", finality: "identified", items: [{ ...unit, index: 0, textChars: 10 }], offset: 0, total: 1, nextOffset: null };
-    const offset = (request as { offset: number }).offset;
-    return { ...description, unit, finality: "identified", text: offset === 0 ? "first " : "last", offset, nextOffset: offset === 0 ? 6 : null, totalChars: 10 };
-  });
+  const h = harness(async () => unavailable ? { ok: false, code: "EXECUTION_NOT_FOUND", message: "Exact receipt unavailable.", effect: "none" } : { ...description, receiptState: "failed", turnState: "failed" });
   try {
     await act(async () => h.root.render(<CoordinationAnswerDelivery ownerSessionId="viewer-main" target={target} receiptId="saved-receipt" />));
-    await h.toggle(h.dom.window.document.querySelector("details")!);
     assert.match(h.dom.window.document.body.textContent!, /Delivery Unknown/);
-    assert.equal(h.dom.window.document.querySelector("dl"), null);
     unavailable = false;
     const retry = h.dom.window.document.querySelector("button")!;
     await act(async () => retry.click());
-    assert.match(h.dom.window.document.body.textContent!, /Receipt DeliveryFailed/);
-    assert.equal(h.requests.length, 2);
-    const resultDetails = h.dom.window.document.querySelectorAll("details")[1];
-    await h.toggle(resultDetails);
-    assert.equal(h.requests.at(-1)?.operation, "list_execution_outputs");
-    assert.equal(h.requests.some(({ operation }) => operation === "get_execution_output"), false);
-    const readButton = [...h.dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Read Final Answer 1")!;
-    await act(async () => readButton.click());
-    const more = [...h.dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Load More Output")!;
-    await act(async () => more.click());
-    assert.equal(h.dom.window.document.querySelector("pre")?.textContent, "first last");
-    assert.deepEqual(h.requests.slice(-2).map(({ operation, request }) => ({ operation, request })), [0, 6].map((offset) => ({ operation: "get_execution_output", request: { target, receiptId: "saved-receipt", index: 0, offset } })));
-    assert.ok(h.requests.every(({ owner }) => owner === "viewer-main"));
+    assert.match(h.dom.window.document.body.textContent!, /Delivery Failed/);
+    assert.deepEqual(h.requests.map(({ owner, operation, request }) => ({ owner, operation, request })), [0, 1].map(() => ({ owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } })));
   } finally { await h.close(); }
 });
