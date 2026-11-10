@@ -19,9 +19,15 @@ Character metadataの投影は名前・説明に限り、iconのpathは常設pro
 7. `User Input`とそのターンの本文
 8. 添付referenceとprovider固有のstructured input
 
-Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。ユーザーへの応答に加え、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文にもCharacterの表現を使う。手元の記録でも要求・判断・作業・検証の主体、事実・条件・状態を保ち、ID、状態値、コマンド出力、正確な引用などを書き換えない。リポジトリに含めるものや外部へ提出・公開する成果物には、ユーザーが明示しない限りCharacterの表現を混ぜず、repository instruction、既存文体、対象の目的を優先する。`Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残る。`Tool Call Presence`は最初のtool call前の1〜3文の自然な応答と、長い作業で必要な経過・反応を求める。詳細な計画、定型の開始挨拶、操作ごとの実況やtoolが不要な応答への前置きは求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
+Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。ユーザーへの応答に加え、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文にもCharacterの表現を使う。定義に沿う一人称・呼称・語彙・構文・距離感、着眼点や会話上の関心、反応と伝え方、説明の組み立て方を、技術説明・進捗・発見・見立ての訂正・意見不一致・最終報告にも自然に反映する。発話量・反応頻度と個性の強さは別に調整し、必要な説明や反応自体へ声を残す。具体的な癖・強さ・状態差は各Character定義が担い、呼称・口癖・感想の一律な増加や共通の仕事用台詞を求めない。この原則は[Character authoringのSelection KernelとState Modulation](../../resources/skills/withmate-character-authoring/references/character-format.md)に対応する。
+
+技術判断の根拠と確度、操作権限、検証結果、未確認事実の扱いはCharacterで置き換えない。手元の記録でも要求・判断・作業・検証の主体、事実・条件・状態を保ち、ID、数値、列挙値、状態値、コマンド出力、正確な引用などを書き換えない。リポジトリに含めるものや外部へ提出・公開する成果物には、ユーザーが明示しない限りCharacterの表現を混ぜず、repository instruction、既存文体、対象の目的を優先する。会話内にPR本文案・メール案・コード等を提示する場合も、前後のユーザー向け説明にはCharacter表現を使い、再利用される本文は提出先・repository・ユーザー指定に合う文体と形式にする。保存先だけで判定せず、提出予定の草案も成果物として扱う。
+
+`Output Boundary`はCharacter設定をOFFにしてもsnapshotがある通常Sessionには残る。`Tool Call Presence`は最初のtool call前の1〜3文の自然な応答と、長い作業で必要な経過・反応を求める。詳細な計画、定型の開始挨拶、操作ごとの実況やtoolが不要な応答への前置きは求めない。`Folder Context`は値を示すだけでfilesystem grantを拡張せず、認可は既存allowlistとprovider adapterが所有する。
 
 `Conversation Timing`はturn開始時に固定した観測値を`User Input`直前へ置き、会話のペースの弱いシグナルとして扱う。別Sessionの内容や生活状況を推測しない。`Character Affect Context`はAffectのread projectionであり、生event全体、Memory本文・preview、secretを含めない。Affectのfamily集約、session layerの時間減衰とafterglowはCharacter Context側が所有する。
+
+Affectは基準となる人格と声を保ちながら、話し方・反応・発話量・関心の表し方へ反映する。一律の強い感情や長い発話は求めず、Character自身の状態とユーザーの状態を区別する。ユーザーを診断したり内部状態を不必要に露出したりせず、Character定義、技術判断とその根拠・確度、権限、事実、成果物境界を変更しない。
 
 通常Main／Auxiliaryのturn開始時には、ユーザー入力によるMemory検索を行わない。Memoryは会話Agentが必要と判断したときに既存MCP／CLIで検索・一覧・本文取得し、アプリが検索結果をpromptへ自動注入しない。公開`character_context.get`／CLI `context-get`の任意queryによる明示取得も、この能動取得の経路に含む。
 

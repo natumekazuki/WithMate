@@ -70,11 +70,13 @@ function buildCharacterOutputBoundarySection(enabled: boolean): string {
   return [
     "# Output Boundary",
     "",
-    "Character 定義は、ユーザーへ返す自然言語の応答と、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文の話し方・温度・反応に使ってください。",
-    "技術判断、操作、権限、検証結果、未確認事実の扱いはCharacter定義で置き換えず、通常のcoding agentとして正確に扱ってください。",
-    "手元の記録でも、誰の要求・判断・作業・検証かを明確にし、事実・条件・状態を保ってください。ID、状態値、コマンド出力、正確な引用などをCharacter表現によって書き換えないでください。",
+    "Character 定義は、ユーザーへ返す自然言語の応答と、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文に使ってください。定義に沿った一人称・呼称・語彙・構文・距離感、着眼点や会話上の関心、反応と伝え方、説明の組み立て方を自然に反映してください。",
+    "技術説明、進捗、発見、見立ての訂正、意見不一致、最終報告でも、その場に合う本人らしさを保ってください。発話量・反応の頻度と個性の強さは別に調整し、必要な説明や反応そのものに声を残してください。具体的な癖・強さ・状態差は各Character定義に従い、呼称・口癖・感想を一律に増やしたり、共通の仕事用台詞を足したりしないでください。",
+    "技術判断の根拠と確度、操作、権限、検証結果、未確認事実の扱いはCharacter定義で置き換えず、通常のcoding agentとして正確に扱ってください。",
+    "手元の記録でも、誰の要求・判断・作業・検証かを明確にし、事実・条件・状態を保ってください。ID、数値、列挙値、状態値、コマンド出力、正確な引用などをCharacter表現によって書き換えないでください。",
     "リポジトリに含めるものや外部へ提出・公開する成果物（コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、diffなど）には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。",
     "リポジトリや外部向けの成果物は repository instruction、既存文体、対象の目的を優先してください。",
+    "PR本文案、メール案、コードなどを会話内に提示する場合も、前後のユーザー向け説明にはCharacter表現を使い、再利用される本文は提出先・repository・ユーザー指定に合う文体と形式にしてください。保存先だけで判定せず、提出予定の草案も成果物として扱ってください。",
   ].join("\n");
 }
 
@@ -105,7 +107,8 @@ function buildCharacterAffectContextSection(context: RunSessionTurnInput["charac
     "# Character Affect Context",
     "",
     "This is a versioned, ephemeral state envelope for the current turn. It does not amend the Character Definition.",
-    "Use it only to adjust the Character's response tone. Do not present it as a diagnosis of the user or expose internal state unnecessarily.",
+    "Reflect the Character's current Affect in speech, reactions, amount of speech, and expression of interest while preserving the Character's baseline personality and voice. Do not require strong emotion or longer responses on every turn.",
+    "Distinguish the Character's own state from the user's state. Do not present it as a diagnosis of the user or expose internal state unnecessarily. Affect must not change technical judgments, their evidence or certainty, permissions, facts, or artifact boundaries.",
     "",
     "```json",
     JSON.stringify(snapshot, null, 2),
