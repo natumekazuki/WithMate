@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { BackgroundMemoryFileAccess } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import { BackgroundMemoryFileAccessError } from "./background-memory-file-access.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
+import { MemoryFileAccessError } from "./memory-file-access.js";
 import { assertRuntimeTurnAdmission, reportRuntimeTurnOperationError, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
@@ -93,8 +93,8 @@ export type MemoryV6StorageAccess = {
 };
 
 export type MemoryV6ProtectedObjectImporter = {
-  inspect(file: MemoryAppendFileInput, fileAccess?: BackgroundMemoryFileAccess): Promise<MemoryProtectedObjectInputFileInspection>;
-  prepare(input: { entryId: string; file: MemoryAppendFileInput; fileAccess?: BackgroundMemoryFileAccess }): Promise<MemoryV6AppendProtectedObjectInput>;
+  inspect(file: MemoryAppendFileInput, fileAccess?: MemoryFileAccess): Promise<MemoryProtectedObjectInputFileInspection>;
+  prepare(input: { entryId: string; file: MemoryAppendFileInput; fileAccess?: MemoryFileAccess }): Promise<MemoryV6AppendProtectedObjectInput>;
   discardPrepared?(input: { objectId: string }): Promise<void>;
 };
 
@@ -102,12 +102,12 @@ export type MemoryV6ProtectedObjectExporter = {
   exportFile(input: {
     metadata: MemoryV6ProtectedObjectExportMetadata;
     outputPath: string;
-    fileAccess?: BackgroundMemoryFileAccess;
+    fileAccess?: MemoryFileAccess;
   }): Promise<{ bytesWritten: number }>;
   exportFiles?(input: {
     metadata: readonly MemoryV6ProtectedObjectExportMetadata[];
     outputDirectoryPath: string;
-    fileAccess?: BackgroundMemoryFileAccess;
+    fileAccess?: MemoryFileAccess;
   }): Promise<{
     files: Array<{
       objectId: string;
@@ -250,7 +250,7 @@ function fingerprint(value: unknown): string {
 }
 
 function storageError(error: unknown): MemoryError | null {
-  if (error instanceof BackgroundMemoryFileAccessError) {
+  if (error instanceof MemoryFileAccessError) {
     return { ...memoryForbiddenError({ message: error.message }), effect: error.effect };
   }
   if (error instanceof MemoryV6FileCleanupError) {
@@ -338,7 +338,7 @@ function fileImportErrorField(index: number, field: MemoryProtectedObjectImportE
 }
 
 function toFileImportError(error: unknown, index: number): MemoryV6FileImportError {
-  if (error instanceof BackgroundMemoryFileAccessError) {
+  if (error instanceof MemoryFileAccessError) {
     return new MemoryV6FileImportError({ ...memoryForbiddenError({ message: error.message }), field: `files[${index}].path` });
   }
   if (error instanceof MemoryProtectedObjectImportError) {
@@ -621,7 +621,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    if (principal.type === "session_binding" && principal.readTargets !== undefined && !principal.fileAccess?.exportRoot) {
+    if (principal.type === "session_binding" && !principal.fileAccess?.exportRoot) {
       return toMemoryErrorResponse({ ...memoryForbiddenError(), effect: "none" });
     }
     const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
@@ -653,7 +653,7 @@ export class MemoryV6Service {
       const result = await this.deps.protectedObjectExporter.exportFile({
         metadata,
         outputPath: validated.value.outputPath,
-        fileAccess: principal.type === "session_binding" && principal.readTargets !== undefined ? principal.fileAccess : undefined,
+        fileAccess: principal.type === "session_binding" ? principal.fileAccess : undefined,
       });
       return createMemoryGetFileResponse({
         objectId: metadata.objectId,
@@ -665,7 +665,7 @@ export class MemoryV6Service {
       });
     } catch (error) {
       if (error instanceof RuntimeTurnInactiveError) throw error;
-      if (error instanceof BackgroundMemoryFileAccessError) return storageErrorResponse(error);
+      if (error instanceof MemoryFileAccessError) return storageErrorResponse(error);
       return toMemoryErrorResponse({
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
@@ -687,7 +687,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    if (principal.type === "session_binding" && principal.readTargets !== undefined && !principal.fileAccess?.exportRoot) {
+    if (principal.type === "session_binding" && !principal.fileAccess?.exportRoot) {
       return toMemoryErrorResponse({ ...memoryForbiddenError(), effect: "none" });
     }
     const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
@@ -719,7 +719,7 @@ export class MemoryV6Service {
       const result = await this.deps.protectedObjectExporter.exportFiles({
         metadata,
         outputDirectoryPath: validated.value.outputDirectoryPath,
-        fileAccess: principal.type === "session_binding" && principal.readTargets !== undefined ? principal.fileAccess : undefined,
+        fileAccess: principal.type === "session_binding" ? principal.fileAccess : undefined,
       });
       return createMemoryExportFilesResponse({
         entryId: validated.value.entryId,
@@ -728,7 +728,7 @@ export class MemoryV6Service {
       });
     } catch (error) {
       if (error instanceof RuntimeTurnInactiveError) throw error;
-      if (error instanceof BackgroundMemoryFileAccessError) return storageErrorResponse(error);
+      if (error instanceof MemoryFileAccessError) return storageErrorResponse(error);
       return toMemoryErrorResponse({
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
@@ -842,7 +842,7 @@ export class MemoryV6Service {
     }
     const files = validated.value.files ?? [];
     const hasFiles = files.length > 0;
-    if (hasFiles && principal.type === "session_binding" && principal.readTargets !== undefined && !principal.fileAccess) {
+    if (hasFiles && principal.type === "session_binding" && !principal.fileAccess) {
       return toMemoryErrorResponse({ ...memoryForbiddenError(), effect: "none" });
     }
     if (hasFiles && !this.deps.protectedObjectImporter) {
@@ -890,7 +890,7 @@ export class MemoryV6Service {
           entryId: entryId ?? `mem-${randomUUID()}`,
           files,
           fileQuotaBytes,
-          fileAccess: principal.type === "session_binding" && principal.readTargets !== undefined ? principal.fileAccess : undefined,
+          fileAccess: principal.type === "session_binding" ? principal.fileAccess : undefined,
         })
         : [];
       let result;
@@ -968,7 +968,7 @@ export class MemoryV6Service {
     entryId: string;
     files: readonly MemoryAppendFileInput[];
     fileQuotaBytes: number;
-    fileAccess?: BackgroundMemoryFileAccess;
+    fileAccess?: MemoryFileAccess;
   }): Promise<MemoryV6AppendProtectedObjectInput[]> {
     if (!this.deps.protectedObjectImporter) {
       throw new Error("Memory protected object importer is not configured.");

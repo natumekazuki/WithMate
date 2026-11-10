@@ -52,6 +52,7 @@ import {
   memoryTargetSchema,
 } from "./withmate-memory-mcp-general.js";
 import { buildWithMateMemoryMcpRuntimeBody } from "./withmate-memory-mcp-operation.js";
+import { MEMORY_FILE_ACCESS_USAGE } from "../../../src-shared/memory/memory-file-access.js";
 import { createMemoryInputValidationError, memoryInputErrorSchema } from "./withmate-memory-input-error.js";
 
 export type McpRuntimeDeps = {
@@ -763,6 +764,7 @@ const appendEpisodeInputSchema = z.object({
 ] });
 
 export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
+  MEMORY_FILE_ACCESS_USAGE,
   "Normal turns inject Character Affect state, not Memory. Use character_context.get to refresh missing, stale, or insufficient Affect context; its optional query explicitly retrieves Character Memory.",
   "When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
   "For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",

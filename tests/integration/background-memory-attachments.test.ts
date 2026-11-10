@@ -13,7 +13,7 @@ import { BACKGROUND_REGISTRATION_OPERATIONS, getBackgroundMemoryFileOperations }
 import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src-shared/settings/provider-settings-state.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import { backgroundMemoryRegistrationHandlers } from "../../src-electron/memory/background-memory-registration.js";
-import { captureBackgroundMemoryFileAccess } from "../../src-electron/memory/background-memory-file-access.js";
+import { captureBackgroundMemoryFileAccess } from "../../src-electron/memory/memory-file-access.js";
 import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } from "../../src-electron/memory/memory-protected-object-exporter.js";
 import { inspectMemoryProtectedObjectInputFile, prepareMemoryProtectedObjectFile } from "../../src-electron/memory/memory-protected-object-importer.js";
 import { MemoryProtectedObjectStore } from "../../src-electron/memory/memory-protected-object-store.js";

@@ -106,7 +106,8 @@ async function createRuntimeFixture(options: {
     agentRuntimeBindingRegistry: bindings,
     providerAgentRuntimeTurns: turns,
     resolveActorSession: (sessionId) => sessionId === "session-a"
-      ? { id: "session-a", providerId: "codex", characterId: "character-a" }
+      ? { id: "session-a", providerId: "codex", characterId: "character-a",
+        resolveMemoryFileAccess: async () => ({ readRoots: [tempDirectory], exportRoot: tempDirectory }) }
       : null,
     resolveProjectById: (id) => id === PROJECT_ID ? { id: PROJECT_ID, displayName: "General Memory" } : null,
     resolveKnownProjectByPath: (projectPath) => projectPath === PROJECT_PATH

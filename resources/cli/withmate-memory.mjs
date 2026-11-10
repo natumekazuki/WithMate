@@ -48,6 +48,8 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 }) : target, mod));
 var __toCommonJS = (mod) => __hasOwnProp.call(mod, "module.exports") ? mod["module.exports"] : __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 var __require = /* #__PURE__ */ (() => createRequire(import.meta.url))();
+// src-shared/memory/memory-file-access.ts
+var MEMORY_FILE_ACCESS_USAGE = "Session-bound attachments may only be imported from the Session Workspace, allowed Additional Directories, or SessionFolder. Normal turns may explicitly restore files within those roots; background restoration is restricted to SessionFolder/memory-exports. Auxiliary uses its own Workspace and Additional Directories and its parent Main SessionFolder. Restoration is a local write: plan and Codex read-only modes forbid it. Missing file authority and symlink/junction escapes are rejected; existing output files are never overwritten.";
 // src-electron/platform/memory/memory-discovery.ts
 var WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v2";
 var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6.current.json";
@@ -23938,7 +23940,8 @@ var backgroundAffectCandidateSchema = object$1({
 	"必要な会話・操作結果・許可された既存Memoryを自分で選んで確認し、今回登録する変化と過去分の再検討を判断する。継続threadの過去の応答は現在の保存状態や権限の正本ではない。",
 	"前回失敗の情報がある場合は、次の会話情報と合わせて必要な過去分も再検討する。現在Affectと途中まで保存された記録を確認し、失敗したから全件未保存とは決めつけず、直後の自動再試行loopは行わない。",
 	"Characterの性格・価値観と、会話で確認できる出来事を根拠に、変化の原因・対象・感情の種類・強さ・layerを選ぶ。既存Affectも踏まえ、今回登録する必要のある変化を判断する。",
-	"対話による追加確認や承認を求めず、指定された材料で処理する。",
+	"サブエージェント・別Agentの使用や作成、他Agentへの委譲・相談、別Sessionや追加のAgent実行の起動、常駐・定期実行、ユーザーや他者への質問・承認要求・通知は行わず、この実行内で完結する。",
+	"操作は許可された情報の参照と、この用途で許可されたAffect管理操作に限定する。それ以外のファイル・DB・設定・Git・Issue・Session Graph・Repository Glossaryなどの変更や外部送信は行わない。",
 	"主会話Agentの非公開の内面を復元・診断したとは扱わない。",
 	"会話を基本材料とし、作業結果の裏付けが必要な場合だけ操作の成否と必要な詳細を参照する。欠落した情報は補完しない。",
 	"原因・感情の対象・根拠となる会話の位置を保ち、作業上の失敗を根拠なくユーザーへの敵意へ変換しない。",
@@ -25424,6 +25427,7 @@ var appendEpisodeInputSchema = object$1({
 	not: { anyOf: [{ required: ["idempotencyKey"] }, { required: ["episode"] }] }
 }] });
 var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
+	MEMORY_FILE_ACCESS_USAGE,
 	"Normal turns inject Character Affect state, not Memory. Use character_context.get to refresh missing, stale, or insufficient Affect context; its optional query explicitly retrieves Character Memory.",
 	"When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
 	"For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
@@ -26138,6 +26142,9 @@ Registration inputs:
 Affect management:
   affect-correct requires reason and expectedVersion. Normal turns also require explicitUserRequest=true; the app-managed background Affect task derives correction authority from its binding.
   affect-reset always requires an explicit user request and is not available to background tasks.
+
+File access:
+  ${MEMORY_FILE_ACCESS_USAGE}
 
 Examples:
   withmate-memory instances

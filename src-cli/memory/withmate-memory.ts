@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { MEMORY_FILE_ACCESS_USAGE } from "../../src-shared/memory/memory-file-access.js";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -244,6 +245,9 @@ Registration inputs:
 Affect management:
   affect-correct requires reason and expectedVersion. Normal turns also require explicitUserRequest=true; the app-managed background Affect task derives correction authority from its binding.
   affect-reset always requires an explicit user request and is not available to background tasks.
+
+File access:
+  ${MEMORY_FILE_ACCESS_USAGE}
 
 Examples:
   withmate-memory instances

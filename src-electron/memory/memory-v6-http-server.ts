@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 
 import { createMemoryErrorResponse, type MemoryAuditResponse, type MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
 import { validateMemoryAppendEntriesRequest } from "../../src-shared/memory/memory-validation.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import {
@@ -104,6 +105,7 @@ export type AgentRuntimeActorSession = {
   characterId: string;
   workspacePath?: string;
   source?: AffectSessionSource;
+  resolveMemoryFileAccess?: (outputPath?: string) => Promise<MemoryFileAccess>;
 };
 
 export type AgentRuntimeExtensionRequest = {
@@ -1431,6 +1433,11 @@ async function resolveRouteAgentRuntimeBinding(input: {
     return { ok: false, error: body.error };
   }
   const principal = createSessionBindingMemoryPrincipal(binding, actorSession, authority);
+  if (!background && principal.type === "session_binding" && fileOperationRoutes.has(input.route)) {
+    const request = body.value && typeof body.value === "object" ? body.value as Record<string, unknown> : {};
+    const outputPath = input.route === "get_file" ? request.outputPath : input.route === "export_files" ? request.outputDirectoryPath : undefined;
+    principal.fileAccess = await actorSession.resolveMemoryFileAccess?.(typeof outputPath === "string" ? outputPath : undefined);
+  }
   let register: (() => Promise<unknown>) | undefined;
   if (background && principal.type === "session_binding") {
     principal.sourceKind = background.history.source.kind;

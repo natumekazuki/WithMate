@@ -150,6 +150,7 @@ import {
   saveSessionFile,
 } from "./files/session-files.js";
 import { MateStorage } from "./mate/mate-storage.js";
+import { captureSessionMemoryFileAccess } from "./memory/memory-file-access.js";
 import { MateProfileItemStorage } from "./mate/mate-profile-item-storage.js";
 import { WindowEntryLoader } from "./windows/window-entry-loader.js";
 import { AuxWindowService } from "./auxiliary/aux-window-service.js";
@@ -732,6 +733,8 @@ async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "
       providerId: session.provider,
       characterId: session.characterId,
       workspacePath: session.workspacePath,
+      resolveMemoryFileAccess: (outputPath?: string) => captureSessionMemoryFileAccess(
+        mainStoreContext.executionSelections.apply(session), resolveSessionFilesDirectory(app.getPath("userData"), session.id), outputPath),
       source: { kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
     };
   }
@@ -747,6 +750,8 @@ async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "
         providerId: auxiliary.provider,
         characterId: auxiliary.characterId,
         workspacePath: auxiliary.workspacePath,
+        resolveMemoryFileAccess: (outputPath?: string) => captureSessionMemoryFileAccess(
+          mainStoreContext.executionSelections.apply(auxiliary), resolveSessionFilesDirectory(app.getPath("userData"), parent.id), outputPath),
         source: { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: getSessionIncarnationId(auxiliary),
           parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } },
       }

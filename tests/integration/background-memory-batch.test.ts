@@ -11,7 +11,7 @@ import type { BackgroundPurpose } from "../../src-shared/agent-runtime/backgroun
 import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src-shared/settings/provider-settings-state.js";
 import { backgroundMemoryRegistrationHandlers } from "../../src-electron/memory/background-memory-registration.js";
 import { registerBackgroundAffect } from "../../src-electron/character/background-affect-registration.js";
-import { captureBackgroundMemoryFileAccess } from "../../src-electron/memory/background-memory-file-access.js";
+import { captureBackgroundMemoryFileAccess } from "../../src-electron/memory/memory-file-access.js";
 import { inspectMemoryProtectedObjectInputFile, prepareMemoryProtectedObjectFile } from "../../src-electron/memory/memory-protected-object-importer.js";
 import { MemoryProtectedObjectStore } from "../../src-electron/memory/memory-protected-object-store.js";
 import { backgroundHistoryFixture as fixture, owner } from "../helpers/background-history-fixture.js";

@@ -15,7 +15,7 @@ import type { BackgroundRegistration } from "./background-registration.js";
 import { classifyBackgroundFailure, projectBackgroundFailure, projectBackgroundExecutionDiagnostic, type BackgroundFailureEvent,
   type BackgroundFailureInput, type BackgroundExecutionDiagnosticEvent } from "./background-failure.js";
 import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
-import { captureBackgroundMemoryFileAccess } from "../memory/background-memory-file-access.js";
+import { captureBackgroundMemoryFileAccess } from "../memory/memory-file-access.js";
 
 export type BackgroundRuntimeEvent =
   | (SessionBackgroundEvent & Readonly<{ source: BackgroundSourceRef }>)

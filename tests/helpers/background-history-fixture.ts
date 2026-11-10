@@ -32,6 +32,7 @@ import { createWithMateSessionHistoryMcpServer } from "../../src-electron/platfo
 import { SESSION_HISTORY_TOOL_OPERATIONS, getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import type { StorageOperationDiagnosticSink } from "../../src-electron/storage/storage-operation-diagnostics.js";
 import type { BackgroundRegistration } from "../../src-electron/providers/background-registration.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
 
 export const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111111", runtimeGenerationId: "22222222-2222-4222-8222-222222222222" };
 export const readOperation = "session_history.route.get_message";
@@ -40,7 +41,8 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   registrationHandlers?: BackgroundRegistration["handlers"], now?: () => Date,
   sourceKinds: BackgroundRegistration["sourceKinds"] = { "character-memory": ["main"], "target-memory": ["main"], affect: ["main"] },
   memoryDependencies?: (directory: string) => Partial<Pick<MemoryV6ServiceDeps,
-    "protectedObjectImporter" | "protectedObjectExporter" | "getMemoryFileQuotaBytes">>) {
+    "protectedObjectImporter" | "protectedObjectExporter" | "getMemoryFileQuotaBytes">>,
+  resolveSessionFileAccess?: (session: Session, outputPath?: string) => Promise<MemoryFileAccess>) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-background-foundation-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
@@ -117,12 +119,14 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
           character_id: string; provider_id: string; parent_session_id: string;
         } | undefined;
         return row ? { id, providerId: row.provider_id, characterId: row.character_id,
+          ...(resolveSessionFileAccess ? { resolveMemoryFileAccess: (outputPath?: string) => resolveSessionFileAccess(sessions.get(id)!, outputPath) } : {}),
           workspacePath: sessions.get(row.parent_session_id)?.workspacePath, source: scope(id).history.source } : null;
       }
       if (sourceKind === "main" && !db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ?").get(id)) return null;
       const session = sessions.get(id);
       const snapshot = readConversationQuerySnapshot(db, "session_messages_v6", id);
       return session ? { id, providerId: session.provider, characterId: session.characterId, workspacePath: session.workspacePath,
+        ...(resolveSessionFileAccess ? { resolveMemoryFileAccess: (outputPath?: string) => resolveSessionFileAccess(session, outputPath) } : {}),
         ...(snapshot ? { source: { kind: "main" as const, sessionId: id, incarnationId: snapshot.incarnationId } } : {}) } : null;
     },
     routeAgentRuntimeExtension: async (request) => await history.route(request) ?? await glossary.route(request) ?? await graph.route(request),

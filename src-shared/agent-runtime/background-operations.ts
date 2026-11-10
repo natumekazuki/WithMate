@@ -1,4 +1,5 @@
-import type { BackgroundMemoryFileAccess, BackgroundPurpose } from "./background-execution-scope.js";
+import type { BackgroundPurpose } from "./background-execution-scope.js";
+import type { MemoryFileAccess } from "../memory/memory-file-access.js";
 import { BACKGROUND_MEMORY_READ_TOOL_OPERATIONS } from "./background-memory-read.js";
 
 export const BACKGROUND_SHARED_READ_TOOL_OPERATIONS: Readonly<Record<string, string>> = {
@@ -29,7 +30,7 @@ export function getBackgroundMemoryFileOperations(): string[] {
 }
 
 export function backgroundMemoryToolOperations(purpose: BackgroundPurpose, registrationConnected: boolean,
-  fileAccess?: BackgroundMemoryFileAccess): Readonly<Record<string, string>> {
+  fileAccess?: MemoryFileAccess): Readonly<Record<string, string>> {
   const registration = BACKGROUND_REGISTRATION_OPERATIONS[purpose];
   return { ...BACKGROUND_MEMORY_READ_TOOL_OPERATIONS,
     ...(fileAccess?.exportRoot ? BACKGROUND_MEMORY_FILE_TOOL_OPERATIONS : {}),
