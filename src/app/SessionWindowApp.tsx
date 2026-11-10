@@ -465,7 +465,6 @@ export default function AgentSessionWindowApp() {
     validateSessionWorkspace,
   } = useSessionWorkspaceAvailability(withmateApi, selectedSession);
   const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
-  const directoryScopeLabel = "Shared · Main + Auxiliary";
   const selectedAuxiliaryRuntimeSession = useMainAuxiliaryRuntimeSession(selectedSession, auxiliaryWorkspace.selectedSession);
   const isAuxiliaryMode = activeAuxiliarySession !== null;
   const selectedSessionId = selectedSession?.id ?? null;
@@ -2093,7 +2092,6 @@ export default function AgentSessionWindowApp() {
   });
   const chatComposerFeature = composerFeature.buildSurface({
     session: activeQueuedTurnEdit ? { ...renderedSession, ...activeQueuedTurnEdit.receipt.captured.request.executionOptions } : renderedSession,
-    directoryScopeLabel,
     canRemoveAdditionalDirectories: true,
     isCharacterAuthoringSession: renderedSession.sessionKind === "character-authoring",
     target: auxiliaryWorkspace.target,

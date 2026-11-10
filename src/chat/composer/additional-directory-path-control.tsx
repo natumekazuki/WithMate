@@ -14,9 +14,8 @@ import { useDialogA11y } from "../../ui/a11y.js";
 import { ButtonContent } from "../../ui/button-content.js";
 import { ComposerIcon } from "./composer-icon.js";
 
-export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate, directoryScopeLabel }: {
+export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate }: {
   disabled: boolean;
-  directoryScopeLabel?: string;
   onAdd: (directoryPath: string) => void | Promise<void>;
   onValidate: (directoryPath: string) => Promise<WorkspaceDirectoryValidationResult>;
 }) {
@@ -118,7 +117,6 @@ export function AdditionalDirectoryPathControl({ disabled, onAdd, onValidate, di
           }
         >
           <h2>Add Directory By Path</h2>
-          {directoryScopeLabel ? <p className="additional-directory-scope">{directoryScopeLabel}</p> : null}
           <form id="additional-directory-path-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
             <DirectoryPathField
               id="additional-directory-path"

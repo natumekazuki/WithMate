@@ -60,7 +60,6 @@ type SessionComposerSendabilityView = {
 export type SessionComposerExpandedProps = {
   queuedTurnEdit?: { busy: boolean; canceling: boolean; unavailable: boolean; onSubmit(): void; onCancel(): void };
   isActive?: boolean;
-  directoryScopeLabel?: string;
   composerController?: { owner: ComposerOwner; registry: ComposerControllerRegistry; initialDraft?: string };
   onRetryComposerSave?: () => void;
   isRunning: boolean;
@@ -246,7 +245,6 @@ export function SessionComposerExpanded({
   onToggleSkillPicker,
   onOpenPromptTemplates = () => {},
   onAddAdditionalDirectory,
-  directoryScopeLabel,
   onValidateAdditionalDirectory,
   onToggleAdditionalDirectoryList,
   onJumpToBottom,
@@ -535,7 +533,6 @@ export function SessionComposerExpanded({
                 <AdditionalDirectoryPathControl
                   key={`${controllerOwner.kind}:${controllerOwner.id}`}
                   disabled={composerControlsDisabled}
-                  directoryScopeLabel={directoryScopeLabel}
                   onAdd={onAddAdditionalDirectory}
                   onValidate={onValidateAdditionalDirectory}
                 />
