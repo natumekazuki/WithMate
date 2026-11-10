@@ -59,14 +59,14 @@ test("saved answer reads the exact delivery without claiming the recipient turn 
   const renderPane = (active: boolean) => h.root.render(<CoordinationPane sessionId="viewer-main" active={active} navigation={navigation} />);
   try {
     await act(async () => renderPane(true));
-    assert.match(h.dom.window.document.body.textContent!, /Delivery Completed/);
+    assert.match(h.dom.window.document.body.textContent!, /Delivered/);
     assert.doesNotMatch(h.dom.window.document.body.textContent!, /Turn Completed|Answer Used/);
     assert.deepEqual(h.requests[0], { owner: "viewer-main", operation: "get_execution", request: { target, receiptId: "saved-receipt" } });
     await act(async () => { for (const listener of h.listeners) listener("other-session"); });
     assert.equal(h.requests.length, 1);
     turnState = "failed";
     await act(async () => { for (const listener of h.listeners) listener(target.sessionId); });
-    assert.match(h.dom.window.document.body.textContent!, /Delivery Completed · Turn Failed/);
+    assert.match(h.dom.window.document.body.textContent!, /Delivered · Turn Failed/);
     await act(async () => renderPane(false));
     assert.equal(h.listeners.size, 0);
     await act(async () => renderPane(true));

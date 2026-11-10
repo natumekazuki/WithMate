@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type {
   CoordinationRecord,
   CoordinationRequest,
@@ -45,10 +45,12 @@ export function CoordinationPane({
   sessionId,
   active,
   navigation,
+  scrollContainerRef,
 }: {
   sessionId: string;
   active: boolean;
   navigation: OpenCoordinationRequest | null;
+  scrollContainerRef?: RefObject<HTMLDivElement | null>;
 }) {
   const [pendingOnly, setPendingOnly] = useState(true);
   const [offset, setOffset] = useState(0);
@@ -58,6 +60,14 @@ export function CoordinationPane({
   const [originError, setOriginError] = useState<{ id: string; message: string } | null>(null);
   const actionsTriggerRef = useRef<HTMLElement>(null);
   const operationInFlight = useRef(false);
+  const savedListScrollTop = useRef(0);
+  const selectedListRow = useRef<string | null>(null);
+  const listRowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const previousView = useRef<string | null>(null);
+  const resetListScroll = () => {
+    savedListScrollTop.current = 0;
+    if (scrollContainerRef?.current) scrollContainerRef.current.scrollTop = 0;
+  };
   const draftKey = `${sessionId}:${selectedId ?? ""}`;
   const draft = drafts[draftKey] ?? { body: "", choices: [], reason: "" };
   const updateDraft = (change: Partial<Draft>) =>
@@ -68,6 +78,8 @@ export function CoordinationPane({
   useEffect(() => {
     setOffset(0);
     setSelectedId(null);
+    savedListScrollTop.current = 0;
+    selectedListRow.current = null;
   }, [sessionId]);
   useEffect(() => {
     if (!navigation) return;
@@ -75,6 +87,17 @@ export function CoordinationPane({
     setOffset(0);
     setSelectedId(navigation.id ?? null);
   }, [navigation]);
+  useLayoutEffect(() => {
+    if (!active || previousView.current === selectedId) return;
+    previousView.current = selectedId;
+    if (scrollContainerRef?.current) {
+      scrollContainerRef.current.scrollTop = selectedId ? 0 : savedListScrollTop.current;
+    }
+    if (!selectedId && selectedListRow.current) {
+      listRowRefs.current.get(selectedListRow.current)?.focus({ preventScroll: true });
+      selectedListRow.current = null;
+    }
+  }, [active, selectedId, scrollContainerRef]);
   const list = useCoordinationQuery(
     {
       operation: "list",
@@ -199,27 +222,38 @@ export function CoordinationPane({
   };
   const buttonsDisabled =
     busyId !== null || Boolean(draft.pendingRequest) || Boolean(detail.error);
-  const renderAnswer = (answer: CoordinationAnswer, historical = false, onEdit?: () => void) => (
-    <article key={answer.id}>
-      <div className="coordination-detail-heading">
-        <strong>{answer.actor.kind === "user" ? "Your Answer" : identityTitle(answer.actor)}</strong>
-        {historical ? <span>Revision {answer.revision}</span> : onEdit ? <button type="button" className="drawer-toggle compact secondary coordination-edit-answer" aria-label="Change Answer" title="Change Answer" onClick={onEdit}><ComposerIcon name="edit" /></button> : null}
-      </div>
-      <MessageRichText text={answer.body} embeddedMedia="text" />
-      {answer.selectedChoices.length && answer.body !== answer.selectedChoices.join("\n") ? <p>{answer.selectedChoices.join(" · ")}</p> : null}
-      {!historical ? <CoordinationAnswerDelivery
-        ownerSessionId={sessionId}
-        target={initiatorTarget}
-        receiptId={answer.receiptId}
-        consumed={Boolean(answer.consumedByOperationId)}
-        active={active}
-      /> : null}
-    </article>
-  );
+  const renderAnswer = (answer: CoordinationAnswer, historical = false, onEdit?: () => void) => {
+    const userAnswer = answer.actor.kind === "user";
+    const answerTime = new Date(answer.createdAt).toLocaleString("en-US");
+    return (
+      <article key={answer.id} className={`message-row coordination-answer ${userAnswer ? "user" : "assistant"}`}>
+        <div className={`message-card ${userAnswer ? "user" : "assistant"}`}>
+          <div className="message-card-content">
+            <div className="coordination-detail-heading">
+              {userAnswer ? (
+                <time dateTime={answer.createdAt} className="messages-navigator-speaker-glyph user" role="img" tabIndex={0} aria-label={`Your Answer · ${answerTime}`} title={`Your Answer · ${answerTime}`}>↗</time>
+              ) : <time dateTime={answer.createdAt} className="coordination-answer-actor" role="img" tabIndex={0} aria-label={`${identityTitle(answer.actor as CoordinationIdentity)} · ${answerTime}`} title={answerTime}>{identityTitle(answer.actor as CoordinationIdentity)}</time>}
+              {historical ? <span>Revision {answer.revision} · {answerTime}</span> : <CoordinationAnswerDelivery
+                ownerSessionId={sessionId}
+                target={initiatorTarget}
+                receiptId={answer.receiptId}
+                consumed={Boolean(answer.consumedByOperationId)}
+                active={active}
+              />}
+              {!historical && onEdit ? <button type="button" className="drawer-toggle compact secondary coordination-edit-answer" aria-label="Change Answer" title="Change Answer" onClick={onEdit}><ComposerIcon name="edit" /></button> : null}
+            </div>
+            <MessageRichText text={answer.body} embeddedMedia="text" />
+            {answer.selectedChoices.length > 0 && answer.body !== answer.selectedChoices.join("\n") ? <p>{answer.selectedChoices.join(" · ")}</p> : null}
+          </div>
+        </div>
+      </article>
+    );
+  };
   const renderDetail = (item: CoordinationRecord) => {
     const latestUserAnswer = [...item.answers].reverse().find((answer) => answer.actor.kind === "user");
     const showEditor = item.respondent.kind === "user" && (!latestUserAnswer || draft.editing || Boolean(draft.pendingRequest));
-    const history = item.history.filter((entry) => entry.operation !== "create");
+    const answerIds = new Set(item.answers.map((answer) => answer.id));
+    const history = item.history.filter((entry) => entry.operation !== "create" && !(entry.operation === "answer" && answerIds.has(entry.operationId)));
     const editAnswer = latestUserAnswer && item.respondent.kind === "user" && !showEditor ? () => updateDraft({
       editing: true,
       ...(draft.editing === undefined ? {
@@ -347,7 +381,7 @@ export function CoordinationPane({
       {history.length || item.answers.length > 1 ? <details className="artifact-fold">
         <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>History</strong></span></summary>
         {item.answers.slice(0, -1).map((answer) => renderAnswer(answer, true))}
-        <ol className="coordination-history">
+        {history.length ? <ol className="coordination-history">
           {history.map((entry) => (
             <li key={entry.operationId}>
               <strong>{({ create: "Created", deliver: "Sent", escalate: "Escalated", answer: "Answered", resolve: "Resolved", consume: "Answer Used", withdraw: "Withdrawn", correct: "Corrected" } as Record<string, string>)[entry.operation] ?? entry.operation}</strong> ·{" "}
@@ -364,7 +398,7 @@ export function CoordinationPane({
               ) : null}
             </li>
           ))}
-        </ol>
+        </ol> : null}
       </details> : null}
     </>
     );
@@ -383,7 +417,7 @@ export function CoordinationPane({
           </button>
         ) : (
           <div className="coordination-filter-tabs" role="group" aria-label="Coordination filter">
-            {([[true, "For You", "Open Consultations For You"], [false, "All", "All Records"]] as const).map(([pending, label, accessibleLabel]) => <button key={String(pending)} type="button" aria-label={accessibleLabel} title={accessibleLabel} aria-pressed={pendingOnly === pending} className={`drawer-toggle compact secondary${pendingOnly === pending ? " active" : ""}`} onClick={() => { setPendingOnly(pending); setOffset(0); }}>{label}</button>)}
+            {([[true, "For You", "Open Consultations For You"], [false, "All", "All Records"]] as const).map(([pending, label, accessibleLabel]) => <button key={String(pending)} type="button" aria-label={accessibleLabel} title={accessibleLabel} aria-pressed={pendingOnly === pending} className={`drawer-toggle compact secondary${pendingOnly === pending ? " active" : ""}`} onClick={() => { if (pendingOnly === pending && offset === 0) return; setPendingOnly(pending); setOffset(0); resetListScroll(); }}>{label}</button>)}
           </div>
         )}
         {!(selectedId ? detail.deleted : list.deleted) ? <button
@@ -436,7 +470,12 @@ export function CoordinationPane({
                 type="button"
                 className="coordination-list-row"
                 key={item.id}
-                onClick={() => setSelectedId(item.id)}
+                ref={(node) => { if (node) listRowRefs.current.set(item.id, node); else listRowRefs.current.delete(item.id); }}
+                onClick={() => {
+                  savedListScrollTop.current = scrollContainerRef?.current?.scrollTop ?? 0;
+                  selectedListRow.current = item.id;
+                  setSelectedId(item.id);
+                }}
               >
                 {identityAvatar(item.initiator)}
                 <span className="coordination-event-copy">
@@ -462,7 +501,7 @@ export function CoordinationPane({
                 type="button"
                 className="drawer-toggle compact secondary"
                 disabled={offset === 0 || list.loading}
-                onClick={() => setOffset(Math.max(0, offset - 30))}
+                onClick={() => { setOffset(Math.max(0, offset - 30)); resetListScroll(); }}
               >
                 Previous
               </button>
@@ -473,7 +512,7 @@ export function CoordinationPane({
                 type="button"
                 className="drawer-toggle compact secondary"
                 disabled={page.nextOffset === null || list.loading}
-                onClick={() => setOffset(page.nextOffset!)}
+                onClick={() => { setOffset(page.nextOffset!); resetListScroll(); }}
               >
                 Next
               </button>

@@ -11,6 +11,9 @@
 .command-monitor-stack.coordination {
   margin-top: 0;
 }
+.command-monitor-shell.coordination .command-monitor-content {
+  padding-top: 0;
+}
 .coordination-toolbar,
 .coordination-detail-heading {
   display: flex;
@@ -20,8 +23,13 @@
   gap: 8px;
 }
 .coordination-navigation {
+  position: sticky;
+  z-index: 2;
+  top: 0;
   flex-wrap: nowrap;
   min-width: 0;
+  padding: 8px 0 6px;
+  background: #12161e;
 }
 .coordination-pane textarea {
   color: var(--ink);
@@ -108,15 +116,45 @@
 }
 .coordination-answers {
   display: grid;
-  gap: 16px;
-  border-top: 1px solid var(--line);
-  padding-top: 14px;
+}
+.coordination-answer.message-row.assistant {
+  grid-template-columns: minmax(0, 1fr);
 }
 .coordination-detail-heading {
   font-size: 12px;
+  line-height: 1.4;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  align-items: flex-start;
 }
 .coordination-detail-heading > span {
   color: var(--muted);
+}
+.coordination-detail-heading > .messages-navigator-speaker-glyph.user {
+  color: var(--character-main);
+  flex: 0 0 24px;
+}
+.coordination-answer-delivery {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding-top: 4px;
+}
+.coordination-answer-delivery .load-error {
+  gap: 8px;
+  padding: 8px 0 0;
+  line-height: 1.4;
+}
+.coordination-answer-actor {
+  max-width: 40%;
+  padding-top: 4px;
+  overflow-wrap: anywhere;
+}
+.coordination-detail-heading > .coordination-parties {
+  flex: 1 1 auto;
+  padding-top: 4px;
+}
+.coordination-answer .message-card-content > :last-child {
+  margin-bottom: 0;
 }
 .coordination-pane .artifact-fold > article {
   margin-top: 14px;
@@ -237,6 +275,7 @@
   width: 28px;
   height: 28px;
   padding: 0;
+  flex: 0 0 auto;
 }
 .coordination-edit-answer .composer-icon { width: 16px; height: 16px; }
 .coordination-recovery {

@@ -56,7 +56,7 @@ export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, 
     ? ` · Turn ${receiptStateLabel(result.turnState)}` : "";
   return <div className="coordination-answer-delivery" aria-busy={loading || undefined}>
     <p className="coordination-parties" role="status">
-      {error ? "Delivery Unknown" : result ? `Delivery ${receiptStateLabel(result.receiptState)}${turnFailure}` : "Checking Delivery"}
+      {error ? "Delivery Unknown" : result ? `${result.receiptState === "completed" ? "Delivered" : `Delivery ${receiptStateLabel(result.receiptState)}`}${turnFailure}` : "Checking Delivery"}
       {consumed ? " · Answer Used" : ""}
     </p>
     {error ? <LoadError message={error} onRetry={() => setRevision((value) => value + 1)} /> : null}

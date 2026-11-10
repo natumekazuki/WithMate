@@ -469,7 +469,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
 - `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、ユーザー担当のopen記録／全記録のページング一覧から詳細へ開く。本文、回答revision、取り下げ理由と後着回答、操作日時・訂正履歴を読み、ユーザー担当の回答・回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の保存、通常queueへの配送、実際の消費・解決を別々に表示する。受付・Session・Turnの内部IDは通常UIへ並べない
 - Coordinationの一覧は本文previewを主にし、34pxのCharacter avatar、Main／Auxiliaryの共通pane iconとSession titleで起票元を識別する。Character名はaccessible nameに保持する。回答があるopen相談は`Reply Recorded` iconを添えるが、Agentの回答をユーザーの回答済みと断定しない。詳細の`Open Origin`は正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxを使い、通常質問と共通の送信icon（`Save And Send Answer`）を明示操作した時だけ保存・送信する。操作名はtooltipとaccessible name、入力groupの名前はaccessible nameに保持する
-- 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameとtooltipを持つiconを使う。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・直近の保存済み回答を主内容とし、回答済みの場合は`Change Answer`で編集を開く。以前の回答と操作履歴を一つの履歴から確認し、解決・理由付き取り下げは起票元行の補助操作へまとめる。操作結果と結果不明時の回復は回答操作の近くに置く
+- 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameとtooltipを持つiconを使う。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・直近の保存済み回答を主内容とし、会話と共通の話者表現に回答と配送状態をまとめ、回答済みの場合は`Change Answer`で編集を開く。回答日時は話者表示のtooltipとaccessible nameから確認できる。以前の回答とその他の操作履歴がある場合は一つの履歴から確認し、表示済み回答と同じ回答操作を重複表示しない。解決・理由付き取り下げは起票元行の補助操作へまとめる。操作結果と結果不明時の回復は回答操作の近くに置く
 - 表示中の最新回答は、回答receiptと保存済み起票元identityに対応する受付配送状態を取得する。受付completedをTurn全体の完了と同一視せず、Turnの失敗・取消・結果不明や回答の利用を区別する。保存済みTurnの内容は起票元の会話を開いて確認し、右ペインに出力viewerを重ねない。取得失敗は不明として再取得できる
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する
@@ -477,7 +477,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - 自分自身の非実行Standaloneではheaderの`Change Role…`から、アプリ内dialogで対象名と変更先`Overall Coordinator`を短く確認してRoleを変更できる。CancelまたはEscapeでは変更せず、変更中は重複操作を止め、失敗時はdialog内から詳細確認・再試行できる。実際のIPC送信Window・mainFrame・保存identity・非実行条件をMainで検証し、既存会話・Workspace・Provider threadを維持してTurnを起動しない
 - right pane 上部には collapsed state の `title handle` を置く
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
-- right pane の本文scrollbarはtab直下からpane下端まで共通の高さにし、`Messages`のfilterと`Glossary`の検索欄は本文の上端へ固定して一覧だけを流す
+- right pane の本文scrollbarはtab直下からpane下端まで共通の高さにし、`Messages`と`Coordination`のfilter・操作欄、`Glossary`の検索欄は本文の上端へ固定して一覧だけを流す。Coordinationは詳細から一覧へ戻る時に、選んだ行とスクロール位置へ戻る
 - Messages navigatorと全履歴query pageは総件数に対してrowをvirtualizeし、All／Bookmarkのいずれも未取得pageを含む全履歴を対象にする。native rowのaccessible nameとfocusを保ち、Arrowで全件内を巡回、Home／Endで先頭／末尾、Enterで本文へjumpする。結果pageの到着でscroll位置を初期化しない。Bookmark切替と会話owner変更では一覧を先頭へ戻し、owner変更ではAllへ戻す。loading／error／Retryと成功0件の空本文を区別する
 - `Generate Memory` は current UI では表示しない
 - Coordinationの閲覧・回答中は、commandやstreaming、相談の更新で選択tab・focus・scroll・draftを変更しない

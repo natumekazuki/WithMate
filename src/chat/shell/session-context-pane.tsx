@@ -491,7 +491,7 @@ export function SessionContextPane({
             </div>
           ) : null}
           <div className={`command-monitor-stack ${activeContextPaneTab}`}>
-            {coordinationSessionId ? <CoordinationPane sessionId={coordinationSessionId} active={visible && activeContextPaneTab === "coordination"} navigation={coordinationNavigation} /> : null}
+            {coordinationSessionId ? <CoordinationPane sessionId={coordinationSessionId} active={visible && activeContextPaneTab === "coordination"} navigation={coordinationNavigation} scrollContainerRef={contentRef} /> : null}
             {activeContextPaneTab === "latest-command" && runningDetailsEntries.length > 0 ? (
               <div className="command-monitor-card">
                 <div className="command-monitor-card-head">

@@ -234,6 +234,120 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
 
 // @test-value v2
 // kind = "contract"
+// claim = "一覧から詳細を開いて戻ると元の行とスクロール位置へ戻り、filter変更では先頭から表示する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md right pane の本文scrollbarとCoordination一覧" }
+// fault = "詳細への遷移で一覧位置を失う、戻った時に選択行へfocusを返さない、または別filterを途中から表示する"
+// observable = "共有スクロール領域のscrollTopと、詳細から戻った後のactiveElement"
+// observation_boundary = "component-behavior"
+// scope = "CoordinationPaneと右ペインから渡される共有スクロール領域。取得APIとスクロール座標はJSDOMのfixture"
+// lifecycle = "permanent"
+// impact = "多件数の相談を確認するたびに読みかけの位置を探し直すことを防ぐ"
+// distinction = "型検査や保存APIのtestでは一覧と詳細の往復時の位置・focusを確認できない"
+// @end-test-value
+test("Coordination restores its list position and focus after opening a detail", async () => {
+  const dom = new JSDOM('<!doctype html><div id="scroll"><div id="root"></div></div>');
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  globals.forEach((name) => Object.defineProperty(globalThis, name, { configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name] }));
+  const initiator = { kind: "main" as const, sessionId: "main", incarnationId: "inc" };
+  const record: CoordinationRecord = {
+    id: "last", crewRootSessionId: "main", kind: "blocker", initiator, initiatorTurnId: "turn", originReceiptId: null, caller: null,
+    body: "Last consultation", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 0, answers: [], history: [],
+    createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z",
+  };
+  const { body, choices, answers, history, ...fields } = record;
+  const item: CoordinationSummary = { ...fields, initiatorMainSessionId: "main", bodyPreview: body };
+  dom.window.withmate = {
+    subscribeCoordinationChanged: () => () => {}, subscribeSessionInvalidation: () => () => {},
+    getCoordinationIdentity: async () => ({ title: "Main", character: { name: "Character", iconPath: "" } }),
+    executeCoordination: async (request: CoordinationRequest) => request.operation === "get" ? { record, initiatorTarget: initiator } : { items: [item], total: 1, nextOffset: null },
+  } as unknown as WithMateWindowApi;
+  const scroll = dom.window.document.getElementById("scroll") as HTMLDivElement;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(createElement(CoordinationPane, { sessionId: "main", active: true, navigation: null, scrollContainerRef: { current: scroll } })));
+    scroll.scrollTop = 420;
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>(".coordination-list-row")!.click());
+    assert.equal(scroll.scrollTop, 0);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Back To List"]')!.click());
+    assert.equal(scroll.scrollTop, 420);
+    assert.equal(dom.window.document.activeElement, dom.window.document.querySelector(".coordination-list-row"));
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="All Records"]')!.click());
+    assert.equal(scroll.scrollTop, 0);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((name, index) => { const descriptor = saved[index]; if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "最新回答の主体・時刻と配送を確認でき、過去の回答や訂正も履歴から読める"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの回答・操作日時・訂正履歴" }
+// fault = "ユーザー回答を識別できなくする、回答日時を失う、または過去回答と訂正を履歴から隠す"
+// observable = "最新回答の本文・日時・主体・配送状態と、過去回答・訂正先への操作"
+// observation_boundary = "component-behavior"
+// scope = "CoordinationPaneの保存回答と履歴。保存と配送読取はfixture"
+// lifecycle = "permanent"
+// impact = "利用者が自分の回答と経緯を区別できず、確認や訂正先への移動を誤る"
+// distinction = "保存coreと型検査はrenderer上の主体・履歴への到達性を確認しない"
+// @end-test-value
+test("Coordination keeps answer identity and meaningful history available", async () => {
+  const dom = new JSDOM('<!doctype html><div id="root"></div>');
+  const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
+  const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
+  globals.forEach((name) => Object.defineProperty(globalThis, name, { configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name] }));
+  const initiator = { kind: "main" as const, sessionId: "main", incarnationId: "inc" };
+  const at = "2026-11-07T00:00:00Z";
+  const answer = { id: "answer-1", revision: 1, actor: { kind: "user" as const }, body: "First answer", selectedChoices: [], createdAt: at };
+  let record: CoordinationRecord = {
+    id: "history", crewRootSessionId: "main", kind: "blocker", initiator, initiatorTurnId: "turn", originReceiptId: null, caller: null,
+    body: "Question", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 1, answers: [answer],
+    history: [{ operationId: answer.id, operation: "answer", actor: answer.actor, at }], createdAt: at, updatedAt: at,
+  };
+  let changed = () => {};
+  const getIds: string[] = [];
+  dom.window.withmate = {
+    subscribeSessionInvalidation: () => () => {},
+    subscribeCoordinationChanged: (listener: (summary: unknown) => void) => { changed = () => listener({ id: record.id, crewRootSessionId: "main", initiator }); return () => {}; },
+    getCoordinationIdentity: async () => ({ title: "Origin", character: { name: "Character", iconPath: "" } }),
+    executeCoordination: async (request: CoordinationRequest) => {
+      if (request.operation === "get") { getIds.push(request.id); return { record, initiatorTarget: initiator }; }
+      return { items: [], total: 0, nextOffset: null };
+    },
+  } as unknown as WithMateWindowApi;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(createElement(CoordinationPane, { sessionId: "main", active: true, navigation: { ...initiator, id: record.id } })));
+    const latest = dom.window.document.querySelector('[aria-label="Saved answers"]')!;
+    const timestamp = latest.querySelector("time")!;
+    assert.equal(timestamp.dateTime, at);
+    assert.match(timestamp.getAttribute("aria-label")!, /Your Answer/);
+    assert.match(latest.textContent!, /First answer/);
+    assert.match(latest.textContent!, /Saved · Not Sent/);
+    record = { ...record, state: "corrected", answerRevision: 2,
+      answers: [answer, { ...answer, id: "answer-2", revision: 2, body: "Revised answer" }],
+      history: [...record.history, { operationId: "answer-2", operation: "answer", actor: answer.actor, at }, { operationId: "correct", operation: "correct", actor: answer.actor, at, correctionId: "corrected" }],
+    };
+    await act(async () => changed());
+    const history = dom.window.document.querySelector<HTMLDetailsElement>("details.artifact-fold")!;
+    history.open = true;
+    assert.match(history.textContent!, /First answer/);
+    const correctionEvent = [...history.querySelectorAll("li")].find((item) => item.textContent?.includes("Corrected"))!;
+    assert.ok(correctionEvent.textContent!.includes(new Date(at).toLocaleString("en-US")));
+    const correction = [...history.querySelectorAll("button")].find((button) => button.textContent === "Open Correction")!;
+    await act(async () => correction.click());
+    assert.equal(getIds.at(-1), "corrected");
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    globals.forEach((name, index) => { const descriptor = saved[index]; if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); });
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "通信失敗は取得済み詳細とdraftを保持し、typed削除済みでは古いrecordを除去してdraftを保ち、遅い取得成功で復活させない"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/839 閉じたWindow・再起動・更新の整合/Crew全体の削除条件" }
 // fault = "一時失敗で入力を失う、削除済みrecordを現行として描画する、または削除確認後の遅い成功を適用して古い本文を復活させる"
