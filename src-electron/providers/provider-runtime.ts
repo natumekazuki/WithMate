@@ -2,10 +2,9 @@ import type { AppSettings } from "../../src-shared/settings/provider-settings-st
 import type { ProviderLogicalPrompt, ProviderDiagnosticMetadata, ProviderUsage, ComposerAttachment, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
-import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { ConversationTimingContext } from "../session/conversation-timing.js";
-import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
+import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
@@ -19,6 +18,12 @@ export type ProviderPromptComposition = {
 
 export type RunSessionTurnInput = {
   session: Session;
+  /** Independent native execution; the source Session remains authorization/workspace context. */
+  executionTarget?: {
+    id: string;
+    threadId: string | null;
+    prompt: ProviderPromptComposition;
+  };
   runtimeOwner?: {
     kind: "main" | "auxiliary";
     id: string;
@@ -27,15 +32,13 @@ export type RunSessionTurnInput = {
   executionOptions: SessionExecutionOptions;
   executionWorkspacePath?: string;
   sessionFolderPath?: string;
-  sessionMemory: SessionMemory;
-  projectMemoryEntries: ProjectMemoryEntry[];
   character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   conversationTimingContext?: ConversationTimingContext;
-  characterContext?: CharacterContextResponse;
+  characterContext?: CharacterAffectContext;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
   /** Resolves only after owned process cleanup is confirmed, independently of turn outcome. */
@@ -45,6 +48,10 @@ export type RunSessionTurnInput = {
   onProviderQuotaTelemetry?: RunSessionTurnProviderQuotaTelemetryHandler;
   onSessionContextTelemetry?: RunSessionTurnSessionContextTelemetryHandler;
 };
+
+export function resolveRunExecutionTarget(input: Pick<RunSessionTurnInput, "session" | "executionTarget">): { id: string; threadId: string | null } {
+  return input.executionTarget ?? input.session;
+}
 
 export function resolveRunWorkspacePath(input: Pick<RunSessionTurnInput, "session" | "executionWorkspacePath">): string {
   const normalized = input.executionWorkspacePath?.trim() ?? "";

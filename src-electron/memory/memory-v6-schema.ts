@@ -35,6 +35,7 @@ export type MemoryV6EntryRow = {
   state: string;
   source_type: MemorySource["type"];
   source_session_id: string | null;
+  source_auxiliary_session_id: string | null;
   source_app_message_id: number | null;
   source_provider_message_id: string | null;
   source_provider_id: string | null;
@@ -66,6 +67,7 @@ export function memoryV6EntrySelectColumns(includeBody = true): string {
   state,
   source_type,
   source_session_id,
+  source_auxiliary_session_id,
   source_app_message_id,
   source_provider_message_id,
   source_provider_id,

@@ -16,14 +16,14 @@ export const sameSessionGraphOwner = (left: SessionGraphOwner, right: SessionGra
 
 export type SessionGraphApplicationServiceDeps = {
     getStore: () => SessionGraphStore;
-    resolveSession: (id: string) => ResolvedSessionGraphSession | null | Promise<ResolvedSessionGraphSession | null>;
+    resolveSession: (id: string, sourceKind?: "main" | "auxiliary") => ResolvedSessionGraphSession | null | Promise<ResolvedSessionGraphSession | null>;
 };
 export class SessionGraphApplicationService {
   readonly #deps: SessionGraphApplicationServiceDeps;
   readonly #listeners = new Set<(sessionId: string) => void>();
   constructor(deps: SessionGraphApplicationServiceDeps) { this.#deps = deps; }
 
-  resolveSession(id: string) { return this.#deps.resolveSession(id); }
+  resolveSession(id: string, sourceKind?: "main" | "auxiliary") { return this.#deps.resolveSession(id, sourceKind); }
   subscribe(listener: (sessionId: string) => void): () => void {
     this.#listeners.add(listener);
     return () => { this.#listeners.delete(listener); };
@@ -31,20 +31,20 @@ export class SessionGraphApplicationService {
   read<K extends SessionGraphReadOperation>(sessionId: string, operation: K, request: SessionGraphUiReadRequest<K>) {
     return this.readTrusted(sessionId, operation, request, () => true);
   }
-  async executeTrusted<K extends SessionGraphOperation>(sessionId: string, operation: K, request: SessionGraphRequest<K>, guard: () => boolean, admission?: RuntimeTurnAdmission, expectedOwner?: SessionGraphOwner): Promise<SessionGraphOperationResult<K>> {
-    return this.execute(sessionId, operation, request, guard, admission, expectedOwner) as Promise<SessionGraphOperationResult<K>>;
+  async executeTrusted<K extends SessionGraphOperation>(sessionId: string, operation: K, request: SessionGraphRequest<K>, guard: () => boolean, admission?: RuntimeTurnAdmission, expectedOwner?: SessionGraphOwner, sourceKind?: "main" | "auxiliary"): Promise<SessionGraphOperationResult<K>> {
+    return this.execute(sessionId, operation, request, guard, admission, expectedOwner, sourceKind) as Promise<SessionGraphOperationResult<K>>;
   }
   readTrusted<K extends SessionGraphReadOperation>(sessionId: string, operation: K, request: SessionGraphUiReadRequest<K>, guard: () => boolean, expectedOwner?: SessionGraphOwner): Promise<SessionGraphUiReadResult<K>> {
     return this.execute(sessionId, operation, request, guard, undefined, expectedOwner) as Promise<SessionGraphUiReadResult<K>>;
   }
-  private async execute<K extends SessionGraphStorageOperation>(sessionId: string, operation: K, request: SessionGraphStorageRequest<K>, guard: () => boolean, admission?: RuntimeTurnAdmission, expectedOwner?: SessionGraphOwner): Promise<SessionGraphStorageResult<K>> {
+  private async execute<K extends SessionGraphStorageOperation>(sessionId: string, operation: K, request: SessionGraphStorageRequest<K>, guard: () => boolean, admission?: RuntimeTurnAdmission, expectedOwner?: SessionGraphOwner, sourceKind?: "main" | "auxiliary"): Promise<SessionGraphStorageResult<K>> {
     const parsed = sessionGraphStorageRequestSchemas[operation].parse(request) as SessionGraphStorageRequest<K>;
-    const captured = await this.#deps.resolveSession(sessionId);
+    const captured = await this.#deps.resolveSession(sessionId, sourceKind);
     if (!captured || (expectedOwner && !sameSessionGraphOwner(expectedOwner, captured.owner))) throw new Error("Session Graph owner is unavailable.");
     const store = this.#deps.getStore();
     const check = async () => {
       assertRuntimeTurnAdmission();
-      const current = await this.#deps.resolveSession(sessionId);
+      const current = await this.#deps.resolveSession(sessionId, sourceKind);
       if (!guard() || !current || current.generation !== captured.generation || this.#deps.getStore() !== store
         || !sameSessionGraphOwner(current.owner, captured.owner) || current.providerId !== captured.providerId
         || current.identity.sessionId !== captured.identity.sessionId || current.identity.character?.id !== captured.identity.character?.id) {

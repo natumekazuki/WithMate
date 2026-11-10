@@ -1,4 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
+import { MemoryV6WorkerClient } from "../../src-electron/memory/memory-v6-worker-client.js";
+import { resolveMemoryV6ProjectCandidate } from "../../src-electron/memory/memory-v6-project-resolver.js";
+import { resolveMemoryV6Target } from "../../src-electron/memory/memory-v6-context-resolver.js";
+import type { MemoryV6SessionBindingPrincipal } from "../../src-electron/memory/memory-v6-permission.js";
 import { describe, it } from "node:test";
 
 import {
@@ -9,42 +18,67 @@ import {
 import { PROVIDER_TEXT_PREVIEW_LIMIT, boundProviderRawItem } from "../../src-electron/session/provider-payload-limits.js";
 
 describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
-  // @test-value v1
+  // @test-value v2
   // kind = "invariant"
-  // claim = "actor Sessionのcharacterとknown workspace projectだけがcanonical authorityへ投影される"
+  // claim = "同じGit Projectのcheckoutは既存DB IDへ解決され、新規Gitは初回保存用ID、非GitはProject権限なしになる"
   // oracle = { type = "adr", ref = "ADR-024" }
-  // failure_mode = "binding authorityがcaller入力や未canonicalなworkspace値を許可集合へ投影する"
+  // fault = "DBの既存IDよりcandidate IDを優先しMemory targetを見失うか非GitへProject権限を与える"
+  // observable = "実storage Workerを使ったauthorityの許可IDとMemory targetの解決結果"
+  // observation_boundary = "public-boundary"
   // scope = "provider-agent-runtime-authority-snapshot"
   // lifecycle = "permanent"
+  // impact = "通常・背景実行が保存済みProject Memoryを参照できない"
+  // distinction = "型検査や固定IDのmockでは既存DB IDとGit candidateの差を検出できず、分離DB一つで実resolverを確認する"
   // @end-test-value
-  it("workspace projectをknown resolverのIDへcanonicalizeする", () => {
-    const snapshot = buildProviderAgentRuntimeAuthoritySnapshot({
-      characterId: " character-a ",
-      workspacePath: "C:/workspace",
-      resolveCanonicalProjectId: (workspacePath) => {
-        assert.equal(workspacePath, "C:/workspace");
-        return " project-z ";
-      },
-    });
-
-    assert.deepEqual(snapshot, {
-      userId: "local-user",
-      characterId: "character-a",
-      allowedProjectIds: ["project-z"],
-    });
+  it("workspace projectをknown resolverのIDへcanonicalizeする", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-project-authority-"));
+    let worker: MemoryV6WorkerClient | undefined;
+    try {
+      const roots = ["checkout", "worktree", "new-project"].map((name) => path.join(directory, name));
+      for (const [index, root] of roots.entries()) {
+        await mkdir(path.join(root, ".git"), { recursive: true });
+        await writeFile(path.join(root, ".git/config"), `[remote "origin"]\nurl = https://example.com/${index < 2 ? "shared" : "new"}.git\n`);
+      }
+      const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
+      const scope = resolveMemoryV6ProjectCandidate(roots[0]!)!.admission!;
+      const existingId = "project-b59b1c03-f144-4901-89c0-a26d372ef237";
+      assert.notEqual(scope.id, existingId);
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`INSERT INTO project_scopes_v6 (id, project_type, project_key, display_name, workspace_path, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, '2026-11-09', '2026-11-09')`).run(existingId, scope.projectType, scope.projectKey, scope.displayName, roots[0]!);
+      } finally { db.close(); }
+      worker = new MemoryV6WorkerClient({ dbPath, workerUrl: new URL("../../src-electron/storage/storage-worker-entry.ts", import.meta.url) });
+      const resolveCanonicalProjectId = async (workspace: string) => (await worker!.resolveKnownProjectByPath(workspace))?.id;
+      for (const root of roots.slice(0, 2)) {
+        const snapshot = await buildProviderAgentRuntimeAuthoritySnapshot({ characterId: " character-a ", workspacePath: root, resolveCanonicalProjectId });
+        assert.deepEqual(snapshot, { userId: "local-user", characterId: "character-a", allowedProjectIds: [existingId] });
+        const principal: MemoryV6SessionBindingPrincipal = { type: "session_binding", bindingIdHash: "fixture", sessionId: "session", providerId: "codex",
+          characterId: snapshot!.characterId, allowedProjectIds: snapshot!.allowedProjectIds, workspacePath: root, permissions: ["memory.search"] };
+        const result = await resolveMemoryV6Target({ owner: "project", scope: "project", project: { type: "id", id: existingId } }, principal, worker, { projectPathResolution: "known" });
+        assert.equal(result.ok, true);
+        if (result.ok) assert.deepEqual(result.target, { owner: { type: "project", id: existingId }, scope: { type: "project", id: existingId } });
+      }
+      const fresh = await buildProviderAgentRuntimeAuthoritySnapshot({ characterId: "character-a", workspacePath: roots[2], resolveCanonicalProjectId });
+      assert.deepEqual(fresh!.allowedProjectIds, [resolveMemoryV6ProjectCandidate(roots[2]!)!.id]);
+      const nonGit = path.join(directory, "plain"); await mkdir(nonGit);
+      assert.deepEqual((await buildProviderAgentRuntimeAuthoritySnapshot({ characterId: "character-a", workspacePath: nonGit, resolveCanonicalProjectId }))!.allowedProjectIds, []);
+    } finally { await worker?.close(); await rm(directory, { recursive: true, force: true }); }
   });
 
-  // @test-value v1
+  // @test-value v2
   // kind = "security"
   // claim = "unresolved workspaceはProject authorityを持たず、空characterはsnapshotを生成しない"
   // oracle = { type = "adr", ref = "ADR-024" }
-  // failure_mode = "解決不能なworkspaceまたは空のCharacter identityへauthorityを付与してMemory targetを越権する"
+  // fault = "解決不能なworkspaceまたは空のCharacter identityへauthorityを付与する"
+  // observable = "snapshotの空Project許可集合と空Characterでのnull"
+  // observation_boundary = "component-behavior"
   // scope = "provider-agent-runtime-authority-snapshot"
   // lifecycle = "permanent"
   // distinction = "既知workspaceのcanonical化とは異なり、fail-closedの境界を検証する"
   // @end-test-value
-  it("unresolved workspaceは空、空characterはnullにする", () => {
-    assert.deepEqual(buildProviderAgentRuntimeAuthoritySnapshot({
+  it("unresolved workspaceは空、空characterはnullにする", async () => {
+    assert.deepEqual(await buildProviderAgentRuntimeAuthoritySnapshot({
       characterId: "character-a",
       workspacePath: "C:/missing",
       resolveCanonicalProjectId: () => null,
@@ -53,7 +87,7 @@ describe("buildProviderAgentRuntimeAuthoritySnapshot", () => {
       characterId: "character-a",
       allowedProjectIds: [],
     });
-    assert.equal(buildProviderAgentRuntimeAuthoritySnapshot({
+    assert.equal(await buildProviderAgentRuntimeAuthoritySnapshot({
       characterId: "   ",
       workspacePath: "C:/workspace",
       resolveCanonicalProjectId: () => "project-a",

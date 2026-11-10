@@ -12,7 +12,7 @@ import {
   type BoundedProviderRawItem,
 } from "../../session/provider-payload-limits.js";
 import type { WorkspaceSnapshot } from "../../platform/snapshot-ignore.js";
-import { getCodexCommandOutputPreview, getCodexMcpResultPreview, type CodexTurnItem } from "./codex-turn-events.js";
+import { getCodexActivityOperation, getCodexCommandOutputPreview, getCodexMcpResultPreview, type CodexTurnItem } from "./codex-turn-events.js";
 export type { CodexTurnItem } from "./codex-turn-events.js";
 export type CodexChangedFileProjectionDeps = {
   normalizeWorkspaceRelativePath: (
@@ -102,6 +102,10 @@ export function buildCodexProviderMetadata(
     "collabAgentToolCall",
     "webSearch",
     "plan",
+    "imageView",
+    "sleep",
+    "contextCompaction",
+    "subAgentActivity",
   ]);
   return items
     .filter((item) => !supported.has(item.type))
@@ -117,6 +121,8 @@ export function buildCodexProviderMetadata(
 export function toMessageOperations(items: CodexTurnItem[]): MessageOperation[] {
   const operationStatus = (status: string): string => status === "inProgress" ? "in_progress" : status === "declined" ? "failed" : status;
   return items.flatMap((item): MessageOperation[] => {
+    const activity = getCodexActivityOperation(item);
+    if (activity) return [activity];
     switch (item.type) {
       case "userMessage":
       case "reasoning":

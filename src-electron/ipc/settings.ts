@@ -18,6 +18,7 @@ import {
   WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
   WITHMATE_RUN_MEMORY_V6_PROTECTED_OBJECT_GC_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
+  WITHMATE_LIST_MEMORY_V6_REVIEW_TARGETS_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
@@ -119,6 +120,10 @@ export function registerSettingsHandlers(
       return deps.runMemoryV6ProtectedObjectGc(request);
     },
   );
+  ipcMain.handle(WITHMATE_LIST_MEMORY_V6_REVIEW_TARGETS_CHANNEL, (event) => {
+    assertMemoryV6ReviewSender(event, deps);
+    return deps.listMemoryV6ReviewTargets();
+  });
   ipcMain.handle(
     WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
     (event, request: MemoryV6ReviewSearchRequest | null | undefined) => {

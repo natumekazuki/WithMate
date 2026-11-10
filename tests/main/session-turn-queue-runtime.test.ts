@@ -113,7 +113,7 @@ test("Main queued runtimeは実Worker保存でFIFO捕捉とthread継承を結合
         assertCapturedComposerAttachmentsAvailable, resolveSessionFolderPath: () => temporary,
         resolveProviderCatalog: () => ({ snapshot, provider }) },
       provider: { getProviderCodingAdapter: () => adapter },
-      memory: { getAppSettings: () => normalizeAppSettings({}), resolveProjectMemoryEntriesForPrompt: () => [], onCharacterContextFailure() {} },
+      memory: { getAppSettings: () => normalizeAppSettings({}), onCharacterContextFailure() {} },
       turn: { createSessionTurn: (input) => bundle.stores.turn.createSessionTurn(input), updateSessionTurn: (id, input) => bundle.stores.turn.updateSessionTurn(id, input) },
       live: { setLiveSessionRun: (_, next) => { live = next; }, getLiveSessionRun: () => live,
         setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {} },

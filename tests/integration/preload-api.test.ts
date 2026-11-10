@@ -848,6 +848,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getMemoryV6Entry",
     "exportMemoryV6EntryFiles",
     "getMemoryV6FileUsage",
+    "listMemoryV6ReviewTargets",
     "runMemoryV6ProtectedObjectGc",
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",

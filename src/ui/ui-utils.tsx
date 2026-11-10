@@ -115,6 +115,14 @@ export function operationTypeLabel(type: string): string {
       return "MCP";
     case "web_search":
       return "Web";
+    case "image_view":
+      return "Image";
+    case "sleep":
+      return "Wait";
+    case "context_compaction":
+      return "Compaction";
+    case "subagent_activity":
+      return "Subagent";
     case "todo_list":
       return "Todo";
     case "reasoning":

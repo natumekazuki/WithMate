@@ -155,9 +155,9 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "tools/listは全Memory公開操作のstrict actor-relative input、identity-free Character context projection、effect contractを公開する"
+  // claim = "tools/listは全Memory公開操作のstrict actor-relative input、通常と背景のAffect候補、identity-free Character context projection、effect contractを公開する"
   // oracle = { type = "contract", ref = "docs/runbooks/memory-affect-mcp.md 公開操作契約" }
-  // fault = "caller identityやowner/scope schemaが再公開される、context private fieldが露出する、error/effect annotationが欠落する、またはappendの必須入力が誤る"
+  // fault = "caller identityやowner/scope schemaが再公開される、Affect候補のfamilyや背景のmessage/Turn参照が欠落する、context private fieldが露出する、annotationが欠落・不正になる、またはappendの必須入力が誤る"
   // observable = "MCP clientが取得するtools/listのschema、annotationと操作説明"
   // observation_boundary = "public-boundary"
   // scope = "withmate-memory-mcp-tools-list"
@@ -228,6 +228,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         );
       }
       const appraise = result.tools.find((tool) => tool.name === "character_affect.appraise");
+      assert.equal(appraise?.annotations?.idempotentHint, false, "background calls assign a new key and must not advertise idempotence");
       const contextGet = result.tools.find((tool) => tool.name === "character_context.get");
       for (const tool of result.tools.filter((candidate) => candidate.name.startsWith("character_"))) {
         for (const identityField of ["userId", "characterId", "sessionId"]) {
@@ -249,18 +250,23 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         "character_affect.appraise must resolve actor Session from runtime binding",
       );
       const affectCandidateItems = appraise?.inputSchema.properties?.candidates as {
-        items?: { required?: string[]; properties?: { family?: { enum?: string[] }; sessionId?: unknown } };
+        items: { anyOf: Array<{ required: string[]; properties: Record<string, { enum?: string[] }> }> };
       };
-      assert.equal(
-        Object.prototype.hasOwnProperty.call(affectCandidateItems.items?.properties ?? {}, "sessionId"),
-        false,
-        "affect candidates must not accept caller-asserted actor Session",
-      );
-      assert.ok(affectCandidateItems.items?.required?.includes("family"));
-      assert.deepEqual(affectCandidateItems.items?.properties?.family?.enum, [
-        "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
-        "concern", "frustration", "disappointment", "regret", "determination", "other",
-      ]);
+      assert.equal(affectCandidateItems.items.anyOf.length, 2);
+      for (const candidate of affectCandidateItems.items.anyOf) {
+        assert.equal(Object.hasOwn(candidate.properties, "sessionId"), false, "affect candidates must not accept caller-asserted actor Session");
+        assert.ok(candidate.required.includes("family"));
+        assert.deepEqual(candidate.properties.family?.enum, [
+          "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
+          "concern", "frustration", "disappointment", "regret", "determination", "other",
+        ]);
+      }
+      const backgroundCandidate = affectCandidateItems.items.anyOf.find((candidate) => Object.hasOwn(candidate.properties, "sourceMessageSeq"));
+      assert.ok(backgroundCandidate);
+      assert.ok(Object.hasOwn(backgroundCandidate.properties, "sourceTurnId"));
+      assert.equal(Object.hasOwn(backgroundCandidate.properties, "occurredAt"), false);
+      assert.equal(Object.hasOwn(backgroundCandidate.properties, "idempotencyKey"), false);
+      assert.equal(Object.hasOwn(backgroundCandidate.properties, "memoryEpisode"), false);
       const contextOutputProperties = contextGet?.outputSchema?.properties ?? {};
       assert.equal(Object.prototype.hasOwnProperty.call(contextOutputProperties, "characterId"), false);
       assert.equal(Object.prototype.hasOwnProperty.call(contextOutputProperties, "sessionId"), false);
@@ -309,7 +315,8 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       }
       for (const toolName of ["memory.append", "memory.forget", "memory.move_entry"]) {
         const tool = result.tools.find((candidate) => candidate.name === toolName);
-        assert.ok(tool?.inputSchema.required?.includes("idempotencyKey"));
+        assert.ok(tool?.inputSchema.required?.includes("idempotencyKey")
+          || (tool?.inputSchema.oneOf as Array<{ required?: string[] }> | undefined)?.some((branch) => branch.required?.includes("idempotencyKey")));
       }
       assert.ok(result.tools.find((tool) => tool.name === "memory.forget")?.inputSchema.required?.includes("reason"));
       assert.ok(result.tools.find((tool) => tool.name === "memory.move_entry")?.inputSchema.required?.includes("reason"));
@@ -346,7 +353,13 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       const listTagsSchema = result.tools.find((tool) => tool.name === "memory.list_tags")?.inputSchema;
       assert.match(result.tools.find((tool) => tool.name === "memory.list_tags")?.description ?? "", /one explicit Memory target/);
       const appendSchema = result.tools.find((tool) => tool.name === "memory.append")?.inputSchema;
-      assert.deepEqual(appendSchema?.required?.slice().sort(), ["target", "kind", "title", "body", "preview", "idempotencyKey"].sort());
+      assert.deepEqual(appendSchema?.required, ["target"]);
+      assert.ok((appendSchema?.oneOf as Array<{ required?: string[] }>).some((branch) =>
+        JSON.stringify(branch.required?.slice().sort()) === JSON.stringify(["kind", "title", "body", "preview", "idempotencyKey"].sort())));
+      const batchEntries = appendSchema?.properties?.entries as { minItems?: number; maxItems?: number; items?: { required?: string[] } };
+      assert.equal(batchEntries.minItems, 1);
+      assert.equal(batchEntries.maxItems, undefined);
+      assert.ok(batchEntries.items?.required?.includes("idempotencyKey"));
       assert.equal((appendSchema?.properties?.tags as { maxItems?: number })?.maxItems, 20);
       assert.equal((listTagsSchema?.properties?.targets as { minItems?: number; maxItems?: number })?.minItems, 1);
       assert.equal((listTagsSchema?.properties?.targets as { minItems?: number; maxItems?: number })?.maxItems, 1);

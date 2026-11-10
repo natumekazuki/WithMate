@@ -1,11 +1,14 @@
-import type { Session } from "../../src-shared/session/session-state.js";
+import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
-import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { LiveApprovalDecision, LiveApprovalRequest, LiveElicitationResponse, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { SessionTurnNotificationTarget } from "../session/session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
+import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
+import type { CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
+import { resolveRuntimeCharacterContext } from "../character/character-context-runtime.js";
+import type { BackgroundSourceRef } from "../../src-shared/session/background-source-snapshot.js";
 
 type AuxiliaryRuntimeOwner = {
   assertActive(operation: string): void;
@@ -39,11 +42,13 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
     endProviderAgentRuntimeTurn?: SessionRuntimeServiceDeps["endProviderAgentRuntimeTurn"];
     resolveProviderSession(session: Session, parentSessionId: string): Session;
     resolveSessionFolderPath(parentSessionId: string): string;
-    issueRuntimeBinding(session: Session, provider: ModelCatalogProvider): Promise<ProviderAgentRuntimeBindingProjection>;
+    issueRuntimeBinding(session: Session, provider: ModelCatalogProvider, source: BackgroundSourceRef): Promise<ProviderAgentRuntimeBindingProjection>;
     beginRuntimeTurn?: SessionRuntimeServiceDeps["beginProviderAgentRuntimeTurn"];
   };
   memory: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
+    getCharacterContextService?: () => Pick<CharacterContextApplicationService, "getContext"> | null;
+    onCharacterContextFailure?: (session: Session, error: CharacterContextErrorResponse) => void;
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: {
@@ -65,6 +70,7 @@ export type AuxiliarySessionRuntimeAssemblyDeps = {
   currentTimestampLabel?: () => string;
   getQueuedInputReceipt?: SessionRuntimeServiceDeps["getQueuedInputReceipt"];
   onSessionRunReleased?: SessionRuntimeServiceDeps["onSessionRunReleased"];
+  onBackgroundEvent?: SessionRuntimeServiceDeps["onBackgroundEvent"];
 };
 
 export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssemblyDeps): SessionRuntimeService {
@@ -74,6 +80,13 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     const result = await callback();
     assertOwner(operation);
     return result;
+  };
+  const resolveSource = async (session: Session): Promise<BackgroundSourceRef> => {
+    const auxiliary = await deps.auxiliary.getSession(session.id);
+    const parent = auxiliary && await deps.parent.getSession(auxiliary.parentSessionId);
+    if (!auxiliary || !parent) throw new Error("Auxiliary conversation owner is unavailable.");
+    return { kind: "auxiliary", sessionId: session.id, incarnationId: getSessionIncarnationId(session),
+      parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } };
   };
 
   const runtime: SessionRuntimeServiceDeps = {
@@ -88,6 +101,7 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     assertCapturedComposerAttachmentsAvailable: deps.resolution.assertCapturedComposerAttachmentsAvailable ? (session, attachments) => guarded("captured attachments", () => deps.resolution.assertCapturedComposerAttachmentsAvailable!(session, attachments)) : undefined,
     getQueuedInputReceipt: deps.getQueuedInputReceipt ? (receipt) => guarded("queued input receipt", () => deps.getQueuedInputReceipt!(receipt)) : undefined,
     onSessionRunReleased: deps.onSessionRunReleased,
+    onBackgroundEvent: deps.onBackgroundEvent,
     resolveRuntimeSessionForTurn: (session) => guarded("runtime session resolution", () => deps.resolution.resolveRuntimeSessionForTurn(session)),
     resolveComposerPreview: (session, userMessage) => guarded("composer preview", () => deps.resolution.resolveComposerPreview(session, userMessage)),
     resolveProviderSession: (session) => guarded("provider session path", async () => {
@@ -101,15 +115,23 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     getAppSettings: () => guarded("settings read", deps.memory.getAppSettings),
     resolveProviderCatalog: (providerId, revision) => guarded("provider catalog", () => deps.resolution.resolveProviderCatalog(providerId, revision)),
     getProviderCodingAdapter: (providerId) => { assertOwner("provider coding adapter"); return deps.provider.getProviderCodingAdapter(providerId); },
-    getProviderAgentRuntimeBinding: ({ session, provider }) => guarded("provider runtime binding", () => deps.provider.issueRuntimeBinding(session, provider)),
+    getProviderAgentRuntimeBinding: ({ session, provider }) => guarded("provider runtime binding", async () =>
+      deps.provider.issueRuntimeBinding(session, provider, await resolveSource(session))),
     beginProviderAgentRuntimeTurn: ({ session, provider, binding, signal }) => binding && deps.provider.beginRuntimeTurn
       ? guarded("provider runtime turn", () => deps.provider.beginRuntimeTurn!({ session, provider, binding, signal }))
       : undefined,
     endProviderAgentRuntimeTurn: deps.provider.endProviderAgentRuntimeTurn,
     resetProviderSessionThread: (providerId, sessionId) => guarded("provider thread reset", () => deps.provider.resetProviderSessionThread!(providerId, sessionId)),
     isAuxiliarySession: (sessionId) => guarded("Auxiliary session check", () => deps.auxiliary.isAuxiliarySession(sessionId)),
-    getSessionMemory: (session) => createDefaultSessionMemory({ id: session.id, workspacePath: session.workspacePath, threadId: session.threadId, taskTitle: session.taskTitle }),
-    resolveProjectMemoryEntriesForPrompt: () => [],
+    resolveCharacterContext: (session) => guarded("character context", async () => {
+      const service = deps.memory.getCharacterContextService?.();
+      if (session.sessionKind !== "default" || !session.characterId || !service) return null;
+      return resolveRuntimeCharacterContext({
+        session, service,
+        sessionSource: await resolveSource(session),
+        onFailure: (owner, error) => deps.memory.onCharacterContextFailure?.(owner, error),
+      });
+    }),
     createSessionTurn: (entry) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
     updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },

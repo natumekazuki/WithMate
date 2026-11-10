@@ -22,6 +22,7 @@ V6 foundationは次を成立させる。
 - V6 Memory に紐づく暗号化 file object / quota / export / GC の拡張設計は`docs/design/v6-memory-protected-objects.md`を参照する。
 - provider runtime boundaryは`docs/design/provider-adapter.md`へ反映する。
 - current保存構造の棚卸しは`docs/design/database-schema.md`を参照する。
+- 背景AgentによるMemory管理・発火・用途別権限は[Background Execution](background-execution.md)を参照する。参照は通常認可範囲、訂正・忘却を含む書込は捕捉した用途別target内で既存操作を利用する。
 
 ## Product Principles
 
@@ -38,8 +39,6 @@ foundationでは次を扱わない。
 - Memoryの毎turn prompt常設注入
 - mutableなSession working state管理
 - session summary / next actionsの自動更新
-- turn完了後の自動Memory抽出
-- background Memory generation
 - Mate Profile / Growthの復活
 - Character definitionの自動更新
 - Character Stream / Monologue連携
@@ -73,6 +72,7 @@ CLI/MCPの公開操作、input schema、handler、errorは`src-electron/platform
 
 - provider共通MCPをagent-facing entrypointとし、initialize instructionsと`tools/list`でoperation contractを公開する。
 - agent-facing targetはactor-relative schemaを使い、user / Character / Session identityを受け付けない。runtime bindingがactor Session、Character、user、許可Projectを解決する。
+  - 通常binding、背景authority、Memory管理targetのProject IDは、Memory storage WorkerでworkspaceのProject keyから解決する。既存keyには保存済みIDを使い、新規Gitには初回保存用のcandidate IDを使う。参照だけではProjectを登録せず、非Git workspaceにはProject authorityを付与しない。MainはDBを直接開かず、解決中のruntime generation切替・maintenanceでは旧結果を利用しない。
 - `withmate-memory` Skillは配布、同期、検査しない。Memory運用方針をprovider instructionやsystem promptへ複製しない。
 - CLIもMCPもlocalhost APIを呼ぶthin adapterであり、ローカルruntime認証を維持する。通常CLIはMCP障害の有無に依存しない。
 - Character context / Affect / Character所有Memoryはbindingを要求し、現在Character / Sessionと許可Projectを解決する。一般user-global / Project Memoryは明示targetがあればbindingなしでも利用できる。binding提示時は許可範囲・失効を検証し、無効bindingを無視してunboundへ降格しない。
@@ -82,7 +82,11 @@ CLI/MCPの公開操作、input schema、handler、errorは`src-electron/platform
 
 Affect更新も通常turn内のAgentによる`character_affect.appraise`を使う。記録する意味のある感情変化だけを保存し、毎turnの必須呼出し、変化なしevent、別LLMによる後処理や補完turnは設けない。linked episodeは同じappraisalの`memoryEpisode`だけに送り、単独episodeだけを`character_memory.append_episode`で保存する。
 
-pre-turnのcontext取得・prompt注入と取得時のafterglow projectionは維持する。保存済みevent／episode／一般Memory、version、idempotency、authorityと`effect: unknown`の照合は既存application境界に従う。turn中に保存済みの更新は、後続の応答失敗・取消で巻き戻さない。旧Affect専用queueは[Database Schema](database-schema.md#起動時の移行とデータ保護)のschema更新で除去し、候補を再適用しない。
+通常Main／Auxiliaryのpre-turnでは、保存済みAffectの最新状態を取得・合成し、afterglow projectionを含む`Character Affect Context`をpromptへ注入する。ユーザー入力をqueryとするMemory検索やMemory本文・previewの自動注入は行わない。MemoryはAgentが必要と判断したときに既存MCP／CLIで検索・一覧・本文取得する。想起専用Agentや検索必須ルール、代替の常設注入は設けない。
+
+公開`character_context.get`／CLI `context-get`は、任意queryによるCharacter Memoryの明示取得を維持する。これは通常turnのAffect取得とは別の利用経路であり、結果のMemoryをpromptへ自動注入しない。
+
+保存済みevent／episode／一般Memory、version、idempotency、authorityと`effect: unknown`の照合は既存application境界に従う。turn中に保存済みの更新は、後続の応答失敗・取消で巻き戻さない。旧Affect専用queueは[Database Schema](database-schema.md#起動時の移行とデータ保護)のschema更新で除去し、候補を再適用しない。
 
 ## Domain Model
 
@@ -455,6 +459,12 @@ type MemoryAppendResponse = {
 
 `created`は元のidempotent append operationが新entryを作成したかを表す。
 
+同じ公開操作は、共通targetと`entries: [{ kind, title, body, preview, idempotencyKey, ... }]`による一括入力も受ける。各itemは独立したentryとして既存単件appendへ保存し、本文や添付を合併しない。配列は非空・件数上限なしで、単件fieldとの混在を拒否する。各itemのkeyは必須とし、本文8,000文字、一entryの添付10件等の既存項目制約を維持する。
+
+一括応答は`results`の各indexに`status: saved | failed | unknown | not_run`と、実行した項目の既存単件`result`を返す。失敗時はtop errorも返し、確認済保存prefixがあれば全体effect partial、結果不明のitemはeffect unknownを維持する。入力全体を事前検証し、保存開始後は最初の失敗・取消・実行条件喪失で停止する。単件input／response、項目単位idempotency、entry＋添付の原子性は維持する。実行基盤と正常／背景の共通契約は[Background Execution](background-execution.md#一括登録と項目別結果)を参照する。
+
+`character_memory.append_episode`も単件に加え`episodes: [{ episode, idempotencyKey }]`を受け、同じindex／status／既存単件resultで独立episodeを返す。Characterとsourceは現在bindingで共通に確定し、itemごとの指定で範囲を広げない。Affectの候補配列には固定件数上限を設けず、候補単位の既存保存・拒否・部分失敗を維持する。
+
 入力の`tags`省略は空配列と同じ正規化値になり、タグを自動生成しない。`title`と`preview`は検索・一覧用の明示入力を必須とし、本文から自動補完しない。正規化後の`MemoryAppendRequest`と保存entryには常に`tags`配列がある。
 
 省略と明示的な空配列は、同じidempotency keyで再送しても同一requestとして扱う。既存の全項目明示入力と保存形式は維持する。idempotent replayでは現在のpermission、entry state、owner / scope accessを再検証し、現在のentryからsummaryを再構築する。idempotency storageには旧title / preview / tagsを含むresponse JSONを保存しない。
@@ -616,6 +626,8 @@ V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmat
 
 projectの絶対pathはruntime側でGit repositoryへ解決する。repository subdirectoryでも、root / common dir / remoteからproject scopeを決定する。同じrepositoryの別worktreeは同一project scopeとして扱う。relative pathを受け付けない。owner / scopeのallowlist、entry access、mutation permissionはapplication serviceで再検証する。
 
+Projectの許可とDB登録済み状態を区別する。未登録のpath readはrepositoryから算出したIDへ解決して空として返し、scope行を作らない。bindingで許可された未登録IDは、実actor SessionのWorkspaceから同じIDを解決できる場合だけ既存candidateを使う。成功した初回append/moveはそのadmissionを既存保存transactionへ渡す。任意IDの不存在や許可外targetを、空の正常結果へ置換しない。
+
 Session bindingによるtarget inventory・audit・largest entry詳細の権限絞り込みはpaginationとcursor生成より前に行う。bound scopeは現在Character・許可Project・共有user-globalであり、記憶を作成したSessionだけに狭めない。`characters`は現在Characterのid/name/descriptionのみを返し、renderer metadataは返さない。
 
 - status、instances、metrics、quota / usage集計はbindingなしでも利用できる。
@@ -660,7 +672,7 @@ V6 MemoryはV6 DB foundation上の新規tableとして実装する。
 Application serviceはversioned request contractとV6 storageの間に置く。
 実装は`src-electron/memory/memory-v6-service.ts`、target解決は`src-electron/memory/memory-v6-context-resolver.ts`、permission gateは`src-electron/memory/memory-v6-permission.ts`に分ける。
 
-Mainのreview操作（usage / export / GC / search / get / forget）、diagnostics、CLI shim操作の組み立ては`src-electron/memory/memory-v6-main-assembly.ts`が所有する。`main.ts`はcurrent runtime、quota、key protector等の依存とWindow dialogを接続し、runtime APIの起動・終了を管理する。Worker経由のstorage操作と認可境界は変更しない。
+Mainのreview操作（target候補 / usage / export / GC / search / get / forget）、diagnostics、CLI shim操作の組み立ては`src-electron/memory/memory-v6-main-assembly.ts`が所有する。`main.ts`はcurrent runtime、quota、key protector等の依存とWindow dialogを接続し、runtime APIの起動・終了を管理する。Worker経由のstorage操作と認可境界は変更しない。
 
 service層で扱う:
 
@@ -855,7 +867,13 @@ foundationではMemory Management Windowを戻さない。
 - runtime API secret、discovery documentのsecret値はdiagnostics stateへ含めない。UIにはsecret値を表示しない。
 - diagnosticsは`generatedAt`、`runtime`、`cliShim`、`lastErrors`の4 fieldだけを持ち、provider別状態、managed Skill同期状態、provider instruction sampleを投影しない。
 
-current実装では、Settings Diagnosticsから`Memory Review` windowを開ける。active entryの検索、full body閲覧、agent-facing APIとは分離したapp-internal IPC経由のforgetを行える。
+### Memory Review
+
+Settings Diagnosticsから`Memory Review` windowを開ける。active entryの検索、full body閲覧、agent-facing APIとは分離したapp-internal IPC経由のforgetを行える。
+
+Review専用readは保存済みowner / scopeを維持し、`characters`と`project_scopes_v6`の登録metadataから対象の名前・Character icon・同名の補足を投影する。登録先が失われた場合もMemoryを除外せず、保存された対象IDと欠落状態を返す。icon pathは既存Character storageと同じuser data基準でmaterializeする。対象候補、検索hit、detailは同じ表示用型を使い、表示専用のstoreや分類tableは持たない。
+
+Reviewの検索は対象名を既存の本文・title・preview・tag検索へ加え、`characterId`と`projectId`のAND filterおよびKindを適用した後にcursor pageを取得する。対象候補の取得は独立したReview IPCで行い、失敗は空配列へ変換しない。Reviewは本文と対象を中心に表示し、出典の会話名・role・Providerを表示用に取得しない。保存sourceと公開MCP / CLIのrequest・responseは変更しない。画面の情報配分とファイル保守の表示は[Settings UI](settings-ui.md#interaction)に従う。
 
 Review UIはruntime API secret、discovery documentのsecret値をrendererへ渡さない。main process側のReview serviceからV6 Memory storageを扱う。manual correctionはappend + supersedesによる訂正方針を維持する。
 

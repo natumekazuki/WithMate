@@ -18,6 +18,9 @@ export type AppLogServiceOptions = {
   fileName?: string;
   maxBytes?: number;
   maxFiles?: number;
+  rotation?: boolean;
+  /** Only for already-selected, redacted background diagnostics. */
+  backgroundFailureDiagnostics?: boolean;
   runtimeInfo: AppLogServiceRuntimeInfo;
 };
 
@@ -53,12 +56,17 @@ export class AppLogService {
   write(input: AppLogInput): AppLogEntry {
     const entry = this.buildEntry(input);
     const line = `${JSON.stringify(entry)}\n`;
-    const lineBytes = Buffer.byteLength(line, "utf8");
+    const rotation = this.options.rotation !== false;
+    const lineBytes = rotation ? Buffer.byteLength(line, "utf8") : 0;
     this.ensureLogDirectory();
-    this.ensureCurrentLogBytesLoaded();
-    this.rotateIfNeeded(lineBytes);
+    if (rotation) {
+      this.ensureCurrentLogBytesLoaded();
+      this.rotateIfNeeded(lineBytes);
+    }
     appendFileSync(this.logFilePath, line, "utf8");
-    this.currentLogBytes += lineBytes;
+    if (rotation) {
+      this.currentLogBytes += lineBytes;
+    }
     return entry;
   }
 
@@ -77,7 +85,9 @@ export class AppLogService {
   }
 
   private buildEntry(input: AppLogInput): AppLogEntry {
-    const data = sanitizeData(input.data);
+    const data = this.options.backgroundFailureDiagnostics
+      && (input.kind === "background.execution.failed" || input.kind === "background.execution.diagnostic")
+      ? input.data : sanitizeData(input.data);
     return {
       ...this.options.runtimeInfo,
       ...input,

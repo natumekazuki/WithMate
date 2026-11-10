@@ -228,7 +228,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - `Session Window`
     - `Close Action Dock After Send`
   - `Prompt Context` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない
-  - `Coding Agent Providers` で provider 名と checkbox を 1 行 row で見せ、provider ごとの enable / disable を切り替える。sectionやproviderを装飾cardで入れ子にしない
+  - `Coding Agent Providers`ではproviderごとに開閉し、見出しで有効状態を確認し、展開内でenable / disableを編集する。sectionやproviderを装飾cardで入れ子にしない。詳細は[Settings UI](settings-ui.md#layout)を参照する
   - OpenCodeの認証はOpenCode側で設定し、WithMate専用のGo key入力・OAuth接続・account切替UIは置かない。provider file設定は維持する
   - `Diagnostics`
   - `Repository Glossary` の自動追加上限

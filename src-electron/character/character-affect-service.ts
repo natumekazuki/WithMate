@@ -31,6 +31,7 @@ export type CharacterAffectEpisodeWriter = {
     characterId: string;
     userId: string;
     sourceSessionId: string;
+    sourceKind?: "main" | "auxiliary";
     sourceEventId: string;
     idempotencyKey: string;
     candidate: AffectMemoryEpisodeCandidate;
@@ -140,7 +141,7 @@ export class CharacterAffectService {
 
   async recordAppraisal(
     candidate: Parameters<CharacterAffectStorage["recordEvent"]>[0],
-    options: { expectedVersion?: string } = {},
+    options: Parameters<CharacterAffectStorage["recordEvent"]>[1] = {},
   ): Promise<{ event: StoredAffectEvent; created: boolean }> {
     if (candidate.memoryEpisode) {
       await this.episodeWriter.validateEpisode({
@@ -161,12 +162,7 @@ export class CharacterAffectService {
     }
   }
 
-  async getEffectiveState(input: {
-    characterId: string;
-    userId: string;
-    sessionId: string;
-    baseline?: readonly AffectBaselineComponent[];
-  }): Promise<EffectiveAffectState & { mode: CharacterAffectServiceMode }> {
+  async getEffectiveState(input: Parameters<CharacterAffectStorage["getEffectiveState"]>[0]): Promise<EffectiveAffectState & { mode: CharacterAffectServiceMode }> {
     return { ...(await this.storage.getEffectiveState(input)), mode: this.mode };
   }
 
@@ -254,13 +250,15 @@ export class CharacterAffectService {
     if (event.memoryEntryId) {
       return event;
     }
-    if (!event.sourceSessionId) {
+    const sourceSessionId = event.sourceSessionId ?? event.sourceAuxiliarySessionId;
+    if (!sourceSessionId) {
       throw new Error("Affect event source session is unavailable for Memory episode creation.");
     }
     const episode = await this.episodeWriter.writeEpisode({
       characterId: event.characterId,
       userId: event.userId,
-      sourceSessionId: event.sourceSessionId,
+      sourceSessionId,
+      ...(event.sourceAuxiliarySessionId ? { sourceKind: "auxiliary" as const } : {}),
       sourceEventId: event.id,
       idempotencyKey: `${event.id}:memory-episode`,
       candidate,

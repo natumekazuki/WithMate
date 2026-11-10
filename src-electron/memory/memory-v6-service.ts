@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
+import { MemoryFileAccessError } from "./memory-file-access.js";
+import { assertRuntimeTurnAdmission, reportRuntimeTurnOperationError, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
   createMemoryAppendResponse,
@@ -17,6 +19,7 @@ import {
   createMemoryMoveEntryResponse,
   createMemorySearchResponse,
   type MemoryAppendResponse,
+  type MemoryAppendEntriesResponse,
   type MemoryAuditResponse,
   type MemoryErrorResponse,
   type MemoryExportFilesResponse,
@@ -37,6 +40,7 @@ import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError, MemoryFor
 import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../../src-shared/settings/provider-settings-state.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryAppendEntriesRequest,
   validateMemoryAuditRequest,
   validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
@@ -52,7 +56,7 @@ import { toMemoryEntrySummary, type MemoryEntryDetail } from "../../src-shared/m
 import { buildMemoryTargetAudit } from "./memory-v6-audit.js";
 import { resolveMemoryV6Target, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
-import { requireMemoryPermission, type MemoryV6Principal } from "./memory-v6-permission.js";
+import { canAccessMemoryTarget, memoryForbiddenError, requireMemoryPermission, type MemoryV6Principal } from "./memory-v6-permission.js";
 import {
   MemoryV6EntryNotFoundError,
   MemoryV6FileQuotaExceededError,
@@ -79,7 +83,7 @@ type Awaitable<T> = T | Promise<T>;
 export type MemoryV6StorageAccess = {
   [K in keyof Pick<MemoryV6Storage,
     | "appendEntry" | "resolveAppendIdempotencyReplay" | "settleAppendCleanupObligation"
-    | "getEntry" | "listTargets" | "listEntries" | "searchEntries" | "searchEntriesForReview"
+    | "getEntry" | "getEntryForReview" | "listReviewTargets" | "listTargets" | "listEntries" | "searchEntries" | "searchEntriesForReview"
     | "getFileUsage" | "listLargestFileEntries" | "getProtectedObjectForExport"
     | "listProtectedObjectsForEntryExport" | "listDeletePendingProtectedObjectsForGc"
     | "listProtectedObjectIdsForGc" | "markProtectedObjectDeletedForGc" | "listTags"
@@ -89,8 +93,8 @@ export type MemoryV6StorageAccess = {
 };
 
 export type MemoryV6ProtectedObjectImporter = {
-  inspect(file: MemoryAppendFileInput): Promise<MemoryProtectedObjectInputFileInspection>;
-  prepare(input: { entryId: string; file: MemoryAppendFileInput }): Promise<MemoryV6AppendProtectedObjectInput>;
+  inspect(file: MemoryAppendFileInput, fileAccess?: MemoryFileAccess): Promise<MemoryProtectedObjectInputFileInspection>;
+  prepare(input: { entryId: string; file: MemoryAppendFileInput; fileAccess?: MemoryFileAccess }): Promise<MemoryV6AppendProtectedObjectInput>;
   discardPrepared?(input: { objectId: string }): Promise<void>;
 };
 
@@ -98,10 +102,12 @@ export type MemoryV6ProtectedObjectExporter = {
   exportFile(input: {
     metadata: MemoryV6ProtectedObjectExportMetadata;
     outputPath: string;
+    fileAccess?: MemoryFileAccess;
   }): Promise<{ bytesWritten: number }>;
   exportFiles?(input: {
     metadata: readonly MemoryV6ProtectedObjectExportMetadata[];
     outputDirectoryPath: string;
+    fileAccess?: MemoryFileAccess;
   }): Promise<{
     files: Array<{
       objectId: string;
@@ -244,6 +250,9 @@ function fingerprint(value: unknown): string {
 }
 
 function storageError(error: unknown): MemoryError | null {
+  if (error instanceof MemoryFileAccessError) {
+    return { ...memoryForbiddenError({ message: error.message }), effect: error.effect };
+  }
   if (error instanceof MemoryV6FileCleanupError) {
     return {
       code: "MEMORY_FILE_CLEANUP_FAILED",
@@ -329,6 +338,9 @@ function fileImportErrorField(index: number, field: MemoryProtectedObjectImportE
 }
 
 function toFileImportError(error: unknown, index: number): MemoryV6FileImportError {
+  if (error instanceof MemoryFileAccessError) {
+    return new MemoryV6FileImportError({ ...memoryForbiddenError({ message: error.message }), field: `files[${index}].path` });
+  }
   if (error instanceof MemoryProtectedObjectImportError) {
     return new MemoryV6FileImportError({
       code: error.code,
@@ -588,7 +600,10 @@ export class MemoryV6Service {
       return createMemoryGetEntryResponse(null);
     }
     const target = entryTarget(entry);
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !canAccessMemoryTarget(principal, target)) return toMemoryErrorResponse(memoryForbiddenError());
     if (!sameTarget(requestedTarget, target)) {
+      if (principal.type === "session_binding" && principal.readTargets !== undefined) return toMemoryErrorResponse(memoryForbiddenError());
       return createMemoryGetEntryResponse(null);
     }
     return createMemoryGetEntryResponse(entry);
@@ -605,6 +620,9 @@ export class MemoryV6Service {
     const validated = validateMemoryGetFileRequest(request);
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
+    }
+    if (principal.type === "session_binding" && !principal.fileAccess?.exportRoot) {
+      return toMemoryErrorResponse({ ...memoryForbiddenError(), effect: "none" });
     }
     const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
@@ -635,6 +653,7 @@ export class MemoryV6Service {
       const result = await this.deps.protectedObjectExporter.exportFile({
         metadata,
         outputPath: validated.value.outputPath,
+        fileAccess: principal.type === "session_binding" ? principal.fileAccess : undefined,
       });
       return createMemoryGetFileResponse({
         objectId: metadata.objectId,
@@ -646,6 +665,7 @@ export class MemoryV6Service {
       });
     } catch (error) {
       if (error instanceof RuntimeTurnInactiveError) throw error;
+      if (error instanceof MemoryFileAccessError) return storageErrorResponse(error);
       return toMemoryErrorResponse({
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
@@ -666,6 +686,9 @@ export class MemoryV6Service {
     const validated = validateMemoryExportFilesRequest(request);
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
+    }
+    if (principal.type === "session_binding" && !principal.fileAccess?.exportRoot) {
+      return toMemoryErrorResponse({ ...memoryForbiddenError(), effect: "none" });
     }
     const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
@@ -696,6 +719,7 @@ export class MemoryV6Service {
       const result = await this.deps.protectedObjectExporter.exportFiles({
         metadata,
         outputDirectoryPath: validated.value.outputDirectoryPath,
+        fileAccess: principal.type === "session_binding" ? principal.fileAccess : undefined,
       });
       return createMemoryExportFilesResponse({
         entryId: validated.value.entryId,
@@ -704,6 +728,7 @@ export class MemoryV6Service {
       });
     } catch (error) {
       if (error instanceof RuntimeTurnInactiveError) throw error;
+      if (error instanceof MemoryFileAccessError) return storageErrorResponse(error);
       return toMemoryErrorResponse({
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
@@ -756,6 +781,45 @@ export class MemoryV6Service {
     return createMemoryListTagsResponse(page.items, page.nextCursor);
   }
 
+  async appendEntries(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryAppendEntriesResponse>> {
+    const permissionError = requirePrincipalPermission(principal, "memory.append");
+    if (permissionError) return permissionError;
+    if (!principal) throw new Error("Memory principal permission check failed.");
+    const validated = validateMemoryAppendEntriesRequest(request);
+    if (!validated.ok) return toMemoryErrorResponse({ ...validated.error, effect: "none" });
+    const resolved = await resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    if (!resolved.ok) return toMemoryErrorResponse(resolved.error);
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !principal.writeTargets?.some((target) => sameTarget(target, resolved.target))) return toMemoryErrorResponse(memoryForbiddenError());
+    const results: MemoryAppendEntriesResponse["results"] = [];
+    let failure: MemoryError | undefined;
+    for (const [index, entry] of validated.value.entries.entries()) {
+      if (failure) { results.push({ index, status: "not_run" }); continue; }
+      try { assertRuntimeTurnAdmission(); }
+      catch (error) {
+        if (!(error instanceof RuntimeTurnInactiveError)) throw error;
+        failure = { code: "MEMORY_FORBIDDEN", message: "The captured runtime turn is no longer active.", effect: "none" };
+        results.push({ index, status: "not_run" });
+        continue;
+      }
+      let result: MemoryV6ServiceResult<MemoryAppendResponse>;
+      try { result = await this.append(principal, { ...entry, tags: entry.tags.map(({ type, value }) => ({ type, value })),
+        schemaVersion: validated.value.schemaVersion, target: validated.value.target }); }
+      catch (error) {
+        reportRuntimeTurnOperationError(error);
+        result = toMemoryErrorResponse(error instanceof RuntimeTurnInactiveError
+          ? { code: "MEMORY_FORBIDDEN", message: "The captured runtime turn is no longer active.", effect: "none" }
+          : { code: "MEMORY_STORAGE_UNAVAILABLE", message: "Memory entry save outcome could not be confirmed.", retryable: false, effect: "unknown" });
+      }
+      if ("error" in result) {
+        failure = { ...result.error, effect: result.error.effect ?? "none" };
+        results.push({ index, status: failure.effect === "unknown" ? "unknown" : "failed", result: toMemoryErrorResponse(failure) });
+      } else results.push({ index, status: "saved", result });
+    }
+    return { schemaVersion: validated.value.schemaVersion, results,
+      ...(failure ? { error: { ...failure, effect: results.some((item) => item.status === "saved") ? "partial" : failure.effect } } : {}) };
+  }
+
   async append(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryAppendResponse>> {
     const permissionError = requirePrincipalPermission(principal, "memory.append");
     if (permissionError) {
@@ -772,8 +836,15 @@ export class MemoryV6Service {
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !principal.writeTargets?.some((target) => sameTarget(target, resolved.target))) {
+      return toMemoryErrorResponse(memoryForbiddenError());
+    }
     const files = validated.value.files ?? [];
     const hasFiles = files.length > 0;
+    if (hasFiles && principal.type === "session_binding" && !principal.fileAccess) {
+      return toMemoryErrorResponse({ ...memoryForbiddenError(), effect: "none" });
+    }
     if (hasFiles && !this.deps.protectedObjectImporter) {
       return toMemoryErrorResponse({
         code: "MEMORY_FILE_APPEND_UNIMPLEMENTED",
@@ -819,6 +890,7 @@ export class MemoryV6Service {
           entryId: entryId ?? `mem-${randomUUID()}`,
           files,
           fileQuotaBytes,
+          fileAccess: principal.type === "session_binding" ? principal.fileAccess : undefined,
         })
         : [];
       let result;
@@ -843,7 +915,8 @@ export class MemoryV6Service {
           } : {}),
           source: {
             type: "agent",
-            sessionId: sessionIdForPrincipal(principal),
+            sessionId: principal.type === "session_binding" && principal.sourceKind === "auxiliary" ? null : sessionIdForPrincipal(principal),
+            ...(principal.type === "session_binding" && principal.sourceKind === "auxiliary" ? { auxiliarySessionId: principal.sessionId } : {}),
             messageId: validated.value.sourceMessageId ?? null,
             providerId: providerIdForPrincipal(principal),
             appMessageId: null,
@@ -895,6 +968,7 @@ export class MemoryV6Service {
     entryId: string;
     files: readonly MemoryAppendFileInput[];
     fileQuotaBytes: number;
+    fileAccess?: MemoryFileAccess;
   }): Promise<MemoryV6AppendProtectedObjectInput[]> {
     if (!this.deps.protectedObjectImporter) {
       throw new Error("Memory protected object importer is not configured.");
@@ -903,7 +977,7 @@ export class MemoryV6Service {
     const inspections = await Promise.all(
       input.files.map(async (file, index) => {
         try {
-          return await importer.inspect(file);
+          return await importer.inspect(file, input.fileAccess);
         } catch (error) {
           throw toFileImportError(error, index);
         }
@@ -923,6 +997,7 @@ export class MemoryV6Service {
         protectedObjects.push(await importer.prepare({
           entryId: input.entryId,
           file,
+          fileAccess: input.fileAccess,
         }));
       }
     } catch (error) {
@@ -978,6 +1053,11 @@ export class MemoryV6Service {
     );
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
+    }
+
+    if (principal.type === "session_binding" && principal.readTargets !== undefined
+      && !principal.writeTargets?.some((target) => sameTarget(target, resolved.target))) {
+      return toMemoryErrorResponse(memoryForbiddenError());
     }
 
     try {

@@ -79,19 +79,6 @@ function makeService(observe: {
     getAppSettings: () => normalizeAppSettings({}),
     resolveProviderCatalog: () => ({ snapshot: { providers: [providerCatalog] }, provider: providerCatalog }),
     getProviderCodingAdapter: () => adapter,
-    getSessionMemory: () => ({
-      sessionId: stored.id,
-      workspacePath: stored.workspacePath,
-      threadId: "",
-      schemaVersion: 1,
-      updatedAt: "",
-      goal: "",
-      decisions: [],
-      openQuestions: [],
-      nextActions: [],
-      notes: [],
-    }),
-    resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn(input) {
       observe.turn.push(input);
       return { id: 1, ...input };

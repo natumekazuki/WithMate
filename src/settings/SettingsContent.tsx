@@ -1,4 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { BackgroundExecutionSettings, type BackgroundExecutionSettingsProps } from "./BackgroundExecutionSettings.js";
+import { parseMemoryRecordingFrequencies } from "../../src-shared/settings/background-settings.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 import { ProviderModelSettings } from "./provider-model-settings.js";
@@ -54,6 +56,9 @@ import { SettingsActionButton } from "./SettingsActionButton.js";
 import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
 
 export type HomeSettingsContentProps = {
+  modelCatalog?: BackgroundExecutionSettingsProps["catalog"];
+  onChangeBackgroundPurpose: BackgroundExecutionSettingsProps["onChangePurpose"];
+  onChangeMemoryRecordingFrequencies: BackgroundExecutionSettingsProps["onChangeFrequencies"];
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
   modelDiscovery?: ModelCatalogSnapshot["discovery"];
@@ -154,6 +159,9 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
 }
 
 export function HomeSettingsContent({
+  modelCatalog = null,
+  onChangeBackgroundPurpose,
+  onChangeMemoryRecordingFrequencies,
   settingsDraft,
   providerSettingRows,
   modelDiscovery,
@@ -219,6 +227,8 @@ export function HomeSettingsContent({
     }
   }, [modelProviderId]);
   const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
+  let memoryRecordingFrequenciesInvalid = false;
+  try { parseMemoryRecordingFrequencies(settingsDraft.memoryRecordingFrequencies); } catch { memoryRecordingFrequenciesInvalid = true; }
   const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
   const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
   const runAction = async (action: SettingsActionKey, callback: () => void | Promise<void>) => {
@@ -260,20 +270,20 @@ export function HomeSettingsContent({
           ) : (
           <section className="settings-section">
           {!settingsDraftLoaded ? (
-            <section className="settings-section-card">
+            <details className="settings-section-card" open>
+              <summary>App</summary>
               <div className="settings-field">
-                <strong>App</strong>
                 {appSettingsLoadStatus === "loading" ? <LoadingIndicator label="Loading app settings" /> : null}
                 {appSettingsLoadStatus === "error" ? (
                   <LoadError message={appSettingsLoadError || "Could not load app settings."} onRetry={onRetryAppSettings} />
                 ) : null}
               </div>
-            </section>
+            </details>
           ) : null}
           {!settingsDraftLoaded ? (
-            <section className="settings-section-card">
+            <details className="settings-section-card" open>
+              <summary>Coding Agent Providers</summary>
               <div className="settings-field">
-                <strong>Coding Agent Providers</strong>
                 {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
                 {modelCatalogLoadStatus === "error" ? (
                   <LoadError
@@ -282,13 +292,13 @@ export function HomeSettingsContent({
                   />
                 ) : null}
               </div>
-            </section>
+            </details>
           ) : null}
           <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
           {settingsDraftLoaded ? <>
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>App</summary>
             <div className="settings-field">
-              <strong>App</strong>
               <label className="settings-provider-toggle-row settings-section-toggle">
                 <span className="settings-provider-name">{SETTINGS_LAUNCH_AT_LOGIN_LABEL}</span>
                 <input
@@ -297,34 +307,39 @@ export function HomeSettingsContent({
                   onChange={(event) => onChangeLaunchAtLoginEnabled(event.target.checked)}
                 />
               </label>
-              <label className="settings-provider-toggle-row settings-section-toggle">
-                <span className="settings-provider-name">{SETTINGS_SESSION_TURN_NOTIFICATION_LABEL}</span>
-                <input
-                  type="checkbox"
-                  checked={settingsDraft.sessionTurnNotificationEnabled}
-                  onChange={(event) => onChangeSessionTurnNotificationEnabled(event.target.checked)}
-                />
-              </label>
-              <label className="settings-provider-toggle-row settings-section-toggle">
-                <span className="settings-provider-name">
-                  {SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL}
-                </span>
-                <input
-                  type="checkbox"
-                  disabled={!settingsDraft.sessionTurnNotificationEnabled}
-                  checked={settingsDraft.sessionTurnNotificationResponsePreviewEnabled}
-                  onChange={(event) =>
-                    onChangeSessionTurnNotificationResponsePreviewEnabled(event.target.checked)}
-                />
-              </label>
-              <label className="settings-provider-toggle-row settings-section-toggle">
-                <span className="settings-provider-name">{SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL}</span>
-                <input
-                  type="checkbox"
-                  checked={settingsDraft.sessionApprovalNotificationEnabled}
-                  onChange={(event) => onChangeSessionApprovalNotificationEnabled(event.target.checked)}
-                />
-              </label>
+              <details className="settings-subsection" open>
+                <summary>Notifications</summary>
+                <div className="settings-subsection-body">
+                  <label className="settings-provider-toggle-row settings-section-toggle">
+                    <span className="settings-provider-name">{SETTINGS_SESSION_TURN_NOTIFICATION_LABEL}</span>
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.sessionTurnNotificationEnabled}
+                      onChange={(event) => onChangeSessionTurnNotificationEnabled(event.target.checked)}
+                    />
+                  </label>
+                  <label className="settings-provider-toggle-row settings-section-toggle">
+                    <span className="settings-provider-name">
+                      {SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL}
+                    </span>
+                    <input
+                      type="checkbox"
+                      disabled={!settingsDraft.sessionTurnNotificationEnabled}
+                      checked={settingsDraft.sessionTurnNotificationResponsePreviewEnabled}
+                      onChange={(event) =>
+                        onChangeSessionTurnNotificationResponsePreviewEnabled(event.target.checked)}
+                    />
+                  </label>
+                  <label className="settings-provider-toggle-row settings-section-toggle">
+                    <span className="settings-provider-name">{SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL}</span>
+                    <input
+                      type="checkbox"
+                      checked={settingsDraft.sessionApprovalNotificationEnabled}
+                      onChange={(event) => onChangeSessionApprovalNotificationEnabled(event.target.checked)}
+                    />
+                  </label>
+                </div>
+              </details>
               <label className="settings-provider-toggle-row settings-section-toggle">
                 <span className="settings-provider-name">{SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL}</span>
                 <input
@@ -371,11 +386,11 @@ export function HomeSettingsContent({
                 </p> : null}
               </div>
             </div>
-          </section>
+          </details>
 
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Prompt Context</summary>
             <div className="settings-field">
-              <strong>Prompt Context</strong>
               <PromptContextToggle
                 id="settings-prompt-context-character-definition"
                 label={SETTINGS_CHARACTER_DEFINITION_LABEL}
@@ -401,11 +416,11 @@ export function HomeSettingsContent({
                 onChange={onChangeToolCallPresenceEnabled}
               />
             </div>
-          </section>
+          </details>
 
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Coding Agent Providers</summary>
             <div className="settings-field">
-              <strong>Coding Agent Providers</strong>
               {modelCatalogLoadStatus === "loading" ? <LoadingIndicator label="Loading model catalog" /> : null}
               {modelCatalogLoadStatus === "error" ? (
                 <LoadError
@@ -416,278 +431,298 @@ export function HomeSettingsContent({
               {providerSettingRows.length > 0 ? (
                 <div className="settings-provider-list">
                   {providerSettingRows.map(({ provider, settings }) => (
-                    <section key={provider.id} className="settings-provider-card">
-                      <div className="settings-provider-model-entry">
-                      <label className="settings-provider-toggle-row">
-                        <span className="settings-provider-name">{provider.label}</span>
-                        <input
-                          type="checkbox"
-                          checked={settings.enabled}
-                          onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
-                        />
-                      </label>
-                      <button
-                        ref={(element) => { if (element) modelsTriggerRefs.current.set(provider.id, element); else modelsTriggerRefs.current.delete(provider.id); }}
-                        type="button"
-                        className="launch-toggle"
-                        aria-label={`Manage ${provider.label} Models`}
-                        onClick={() => setModelProviderId(provider.id)}
-                      >Models</button>
-                      </div>
-                      {provider.id === "claude" ? (
-                        <p className="settings-help">
-                          Uses local Claude Code authentication and billing settings. Sign in with the official CLI before starting a session.
-                        </p>
-                      ) : null}
-                      {provider.id === "opencode" ? (
-                        <p className="settings-help">Configure authentication in OpenCode.</p>
-                      ) : null}
-                      <div className="settings-provider-file-settings">
-                        <div>
-                          <strong>{SETTINGS_PROVIDER_FILE_SETTINGS_LABEL}</strong>
-                          <p className="settings-help">{SETTINGS_PROVIDER_FILE_SETTINGS_HELP}</p>
-                          {provider.id === "opencode" ? (
-                            <p className="settings-help">Use the OpenCode config root with AGENTS.md and skills/&lt;name&gt;/SKILL.md. Custom paths are not registered with OpenCode automatically.</p>
-                          ) : null}
+                    <details key={provider.id} className="settings-subsection settings-provider-card" open>
+                      <summary>{provider.label}<span className="settings-provider-state">{settings.enabled ? "Enabled" : "Disabled"}</span></summary>
+                      <div className="settings-subsection-body">
+                        <div className="settings-provider-model-entry">
+                          <label className="settings-provider-toggle-row">
+                            <span className="settings-provider-name">Enabled</span>
+                            <input
+                              type="checkbox"
+                              aria-label={`${provider.label} Enabled`}
+                              checked={settings.enabled}
+                              onChange={(event) => onChangeProviderEnabled(provider.id, event.target.checked)}
+                            />
+                          </label>
+                          <button
+                            ref={(element) => { if (element) modelsTriggerRefs.current.set(provider.id, element); else modelsTriggerRefs.current.delete(provider.id); }}
+                            type="button"
+                            className="launch-toggle"
+                            aria-label={`Manage ${provider.label} Models`}
+                            onClick={() => setModelProviderId(provider.id)}
+                          >Models</button>
                         </div>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL}</span>
-                          <div className="settings-inline-input-row">
-                            <input
-                              type="text"
-                              value={settings.skillRootPath}
-                              onChange={(event) => onChangeProviderSkillRootPath(provider.id, event.target.value)}
-                              placeholder={SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER}
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                            <SettingsActionButton
-                              failure={settingsErrors.get(`browse-root:${provider.id}`)}
-                              actionLabel={`Choose Root Directory for ${provider.label}`}
-                              className="launch-toggle"
-                              type="button"
-                              onClick={() => void runAction(`browse-root:${provider.id}`, () => onBrowseProviderSkillRootPath(provider.id))}
-                              disabled={actionIsBlocked(`browse-root:${provider.id}`)}
-                              aria-busy={actionIsBusy(`browse-root:${provider.id}`)}
-                              aria-label={actionIsBusy(`browse-root:${provider.id}`) ? `Opening provider root directory for ${provider.label}` : "Browse"}
-                            >
-                              <ButtonContent
-                                busy={actionIsBusy(`browse-root:${provider.id}`)}
-                                busyLabel={`Opening provider root directory for ${provider.label}.`}
-                              >
-                                Browse
-                              </ButtonContent>
-                            </SettingsActionButton>
+                        {provider.id === "claude" ? (
+                          <p className="settings-help">
+                            Uses local Claude Code authentication and billing settings. Sign in with the official CLI before starting a session.
+                          </p>
+                        ) : null}
+                        {provider.id === "opencode" ? (
+                          <p className="settings-help">Configure authentication in OpenCode.</p>
+                        ) : null}
+                        <details className="settings-subsection settings-provider-file-settings" open>
+                          <summary>{SETTINGS_PROVIDER_FILE_SETTINGS_LABEL}</summary>
+                          <div className="settings-subsection-body">
+                            <div>
+                              <p className="settings-help">{SETTINGS_PROVIDER_FILE_SETTINGS_HELP}</p>
+                              {provider.id === "opencode" ? (
+                                <p className="settings-help">Use the OpenCode config root with AGENTS.md and skills/&lt;name&gt;/SKILL.md. Custom paths are not registered with OpenCode automatically.</p>
+                              ) : null}
+                            </div>
+                            <label className="settings-provider-input">
+                              <span>{SETTINGS_PROVIDER_ROOT_DIRECTORY_LABEL}</span>
+                              <div className="settings-inline-input-row">
+                                <input
+                                  type="text"
+                                  value={settings.skillRootPath}
+                                  onChange={(event) => onChangeProviderSkillRootPath(provider.id, event.target.value)}
+                                  placeholder={SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER}
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                />
+                                <SettingsActionButton
+                                  failure={settingsErrors.get(`browse-root:${provider.id}`)}
+                                  actionLabel={`Choose Root Directory for ${provider.label}`}
+                                  className="launch-toggle"
+                                  type="button"
+                                  onClick={() => void runAction(`browse-root:${provider.id}`, () => onBrowseProviderSkillRootPath(provider.id))}
+                                  disabled={actionIsBlocked(`browse-root:${provider.id}`)}
+                                  aria-busy={actionIsBusy(`browse-root:${provider.id}`)}
+                                  aria-label={actionIsBusy(`browse-root:${provider.id}`) ? `Opening provider root directory for ${provider.label}` : "Browse"}
+                                >
+                                  <ButtonContent
+                                    busy={actionIsBusy(`browse-root:${provider.id}`)}
+                                    busyLabel={`Opening provider root directory for ${provider.label}.`}
+                                  >
+                                    Browse
+                                  </ButtonContent>
+                                </SettingsActionButton>
+                              </div>
+                            </label>
+                            <label className="settings-provider-input">
+                              <span>{SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL}</span>
+                              <div className="settings-inline-input-row">
+                                <input
+                                  type="text"
+                                  value={settings.skillRelativePath ?? ""}
+                                  onChange={(event) => onChangeProviderSkillRelativePath(provider.id, event.target.value)}
+                                  placeholder={SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER}
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                />
+                                <SettingsActionButton
+                                  failure={settingsErrors.get(`browse-skill:${provider.id}`)}
+                                  actionLabel={`Choose Skill Folder for ${provider.label}`}
+                                  className="launch-toggle"
+                                  type="button"
+                                  onClick={() => void runAction(`browse-skill:${provider.id}`, () => onBrowseProviderSkillRelativePath(provider.id))}
+                                  disabled={actionIsBlocked(`browse-skill:${provider.id}`)}
+                                  aria-busy={actionIsBusy(`browse-skill:${provider.id}`)}
+                                  aria-label={actionIsBusy(`browse-skill:${provider.id}`) ? `Opening skill folder for ${provider.label}` : "Browse"}
+                                >
+                                  <ButtonContent
+                                    busy={actionIsBusy(`browse-skill:${provider.id}`)}
+                                    busyLabel={`Opening skill folder for ${provider.label}.`}
+                                  >
+                                    Browse
+                                  </ButtonContent>
+                                </SettingsActionButton>
+                              </div>
+                            </label>
+                            <label className="settings-provider-input">
+                              <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
+                              <div className="settings-inline-input-row">
+                                <input
+                                  type="text"
+                                  value={settings.instructionRelativePath ?? ""}
+                                  onChange={(event) => onChangeProviderInstructionRelativePath(provider.id, event.target.value)}
+                                  placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
+                                  autoComplete="off"
+                                  spellCheck={false}
+                                />
+                                <SettingsActionButton
+                                  failure={settingsErrors.get(`browse-instruction:${provider.id}`)}
+                                  actionLabel={`Choose Instruction File for ${provider.label}`}
+                                  className="launch-toggle"
+                                  type="button"
+                                  onClick={() => void runAction(`browse-instruction:${provider.id}`, () => onBrowseProviderInstructionRelativePath(provider.id))}
+                                  disabled={actionIsBlocked(`browse-instruction:${provider.id}`)}
+                                  aria-busy={actionIsBusy(`browse-instruction:${provider.id}`)}
+                                  aria-label={actionIsBusy(`browse-instruction:${provider.id}`) ? `Opening instruction file for ${provider.label}` : "Browse"}
+                                >
+                                  <ButtonContent
+                                    busy={actionIsBusy(`browse-instruction:${provider.id}`)}
+                                    busyLabel={`Opening instruction file for ${provider.label}.`}
+                                  >
+                                    Browse
+                                  </ButtonContent>
+                                </SettingsActionButton>
+                              </div>
+                            </label>
                           </div>
-                        </label>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_LABEL}</span>
-                          <div className="settings-inline-input-row">
-                            <input
-                              type="text"
-                              value={settings.skillRelativePath ?? ""}
-                              onChange={(event) => onChangeProviderSkillRelativePath(provider.id, event.target.value)}
-                              placeholder={SETTINGS_PROVIDER_SKILL_RELATIVE_PATH_PLACEHOLDER}
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                            <SettingsActionButton
-                              failure={settingsErrors.get(`browse-skill:${provider.id}`)}
-                              actionLabel={`Choose Skill Folder for ${provider.label}`}
-                              className="launch-toggle"
-                              type="button"
-                              onClick={() => void runAction(`browse-skill:${provider.id}`, () => onBrowseProviderSkillRelativePath(provider.id))}
-                              disabled={actionIsBlocked(`browse-skill:${provider.id}`)}
-                              aria-busy={actionIsBusy(`browse-skill:${provider.id}`)}
-                              aria-label={actionIsBusy(`browse-skill:${provider.id}`) ? `Opening skill folder for ${provider.label}` : "Browse"}
-                            >
-                              <ButtonContent
-                                busy={actionIsBusy(`browse-skill:${provider.id}`)}
-                                busyLabel={`Opening skill folder for ${provider.label}.`}
-                              >
-                                Browse
-                              </ButtonContent>
-                            </SettingsActionButton>
-                          </div>
-                        </label>
-                        <label className="settings-provider-input">
-                          <span>{SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_LABEL}</span>
-                          <div className="settings-inline-input-row">
-                            <input
-                              type="text"
-                              value={settings.instructionRelativePath ?? ""}
-                              onChange={(event) => onChangeProviderInstructionRelativePath(provider.id, event.target.value)}
-                              placeholder={SETTINGS_PROVIDER_INSTRUCTION_RELATIVE_PATH_PLACEHOLDER}
-                              autoComplete="off"
-                              spellCheck={false}
-                            />
-                            <SettingsActionButton
-                              failure={settingsErrors.get(`browse-instruction:${provider.id}`)}
-                              actionLabel={`Choose Instruction File for ${provider.label}`}
-                              className="launch-toggle"
-                              type="button"
-                              onClick={() => void runAction(`browse-instruction:${provider.id}`, () => onBrowseProviderInstructionRelativePath(provider.id))}
-                              disabled={actionIsBlocked(`browse-instruction:${provider.id}`)}
-                              aria-busy={actionIsBusy(`browse-instruction:${provider.id}`)}
-                              aria-label={actionIsBusy(`browse-instruction:${provider.id}`) ? `Opening instruction file for ${provider.label}` : "Browse"}
-                            >
-                              <ButtonContent
-                                busy={actionIsBusy(`browse-instruction:${provider.id}`)}
-                                busyLabel={`Opening instruction file for ${provider.label}.`}
-                              >
-                                Browse
-                              </ButtonContent>
-                            </SettingsActionButton>
-                          </div>
-                        </label>
+                        </details>
                       </div>
-                    </section>
+                    </details>
                   ))}
                 </div>
               ) : null}
             </div>
-          </section>
+          </details>
           </> : null}
           </fieldset>
 
-          <section className="settings-section-card">
+          {settingsDraftLoaded ? <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
+            <BackgroundExecutionSettings settings={settingsDraft} catalog={modelCatalog}
+              onChangePurpose={onChangeBackgroundPurpose} onChangeFrequencies={onChangeMemoryRecordingFrequencies} />
+          </fieldset> : null}
+          <details className="settings-section-card" open>
+            <summary>{SETTINGS_DIAGNOSTICS_LABEL}</summary>
             <div className="settings-field">
-              <strong>{SETTINGS_DIAGNOSTICS_LABEL}</strong>
-              {memoryV6Diagnostics ? (
-                <>
-                <div className="settings-diagnostics-grid">
-                  <div className="settings-diagnostics-item">
-                    <span>Memory API</span>
-                    <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "Discovery Published" : "Discovery Unavailable"}</small>
-                  </div>
-                  <div className="settings-diagnostics-item">
-                    <span>CLI Shim</span>
-                    <strong>{memoryV6Diagnostics.cliShim.status}</strong>
-                    <small>{formatCliShimDetail(memoryV6Diagnostics)}</small>
-                  </div>
-                  <div className="settings-diagnostics-item settings-diagnostics-wide">
-                    <span>Last Error</span>
-                    <strong>
-                      {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
-                        ?? memoryV6Diagnostics.lastErrors[0]?.kind
-                        ?? "None"}
-                    </strong>
-                    {memoryV6Diagnostics.lastErrors.length > 0 ? <small>Review the application log for details.</small> : null}
+              <details className="settings-subsection" open>
+                <summary>Memory</summary>
+                <div className="settings-subsection-body">
+                  {memoryV6Diagnostics ? (
+                    <>
+                      <div className="settings-diagnostics-grid">
+                        <div className="settings-diagnostics-item">
+                          <span>Memory API</span>
+                          <strong>{memoryV6Diagnostics.runtime.status}</strong>
+                          <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "Discovery Published" : "Discovery Unavailable"}</small>
+                        </div>
+                        <div className="settings-diagnostics-item">
+                          <span>CLI Shim</span>
+                          <strong>{memoryV6Diagnostics.cliShim.status}</strong>
+                          <small>{formatCliShimDetail(memoryV6Diagnostics)}</small>
+                        </div>
+                        <div className="settings-diagnostics-item settings-diagnostics-wide">
+                          <span>Last Error</span>
+                          <strong>
+                            {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
+                              ?? memoryV6Diagnostics.lastErrors[0]?.kind
+                              ?? "None"}
+                          </strong>
+                          {memoryV6Diagnostics.lastErrors.length > 0 ? <small>Review the application log for details.</small> : null}
+                        </div>
+                      </div>
+                      {memoryV6DiagnosticsLoadStatus === "loading" ? (
+                        <LoadingIndicator label="Refreshing Memory V6 diagnostics" inline />
+                      ) : null}
+                      {memoryV6DiagnosticsLoadStatus === "error" ? (
+                        <LoadError
+                          message={memoryV6DiagnosticsLoadError || "Could not refresh Memory V6 diagnostics."}
+                          onRetry={onRetryMemoryV6Diagnostics}
+                        />
+                      ) : null}
+                    </>
+                  ) : memoryV6DiagnosticsLoadStatus === "loading" ? (
+                    <LoadingIndicator label="Loading Memory V6 diagnostics" inline />
+                  ) : memoryV6DiagnosticsLoadStatus === "error" ? (
+                    <LoadError
+                      message={memoryV6DiagnosticsLoadError || "Could not load Memory V6 diagnostics."}
+                      onRetry={onRetryMemoryV6Diagnostics}
+                    />
+                  ) : (
+                    <p className="settings-empty-state">Diagnostics are unavailable.</p>
+                  )}
+                  <div className="settings-actions">
+                    <button
+                      className="launch-toggle"
+                      type="button"
+                      onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
+                      disabled={actionIsBlocked("review-memory")}
+                      aria-busy={actionIsBusy("review-memory")}
+                      aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "Review Memory"}
+                    >
+                      <ButtonContent
+                        busy={actionIsBusy("review-memory")}
+                        busyLabel="Opening Memory review."
+                      >
+                        Review Memory
+                      </ButtonContent>
+                    </button>
+                    <SettingsActionButton
+                      failure={settingsErrors.get("install-cli-shim")}
+                      actionLabel="Install CLI Shim"
+                      className="launch-toggle"
+                      type="button"
+                      onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
+                      disabled={actionIsBlocked("install-cli-shim") || !memoryV6Diagnostics?.cliShim.supported}
+                      aria-busy={actionIsBusy("install-cli-shim")}
+                      aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "Install CLI Shim"}
+                    >
+                      <ButtonContent
+                        busy={actionIsBusy("install-cli-shim")}
+                        busyLabel="Installing CLI shim."
+                      >
+                        Install CLI Shim
+                      </ButtonContent>
+                    </SettingsActionButton>
+                    <SettingsActionButton
+                      failure={settingsErrors.get("uninstall-cli-shim")}
+                      actionLabel="Uninstall CLI Shim"
+                      className="launch-toggle"
+                      type="button"
+                      onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
+                      disabled={actionIsBlocked("uninstall-cli-shim") || !canUninstallCliShim(memoryV6Diagnostics)}
+                      aria-busy={actionIsBusy("uninstall-cli-shim")}
+                      aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "Uninstall CLI Shim"}
+                    >
+                      <ButtonContent
+                        busy={actionIsBusy("uninstall-cli-shim")}
+                        busyLabel="Uninstalling CLI shim."
+                      >
+                        Uninstall CLI Shim
+                      </ButtonContent>
+                    </SettingsActionButton>
                   </div>
                 </div>
-                {memoryV6DiagnosticsLoadStatus === "loading" ? (
-                  <LoadingIndicator label="Refreshing Memory V6 diagnostics" inline />
-                ) : null}
-                {memoryV6DiagnosticsLoadStatus === "error" ? (
-                  <LoadError
-                    message={memoryV6DiagnosticsLoadError || "Could not refresh Memory V6 diagnostics."}
-                    onRetry={onRetryMemoryV6Diagnostics}
-                  />
-                ) : null}
-                </>
-              ) : memoryV6DiagnosticsLoadStatus === "loading" ? (
-                <LoadingIndicator label="Loading Memory V6 diagnostics" inline />
-              ) : memoryV6DiagnosticsLoadStatus === "error" ? (
-                <LoadError
-                  message={memoryV6DiagnosticsLoadError || "Could not load Memory V6 diagnostics."}
-                  onRetry={onRetryMemoryV6Diagnostics}
-                />
-              ) : (
-                <p className="settings-empty-state">Diagnostics are unavailable.</p>
-              )}
-              <div className="settings-actions">
-                <button
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
-                  disabled={actionIsBlocked("review-memory")}
-                  aria-busy={actionIsBusy("review-memory")}
-                  aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "Review Memory"}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("review-memory")}
-                    busyLabel="Opening Memory review."
+              </details>
+              <details className="settings-subsection" open>
+                <summary>Application Logs</summary>
+                <div className="settings-subsection-body settings-actions">
+                  <SettingsActionButton
+                    failure={settingsErrors.get("open-logs")}
+                    actionLabel="Open Logs"
+                    className="launch-toggle"
+                    type="button"
+                    onClick={() => void runAction("open-logs", onOpenAppLogFolder)}
+                    disabled={actionIsBlocked("open-logs")}
+                    aria-busy={actionIsBusy("open-logs")}
+                    aria-label={actionIsBusy("open-logs") ? "Opening application logs" : SETTINGS_OPEN_LOG_FOLDER_LABEL}
                   >
-                    Review Memory
-                  </ButtonContent>
-                </button>
-                <SettingsActionButton
-                  failure={settingsErrors.get("install-cli-shim")}
-                  actionLabel="Install CLI Shim"
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
-                  disabled={actionIsBlocked("install-cli-shim") || !memoryV6Diagnostics?.cliShim.supported}
-                  aria-busy={actionIsBusy("install-cli-shim")}
-                  aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "Install CLI Shim"}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("install-cli-shim")}
-                    busyLabel="Installing CLI shim."
+                    <ButtonContent
+                      busy={actionIsBusy("open-logs")}
+                      busyLabel="Opening application logs."
+                    >
+                      {SETTINGS_OPEN_LOG_FOLDER_LABEL}
+                    </ButtonContent>
+                  </SettingsActionButton>
+                  <SettingsActionButton
+                    failure={settingsErrors.get("open-crash-dumps")}
+                    actionLabel="Open Crash Dumps"
+                    className="launch-toggle"
+                    type="button"
+                    onClick={() => void runAction("open-crash-dumps", onOpenCrashDumpFolder)}
+                    disabled={actionIsBlocked("open-crash-dumps")}
+                    aria-busy={actionIsBusy("open-crash-dumps")}
+                    aria-label={actionIsBusy("open-crash-dumps") ? "Opening crash dumps" : SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
                   >
-                    Install CLI Shim
-                  </ButtonContent>
-                </SettingsActionButton>
-                <SettingsActionButton
-                  failure={settingsErrors.get("uninstall-cli-shim")}
-                  actionLabel="Uninstall CLI Shim"
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
-                  disabled={actionIsBlocked("uninstall-cli-shim") || !canUninstallCliShim(memoryV6Diagnostics)}
-                  aria-busy={actionIsBusy("uninstall-cli-shim")}
-                  aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "Uninstall CLI Shim"}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("uninstall-cli-shim")}
-                    busyLabel="Uninstalling CLI shim."
-                  >
-                    Uninstall CLI Shim
-                  </ButtonContent>
-                </SettingsActionButton>
-                <SettingsActionButton
-                  failure={settingsErrors.get("open-logs")}
-                  actionLabel="Open Logs"
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("open-logs", onOpenAppLogFolder)}
-                  disabled={actionIsBlocked("open-logs")}
-                  aria-busy={actionIsBusy("open-logs")}
-                  aria-label={actionIsBusy("open-logs") ? "Opening application logs" : SETTINGS_OPEN_LOG_FOLDER_LABEL}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("open-logs")}
-                    busyLabel="Opening application logs."
-                  >
-                    {SETTINGS_OPEN_LOG_FOLDER_LABEL}
-                  </ButtonContent>
-                </SettingsActionButton>
-                <SettingsActionButton
-                  failure={settingsErrors.get("open-crash-dumps")}
-                  actionLabel="Open Crash Dumps"
-                  className="launch-toggle"
-                  type="button"
-                  onClick={() => void runAction("open-crash-dumps", onOpenCrashDumpFolder)}
-                  disabled={actionIsBlocked("open-crash-dumps")}
-                  aria-busy={actionIsBusy("open-crash-dumps")}
-                  aria-label={actionIsBusy("open-crash-dumps") ? "Opening crash dumps" : SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
-                >
-                  <ButtonContent
-                    busy={actionIsBusy("open-crash-dumps")}
-                    busyLabel="Opening crash dumps."
-                  >
-                    {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
-                  </ButtonContent>
-                </SettingsActionButton>
-              </div>
+                    <ButtonContent
+                      busy={actionIsBusy("open-crash-dumps")}
+                      busyLabel="Opening crash dumps."
+                    >
+                      {SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL}
+                    </ButtonContent>
+                  </SettingsActionButton>
+                </div>
+              </details>
             </div>
-          </section>
+          </details>
 
           {settingsDraftLoaded ? <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Repository Glossary</summary>
             <div className="settings-field">
-              <strong>Repository Glossary</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -704,11 +739,11 @@ export function HomeSettingsContent({
                 <p className="settings-help">{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP}</p>
               </label>
             </div>
-          </section>
+          </details>
 
-          <section className="settings-section-card">
+          <details className="settings-section-card" open>
+            <summary>Storage Maintenance</summary>
             <div className="settings-field">
-              <strong>Storage Maintenance</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_MEMORY_FILE_QUOTA_LABEL}</span>
                 <div className="settings-inline-input-row">
@@ -724,38 +759,44 @@ export function HomeSettingsContent({
                 </div>
                 <p className="settings-help">{SETTINGS_MEMORY_FILE_QUOTA_HELP}</p>
               </label>
-              <label className="settings-provider-input">
-                <span>{SETTINGS_DELETE_OLD_SESSIONS_LABEL}</span>
-                <div className="settings-inline-input-row">
-                  <input
-                    type="date"
-                    value={sessionCleanupCutoffDate}
-                    onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
-                    disabled={cleaningSessionFiles || deletingOldSessions || actionIsBusy("delete-sessions")}
-                  />
-                  <SettingsActionButton
-                    failure={settingsErrors.get("delete-sessions")}
-                    actionLabel="Delete Old Sessions"
-                    className="launch-toggle"
-                    type="button"
-                    onClick={() => void runAction("delete-sessions", onDeleteSessionsLastActiveBefore)}
-                    disabled={cleaningSessionFiles || deletingOldSessions || actionIsBlocked("delete-sessions") || !sessionCleanupCutoffDate}
-                    aria-busy={actionIsBusy("delete-sessions")}
-                    aria-label={actionIsBusy("delete-sessions") ? "Deleting old sessions" : "Delete"}
-                  >
-                    <ButtonContent
-                      busy={actionIsBusy("delete-sessions")}
-                      busyLabel="Deleting old sessions."
-                    >
-                      Delete
-                    </ButtonContent>
-                  </SettingsActionButton>
+              <details className="settings-subsection" open>
+                <summary>{SETTINGS_DELETE_OLD_SESSIONS_LABEL}</summary>
+                <div className="settings-subsection-body">
+                  <label className="settings-provider-input">
+                    <span>Last Active Before</span>
+                    <div className="settings-inline-input-row">
+                      <input
+                        type="date"
+                        aria-label="Delete Old Sessions Last Active Before"
+                        value={sessionCleanupCutoffDate}
+                        onChange={(event) => onChangeSessionCleanupCutoffDate(event.target.value)}
+                        disabled={cleaningSessionFiles || deletingOldSessions || actionIsBusy("delete-sessions")}
+                      />
+                      <SettingsActionButton
+                        failure={settingsErrors.get("delete-sessions")}
+                        actionLabel="Delete Old Sessions"
+                        className="launch-toggle"
+                        type="button"
+                        onClick={() => void runAction("delete-sessions", onDeleteSessionsLastActiveBefore)}
+                        disabled={cleaningSessionFiles || deletingOldSessions || actionIsBlocked("delete-sessions") || !sessionCleanupCutoffDate}
+                        aria-busy={actionIsBusy("delete-sessions")}
+                        aria-label={actionIsBusy("delete-sessions") ? "Deleting old sessions" : "Delete"}
+                      >
+                        <ButtonContent
+                          busy={actionIsBusy("delete-sessions")}
+                          busyLabel="Deleting old sessions."
+                        >
+                          Delete
+                        </ButtonContent>
+                      </SettingsActionButton>
+                    </div>
+                    <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
+                  </label>
                 </div>
-                <p className="settings-help">{SETTINGS_DELETE_OLD_SESSIONS_HELP}</p>
-              </label>
+              </details>
               <SessionFolderCleanup disabled={deletingOldSessions || actionIsBusy("delete-sessions")} onBusyChange={setCleaningSessionFiles} />
             </div>
-          </section>
+          </details>
 
           <KeyboardShortcutsHelpSection
             settings={settingsDraft.keyboardShortcuts}
@@ -778,7 +819,7 @@ export function HomeSettingsContent({
           className="launch-toggle"
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
-          disabled={!settingsDirty || previewWheelZoomStepInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
+          disabled={!settingsDirty || previewWheelZoomStepInvalid || memoryRecordingFrequenciesInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >

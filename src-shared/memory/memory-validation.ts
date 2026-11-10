@@ -9,7 +9,9 @@ import {
   type MemoryAppendFileInput,
   type MemoryAppendFileRole,
   type MemoryAppendRequest,
+  type MemoryAppendEntriesRequest,
   type MemoryEntryKind,
+  type MemoryEntryContent,
   type MemoryForgetReason,
   type MemoryForgetRequest,
   type MemoryAuditRequest,
@@ -53,6 +55,8 @@ const APPEND_REQUEST_KEYS = new Set([
   "idempotencyKey",
 ]);
 const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey", "dryRun"]);
+const APPEND_ENTRY_KEYS = new Set([...APPEND_REQUEST_KEYS].filter((key) => key !== "schemaVersion" && key !== "target"));
+const APPEND_ENTRIES_REQUEST_KEYS = new Set(["schemaVersion", "target", "entries"]);
 const MOVE_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "from", "to", "reason", "sourceMessageId", "idempotencyKey"]);
 const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
@@ -943,6 +947,21 @@ export function validateMemoryListTagsRequest(value: unknown): MemoryValidationR
   };
 }
 
+/** Content normalization shared by append and app-managed generation, after outer shape validation. */
+export function validateMemoryEntryContent(value: Record<string, unknown>): MemoryValidationResult<MemoryEntryContent> {
+  const kind = validateMemoryKind(value.kind, "kind");
+  if (!kind.ok) return kind;
+  const title = normalizeText(value.title, "title", { maxLength: MAX_TITLE_LENGTH });
+  if (!title.ok) return title;
+  const body = normalizeText(value.body, "body", { maxLength: MAX_BODY_LENGTH });
+  if (!body.ok) return body;
+  const preview = normalizeText(value.preview, "preview", { maxLength: MAX_PREVIEW_LENGTH });
+  if (!preview.ok) return preview;
+  const tags = normalizeTags(value.tags);
+  if (!tags.ok) return tags;
+  return { ok: true, value: { kind: kind.value, title: title.value, body: body.value, preview: preview.value, tags: tags.value } };
+}
+
 export function validateMemoryAppendRequest(value: unknown): MemoryValidationResult<MemoryAppendRequest> {
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_REQUEST", "Append request must be an object.");
@@ -959,26 +978,8 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
   if (!target.ok) {
     return target;
   }
-  const kind = validateMemoryKind(value.kind, "kind");
-  if (!kind.ok) {
-    return kind;
-  }
-  const title = normalizeText(value.title, "title", { maxLength: MAX_TITLE_LENGTH });
-  if (!title.ok) {
-    return title;
-  }
-  const body = normalizeText(value.body, "body", { maxLength: MAX_BODY_LENGTH });
-  if (!body.ok) {
-    return body;
-  }
-  const preview = normalizeText(value.preview, "preview", { maxLength: MAX_PREVIEW_LENGTH });
-  if (!preview.ok) {
-    return preview;
-  }
-  const tags = normalizeTags(value.tags);
-  if (!tags.ok) {
-    return tags;
-  }
+  const content = validateMemoryEntryContent(value);
+  if (!content.ok) return content;
   const supersedes = normalizeStringArray(value.supersedes, "supersedes", { maxItems: MAX_SUPERSEDES, maxLength: MAX_ID_LENGTH });
   if (!supersedes.ok) {
     return supersedes;
@@ -1005,11 +1006,7 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
     value: {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: target.value,
-      kind: kind.value,
-      title: title.value,
-      body: body.value,
-      preview: preview.value,
-      tags: tags.value,
+      ...content.value,
       ...(supersedes.value && supersedes.value.length > 0 ? { supersedes: supersedes.value } : {}),
       ...(mutationReason.value !== undefined ? { mutationReason: mutationReason.value } : {}),
       ...(files.value && files.value.length > 0 ? { files: files.value } : {}),
@@ -1017,6 +1014,32 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
       ...(idempotencyKey.value !== undefined ? { idempotencyKey: idempotencyKey.value } : {}),
     },
   };
+}
+
+export function validateMemoryAppendEntriesRequest(value: unknown): MemoryValidationResult<MemoryAppendEntriesRequest> {
+  if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Append entries request must be an object.");
+  const keys = rejectUnknownKeys(value, APPEND_ENTRIES_REQUEST_KEYS, "request");
+  if (!keys.ok) return keys;
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) return schema;
+  const target = normalizeMemoryTarget(value.target, "target");
+  if (!target.ok) return target;
+  if (!Array.isArray(value.entries) || value.entries.length === 0) {
+    return error("MEMORY_INVALID_FIELD", "entries must be a non-empty array.", "entries");
+  }
+  const entries: MemoryAppendEntriesRequest["entries"] = [];
+  for (const [index, item] of value.entries.entries()) {
+    if (!isRecord(item)) return error("MEMORY_INVALID_FIELD", "Each entry must be an object.", `entries[${index}]`);
+    const itemKeys = rejectUnknownKeys(item, APPEND_ENTRY_KEYS, `entries[${index}]`);
+    if (!itemKeys.ok) return itemKeys;
+    const validated = validateMemoryAppendRequest({ ...item, schemaVersion: value.schemaVersion, target: value.target });
+    if (!validated.ok) return { ok: false, error: { ...validated.error,
+      field: `entries[${index}]${validated.error.field ? `.${validated.error.field}` : ""}` } };
+    if (!validated.value.idempotencyKey) return error("MEMORY_INVALID_FIELD", "Each entry requires an idempotency key.", `entries[${index}].idempotencyKey`);
+    const { schemaVersion: _schemaVersion, target: _target, ...entry } = validated.value;
+    entries.push({ ...entry, idempotencyKey: validated.value.idempotencyKey });
+  }
+  return { ok: true, value: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, target: target.value, entries } };
 }
 
 export function validateMemoryForgetRequest(value: unknown): MemoryValidationResult<MemoryForgetRequest> {

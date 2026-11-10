@@ -15,6 +15,8 @@ export type MemoryV6WorkerCommand =
   | { operation: "memory.appendEntry"; input: Parameters<MemoryV6Storage["appendEntry"]>[0] }
   | { operation: "memory.resolveAppendIdempotencyReplay"; input: Parameters<MemoryV6Storage["resolveAppendIdempotencyReplay"]>[0] }
   | { operation: "memory.getEntry"; input: { entryId: string } }
+  | { operation: "memory.getEntryForReview"; input: { entryId: string } }
+  | { operation: "memory.listReviewTargets"; input: undefined }
   | { operation: "memory.listTargets"; input: Parameters<MemoryV6Storage["listTargets"]>[0] }
   | { operation: "memory.listEntries"; input: Parameters<MemoryV6Storage["listEntries"]>[0] }
   | { operation: "memory.searchEntries"; input: Parameters<MemoryV6Storage["searchEntries"]>[0] }
@@ -35,9 +37,9 @@ export type MemoryV6WorkerCommand =
   | { operation: "memory.listTagStatisticsPage"; input: { targets: readonly MemoryV6ResolvedTarget[]; options: Parameters<MemoryV6Storage["listTagStatisticsPage"]>[1] } }
   | { operation: "memory.moveEntry"; input: Parameters<MemoryV6Storage["moveEntry"]>[0] }
   | { operation: "memory.forgetEntryForReview"; input: Parameters<MemoryV6Storage["forgetEntryForReview"]>[0] }
-  | { operation: "affect.recordEvent"; input: { event: AffectEventInput; expectedVersion?: string } }
-  | { operation: "affect.correctEvent"; input: { event: Parameters<CharacterAffectStorage["correctEvent"]>[0]; expectedVersion?: string } }
-  | { operation: "affect.reset"; input: { reset: AffectResetInput; expectedVersion?: string } }
+  | { operation: "affect.recordEvent"; input: { event: AffectEventInput } & NonNullable<Parameters<CharacterAffectStorage["recordEvent"]>[1]> }
+  | { operation: "affect.correctEvent"; input: { event: Parameters<CharacterAffectStorage["correctEvent"]>[0] } & NonNullable<Parameters<CharacterAffectStorage["correctEvent"]>[1]> }
+  | { operation: "affect.reset"; input: { reset: AffectResetInput } & NonNullable<Parameters<CharacterAffectStorage["reset"]>[1]> }
   | { operation: "affect.linkMemoryEpisode"; input: { eventId: string; memoryEntryId: string } }
   | { operation: "affect.recordEpisodeCandidate"; input: { eventId: string } }
   | { operation: "affect.recordRejection"; input: Parameters<CharacterAffectStorage["recordRejection"]>[0] }

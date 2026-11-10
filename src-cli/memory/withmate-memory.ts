@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { MEMORY_FILE_ACCESS_USAGE } from "../../src-shared/memory/memory-file-access.js";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -232,6 +233,21 @@ Connection options:
 
 Validation:
   validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
+
+Registration inputs:
+  Background affect-appraise candidates use sourceMessageSeq from a saved user/assistant message; the app resolves the terminal Turn and time. Alternatively use sourceTurnId, never both.
+  append accepts a target and either the single-entry fields or entries[]. Each entry has its own idempotencyKey.
+  character-memory-append-episode accepts either episode/idempotencyKey or episodes[] of those pairs.
+  Registration arrays have no fixed item-count maximum; per-item text and attachment limits still apply.
+  Batch results use input index, saved/failed/unknown/not_run and the existing single-item result.
+  Processing stops at the first failure; confirmed items remain saved. Do not automatically retry a whole batch.
+
+Affect management:
+  affect-correct requires reason and expectedVersion. Normal turns also require explicitUserRequest=true; the app-managed background Affect task derives correction authority from its binding.
+  affect-reset always requires an explicit user request and is not available to background tasks.
+
+File access:
+  ${MEMORY_FILE_ACCESS_USAGE}
 
 Examples:
   withmate-memory instances

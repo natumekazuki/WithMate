@@ -81,9 +81,11 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_memory_protected_objects_state",
   "idx_v6_memory_protected_objects_entry",
   "idx_v6_character_affect_events_effective",
+  "idx_v6_character_affect_events_auxiliary_effective",
   "idx_v6_character_affect_events_afterglow",
   "idx_v6_character_affect_events_target",
   "idx_v6_character_affect_resets_scope",
+  "idx_v6_character_affect_resets_auxiliary_scope",
   "idx_v6_character_affect_mutations_scope",
   "idx_v6_character_affect_observations_scope",
 ] as const;
@@ -231,6 +233,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "deleted_at",
   ],
   character_affect_events_v6: [
+    "auxiliary_session_id", "source_auxiliary_session_id",
     "id",
     "character_id",
     "user_id",
@@ -254,6 +257,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "created_at",
   ],
   character_affect_resets_v6: [
+    "auxiliary_session_id",
     "id",
     "character_id",
     "user_id",
@@ -276,6 +280,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "created_at",
   ],
   character_affect_mutations_v6: [
+    "auxiliary_session_id", "source_auxiliary_session_id",
     "id",
     "operation",
     "character_id",
@@ -288,6 +293,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "created_at",
   ],
   character_affect_observations_v6: [
+    "auxiliary_session_id",
     "id",
     "kind",
     "outcome",
@@ -470,6 +476,8 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "memory_protected_objects_v6", "entry_id", "memory_entries_v6")
     && hasForeignKey(db, "character_affect_events_v6", "character_id", "characters", "id", "CASCADE")
     && hasForeignKey(db, "character_affect_events_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_events_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_events_v6", "source_auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
     && hasForeignKey(db, "character_affect_events_v6", "source_session_id", "sessions_v6", "id", "SET NULL")
     && hasForeignKey(
       db,
@@ -490,6 +498,7 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     )
     && hasForeignKey(db, "character_affect_resets_v6", "character_id", "characters", "id", "CASCADE")
     && hasForeignKey(db, "character_affect_resets_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_resets_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "CASCADE")
     && hasForeignKey(db, "character_affect_idempotency_v6", "character_id", "characters", "id", "CASCADE")
     && hasForeignKey(
       db,
@@ -509,6 +518,8 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     )
     && hasForeignKey(db, "character_affect_mutations_v6", "character_id", "characters", "id", "CASCADE")
     && hasForeignKey(db, "character_affect_mutations_v6", "session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(db, "character_affect_mutations_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
+    && hasForeignKey(db, "character_affect_mutations_v6", "source_auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
     && hasForeignKey(db, "character_affect_mutations_v6", "source_session_id", "sessions_v6", "id", "SET NULL")
     && hasForeignKey(
       db,
@@ -528,6 +539,7 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     )
     && hasForeignKey(db, "character_affect_observations_v6", "character_id", "characters", "id", "CASCADE")
     && hasForeignKey(db, "character_affect_observations_v6", "session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(db, "character_affect_observations_v6", "auxiliary_session_id", "auxiliary_sessions", "id", "SET NULL")
     && hasForeignKey(
       db,
       "character_affect_observations_v6",
@@ -610,9 +622,11 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && affectEventsSql.includes("target_id <> ''")
     && affectEventsSql.includes("layer <> 'relationship' OR target_type IN ('user', 'relationship')")
     && affectEventsSql.includes("layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id")
+    && affectEventsSql.includes("layer = 'session' AND auxiliary_session_id IS NOT NULL AND source_auxiliary_session_id = auxiliary_session_id")
     && affectEventsSql.includes("layer = 'relationship' AND session_id IS NULL")
     && affectResetsSql.includes("layer IN ('relationship', 'session')")
-    && affectResetsSql.includes("layer = 'session' AND session_id IS NOT NULL")
+    && affectResetsSql.includes("session_id IS NOT NULL AND auxiliary_session_id IS NULL")
+    && affectResetsSql.includes("session_id IS NULL AND auxiliary_session_id IS NOT NULL")
     && affectResetsSql.includes("layer = 'relationship' AND session_id IS NULL")
     && affectIdempotencySql.includes("operation IN ('record', 'correct', 'reset')")
     && affectIdempotencySql.includes("PRIMARY KEY (character_id, user_id, idempotency_key)")
@@ -926,6 +940,7 @@ export const CREATE_V6_MEMORY_ENTRIES_TABLE_SQL = `
     source_type TEXT NOT NULL CHECK (source_type IN ('agent', 'manual', 'migration')),
     source_session_id TEXT,
     source_app_message_id INTEGER,
+    source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
     source_provider_message_id TEXT,
     source_provider_id TEXT,
     superseded_by_id TEXT,
@@ -1180,6 +1195,13 @@ export const CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL = `
     ON memory_move_events_v6(entry_id, created_at DESC);
 `;
 
+const CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_auxiliary_effective
+    ON character_affect_events_v6(character_id, user_id, layer, auxiliary_session_id, state, occurred_at, id);
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_resets_auxiliary_scope
+    ON character_affect_resets_v6(character_id, user_id, layer, auxiliary_session_id, reset_at DESC, id DESC);
+`;
+
 export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS character_affect_events_v6 (
     id TEXT PRIMARY KEY,
@@ -1203,6 +1225,8 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     memory_entry_id TEXT,
     supersedes_memory_entry_id TEXT,
     created_at TEXT NOT NULL,
+    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE CASCADE,
+    source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
     FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
@@ -1213,9 +1237,12 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     CHECK (user_id <> ''),
     CHECK (target_id <> ''),
     CHECK (layer <> 'relationship' OR target_type IN ('user', 'relationship')),
+    CHECK (session_id IS NULL OR auxiliary_session_id IS NULL),
+    CHECK (source_session_id IS NULL OR source_auxiliary_session_id IS NULL),
     CHECK (
-      (layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id)
-      OR (layer = 'relationship' AND session_id IS NULL)
+      (layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id AND auxiliary_session_id IS NULL)
+      OR (layer = 'session' AND auxiliary_session_id IS NOT NULL AND source_auxiliary_session_id = auxiliary_session_id AND session_id IS NULL)
+      OR (layer = 'relationship' AND session_id IS NULL AND auxiliary_session_id IS NULL)
     )
   );
 
@@ -1239,10 +1266,11 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE CASCADE,
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
     UNIQUE (character_id, user_id, idempotency_key),
-    CHECK ((layer = 'session' AND session_id IS NOT NULL) OR (layer = 'relationship' AND session_id IS NULL))
+    CHECK ((layer = 'session' AND ((session_id IS NOT NULL AND auxiliary_session_id IS NULL) OR (session_id IS NULL AND auxiliary_session_id IS NOT NULL))) OR (layer = 'relationship' AND session_id IS NULL AND auxiliary_session_id IS NULL))
   );
 
   CREATE INDEX IF NOT EXISTS idx_v6_character_affect_resets_scope
@@ -1278,6 +1306,8 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     reset_id TEXT,
     reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
+    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
+    source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
     FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
@@ -1299,6 +1329,7 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     reset_id TEXT,
     reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
+    auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL,
     FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
     FOREIGN KEY (event_id) REFERENCES character_affect_events_v6(id) ON DELETE SET NULL,
@@ -1307,6 +1338,7 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_character_affect_observations_scope
     ON character_affect_observations_v6(character_id, user_id, created_at DESC, id DESC);
+  ${CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL}
 `;
 
 export const CREATE_V6_SESSION_TURN_QUEUE_TABLE_SQL = `
@@ -1452,7 +1484,8 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     ) {
       continue;
     }
-    db.exec(statement);
+    db.exec(statement === CREATE_V6_CHARACTER_AFFECT_TABLES_SQL
+      ? statement.replace(CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL, "") : statement);
   }
 
   if (!db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?").get(SESSION_GRAPH_CONTRACT_INITIALIZED_KEY)) {
@@ -1586,6 +1619,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     `);
   }
 
+  if (!tableColumnNames(db, "memory_entries_v6").has("source_auxiliary_session_id")) {
+    db.exec("ALTER TABLE memory_entries_v6 ADD COLUMN source_auxiliary_session_id TEXT REFERENCES auxiliary_sessions(id) ON DELETE SET NULL");
+  }
+
   if (tableExists(db, "memory_mutation_events_v6")) {
     const mutationEventColumns = tableColumnNames(db, "memory_mutation_events_v6");
     if (!mutationEventColumns.has("source_message_id")) {
@@ -1607,6 +1644,26 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     }
   }
 
+  ensureAffectConversationOwners(db);
+  db.exec(CREATE_V6_CHARACTER_AFFECT_AUXILIARY_INDEXES_SQL);
+
+}
+
+function ensureAffectConversationOwners(db: DatabaseSync): void {
+  if (tableColumnNames(db, "character_affect_events_v6").has("auxiliary_session_id")) return;
+  const tables = ["character_affect_events_v6", "character_affect_resets_v6", "character_affect_idempotency_v6",
+    "character_affect_mutations_v6", "character_affect_observations_v6"];
+  // Rebuild the connected Affect tables together so every event/reset/link ID survives.
+  let replacementSql = CREATE_V6_CHARACTER_AFFECT_TABLES_SQL.replace(/CREATE INDEX[^;]+;/g, "");
+  for (const table of tables) replacementSql = replacementSql.replaceAll(table, `${table}_replacement`);
+  db.exec(replacementSql);
+  for (const table of tables) {
+    const columns = [...tableColumnNames(db, table)].map((column) => `"${column}"`).join(", ");
+    db.exec(`INSERT INTO ${table}_replacement (${columns}) SELECT ${columns} FROM ${table};`);
+  }
+  for (const table of [...tables].reverse()) db.exec(`DROP TABLE ${table};`);
+  for (const table of tables) db.exec(`ALTER TABLE ${table}_replacement RENAME TO ${table};`);
+  db.exec(CREATE_V6_CHARACTER_AFFECT_TABLES_SQL);
 }
 
 export function ensureV6Schema(db: DatabaseSync): void {

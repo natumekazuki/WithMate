@@ -85,7 +85,8 @@ async function withMemoryApi<T>(
     maxBodyBytes: 1024,
     agentRuntimeBindingRegistry: bindings,
     providerAgentRuntimeTurns: turns,
-    resolveActorSession: () => ({ id: "session-a", providerId: "codex", characterId: "mika" }),
+    resolveActorSession: () => ({ id: "session-a", providerId: "codex", characterId: "mika",
+      resolveMemoryFileAccess: async () => ({ readRoots: [tempDirectory], exportRoot: tempDirectory }) }),
     resolveProjectById: (id) => ({ id, displayName: id }),
     resolveProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a"
       ? { id: "project-a", displayName: "Project A" } : null,

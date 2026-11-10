@@ -6,6 +6,8 @@ Accepted
 
 ## Subsequent decisions
 
+[ADR 035](035-background-execution-binding-and-history-scope.md)により、専用post-turn生成を設けない方針は背景生成へ置換する。共通binding／履歴read基盤の適用と用途別生成・保存の接続は分け、生成担当の統合前に現行の通常turn内操作だけを削除しない。以下の本文と保存済みデータの保護を維持する。
+
 [ADR 029](029-cli-mcp-parity-context-binding.md)により、通常turn内AffectをMCP入口だけに限定する部分は現行運用の適用対象外とする。CLIも同じbinding、current turn、公開schemaとapplication serviceを利用する。専用post-turn評価を設けず、Agentが記録する意味のある変化だけを保存する判断は維持する。以下の本文は当時の判断として保持する。
 
 ## Context

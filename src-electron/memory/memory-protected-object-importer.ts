@@ -1,5 +1,7 @@
 import { stat, readFile } from "node:fs/promises";
 import { extname } from "node:path";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
+import { MemoryFileAccessError, resolveMemoryImportPath } from "./memory-file-access.js";
 import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
@@ -46,6 +48,7 @@ export class MemoryProtectedObjectImportError extends Error {
 export type PrepareMemoryProtectedObjectFileInput = {
   entryId: string;
   file: MemoryAppendFileInput;
+  fileAccess?: MemoryFileAccess;
 };
 
 export type PrepareMemoryProtectedObjectFileDependencies = {
@@ -66,16 +69,18 @@ export async function prepareMemoryProtectedObjectFile(
   dependencies: PrepareMemoryProtectedObjectFileDependencies,
   input: PrepareMemoryProtectedObjectFileInput,
 ): Promise<MemoryV6AppendProtectedObjectInput> {
-  const inspected = await inspectMemoryProtectedObjectInputFile(input.file);
+  const inspected = await inspectMemoryProtectedObjectInputFile(input.file, input.fileAccess);
   assertRuntimeTurnAdmission();
   const objectId = createMemoryProtectedObjectId();
   let key: MemoryProtectedObjectKey;
   let plaintext: Buffer;
   try {
     key = await dependencies.keyStore.getOrCreateActiveKey();
-    plaintext = await readFile(input.file.path);
+    const sourcePath = input.fileAccess ? await resolveMemoryImportPath(input.file.path, input.fileAccess) : input.file.path;
+    assertRuntimeTurnAdmission();
+    plaintext = await readFile(sourcePath);
   } catch (error) {
-    if (error instanceof RuntimeTurnInactiveError) throw error;
+    if (error instanceof RuntimeTurnInactiveError || error instanceof MemoryFileAccessError) throw error;
     throw new MemoryProtectedObjectImportError(
       "MEMORY_FILE_IMPORT_FAILED",
       "files",
@@ -131,11 +136,16 @@ export async function prepareMemoryProtectedObjectFile(
 
 export async function inspectMemoryProtectedObjectInputFile(
   file: MemoryAppendFileInput,
+  fileAccess?: MemoryFileAccess,
 ): Promise<MemoryProtectedObjectInputFileInspection> {
+  assertRuntimeTurnAdmission();
   let stats;
   try {
-    stats = await stat(file.path);
-  } catch {
+    const sourcePath = fileAccess ? await resolveMemoryImportPath(file.path, fileAccess) : file.path;
+    assertRuntimeTurnAdmission();
+    stats = await stat(sourcePath);
+  } catch (error) {
+    if (error instanceof MemoryFileAccessError || error instanceof RuntimeTurnInactiveError) throw error;
     throw new MemoryProtectedObjectImportError(
       "MEMORY_INVALID_FIELD",
       "path",

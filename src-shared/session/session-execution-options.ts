@@ -30,7 +30,7 @@ export function captureSessionExecutionOptions(source: Pick<Session, keyof Sessi
 
 export function validateSessionExecutionOptions(
   value: unknown,
-  providerCatalog: ModelCatalogProvider,
+  providerCatalog: Pick<ModelCatalogProvider, "id">,
 ): SessionExecutionOptions {
   if (!value || typeof value !== "object") {
     throw new Error("Turn execution options are required.");

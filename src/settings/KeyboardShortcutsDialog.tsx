@@ -32,9 +32,9 @@ export function KeyboardShortcutsHelpSection({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <section className="settings-section-card settings-help-section">
+    <details className="settings-section-card settings-help-section" open>
+      <summary>Help</summary>
       <div className="settings-field">
-        <strong>Help</strong>
         <button className="launch-toggle" type="button" onClick={() => setOpen(true)}>
           Keyboard Shortcuts
         </button>
@@ -45,7 +45,7 @@ export function KeyboardShortcutsHelpSection({
         settings={settings}
         onChange={onChange}
       />
-    </section>
+    </details>
   );
 }
 

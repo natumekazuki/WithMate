@@ -182,7 +182,7 @@ provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同
 
 Affect更新は通常turn中のAgentによる`character_affect.appraise`を使い、具体的な感情変化がないturnでは呼出しを必須としない。turnのterminal保存・成功判定はAffect専用enqueueやsettlementに依存しない。失敗・取消後や起動・再接続・timerから専用LLM評価を開始せず、未記録分を補完turnや合成eventで埋めない。
 
-pre-turn context取得とprompt注入、取得時のafterglowを維持する。通常MCPのactor、provider、captured turn、token、version、idempotency、effect certaintyは既存application boundaryに従う。turn中に保存済みのevent／episodeは、その後の応答失敗・取消で巻き戻さない。旧queueの整理と保存済み正本の保護は[Database Schema](database-schema.md#起動時の移行とデータ保護)に従う。
+pre-turnではAffectの最新状態取得・合成とprompt注入、取得時のafterglowを維持する。Memoryはユーザー入力による事前検索や自動prompt注入を行わず、Agentが必要時に既存MCP／CLIで取得する。通常MCPのactor、provider、captured turn、token、version、idempotency、effect certaintyは既存application boundaryに従う。turn中に保存済みのevent／episodeは、その後の応答失敗・取消で巻き戻さない。旧queueの整理と保存済み正本の保護は[Database Schema](database-schema.md#起動時の移行とデータ保護)に従う。
 
 ### Home Window Close
 

@@ -6,6 +6,10 @@
 
 永続化データの正本と、Markdownやprovider instructionなどのgenerated projectionを混同しない。生成された投影は手編集を正本とせず、削除・忘却した情報を再投影やproviderへの送信に残さない。
 
+背景三用途のProvider／model／任意のreasoningEffort・用途別権限・登録本文は`app_settings`の`background_execution_settings_json`、Memory二用途の頻度は`memory_recording_frequencies_json`に保存する。既存AppSettingsの読込・保存・変更通知を用い、キー欠落時だけ初期化し、不正値を既定値へ置換しない。選択未設定と本文未設定・空文字列を区別する。
+
+元会話×用途の背景native thread ID・前回失敗・待機通知はアプリruntime内だけで保持し、DBへ保存しない。再起動時に過去の待機や失敗範囲を自動復元しない。保存済みMemory／Affectはそのまま保持し、生成・登録対象の完了cursorや実行台帳は設けない。実行ごとの認可と継続の契約は[Background Execution](background-execution.md)を参照する。
+
 V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存操作はstorage Workerが所有する。Mainは許可されたtyped commandを非同期で送る。close、reset、reopen後に旧storage generationの遅延応答を新しいDBへ適用しない。
 
 ## Storage Overview
@@ -60,6 +64,16 @@ Main／Auxiliaryの対象owner・request IDをそれぞれ一意にし、親ま�
 継続pageはrequest ID、generation、会話owner、対象revisionを照合し、変更・取消・失効を成功0件と区別する。所有と取消・上限は[V6 Database Foundation](v6-database-foundation.md#runtime-ownerとschema)を参照する。
 
 Memoryのowner、scope、忘却、idempotency、保護対象fileは[V6 Memory Foundation](v6-memory-foundation.md)と[V6 Memory Protected Objects](v6-memory-protected-objects.md)を参照する。Characterの定義fileは`<userData>/characters/<character-id>/`に置き、catalog metadataとsession snapshotの境界は[Character Storage](character-storage.md)を参照する。
+
+Memory出典の`source_session_id`は実Main、`source_auxiliary_session_id`は実Auxiliaryを参照する。Auxiliary登録ではMain側をNULLにし、同名IDを親Mainへ代用しない。Auxiliary削除では出典FKをSET NULLにして登録済みMemory本文・targetを保持する。既存V6への列追加はWorkerの`ensureV6Schema`で行い、保存済みentryを作り直さない。公開readの`source.auxiliarySessionId`は出典がある場合だけ返し、MCP／CLIで同じ契約を使う。
+
+## Character Affect
+
+`character_affect_*_v6`をMain／Auxiliaryで共用する。session-layer eventとresetのscope ownerはMainの`session_id`かAuxiliaryの`auxiliary_session_id`の一方だけで、対象会話削除時にcascade削除する。relationship-layerは両scope列をNULLとし、Character／local-user単位で全会話に共有する。発生元は`source_session_id`か`source_auxiliary_session_id`に保持し、削除時はprovenanceだけをNULLにする。mutation／observationの会話参照も削除時にNULLとなる。
+
+内部`sessionSource`が実kind・incarnation・親identity、背景では既存WorkerのownerIdentityを伝え、同名Main／Auxiliaryを区別する。未指定の既存入力はMainである。projection／version／inspect／correct／resetは同じownerを使う。別会話の一時感情は既存afterglowのread-time規則だけで合成し、relationshipへ転写しない。詳細は[ADR018](../adr/018-character-affect-event-persistence.md)に従う。
+
+schema ensureは既存Affect tablesの列・CHECK・FKを更新する際、接続するevent／reset／idempotency／mutation／observationを同じsavepoint内で再構築する。既存Main行、ID、Memory link、fingerprint、監査をコピーして保持し、Mainのstate versionを変更しない。Memory tablesと保存本文は対象外で、`user_version`は6を維持する。
 
 ## Session Graph
 

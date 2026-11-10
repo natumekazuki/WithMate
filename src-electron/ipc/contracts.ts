@@ -337,6 +337,7 @@ export type MainIpcSettingsDeps = MainIpcEventWindowDeps &
     searchMemoryV6Entries(
       request: MemoryV6ReviewSearchRequest | null | undefined,
     ): Awaitable<MemoryV6ReviewSearchResult>;
+    listMemoryV6ReviewTargets(): Awaitable<import("../../src-shared/memory/memory-review-state.js").MemoryV6ReviewTargets>;
     getMemoryV6Entry(
       entryId: string,
     ): Awaitable<MemoryV6ReviewEntryDetail | null>;

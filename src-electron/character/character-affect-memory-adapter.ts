@@ -37,7 +37,8 @@ export class MemoryV6CharacterAffectEpisodeWriter implements CharacterAffectEpis
       bindingIdHash: LOCAL_USER_ID,
       source: {
         type: "agent",
-        sessionId: input.sourceSessionId,
+        sessionId: input.sourceKind === "auxiliary" ? null : input.sourceSessionId,
+        ...(input.sourceKind === "auxiliary" ? { auxiliarySessionId: input.sourceSessionId } : {}),
         messageId: null,
         providerId: null,
         appMessageId: null,

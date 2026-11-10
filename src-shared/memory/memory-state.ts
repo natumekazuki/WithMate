@@ -19,6 +19,7 @@ export type MemoryScopeRef =
 export type MemorySource = {
   type: "agent" | "manual" | "migration";
   sessionId: string | null;
+  auxiliarySessionId?: string;
   messageId: string | null;
   providerId: string | null;
 };

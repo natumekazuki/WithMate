@@ -1,3 +1,4 @@
+import { resolveRunExecutionTarget } from "../provider-runtime.js";
 import { readFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -475,7 +476,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
     const permissionMode = mapApprovalModeToClaudePermissionMode(input.executionOptions.approvalMode, input.executionOptions.codexReviewer);
     const prompt = this.composePrompt(input);
     const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
-    const trace = this.makeTrace(input.session.threadId || null, redactor);
+    const trace = this.makeTrace(resolveRunExecutionTarget(input).threadId || null, redactor);
     const workspacePath = resolveRunWorkspacePath(input);
     const selection = resolveModelSelection(input.providerCatalog, input.executionOptions.model, input.executionOptions.reasoningEffort);
     const controller = new AbortController();
@@ -505,7 +506,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       const steps = trace.steps.takeProgress(redactor);
       const backgroundTasks = trace.backgroundTasks.takeProgress(redactor);
       const state = {
-        sessionId: input.session.id,
+        sessionId: resolveRunExecutionTarget(input).id,
         threadId: trace.threadId ?? "",
         assistantText: redactor.sanitizeText(liveText(trace)),
         steps: steps.snapshot,
@@ -531,7 +532,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       permissionMode,
       allowDangerouslySkipPermissions: input.executionOptions.approvalMode === "never",
       settings: { fastMode: input.executionOptions.codexSpeed === "fast" },
-      resume: input.session.threadId || undefined,
+      resume: resolveRunExecutionTarget(input).threadId || undefined,
       systemPrompt: { type: "preset", preset: "claude_code", append: prompt.systemBodyText, snapshot: false },
       additionalDirectories: prompt.additionalDirectories,
       settingSources: ["user", "project", "local"],
@@ -577,7 +578,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
       canUseTool: async (toolName, toolInput, context) => {
         if (controller.signal.aborted || context.signal.aborted) return { behavior: "deny", message: "Canceled" };
         if (permissionMode === "dontAsk") return { behavior: "deny", message: "Only preapproved tools are allowed" };
-        const requestId = context.toolUseID || `${input.session.id}:${Date.now()}`;
+        const requestId = context.toolUseID || `${resolveRunExecutionTarget(input).id}:${Date.now()}`;
         if (toolName === "AskUserQuestion") {
           if (!input.onElicitationRequest) return { behavior: "deny", message: "Question UI is unavailable" };
           try {
@@ -671,7 +672,7 @@ export class ClaudeAdapter implements ProviderTurnAdapter {
           if (reportFailure) throw new Error(terminal.subtype === "success" ? terminal.result : terminal.errors.join("\n") || terminal.subtype);
           if (!matchesInput && !sessionFailure) continue;
         }
-        this.receive(next.value, trace, Boolean(input.session.threadId));
+        this.receive(next.value, trace, Boolean(resolveRunExecutionTarget(input).threadId));
         if (next.value.type === "system" && next.value.subtype === "init") {
           if (next.value.permissionMode && next.value.permissionMode !== permissionMode) {
             throw new Error(`Claude did not apply the requested permission mode (${permissionMode}); active mode: ${next.value.permissionMode}.`);

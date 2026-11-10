@@ -60,6 +60,8 @@ export function createStorageWorkerCommandHandlers(): StorageWorkerCommandHandle
     "memory.appendEntry": (payload) => memory.appendEntry(input(payload)),
     "memory.resolveAppendIdempotencyReplay": (payload) => memory.resolveAppendIdempotencyReplay(input(payload)),
     "memory.getEntry": (payload) => memory.getEntry(String(requireObjectPayload(payload).entryId ?? "")),
+    "memory.getEntryForReview": (payload) => memory.getEntryForReview(String(requireObjectPayload(payload).entryId ?? "")),
+    "memory.listReviewTargets": (payload) => { noPayload(payload); return memory.listReviewTargets(); },
     "memory.listTargets": (payload) => memory.listTargets(input(payload)),
     "memory.listEntries": (payload) => memory.listEntries(input(payload)),
     "memory.searchEntries": (payload) => memory.searchEntries(input(payload)),
@@ -93,16 +95,16 @@ export function createStorageWorkerCommandHandlers(): StorageWorkerCommandHandle
     "memory.moveEntry": (payload) => memory.moveEntry(input(payload)),
     "memory.forgetEntryForReview": (payload) => memory.forgetEntryForReview(input(payload)),
     "affect.recordEvent": (payload) => {
-      const value = input<{ event: Parameters<CharacterAffectStorage["recordEvent"]>[0]; expectedVersion?: string }>(setObservedAt(affect, payload));
-      return affect.recordEvent(value.event, value.expectedVersion ? { expectedVersion: value.expectedVersion } : {});
+      const { event, ...options } = input<{ event: Parameters<CharacterAffectStorage["recordEvent"]>[0] } & NonNullable<Parameters<CharacterAffectStorage["recordEvent"]>[1]>>(setObservedAt(affect, payload));
+      return affect.recordEvent(event, options);
     },
     "affect.correctEvent": (payload) => {
-      const value = input<{ event: Parameters<CharacterAffectStorage["correctEvent"]>[0]; expectedVersion?: string }>(setObservedAt(affect, payload));
-      return affect.correctEvent(value.event, value.expectedVersion ? { expectedVersion: value.expectedVersion } : {});
+      const { event, ...options } = input<{ event: Parameters<CharacterAffectStorage["correctEvent"]>[0] } & NonNullable<Parameters<CharacterAffectStorage["correctEvent"]>[1]>>(setObservedAt(affect, payload));
+      return affect.correctEvent(event, options);
     },
     "affect.reset": (payload) => {
-      const value = input<{ reset: Parameters<CharacterAffectStorage["reset"]>[0]; expectedVersion?: string }>(setObservedAt(affect, payload));
-      return affect.reset(value.reset, value.expectedVersion ? { expectedVersion: value.expectedVersion } : {});
+      const { reset, ...options } = input<{ reset: Parameters<CharacterAffectStorage["reset"]>[0] } & NonNullable<Parameters<CharacterAffectStorage["reset"]>[1]>>(setObservedAt(affect, payload));
+      return affect.reset(reset, options);
     },
     "affect.linkMemoryEpisode": (payload) => {
       const value = input<{ eventId: string; memoryEntryId: string }>(setObservedAt(affect, payload));

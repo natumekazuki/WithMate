@@ -1,5 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
+import { MemoryFileAccessError, resolveMemoryExportPath } from "./memory-file-access.js";
 import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
@@ -29,6 +31,7 @@ export type ExportMemoryProtectedObjectFileDependencies = {
 export type ExportMemoryProtectedObjectFileInput = {
   metadata: MemoryV6ProtectedObjectExportMetadata;
   outputPath: string;
+  fileAccess?: MemoryFileAccess;
 };
 
 export type ExportMemoryProtectedObjectFileResult = {
@@ -38,6 +41,7 @@ export type ExportMemoryProtectedObjectFileResult = {
 export type ExportMemoryProtectedObjectFilesInput = {
   metadata: readonly MemoryV6ProtectedObjectExportMetadata[];
   outputDirectoryPath: string;
+  fileAccess?: MemoryFileAccess;
 };
 
 export type ExportMemoryProtectedObjectFilesResult = {
@@ -54,6 +58,8 @@ export async function exportMemoryProtectedObjectFile(
   dependencies: ExportMemoryProtectedObjectFileDependencies,
   input: ExportMemoryProtectedObjectFileInput,
 ): Promise<ExportMemoryProtectedObjectFileResult> {
+  assertRuntimeTurnAdmission();
+  if (input.fileAccess) await resolveMemoryExportPath(input.outputPath, input.fileAccess);
   assertExportMetadataWithinReadLimit(input.metadata);
   const key = await dependencies.keyStore.readKey(input.metadata.keyId);
   if (!key) {
@@ -83,7 +89,27 @@ export async function exportMemoryProtectedObjectFile(
   }
 
   assertRuntimeTurnAdmission();
-  await writeFile(input.outputPath, plaintext, { flag: "wx" });
+  let outputPath = input.outputPath;
+  if (input.fileAccess) {
+    outputPath = await resolveMemoryExportPath(outputPath, input.fileAccess);
+    assertRuntimeTurnAdmission();
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    try {
+      outputPath = await resolveMemoryExportPath(outputPath, input.fileAccess);
+    } catch (error) {
+      if (error instanceof MemoryFileAccessError) throw new MemoryFileAccessError("partial");
+      throw error;
+    }
+  }
+  try {
+    assertRuntimeTurnAdmission();
+    await writeFile(outputPath, plaintext, { flag: "wx" });
+  } catch (error) {
+    if (input.fileAccess && error instanceof RuntimeTurnInactiveError) {
+      throw new Error("Memory file export stopped after a partial effect.", { cause: error });
+    }
+    throw error;
+  }
   return { bytesWritten: plaintext.byteLength };
 }
 
@@ -109,14 +135,19 @@ export async function exportMemoryProtectedObjectFiles(
   input: ExportMemoryProtectedObjectFilesInput,
 ): Promise<ExportMemoryProtectedObjectFilesResult> {
   assertRuntimeTurnAdmission();
-  await mkdir(input.outputDirectoryPath, { recursive: true });
+  const outputDirectoryPath = input.fileAccess
+    ? await resolveMemoryExportPath(input.outputDirectoryPath, input.fileAccess)
+    : input.outputDirectoryPath;
+  assertRuntimeTurnAdmission();
+  await mkdir(outputDirectoryPath, { recursive: true });
   const files = [];
   for (const metadata of input.metadata) {
-    const outputPath = path.join(input.outputDirectoryPath, buildExportFileName(metadata));
+    const outputPath = path.join(outputDirectoryPath, buildExportFileName(metadata));
     let result: ExportMemoryProtectedObjectFileResult;
     try {
-      result = await exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath });
+      result = await exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath, fileAccess: input.fileAccess });
     } catch (error) {
+      if (error instanceof MemoryFileAccessError) throw new MemoryFileAccessError("partial");
       if (error instanceof RuntimeTurnInactiveError) {
         // The output directory and possibly earlier files have already been created.
         throw new Error("Memory file export stopped after a partial effect.", { cause: error });

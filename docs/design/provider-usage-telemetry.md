@@ -60,7 +60,7 @@ Codex App Serverの`thread/tokenUsage/updated`は`total`がthread累計、`last`
 
 異なるthreadの通知と、現在turnのusage取得後に届く別turnの通知はusageへ反映しない。Main・Auxiliary・Backgroundは同じ集計を使ってprovider結果へturn使用量を返し、Main・Auxiliaryでは通常artifactにも保存する。これは契約全体の消費量やquota残量ではない。
 
-ClaudeのMain・Auxiliaryはuser / project / local設定を読み込むが、Backgroundとquota取得は副作用を隔離するため読み込まない。Backgroundとquota取得の認証・接続先は親プロセスの環境変数とSDKが参照する既存CLIログインに依存する。
+ClaudeのMain・Auxiliary・Backgroundは同じadapterでuser / project / local設定を読み込む。quota取得は独立した取得経路で読み込まない。認証・接続先は各経路の既存環境変数とSDKが参照する既存CLIログインに依存する。
 
 Main・Auxiliaryも同じ経路で解決される場合は補助処理も同じ契約枠を消費するが、設定ファイルだけにある`apiKeyHelper`や認証・接続先の環境変数に依存する場合は、認証失敗や異なる利用先・消費枠となり得る。同一の認証・課金経路を無条件に保証せず、WithMateから認証情報をコピーしたり、失敗時に別の認証へ切り替えたりしない。
 

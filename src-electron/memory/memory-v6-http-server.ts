@@ -4,6 +4,8 @@ import type { AddressInfo } from "node:net";
 
 import { createMemoryErrorResponse, type MemoryAuditResponse, type MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
+import { validateMemoryAppendEntriesRequest } from "../../src-shared/memory/memory-validation.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import {
   LOCAL_USER_MEMORY_PERMISSIONS,
@@ -49,12 +51,24 @@ import {
   WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
 } from "../platform/memory/memory-runtime-exchange.js";
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
+import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
+import type { BackgroundMemoryTarget } from "../../src-shared/agent-runtime/background-execution-scope.js";
+import type { AffectSessionSource } from "../character/character-affect-storage.js";
+import type { BackgroundRegistration } from "../providers/background-registration.js";
+import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
+import { getSessionIncarnationId, isReadOnlySession } from "../../src-shared/session/session-state.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
-import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { backgroundOperationFailure, classifyBackgroundFailure } from "../providers/background-failure.js";
+import { sessionHistoryRuntimeOperationByPath } from "../../src-shared/session-history/session-history-contract.js";
+import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
   characterContextService?: CharacterContextApplicationService;
+  backgroundRegistration?: BackgroundRegistration;
+  onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
   apiSecret: string;
   operatorApiSecret: string;
   mcpApiSecret: string;
@@ -70,13 +84,14 @@ export type MemoryV6HttpServerOptions = {
   requestTimeoutMs?: number;
   fileOperationRequestTimeoutMs?: number;
   maxConcurrentRequests?: number;
-  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve" | "resolveIdentity">;
   providerAgentRuntimeTurns?: Pick<ProviderAgentRuntimeTurnCoordinator, "admit">;
   resolveProjectById?: (id: string) => Promise<MemoryV6ProjectContext | null> | MemoryV6ProjectContext | null;
   resolveProjectByPath?: (projectPath: string) => Promise<MemoryV6ProjectContext | null> | MemoryV6ProjectContext | null;
   resolveKnownProjectByPath?: (projectPath: string) => Promise<MemoryV6ProjectContext | null> | MemoryV6ProjectContext | null;
   resolveActorSession?: (
     sessionId: string,
+    sourceKind?: SessionHistoryReadScope["source"]["kind"],
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
   routeAgentRuntimeExtension?: (
     request: AgentRuntimeExtensionRequest,
@@ -89,6 +104,8 @@ export type AgentRuntimeActorSession = {
   providerId: string;
   characterId: string;
   workspacePath?: string;
+  source?: AffectSessionSource;
+  resolveMemoryFileAccess?: (outputPath?: string) => Promise<MemoryFileAccess>;
 };
 
 export type AgentRuntimeExtensionRequest = {
@@ -403,6 +420,7 @@ async function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6
     return service.listTags(principal, body);
   }
   if (route === "append") {
+    if (body && typeof body === "object" && "entries" in body) return service.appendEntries(principal, body);
     return service.append(principal, body);
   }
   if (route === "forget") {
@@ -447,12 +465,13 @@ async function routeCharacterContextRequest(
   route: MemoryV6Route,
   body: unknown,
   transport: CharacterContextTransport,
+  sessionSource?: AffectSessionSource,
 ): Promise<unknown> {
   if (!service) {
     return memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Character context service is unavailable.");
   }
   if (route === "character_context_get") {
-    return service.getContext(body, transport);
+    return service.getContext(body, transport, undefined, sessionSource);
   }
   if (
     transport === "mcp"
@@ -467,22 +486,24 @@ async function routeCharacterContextRequest(
   }
   const authorizedBody = resolveTransportAuthority(body, route, transport);
   if (route === "character_affect_appraise") {
-    return service.appraise(authorizedBody, transport);
+    return service.appraise(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_inspect") {
-    return service.inspectAffect(authorizedBody, transport);
+    return service.inspectAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_correct") {
-    return service.correctAffect(authorizedBody, transport);
+    return service.correctAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_reset") {
-    return service.resetAffect(authorizedBody, transport);
+    return service.resetAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_memory_search") {
     return service.searchMemory(body, transport, principal);
   }
   if (route === "character_memory_append_episode") {
-    return service.appendEpisode(authorizedBody, transport, principal);
+    return authorizedBody && typeof authorizedBody === "object" && "episodes" in authorizedBody
+      ? service.appendEpisodes(authorizedBody, transport, principal)
+      : service.appendEpisode(authorizedBody, transport, principal);
   }
   if (route === "character_memory_correct") {
     return service.correctMemory(authorizedBody, transport, principal);
@@ -834,6 +855,7 @@ async function resolveAgentBoundRequestBody(
   body: unknown,
   actorSession: AgentRuntimeActorSession,
   authority: ProviderAgentRuntimeAuthoritySnapshot,
+  backgroundAffectManagement = false,
 ): Promise<AgentBodyResult> {
   if (route.startsWith("character_")) {
     if (route === "character_context_metrics") return { ok: true, value: body };
@@ -842,12 +864,13 @@ async function resolveAgentBoundRequestBody(
         return { ok: false, error: agentInputError(route, "body", "Character request body must be an object.") };
       }
       const { explicitUserRequest, ...request } = body as Record<string, unknown>;
-      if (explicitUserRequest !== true || typeof request.reason !== "string" || !request.reason.trim()) {
+      if ((!backgroundAffectManagement && explicitUserRequest !== true)
+        || typeof request.reason !== "string" || !request.reason.trim()) {
         return { ok: false, error: agentInputError(route, "explicitUserRequest", "An explicit user request and concrete reason are required.") };
       }
       return { ok: true, value: applyActorSessionToBody(route, {
         ...request,
-        authority: { kind: "explicit_user_instruction", reason: request.reason },
+        authority: { kind: backgroundAffectManagement ? "background_management" : "explicit_user_instruction", reason: request.reason },
       }, actorSession, authority) };
     }
     if (route === "character_memory_search") {
@@ -946,7 +969,8 @@ function projectAgentBoundResponse(
   result: unknown,
   authority: ProviderAgentRuntimeAuthoritySnapshot | null,
 ): unknown {
-  if (isMemoryErrorResponse(result) || isCharacterContextError(result) || route.startsWith("character_")) {
+  if (route.startsWith("character_") || (isMemoryErrorResponse(result)
+    && !(route === "append" && "results" in result && Array.isArray(result.results)))) {
     return result;
   }
   const targetForSelector = (value: unknown): Record<string, unknown> | null => {
@@ -1057,6 +1081,19 @@ function projectAgentBoundResponse(
   });
 }
 
+function resolveBackgroundFailureBinding(
+  options: MemoryV6HttpServerOptions,
+  bindingReference: string | undefined,
+  turnCapability: string | undefined,
+): ResolvedAgentRuntimeBinding | undefined {
+  const resolved = options.agentRuntimeBindingRegistry?.resolveIdentity(bindingReference);
+  if (!resolved?.ok || !resolved.binding.backgroundScope) return;
+  const binding = resolved.binding;
+  const admitted = options.providerAgentRuntimeTurns?.admit({ actorSessionId: binding.actorSessionId,
+    providerId: binding.providerId, bindingId: binding.bindingId, turnCapability });
+  return admitted?.ok && admitted.handle.bindingId === binding.bindingId ? binding : undefined;
+}
+
 async function routeResolvedRequest(input: {
   options: MemoryV6HttpServerOptions;
   route: MemoryV6Route;
@@ -1065,6 +1102,43 @@ async function routeResolvedRequest(input: {
   fallbackFrom?: "mcp";
   bindingReference?: string;
   turnCapability?: string;
+}): Promise<unknown> {
+  const binding = resolveBackgroundFailureBinding(input.options, input.bindingReference, input.turnCapability);
+  const stage = input.route === "get_file" || input.route === "export_files" ? "file"
+    : Object.values(BACKGROUND_REGISTRATION_OPERATIONS).some(({ operation }) => operation === agentRuntimeOperationForMemoryRoute(input.route))
+      ? "registration" : "read";
+  const metadata = { requestId: randomUUID(), operation: agentRuntimeOperationForMemoryRoute(input.route),
+    transport: input.fallbackFrom ? "agent_cli_fallback" : input.transport ?? "unknown", boundary: stage } as const;
+  const secrets = [input.options.apiSecret, input.options.operatorApiSecret, input.options.mcpApiSecret,
+    input.options.fallbackAdmissionApiSecret ?? "", input.bindingReference ?? "", input.turnCapability ?? ""];
+  let operationError: unknown;
+  const observe = (observation: Pick<BackgroundOperationObservation, "phase" | "outcome" | "result" | "failure">) => {
+    if (binding) input.options.onBackgroundOperation?.(binding.bindingId,
+      { ...metadata, ...observation, timestamp: new Date().toISOString() });
+  };
+  observe({ phase: "request" });
+  try {
+    const result = await dispatchResolvedRequest({ ...input,
+      ...(binding ? { onOperationError: (error: unknown) => { operationError = error; } } : {}) });
+    let failure = backgroundOperationFailure(result, stage);
+    if (failure && operationError !== undefined) {
+      failure = { ...failure, diagnostic: backgroundErrorDiagnostic({ errors: failure.diagnostic, cause: operationError }, secrets) };
+    }
+    observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(result) });
+    return result;
+  } catch (error) {
+    const failure = classifyBackgroundFailure(error, stage, "BACKGROUND_OPERATION_FAILED");
+    const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
+      secrets) };
+    observe({ phase: "response", outcome: "failure", failure: safeFailure });
+    throw error;
+  }
+}
+
+async function dispatchResolvedRequest(input: {
+  options: MemoryV6HttpServerOptions; route: MemoryV6Route; body: unknown; transport: CharacterContextTransport | null;
+  fallbackFrom?: "mcp"; bindingReference?: string; turnCapability?: string;
+  onOperationError?: (error: unknown) => void;
 }): Promise<unknown> {
   if (!input.transport || !canTransportInvokeRoute(input.transport, input.route)) {
     return createTransportAuthorityError(input.route);
@@ -1093,7 +1167,7 @@ async function routeResolvedRequest(input: {
     if (mcpGeneralPolicyError) {
       return mcpGeneralPolicyError;
     }
-    const dispatch = () => (input.route === "runtime_status" || input.route === "runtime_instances"
+    const dispatch = () => bindingResolution.register ? bindingResolution.register() : (input.route === "runtime_status" || input.route === "runtime_instances"
       ? Promise.resolve(buildStatusResponse({
           apiSecret: input.options.apiSecret,
           applicationInstanceId: input.options.applicationInstanceId ?? "legacy",
@@ -1108,6 +1182,7 @@ async function routeResolvedRequest(input: {
           input.route,
           bindingResolution.body,
           transport,
+          bindingResolution.sessionSource,
         )
       : routeServiceRequest(
           input.options.service,
@@ -1116,7 +1191,13 @@ async function routeResolvedRequest(input: {
           bindingResolution.body,
         ));
     const result = await (bindingResolution.turnAdmission
-      ? runWithRuntimeTurnAdmission(bindingResolution.turnAdmission, dispatch)
+      ? runWithRuntimeTurnAdmission({ ...bindingResolution.turnAdmission, onOperationError: input.onOperationError }, async () => {
+          const value = await dispatch();
+          if (!bindingResolution.register && bindingResolution.principal?.type === "session_binding"
+            && bindingResolution.principal.readTargets !== undefined
+            && input.route !== "get_file" && input.route !== "export_files") assertRuntimeTurnAdmission();
+          return value;
+        })
       : dispatch());
     return projectAgentBoundResponse(input.route, bindingResolution.body, result, bindingResolution.authority);
   } catch (error) {
@@ -1132,6 +1213,8 @@ type RouteBindingResolution =
       principal: MemoryV6Principal | null;
       authority: ProviderAgentRuntimeAuthoritySnapshot | null;
       turnAdmission?: RuntimeTurnAdmission;
+      sessionSource?: AffectSessionSource;
+      register?: () => Promise<unknown>;
     }
   | { ok: false; error: unknown };
 
@@ -1293,12 +1376,14 @@ async function resolveRouteAgentRuntimeBinding(input: {
     };
   }
   const binding = resolved.binding;
+  const background = binding.backgroundScope;
   let turnAdmission: RuntimeTurnAdmission | undefined;
-  if (input.turnCapability || input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
+  if (background || input.turnCapability || input.fallbackFrom === "mcp" || requiresCurrentTurnCapability(input.route, input.body)) {
     const admission = input.options.providerAgentRuntimeTurns?.admit({
       actorSessionId: binding.actorSessionId,
       providerId: binding.providerId,
       turnCapability: input.turnCapability,
+      ...(background ? { bindingId: binding.bindingId } : {}),
     });
     if (!admission?.ok) return { ok: false, error: turnAdmissionFailure(input.route) };
     const handle = admission.handle;
@@ -1310,6 +1395,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
           actorSessionId: binding.actorSessionId,
           providerId: binding.providerId,
           turnCapability: input.turnCapability,
+          ...(background ? { bindingId: binding.bindingId } : {}),
         });
         return Boolean(currentBinding?.ok
           && currentBinding.binding.bindingId === binding.bindingId
@@ -1320,11 +1406,12 @@ async function resolveRouteAgentRuntimeBinding(input: {
       },
     };
   }
-  const actorSession = await input.options.resolveActorSession?.(resolved.binding.actorSessionId) ?? null;
+  const sessionSource = background?.history.source ?? binding.actorSource;
+  const actorSession = await input.options.resolveActorSession?.(binding.actorSessionId, sessionSource?.kind) ?? null;
   if (
     !actorSession
     || actorSession.id !== resolved.binding.actorSessionId
-    || actorSession.providerId !== resolved.binding.providerId
+    || (!background && actorSession.providerId !== resolved.binding.providerId)
   ) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
   }
@@ -1332,21 +1419,112 @@ async function resolveRouteAgentRuntimeBinding(input: {
   if (!authority) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
   }
+  if (sessionSource && !matchesActorSource(sessionSource, actorSession.source)) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+  }
   const identityField = findCallerIdentityField(input.body, input.route === "character_memory_search");
   if (identityField) {
     return { ok: false, error: agentInputError(input.route, identityField, "Caller identity is not accepted.") };
   }
   if (turnAdmission) runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
-  const body = await resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority);
+  const body = await resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority,
+    background?.purpose === "affect" && input.route === "character_affect_correct");
   if (!body.ok) {
     return { ok: false, error: body.error };
+  }
+  const principal = createSessionBindingMemoryPrincipal(binding, actorSession, authority);
+  if (!background && principal.type === "session_binding" && fileOperationRoutes.has(input.route)) {
+    const request = body.value && typeof body.value === "object" ? body.value as Record<string, unknown> : {};
+    const outputPath = input.route === "get_file" ? request.outputPath : input.route === "export_files" ? request.outputDirectoryPath : undefined;
+    principal.fileAccess = await actorSession.resolveMemoryFileAccess?.(typeof outputPath === "string" ? outputPath : undefined);
+  }
+  let register: (() => Promise<unknown>) | undefined;
+  if (background && principal.type === "session_binding") {
+    principal.sourceKind = background.history.source.kind;
+    const capturedTargets = background.memoryTargets.map(capturedMemoryTarget);
+    principal.readTargets = [
+      capturedMemoryTarget({ owner: "user", scope: "global" }),
+      capturedMemoryTarget({ owner: "character", scope: "character", character: { type: "id", id: authority.characterId } }),
+      ...authority.allowedProjectIds.flatMap((id) => [
+        capturedMemoryTarget({ owner: "project", scope: "project", project: { type: "id", id } }),
+        capturedMemoryTarget({ owner: "character", scope: "project", character: { type: "id", id: authority.characterId }, project: { type: "id", id } }),
+      ]),
+    ];
+    principal.fileAccess = background.fileAccess;
+    principal.permissions = ["memory.search", "memory.list_entries", "memory.get_entry", "memory.list_tags",
+      "memory.list_targets", "memory.audit", "memory.list_characters", "memory.file_usage",
+      ...(background.fileAccess?.exportRoot ? ["memory.get_file", "memory.export_files"] as const : [])];
+    const restoresFiles = input.route === "get_file" || input.route === "export_files";
+    const registrationOperation = BACKGROUND_REGISTRATION_OPERATIONS[background.purpose].operation === agentRuntimeOperationForMemoryRoute(input.route);
+    const managementMutation = ["forget", "character_memory_correct", "character_memory_forget", "character_affect_correct"].includes(input.route);
+    if (!restoresFiles && !registrationOperation && !managementMutation) {
+      const registration = input.options.backgroundRegistration;
+      if (!registration) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+      let source;
+      try {
+        source = await runWithRuntimeTurnAdmission(turnAdmission!, () => registration.readBackgroundSource(background.history));
+      } catch (error) {
+        if (error instanceof RuntimeTurnInactiveError) throw error;
+        return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+      }
+      if (!source || source.session.id !== binding.actorSessionId || source.session.characterId !== authority.characterId
+        || !matchesSessionHistorySource(background.history.source, {
+          incarnationId: getSessionIncarnationId(source.session), ownerIdentity: source.ownerIdentity,
+        })) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+    }
+    if (restoresFiles || registrationOperation || managementMutation) {
+      const registration = input.options.backgroundRegistration;
+      const handler = registration?.handlers[background.purpose];
+      const denied = (reason: string) => ({ ok: false as const, error: input.route.startsWith("character_")
+        ? createCharacterContextError("authority_denied", `Background registration is unavailable: ${reason}.`, {
+            retryable: false, conversationMayContinue: true, effect: "none", details: { backgroundRegistration: reason },
+          })
+        : createMemoryErrorResponse({ code: "MEMORY_FORBIDDEN", message: `Background registration is unavailable: ${reason}.`,
+            retryable: false, conversationMayContinue: true, effect: "none", details: { backgroundRegistration: reason } }) });
+      if (!registration || (!restoresFiles && !handler)) return denied("not_connected");
+      if (!registration.sourceKinds[background.purpose]?.includes(background.history.source.kind)) return denied("unsupported_source");
+      // Domain adapters must also validate their source references and construct trusted save inputs.
+      let source;
+      try {
+        source = await runWithRuntimeTurnAdmission(turnAdmission!, () => registration.readBackgroundSource(background.history));
+      } catch (error) {
+        if (error instanceof RuntimeTurnInactiveError) throw error;
+        return denied("source_unavailable");
+      }
+      if (!source || source.session.id !== binding.actorSessionId
+        || source.session.characterId !== authority.characterId || isReadOnlySession(source.session)
+        || source.session.sessionKind === "character-authoring"
+        || !matchesSessionHistorySource(background.history.source, {
+          incarnationId: getSessionIncarnationId(source.session), ownerIdentity: source.ownerIdentity,
+        })) return denied("source_denied");
+      principal.writeTargets = background.purpose === "affect" ? [] : background.purpose === "character-memory"
+        ? capturedTargets.filter((target) => target.owner.type === "character" && target.owner.id === authority.characterId
+          && target.scope.type === "character") : capturedTargets;
+      if (!restoresFiles && background.purpose !== "affect") principal.permissions = [...principal.permissions, "memory.append", "memory.forget"];
+      if (registrationOperation && handler) {
+        const request = body.value as Record<string, unknown>;
+        if (input.route === "character_affect_appraise" && Array.isArray(request.candidates)
+          && request.candidates.some((candidate) => candidate && typeof candidate === "object" && "memoryEpisode" in candidate)) {
+          return denied("linked_episode_forbidden");
+        }
+        const registrationBody = input.route.startsWith("character_")
+          ? resolveTransportAuthority(body.value, input.route, input.transport) : body.value;
+        register = async () => {
+          assertRuntimeTurnAdmission();
+          return handler({ body: registrationBody, scope: background, source, principal, admission: turnAdmission!, transport: input.transport },
+            { memory: input.options.service, character: input.options.characterContextService });
+        };
+      }
+    }
   }
   return {
     ok: true,
     body: body.value,
-    principal: createSessionBindingMemoryPrincipal(binding, actorSession, authority),
+    principal,
     authority,
     turnAdmission,
+    ...(sessionSource ? { sessionSource } : {}),
+    register,
   };
 }
 
@@ -1361,9 +1539,29 @@ function createSessionBindingMemoryPrincipal(
     sessionId: binding.actorSessionId,
     providerId: binding.providerId,
     characterId: actorSession.characterId,
+    ...(binding.actorSource ? { sourceKind: binding.actorSource.kind } : {}),
+    ...(actorSession.workspacePath ? { workspacePath: actorSession.workspacePath } : {}),
     ...(authority ? { allowedProjectIds: authority.allowedProjectIds } : {}),
     permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
+}
+
+function matchesActorSource(captured: AffectSessionSource, current?: AffectSessionSource): boolean {
+  return Boolean(current && captured.kind === current.kind && captured.sessionId === current.sessionId
+    && captured.incarnationId === current.incarnationId && (captured.kind !== "auxiliary"
+      || (current.kind === "auxiliary" && captured.parent.sessionId === current.parent.sessionId
+        && captured.parent.incarnationId === current.parent.incarnationId)));
+}
+
+function capturedMemoryTarget(selector: BackgroundMemoryTarget): MemoryV6ResolvedTarget {
+  if (selector.owner === "user") {
+    return { owner: { type: "user", id: "local-user" }, scope: { type: "global", id: "global" } };
+  }
+  if (selector.owner === "project") {
+    return { owner: { type: "project", id: selector.project.id }, scope: { type: "project", id: selector.project.id } };
+  }
+  return { owner: { type: "character", id: selector.character.id }, scope: selector.scope === "project"
+    ? { type: "project", id: selector.project.id } : { type: "character", id: selector.character.id } };
 }
 
 function validateMcpGeneralMutationPolicy(
@@ -1388,6 +1586,10 @@ function validateMcpGeneralMutationPolicy(
       })
   );
   if (route === "append") {
+    if ("entries" in request) {
+      const validated = validateMemoryAppendEntriesRequest(request);
+      return validated.ok ? null : createMemoryErrorResponse({ ...validated.error, effect: "none" });
+    }
     return requireText("idempotencyKey");
   }
   if (route === "move_entry") {
@@ -1849,15 +2051,36 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Agent runtime extension does not accept Memory CLI fallback mode."));
           return;
         }
-        const extensionResponse = await options.routeAgentRuntimeExtension?.({
-          method: payload.operation.method,
-          path: payload.operation.path,
-          body: payload.operation.body,
-          transport: payload.adapter,
-          bindingReference: payload.bindingReference,
-          turnCapability: payload.turnCapability,
-          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
-        }) ?? null;
+        const historyOperation = sessionHistoryRuntimeOperationByPath.get(new URL(payload.operation.path, "http://127.0.0.1").pathname);
+        const backgroundBinding = historyOperation ? resolveBackgroundFailureBinding(options, payload.bindingReference, payload.turnCapability) : undefined;
+        const metadata = { requestId: randomUUID(), operation: historyOperation ?? "unknown", transport: payload.adapter, boundary: "history" } as const;
+        const observe = (observation: Pick<BackgroundOperationObservation, "phase" | "outcome" | "failure" | "result">) => {
+          if (backgroundBinding) options.onBackgroundOperation?.(backgroundBinding.bindingId,
+            { ...metadata, ...observation, timestamp: new Date().toISOString() });
+        };
+        observe({ phase: "request" });
+        let extensionResponse;
+        try {
+          extensionResponse = await options.routeAgentRuntimeExtension?.({
+            method: payload.operation.method,
+            path: payload.operation.path,
+            body: payload.operation.body,
+            transport: payload.adapter,
+            bindingReference: payload.bindingReference,
+            turnCapability: payload.turnCapability,
+            ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
+          }) ?? null;
+        } catch (error) {
+          const failure = classifyBackgroundFailure(error, "history", "BACKGROUND_OPERATION_FAILED");
+          const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
+            [apiSecret, operatorApiSecret, mcpApiSecret, payload.bindingReference ?? "", payload.turnCapability ?? ""]) };
+          observe({ phase: "response", outcome: "failure", failure: safeFailure });
+          throw error;
+        }
+        if (historyOperation) {
+          const failure = backgroundOperationFailure(extensionResponse?.value, "history");
+          observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(extensionResponse?.value) });
+        }
         if (!extensionResponse) {
           writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Agent runtime extension route was not found."));
           return;

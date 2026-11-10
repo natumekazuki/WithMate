@@ -30,6 +30,8 @@ Repository Glossaryにはmanaged Skill、CLI、MCPを用意しています。Ses
 
 自発的な用語追加を許可する場合はSettingsで有効化し、1 turnあたりの追加上限を設定します。上限を超える操作や、別Session、別checkout、終了済みturnからの操作は拒否します。
 
+背景三用途は、元会話の許可されたprimary checkoutに対する一覧・検索・取得・検証を利用できます。create／update／deleteは公開しません。背景Providerが元会話と異なる場合も、捕捉checkoutと元会話のidentity、activeなbinding／turnを確認し、返却前にも失効を検証します。詳細は[Background Execution](../design/background-execution.md#背景memory-read)を参照してください。
+
 ## 境界と制約
 
 - 用語集はGit checkout単位で解決します。任意の親directoryや別repositoryの用語集へ自動fallbackしません。

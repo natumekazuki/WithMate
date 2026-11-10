@@ -1,5 +1,6 @@
 import type { MemoryError, MemoryPermission } from "../../src-shared/memory/memory-contract.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
 
 export type MemoryV6LocalUserPrincipal = {
   type: "local_user";
@@ -12,9 +13,18 @@ export type MemoryV6SessionBindingPrincipal = {
   type: "session_binding";
   bindingIdHash: string;
   sessionId: string;
+  /** Conversation kind captured by a trusted binding or validated registration handler. */
+  sourceKind?: "main" | "auxiliary";
   providerId: string;
   characterId: string;
   allowedProjectIds?: readonly string[];
+  /** Trusted actor Workspace, used to resolve an authorized Project before its first save. */
+  workspacePath?: string;
+  /** Normal read authority captured for background execution; an empty set permits no target. */
+  readTargets?: readonly MemoryV6ResolvedTarget[];
+  fileAccess?: MemoryFileAccess;
+  /** Captured management targets, present only after purpose/source/handler authorization. */
+  writeTargets?: readonly MemoryV6ResolvedTarget[];
   permissions: readonly MemoryPermission[];
 };
 
@@ -86,6 +96,10 @@ export function canAccessMemoryTarget(principal: MemoryV6Principal, target: Memo
   if (!isUserGlobalTarget && !isProjectTarget && !isCharacterTarget && !isCharacterProjectTarget) {
     return false;
   }
+  if (principal.type === "session_binding" && principal.readTargets !== undefined
+    && !principal.readTargets.some((allowed) => allowed.owner.type === target.owner.type
+      && allowed.owner.id === target.owner.id && allowed.scope.type === target.scope.type
+      && allowed.scope.id === target.scope.id)) return false;
   if (principal.type === "local_user" || target.owner.type !== "character") {
     return true;
   }

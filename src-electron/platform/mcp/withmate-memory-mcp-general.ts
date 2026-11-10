@@ -87,6 +87,7 @@ const memorySearchHitSchema = memoryEntrySummarySchema.omit({ state: true }).ext
 const memorySourceSchema = z.object({
   type: z.enum(["agent", "manual", "migration"]),
   sessionId: z.string().nullable(),
+  auxiliarySessionId: z.string().optional(),
   messageId: z.string().nullable(),
   providerId: z.string().nullable(),
 }).strict();
@@ -217,6 +218,68 @@ const appendSuccessSchema = z.object({
   replayed: z.literal(true).optional(),
 }).strict();
 
+const appendFileInputSchema = z.object({
+  path: z.string().min(1).max(1_000).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "path must be absolute"),
+  summary: z.string().min(1).max(500),
+  role: z.enum(MEMORY_APPEND_FILE_ROLES).optional(),
+  displayName: z.string().min(1).max(255).optional(),
+  contentType: z.string().min(1).max(120).optional(),
+}).strict();
+
+const appendItemSchema = z.object({
+  kind: z.enum(MEMORY_ENTRY_KINDS),
+  title: z.string().min(1).max(160),
+  body: z.string().min(1).max(8_000),
+  preview: z.string().min(1).max(280),
+  tags: z.array(memoryTagInputSchema).max(20).optional(),
+  supersedes: z.array(z.string().min(1).max(200)).max(20).optional(),
+  mutationReason: z.string().min(1).max(200).optional(),
+  files: z.array(appendFileInputSchema).max(10).optional(),
+  sourceMessageId: z.string().min(1).max(200).optional(),
+  idempotencyKey: z.string().min(1).max(200),
+}).strict();
+
+const appendInputSchema = z.object({
+  target: memoryTargetSchema,
+  ...appendItemSchema.partial().shape,
+  entries: z.array(appendItemSchema).min(1).optional(),
+}).strict().superRefine((input, context) => {
+  const { target: _target, entries, ...item } = input;
+  if (entries !== undefined) {
+    for (const key of Object.keys(item)) context.addIssue({ code: "custom", path: [key], message: "Specify entries or a single entry, not both." });
+  } else {
+    const parsed = appendItemSchema.safeParse(item);
+    if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue });
+  }
+}).meta({ oneOf: [
+  { required: ["entries"], not: { anyOf: Object.keys(appendItemSchema.shape).map((key) => ({ required: [key] })) } },
+  { required: ["kind", "title", "body", "preview", "idempotencyKey"], not: { required: ["entries"] } },
+] });
+
+const appendBatchSchema = z.object({
+  schemaVersion: z.literal(MEMORY_V6_SCHEMA_VERSION),
+  results: z.array(z.discriminatedUnion("status", [
+    z.object({ index: z.number().int().nonnegative(), status: z.literal("saved"), result: appendSuccessSchema }).strict(),
+    z.object({ index: z.number().int().nonnegative(), status: z.enum(["failed", "unknown"]), result: memoryErrorSchema }).strict(),
+    z.object({ index: z.number().int().nonnegative(), status: z.literal("not_run") }).strict(),
+  ])).min(1),
+  error: memoryErrorSchema.shape.error.optional(),
+}).strict();
+
+const appendOutputSchema = appendSuccessSchema.partial().extend({
+  schemaVersion: z.literal(MEMORY_V6_SCHEMA_VERSION),
+  results: appendBatchSchema.shape.results.optional(),
+  error: memoryErrorSchema.shape.error.optional(),
+}).strict().superRefine((input, context) => {
+  if (![appendSuccessSchema, appendBatchSchema, memoryErrorSchema].some((schema) => schema.safeParse(input).success)) {
+    context.addIssue({ code: "custom", message: "Result must match a single entry, indexed entries, or an error." });
+  }
+}).meta({ oneOf: [
+  { required: ["entry", "created"], not: { anyOf: [{ required: ["results"] }, { required: ["error"] }] } },
+  { required: ["results"], not: { anyOf: [{ required: ["entry"] }, { required: ["created"] }, { required: ["replayed"] }] } },
+  { required: ["error"], not: { anyOf: [{ required: ["entry"] }, { required: ["created"] }, { required: ["replayed"] }, { required: ["results"] }] } },
+] });
+
 const forgetSuccessSchema = z.object({
   schemaVersion: z.literal(MEMORY_V6_SCHEMA_VERSION),
   results: z.array(z.object({
@@ -278,21 +341,13 @@ const fileUsageSuccessSchema = z.object({
   largestEntries: z.array(z.object({ entryId: z.string(), title: z.string(), preview: z.string(), totalFileBytes: z.number().int().nonnegative(), fileCount: z.number().int().nonnegative(), updatedAt: z.string() }).strict()).optional(),
 }).strict();
 
-const appendFileInputSchema = z.object({
-  path: z.string().min(1).max(1_000).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "path must be absolute"),
-  summary: z.string().min(1).max(500),
-  role: z.enum(MEMORY_APPEND_FILE_ROLES).optional(),
-  displayName: z.string().min(1).max(255).optional(),
-  contentType: z.string().min(1).max(120).optional(),
-}).strict();
-
 export const GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
   { name: "memory.search", description: "Search active general Memory in one or more actor-relative targets. Before memory.append, search the same exact target and do not append an active semantic duplicate or create a conflicting replacement without correction authority. Ordinary CLI use exposes the same public input without requiring an MCP failure. The explicit --fallback-from mcp recovery mode is available only when MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true: invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON. The runtime consumes the matching short-lived admission. Never fallback for domain, authority, version, idempotency, migration, or storage errors.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.get_entry", description: "Read one active Memory entry from an explicit target, including its full body. After search or a small entry/tag listing, read only relevant entries before relying on their details; previews are not the full record.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_targets", description: "List bounded general Memory target inventory without exposing entry bodies. Use a small filtered page when the relevant authorized target is unknown, not a full inventory on every turn.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_entries", description: "List entries in one explicit target; bodies are omitted unless explicitly requested. When no search query comes to mind, try {target, states:[\"active\"], limit:5}, then memory.get_entry for relevant IDs. Untagged notes are included unless a tag filter is supplied.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_tags", description: "List tags for one explicit Memory target, optionally with bounded counts and samples. To discover topics without a search query, try {targets:[target], limit:5}, then filter search/list entries by a relevant tag and read selected bodies with memory.get_entry. Untagged entries are not represented here; use memory.list_entries for them.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: "memory.append", description: "Append one idempotent general Memory entry to an actor-relative target, optionally importing protected files atomically. Small everyday topics or preferences can be short note/preference entries without an explicit remember request or certainty of future usefulness. Supply title and preview suitable for search/list display; tags may be omitted (stored as []). First run memory.search against the same exact target; do not append an active semantic duplicate or create a conflicting replacement without correction authority. After response loss, reconcile only with the unchanged request and idempotency key, and distinguish replayed from a new effect.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
+  { name: "memory.append", description: "Append one entry or independent entries to one actor-relative target. Use the single-entry fields or entries, not both; each entry requires its own idempotencyKey and retains its text and attachment limits. Indexed results distinguish saved, failed, unknown and not_run; processing stops on the first failure and preserves the saved prefix. Protected files are atomic with their own entry. Automatic registration belongs to background Memory tasks; normal turns use append for explicit remember requests. First search the same exact target; do not append an active semantic duplicate. After response loss, reconcile unchanged items with the same keys; never assume all items were unsaved or automatically resend the whole batch.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.forget", description: "Preview or perform an idempotent forget for an actor-relative target and concrete reason. Run dryRun before a bulk forget, then read back current state. After response loss, reconcile only with the unchanged request and idempotency key; use a new key for a changed request and do not infer saved or effect state.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: "memory.move_entry", description: "Move one active entry idempotently between actor-relative targets while preserving its identity and attachments. After response loss, reconcile only with the unchanged request and idempotency key, use a new key for a changed request, and read back current state without guessing effect certainty.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: "memory.get_file", description: "Export one protected object to a new absolute output path after target validation; existing files are not overwritten. This operation is non-idempotent: after a dispatched response loss, treat the effect as unknown and do not retry automatically. Inspect the intended output path read-only or use operator manual recovery; run a new operation only after confirming no file was created or by choosing a new output path.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
@@ -379,19 +434,7 @@ export function registerGeneralMemoryMcpTools(
     method: "POST", path: "/v1/list_tags", body: buildWithMateMemoryMcpRuntimeBody("list_tags", input), operationKind: "read",
   }));
 
-  register("memory.append", z.object({
-    target: memoryTargetSchema,
-    kind: z.enum(MEMORY_ENTRY_KINDS),
-    title: z.string().min(1).max(160),
-    body: z.string().min(1).max(8_000),
-    preview: z.string().min(1).max(280),
-    tags: z.array(memoryTagInputSchema).max(20).optional(),
-    supersedes: z.array(z.string().min(1).max(200)).max(20).optional(),
-    mutationReason: z.string().min(1).max(200).optional(),
-    files: z.array(appendFileInputSchema).max(10).optional(),
-    sourceMessageId: z.string().min(1).max(200).optional(),
-    idempotencyKey: z.string().min(1).max(200),
-  }).strict(), createMemoryToolOutputSchema(appendSuccessSchema, ["schemaVersion", "entry", "created"]), (input) => ({
+  register("memory.append", appendInputSchema, appendOutputSchema, (input) => ({
     method: "POST", path: "/v1/append", body: buildWithMateMemoryMcpRuntimeBody("append", input), operationKind: "write",
   }));
 

@@ -3,7 +3,8 @@ import type {
   MemoryForgetReason,
   MemoryV6ReviewSearchRequest,
 } from "../../src-shared/memory/memory-contract.js";
-import type { MemoryEntryDetail, MemoryFileSummary } from "../../src-shared/memory/memory-state.js";
+import type { MemoryFileSummary } from "../../src-shared/memory/memory-state.js";
+import { materializeCharacterIconFilePath } from "../character/character-storage.js";
 import type {
   MemoryV6ReviewEntryDetail,
   MemoryV6ReviewFileSummary,
@@ -12,6 +13,9 @@ import type {
   MemoryV6ProtectedObjectGcRequest,
   MemoryV6ProtectedObjectGcResponse,
   MemoryV6ReviewSearchResult,
+  MemoryV6ReviewTargets,
+  MemoryV6ReviewCharacter,
+  MemoryV6ReviewTarget,
 } from "../../src-shared/memory/memory-review-state.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import {
@@ -24,6 +28,7 @@ import type { MemoryV6ProtectedObjectExporter, MemoryV6StorageAccess } from "./m
 import { MemoryV6Storage } from "./memory-v6-storage.js";
 
 export type MemoryV6ReviewServiceDeps = {
+  userDataPath?: string;
   resolveDbPath(): string | null;
   storage?: MemoryV6StorageAccess;
   getMemoryFileQuotaBytes?(): number | Promise<number>;
@@ -77,7 +82,7 @@ function sanitizeReviewFileSummary(file: MemoryFileSummary | MemoryV6ReviewFileS
   return safeFile;
 }
 
-function sanitizeReviewEntryDetail(entry: MemoryEntryDetail): MemoryV6ReviewEntryDetail {
+function sanitizeReviewEntryDetail(entry: MemoryV6ReviewEntryDetail): MemoryV6ReviewEntryDetail {
   const { files, ...safeEntry } = entry;
   return {
     ...safeEntry,
@@ -87,12 +92,22 @@ function sanitizeReviewEntryDetail(entry: MemoryEntryDetail): MemoryV6ReviewEntr
 
 function normalizeSearchRequest(request: MemoryV6ReviewSearchRequest | null | undefined): MemoryV6ReviewSearchRequest {
   const kinds = (request?.kinds ?? []).filter((kind): kind is MemoryEntryKind => VALID_KIND_SET.has(kind));
+  const characterId = normalizeTargetFilter(request?.characterId, "characterId");
+  const projectId = normalizeTargetFilter(request?.projectId, "projectId");
   return {
     query: typeof request?.query === "string" ? request.query : "",
+    ...(characterId ? { characterId } : {}),
+    ...(projectId ? { projectId } : {}),
     ...(kinds.length > 0 ? { kinds } : {}),
     ...(typeof request?.limit === "number" ? { limit: request.limit } : {}),
     ...(typeof request?.cursor === "string" ? { cursor: request.cursor } : {}),
   };
+}
+
+function normalizeTargetFilter(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !value.trim()) throw new Error(`Memory review ${field} must be a non-empty string.`);
+  return value.trim();
 }
 
 function normalizeForgetReason(reason: MemoryForgetReason | null | undefined): MemoryForgetReason {
@@ -101,6 +116,24 @@ function normalizeForgetReason(reason: MemoryForgetReason | null | undefined): M
 
 export class MemoryV6ReviewService {
   constructor(private readonly deps: MemoryV6ReviewServiceDeps) {}
+
+  private projectCharacter(character: MemoryV6ReviewCharacter): MemoryV6ReviewCharacter {
+    return {
+      ...character,
+      iconFilePath: character.iconFilePath ? materializeCharacterIconFilePath(this.deps.userDataPath ?? "", character.iconFilePath) : null,
+    };
+  }
+
+  private projectTarget(target: MemoryV6ReviewTarget): MemoryV6ReviewTarget {
+    return { ...target, ...(target.character ? { character: this.projectCharacter(target.character) } : {}) };
+  }
+
+  async listTargets(): Promise<MemoryV6ReviewTargets> {
+    return this.withStorage(async (storage) => {
+      const targets = await storage.listReviewTargets();
+      return { ...targets, characters: targets.characters.map((character) => this.projectCharacter(character)) };
+    });
+  }
 
   async getFileUsage(): Promise<MemoryFileUsageResponse> {
     return this.withStorage(async (storage) => createMemoryFileUsageResponse({
@@ -243,6 +276,7 @@ export class MemoryV6ReviewService {
           const { files, ...safeItem } = item;
           return {
             ...safeItem,
+            target: this.projectTarget(item.target),
             ...(files && files.length > 0 ? { files: files.map(sanitizeReviewFileSummary) } : {}),
           };
         }),
@@ -256,8 +290,8 @@ export class MemoryV6ReviewService {
       return null;
     }
     return this.withStorage(async (storage) => {
-      const entry = await storage.getEntry(normalizedEntryId);
-      return entry?.state === "active" ? sanitizeReviewEntryDetail(entry) : null;
+      const entry = await storage.getEntryForReview(normalizedEntryId);
+      return entry ? sanitizeReviewEntryDetail({ ...entry, target: this.projectTarget(entry.target) }) : null;
     });
   }
 

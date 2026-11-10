@@ -6,6 +6,7 @@ import {
   type CharacterAffectResetRequest,
   type CharacterContextGetRequest,
   type CharacterMemoryAppendEpisodeRequest,
+  type CharacterMemoryAppendEpisodesRequest,
   type CharacterMemoryCorrectRequest,
   type CharacterMemoryEpisodeInput,
   type CharacterMemoryForgetRequest,
@@ -74,13 +75,13 @@ function authority(value: unknown, field = "authority"): CharacterOperationAutho
     }
     return { kind: "conversation" };
   }
-  if (input.kind === "explicit_user_instruction" || input.kind === "operator") {
+  if (input.kind === "explicit_user_instruction" || input.kind === "operator" || input.kind === "background_management") {
     return { kind: input.kind, reason: text(input.reason, `${field}.reason`) };
   }
   throw new CharacterContextValidationError(`${field}.kind is not supported.`, `${field}.kind`);
 }
 
-function episode(value: unknown, field = "episode"): CharacterMemoryEpisodeInput {
+export function validateCharacterMemoryEpisodeInput(value: unknown, field = "episode"): CharacterMemoryEpisodeInput {
   const input = record(value, field);
   exactKeys(input, ["title", "body", "preview", "motif", "observedFact", "characterObservation"], field);
   const observedFact = optionalText(input.observedFact, `${field}.observedFact`);
@@ -119,8 +120,8 @@ export function validateCharacterAffectAppraiseRequest(value: unknown): Characte
   const input = record(value);
   exactKeys(input, ["schemaVersion", "characterId", "sessionId", "expectedVersion", "authority", "candidates"]);
   schemaVersion(input);
-  if (!Array.isArray(input.candidates) || input.candidates.length === 0 || input.candidates.length > 10) {
-    throw new CharacterContextValidationError("candidates must contain between 1 and 10 items.", "candidates");
+  if (!Array.isArray(input.candidates) || input.candidates.length === 0) {
+    throw new CharacterContextValidationError("candidates must contain at least one item.", "candidates");
   }
   const characterId = text(input.characterId, "characterId");
   const sessionId = text(input.sessionId, "sessionId");
@@ -246,8 +247,33 @@ export function validateCharacterMemoryAppendEpisodeRequest(value: unknown): Cha
     sessionId: text(input.sessionId, "sessionId"),
     authority: authority(input.authority),
     idempotencyKey: text(input.idempotencyKey, "idempotencyKey"),
-    episode: episode(input.episode),
+    episode: validateCharacterMemoryEpisodeInput(input.episode),
   };
+}
+
+export function validateCharacterMemoryAppendEpisodesRequest(value: unknown): CharacterMemoryAppendEpisodesRequest {
+  const input = record(value);
+  exactKeys(input, ["schemaVersion", "characterId", "sessionId", "authority", "episodes"]);
+  schemaVersion(input);
+  if (!Array.isArray(input.episodes) || input.episodes.length === 0) {
+    throw new CharacterContextValidationError("episodes must contain at least one item.", "episodes");
+  }
+  const common = {
+    schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+    characterId: text(input.characterId, "characterId"),
+    sessionId: text(input.sessionId, "sessionId"),
+    authority: authority(input.authority),
+  };
+  const episodes = input.episodes.map((value, index) => {
+    const field = `episodes[${index}]`;
+    const item = record(value, field);
+    exactKeys(item, ["idempotencyKey", "episode"], field);
+    return {
+      idempotencyKey: text(item.idempotencyKey, `${field}.idempotencyKey`),
+      episode: validateCharacterMemoryEpisodeInput(item.episode, `${field}.episode`),
+    };
+  });
+  return { ...common, episodes };
 }
 
 export function validateCharacterMemoryCorrectRequest(value: unknown): CharacterMemoryCorrectRequest {
@@ -261,7 +287,7 @@ export function validateCharacterMemoryCorrectRequest(value: unknown): Character
     authority: authority(input.authority),
     reason: text(input.reason, "reason"),
     idempotencyKey: text(input.idempotencyKey, "idempotencyKey"),
-    replacement: episode(input.replacement, "replacement"),
+    replacement: validateCharacterMemoryEpisodeInput(input.replacement, "replacement"),
   };
 }
 

@@ -10,7 +10,6 @@ import { captureSessionExecutionOptions } from "../../src-shared/session/session
 import { currentTimestampLabel } from "../../src-shared/time-state.js";
 import type { ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
-import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import type { Session } from "../../src-shared/session/session-state.js";
 import { normalizeAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
@@ -28,7 +27,7 @@ import {
   isRetryableStaleThreadSessionError,
 } from "../../src-electron/session/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
-import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
+import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
@@ -40,6 +39,16 @@ import { SessionElicitationService } from "../../src-electron/session/session-el
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionTurnRecord } from "../../src-shared/session/session-turn-state.js";
 import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
+import { createMainSessionRuntime } from "../../src-electron/app/main-session-runtime-assembly.js";
+import { createAuxiliarySessionRuntime } from "../../src-electron/auxiliary/auxiliary-session-runtime-assembly.js";
+import type { SessionBackgroundEvent } from "../../src-electron/session/session-background-events.js";
+import type { SessionRuntimeService as ProductionSessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
+import { BackgroundProductionRuntime } from "../../src-electron/providers/background-production-runtime.js";
+import { BackgroundExecutionService } from "../../src-electron/providers/background-execution-service.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
+import { MemoryRecordingController } from "../../src-electron/memory/memory-recording-controller.js";
+import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -71,21 +80,6 @@ function createSession(overrides?: Partial<Session>): Session {
 }
 
 const TEST_EXECUTION_OPTIONS = captureSessionExecutionOptions(createSession());
-
-function createSessionMemory(sessionId: string): SessionMemory {
-  return {
-    sessionId,
-    workspacePath: "C:/workspace",
-    threadId: "",
-    schemaVersion: 1,
-    goal: "テストする",
-    decisions: [],
-    openQuestions: [],
-    nextActions: [],
-    notes: [],
-    updatedAt: new Date().toISOString(),
-  };
-}
 
 function createCharacter(): CharacterProfile {
   return {
@@ -161,7 +155,8 @@ function createLiveRunState(overrides?: Partial<LiveSessionRunState>): LiveSessi
   };
 }
 
-function createProgressRuntime(session: Session, run: ProviderCodingAdapter["runSessionTurn"], overrides: Partial<SessionRuntimeServiceDeps>): SessionRuntimeService {
+function createProgressRuntime(session: Session, run: ProviderCodingAdapter["runSessionTurn"], overrides: Partial<SessionRuntimeServiceDeps>,
+  createRuntime: (deps: SessionRuntimeServiceDeps) => ProductionSessionRuntimeService = createTestRuntime): ProductionSessionRuntimeService {
   let stored = session;
   let live: LiveSessionRunState | null = null;
   const adapter: ProviderCodingAdapter = {
@@ -171,15 +166,13 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     async invalidateAllSessionThreads() {},
     runSessionTurn: run,
   };
-  return createTestRuntime({
+  return createRuntime({
     getSession: () => stored,
     upsertSession(next) { stored = next; return next; },
     async resolveComposerPreview() { return { attachments: [], errors: [] }; },
     getAppSettings: () => normalizeAppSettings({}),
     resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
     getProviderCodingAdapter: () => adapter,
-    getSessionMemory: () => createSessionMemory(session.id),
-    resolveProjectMemoryEntriesForPrompt: () => [],
     createSessionTurn: createSessionTurnBase,
     updateSessionTurn() {},
     setLiveSessionRun(_id, state) { live = state; },
@@ -193,6 +186,189 @@ function createProgressRuntime(session: Session, run: ProviderCodingAdapter["run
     ...overrides,
   });
 }
+
+function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: SessionRuntimeServiceDeps, parent: Session): ProductionSessionRuntimeService {
+  const writes = {
+    getSession: deps.getSession,
+    persistRunningTurnStart: deps.persistRunningTurnStart ?? ((session: Session) => deps.upsertSession(session)),
+    appendRunningInput: deps.appendRunningInput ?? ((session: Session) => deps.upsertSession(session)),
+    checkpointRuntimeMetadata: deps.checkpointRuntimeMetadata ?? ((session: Session) => deps.upsertSession(session)),
+    appendTerminalSession: deps.appendTerminalSession ?? ((session: Session) => deps.upsertSession(session)),
+  };
+  const owner = { assertActive() {}, isActive: () => true };
+  const admission = { runSessionAdmissionExclusive: async <T>(_id: string, operation: () => T | Promise<T>): Promise<T> => operation() };
+  const resolution = { resolveRuntimeSessionForTurn: (session: Session) => session,
+    resolveComposerPreview: deps.resolveComposerPreview, resolveProviderCatalog: deps.resolveProviderCatalog };
+  const live = { setLiveSessionRun: deps.setLiveSessionRun, getLiveSessionRun: deps.getLiveSessionRun,
+    setProviderQuotaTelemetry: deps.setProviderQuotaTelemetry, setSessionContextTelemetry: deps.setSessionContextTelemetry,
+    scheduleProviderQuotaTelemetryRefresh: deps.scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun: deps.broadcastLiveSessionRun };
+  const turn = { createSessionTurn: deps.createSessionTurn, updateSessionTurn: deps.updateSessionTurn };
+  if (kind === "main") return createMainSessionRuntime({ owner, admission,
+    sessions: { ...writes, clearCharacterAuthoringRuntimeState: (session) => session },
+    resolution: { ...resolution, resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture" },
+    provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter },
+    memory: { getAppSettings: deps.getAppSettings, onCharacterContextFailure() {} },
+    turn, live, interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
+      resolvePendingApprovalRequest: deps.resolvePendingApprovalRequest, resolvePendingElicitationRequest: deps.resolvePendingElicitationRequest,
+      invalidateProviderSessionThread: deps.invalidateProviderSessionThread },
+    notification: { onBackgroundEvent: deps.onBackgroundEvent, notifySessionTurnTerminal: deps.notifySessionTurnTerminal }, timing: {},
+  });
+  return createAuxiliarySessionRuntime({ owner, admission,
+    auxiliary: { ...writes, getRuntimeSession: async (id) => deps.getSession(id), getSession: async (id) => {
+      const session = await deps.getSession(id);
+      return session ? { ...session, parentSessionId: parent.id, status: "active", runState: "idle",
+        title: session.taskTitle, composerDraft: "", createdAt: session.updatedAt, displayAfterMessageIndex: null, closedAt: "" } : null;
+    },
+      persistRunningTurnStart: async (session, count) => writes.persistRunningTurnStart(session, count), isAuxiliarySession: async () => true },
+    parent: { getSession: async (id) => id === parent.id ? parent : null }, resolution,
+    provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter, resetProviderSessionThread: async () => {},
+      resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture",
+      issueRuntimeBinding: async (session, provider) => new AgentRuntimeBindingRegistry().issueOrReuse({ actorSessionId: session.id, providerId: provider.id, operationGrants: [] }) },
+    memory: { getAppSettings: deps.getAppSettings }, turn, live,
+    interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
+      cancelApprovals: (id) => deps.resolvePendingApprovalRequest(id, "deny"), cancelElicitations: (id) => deps.resolvePendingElicitationRequest(id, { action: "cancel" }),
+      invalidateProviderSessionThread: async (provider, id) => { await deps.invalidateProviderSessionThread(provider, id); } },
+    notification() {}, onBackgroundEvent: deps.onBackgroundEvent,
+  });
+}
+
+// @test-value v2
+// kind = "contract"
+// claim = "MainとAuxiliaryの本番assemblyはcompleted・failed・canceledを終端保存成功後に発行し、会話の実行開始終了を渡す"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "assemblyがイベントを未接続にする、保存完了前に発行する、またはOS通知と同様にcanceledを落とす"
+// observable = "保存gate前後のイベント列、terminalのphaseと保存済みSession、run_stateの順序"
+// observation_boundary = "consumer"
+// scope = "real SessionRuntimeService through main and auxiliary production assemblies"
+// lifecycle = "permanent"
+// distinction = "通知testはcanceledを対象外とし、assemblyのbackground callbackと保存成功境界を確認しない"
+// @end-test-value
+it("本番両assemblyは保存完了後だけ背景terminalを発行する", { timeout: 5000 }, async () => {
+  for (const kind of ["main", "auxiliary"] as const) for (const phase of ["completed", "failed", "canceled"] as const) {
+    const session = createSession({ id: `${kind}-source` });
+    const parent = createSession({ id: "parent", incarnationId: "parent-inc" });
+    const entered = queueGate(), release = queueGate();
+    const events: SessionBackgroundEvent[] = [];
+    let stored: Session | undefined;
+    const runtime = createProgressRuntime(session, async () => {
+      const result = createPartialResult({ assistantText: "saved response" });
+      if (phase !== "completed") throw new ProviderTurnError("provider stopped", result, phase === "canceled");
+      return result;
+    }, { appendTerminalSession: async (next) => { entered.resolve(); await release.promise; stored = next; return next; },
+      onBackgroundEvent: (event) => { events.push(event); },
+    }, (deps) => assembleBackgroundEventRuntime(kind, deps, parent));
+    const pending = runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
+    try {
+      await entered.promise;
+      assert.deepEqual(events.map((event) => event.kind), ["run_state"]);
+      assert.equal(events[0]!.kind === "run_state" && events[0]!.running, true);
+      release.resolve(); await pending; await runtime.waitForPendingRuns();
+      assert.deepEqual(events.map((event) => event.kind), ["run_state", "terminal_saved", "run_state"]);
+      const terminal = events[1]!;
+      assert.equal(terminal.kind === "terminal_saved" && terminal.terminal.phase, phase);
+      assert.equal(terminal.session, stored);
+      assert.equal(terminal.session.id, session.id);
+      assert.equal(events[2]!.kind === "run_state" && events[2]!.running, false);
+    } finally { release.resolve(); }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "保存拒否では背景terminalを発行せず、背景callbackの同期throw・reject・未解決Promiseは主会話を失敗させず完了待ちへ加えない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "保存失敗を保存済みとして公開するか、背景callbackの失敗や未完了を主会話へ伝播する"
+// observable = "主会話の保存phaseと返却、イベント列、保存拒否のreject"
+// observation_boundary = "consumer"
+// scope = "session runtime terminal persistence and best effort background callback"
+// lifecycle = "permanent"
+// distinction = "OS通知の失敗隔離testではbackground callbackと保存拒否によるevent不発火を扱わない"
+// @end-test-value
+it("背景callbackの失敗と未完了は会話保存から隔離し、保存拒否では発火しない", { timeout: 5000 }, async () => {
+  for (const callback of ["throw", "reject", "pending"] as const) {
+    const session = createSession(); const phases: string[] = []; const events: string[] = [];
+    const runtime = createProgressRuntime(session, async () => createPartialResult({ assistantText: "saved" }), {
+      appendTerminalSession(next, terminal) { phases.push(terminal.phase); return next; },
+      onBackgroundEvent(event) { events.push(event.kind); if (callback === "throw") throw new Error("background failure");
+        return callback === "reject" ? Promise.reject(new Error("background failure")) : new Promise<void>(() => {}); },
+    });
+    const result = await runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
+    await runtime.waitForPendingRuns();
+    assert.equal(result.runState, "idle"); assert.deepEqual(phases, ["completed"]);
+    assert.deepEqual(events, ["run_state", "terminal_saved", "run_state"]);
+  }
+  const session = createSession(); const events: string[] = [];
+  const runtime = createProgressRuntime(session, async () => createPartialResult({ assistantText: "not saved" }), {
+    appendTerminalSession: async () => { throw new Error("storage unavailable"); },
+    onBackgroundEvent: (event) => { events.push(event.kind); },
+  });
+  await assert.rejects(runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" }), /storage unavailable/);
+  await runtime.waitForPendingRuns();
+  assert.deepEqual(events, ["run_state", "run_state"]);
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "本番両assemblyの保存成功イベントからMemory controllerとprepare/runOnceへ届き、背景失敗は主会話を変えず保存拒否では発火しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
+// fault = "実terminalイベントがcontrollerへ届かないか、背景失敗を通常保存へ伝播するか保存失敗から生成する"
+// observable = "主会話の返却結果と背景Agent数・scope、保存拒否時のAgent数0"
+// observation_boundary = "consumer"
+// scope = "real Main/Auxiliary SessionRuntimeService assemblies through production event/runtime/controller with fake saved-source port and Agent"
+// lifecycle = "permanent"
+// distinction = "controller単体のpublishでは本番SessionRuntimeServiceの保存境界からの接続を検査できない"
+// @end-test-value
+it("実保存イベントからMemoryを発火し背景失敗を会話から隔離する", { timeout: 5000 }, async () => {
+  for (const kind of ["main", "auxiliary"] as const) for (const rejectSave of [false, true]) {
+    const session = createSession({ id: `${kind}-auto-memory`, incarnationId: "inc" });
+    const parent = createSession({ id: "parent", incarnationId: "parent-inc" });
+    const source: BackgroundSourceRef = kind === "main" ? { kind, sessionId: session.id, incarnationId: "inc" }
+      : { kind, sessionId: session.id, incarnationId: "inc", parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } };
+    const captured = { history: { source: { ...source, ownerIdentity: "saved-owner" }, fromMessageSeq: 0, throughMessageSeq: 0 },
+      snapshot: { session, ownerIdentity: "saved-owner", turns: Array<CapturedBackgroundSource["snapshot"]["turns"][number]>() } } satisfies CapturedBackgroundSource;
+    const settings = normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } });
+    for (const purpose of ["character-memory", "target-memory"] as const) {
+      settings.backgroundExecutionSettings[purpose] = { selection: { providerId: "claude", modelId: "test" } };
+    }
+    settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
+    const agents: Array<{ purpose: string; sourceKind: string }> = [];
+    const executions = new BackgroundExecutionService({ bindings: new AgentRuntimeBindingRegistry(), turns: new ProviderAgentRuntimeTurnCoordinator(), closeConnection() {} });
+    const authority = () => ({ userId: "local-user" as const, characterId: session.characterId!, allowedProjectIds: [] });
+    const background = new BackgroundProductionRuntime({ executions, getAppSettings: () => settings,
+      getModelCatalog: () => ({ providers: [{ id: "claude", label: "Claude", defaultModelId: "test", defaultReasoningEffort: "",
+        models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] }),
+      captureSource: async () => structuredClone(captured), resolveAuthority: authority,
+      sourceKinds: { "character-memory": [kind], "target-memory": [kind] },
+      runAgent(input) { agents.push({ purpose: input.scope.purpose, sourceKind: input.scope.history.source.kind }); throw new Error("background generation failed"); } });
+    const controller = new MemoryRecordingController({ runtime: background, getSettings: () => settings,
+      captureSource: async () => structuredClone(captured), resolveAuthority: authority });
+    background.start(); controller.start();
+    const normal = createProgressRuntime(session, async () => createPartialResult({ assistantText: "saved" }), {
+      appendTerminalSession(next, terminal) {
+        if (rejectSave) throw new Error("storage denied");
+        captured.history.throughMessageSeq = terminal.assistantMessageSeq;
+        captured.snapshot.turns = [{ id: terminal.turnId, phase: terminal.phase, completedAt: terminal.completedAt,
+          assistantMessageSeq: terminal.assistantMessageSeq, sessionId: kind === "main" ? session.id : null,
+          ...(kind === "auxiliary" ? { auxiliarySessionId: session.id } : {}) }];
+        return next;
+      },
+      onBackgroundEvent(event) { background.publish({ ...event, source }); },
+    }, (deps) => assembleBackgroundEventRuntime(kind, deps, parent));
+    try {
+      const pending = normal.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
+      if (rejectSave) await assert.rejects(pending, /storage denied/);
+      else assert.equal((await pending).runState, "idle");
+      await normal.waitForPendingRuns();
+      if (!rejectSave) {
+        await waitForCondition(() => agents.length === 2, "both Memory purposes did not start");
+        assert.deepEqual([...agents].sort((left, right) => left.purpose.localeCompare(right.purpose)), [
+          { purpose: "character-memory", sourceKind: kind }, { purpose: "target-memory", sourceKind: kind },
+        ]);
+      }
+      else { await new Promise<void>((done) => setImmediate(done)); assert.deepEqual(agents, []); }
+    } finally { background.stop(); }
+  }
+});
 
 function queuedReceipt(session: Session): SessionTurnQueueReceipt {
   return { sessionId: session.id, incarnationId: getSessionIncarnationId(session), id: "queue-1", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
@@ -870,7 +1046,7 @@ describe("SessionRuntimeService", () => {
         getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
         resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
         resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-        getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+        getProviderCodingAdapter: () => adapter,
         createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, update) => { phases.push(update.phase); },
         setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
         waitForApprovalDecision: () => "deny", waitForElicitationResponse: (id, request, signal) => questions.waitForLiveElicitationResponse(id, request, signal),
@@ -1137,7 +1313,7 @@ describe("SessionRuntimeService", () => {
       upsertTerminalSession: async (next) => { saveStarted = true; await saveGate; stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1213,7 +1389,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn: (_id, input) => { turnUpdates.push(input); },
       setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
@@ -1293,7 +1469,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1366,7 +1542,7 @@ describe("SessionRuntimeService", () => {
       },
       getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1419,7 +1595,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async (_session, text) => { if (text === "race") { previewStarted = true; await previewGate; } return { attachments: [], errors: [] }; }, getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun: (_id, next) => { live = next; }, getLiveSessionRun: () => live,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1463,7 +1639,7 @@ describe("SessionRuntimeService", () => {
       getSession: () => stored, upsertSession: (next) => { stored = next; return next; },
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }), getAppSettings: () => normalizeAppSettings({}),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
-      getProviderCodingAdapter: () => adapter, getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
+      getProviderCodingAdapter: () => adapter,
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }), resetProviderSessionThread: () => { resets += 1; },
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {}, broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
@@ -1544,8 +1720,6 @@ describe("SessionRuntimeService", () => {
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
-      getSessionMemory: (session) => createSessionMemory(session.id),
-      resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase,
       updateSessionTurn() {},
       setLiveSessionRun: (_id, next) => { live = next; },
@@ -1603,13 +1777,11 @@ describe("SessionRuntimeService", () => {
       resolveCharacterContext: () => ({ schemaVersion: "withmate-character-context-v1",
         baseline: { definitionSha256: current, snapshotAt: "2026-10-03T00:00:00Z" },
         affect: { mode: "active", effective: [{ contributingLayers: ["session"], targetType: "user", targetId: "user", family: null,
-          label: `Affect ${current}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: current, updatedAt: null },
-        memory: { items: [], updatedAt: null } }),
+          label: `Affect ${current}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: current, updatedAt: null } }),
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
       getProviderCodingAdapter: () => adapter,
-      getSessionMemory: (session) => createSessionMemory(session.id), resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: createSessionTurnBase, updateSessionTurn() {}, setLiveSessionRun() {}, getLiveSessionRun: () => null,
       waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
       setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, async invalidateProviderSessionThread() {},
@@ -1705,8 +1877,6 @@ describe("SessionRuntimeService", () => {
           getAppSettings: () => normalizeAppSettings({}),
           resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog()] }, provider: createProviderCatalog() }),
           getProviderCodingAdapter: () => adapter,
-          getSessionMemory: (session) => createSessionMemory(session.id),
-          resolveProjectMemoryEntriesForPrompt: () => [],
           createSessionTurn: createSessionTurnBase,
           updateSessionTurn() {},
           setLiveSessionRun: (_id, next) => { live = next; },
@@ -1809,8 +1979,6 @@ describe("SessionRuntimeService", () => {
       resolveProviderCatalog: (id) => facade.resolveProviderCatalog(id),
       getProviderCodingAdapter: (id) => facade.getProviderCodingAdapter(id),
       getProviderAgentRuntimeBinding: () => { bindingIssues += 1; return null; },
-      getSessionMemory: () => createSessionMemory(session.id),
-      resolveProjectMemoryEntriesForPrompt: () => [],
       createSessionTurn: unexpectedWrite,
       updateSessionTurn: unexpectedWrite,
       getLiveSessionRun: () => null,
@@ -1883,7 +2051,7 @@ describe("SessionRuntimeService", () => {
         };
       },
     };
-    const context = (version: number): CharacterContextResponse => ({
+    const context = (version: number): CharacterAffectContext => ({
       schemaVersion: "withmate-character-context-v1",
       baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
       affect: {
@@ -1893,7 +2061,6 @@ describe("SessionRuntimeService", () => {
         version: `affect-v1-${version}`,
         updatedAt: "2026-08-09T00:00:00.000Z",
       },
-      memory: { items: [], updatedAt: null },
     });
 
     const service = createTestRuntime({
@@ -1935,12 +2102,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(session) {
-        return createSessionMemory(session.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       resolveConversationTimingContext() {
         timingCompletionSnapshots.push(lastCommittedAt);
@@ -2111,12 +2272,6 @@ describe("SessionRuntimeService", () => {
       resolveSessionFolderPath(sessionId) {
         return `F:/user-data/session-files/${sessionId}`;
       },
-      getSessionMemory() {
-        return createSessionMemory(staleSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -2220,12 +2375,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -2311,12 +2460,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn() {
         calls.push("createSessionTurn");
@@ -2466,12 +2609,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -2590,12 +2727,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt(): ProjectMemoryEntry[] {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -2832,12 +2963,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -2949,12 +3074,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -3055,12 +3174,6 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3192,12 +3305,6 @@ resolveComposer!({ attachments: [], errors: [] });
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3364,12 +3471,6 @@ resolveProvider!(createPartialResult());
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -3471,12 +3572,6 @@ resolveProvider!(createPartialResult());
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3634,12 +3729,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       },
       endProviderAgentRuntimeTurn(handle) {
         endedRuntimeTurnHandles.push(handle);
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       resolveConversationTimingContext(_session, observedAt) {
         timingResolutionCount += 1;
@@ -3809,12 +3898,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -3919,12 +4002,6 @@ releaseSecondAttempt!();
       getProviderCodingAdapter() {
         return adapter;
       },
-      getSessionMemory(currentSession) {
-        return createSessionMemory(currentSession.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
-      },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
       },
@@ -4021,12 +4098,6 @@ releaseSecondAttempt!();
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -4127,12 +4198,6 @@ releaseSecondAttempt!();
         getProviderCodingAdapter() {
           return adapter;
         },
-        getSessionMemory(current) {
-          return createSessionMemory(current.id);
-        },
-        resolveProjectMemoryEntriesForPrompt() {
-          return [];
-        },
         createSessionTurn(input) {
           return createSessionTurnBase(input);
         },
@@ -4231,12 +4296,6 @@ releaseSecondAttempt!();
       },
       getProviderCodingAdapter() {
         return adapter;
-      },
-      getSessionMemory(current) {
-        return createSessionMemory(current.id);
-      },
-      resolveProjectMemoryEntriesForPrompt() {
-        return [];
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);

@@ -58,19 +58,17 @@ export function createMemoryV6ProjectResolver(dbPath: string): Pick<
       return candidate;
     }),
     resolveKnownProjectByPath: (projectPath) => withDatabase(dbPath, (db) => {
-      const resolved = resolveProjectScope(projectPath);
-      if (resolved.projectType !== "git") {
-        return null;
-      }
+      const candidate = resolveMemoryV6ProjectCandidate(projectPath);
+      if (!candidate?.admission) return null;
       const row = db.prepare(`
         SELECT id, display_name
         FROM project_scopes_v6
         WHERE project_type = ?
           AND project_key = ?
-      `).get(resolved.projectType, resolved.projectKey) as { id: string; display_name: string } | undefined;
+      `).get(candidate.admission.projectType, candidate.admission.projectKey) as { id: string; display_name: string } | undefined;
       return row
         ? { id: row.id, displayName: row.display_name }
-        : { id: `unresolved:${resolved.projectKey}`, displayName: resolved.displayName };
+        : { id: candidate.id, displayName: candidate.displayName };
     }),
   };
 }

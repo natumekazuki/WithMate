@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { JSONRPCMessage, MessageExtraInfo, RequestId } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, type JSONRPCMessage, type MessageExtraInfo, type RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { backgroundAffectCandidateSchema } from "../../../src-shared/character-affect/affect-composition.js";
 
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -51,6 +52,8 @@ import {
   memoryTargetSchema,
 } from "./withmate-memory-mcp-general.js";
 import { buildWithMateMemoryMcpRuntimeBody } from "./withmate-memory-mcp-operation.js";
+import { MEMORY_FILE_ACCESS_USAGE } from "../../../src-shared/memory/memory-file-access.js";
+import { createMemoryInputValidationError, memoryInputErrorSchema } from "./withmate-memory-input-error.js";
 
 export type McpRuntimeDeps = {
   adapter?: "mcp" | "cli";
@@ -99,7 +102,7 @@ export type McpFallbackAdmission = {
   markEligible(operation: WithMateMemoryRuntimeOperation): Promise<boolean>;
 };
 
-class ToolsListTrackingTransport implements Transport {
+class MemoryMcpTransport implements Transport {
   readonly #pendingToolsList = new Set<RequestId>();
   #toolsListSendQueue = Promise.resolve();
   onclose?: () => void;
@@ -108,13 +111,31 @@ class ToolsListTrackingTransport implements Transport {
 
   constructor(
     readonly delegate: Transport,
-    readonly onToolsListStart: McpFallbackAdmission["markListed"],
+    readonly inputSchemas: ReadonlyMap<string, z.ZodType>,
+    readonly onToolsListStart?: McpFallbackAdmission["markListed"],
     readonly toolsListDelivery?: (requestId: RequestId) => Promise<void>,
   ) {
     delegate.onclose = () => this.onclose?.();
     delegate.onerror = (error) => this.onerror?.(error);
     delegate.onmessage = (message, extra) => {
-      if ("method" in message && message.method === "tools/list" && "id" in message && message.id !== undefined) {
+      if ("method" in message && message.method === "tools/call" && "id" in message && message.id !== undefined) {
+        const request = CallToolRequestSchema.safeParse(message);
+        const schema = request.success ? this.inputSchemas.get(request.data.params.name) : undefined;
+        if (request.success && schema) {
+          const input = schema.safeParse(request.data.params.arguments ?? {});
+          if (!input.success) {
+            // The SDK reduces union failures to text before invoking tool handlers.
+            // Reject here using the same published schema, without dispatching to the runtime.
+            void this.send({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: toolResult(createMemoryInputValidationError(request.data.params.name, input.error)),
+            }, { relatedRequestId: message.id }).catch((error: Error) => this.onerror?.(error));
+            return;
+          }
+        }
+      }
+      if (this.onToolsListStart && "method" in message && message.method === "tools/list" && "id" in message && message.id !== undefined) {
         this.#pendingToolsList.add(message.id);
       }
       this.onmessage?.(message, extra);
@@ -142,7 +163,7 @@ class ToolsListTrackingTransport implements Transport {
       return;
     }
     const send = this.#toolsListSendQueue.then(async () => {
-      const registration = await this.onToolsListStart();
+      const registration = await this.onToolsListStart!();
       try {
         await this.delegate.send(message, options);
         await this.toolsListDelivery?.(message.id as RequestId);
@@ -165,21 +186,24 @@ class ToolsListTrackingTransport implements Transport {
   }
 }
 
-class FallbackAwareMcpServer extends McpServer {
+class MemoryMcpServer extends McpServer {
+  readonly inputSchemas = new Map<string, z.ZodType>();
+
   constructor(
-    readonly fallbackAdmission: McpFallbackAdmission,
+    readonly fallbackAdmission?: McpFallbackAdmission,
     readonly toolsListDelivery?: (requestId: RequestId) => Promise<void>,
   ) {
     super(
-      { name: "withmate-character-context", version: "1.0.0" },
-      { instructions: CHARACTER_MCP_SERVER_INSTRUCTIONS },
+      { name: fallbackAdmission ? "withmate-character-context" : "withmate-memory", version: "1.0.0" },
+      { instructions: fallbackAdmission ? CHARACTER_MCP_SERVER_INSTRUCTIONS : "Use the published reads and purpose-specific management operations within this background execution's captured authority. File restoration is a local write and is available only when its tools are published. Final text is not proof of saving. No other write or fallback authority is provided." },
     );
   }
 
   override connect(transport: Transport): Promise<void> {
-    return super.connect(new ToolsListTrackingTransport(
+    return super.connect(new MemoryMcpTransport(
       transport,
-      () => this.fallbackAdmission.markListed(),
+      this.inputSchemas,
+      this.fallbackAdmission ? () => this.fallbackAdmission!.markListed() : undefined,
       this.toolsListDelivery,
     ));
   }
@@ -654,25 +678,32 @@ const mutationOutputSchema = z.union([
   characterErrorSchema,
 ]);
 
+const toolErrorOutputBranch = {
+  required: ["error"],
+  oneOf: [z.toJSONSchema(characterErrorSchema), z.toJSONSchema(memoryInputErrorSchema)],
+};
+const toolSchemaVersion = z.union([characterErrorSchema.shape.schemaVersion, memoryInputErrorSchema.shape.schemaVersion]);
+const toolErrorSchema = z.union([characterErrorSchema.shape.error, memoryInputErrorSchema.shape.error]);
+
 function createToolOutputSchema<T extends z.ZodRawShape>(
   successSchema: z.ZodObject<T>,
   requiredSuccessKeys: string[],
 ) {
   return successSchema.partial().extend({
-    schemaVersion: z.literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
-    error: characterErrorSchema.shape.error.optional(),
+    schemaVersion: toolSchemaVersion,
+    error: toolErrorSchema.optional(),
   }).strict().superRefine((value, context) => {
-    if (successSchema.safeParse(value).success || characterErrorSchema.safeParse(value).success) {
+    if (successSchema.safeParse(value).success || characterErrorSchema.safeParse(value).success || memoryInputErrorSchema.safeParse(value).success) {
       return;
     }
     context.addIssue({
       code: "custom",
-      message: "Result must match either the tool success contract or the Character context error contract.",
+      message: "Result must match the tool success, Character context error or public input error contract.",
     });
   }).meta({
     oneOf: [
-      { required: requiredSuccessKeys, not: { required: ["error"] } },
-      { required: ["error"] },
+      { required: requiredSuccessKeys, properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } }, not: { required: ["error"] } },
+      toolErrorOutputBranch,
     ],
   });
 }
@@ -694,18 +725,56 @@ const mutationToolOutputSchema = createToolOutputSchema(
   ["schemaVersion", "characterId", "operation", "entry", "readBack", "sourceVersion"],
 );
 
+const appendEpisodesOutputSchema = z.object({
+  schemaVersion: z.literal(CHARACTER_CONTEXT_SCHEMA_VERSION),
+  results: z.array(z.union([
+    z.object({ index: z.number().int().nonnegative(), status: z.literal("saved"), result: mutationOutputSchema.options[0] }).strict(),
+    z.object({ index: z.number().int().nonnegative(), status: z.enum(["failed", "unknown"]), result: characterErrorSchema }).strict(),
+    z.object({ index: z.number().int().nonnegative(), status: z.literal("not_run") }).strict(),
+  ])),
+  error: characterErrorSchema.shape.error.optional(),
+}).strict();
+
+const appendEpisodeToolOutputSchema = mutationOutputSchema.options[0].partial().extend({
+  schemaVersion: toolSchemaVersion,
+  results: appendEpisodesOutputSchema.shape.results.optional(),
+  error: toolErrorSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if (!mutationOutputSchema.safeParse(value).success && !appendEpisodesOutputSchema.safeParse(value).success && !memoryInputErrorSchema.safeParse(value).success) {
+    context.addIssue({ code: "custom", message: "Result must match a single episode result, batch results, Character error or public input error." });
+  }
+}).meta({ oneOf: [
+  { required: ["characterId", "operation", "entry", "readBack", "sourceVersion"], properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } }, not: { anyOf: [{ required: ["results"] }, { required: ["error"] }] } },
+  { required: ["results"], properties: { schemaVersion: { const: CHARACTER_CONTEXT_SCHEMA_VERSION } }, not: { required: ["characterId"] } },
+  toolErrorOutputBranch,
+] });
+
+const appendEpisodeInputSchema = z.object({
+  idempotencyKey: z.string().min(1).optional(),
+  episode: episodeSchema.optional(),
+  episodes: z.array(z.object({ idempotencyKey: z.string().min(1), episode: episodeSchema }).strict()).min(1).optional(),
+}).strict().superRefine((value, context) => {
+  const batch = value.episodes !== undefined;
+  if (batch ? value.idempotencyKey !== undefined || value.episode !== undefined : value.idempotencyKey === undefined || value.episode === undefined) {
+    context.addIssue({ code: "custom", message: "Provide either idempotencyKey and episode, or episodes, without mixing them." });
+  }
+}).meta({ oneOf: [
+  { required: ["idempotencyKey", "episode"], not: { required: ["episodes"] } },
+  { required: ["episodes"], not: { anyOf: [{ required: ["idempotencyKey"] }, { required: ["episode"] }] } },
+] });
+
 export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
-  "Use character_context.get only when injected turn context is missing, stale, too small for the current topic, or when the client cannot inject context.",
-  "At a topic start, switch, or resumption, consider focused recall when past context could help. Reuse memories already in context; there is no per-turn search or save quota.",
+  MEMORY_FILE_ACCESS_USAGE,
+  "Normal turns inject Character Affect state, not Memory. Use character_context.get to refresh missing, stale, or insufficient Affect context; its optional query explicitly retrieves Character Memory.",
+  "When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
   "For a known topic, search the relevant authorized target. Without a useful query, try memory.list_entries with {target, states:[\"active\"], limit:5} or memory.list_tags with {targets:[target], limit:5}, then memory.get_entry for relevant IDs. No search hits does not mean that no memories exist.",
   "Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
-  "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
-  "Use character_affect.appraise during the normal turn when the exchange meaningfully changes the Character's own affect. It is optional, not a per-turn requirement or a final-response checklist. Do not submit unchanged-state events just to call the tool; skipping or failing this update does not trigger a separate evaluation or replacement generation.",
-  "Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
+  "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Normal-turn candidates need an explicit target, timestamp and idempotency key. Background Affect candidates supply sourceMessageSeq from a saved user or assistant message to resolve its terminal Turn, or alternatively sourceTurnId, never both; the app supplies timestamp, identity and key, and linked episodes are unavailable.",
+  "Use character_memory.append_episode for explicit remember requests during a normal turn, or for the current background registration task. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
   "Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
   "Do not expose internal audit data or tool state in the user-facing response. Use returned source version and update result without guessing missing values.",
   "Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
-  "Brief everyday topics, small preferences, and actually shared exchanges can be notes or episodes: an explicit remember request, a major achievement, strong affect, or certainty of future usefulness is not a prerequisite for every save. Use general Memory for semantic facts/preferences, standalone Character episodes for shared events, and character_affect.appraise.memoryEpisode only for an episode linked to that affect event; do not duplicate the same record across routes.",
+  "Automatic general Memory and standalone episode registration belong to the background Memory task. During normal turns, retain explicit remember, correct and forget operations rather than automatically registering each exchange. Use character_affect.appraise.memoryEpisode only for an episode linked to that affect event; do not duplicate the same record across routes.",
   "Current user input and Character Definition take precedence over past Memory. Do not store speculation as fact, secrets, private paths, raw logs, or repository contracts/implementation state as a replacement for their source of truth. Follow the host agent's permission rules; these usage examples do not grant authority.",
   "The regular withmate-memory CLI exposes the same public inputs and operations without requiring an MCP failure. Character context, Affect, and Character-owned Memory require a valid Session binding; explicit user-global and Project Memory and runtime diagnostics use local runtime authentication without requiring one. Any supplied binding is validated and limits authority; an invalid binding never downgrades to unbound access.",
   "The explicit --fallback-from mcp recovery mode is available only when this MCP initialize and tools/list succeeded and a later transport error returns details.fallbackEligible=true. Invoke withmate-memory <command> --fallback-from mcp with the same actor-relative JSON; the runtime consumes the matching short-lived admission. Initialization, tools/list, domain, authority, version, idempotency, migration, and storage failures do not permit fallback in this explicit recovery mode. These admission requirements do not restrict ordinary CLI use.",
@@ -714,13 +783,13 @@ export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   {
     name: "character_context.get",
-    description: "Get a versioned, minimal Character context snapshot when injected context is unavailable or insufficient.",
+    description: "Get current Character Affect context and, with an explicit query, relevant Character Memory previews.",
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "character_affect.appraise",
-    description: "Validate and record bounded candidates for the Character's own affect; this does not diagnose the user. An episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry.",
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    description: "Validate and record one or multiple candidates for the Character's own affect; this does not diagnose the user. In normal turns, an episode linked to this affect event must be sent only as memoryEpisode here and never duplicated through character_memory.append_episode. Reuse an idempotency key only for an unchanged same-event retry. Background Affect accepts domain values and exactly one of sourceMessageSeq (the exact saved user or assistant message seq from session_history, resolved to its terminal Turn) or sourceTurnId. The app supplies timestamp, identity and a new key for each call. Background calls cannot include memoryEpisode or expectedVersion and are not idempotent retries.",
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   {
     name: "character_memory.search",
@@ -729,7 +798,7 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_memory.append_episode",
-    description: "Append one standalone shared Character episode, including a small everyday exchange or shared event; a major achievement or strong affect is not required. Episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Do not also save the same episode through general Memory. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
+    description: "Append one or multiple independent standalone shared Character episodes for the current background Memory task or an explicit normal-turn remember request. Use episode with idempotencyKey, or episodes with a key for each item. Batch results retain input indices and stop after the first failure or unknown outcome; remaining items are not_run. Episodes linked to an affect event belong exclusively to character_affect.appraise.memoryEpisode. Do not also save the same episode through general Memory. Motif recurrence is allowed and only unchanged same-event retries reuse an idempotency key.",
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
@@ -973,11 +1042,19 @@ function toolResult(value: unknown) {
   };
 }
 
-export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpServer {
-  const fallbackAdmission = deps.fallbackAdmission ?? createMcpFallbackAdmission(deps);
-  const server = new FallbackAwareMcpServer(fallbackAdmission, deps.toolsListDelivery);
-  const runtimeDeps = { ...deps, fallbackAdmission };
-  registerWithMateMemoryTools(server, runtimeDeps);
+export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}, allowedTools?: readonly string[]): McpServer {
+  const fallbackAdmission = allowedTools === undefined ? deps.fallbackAdmission ?? createMcpFallbackAdmission(deps) : undefined;
+  const server = new MemoryMcpServer(fallbackAdmission, deps.toolsListDelivery);
+  const registerTool = server.registerTool.bind(server);
+  const publication: Pick<McpServer, "registerTool"> = {
+    registerTool(name, config, callback) {
+      const tool = registerTool(name, config, callback);
+      if (allowedTools !== undefined && !allowedTools.includes(name)) tool.remove();
+      else if (config.inputSchema) server.inputSchemas.set(name, config.inputSchema as z.ZodType);
+      return tool;
+    },
+  };
+  registerWithMateMemoryTools(publication, { ...deps, fallbackAdmission });
   return server;
 }
 
@@ -998,13 +1075,13 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
     { name: "memory.instances", command: "instances", path: "/v1/runtime_instances", schema: z.object({}).strict(), write: false },
     { name: "character_context.metrics", command: "character_metrics", path: "/v1/character_context/metrics", schema: z.object({}).strict(), write: false },
     { name: "character_affect.inspect", command: "affect_inspect", path: "/v1/character_affect/inspect", schema: z.object({}).strict(), write: false },
-    { name: "character_affect.correct", command: "affect_correct", path: "/v1/character_affect/correct", schema: z.object({ eventId: z.string().min(1), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true), reason: z.string().min(1), replacement: affectCandidateSchema.omit({ memoryEpisode: true }) }).strict(), write: true },
+    { name: "character_affect.correct", command: "affect_correct", path: "/v1/character_affect/correct", schema: z.object({ eventId: z.string().min(1), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true).optional(), reason: z.string().min(1), replacement: affectCandidateSchema.omit({ memoryEpisode: true }) }).strict(), write: true },
     { name: "character_affect.reset", command: "affect_reset", path: "/v1/character_affect/reset", schema: z.object({ layer: z.enum(["session", "relationship"]), expectedVersion: z.string().min(1), explicitUserRequest: z.literal(true), reason: z.string().min(1), resetAt: z.string().min(1), idempotencyKey: z.string().min(1) }).strict(), write: true },
   ] as const;
   for (const definition of extraTools) {
     server.registerTool(definition.name, {
       description: definition.name.startsWith("character_affect.") || definition.command === "characters"
-        ? `Run ${definition.name} for the Character and Session selected by a valid Session binding.${definition.write ? " Requires explicitUserRequest=true, a concrete reason, and the current expectedVersion." : ""}`
+        ? `Run ${definition.name} for the Character and Session selected by a valid Session binding.${definition.write ? " Requires a concrete reason and the current expectedVersion. An explicit user request (explicitUserRequest=true) is required except for correction by the app-managed background Affect task. Reset always requires an explicit user request." : ""}`
         : definition.command === "audit"
         ? "Audit explicit user-global or Project targets using local runtime authentication. Character targets and allTargets require a valid Session binding. A supplied binding always limits authority."
         : `Read ${definition.name} using local runtime authentication. A Session binding is not required, but any supplied binding is validated and limits authority.`,
@@ -1034,7 +1111,7 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
     ...definitions.get("character_affect.appraise")!,
     inputSchema: z.object({
       expectedVersion: z.string().min(1).optional(),
-      candidates: z.array(affectCandidateSchema).min(1).max(10),
+      candidates: z.array(z.union([affectCandidateSchema, backgroundAffectCandidateSchema])).min(1),
     }).strict(),
     outputSchema: appraisalToolOutputSchema,
   }, async (input) => toolResult(await callRuntime(
@@ -1064,11 +1141,8 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
 
   server.registerTool("character_memory.append_episode", {
     ...definitions.get("character_memory.append_episode")!,
-    inputSchema: z.object({
-      idempotencyKey: z.string().min(1),
-      episode: episodeSchema,
-    }).strict(),
-    outputSchema: mutationToolOutputSchema,
+    inputSchema: appendEpisodeInputSchema,
+    outputSchema: appendEpisodeToolOutputSchema,
   }, async (input) => toolResult(await callRuntime(
     "/v1/character_memory/append_episode",
     buildWithMateMemoryMcpRuntimeBody("character_memory_append_episode", input),
@@ -1148,8 +1222,11 @@ export function describeWithMateMemoryPublicTools(): unknown {
 }
 
 export function validateWithMateMemoryPublicInput(command: string, input: unknown): unknown {
-  const tool = createWithMateMemoryPublicTools().get(withMateMemoryToolName(command));
+  const name = withMateMemoryToolName(command);
+  const tool = createWithMateMemoryPublicTools().get(name);
   const result = tool?.inputSchema.safeParse(input);
-  if (!result?.success) return createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", result ? result.error.message : "Unknown Memory command.", { retryable: false, conversationMayContinue: true, effect: "none" });
+  if (!result?.success) return result
+    ? createMemoryInputValidationError(name, result.error)
+    : createMemoryRuntimeError("WITHMATE_MEMORY_INVALID_INPUT", "Unknown Memory command.", { retryable: false, conversationMayContinue: true, effect: "none" });
   return { schemaVersion: "withmate-memory-v1", valid: true, command, value: result.data };
 }

@@ -39,7 +39,7 @@ type AsyncStore<T extends object> = {
 const STORE_METHODS = {
   sessionGraph: ["execute"],
   session: [
-    "getSessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
+    "getSessionView", "getConversationPage", "readSessionHistory", "readBackgroundSource", "captureBackgroundSource", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
@@ -52,7 +52,7 @@ const STORE_METHODS = {
   turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
   queue: ["enqueue", "getReceipt", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
-    "getAuxiliarySessionView", "getConversationPage", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
+    "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listAllAuxiliarySessions", "listAuxiliarySessions", "listAuxiliarySessionSummaries",
     "listActiveAuxiliarySessionSummaries", "listRunningActiveAuxiliarySessions", "getActiveAuxiliarySession",
     "getAuxiliarySession", "getAuxiliarySessionSummary", "getAuxiliarySessionMetadata", "listAuxiliaryCredentialThreads", "getAuxiliaryMessageArtifactDetail",
@@ -166,8 +166,8 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if (input.store === "sessionGraph" && input.runtimeTurnAdmissionState !== undefined) {
-        if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Session Graph turn admission state is invalid.");
+      if ((input.store === "sessionGraph" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
+        if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }
       return method.apply(store, input.args);
@@ -222,8 +222,9 @@ export function createV6StorageWorkerBundle(options: {
         if (!methods.includes(property as never)) return undefined;
         return (...args: unknown[]) => {
           const graphMutation = store === "sessionGraph" && args[1] === "apply";
-          if (graphMutation) assertRuntimeTurnAdmission();
-          const runtimeTurnAdmissionState = graphMutation ? currentRuntimeTurnAdmissionState() : undefined;
+          const needsTurnAdmission = graphMutation || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
+          if (needsTurnAdmission) assertRuntimeTurnAdmission();
+          const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
             : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
             property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmissionState ? { runtimeTurnAdmissionState } : {}) }, {

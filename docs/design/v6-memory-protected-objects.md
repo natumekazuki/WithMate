@@ -214,6 +214,8 @@ usage は少なくとも次を区別できるようにする。
 
 既存 `memory.append` の request body に `files` を追加する。file 付き append は `--stdin` / `--file` による structured request を正本にし、複雑な request を CLI flags へすべて展開しない。
 
+一括入力の`entries`でもfilesは各entryに指定し、添付10件の上限をentryごとに判定する。異なるentryの添付を合算して一entryの上限にしない。保存・quota・idempotencyは既存entry単位で扱い、失敗entryを本文だけの成功へ変換せず、先行確定entryとその添付を保持する。
+
 ```ts
 type MemoryAppendFileInput = {
   path: string;
@@ -333,6 +335,18 @@ withmate-memory file-usage
   ]
 }
 ```
+
+## Agent-bound Memoryのfile認可
+
+通常Sessionの添付取込は、信頼済みactor resolverが実Sessionから解決するWorkspace・許可Additional Directory・SessionFolder内に限定する。明示復元のget-file／export-filesも同じroot群の内側だけへ書き出す。Auxiliaryは実AuxiliaryのWorkspace・Additional Directories・実行設定を使い、SessionFolderは親Mainと共有する。実効設定がplanまたはCodex read-onlyの場合は復元を拒否する。Memory本文の保存・参照権限はfileのread／write権限と分ける。
+
+file scopeを渡せないsession bindingはfile操作を拒否する。MCPとCLIは同じserviceからimporter／exporterへscopeを渡し、payload読取・復号と出力directory作成より前に実体pathを認可する。symlink／junctionと未作成子pathも、直近の既存祖先を使って実体包含を確認する。既存出力を上書きしない。runtime binding／turnの失効検査を維持し、Providerの全FS権限やElectronのOS権限を追加のMemory file権限にしない。trusted `local_user`のoperator操作はSession root限定の対象外とする。
+
+### 背景Memory
+
+背景の添付appendは`target-memory`だけが利用し、許可されたMemory targetに限定する。三用途の既存Memory参照では、必要時に既存get-file／export-filesを利用できる。Memory target認可とfile read／write認可は分け、現在bindingの`fileAccess`を既存serviceからimporter／exporterへ渡す。
+
+取込は準備時に実体解決したsourceのWorkspace・許可Additional Directory・SessionFolder内、復元はそのSessionFolder内`memory-exports/`だけを許可する。通常Sessionの復元root群へ拡張しない。詳細は[Background Execution](background-execution.md#背景memoryの添付と必要時復元)を正本とする。
 
 ## CLI Policy
 

@@ -23,6 +23,8 @@ import { PROVIDER_RAW_ITEMS_JSON_LIMIT, PROVIDER_TEXT_PREVIEW_LIMIT } from "../.
 import { buildCodexStableRawItems, toMessageOperations } from "../../src-electron/providers/codex/codex-event-projection.js";
 import { WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import type { LiveElicitationRequest, LiveRunStep } from "../../src-shared/session/runtime-state.js";
+import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
+type CodexLog = Parameters<NonNullable<ConstructorParameters<typeof CodexAdapter>[0]>>[0];
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
   label: "OpenAI Codex",
@@ -97,19 +99,6 @@ function createCodexRunSessionTurnInput(workspacePath: string): RunSessionTurnIn
   return {
     session,
     executionOptions: captureSessionExecutionOptions(session),
-    sessionMemory: {
-      sessionId: "session-1",
-      workspacePath,
-      threadId: "",
-      schemaVersion: 1,
-      goal: "",
-      decisions: [],
-      openQuestions: [],
-      nextActions: [],
-      notes: [],
-      updatedAt: "",
-    },
-    projectMemoryEntries: [],
     providerCatalog: CODEX_PROVIDER_CATALOG,
     userMessage: "run task",
     appSettings: createDefaultAppSettings(),
@@ -1639,6 +1628,58 @@ it("native fileChangeとcollaborationをartifactへ投影する", async () => wo
   assert.deepEqual(result.artifact?.changedFiles.map((file) => ({ path: file.path, kind: file.kind })), [{ path: "changed.ts", kind: "edit" }]);
   assert.ok(result.artifact?.operationTimeline?.some((operation) => operation.type === "collab_tool_call"));
 }));
+
+// @test-value v2
+// kind = "contract"
+// claim = "Codex活動は識別可能なOperationsとして保存・復元され、画像の本文挿入をせず未知itemの診断だけを残す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime; https://github.com/natumekazuki/WithMate/issues/931" }
+// fault = "activityをunknownへ落とす、artifact保存でID/pathを失う、画像を本文へ追加する、または未知itemのwarningを抑制する"
+// observable = "Adapter結果・SessionStorage再open後のoperationTimeline・本文・providerMetadataとwarning log"
+// observation_boundary = "public-boundary"
+// scope = "Codex native activity adapter and normal history"
+// lifecycle = "permanent"
+// impact = "利用者が画像確認の対象や背景活動を履歴で識別できず、未対応診断も信用できなくなる"
+// distinction = "projection Worker単体では最終artifactと通常履歴の保存・復元およびadapter loggingの配線を確認できない"
+// @end-test-value
+it("native activitiesをOperationsへ保存し未知itemだけを警告する", async () => workspace(async (directory) => {
+  const transport = new FakeTransport();
+  const imagePath = path.join(directory, "result.png");
+  transport.events = [completed([
+    { type: "imageView", id: "image", path: imagePath },
+    { type: "sleep", id: "sleep", durationMs: 1500 },
+    { type: "contextCompaction", id: "compact" },
+    { type: "subAgentActivity", id: "child", kind: "completed", agentThreadId: "child-thread", agentPath: "/root/check", model: null, reasoningEffort: null },
+    { type: "futureItem", id: "future", value: "preserve" },
+    message("answer", "done"),
+  ])];
+  const logs: CodexLog[] = [];
+  const input = createCodexRunSessionTurnInput(directory);
+  const result = await new CodexAdapter((entry) => logs.push(entry), { createTransport: () => transport }).runSessionTurn(input);
+  assert.equal(result.assistantText, "done");
+  const operations = result.artifact!.operationTimeline!;
+  assert.deepEqual(operations.map(({ type }) => type), ["image_view", "sleep", "context_compaction", "subagent_activity", "unknown", "agent_message"]);
+  assert.deepEqual(operations[0], { id: "image", type: "image_view", summary: "result.png", details: imagePath });
+  assert.deepEqual(operations.slice(1, 4).map(({ id, summary }) => ({ id, summary })), [
+    { id: "sleep", summary: "Wait 1.5 s" }, { id: "compact", summary: "Compact conversation" }, { id: "child", summary: "completed: /root/check" },
+  ]);
+  assert.deepEqual(result.providerMetadata!.map(({ responseType }) => responseType), ["futureItem"]);
+  const warnings = logs.filter((entry) => entry.kind === "provider.unsupported-response");
+  assert.equal(warnings.length, 1);
+  assert.equal((warnings[0].data as { responseType: string }).responseType, "futureItem");
+  assert.equal(warnings[0].level, "warn");
+  const dbPath = path.join(directory, "history.db");
+  let storage = new SessionStorageV6(dbPath);
+  try {
+    const session = { ...input.session, messages: [{ role: "assistant" as const, text: result.assistantText, artifact: result.artifact }] };
+    storage.insertSession(session);
+    storage.close(); storage = new SessionStorageV6(dbPath);
+    const restored = storage.getSession(session.id)!;
+    assert.equal(restored.messages[0].text, "done");
+    const artifact = storage.getSessionMessageArtifact(session.id, 0);
+    const identity = ({ id, type, summary, details }: import("../../src-shared/session/runtime-state.js").MessageOperation) => ({ id, type, summary, details });
+    assert.deepEqual(artifact?.operationTimeline?.map(identity), operations.map(identity));
+  } finally { storage.close(); }
+}));
 // @test-value v2
 // kind = "invariant"
 // claim = "大きいnative commandとMCP出力をliveとartifactの省略marker付きpreviewへ投影しassistant本文を保持する"
@@ -1703,10 +1744,10 @@ it("native token usageはthread baselineからturn差分を集計する", () => 
 
 // @test-value v2
 // kind = "invariant"
-// claim = "terminalより後に返るsteer成功ACKも受理済みとして成功にし対応turnの履歴へ残す"
+// claim = "terminalより後に返るsteer成功ACKも受理済みとして成功にし対応turnの履歴と通常診断へ残す"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md" }
 // fault = "終端処理後の成功ACKを失敗へ置換し入力draftを復元させる"
-// observable = "terminal先行時のsteer promise結果とturn providerMetadata"
+// observable = "terminal先行時のsteer promise結果、turn providerMetadataと未対応扱いしないinfo診断log"
 // observation_boundary = "component-behavior"
 // scope = "codex-adapter"
 // lifecycle = "permanent"
@@ -1730,7 +1771,8 @@ createInterface({ input: process.stdin }).on('line', line => {
 setInterval(() => {}, 1000);
 `;
   let transport!: CodexAppServerTransport;
-  const adapter = new CodexAdapter(undefined, { createTransport: (options) => {
+  const logs: CodexLog[] = [];
+  const adapter = new CodexAdapter((entry) => logs.push(entry), { createTransport: (options) => {
     transport = new CodexAppServerTransport({ ...options, executable: process.execPath, arguments: ["--input-type=module", "-e", fixture] });
     return transport;
   } });
@@ -1746,6 +1788,9 @@ setInterval(() => {}, 1000);
     threadId: "thread-1", turnId: "turn-1", input: [{ type: "text", text: "追加", text_elements: [] }],
   });
   assert.equal(transport.state, "closed");
+  const acceptedLog = logs.find((entry) => (entry.data as { kind?: string })?.kind === "withmate.accepted_steer")!;
+  assert.equal(acceptedLog.kind, "provider.diagnostic");
+  assert.equal(acceptedLog.level, "info");
 }));
 
 // @test-value v2

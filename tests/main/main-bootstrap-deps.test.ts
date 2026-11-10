@@ -137,6 +137,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         exportMemoryV6EntryFiles: () => null,
         runMemoryV6ProtectedObjectGc: () => ({}) as never,
         searchMemoryV6Entries: () => ({ items: [] }),
+        listMemoryV6ReviewTargets: () => ({ characters: [], projects: [] }),
         getMemoryV6Entry: () => null,
         forgetMemoryV6Entry: (entryId: string) => ({ entryId, status: "not_found", reason: "user_request" }),
         resetAppDatabase: async () => null,

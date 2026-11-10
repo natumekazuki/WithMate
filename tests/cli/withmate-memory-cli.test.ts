@@ -1393,7 +1393,7 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
   // claim = "schemaはruntime接続なしでCLI capabilitiesを返す"
   // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
   // fault = "schemaはruntime接続なしでCLI capabilitiesを返すという公開契約に反する結果を返す"
-  // observable = "schemaのpublic tools名、append kind enum、必須idempotencyKey、schemaVersion入力の不在、fetch呼出し0件と成功終了code"
+  // observable = "schemaのpublic tools名、append kind enum、単件と各配列itemの必須idempotencyKey、schemaVersion入力の不在、fetch呼出し0件と成功終了code"
   // observation_boundary = "public-boundary"
   // scope = "Memory CLI public input and runtime exchange"
   // lifecycle = "permanent"
@@ -1418,7 +1418,9 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
     assert.deepEqual(append.inputSchema.properties.kind.enum, [
       "decision", "constraint", "convention", "context", "deferred", "preference", "relationship", "boundary", "note",
     ]);
-    assert.ok(append.inputSchema.required.includes("idempotencyKey"));
+    assert.ok(append.inputSchema.oneOf.some((branch: { required?: string[] }) => branch.required?.includes("idempotencyKey")));
+    assert.ok(append.inputSchema.properties.entries.items.required.includes("idempotencyKey"));
+    assert.equal(append.inputSchema.properties.entries.maxItems, undefined);
     assert.equal(append.inputSchema.properties.schemaVersion, undefined);
     assert.ok(tools.some((tool) => tool.name === "memory.get_file"));
     assert.ok(tools.some((tool) => tool.name === "memory.export_files"));
@@ -1458,6 +1460,9 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
     assert.match(stdout.text(), /export-files/);
     assert.match(stdout.text(), /search --project/);
     assert.match(stdout.text(), /validate --command <list-targets\|list-entries\|audit\|search\|get-entry\|get-file\|export-files\|list-tags\|append\|forget\|move-entry>/);
+    assert.match(stdout.text(), /entries\[\]/);
+    assert.match(stdout.text(), /episodes\[\]/);
+    assert.match(stdout.text(), /saved\/failed\/unknown\/not_run/);
   });
 
   // @test-value v2
@@ -1562,7 +1567,7 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
   // claim = "validateはinvalid requestをJSON errorで返す"
   // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
   // fault = "validateはinvalid requestをJSON errorで返すという公開契約に反する結果を返す"
-  // observable = "apiError終了code、WITHMATE_MEMORY_INVALID_INPUT、kindを示すmessage、effect none"
+  // observable = "apiError終了code、WITHMATE_MEMORY_INVALID_INPUT、kindを示すissue path、effect none"
   // observation_boundary = "public-boundary"
   // scope = "Memory CLI public input and runtime exchange"
   // lifecycle = "permanent"
@@ -1585,7 +1590,7 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
     assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_INVALID_INPUT");
-    assert.match(stdout.json().error.message, /kind/);
+    assert.ok(stdout.json().error.details.issues.some((issue: { path: string[]; code: string }) => issue.path[0] === "kind" && issue.code === "invalid_value"));
     assert.equal(stdout.json().error.effect, "none");
   });
 

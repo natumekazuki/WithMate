@@ -11,6 +11,7 @@ export const CHARACTER_CONTEXT_SCHEMA_VERSION = "withmate-character-context-v1" 
 
 export type CharacterOperationAuthority =
   | { kind: "conversation" }
+  | { kind: "background_management"; reason: string }
   | { kind: "explicit_user_instruction"; reason: string }
   | { kind: "operator"; reason: string };
 
@@ -67,7 +68,7 @@ export type CharacterMemoryPreview = {
   updatedAt: string;
 };
 
-export type CharacterContextResponse = {
+export type CharacterAffectContext = {
   schemaVersion: typeof CHARACTER_CONTEXT_SCHEMA_VERSION;
   baseline: {
     definitionSha256: string;
@@ -80,6 +81,9 @@ export type CharacterContextResponse = {
     version: string;
     updatedAt: string | null;
   };
+};
+
+export type CharacterContextResponse = CharacterAffectContext & {
   memory: {
     items: CharacterMemoryPreview[];
     relatedTags?: MemoryTag[];
@@ -195,6 +199,20 @@ export type CharacterMemoryCorrectRequest = {
   reason: string;
   idempotencyKey: string;
   replacement: CharacterMemoryEpisodeInput;
+};
+
+export type CharacterMemoryAppendEpisodesRequest = Omit<CharacterMemoryAppendEpisodeRequest, "idempotencyKey" | "episode"> & {
+  episodes: Array<Pick<CharacterMemoryAppendEpisodeRequest, "idempotencyKey" | "episode">>;
+};
+
+export type CharacterMemoryAppendEpisodesResponse = {
+  schemaVersion: typeof CHARACTER_CONTEXT_SCHEMA_VERSION;
+  results: Array<
+    | { index: number; status: "saved"; result: CharacterMemoryMutationResponse }
+    | { index: number; status: "failed" | "unknown"; result: CharacterContextErrorResponse }
+    | { index: number; status: "not_run" }
+  >;
+  error?: CharacterContextErrorResponse["error"];
 };
 
 export type CharacterMemoryForgetRequest = {

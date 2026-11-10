@@ -1,7 +1,6 @@
 import { currentTimestampLabel as defaultCurrentTimestampLabel } from "../../src-shared/time-state.js";
 import type { ComposerAttachment, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry, SteerSessionTurnRequest, SteerSessionTurnResult } from "../../src-shared/session/runtime-state.js";
 import type { MessageArtifact } from "../../src-shared/session/session-state.js";
-import type { ProjectMemoryEntry, SessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { normalizeSessionTurnCorrelation } from "../../src-shared/session/runtime-state.js";
 import { placeElicitationRecords } from "../../src-shared/session/question-placement.js";
 import { validateSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
@@ -25,10 +24,11 @@ import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js
 import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
-import type { CharacterContextResponse } from "../../src-shared/character-context/character-context-contract.js";
+import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 import { applyProviderProgressChanges } from "../providers/provider-progress.js";
+import type { SessionBackgroundEvent } from "./session-background-events.js";
 
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -71,20 +71,13 @@ export type SessionRuntimeServiceDeps = {
     provider: ModelCatalogProvider;
   }>;
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
-  getSessionMemory(session: Session): Awaitable<SessionMemory>;
-  resolveProjectMemoryEntriesForPrompt(
-    session: Session,
-    userMessage: string,
-    sessionMemory: SessionMemory,
-  ): Awaitable<ProjectMemoryEntry[]>;
   resolveConversationTimingContext?: (
     session: Session,
     observedAt: Date,
   ) => Awaitable<ConversationTimingContext | null>;
   resolveCharacterContext?: (
     session: Session,
-    query: string,
-  ) => Awaitable<CharacterContextResponse | null>;
+  ) => Awaitable<CharacterAffectContext | null>;
   createSessionTurn(input: SessionTurnInput): Awaitable<SessionTurnRecord>;
   updateSessionTurn(id: number, input: SessionTurnInput): Awaitable<void | SessionTurnRecord>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -125,6 +118,7 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
   notifySessionTurnTerminal?: (notification: SessionTurnTerminalNotification) => Awaitable<void>;
+  onBackgroundEvent?: (event: SessionBackgroundEvent) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   currentDate?: () => Date;
   providerCancelGraceMs?: number;
@@ -953,8 +947,6 @@ export class SessionRuntimeService {
     let agentRuntimeBinding = await Promise.resolve(
       this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
     );
-    const sessionMemory = await this.deps.getSessionMemory(session);
-    const projectMemoryEntries = await this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
     const conversationTimingContext = appSettings.conversationTimingEnabled
       ? await Promise.resolve(
@@ -963,7 +955,7 @@ export class SessionRuntimeService {
       : null;
     const characterContext = appSettings.characterAffectContextEnabled
       ? await Promise.resolve(
-        this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
+        this.deps.resolveCharacterContext?.(session) ?? null,
       )
       : null;
     throwIfRunCanceled(runAbortController.signal, queued);
@@ -1031,6 +1023,7 @@ export class SessionRuntimeService {
         elapsedMs: Date.now() - investigationStartedAt,
       });
       this.startingSessionRuns.delete(sessionId);
+      this.publishBackgroundEvent({ kind: "run_state", session: runningSession, running: true });
     } catch (error) {
       this.deps.resolvePendingApprovalRequest(sessionId, "deny");
       this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
@@ -1093,8 +1086,6 @@ export class SessionRuntimeService {
         },
         executionOptions,
         sessionFolderPath: await this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
-        sessionMemory,
-        projectMemoryEntries,
         providerCatalog: provider,
         userMessage: nextMessage,
         appSettings,
@@ -1266,7 +1257,7 @@ export class SessionRuntimeService {
       const completedSessionUpsertStartedAt = Date.now();
       const completedThreadId = pickPreferredThreadId(result.threadId, completedSession.threadId);
       terminalPersistenceStarted = true;
-      const storedCompletedSession = await this.deps.appendTerminalSession(completedSession, {
+      const terminal: SessionTurnTerminalCommit = {
         turnId: runningTurn.id,
         sessionId,
         phase: "completed",
@@ -1274,7 +1265,8 @@ export class SessionRuntimeService {
         threadId: completedThreadId,
         errorMessage: "",
         completedAt,
-      }, {
+      };
+      const storedCompletedSession = await this.deps.appendTerminalSession(completedSession, terminal, {
         confirmedFinalAssistantText: result.lastNonEmptyAssistantMessageText,
       });
       if (queued) queued.outcome = { state: "completed" };
@@ -1287,6 +1279,7 @@ export class SessionRuntimeService {
         storedStatus: storedCompletedSession.status,
       });
       activeRunningSession = storedCompletedSession;
+      this.publishBackgroundEvent({ kind: "terminal_saved", session: storedCompletedSession, terminal });
       if (!runAbortController.signal.aborted) {
         notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
           outcome: "completed",
@@ -1352,7 +1345,7 @@ export class SessionRuntimeService {
       };
 
       const failedSessionUpsertStartedAt = Date.now();
-      const storedFailedSession = await this.deps.appendTerminalSession(failedSession, {
+      const terminal: SessionTurnTerminalCommit = {
         turnId: runningTurn.id,
         sessionId,
         phase: canceled ? "canceled" : "failed",
@@ -1360,7 +1353,8 @@ export class SessionRuntimeService {
         threadId: failedTurnThreadId,
         errorMessage: failureMessage,
         completedAt,
-      });
+      };
+      const storedFailedSession = await this.deps.appendTerminalSession(failedSession, terminal);
       if (queued) queued.outcome = { state: canceled ? "canceled" : "failed", reason: failureMessage };
       logSessionRunStuckInvestigation("runtime.terminal-session-upsert.done", {
         sessionId,
@@ -1371,6 +1365,7 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
+      this.publishBackgroundEvent({ kind: "terminal_saved", session: storedFailedSession, terminal });
       if (!canceled && !this.pendingSessionRunCancels.has(sessionId)
         && !runAbortController.signal.aborted) {
         notifySessionTurnTerminalBestEffort(this.deps.notifySessionTurnTerminal, {
@@ -1412,6 +1407,7 @@ export class SessionRuntimeService {
         this.setRuntimeLiveState(sessionId, null);
       }
       this.deps.broadcastLiveSessionRun(sessionId);
+      this.publishBackgroundEvent({ kind: "run_state", session: activeRunningSession, running: false });
       logSessionRunStuckInvestigation("runtime.finally.done", {
         sessionId,
         clientRequestId,
@@ -1422,6 +1418,16 @@ export class SessionRuntimeService {
         preservedReasoningChars: preservedReasoningText.length,
         liveRunAfterFinally: this.deps.getLiveSessionRun(sessionId) ? "present" : "null",
       });
+    }
+  }
+
+  private publishBackgroundEvent(event: SessionBackgroundEvent): void {
+    const notify = this.deps.onBackgroundEvent;
+    if (!notify) return;
+    try {
+      void Promise.resolve(notify(event)).catch((error) => console.warn("Background lifecycle callback failed", error));
+    } catch (error) {
+      console.warn("Background lifecycle callback failed", error);
     }
   }
 

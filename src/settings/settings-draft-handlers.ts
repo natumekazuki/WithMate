@@ -30,6 +30,8 @@ type SettingsDraftHandlersContext = {
 export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
+  | "onChangeBackgroundPurpose"
+  | "onChangeMemoryRecordingFrequencies"
   | "onChangeCharacterAffectContextEnabled"
   | "onChangeCharacterDefinitionEnabled"
   | "onChangeConversationTimingEnabled"
@@ -60,6 +62,12 @@ export function buildSettingsDraftHandlers({
   };
 
   return {
+    onChangeBackgroundPurpose: (purpose, value) => {
+      updateSettingsDraft((current) => ({ ...current, backgroundExecutionSettings: { ...current.backgroundExecutionSettings, [purpose]: value } }));
+    },
+    onChangeMemoryRecordingFrequencies: (value) => {
+      updateSettingsDraft((current) => ({ ...current, memoryRecordingFrequencies: value }));
+    },
     onChangeModelAvailability: (modelAvailability) => {
       updateSettingsDraft((current) => ({ ...current, modelAvailability }));
     },

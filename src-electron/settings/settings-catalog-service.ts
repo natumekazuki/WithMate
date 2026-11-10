@@ -58,6 +58,7 @@ export type SettingsCatalogServiceDeps = {
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
   onChatLayoutPreferenceSaveError?(update: ChatLayoutPreferenceUpdate, error: unknown): void;
   onProviderTurnAvailable?(providerId: string): void;
+  invalidateBackgroundProvider?(providerId: string): void;
   getModelCatalog(): Awaitable<ModelCatalogSnapshot>;
   replaceAllSessions(
     nextSessions: Session[],
@@ -159,6 +160,16 @@ export class SettingsCatalogService {
     return (this.affectedProviders.get(providerId) ?? 0) === 0;
   }
 
+  private invalidateChangedBackgroundProviders(previousSettings: AppSettings, savedSettings: AppSettings): void {
+    const providersWithApiKeyChange = new Set(getProvidersWithApiKeyChange(previousSettings, savedSettings));
+    for (const providerId of Object.keys(previousSettings.codingProviderSettings)) {
+      if (providersWithApiKeyChange.has(providerId)
+        || (getProviderAppSettings(previousSettings, providerId).enabled && !getProviderAppSettings(savedSettings, providerId).enabled)) {
+        this.deps.invalidateBackgroundProvider?.(providerId);
+      }
+    }
+  }
+
   async getAppSettings(): Promise<AppSettings> {
     return this.withCurrentChatLayout(await this.deps.getAppSettings());
   }
@@ -256,6 +267,7 @@ export class SettingsCatalogService {
     let savedSettings: AppSettings | null = null;
     try {
       savedSettings = await this.deps.updateAppSettings(nextSettings);
+      this.invalidateChangedBackgroundProviders(previousSettings, savedSettings);
       for (const providerId of providersWithApiKeyChange) {
         this.deps.clearProviderQuotaTelemetry(providerId);
       }
@@ -455,7 +467,9 @@ export class SettingsCatalogService {
         await this.deps.invalidateAllProviderSessionThreads();
       }
       if (appliedTargets.has("appSettings")) {
-        await this.deps.resetAppSettings();
+        const previousSettings = await this.deps.getAppSettings();
+        const savedSettings = await this.deps.resetAppSettings();
+        this.invalidateChangedBackgroundProviders(previousSettings, savedSettings);
         this.chatLayoutCurrent = {};
         this.deps.clearAllProviderQuotaTelemetry();
       }

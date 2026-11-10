@@ -34,23 +34,23 @@ export type ProviderAgentRuntimeBindingRedactor = {
 export type ProviderAgentRuntimeAuthoritySnapshotInput = {
   characterId: string | null | undefined;
   workspacePath: string | null | undefined;
-  resolveCanonicalProjectId: (workspacePath: string) => string | null | undefined;
+  resolveCanonicalProjectId: (workspacePath: string) => string | null | undefined | Promise<string | null | undefined>;
 };
 
 /**
  * Builds the canonical actor authority snapshot from the bound Session only.
- * Project resolution is deliberately fail-closed: an unknown workspace grants
- * no project target rather than inventing an identifier.
+ * The storage resolver retains the stored ID for an existing Project key;
+ * a workspace with no resolved Project grants no project target.
  */
-export function buildProviderAgentRuntimeAuthoritySnapshot(
+export async function buildProviderAgentRuntimeAuthoritySnapshot(
   input: ProviderAgentRuntimeAuthoritySnapshotInput,
-): ProviderAgentRuntimeAuthoritySnapshot | null {
+): Promise<ProviderAgentRuntimeAuthoritySnapshot | null> {
   const characterId = input.characterId?.trim() ?? "";
   if (!characterId) {
     return null;
   }
   const workspacePath = input.workspacePath?.trim() ?? "";
-  const resolvedProjectId = workspacePath ? input.resolveCanonicalProjectId(workspacePath)?.trim() ?? "" : "";
+  const resolvedProjectId = workspacePath ? (await input.resolveCanonicalProjectId(workspacePath))?.trim() ?? "" : "";
   const allowedProjectIds = resolvedProjectId ? [resolvedProjectId] : [];
   return {
     userId: "local-user",

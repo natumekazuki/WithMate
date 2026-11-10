@@ -10,7 +10,6 @@ import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapte
 import { ProviderTurnError, type RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
-import { createDefaultSessionMemory } from "../../src-shared/memory/session-memory-state.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { PROVIDER_TEXT_PREVIEW_LIMIT } from "../../src-electron/session/provider-payload-limits.js";
@@ -82,8 +81,8 @@ function input(threadId = "", signal?: AbortSignal): RunSessionTurnInput {
     model: "claude-opus-5-5", reasoningEffort: "high", customAgentName: "",
   }), threadId };
   return {
-    session, executionOptions: captureSessionExecutionOptions(session), sessionMemory: createDefaultSessionMemory(session),
-    projectMemoryEntries: [], providerCatalog: {
+    session, executionOptions: captureSessionExecutionOptions(session),
+    providerCatalog: {
       id: "claude", label: "Claude", defaultModelId: "claude-opus-5-5", defaultReasoningEffort: "high",
       models: [{ id: "claude-opus-5-5", label: "Opus", reasoningEfforts: ["low", "medium", "high", "xhigh", "max"] }],
     },
@@ -882,7 +881,6 @@ it("resumes by explicit id with the current system prompt and deduplicates strea
       baseline: { definitionSha256: marker, snapshotAt: "2026-10-03T00:00:00Z" },
       affect: { mode: "active", effective: [{ contributingLayers: ["session"], targetType: "user", targetId: "user", family: null,
         label: `Affect ${marker}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: marker, updatedAt: null },
-      memory: { items: [], updatedAt: null },
     };
     // Recreate the adapter for explicit resume: freshness must not rely on an in-memory query cache.
     const currentAdapter = index === 2 ? new ClaudeAdapter({ query: fakeQuery(async function* () { yield result("thread-1"); },

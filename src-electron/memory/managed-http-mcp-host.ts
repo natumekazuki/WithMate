@@ -13,11 +13,16 @@ import { createWithMateGlossaryMcpServer } from "../platform/mcp/withmate-glossa
 import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-session-graph-mcp.js";
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
+import { backgroundMemoryToolOperations, BACKGROUND_REGISTRATION_OPERATIONS, BACKGROUND_SHARED_READ_TOOL_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { supportsBackgroundRegistration, type BackgroundRegistration } from "../providers/background-registration.js";
+import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
+import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
 
 type Endpoint = {
   server: McpServer;
   transport: StreamableHTTPServerTransport;
   deliveries: Map<RequestId, Promise<void>>;
+  calls: Map<RequestId, { operation: string; toolName: string }>;
 };
 
 type TurnConnection = {
@@ -31,11 +36,23 @@ type TurnConnection = {
   removeAbortListener?: () => void;
 };
 
+export type SessionHistoryMcpRegistration = {
+  toolOperations: Readonly<Record<string, string>>;
+  createServer: (deps: {
+    env: Record<string, string>;
+    connection: WithMateMemoryRuntimeConnection;
+    runtimeCall: typeof callWithMateMemoryRuntime;
+  }, allowedOperations: readonly string[]) => McpServer;
+};
+
 export type ManagedHttpMcpHostOptions = {
   connection: WithMateMemoryRuntimeConnection;
   fallbackAdmissionSecret: string;
-  bindingRegistry: Pick<AgentRuntimeBindingRegistry, "resolve" | "subscribeChanges">;
+  bindingRegistry: Pick<AgentRuntimeBindingRegistry, "resolve" | "resolveIdentity" | "subscribeChanges">;
   turns: Pick<ProviderAgentRuntimeTurnCoordinator, "admit" | "end">;
+  sessionHistory?: SessionHistoryMcpRegistration;
+  backgroundRegistration?: BackgroundRegistration;
+  onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
 };
 
 function reply(response: ServerResponse, status: number, message: string): void {
@@ -90,7 +107,9 @@ export class ManagedHttpMcpHost {
     this.#server.headersTimeout = 10_000;
     this.#unsubscribe = options.bindingRegistry.subscribeChanges((change) => {
       for (const context of this.#connections.values()) {
-        if (context.handle.actorSessionId === change.actorSessionId
+        if (change.backgroundBindingId ? context.binding.bindingId === change.backgroundBindingId
+          && context.binding.executionGeneration !== change.executionGeneration
+          : !context.binding.background && context.handle.actorSessionId === change.actorSessionId
           && context.handle.providerId === change.providerId
           && context.binding.executionGeneration !== change.executionGeneration) {
           this.release(context.handle);
@@ -114,6 +133,7 @@ export class ManagedHttpMcpHost {
     NonNullable<ProviderAgentRuntimeBindingProjection["managedMcp"]> {
     if (!this.#address || this.#stopping) throw new Error("Managed MCP runtime is unavailable.");
     signal?.throwIfAborted();
+    if (binding.background && !this.#options.sessionHistory) throw new Error("Session history MCP is not registered.");
     const existing = [...this.#connections.values()].find((context) => context.handle === handle);
     const candidate: TurnConnection = {
       token: randomBytes(32).toString("base64url"),
@@ -134,15 +154,21 @@ export class ManagedHttpMcpHost {
       context.removeAbortListener = () => signal.removeEventListener("abort", abort);
     }
     const baseUrl = `http://127.0.0.1:${this.#address.port}`;
-    return { memoryUrl: `${baseUrl}/mcp/memory`, glossaryUrl: `${baseUrl}/mcp/glossary`, sessionGraphUrl: `${baseUrl}/mcp/session-graph`, token: context.token };
+    return { memoryUrl: `${baseUrl}/mcp/memory`, glossaryUrl: `${baseUrl}/mcp/glossary`, sessionGraphUrl: `${baseUrl}/mcp/session-graph`,
+      ...(binding.background ? { sessionHistoryUrl: `${baseUrl}/mcp/session-history` } : {}), token: context.token };
   }
 
   release(handle: ProviderAgentRuntimeTurnHandle): void {
+    this.closeConnection(handle);
+    this.#options.turns.end(handle);
+  }
+
+  /** Native completion closes tool access without ending application-save admission. */
+  closeConnection(handle: ProviderAgentRuntimeTurnHandle): void {
     for (const context of this.#connections.values()) {
       if (context.handle !== handle) continue;
       this.#connections.delete(context.token);
       context.removeAbortListener?.();
-      this.#options.turns.end(handle);
       context.abort.abort();
       for (const endpoint of context.endpoints.values()) {
         void endpoint.server.close().catch(() => undefined);
@@ -165,11 +191,12 @@ export class ManagedHttpMcpHost {
 
   #isCurrent(context: TurnConnection): boolean {
     if (this.#stopping || context.abort.signal.aborted) return false;
-    const resolved = this.#options.bindingRegistry.resolve(context.binding.bindingReference, "memory.route.list_targets");
+    const resolved = this.#options.bindingRegistry.resolveIdentity(context.binding.bindingReference);
     const admitted = this.#options.turns.admit({
       actorSessionId: context.handle.actorSessionId,
       providerId: context.handle.providerId,
       turnCapability: context.handle.capability,
+      ...(context.binding.background ? { bindingId: context.binding.bindingId } : {}),
     });
     return resolved.ok
       && context.binding.turnCapability === context.handle.capability
@@ -179,11 +206,25 @@ export class ManagedHttpMcpHost {
       && resolved.binding.executionGeneration === context.binding.executionGeneration
       && resolved.binding.actorSessionId === context.handle.actorSessionId
       && resolved.binding.providerId === context.handle.providerId
+      && Boolean(resolved.binding.backgroundScope) === Boolean(context.binding.background)
       && admitted.ok && admitted.handle === context.handle;
+  }
+
+  #backgroundMemoryOperations(context: TurnConnection): Readonly<Record<string, string>> {
+    const resolved = this.#options.bindingRegistry.resolveIdentity(context.binding.bindingReference);
+    const scope = resolved.ok ? resolved.binding.backgroundScope : undefined;
+    return scope ? backgroundMemoryToolOperations(scope.purpose,
+      supportsBackgroundRegistration(this.#options.backgroundRegistration, scope.purpose, scope.history.source.kind), scope.fileAccess) : {};
+  }
+
+  #backgroundEndpointOperations(context: TurnConnection, pathname: string): Readonly<Record<string, string>> {
+    return pathname === "/mcp/session-history" ? this.#options.sessionHistory!.toolOperations
+      : pathname === "/mcp/memory" ? this.#backgroundMemoryOperations(context) : BACKGROUND_SHARED_READ_TOOL_OPERATIONS;
   }
 
   async #createEndpoint(context: TurnConnection, pathname: string): Promise<Endpoint> {
     const deliveries = new Map<RequestId, Promise<void>>();
+    const calls: Endpoint["calls"] = new Map();
     const deps = {
       env: buildProviderAgentRuntimeBindingEnv(context.binding),
       connection: this.#options.connection,
@@ -201,9 +242,14 @@ export class ManagedHttpMcpHost {
             if (!delivery) throw new Error("MCP tools list delivery is missing.");
             await delivery;
           },
-        })
-      : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
-      : createWithMateSessionGraphMcpServer(deps);
+        }, context.binding.background ? Object.entries(this.#backgroundMemoryOperations(context))
+          .filter(([, operation]) => this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok)
+          .map(([name]) => name) : undefined)
+      : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps, context.binding.background)
+      : pathname === "/mcp/session-graph" ? createWithMateSessionGraphMcpServer(deps, context.binding.background)
+      : this.#options.sessionHistory!.createServer(deps,
+        Object.values(this.#options.sessionHistory!.toolOperations).filter((operation) =>
+          this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok));
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: randomUUID,
       enableJsonResponse: true,
@@ -211,13 +257,45 @@ export class ManagedHttpMcpHost {
         if (context.endpoints.get(pathname)?.transport === transport) context.endpoints.delete(pathname);
       },
     });
+    if (context.binding.background) {
+      const send = transport.send.bind(transport);
+      transport.send = async (message, options) => {
+        const responseId = "id" in message && (typeof message.id === "string" || typeof message.id === "number") ? message.id : undefined;
+        const call = responseId !== undefined ? calls.get(responseId) : undefined;
+        const stage = pathname === "/mcp/session-history" ? "history" : Object.values(BACKGROUND_REGISTRATION_OPERATIONS)
+          .some(({ operation }) => operation === call?.operation) ? "registration" : "read";
+        let failure: BackgroundFailure | undefined;
+        if ("result" in message && typeof message.result === "object" && message.result !== null && message.result.isError === true) {
+          failure = backgroundOperationFailure(message.result.structuredContent, stage)
+            ?? classifyBackgroundFailure({ code: "BACKGROUND_OPERATION_FAILED", message: Array.isArray(message.result.content)
+              ? message.result.content.filter((item: unknown): item is { type: "text"; text: string } => !!item && typeof item === "object"
+                && "type" in item && item.type === "text" && "text" in item && typeof item.text === "string").map((item) => item.text).join("\n") : undefined }, stage);
+        } else if ("error" in message) {
+          failure = classifyBackgroundFailure(message.error, stage, "BACKGROUND_MCP_INVALID_REQUEST");
+        }
+        if (failure) {
+          failure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
+            [context.token, context.binding.bindingReference, context.handle.capability, this.#options.connection.api.apiSecret,
+              this.#options.connection.credential.adapterSecret, this.#options.fallbackAdmissionSecret]) };
+        }
+        if ((call || failure) && responseId !== undefined) {
+          this.#options.onBackgroundOperation?.(context.binding.bindingId, { operation: call?.operation ?? "unknown",
+            ...(call?.toolName ? { toolName: call.toolName } : {}), requestId: responseId, transport: "mcp",
+            boundary: "mcp", phase: "response", timestamp: new Date().toISOString(), outcome: failure ? "failure" : "success", failure,
+            ...("result" in message ? { result: backgroundOperationResult((message.result as { structuredContent?: unknown }).structuredContent) } : {}) });
+          calls.delete(responseId);
+        }
+        await send(message, options);
+      };
+    }
     await server.connect(transport);
-    return { server, transport, deliveries };
+    return { server, transport, deliveries, calls };
   }
 
   async #route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const pathname = request.url;
-    if (pathname !== "/mcp/memory" && pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph") {
+    if (pathname !== "/mcp/memory" && pathname !== "/mcp/glossary" && pathname !== "/mcp/session-graph"
+      && pathname !== "/mcp/session-history") {
       reply(response, 404, "Unknown MCP endpoint."); return;
     }
     if (request.socket.remoteAddress !== "127.0.0.1"
@@ -230,6 +308,9 @@ export class ManagedHttpMcpHost {
     if (!context || !this.#isCurrent(context)) {
       if (context) this.release(context.handle);
       reply(response, 401, "MCP turn credential is inactive."); return;
+    }
+    if (!context.binding.background && pathname === "/mcp/session-history") {
+      reply(response, 403, "MCP endpoint is outside this execution scope."); return;
     }
     if (request.method !== "POST" && request.method !== "DELETE") {
       reply(response, 405, "MCP supports POST and DELETE."); return;
@@ -248,6 +329,24 @@ export class ManagedHttpMcpHost {
       const body = request.method === "POST" ? await readBody(request,
         pathname !== "/mcp/memory" ? WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES : 256 * 1024) : undefined;
       if (!this.#isCurrent(context)) { reply(response, 401, "MCP turn credential is inactive."); return; }
+      if ((pathname === "/mcp/session-history" || context.binding.background)
+        && body && typeof body === "object" && !Array.isArray(body)) {
+        const call = body as { id?: unknown; method?: unknown; params?: { name?: unknown } };
+        if (call.method === "tools/call") {
+          const operation = typeof call.params?.name === "string"
+            ? this.#backgroundEndpointOperations(context, pathname)[call.params.name] : undefined;
+          if (!operation || !this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok) {
+            reply(response, 403, "Background operation is not granted or connected.");
+            const failure = classifyBackgroundFailure({ code: "SESSION_BINDING_FORBIDDEN", message: "Background operation is not granted or connected." }, pathname === "/mcp/session-history" ? "history" : "registration");
+            const metadata = { requestId: typeof call.id === "string" || typeof call.id === "number" ? call.id : "invalid-id",
+              operation: operation ?? "unknown", toolName: typeof call.params?.name === "string" ? call.params.name : "unknown",
+              transport: "mcp", boundary: "mcp" as const, timestamp: new Date().toISOString() };
+            this.#options.onBackgroundOperation?.(context.binding.bindingId, { ...metadata, phase: "request" });
+            this.#options.onBackgroundOperation?.(context.binding.bindingId, { ...metadata, phase: "response", outcome: "failure", failure });
+            return;
+          }
+        }
+      }
       endpoint = context.endpoints.get(pathname);
       const sessionId = request.headers["mcp-session-id"];
       if (sessionId !== undefined) {
@@ -271,6 +370,17 @@ export class ManagedHttpMcpHost {
         }
         context.endpoints.set(pathname, endpoint);
       } else { reply(response, 400, "MCP initialization is required."); return; }
+      if (context.binding.background && body && typeof body === "object" && !Array.isArray(body)) {
+        const call = body as { id?: unknown; method?: unknown; params?: { name?: unknown } };
+        if (call.method === "tools/call" && (typeof call.id === "string" || typeof call.id === "number") && typeof call.params?.name === "string") {
+          const toolName = call.params.name;
+          const operation = this.#backgroundEndpointOperations(context, pathname)[toolName] ?? toolName;
+          endpoint.calls.set(call.id, { operation, toolName });
+          this.#options.onBackgroundOperation?.(context.binding.bindingId, { requestId: call.id, operation, toolName,
+            transport: "mcp", boundary: "mcp",
+            phase: "request", timestamp: new Date().toISOString() });
+        }
+      }
       if (body && typeof body === "object" && !Array.isArray(body)
         && (body as { method?: unknown }).method === "tools/list") {
         const id = (body as { id?: unknown }).id;

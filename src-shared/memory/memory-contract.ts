@@ -41,10 +41,10 @@ export type ProjectTargetRef =
 
 export type CharacterTargetRef = { type: "id"; id: string };
 
-export type MemoryTargetSelector =
-  | { owner: "project"; project: ProjectTargetRef; scope: "project" }
+export type MemoryTargetSelector<ProjectRef extends ProjectTargetRef = ProjectTargetRef> =
+  | { owner: "project"; project: ProjectRef; scope: "project" }
   | { owner: "character"; character: CharacterTargetRef; scope: "character" }
-  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectTargetRef }
+  | { owner: "character"; character: CharacterTargetRef; scope: "project"; project: ProjectRef }
   | { owner: "user"; scope: "global" };
 
 export type MemoryTag = {
@@ -164,6 +164,18 @@ export type MemoryAppendRequest = {
   idempotencyKey?: string;
 };
 
+export type MemoryEntryContent = Pick<MemoryAppendRequest, "kind" | "title" | "body" | "preview" | "tags">;
+
+export type MemoryAppendEntryInput = Omit<MemoryAppendRequest, "schemaVersion" | "target" | "idempotencyKey"> & {
+  idempotencyKey: string;
+};
+
+export type MemoryAppendEntriesRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  target: MemoryTargetSelector;
+  entries: MemoryAppendEntryInput[];
+};
+
 export const MEMORY_FORGET_REASONS = [
   "user_request",
   "incorrect",
@@ -196,6 +208,8 @@ export type MemoryMoveEntryRequest = {
 
 export type MemoryV6ReviewSearchRequest = {
   query: string;
+  characterId?: string;
+  projectId?: string;
   kinds?: MemoryEntryKind[];
   limit?: number;
   cursor?: string;

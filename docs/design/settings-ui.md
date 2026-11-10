@@ -11,8 +11,10 @@
 
 - 設定は `Home Window` から開く独立 `Settings Window` とする
 - Character定義は`Characters` editorで管理し、Session開始時の`CharacterRuntimeSnapshot`をruntime promptへ渡す
-- current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Diagnostics`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
+- current 実装では `App`、`Prompt Context`、`Coding Agent Providers`、`Background Execution`、`Diagnostics`、`Repository Glossary`、`Storage Maintenance` を置く。microcopy catalogの編集面や保存設定は提供せず、残存するmicrocopy設定キーは起動時に削除してcurrent `AppSettings`へ読み戻さない
 - Settings のsectionとprovider rowは意味上のgroupを保つが、入れ子の装飾card、重複するsection見出し、説明だけの空行は置かない
+- Settings本文のApp、Prompt Context、Coding Agent Providers、Background Execution、Diagnostics、Repository Glossary、Storage Maintenance、Helpは、native disclosureで個別に開閉する。初期状態は開き、複数sectionを同時に開ける。閉じても子の編集面をunmountせず、draft・入力途中の値・既存の失敗情報を保持する。開閉だけでは設定を保存せず、開閉状態の永続化は行わない。Save Settingsと保存結果はsectionの外へ置く
+- section内部も、AppのNotifications、Providerごとの設定とProvider File Settings、背景三用途と各Registration Instructions、DiagnosticsのMemory / Application Logs、Storage MaintenanceのDelete Old Sessions / Clean Session Filesを独立したnative disclosureとする。単一fieldごとの開閉は増やさず、Prompt Context / Repository Glossary / Help等の単純なgroupは追加分割しない。親を閉じても子の開閉・入力途中・処理結果を保持する。Clean Session Filesの確認dialogはすべてのdisclosureの外（document.body）へ表示し、取消後は表示可能な操作元または閉じた親のsummaryへfocusを戻す
 - Memoryの通常操作はprovider共通MCPの`tools/list`を正本とし、Settingsにはprovider instruction sampleやcopy導線を置かない
 - `Settings Window` はfieldsetの内外でsection間の余白を24pxに揃え、直前の入力欄やfocus枠と区切り線を離す。内容が増えた場合は window 内スクロールで末尾まで操作できるようにする
 - `Session Turn Notification`はturn完了・失敗とCodexの構造化質問通知に共通で適用する。`Notification Response Preview`は成功したturnの完了通知だけを対象とし、質問文や入力値は表示しない。通知の条件と復帰先は[Desktop UI](desktop-ui.md#windows-session-notifications)を参照する
@@ -24,7 +26,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings を編集して保存する。window が小さいときは内部スクロールで下端まで移動する
+3. App 表示設定、PromptContext の4項目、coding provider の enable / disable と provider file settings、背景用途のmodel・本文・Memory頻度を編集して保存する。window が小さいときは内部スクロールで下端まで移動する
 4. 結果は window 内の短いフィードバックで返す
 
 設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。
@@ -32,6 +34,16 @@
 操作結果は操作ごとに扱い、並行した別操作の成功で未解消の失敗理由を消さない。再操作の結果はその操作の失敗理由だけを更新・解消する。失敗は元の操作buttonの横のiconで示し、そのbuttonから再操作できる。診断原文はiconから非modal popoverで開き、元の操作を覆わずに画面内へ配置する。長文は内部scroll・選択でき、Escape・閉じるbuttonでは入口へfocusを戻し、入口の再操作・外側clickでも閉じる。入力修正が必要な案内はフィードバック領域へ直接表示する。未解消の失敗がある間は通常の結果通知を出さない。ユーザーによるdraft編集では結果通知をクリアする。
 
 Memory Review は検索・pagination・detail取得の応答順を識別し、古い応答で現在の一覧やdetailを上書きしない。detail切替中は旧detailのForget / Export操作を表示せず、Forget / GCの対象と削除影響を確認できる表示を維持する。
+
+Memory Review の一覧・detail・Forget確認は、保存済みowner / scopeからユーザー共通、プロジェクト、Character、Character＋プロジェクトを表示する。Characterは登録名とicon、プロジェクトは登録表示名を使い、同名はIDやworkspace pathの補足で区別する。登録情報や名前・画像が失われても別のCharacterへ置き換えず、対象の識別情報を保持する。補足は名称より弱く表示する。
+
+一覧はtitle・対象・previewを表示し、Kindとtagsは詳細へ集約する。詳細はtitle・対象、補足のKindとローカル時刻の更新日時、保存本文、tag値、添付fileの順とする。本文は原文のread-only表示を維持する。添付は名前・summary・sizeとExportを表示し、出典の会話名やProvider、fileの内部role等を常設しない。保存された出典・tag・file metadataは変更しない。
+
+`Forget Entry`は現在の対象から確認dialogを開く。理由はdialog内で選び、新たに開くときは`User Request`を選択する。確認ではtitle・対象・理由とprivacy時の保存本文等への影響を示し、Cancelとfocus管理を維持する。
+
+下部の`File Storage`は使用量 / 上限を要約し、native disclosureを開くと全Memoryを対象に削除待ち・Largest Attachments・`Preview Cleanup` / `Clean Up Files`を表示する。後者の永久削除確認は維持し、操作後は対象数または削除数を表示する。取得・操作の失敗、部分失敗、参照中fileの欠落は、disclosureを閉じても確認できる。
+
+`Search`は本文・title・preview・tag・対象名を検索し、`Kind`、`Character`、`Project`を組み合わせて絞り込める。CharacterとProjectは名前で選択し、両方指定した場合は同じentryが両条件を満たすものに限定する。検索条件の変更ではcursor・選択detail・Forget確認を解除する。対象候補の取得は検索と独立したloading / error / Retryを持ち、取得失敗を正常0件に置き換えない。
 
 ## Layout
 
@@ -54,13 +66,17 @@ Memory Review は検索・pagination・detail取得の応答順を識別し、�
     - `Conversation Timing`
     - `Tool Call Presence`
   - `Coding Agent Providers`
-    - provider 名を左、enable checkbox を右に置く
+    - providerごとの開閉見出しに名前とEnabled / Disabledを表示し、展開内のEnabled checkboxで有効化を編集する
     - providerごとの`Models`からModel管理を開く
     - OpenCodeの認証はOpenCode側で設定する
     - provider ごとの `Provider File Settings`
       - `Root Directory`
       - `Skill Relative Path`
       - `Instruction Relative Path`
+  - `Background Execution`
+    - `Character Memory` / `Target Memory` / `Character Affect`ごとの`Provider`→`Model`→`Depth`、対応する`Approval`／`Reviewer`／`Sandbox`と`Registration Instructions`
+    - Memory二用途の`Every Turns`と`Idle Minutes`
+    - 本文は直接編集でき、`Use Preset`ボタンの押下で現在の用途preset本文へ置換する
   - `Diagnostics`
     - `Open Logs` / `Open Crash Dumps`
     - Memory V6 read-only diagnostics
@@ -92,6 +108,16 @@ Model一覧の先頭に`Enable All`／`Disable All`を置く。OpenCodeでは展
 `Back`はproviderの`Models`入口へfocusを戻し、編集内容を単一の`AppSettings draft`へ保持する。既存の`Save Settings` footerとdirty判定を共用し、独立した保存、Window、設定storeは追加しない。候補の除外と実行時の検査は[Model Availability](model-catalog.md#model-availability)に従う。
 
 ## Current Scope
+
+- 背景三用途は`AppSettings.backgroundExecutionSettings`に用途別の選択と本文を保存する。Provider／modelは初期未設定で、通常Sessionの選択や別用途のMemory生成設定を流用しない。catalogの実IDで選択し、未設定、利用不可、一覧取得失敗を区別する。利用不可でも保存値を保持し、対応する選択への修正先を示す。背景対応Providerの判定は共有`background-provider-support.ts`を使い、無効なProviderは`Coding Agent Providers`での有効化を案内する。
+- 背景Model候補はapp共通のModel／サービス無効設定を反映する。無効な現在値は`Disabled`として選択不能な表示だけを残し、Model／Depthの保存値を変えず`Models`での再有効化または別Modelの選択を案内する。有効ModelがないProviderは新規選択できない。
+- 背景実行はCodex／Copilot／Claude／OpenCodeの既存adapterを利用する。各用途は同じgroup内で`Provider`→`Model`→`Depth`の順に編集する。新たに選べるProviderは有効なものだけとし、model候補が未取得なら選択できない。Provider変更時はcatalogの既定model（候補にない場合は先頭model）と既定Depthを既存model選択helperで解決し、一括設定する。Model候補は選択Providerのものだけを表示する。
+- 背景三用途の選択欄は、ラベルと横幅を使ったnative selectを1行に一つずつ並べる。Provider / Model / DepthとApproval / Reviewer / Sandboxを複数列へ詰めず、選択値を改行しない。Settingsの最小幅でも未設定状態と権限の固定候補を読める幅を確保し、長いModel名も代表条件として確認する。保存値・候補labelを表示幅のために切り詰めない。
+- 各用途のselectionは`reasoningEffort`を任意で保持し、未指定はProviderの既定を意味する。`Depth`候補は選択modelの`reasoningEfforts`を使い、候補なしなら非表示とする。明示的なmodel変更時だけ既存model選択helperでDepthを調整する。catalog更新・Provider無効化だけでは保存値やdraftを変更しない。現在の無効／利用不可Providerや一覧から消えたmodelも選択表示を保持し、有効なProviderへ明示変更できる。Provider未設定・無効・一覧未取得ではModelとDepthを編集できない。
+- 権限は同じ用途group内でProvider共通の候補・組合せ規則を使い、`Approval`は全対応Provider、`Reviewer`はCodex／Claude、`Sandbox`はCodexで編集する。欠落項目は選択Providerの既定値（ApprovalはCodex／CopilotがSafety Focused、Claude／OpenCodeがProvider Controlled、ReviewerはUser、SandboxはWorkspace Write）を使う。Provider変更時は対応する権限項目をそのProviderの既定値へ一括設定し、Model変更では権限を保持する。ClaudeのAuto Reviewで非対応のApprovalへ変えるときは、先にReviewerをUserへ明示変更する。Auto Run中のReviewerは編集しない。
+- 明示された非対応権限や組合せは保持して警告し、実行時も拒否する。非対応fieldは保存値と`Not Applicable`の修正先を表示し、対応値への変更またはProvider変更で回復できる。背景実行開始時に用途別選択を捕捉し、通常Main／Auxiliaryや別用途の権限は継承・変更しない。SpeedはStandard、custom agentは未指定で明示構築する。保存した変更は次の背景実行から適用する。
+- 登録本文は未設定なら用途presetを表示し、そのまま編集できる。`Use Preset`ボタンは現在の用途presetを編集本文へコピーして置換し、以後も編集できる。置換はdraftへ反映し、通常の`Save Settings`で保存する。設定後は空文字列も含めその本文だけを使う。preset本文の正本は`memory-registration-input.ts`と`affect-composition.ts`とし、Settings側に複製しない。
+- `memoryRecordingFrequencies`はMemory二用途のTurn数・idle分を保持し、既定はそれぞれ5。Turn数は1以上の整数、idle分は0より大きい有限数とする。入力不正は入力欄に示して保存を止める。保存・読込境界も明示された不正値を拒否し、欠落だけを既定化する。既存`app_settings`のJSON値へ保存し、専用tableは持たない。
 
 - `App` の `Close Action Dock After Send` を含む表示設定の保存
 - `Preview Wheel Zoom Step`は画像／SVG／Mermaidの共通previewと画像lightboxのCtrl＋wheelの加算刻みを設定する。labelと3桁用の短い入力欄を横並びにし、通常時の説明文・単位表示は置かない。単位はpercentage points、既定値5、範囲は整数1〜100とする。空入力・小数・範囲外は入力欄にエラーを示して保存を止め、保存境界でも不正値を拒否する。設定項目がない既存データは5で初期化し、明示された不正な保存値を既定値へ置き換えない

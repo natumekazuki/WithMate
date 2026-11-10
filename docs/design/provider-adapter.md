@@ -45,6 +45,7 @@ providerごとの差は次。
 
 - `CodexAdapter`
   - turnごとに公式Codex CLIの`app-server --listen stdio://`を起動し、`initialize` / `initialized`後に`thread/start`または保存済みIDの`thread/resume`、`turn/start`を実行する。native item / delta / usage通知からlive state、workspace snapshotを含むartifactを組み立てる
+  - `imageView`、`sleep`、`contextCompaction`、`subAgentActivity`はitemの開始・完了をlive stepへ、画像確認・待機・会話圧縮・子Agent活動を通常のOperationsへ投影する。画像確認はファイル名とpathを保持し、画像実体の複製・本文への自動挿入を行わない。子Agent活動は操作履歴であり、Tasks UIの実行管理には接続しない。未知itemはbounded rawと未対応診断を保持する。WithMate自身の受理済みsteer診断は未対応警告と分けてinfoで記録する
   - command / file approval、permissions、user-input、MCP elicitationのserver requestを元のrequest IDとの対応を保持して共通GUIへ直列中継し、応答は元のIDへ返す。GUIのrequest IDは独立したopaque IDとする。`serverRequest/resolved`、turn終了、取消でpendingと待機列を解放し、二重回答・別turnへの回答を拒否する
   - 質問はnative `item/tool/requestUserInput`のblocking／nonblockingと、`agentMessage.delivery = async`の構造化`questions`を識別し、共通`LiveElicitationRequest.kind = question`へ投影する。本文から質問を推測しない。asyncはitem IDで重複を除き、providerの進行を待機させず複数のformを表示する。native requestの応答先とasyncの通常入力配送は分離する。質問表示時のWindows通知条件とactivationは[Desktop UI](desktop-ui.md#windows-session-notifications)を参照する
   - async質問はsource item IDと秘匿化後の本文範囲をlive/final投影へ保持する。表示前に受信済み本文を配送し、質問本文の差し替えと本文のない要求の受信位置を共通runtimeへ渡す。preview外へ移動したsourceの古い範囲は破棄し、確定全文のfinal範囲で補正する。本文のない要求の挿入位置は受信時の秘匿化後全文の末尾とし、live previewの切断位置を使わない
@@ -85,7 +86,7 @@ providerごとの差は次。
   - 再開時の内部通知など別入力のresultでは終了せず、その本文・usageを入力対応resultとして採用しない。子の通知処理で続く親assistant本文は通常の受信経路で保持する。`background_tasks_changed`の非ambientなlive集合と`task_notification`を既存のbackground progressへ投影するが、snapshotからの消失を報告配送済み・親の完了とはみなさない。ambient監視や常駐shellを含む完了待ちの範囲はSDKのsession state契約に従う
   - 送信に紐づかないsession全体の失敗、子の失敗・停止、入力対応result後の子報告回収turnの失敗、正常終端前のEOFは失敗として扱い、取得済み本文・操作をpartial resultへ保持する。子の失敗・停止は親の取りまとめを回収してから失敗を返す。取消は既存の取消経路で停止する。空本文だけで正常結果を失敗へ変更しない
   - modelとDepth候補はSDKから取得する。WithMateのApprovalとReviewerの組合せをSDKの6 permission modeへ写像し、Speedは`Standard / Fast`へ対応する。Codexのsandbox選択は提供しない
-  - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affect / Memoryを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
+  - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affectを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
   - `Provider Controlled + User`ではSDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`Auto Run`と`Auto Review`では通常toolの強制askを行わず、選択したnative modeの制御へ任せる。いずれもSDKから届く承認要求は共通UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
   - quotaはモデルを実行しないcontrol APIで取得し、Mainの非永続cacheへ保持する。取得用の非永続sessionはtools / MCP / hooksを無効化し、`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合は実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
   - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。token / cache usageは通常turn単位で扱う。API換算USDは実請求額として表示しない。認証先と利用枠の対応は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
@@ -104,6 +105,8 @@ providerごとの差は次。
 
 ### Managed HTTP MCP
 
+アプリ管理の背景呼出しも既存の四つのadapterを使う。共通層の独立`executionTarget`でnative threadとcacheを元会話から分け、通常の承認・sandbox・管理者policyを維持する。独立binding／handle・履歴専用接続・指示と出力の境界は[Background Execution](background-execution.md)を参照する。通常adapterの対応を、背景だけの絶対的な副作用隔離や実認証推論確認済みと読み替えない。
+
 Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。endpointは`/mcp/memory`、`/mcp/glossary`、`/mcp/session-graph`である。tool schemaとruntime clientは`src-electron/platform/mcp/`に置き、Memory／Glossaryではstdio CLIとも共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
 
 - Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。
@@ -114,7 +117,7 @@ Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
 - HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。CLIは同じ公開操作・認可の明示入口として利用でき、admission付きの同一要求再照合は通常CLIとは別の限定経路として扱う。
 
-provider adapterは通常turn実行を所有する。Affect専用の背景生成経路は持たず、Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
+provider adapterは共通のnative実行を所有し、用途別の背景SDK engineは持たない。Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
 
 ### Coding Plane
 

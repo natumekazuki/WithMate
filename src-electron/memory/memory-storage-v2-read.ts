@@ -84,10 +84,6 @@ export class ProjectMemoryStorageV2Read {
     return;
   }
 
-  markProjectMemoryEntriesUsed(_entryIds: string[]): void {
-    return;
-  }
-
   upsertProjectMemoryEntry(
     input: Omit<ProjectMemoryEntry, "id" | "createdAt" | "updatedAt" | "lastUsedAt"> & { id?: string },
   ): ProjectMemoryEntry {

@@ -17,7 +17,7 @@ import type { AuxiliarySessionSummary } from "../../src-shared/auxiliary/auxilia
 import type { HomeMonitorEntry } from "../../src/home/home-session-projection.js";
 import type { HomeSessionSummary, SessionSummary } from "../../src-shared/session/session-state.js";
 import { HomeMateSetupPanel, type MateAvatarAction } from "../../src/mate/MateSetupPanel.js";
-import { HomeSettingsContent } from "../../src/settings/SettingsContent.js";
+import { HomeSettingsContent, type HomeSettingsContentProps } from "../../src/settings/SettingsContent.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
@@ -70,6 +70,9 @@ describe("HomeSettingsContent", () => {
 
   const buildSettingsContent = (params?: RenderSettingsParams) => (
     <HomeSettingsContent
+      modelCatalog={modelCatalog}
+      onChangeBackgroundPurpose={noOp}
+      onChangeMemoryRecordingFrequencies={noOp}
       settingsDraft={params?.settingsDraft ?? settingsDraft}
       providerSettingRows={params?.providerSettingRows ?? providerSettingRows}
       memoryV6Diagnostics={params?.memoryV6Diagnostics ?? null}
@@ -207,6 +210,96 @@ describe("HomeSettingsContent", () => {
 
   // @test-value v2
   // kind = "contract"
+  // claim = "Settingsの親子groupは独立開閉でき、別sectionの編集後も子の開閉・入力途中・背景設定draftを保持して既存Saveへ渡す"
+  // oracle = { type = "contract", ref = "docs/design/settings-ui.md#decision" }
+  // fault = "親の開閉で子の開閉や入力途中を失うか、別sectionの更新で開閉を巻き戻すか、開閉だけで保存する"
+  // observable = "親子のopen状態、再open後の同じselect/textareaと選択範囲・値、Save呼出回数とpayload"
+  // observation_boundary = "component-behavior"
+  // scope = "Settings section disclosure and shared draft"
+  // lifecycle = "permanent"
+  // impact = "閲覧範囲の整理で未保存の設定を失うか、意図せず保存したと誤認させる"
+  // distinction = "native disclosure自体でなく、Settingsの再renderと保存結線をまたぐ編集保持を確認する"
+  // @end-test-value
+  it("sectionを個別に閉じても背景設定を保持してSaveへ渡す", async () => {
+    await withSettingsDom(async (container, root) => {
+      let saved: ReturnType<typeof createDefaultAppSettings> | undefined;
+      let saves = 0;
+      function View() {
+        const [draft, setDraft] = useState(createDefaultAppSettings());
+        const changeBackgroundPurpose: HomeSettingsContentProps["onChangeBackgroundPurpose"] = (purpose, value) => setDraft((current) => ({
+          ...current, backgroundExecutionSettings: { ...current.backgroundExecutionSettings, [purpose]: value },
+        }));
+        return React.cloneElement(buildSettingsContent(), {
+          settingsDraft: draft,
+          settingsDirty: JSON.stringify(draft) !== JSON.stringify(createDefaultAppSettings()),
+          onChangeBackgroundPurpose: changeBackgroundPurpose,
+          onChangeToolCallPresenceEnabled: (enabled: boolean) => setDraft((current) => ({ ...current, toolCallPresenceEnabled: enabled })),
+          onSaveSettings: () => { saves++; saved = structuredClone(draft); },
+        });
+      }
+      await act(async () => root.render(<View />));
+      const sections = [...container.querySelectorAll<HTMLDetailsElement>("details.settings-section-card")];
+      assert.deepEqual(sections.map((section) => section.querySelector("summary")?.textContent), [
+        "App", "Prompt Context", "Coding Agent Providers", "Background Execution", "Diagnostics", "Repository Glossary", "Storage Maintenance", "Help",
+      ]);
+      assert.ok(sections.every((section) => section.open));
+      const section = (title: string) => sections.find((entry) => entry.querySelector("summary")?.textContent === title)!;
+      const background = section("Background Execution");
+      const target = [...background.querySelectorAll<HTMLDetailsElement>(".settings-background-purpose")]
+        .find((entry) => entry.querySelector("summary")?.textContent === "Target Memory")!;
+      const instructions = target.querySelector<HTMLDetailsElement>("details.settings-subsection")!;
+      const textarea = instructions.querySelector("textarea")!;
+      textarea.setSelectionRange(3, 9);
+      const codex = section("Coding Agent Providers").querySelector<HTMLDetailsElement>("details.settings-provider-card")!;
+      const fileSettings = codex.querySelector<HTMLDetailsElement>("details.settings-provider-file-settings")!;
+      const notifications = section("App").querySelector<HTMLDetailsElement>("details.settings-subsection")!;
+      const provider = background.querySelector<HTMLSelectElement>('[aria-label="Target Memory Provider"]')!;
+      await act(async () => {
+        provider.value = "codex";
+        provider.dispatchEvent(new window.Event("change", { bubbles: true }));
+      });
+      await act(async () => {
+        instructions.querySelector("summary")!.click();
+        target.querySelector("summary")!.click();
+        fileSettings.querySelector("summary")!.click();
+        codex.querySelector("summary")!.click();
+        notifications.querySelector("summary")!.click();
+        background.querySelector("summary")!.click();
+        section("App").querySelector("summary")!.click();
+      });
+      assert.equal(background.open, false);
+      assert.equal(section("App").open, false);
+      assert.equal(section("Prompt Context").open, true);
+      await act(async () => container.querySelector<HTMLInputElement>("#settings-prompt-context-tool-call-presence")!.click());
+      assert.equal(background.open, false);
+      assert.equal(section("App").open, false);
+      await act(async () => background.querySelector("summary")!.click());
+      assert.equal(background.open, true);
+      assert.equal(target.open, false);
+      assert.equal(instructions.open, false);
+      assert.equal(codex.open, false);
+      assert.equal(fileSettings.open, false);
+      assert.equal(notifications.open, false);
+      await act(async () => {
+        target.querySelector("summary")!.click();
+        instructions.querySelector("summary")!.click();
+      });
+      assert.equal(instructions.querySelector("textarea"), textarea);
+      assert.equal(textarea.selectionStart, 3);
+      assert.equal(textarea.selectionEnd, 9);
+      assert.equal(background.querySelector('[aria-label="Target Memory Provider"]'), provider);
+      assert.equal(provider.value, "codex");
+      assert.equal(background.querySelector<HTMLSelectElement>('[aria-label="Target Memory Model"]')!.value, "gpt-5.4");
+      assert.equal(saves, 0);
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Save Settings"]')!.click());
+      assert.equal(saves, 1);
+      assert.equal(saved?.backgroundExecutionSettings["target-memory"].selection?.providerId, "codex");
+      assert.equal(saved?.toolCallPresenceEnabled, false);
+    });
+  });
+
+  // @test-value v2
+  // kind = "contract"
   // claim = "App SettingsはWindows通知、response preview、action dock、latest messageの4つの表示設定名をTitle Caseで表示する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#layout" }
   // fault = "4つの表示設定のいずれかを欠落させるか、別の設定面やTitle Caseでないlabelを表示する"
@@ -239,11 +332,11 @@ describe("HomeSettingsContent", () => {
   it("Prompt Context に4項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
     const document = new JSDOM(html).window.document;
-    const promptContextSection = Array.from(document.querySelectorAll("section.settings-section-card"))
-      .find((section) => section.querySelector("strong")?.textContent === "Prompt Context");
+    const promptContextSection = Array.from(document.querySelectorAll("details.settings-section-card"))
+      .find((section) => section.querySelector("summary")?.textContent === "Prompt Context");
 
     assert.ok(promptContextSection);
-    assert.equal(promptContextSection.querySelector("strong")?.textContent, "Prompt Context");
+    assert.equal(promptContextSection.querySelector("summary")?.textContent, "Prompt Context");
 
     const promptContextLabels = [
       "Character Definition Snapshot",
