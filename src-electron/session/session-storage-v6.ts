@@ -13,6 +13,7 @@ import { assertChildSessionRole, assertSessionRole, normalizeSessionRelationship
 import { validateSessionMetadataPatch, type SessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
 import { beginSessionLifecycleOperation, readSessionLifecycleOperation, type SessionLifecycleOperation } from "./session-lifecycle-operation.js";
 import { listCrewCoordinationBlockers } from "../coordination/coordination-schema-v7.js";
+import { acquireCoordinationAnswer } from "../coordination/coordination-dispatch.js";
 import type { CrewDeletionBlocker, CrewDeletionStatus } from "../../src-shared/session/session-crew-deletion.js";
 
 import {
@@ -1278,6 +1279,7 @@ export class SessionStorageV6 {
           || turn.sandboxMode !== options.codexSandboxMode) {
           throw new Error("The queued turn start does not match its captured request and message sequence.");
         }
+        acquireCoordinationAnswer(this.db, captured, { kind: "main", sessionId, incarnationId: currentRow.incarnation_id });
       }
 
       const runtimePolicyJson = JSON.stringify({

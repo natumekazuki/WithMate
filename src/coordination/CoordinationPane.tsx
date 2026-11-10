@@ -118,7 +118,7 @@ export function CoordinationPane({
     detail.result && "record" in detail.result ? detail.result.record : null;
   const confirmedAnswer = draft.confirmedAnswer;
   const record = fetchedRecord && confirmedAnswer && confirmedAnswer.revision > fetchedRecord.answerRevision
-    ? { ...fetchedRecord, answerRevision: confirmedAnswer.revision, answers: [...fetchedRecord.answers, confirmedAnswer] }
+    ? { ...fetchedRecord, answerRevision: confirmedAnswer.revision, answers: [confirmedAnswer] }
     : fetchedRecord;
   const initiatorTarget =
     detail.result && "record" in detail.result
@@ -222,7 +222,7 @@ export function CoordinationPane({
   };
   const buttonsDisabled =
     busyId !== null || Boolean(draft.pendingRequest) || Boolean(detail.error);
-  const renderAnswer = (answer: CoordinationAnswer, historical = false, onEdit?: () => void) => {
+  const renderAnswer = (answer: CoordinationAnswer, onEdit?: () => void) => {
     const userAnswer = answer.actor.kind === "user";
     const answerTime = new Date(answer.createdAt).toLocaleString("en-US");
     return (
@@ -233,14 +233,16 @@ export function CoordinationPane({
               {userAnswer ? (
                 <time dateTime={answer.createdAt} className="messages-navigator-speaker-glyph user" role="img" tabIndex={0} aria-label={`Your Answer · ${answerTime}`} title={`Your Answer · ${answerTime}`}>↗</time>
               ) : <time dateTime={answer.createdAt} className="coordination-answer-actor" role="img" tabIndex={0} aria-label={`${identityTitle(answer.actor as CoordinationIdentity)} · ${answerTime}`} title={answerTime}>{identityTitle(answer.actor as CoordinationIdentity)}</time>}
-              {historical ? <span>Revision {answer.revision} · {answerTime}</span> : <CoordinationAnswerDelivery
+              <CoordinationAnswerDelivery
                 ownerSessionId={sessionId}
                 target={initiatorTarget}
                 receiptId={answer.receiptId}
+                acquired={Boolean(answer.acquiredAt)}
                 consumed={Boolean(answer.consumedByOperationId)}
                 active={active}
-              />}
-              {!historical && onEdit ? <button type="button" className="drawer-toggle compact secondary coordination-edit-answer" aria-label="Change Answer" title="Change Answer" onClick={onEdit}><ComposerIcon name="edit" /></button> : null}
+                onDeliveryChange={detail.refresh}
+              />
+              {onEdit ? <button type="button" className="drawer-toggle compact secondary coordination-edit-answer" aria-label="Change Answer" title="Change Answer" onClick={onEdit}><ComposerIcon name="edit" /></button> : null}
             </div>
             <MessageRichText text={answer.body} embeddedMedia="text" />
             {answer.selectedChoices.length > 0 && answer.body !== answer.selectedChoices.join("\n") ? <p>{answer.selectedChoices.join(" · ")}</p> : null}
@@ -251,10 +253,9 @@ export function CoordinationPane({
   };
   const renderDetail = (item: CoordinationRecord) => {
     const latestUserAnswer = [...item.answers].reverse().find((answer) => answer.actor.kind === "user");
-    const showEditor = item.respondent.kind === "user" && (!latestUserAnswer || draft.editing || Boolean(draft.pendingRequest));
-    const answerIds = new Set(item.answers.map((answer) => answer.id));
-    const history = item.history.filter((entry) => entry.operation !== "create" && !(entry.operation === "answer" && answerIds.has(entry.operationId)));
-    const editAnswer = latestUserAnswer && item.respondent.kind === "user" && !showEditor ? () => updateDraft({
+    const answerAcquired = Boolean(item.answers.at(-1)?.acquiredAt);
+    const showEditor = item.respondent.kind === "user" && !answerAcquired && (!latestUserAnswer || draft.editing || Boolean(draft.pendingRequest));
+    const editAnswer = latestUserAnswer && item.respondent.kind === "user" && !answerAcquired && !showEditor ? () => updateDraft({
       editing: true,
       ...(draft.editing === undefined ? {
         body: latestUserAnswer.body === latestUserAnswer.selectedChoices.join("\n") ? "" : latestUserAnswer.body,
@@ -290,9 +291,10 @@ export function CoordinationPane({
         {identityRead(item.initiator)?.error ? <LoadError message={identityRead(item.initiator)!.error!} onRetry={identities.refresh} /> : null}
         {originError?.id === item.id ? <LoadError message={originError.message} onRetry={() => void openOrigin()} /> : null}
       </div>
-      {item.state !== "open" && item.state !== "withdrawn" ? <p className="coordination-response-state">{stateLabel(item.state)}</p> : null}
+      {item.state !== "open" && item.state !== "withdrawn" ? <p className="coordination-response-state">{stateLabel(item.state)}{item.correctionId ? <> · <button type="button" className="drawer-toggle compact secondary" onClick={() => setSelectedId(item.correctionId!)}>Open Correction</button></> : null}</p> : null}
       {item.respondent.kind !== "user" ? <p className="coordination-parties">Assigned To: {identityTitle(item.respondent)}</p> : null}
       <section className="coordination-body" aria-label="Consultation"><MessageRichText text={item.body} embeddedMedia="text" /></section>
+      {item.escalationBody ? <section className="coordination-body" aria-label="Escalation"><MessageRichText text={item.escalationBody} embeddedMedia="text" /></section> : null}
       {item.state === "withdrawn" ? (
         <div className="coordination-withdrawal" role="status">
           <strong>Withdrawn</strong>
@@ -301,8 +303,14 @@ export function CoordinationPane({
       ) : null}
       {item.answers.length ? (
         <section className="coordination-answers" aria-label="Saved answers">
-          {renderAnswer(item.answers[item.answers.length - 1], false, editAnswer)}
+          {renderAnswer(item.answers[item.answers.length - 1], editAnswer)}
         </section>
+      ) : null}
+      {answerAcquired && draft.editing && (draft.body || draft.choices.length) ? (
+        <label className="coordination-operation-feedback">
+          Answer Received · Unsent Draft Preserved
+          <textarea readOnly aria-label="Unsent answer draft" value={[draft.body, ...draft.choices].filter(Boolean).join("\n")} />
+        </label>
       ) : null}
       {showEditor ? (
         <form
@@ -378,28 +386,6 @@ export function CoordinationPane({
           }}>Keep Draft And Check Saved State</button>
         </div>
       ) : null}
-      {history.length || item.answers.length > 1 ? <details className="artifact-fold">
-        <summary className="artifact-fold-summary"><span className="artifact-fold-summary-copy"><strong>History</strong></span></summary>
-        {item.answers.slice(0, -1).map((answer) => renderAnswer(answer, true))}
-        {history.length ? <ol className="coordination-history">
-          {history.map((entry) => (
-            <li key={entry.operationId}>
-              <strong>{({ create: "Created", deliver: "Sent", escalate: "Escalated", answer: "Answered", resolve: "Resolved", consume: "Answer Used", withdraw: "Withdrawn", correct: "Corrected" } as Record<string, string>)[entry.operation] ?? entry.operation}</strong> ·{" "}
-              {new Date(entry.at).toLocaleString("en-US")}
-              {entry.body && entry.operation !== "answer" && entry.operation !== "create" ? <p>{entry.body}</p> : null}
-              {entry.correctionId ? (
-                <button
-                  type="button"
-                  className="drawer-toggle compact secondary"
-                  onClick={() => setSelectedId(entry.correctionId!)}
-                >
-                  Open Correction
-                </button>
-              ) : null}
-            </li>
-          ))}
-        </ol> : null}
-      </details> : null}
     </>
     );
   };

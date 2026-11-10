@@ -6,6 +6,7 @@ import type { SessionHistoryReadInput, SessionHistoryResult } from "../../src-sh
 import { readSessionHistory } from "../storage/session-history-read.js";
 import { randomUUID } from "node:crypto";
 import { validateSessionMetadataPatch } from "../../src-shared/session/session-metadata.js";
+import { acquireCoordinationAnswer } from "../coordination/coordination-dispatch.js";
 
 import {
   normalizeAuxiliarySession,
@@ -356,6 +357,7 @@ export class AuxiliarySessionStorage {
           || turn.approvalMode !== captured.request.executionOptions.approvalMode || turn.sandboxMode !== captured.request.executionOptions.codexSandboxMode) {
           throw new Error("The Auxiliary queued turn does not match its captured request.");
         }
+        acquireCoordinationAnswer(db, captured, { kind: "auxiliary", sessionId: current.id, incarnationId: current.createdAt });
         queuedTurn = insertSessionTurn(db, { sessionId: null, auxiliarySessionId: current.id }, turn);
         const result = db.prepare(`UPDATE session_turn_queue_v6 SET state = 'running', turn_id = ?, user_message_seq = ?, updated_at = ?
           WHERE id = ? AND state = 'starting' AND input_turn_id IS NULL`)

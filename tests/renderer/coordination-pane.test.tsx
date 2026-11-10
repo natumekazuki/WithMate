@@ -56,7 +56,6 @@ test("Coordination keeps withdrawn answer draft and retries the same operation",
     state: "open",
     answerRevision: 0,
     answers: [],
-    history: [],
     createdAt: "2026-11-07T00:00:00Z",
     updatedAt: "2026-11-07T00:00:00Z",
   };
@@ -166,10 +165,10 @@ test("Coordination shows originating identities and opens the exact Auxiliary ro
   const record: CoordinationRecord = {
     id: "identity-consultation", crewRootSessionId: "crew", kind: "user_decision_required", initiator,
     initiatorTurnId: "origin-turn", originReceiptId: null, caller: null, body: "Which approach?", choices: ["A", "B"],
-    respondent: { kind: "user" }, state: "open", answerRevision: 0, answers: [], history: [],
+    respondent: { kind: "user" }, state: "open", answerRevision: 0, answers: [],
     createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z",
   };
-  const { body, choices, answers, history, ...summaryFields } = record;
+  const { body, choices, answers, ...summaryFields } = record;
   const summary: CoordinationSummary = { ...summaryFields, initiatorMainSessionId: "origin-main", bodyPreview: body };
   const requests: CoordinationRequest[] = [];
   const opened: Array<[string, string | undefined]> = [];
@@ -252,10 +251,10 @@ test("Coordination restores its list position and focus after opening a detail",
   const initiator = { kind: "main" as const, sessionId: "main", incarnationId: "inc" };
   const record: CoordinationRecord = {
     id: "last", crewRootSessionId: "main", kind: "blocker", initiator, initiatorTurnId: "turn", originReceiptId: null, caller: null,
-    body: "Last consultation", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 0, answers: [], history: [],
+    body: "Last consultation", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 0, answers: [],
     createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z",
   };
-  const { body, choices, answers, history, ...fields } = record;
+  const { body, choices, answers, ...fields } = record;
   const item: CoordinationSummary = { ...fields, initiatorMainSessionId: "main", bodyPreview: body };
   dom.window.withmate = {
     subscribeCoordinationChanged: () => () => {}, subscribeSessionInvalidation: () => () => {},
@@ -283,34 +282,37 @@ test("Coordination restores its list position and focus after opening a detail",
 
 // @test-value v2
 // kind = "contract"
-// claim = "最新回答の主体・時刻と配送を確認でき、過去の回答や訂正も履歴から読める"
-// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの回答・操作日時・訂正履歴" }
-// fault = "ユーザー回答を識別できなくする、回答日時を失う、または過去回答と訂正を履歴から隠す"
-// observable = "最新回答の本文・日時・主体・配送状態と、過去回答・訂正先への操作"
+// claim = "回答の取得後に編集を止めても未送信draftを保持し、現在の引継ぎ理由と訂正先を確認できる"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの回答・引継ぎ・訂正" }
+// fault = "取得後も回答を編集させる、編集中のdraftを消す、または現在の引継ぎ理由・訂正先を失う"
+// observable = "queue通知後の回答の本文・日時・主体・取得状態、readonly draft、引継ぎ理由と訂正先への操作"
 // observation_boundary = "component-behavior"
-// scope = "CoordinationPaneの保存回答と履歴。保存と配送読取はfixture"
+// scope = "CoordinationPaneの回答確定と現在の相談情報。保存と配送読取はfixture"
 // lifecycle = "permanent"
-// impact = "利用者が自分の回答と経緯を区別できず、確認や訂正先への移動を誤る"
-// distinction = "保存coreと型検査はrenderer上の主体・履歴への到達性を確認しない"
+// impact = "確定済み回答の再編集、入力消失、必要な引継ぎ情報への到達不能を防ぐ"
+// distinction = "保存coreと型検査はrenderer上の編集制御・draft保持・現在の相談情報を確認しない"
 // @end-test-value
-test("Coordination keeps answer identity and meaningful history available", async () => {
+test("Coordination preserves the draft and current context when the answer is received", async () => {
   const dom = new JSDOM('<!doctype html><div id="root"></div>');
   const globals = ["window", "document", "HTMLElement", "Node", "navigator", "IS_REACT_ACT_ENVIRONMENT"] as const;
   const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
   globals.forEach((name) => Object.defineProperty(globalThis, name, { configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name] }));
   const initiator = { kind: "main" as const, sessionId: "main", incarnationId: "inc" };
   const at = "2026-11-07T00:00:00Z";
-  const answer = { id: "answer-1", revision: 1, actor: { kind: "user" as const }, body: "First answer", selectedChoices: [], createdAt: at };
+  const answer = { id: "answer-1", revision: 1, actor: { kind: "user" as const }, body: "First answer", selectedChoices: [], createdAt: at, receiptId: "receipt" };
   let record: CoordinationRecord = {
     id: "history", crewRootSessionId: "main", kind: "blocker", initiator, initiatorTurnId: "turn", originReceiptId: null, caller: null,
-    body: "Question", choices: [], respondent: { kind: "user" }, state: "open", answerRevision: 1, answers: [answer],
-    history: [{ operationId: answer.id, operation: "answer", actor: answer.actor, at }], createdAt: at, updatedAt: at,
+    body: "Question", choices: ["Choice A", "Choice B"], respondent: { kind: "user" }, state: "open", answerRevision: 1, answers: [answer],
+    escalationBody: "Please choose a direction", createdAt: at, updatedAt: at,
   };
-  let changed = () => {};
+  let queueChanged = () => {};
   const getIds: string[] = [];
   dom.window.withmate = {
     subscribeSessionInvalidation: () => () => {},
-    subscribeCoordinationChanged: (listener: (summary: unknown) => void) => { changed = () => listener({ id: record.id, crewRootSessionId: "main", initiator }); return () => {}; },
+    subscribeCoordinationChanged: () => () => {},
+    onSessionTurnQueueChanged: (listener: (id: string) => void) => { queueChanged = () => listener(initiator.sessionId); return () => {}; },
+    onSessionTurnUpdated: () => () => {},
+    readSessionExecution: async () => ({ ok: true, receiptState: "queued", turnState: null }),
     getCoordinationIdentity: async () => ({ title: "Origin", character: { name: "Character", iconPath: "" } }),
     executeCoordination: async (request: CoordinationRequest) => {
       if (request.operation === "get") { getIds.push(request.id); return { record, initiatorTarget: initiator }; }
@@ -325,18 +327,18 @@ test("Coordination keeps answer identity and meaningful history available", asyn
     assert.equal(timestamp.dateTime, at);
     assert.match(timestamp.getAttribute("aria-label")!, /Your Answer/);
     assert.match(latest.textContent!, /First answer/);
-    assert.match(latest.textContent!, /Saved · Not Sent/);
-    record = { ...record, state: "corrected", answerRevision: 2,
-      answers: [answer, { ...answer, id: "answer-2", revision: 2, body: "Revised answer" }],
-      history: [...record.history, { operationId: "answer-2", operation: "answer", actor: answer.actor, at }, { operationId: "correct", operation: "correct", actor: answer.actor, at, correctionId: "corrected" }],
-    };
-    await act(async () => changed());
-    const history = dom.window.document.querySelector<HTMLDetailsElement>("details.artifact-fold")!;
-    history.open = true;
-    assert.match(history.textContent!, /First answer/);
-    const correctionEvent = [...history.querySelectorAll("li")].find((item) => item.textContent?.includes("Corrected"))!;
-    assert.ok(correctionEvent.textContent!.includes(new Date(at).toLocaleString("en-US")));
-    const correction = [...history.querySelectorAll("button")].find((button) => button.textContent === "Open Correction")!;
+    assert.match(latest.textContent!, /Delivery Queued/);
+    assert.match(dom.window.document.body.textContent!, /Please choose a direction/);
+    await act(async () => dom.window.document.querySelector<HTMLButtonElement>('button[aria-label="Change Answer"]')!.click());
+    await act(async () => dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
+    record = { ...record, state: "corrected", correctionId: "corrected", answers: [{ ...answer, acquiredAt: at }] };
+    await act(async () => queueChanged());
+    assert.match(dom.window.document.querySelector('[aria-label="Saved answers"]')!.textContent!, /Received/);
+    assert.equal(dom.window.document.querySelector('button[aria-label="Change Answer"]'), null);
+    const preserved = dom.window.document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Unsent answer draft"]')!;
+    assert.equal(preserved.readOnly, true);
+    assert.match(preserved.value, /Choice A/);
+    const correction = [...dom.window.document.querySelectorAll("button")].find((button) => button.textContent === "Open Correction")!;
     await act(async () => correction.click());
     assert.equal(getIds.at(-1), "corrected");
   } finally {
@@ -391,7 +393,6 @@ test("Coordination distinguishes transient reads from terminal deletion without 
     state: "open",
     answerRevision: 0,
     answers: [],
-    history: [],
     createdAt: "2026-11-07T00:00:00Z",
     updatedAt: "2026-11-07T00:00:00Z",
   };
@@ -496,7 +497,7 @@ test("Coordination distinguishes transient reads from terminal deletion without 
 // kind = "contract"
 // claim = "Agent回答の起票元を正しく読み、引き継がれた相談へユーザーが回答でき、回答変更中の背景更新でもdraftを失わない"
 // oracle = { type = "contract", ref = "docs/design/desktop-ui.md Coordinationの回答・下書き" }
-// fault = "Agent回答のturnIdをidentity IPCへ渡す、Agent回答revisionをユーザー回答済みと扱う、または背景更新で回答変更の入力を隠す"
+// fault = "Agent回答のturnIdをidentity IPCへ渡す、引継ぎ後のrevisionでユーザーが回答できない、または背景更新で回答変更の入力を隠す"
 // observable = "identity request、回答formの表示、送信request、保存回答、背景更新と再編集後の選択値・focus"
 // observation_boundary = "component-behavior"
 // scope = "CoordinationPaneの回答前・保存後・変更中の遷移。保存と配送読取はfixture"
@@ -510,11 +511,12 @@ test("Coordination preserves answer editing across saved and background states",
   const saved = globals.map((name) => Object.getOwnPropertyDescriptor(globalThis, name));
   globals.forEach((name) => Object.defineProperty(globalThis, name, { configurable: true, value: name === "IS_REACT_ACT_ENVIRONMENT" ? true : dom.window[name] }));
   const initiator = { kind: "main" as const, sessionId: "main", incarnationId: "inc" };
+  const respondent = { kind: "auxiliary" as const, sessionId: "respondent", incarnationId: "respondent-inc" };
   let record: CoordinationRecord = {
     id: "escalated", crewRootSessionId: "main", kind: "blocker", initiator, initiatorTurnId: "turn", originReceiptId: null, caller: null,
-    body: "Choose a direction", choices: ["Choice A", "Choice B"], respondent: { kind: "user" }, state: "open", answerRevision: 1,
-    answers: [{ id: "agent-answer", revision: 1, actor: { ...initiator, turnId: "agent-turn" }, body: "Agent recommendation", selectedChoices: [], createdAt: "2026-11-07T00:00:00Z" }],
-    history: [], createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z",
+    body: "Choose a direction", choices: ["Choice A", "Choice B"], respondent, state: "open", answerRevision: 1,
+    answers: [{ id: "agent-answer", revision: 1, actor: { ...respondent, turnId: "agent-turn" }, body: "Agent recommendation", selectedChoices: [], createdAt: "2026-11-07T00:00:00Z" }],
+    createdAt: "2026-11-07T00:00:00Z", updatedAt: "2026-11-07T00:00:00Z",
   };
   let changed = () => {};
   const sent: CoordinationRequest[] = [];
@@ -528,7 +530,7 @@ test("Coordination preserves answer editing across saved and background states",
       if (request.operation === "get") return { record, initiatorTarget: initiator };
       if (request.operation === "answer") {
         sent.push(request);
-        record = { ...record, answerRevision: 2, answers: [...record.answers, { id: request.operationId, revision: 2, actor: { kind: "user" }, body: request.body, selectedChoices: request.selectedChoices, receiptId: "receipt", createdAt: "2026-11-07T00:01:00Z" }] };
+        record = { ...record, answerRevision: 3, answers: [{ id: request.operationId, revision: 3, actor: { kind: "user" }, body: request.body, selectedChoices: request.selectedChoices, receiptId: "receipt", createdAt: "2026-11-07T00:01:00Z" }] };
         return { record };
       }
       return { items: [], total: 0, nextOffset: null };
@@ -537,12 +539,17 @@ test("Coordination preserves answer editing across saved and background states",
   const root = createRoot(dom.window.document.getElementById("root")!);
   try {
     await act(async () => root.render(createElement(CoordinationPane, { sessionId: "main", active: true, navigation: { ...initiator, id: record.id } })));
-    assert.deepEqual(identityRequests[0], initiator);
+    assert.ok(identityRequests.some((value) => JSON.stringify(value) === JSON.stringify(initiator)));
+    assert.ok(identityRequests.some((value) => JSON.stringify(value) === JSON.stringify(respondent)));
+    assert.ok(identityRequests.every((value) => !("turnId" in (value as object))));
+    assert.equal(dom.window.document.querySelector('fieldset[aria-label="Your Answer"]'), null);
+    record = { ...record, respondent: { kind: "user" }, answerRevision: 2, answers: [], escalationBody: "Please decide" };
+    await act(async () => changed());
     assert.ok(dom.window.document.querySelector('fieldset[aria-label="Your Answer"]'));
     await act(async () => dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click());
     await act(async () => dom.window.document.querySelector("form")!.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })));
     assert.equal(sent.length, 1);
-    assert.equal(sent[0].operation === "answer" && sent[0].expectedAnswerRevision, 1);
+    assert.equal(sent[0].operation === "answer" && sent[0].expectedAnswerRevision, 2);
     assert.equal(dom.window.document.querySelector("form"), null);
     const answerText = dom.window.document.querySelector('[aria-label="Saved answers"]')!.textContent!;
     assert.equal(answerText.split("Choice A").length - 1, 1);
@@ -553,7 +560,7 @@ test("Coordination preserves answer editing across saved and background states",
     assert.equal(checks[0].checked, true);
     await act(async () => checks[1].click());
     checks[1].focus();
-    record = { ...record, answerRevision: 3, answers: [...record.answers, { id: "external-answer", revision: 3, actor: { kind: "user" }, body: "Another saved answer", selectedChoices: [], createdAt: "2026-11-07T00:02:00Z" }] };
+    record = { ...record, answerRevision: 4, answers: [{ id: "external-answer", revision: 4, actor: { kind: "user" }, body: "Another saved answer", selectedChoices: [], createdAt: "2026-11-07T00:02:00Z" }] };
     await act(async () => changed());
     assert.equal(checks[1].checked, true);
     assert.equal(dom.window.document.activeElement, checks[1]);

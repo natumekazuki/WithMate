@@ -467,9 +467,9 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - Approval / Elicitation の解決中は既存 pending item 内の spinner と `aria-busy` で待機を示し、同じ対象の状態文を重複表示しない
 - `live run step` は pending bubble に混在させず、right pane の `Latest Command` へ要約して分離する
 - right pane は `Latest Command` を基本 tab とし、provider が `Copilot` の時だけ `Tasks` tab を追加する
-- `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、ユーザー担当のopen記録／全記録のページング一覧から詳細へ開く。本文、回答revision、取り下げ理由と後着回答、操作日時・訂正履歴を読み、ユーザー担当の回答・回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の保存、通常queueへの配送、実際の消費・解決を別々に表示する。受付・Session・Turnの内部IDは通常UIへ並べない
+- `Coordination`はMainと全所属Auxiliaryに関係する保存記録を、ユーザー担当のopen記録／全記録のページング一覧から詳細へ開く。本文、現在の引継ぎ理由・回答・訂正先、取り下げ理由と後着回答を読み、ユーザー担当の回答・未取得時の回答変更、明示解決、理由付き`Withdraw`をcoreへ送る。回答の取得、通常queueへの配送、実際の利用・解決を区別する。受付・Session・Turnの内部IDは通常UIへ並べない
 - Coordinationの一覧は本文previewを主にし、34pxのCharacter avatar、Main／Auxiliaryの共通pane iconとSession titleで起票元を識別する。Character名はaccessible nameに保持する。回答があるopen相談は`Reply Recorded` iconを添えるが、Agentの回答をユーザーの回答済みと断定しない。詳細の`Open Origin`は正確なMain／Auxiliaryを開く。表示identityは現在のSessionの軽量metadataから取得し、記録本体へ複製しない。選択肢は複数checkboxを使い、通常質問と共通の送信icon（`Save And Send Answer`）を明示操作した時だけ保存・送信する。操作名はtooltipとaccessible name、入力groupの名前はaccessible nameに保持する
-- 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameとtooltipを持つiconを使う。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・直近の保存済み回答を主内容とし、会話と共通の話者表現に回答と配送状態をまとめ、回答済みの場合は`Change Answer`で編集を開く。回答日時は話者表示のtooltipとaccessible nameから確認できる。以前の回答とその他の操作履歴がある場合は一つの履歴から確認し、表示済み回答と同じ回答操作を重複表示しない。解決・理由付き取り下げは起票元行の補助操作へまとめる。操作結果と結果不明時の回復は回答操作の近くに置く
+- 一覧filterの`For You`はopenかつuser担当の相談、`All`は関連する全記録を示す。回答済みのopen記録も`For You`に含み、未回答件数とは扱わない。短いfilterと更新は一行にまとめ、Session共通buttonの選択状態を使う。更新と一覧へ戻る操作はaccessible nameとtooltipを持つiconを使う。更新中はbutton内のspinnerとdisabledで示し、別のloading行を増やさない。詳細は相談本文・現在の回答を主内容とし、会話と共通の話者表現に回答と配送・取得状態をまとめる。起票元の取得前だけ`Change Answer`で編集でき、取得中に編集中だった未送信draftは読取専用で保持する。回答日時は話者表示のtooltipとaccessible nameから確認できる。過去回答や操作のHistoryは表示しない。解決・理由付き取り下げは起票元行の補助操作へまとめる。操作結果と結果不明時の回復は回答操作の近くに置く
 - 表示中の最新回答は、回答receiptと保存済み起票元identityに対応する受付配送状態を取得する。受付completedをTurn全体の完了と同一視せず、Turnの失敗・取消・結果不明や回答の利用を区別する。保存済みTurnの内容は起票元の会話を開いて確認し、右ペインに出力viewerを重ねない。取得失敗は不明として再取得できる
 - Coordinationの下書きは実Sessionと記録IDへ結び付け、右ペインの閉鎖・tab切替・更新・取り下げで消さず、自動送信しない。送信結果不明では同じoperationIdによる明示retryと保存状態の再確認を提供する。通常Composerの送信先と下書き、中央Graph／Main／Auxiliaryの表示は右ペイン操作で変更しない
 - 保存側が削除済みを確定したCoordinationは`Deleted`へ切り替え、古い本文・回答・操作formを現行表示しない。未送信draftは読取専用で保持し、遅い旧応答で記録を復活させない。一般の通信失敗では取得済み内容とdraftを保持して再取得を提供する
@@ -602,7 +602,7 @@ Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表
 
 送信側は既存receiptを表示中のsource WithMate Turnから件数単位で一括取得し、自身の保存Character avatarと発言者名を左側に置く。本文側の先頭行は受信側と同じ`@宛先Character`を左、独立した小さな`To 宛先Session名`リンクを右に置く。Session名は複数Sessionを区別するため通常表示に残す。呼びかけは保存本文を書き換えない表示要素として扱う。出力内の厳密な送信位置は記録されないためsource Turn単位にまとめ、複数assistant messageへ重複表示しない。表示対象の保存原文は最初から全文を表示する。receiptの配送状態と宛先Turnの状態はinfo詳細で区別する。送信表示のための別台帳や本文コピーは持たない。詳細の配送・Turn状態は再展開と宛先の通知で再取得し、本文とは分ける。
 
-Coordination由来の送信通知は保存metadataで識別し、内部JSONではなく相談／回答本文の全文を表示する。通常メッセージの本文をJSONらしい形だけで解釈しない。相談の状態や回答履歴を確認するための`Related Consultation`リンクは`Delivery Details`内の補助導線とし、本文閲覧と分ける。
+Coordination由来の送信通知は保存metadataで識別し、内部JSONではなく相談／回答本文の全文を表示する。通常メッセージの本文をJSONらしい形だけで解釈しない。相談の状態や現在の回答を確認するための`Related Consultation`リンクは`Delivery Details`内の補助導線とし、本文閲覧と分ける。
 
 レスポンスDetailsは既存の`Run Checks`にあるProvider・Model等の実行情報と`Operations`を保持し、同じ設定を別の`Execution Settings`へ重複表示しない。Provider内部thread IDは表示しない。Run Checksが記録されていない場合だけ、保存された設定を`Execution Settings`へ表示する。受付のない過去TurnはそのTurnに保存された設定だけを表示し、未記録の値を現在選択や既定値で補わない。捕捉された設定はProviderが実際に適用した結果とは扱わない。受付・Turnの状態と配送タイミングをまとめる`Input State`は受付がある場合に表示し、`Run Checks`または`Execution Settings`と初期展開から個別に開閉できる。受付・Session・Turnの内部参照や原文比較・分類別入力一覧はユーザーUIへ表示しない。入力比較はエージェント向けAPIに残し、全編集履歴の保存・表示は持たない。送信側の`Delivery Details`も既存Detailsと同じ項目行・見出し・開閉表現を使う。
 

@@ -540,10 +540,10 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
 
 // @test-value v2
 // kind = "contract"
-// claim = "実保存のCoordination詳細はMain/Auxiliary起票元のexact targetを失わずMCPとbound CLIで取得できる"
-// oracle = { type = "contract", ref = "GitHub #835 全Crew保存読取とMCP/CLI同一結果 / #838 Coordination詳細" }
-// fault = "実storageのinitiatorTarget追加を公開schemaが拒否するかAuxiliary所属Main identityを削除する"
-// observable = "実SQLite起票からApplication/runtimeを経た両入口の成功code、record IDとinitiatorTarget"
+// claim = "実保存のCoordination詳細はMCPとbound CLIで同じtargetと回答を返し、起票元だけの取得で回答を確定する"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md#coordination; docs/runbooks/development-workflow.md MCPとCLIの機能・操作契約" }
+// fault = "片方の入口で取得を確定しない、他Sessionの取得で確定する、またはAuxiliary所属Main identityを失う"
+// observable = "両入口の成功結果・record ID・initiatorTarget・取得済み状態、MCPの操作属性"
 // observation_boundary = "public-boundary"
 // scope = "CoordinationStorageV7 → CoordinationApplicationService → SessionManagementRuntimeService → SDK MCP/bound CLI（HTTP exchangeのみin-process adapter）"
 // lifecycle = "permanent"
@@ -679,7 +679,10 @@ test("saved Coordination details cross the real application and both public sche
   try {
     await server.connect(b);
     await client.connect(a);
-    await client.listTools();
+    const listed = await client.listTools();
+    const getTool = listed.tools.find((entry) => entry.name === "session.coordination_get")!;
+    assert.equal(getTool.annotations?.readOnlyHint, false);
+    assert.equal(getTool.annotations?.idempotentHint, true);
     const actors = [
       { ...identity, turnId: "1" },
       {
@@ -689,7 +692,7 @@ test("saved Coordination details cross the real application and both public sche
         turnId: "2",
       },
     ];
-    for (const actor of actors) {
+    for (const [actor, first] of [[actors[0], "cli"], [actors[0], "mcp"], [actors[1], "cli"]] as const) {
       const saved = store.execute({
         actor,
         request: {
@@ -703,17 +706,14 @@ test("saved Coordination details cross the real application and both public sche
         },
       });
       assert.ok("record" in saved);
+      store.execute({ actor: { kind: "user" }, request: { operation: "answer", id: saved.record.id, operationId: randomUUID(), body: "Use this", selectedChoices: [], expectedAnswerRevision: 0, send: false } });
       const input = { id: saved.record.id };
-      const command = await cli(
-        "coordination-get",
-        input,
-        runtimeCall,
-        boundEnv,
-      );
-      const tool = await client.callTool({
-        name: "session.coordination_get",
-        arguments: input,
-      });
+      let command: Awaited<ReturnType<typeof cli>>;
+      let tool: Awaited<ReturnType<typeof client.callTool>>;
+      const callCli = () => cli("coordination-get", input, runtimeCall, boundEnv);
+      const callMcp = () => client.callTool({ name: "session.coordination_get", arguments: input });
+      if (first === "cli") { command = await callCli(); tool = await callMcp(); }
+      else { tool = await callMcp(); command = await callCli(); }
       assert.equal(command.exit, 0);
       assert.equal(tool.isError, undefined);
       assert.deepEqual(command.value, tool.structuredContent);
@@ -721,6 +721,8 @@ test("saved Coordination details cross the real application and both public sche
         (command.value.record as { id: string }).id,
         saved.record.id,
       );
+      const answer = (command.value.record as { answers: Array<{ acquiredAt?: string }> }).answers[0];
+      assert.equal(Boolean(answer?.acquiredAt), actor.kind === "main");
       assert.deepEqual(
         command.value.initiatorTarget,
         actor.kind === "main"

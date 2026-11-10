@@ -10,12 +10,14 @@ export function receiptStateLabel(state: string | null) {
   return ({ queued: "Queued", starting: "Starting", running: "In Progress", completed: "Completed", failed: "Failed", canceled: "Canceled", interrupted: "Interrupted — Outcome Unknown" })[state ?? ""] ?? "Unknown";
 }
 
-export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, consumed, active = true }: {
+export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, acquired, consumed, active = true, onDeliveryChange }: {
   ownerSessionId: string;
   target?: SessionTarget;
   receiptId?: string;
+  acquired?: boolean;
   consumed?: boolean;
   active?: boolean;
+  onDeliveryChange?: () => void;
 }) {
   const [state, setState] = useState<{ key: string; result: Execution | null; error: string; loading: boolean }>({ key: "", result: null, error: "", loading: false });
   const [revision, setRevision] = useState(0);
@@ -44,19 +46,19 @@ export function CoordinationAnswerDelivery({ ownerSessionId, target, receiptId, 
   }, [identity, active, revision]);
   useEffect(() => {
     if (!active || !target || !receiptId) return;
-    const refresh = (sessionId: string) => { if (sessionId === target.sessionId) setRevision((value) => value + 1); };
+    const refresh = (sessionId: string) => { if (sessionId === target.sessionId) { setRevision((value) => value + 1); onDeliveryChange?.(); } };
     const api = getWithMateApi();
     const queueChanged = api?.onSessionTurnQueueChanged?.(refresh);
     const turnUpdated = api?.onSessionTurnUpdated?.(refresh);
     return () => { queueChanged?.(); turnUpdated?.(); };
-  }, [identity, active]);
+  }, [identity, active, onDeliveryChange]);
 
-  if (!receiptId) return <p className="coordination-parties" role="status">Saved · Not Sent{consumed ? " · Answer Used" : ""}</p>;
+  if (!receiptId) return <p className="coordination-parties" role="status">{acquired ? "Received" : "Saved · Not Sent"}{consumed ? " · Answer Used" : ""}</p>;
   const turnFailure = result && ["failed", "canceled", "interrupted"].includes(result.turnState ?? "")
     ? ` · Turn ${receiptStateLabel(result.turnState)}` : "";
   return <div className="coordination-answer-delivery" aria-busy={loading || undefined}>
     <p className="coordination-parties" role="status">
-      {error ? "Delivery Unknown" : result ? `${result.receiptState === "completed" ? "Delivered" : `Delivery ${receiptStateLabel(result.receiptState)}`}${turnFailure}` : "Checking Delivery"}
+      {acquired ? `Received${turnFailure}` : error ? "Delivery Unknown" : result ? `${result.receiptState === "completed" ? "Delivered" : `Delivery ${receiptStateLabel(result.receiptState)}`}${turnFailure}` : "Checking Delivery"}
       {consumed ? " · Answer Used" : ""}
     </p>
     {error ? <LoadError message={error} onRetry={() => setRevision((value) => value + 1)} /> : null}

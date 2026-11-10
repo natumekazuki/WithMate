@@ -156,9 +156,6 @@
 .coordination-answer .message-card-content > :last-child {
   margin-bottom: 0;
 }
-.coordination-pane .artifact-fold > article {
-  margin-top: 14px;
-}
 .coordination-answer-form fieldset {
   display: grid;
   gap: 10px;
@@ -319,10 +316,6 @@
   cursor: pointer;
   padding-block: 5px;
 }
-.coordination-pane .artifact-fold-summary-copy strong {
-  font-size: 12px;
-  font-weight: 500;
-}
 .coordination-withdrawal {
   border-inline-start: 3px solid var(--muted);
   padding-inline-start: 10px;
@@ -331,14 +324,6 @@
   white-space: pre-wrap;
   margin-block: 6px 0;
 }
-.coordination-history {
-  padding-inline-start: 20px;
-}
-.coordination-history li {
-  margin-bottom: 10px;
-  overflow-wrap: anywhere;
-}
-.coordination-history p,
 .coordination-operation-feedback {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -346,4 +331,8 @@
 .coordination-operation-feedback {
   margin: 0;
   font-size: 12px;
+}
+label.coordination-operation-feedback {
+  display: grid;
+  gap: 6px;
 }

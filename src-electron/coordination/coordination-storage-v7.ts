@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { coordinationRequestSchema, type CoordinationActor, type CoordinationIdentity, type CoordinationRecord, type CoordinationResult, type CoordinationStorageInput } from "../../src-shared/coordination/coordination-contract.js";
+import { coordinationRequestSchema, type CoordinationActor, type CoordinationIdentity, type CoordinationRecord, type CoordinationResult, type CoordinationStorageInput, type CoordinationStorageResult } from "../../src-shared/coordination/coordination-contract.js";
+import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureCoordinationSchemaV7 } from "./coordination-schema-v7.js";
@@ -10,6 +11,9 @@ import { CoordinationDeletedError, CoordinationRejectedError } from "./coordinat
 
 const same = (a: { kind: string; sessionId?: string; incarnationId?: string }, b: { kind: string; sessionId?: string; incarnationId?: string }) => a.kind === b.kind && a.sessionId === b.sessionId && a.incarnationId === b.incarnationId;
 type Saved = { payload_json: string };
+type StoredCoordinationRecord = CoordinationRecord & {
+  history: Array<{ operationId: string; operation: string; actor: CoordinationActor; at: string; body?: string; receiptId?: string; correctionId?: string; request?: unknown; deliveryTarget?: CoordinationIdentity }>;
+};
 
 export class CoordinationStorageV7 {
   private readonly db: DatabaseSync;
@@ -29,17 +33,36 @@ export class CoordinationStorageV7 {
     if (request.operation === "deliver") { const respondent = this.get(request.id).respondent; return respondent.kind === "user" ? null : respondent; }
     return null;
   }
-  execute(input: CoordinationStorageInput): CoordinationResult {
+  execute(input: CoordinationStorageInput): CoordinationStorageResult {
     const request = coordinationRequestSchema.parse(input.request);
     this.db.exec("BEGIN IMMEDIATE");
     let committing = false;
     try {
       assertRuntimeTurnAdmission();
       if (input.actor.kind !== "user") this.identity(input.actor, request.operation !== "list" && request.operation !== "get" ? input.actor.turnId : undefined);
-      const result = this.apply({ ...input, request });
+      const queueUpdates: SessionTurnQueueReceipt[] = [];
+      const result = this.apply({ ...input, request }, queueUpdates);
+      if ("record" in result && input.actor.kind !== "user" && same(input.actor, result.record.initiator)) {
+        const storedRecord = result.record as StoredCoordinationRecord;
+        const answer = storedRecord.answers.at(-1);
+        if (answer && !answer.acquiredAt) {
+          answer.acquiredAt = new Date().toISOString();
+          storedRecord.updatedAt = answer.acquiredAt;
+          this.save(storedRecord);
+        }
+      }
+      let publicResult: CoordinationStorageResult = queueUpdates.length ? { ...result, queueUpdates } : result;
+      if ("record" in result) {
+        const { history, ...record } = result.record as StoredCoordinationRecord;
+        const latest = [...history].reverse();
+        const escalationBody = latest.find((entry) => entry.operation === "escalate")?.body;
+        const correctionId = latest.find((entry) => entry.operation === "correct")?.correctionId;
+        publicResult = { ...result, record: { ...record, answers: record.answers.slice(-1), ...(escalationBody ? { escalationBody } : {}), ...(correctionId ? { correctionId } : {}) }, ...(queueUpdates.length ? { queueUpdates } : {}) };
+      }
       assertRuntimeTurnAdmission();
       committing = true;
-      this.db.exec("COMMIT"); return result;
+      this.db.exec("COMMIT");
+      return publicResult;
     } catch (error) {
       this.db.exec("ROLLBACK");
       if (committing) throw error;
@@ -57,10 +80,10 @@ export class CoordinationStorageV7 {
     if (turnId && !this.db.prepare(`SELECT 1 FROM session_turns_v6 WHERE id=? AND ${identity.kind === "main" ? "session_id=? AND auxiliary_session_id IS NULL" : "auxiliary_session_id=? AND session_id IS NULL"}`).get(turnId, identity.sessionId)) throw new Error("Coordination actor Turn does not belong to this Session.");
     return { mainId, rootId: main.root_session_id ?? main.id };
   }
-  private get(id: string): CoordinationRecord {
+  private get(id: string): StoredCoordinationRecord {
     const row = this.db.prepare("SELECT payload_json FROM coordination_records_v7 WHERE id=?").get(id) as Saved | undefined;
     if (!row) throw new CoordinationDeletedError("Coordination was deleted or does not exist.");
-    return JSON.parse(row.payload_json) as CoordinationRecord;
+    return JSON.parse(row.payload_json) as StoredCoordinationRecord;
   }
   private caller(actor: CoordinationIdentity & { turnId: string }): { caller: CoordinationIdentity | null; receiptId: string | null } {
     const origin = this.db.prepare(`SELECT id,accepted_json FROM session_turn_queue_v6 WHERE turn_id=? AND COALESCE(auxiliary_session_id,session_id)=? AND incarnation_id=?
@@ -75,11 +98,29 @@ export class CoordinationStorageV7 {
     }
     return { caller, receiptId: origin?.id ?? null };
   }
-  private save(record: CoordinationRecord): void {
+  private save(record: StoredCoordinationRecord): void {
     this.db.prepare(`INSERT INTO coordination_records_v7 VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET respondent_session_id=excluded.respondent_session_id,respondent_kind=excluded.respondent_kind,state=excluded.state,payload_json=excluded.payload_json`)
       .run(record.id, record.crewRootSessionId, record.initiator.sessionId, record.initiator.kind, record.initiator.incarnationId, record.respondent.kind === "user" ? null : record.respondent.sessionId, record.respondent.kind, record.state, JSON.stringify(record));
   }
-  private apply(input: CoordinationStorageInput): CoordinationResult {
+  private retireAnswer(record: StoredCoordinationRecord, queueUpdates: SessionTurnQueueReceipt[]): boolean {
+    const previous = record.answers.at(-1);
+    if (!previous) return false;
+    if (previous.acquiredAt) throw new Error("The originating Session has already received this answer.");
+    if (previous.receiptId) {
+      const receipt = this.queue.getReceiptById(record.initiator, previous.receiptId);
+      if (!receipt) throw new Error("The answer delivery receipt is unavailable.");
+      if (receipt.state === "starting" || receipt.state === "running") throw new Error("The answer is being delivered; check its state before editing.");
+      if (receipt.state === "queued") queueUpdates.push(this.queue.cancelQueued(record.initiator, previous.receiptId));
+    }
+    record.history = record.history.map((entry) => {
+      if (entry.operation !== "answer") return entry;
+      const { body: _body, request: _request, ...identity } = entry;
+      return identity;
+    });
+    record.answers = [];
+    return true;
+  }
+  private apply(input: CoordinationStorageInput, queueUpdates: SessionTurnQueueReceipt[]): CoordinationResult {
     const { actor, request } = input;
     if (request.operation === "list") {
       const clauses: string[] = [], args: (string | number)[] = [];
@@ -96,7 +137,7 @@ export class CoordinationStorageV7 {
       const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
       const total = (this.db.prepare(`SELECT count(*) AS n FROM coordination_records_v7 ${where}`).get(...args) as { n: number }).n;
       const rows = this.db.prepare(`SELECT json_set(json_remove(payload_json,'$.body','$.choices','$.answers','$.history'),'$.bodyPreview',substr(json_extract(payload_json,'$.body'),1,180)) AS payload_json FROM coordination_records_v7 ${where} ORDER BY id LIMIT ? OFFSET ?`).all(...args, request.limit, request.offset) as Saved[];
-      return { items: rows.map(row => { const summary = JSON.parse(row.payload_json) as Omit<CoordinationRecord, "body" | "choices" | "answers" | "history"> & { bodyPreview: string }; return { ...summary, initiatorMainSessionId: this.identity(summary.initiator).mainId }; }), total, nextOffset: request.offset + rows.length < total ? request.offset + rows.length : null };
+      return { items: rows.map(row => { const summary = JSON.parse(row.payload_json) as Omit<CoordinationRecord, "body" | "choices" | "answers"> & { bodyPreview: string }; return { ...summary, initiatorMainSessionId: this.identity(summary.initiator).mainId }; }), total, nextOffset: request.offset + rows.length < total ? request.offset + rows.length : null };
     }
     if (request.operation === "get") {
       const record = this.get(request.id);
@@ -110,15 +151,17 @@ export class CoordinationStorageV7 {
     // Retry identity lives with the record's required operation history, not a second execution ledger.
     const existing = this.db.prepare("SELECT payload_json FROM coordination_records_v7 WHERE EXISTS(SELECT 1 FROM json_each(payload_json,'$.history') AS history WHERE json_extract(history.value,'$.operationId')=?)").all(request.operationId) as Saved[];
     for (const row of existing) {
-      const record = JSON.parse(row.payload_json) as CoordinationRecord;
+      const record = JSON.parse(row.payload_json) as StoredCoordinationRecord;
       const history = record.history.find(event => event.operationId === request.operationId);
       if (!history) continue;
       const persisted = (history as typeof history & { request?: unknown }).request;
-      if (JSON.stringify(persisted) !== JSON.stringify(request) || !same(history.actor, actor) || (history.actor.kind !== "user" && actor.kind !== "user" && history.actor.turnId !== actor.turnId)) throw new Error("Coordination operation identity reused with different input or actor.");
+      if (!same(history.actor, actor) || (history.actor.kind !== "user" && actor.kind !== "user" && history.actor.turnId !== actor.turnId)) throw new Error("Coordination operation identity reused with different input or actor.");
+      if (!persisted && history.operation === "answer") throw new Error("The answer was replaced; read the current Coordination state.");
+      if (JSON.stringify(persisted) !== JSON.stringify(request)) throw new Error("Coordination operation identity reused with different input or actor.");
       const target = (history as typeof history & { deliveryTarget?: CoordinationIdentity }).deliveryTarget;
       return { record, ...(target && history.receiptId ? { receipt: this.queue.getReceiptById(target, history.receiptId)! } : {}) };
     }
-    let record: CoordinationRecord;
+    let record: StoredCoordinationRecord;
     if (request.operation === "create") {
       if (actor.kind === "user") throw new Error("Only an Agent can originate Coordination.");
       const { caller, receiptId } = this.caller(actor);
@@ -133,13 +176,18 @@ export class CoordinationStorageV7 {
     let answer: CoordinationRecord["answers"][number] | undefined;
     if (request.operation === "create" && request.deliver && record.respondent.kind !== "user") deliveryTarget = record.respondent;
     if (request.operation === "deliver") { if (!initiator) throw new Error("Only the initiator may deliver Coordination."); if (record.respondent.kind !== "user") deliveryTarget = record.respondent; }
-    if (request.operation === "escalate") { if (!respondent || actor.kind === "user") throw new Error("Only the assigned Agent can escalate Coordination."); record.respondent = { kind: "user" }; }
+    if (request.operation === "escalate") {
+      if (!respondent || actor.kind === "user") throw new Error("Only the assigned Agent can escalate Coordination.");
+      if (this.retireAnswer(record, queueUpdates)) record.answerRevision++;
+      record.respondent = { kind: "user" };
+    }
     if (request.operation === "answer") {
       if (!respondent) throw new Error("Only the assigned respondent can answer Coordination.");
       if (record.answerRevision !== request.expectedAnswerRevision) throw new Error("Coordination answer revision conflict.");
       if (request.selectedChoices.some(choice => !record.choices.includes(choice))) throw new Error("Unknown Coordination answer choice.");
+      this.retireAnswer(record, queueUpdates);
       answer = { id: request.operationId, revision: ++record.answerRevision, actor, body: request.body, selectedChoices: request.selectedChoices, createdAt: now };
-      record.answers.push(answer); if (request.send) deliveryTarget = record.initiator;
+      record.answers = [answer]; if (request.send) deliveryTarget = record.initiator;
     }
     if (["withdraw", "resolve", "consume", "correct"].includes(request.operation) && !initiator) throw new Error("Only the originating Agent or real user can change this Coordination.");
     if (request.operation === "withdraw") { record.state = "withdrawn"; record.withdrawalReason = request.reason; }

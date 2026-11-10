@@ -350,7 +350,6 @@ export const SESSION_READ_OPERATIONS: readonly SessionOperation[] = [
   "get_receipt",
   "get_catalog",
   "coordination_list",
-  "coordination_get",
   ...(Object.keys(
     executionOperationRequestSchemas,
   ) as (keyof typeof executionOperationRequestSchemas)[]),

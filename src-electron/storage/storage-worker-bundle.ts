@@ -234,13 +234,17 @@ export function createV6StorageWorkerBundle(options: {
         if (!methods.includes(property as never)) return undefined;
         return (...args: unknown[]) => {
           const graphMutation = store === "sessionGraph" && args[1] === "apply";
+          const coordinationInput = store === "coordination" && property === "execute"
+            ? args[0] as { request: { operation: string }; actor: { kind: string } } : null;
+          const coordinationMutation = coordinationInput !== null && coordinationInput.request.operation !== "list"
+            && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
           const needsTurnAdmission = graphMutation || store === "coordination" || store === "execution" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
           const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"
             : property === "searchConversation" || property === "listConversationNavigator" ? "conversation.query" : "store.call",
             property === "cancelConversationQuery" ? args[0] : { store, method: property, args, ...(runtimeTurnAdmissionState ? { runtimeTurnAdmissionState } : {}) }, {
-            mutation: store === "coordination" ? property === "execute" && !["list", "get"].includes((args[0] as { request: { operation: string } }).request.operation) : store === "sessionGraph" ? args[1] === "apply" : MUTATIONS.has(property),
+            mutation: store === "coordination" ? coordinationMutation : store === "sessionGraph" ? args[1] === "apply" : MUTATIONS.has(property),
             operation: `${store}.${property}`,
           });
         };

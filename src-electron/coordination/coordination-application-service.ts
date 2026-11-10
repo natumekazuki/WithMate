@@ -31,10 +31,12 @@ export class CoordinationApplicationService {
       captured = target && "operationId" in request ? await this.deps.prepareDelivery(target, request.operationId, actor) : null;
     } catch (error) { if (isCoordinationDeletedError(error)) throw error; throw new CoordinationRejectedError(error instanceof Error ? error.message : String(error)); }
     check();
-    const result = await store.execute({ actor, request, ...(target && captured ? { delivery: { target, captured } } : {}) });
+    const stored = await store.execute({ actor, request, ...(target && captured ? { delivery: { target, captured } } : {}) });
+    const { queueUpdates = [], ...result } = stored;
     // A saved operation stays saved even if a window notification cannot be delivered.
+    for (const receipt of queueUpdates) { try { runWithoutRuntimeTurnAdmission(() => this.deps.onAccepted?.(receipt)); } catch (error) { this.deps.onNotificationError?.(error); } }
     if ("receipt" in result && result.receipt) { try { const receipt = result.receipt; runWithoutRuntimeTurnAdmission(() => this.deps.onAccepted?.(receipt)); } catch (error) { this.deps.onNotificationError?.(error); } }
-    if ("record" in result && request.operation !== "get") for (const listener of this.listeners) { try { listener(result.record); } catch (error) { this.deps.onNotificationError?.(error); } }
+    if ("record" in result && (request.operation !== "get" || (actor.kind !== "user" && actor.kind === result.record.initiator.kind && actor.sessionId === result.record.initiator.sessionId && actor.incarnationId === result.record.initiator.incarnationId && result.record.answers.length > 0))) for (const listener of this.listeners) { try { listener(result.record); } catch (error) { this.deps.onNotificationError?.(error); } }
     return result;
   }
 }

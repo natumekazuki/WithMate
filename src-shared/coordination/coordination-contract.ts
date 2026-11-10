@@ -23,16 +23,16 @@ export const coordinationRequestSchema = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("correct"), operationId, id: z.string(), body: text }).strict(),
 ]);
 export type CoordinationRequest = z.infer<typeof coordinationRequestSchema>;
-export type CoordinationAnswer = { id: string; revision: number; actor: CoordinationActor; body: string; selectedChoices: string[]; createdAt: string; receiptId?: string; consumedByOperationId?: string };
+export type CoordinationAnswer = { id: string; revision: number; actor: CoordinationActor; body: string; selectedChoices: string[]; createdAt: string; receiptId?: string; acquiredAt?: string; consumedByOperationId?: string };
 export type CoordinationRecord = {
   id: string; crewRootSessionId: string; kind: z.infer<typeof coordinationKindSchema>; initiator: CoordinationIdentity; initiatorTurnId: string;
   originReceiptId: string | null; caller: CoordinationIdentity | null; body: string; choices: string[]; respondent: CoordinationRespondent;
-  state: "open" | "resolved" | "withdrawn" | "corrected"; withdrawalReason?: string; answerRevision: number; answers: CoordinationAnswer[];
-  history: Array<{ operationId: string; operation: string; actor: CoordinationActor; at: string; body?: string; receiptId?: string; correctionId?: string }>;
+  state: "open" | "resolved" | "withdrawn" | "corrected"; withdrawalReason?: string; escalationBody?: string; correctionId?: string; answerRevision: number; answers: CoordinationAnswer[];
   createdAt: string; updatedAt: string;
 };
-export type CoordinationSummary = Omit<CoordinationRecord, "body" | "choices" | "answers" | "history"> & { initiatorMainSessionId: string; bodyPreview: string };
+export type CoordinationSummary = Omit<CoordinationRecord, "body" | "choices" | "answers"> & { initiatorMainSessionId: string; bodyPreview: string };
 export type CoordinationResult = { record: CoordinationRecord; receipt?: SessionTurnQueueReceipt; initiatorTarget?: SessionTarget } | { items: CoordinationSummary[]; total: number; nextOffset: number | null };
+export type CoordinationStorageResult = CoordinationResult & { queueUpdates?: SessionTurnQueueReceipt[] };
 /** Trusted application input; never accept this wrapper from MCP/CLI/renderer. */
 export type CoordinationStorageInput = { actor: CoordinationActor; request: CoordinationRequest; defaultCrewRootSessionId?: string; delivery?: { target: CoordinationIdentity; captured: SessionTurnQueueCapturedInput } };
-export type CoordinationStore = { execute(input: CoordinationStorageInput): Promise<CoordinationResult>; deliveryTarget(input: Omit<CoordinationStorageInput, "delivery">): Promise<CoordinationIdentity | null> };
+export type CoordinationStore = { execute(input: CoordinationStorageInput): Promise<CoordinationStorageResult>; deliveryTarget(input: Omit<CoordinationStorageInput, "delivery">): Promise<CoordinationIdentity | null> };

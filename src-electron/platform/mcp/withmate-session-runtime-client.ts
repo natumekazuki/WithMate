@@ -35,7 +35,7 @@ export function createSessionTransportError(
     ok: false,
     code: "SESSION_TRANSPORT_ERROR",
     message:
-      "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. Do not automatically resend mutations or invent new keys.",
+      "The Session response was not confirmed. Recover enqueue with get_receipt and its original requestId. Child creation and Coordination retries must keep the identical request and original requestId/operationId. A coordination_get can be repeated to recover its current state. Do not automatically resend mutations or invent new keys.",
     effect:
       operation && !SESSION_READ_OPERATIONS.includes(operation)
         ? "unknown"
