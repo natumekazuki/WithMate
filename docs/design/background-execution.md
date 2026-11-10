@@ -131,7 +131,7 @@ Mainは`createBackgroundProviderAgent()`をこのruntimeへ接続し、既存の
 
 Codex・Claude・OpenCodeは既存の新process＋現在env／MCP構成を用いてresumeする。OpenCodeのruntime ownerは継続IDとsource incarnationで固定する。Copilotは現在bindingのclient／configでresumeし、背景ではmissing threadからの新thread fallbackと内部自動retryを行わない。全Providerで現在のbinding／credential／scopeを渡し、呼出終了時に権限を閉じる。古いthreadの接続情報で権限を延命しない。native resume自体の失敗も診断へ渡す。
 
-行動・tool使用方針は用途presetまたは編集本文へ集約し、固定promptは独立実行・材料・返却先の技術情報だけを示す。背景だけのenv allowlist、tool／skill／plugin／hook／native設定の一括無効化、managed／custom接続の一律拒否は設けない。自然言語の方針を技術的な使用不能保証とはしない。通常adapterのapproval／sandbox／管理者policyは維持し、背景だけの無条件許可を追加しない。fake SDKによる接続検証と実認証の推論確認は区別する。
+行動・tool使用方針は用途presetまたは編集本文へ集約し、固定promptは独立実行・材料・返却先の技術情報だけを示す。三用途のpresetはサブエージェント等の他Agentの使用・作成・委譲・相談、別Sessionや追加Agent実行の起動、常駐・定期実行、人への質問・承認要求・通知を行わず、当該実行内で完結する方針を示す。操作は許可された参照と用途別のMemory／Affect管理に限定し、それ以外のファイル・DB・設定・Git・Issue・Graph・Glossary等の変更や外部送信を行わない。許可されたMemory添付取込・必要時復元等の専用管理操作はこの方針で除外しない。背景だけのenv allowlist、tool／skill／plugin／hook／native設定の一括無効化、managed／custom接続の一律拒否は設けない。自然言語の方針を技術的な使用不能保証とはしない。通常adapterのapproval／sandbox／管理者policyは維持し、背景だけの無条件許可を追加しない。fake SDKによる接続検証と実認証の推論確認は区別する。
 
 ## 用途別権限と非対話終了
 
@@ -186,6 +186,8 @@ Affect controllerはMain／Auxiliaryの`terminal_saved`をsource identityごと�
 ## Memoryの登録本文と直接登録
 
 `memory-registration-input.ts`の`MEMORY_REGISTRATION_PRESETS`は二用途の標準本文である。各本文は自身の目的・材料・判断・登録方法・終了条件を直接示す。Character Memoryは実Character定義の一人称・口調を使い、共有した出来事と本人の感情・関心・受け取りをepisodeへ残す。観察事実と本人の解釈は区別し、定義だけから会話にない経験・成果・感情を作らない。対象Memoryは対象に帰属する事実・合意・判断・制約・好み・成果を、許可targetと適用範囲に照合して登録する。実行結果に必要な操作記録は固定historyから確認し、欠落情報や不明な成否を補完しない。必要な内容の分量を自然言語で制限せず、不要なら登録しない。公開APIの入力制約はそのまま維持する。
+
+体験の記憶と、そこから得た好み・知識は記録の目的が異なる。Character Memoryは要約時も出来事と本人の受け取りを残し、教訓や好みだけに置き換えない。対象Memoryが体験から知識を抽出する場合は別entryへ記録し、同じ内容に触れることや知識として抽出済みであることだけを理由に元の体験を置換・忘却しない。誤記や同じ目的の記録の重複については、元の本文と根拠を確認して訂正・忘却を判断する。この整理基準は指示本文の方針であり、保存先・entry schema・用途別権限を分離する機構ではない。
 
 `buildMemoryRegistrationInput({ scope, materials, instructionText? })`は、本文未設定時だけプリセットを使い、空文字列を含む編集本文は単独で使う。固定プリセットとの合成や隠れた追加方針はない。本文、固定history／許可target、参照材料、操作の技術説明を別節に置く。Character定義とAffectは共通promptが供給する。保存済み編集本文を自動置換せず、切替にはSettingsの該当用途の`Use Preset`を使う。プリセットは取得箇所と過去分の再検討、必要な登録・訂正・忘却をAIが判断し、現在の記録を確認して部分保存を全件未保存と扱わない方針を示す。
 
