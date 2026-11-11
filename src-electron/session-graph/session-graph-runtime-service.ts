@@ -4,6 +4,7 @@ import type { AgentRuntimeBindingResolveResult } from "../providers/agent-runtim
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import type { AgentRuntimeExtensionRequest, AgentRuntimeExtensionResponse } from "../memory/memory-v6-http-server.js";
 import type { RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import type { SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { SessionGraphApplicationService, sameSessionGraphOwner } from "./session-graph-application-service.js";
 
 export class SessionGraphRuntimeService {
@@ -11,6 +12,7 @@ export class SessionGraphRuntimeService {
     applicationService: SessionGraphApplicationService;
     bindingRegistry: { resolve(reference: string | null | undefined, operation: string): AgentRuntimeBindingResolveResult };
     providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
+    validateBackgroundSource?: (scope: SessionHistoryReadScope) => Promise<boolean>;
   }) {}
 
   async route(request: AgentRuntimeExtensionRequest): Promise<AgentRuntimeExtensionResponse | null> {
@@ -24,12 +26,18 @@ export class SessionGraphRuntimeService {
     const resolved = this.deps.bindingRegistry.resolve(request.bindingReference, grant);
     if (!resolved.ok) return error(401, resolved.code, "Session Graph requires an active Session binding.");
     const binding = resolved.binding;
+    const validBackgroundSource = async () => !binding.backgroundScope
+      || Boolean(await this.deps.validateBackgroundSource?.(binding.backgroundScope.history));
+    if (binding.backgroundScope && !await validBackgroundSource()) return error(403, "SESSION_GRAPH_BINDING_INVALID", "Background source authority is no longer active.");
     const owner = binding.authoritySnapshot.sessionGraphOwner as SessionGraphOwner | undefined;
-    const source = sessionGraphSourceSchema.safeParse(binding.authoritySnapshot.sessionGraphSource);
+    const backgroundSource = binding.backgroundScope?.history.source;
+    const source = sessionGraphSourceSchema.safeParse(backgroundSource
+      ? { kind: backgroundSource.kind, incarnationId: backgroundSource.incarnationId }
+      : binding.authoritySnapshot.sessionGraphSource);
     const actor = source.success ? await this.deps.applicationService.resolveSession(binding.actorSessionId, source.data) : null;
     if (!owner || typeof owner.sessionId !== "string" || typeof owner.incarnationId !== "string" || !actor
       || !source.success || actor.source?.kind !== source.data.kind || actor.source?.incarnationId !== source.data.incarnationId
-      || actor.providerId !== binding.providerId || !sameSessionGraphOwner(owner, actor.owner)
+      || (!binding.backgroundScope && actor.providerId !== binding.providerId) || !sameSessionGraphOwner(owner, actor.owner)
       || typeof binding.authoritySnapshot.characterId !== "string"
       || actor.identity.character?.id !== binding.authoritySnapshot.characterId) {
       return error(403, "SESSION_GRAPH_BINDING_INVALID", "Session Graph parent authority is no longer active.");
@@ -40,8 +48,9 @@ export class SessionGraphRuntimeService {
         && current.binding.executionGeneration === binding.executionGeneration;
     };
     let admission: RuntimeTurnAdmission | undefined;
-    if (operation === "apply" || request.turnCapability) {
-      const turnInput = { actorSessionId: binding.actorSessionId, providerId: binding.providerId, turnCapability: request.turnCapability };
+    if (operation === "apply" || request.turnCapability || binding.backgroundScope) {
+      const turnInput = { actorSessionId: binding.actorSessionId, providerId: binding.providerId, turnCapability: request.turnCapability,
+        ...(binding.backgroundScope ? { bindingId: binding.bindingId } : {}) };
       const turn = this.deps.providerAgentRuntimeTurns.admit(turnInput);
       if (!turn.ok) return error(401, "SESSION_GRAPH_TURN_INACTIVE", "Session Graph requires the captured active provider turn.");
       admission = { state: turn.handle.revocationState, isCurrent: () => {
@@ -51,6 +60,9 @@ export class SessionGraphRuntimeService {
     }
     try {
       const result = await this.deps.applicationService.executeTrusted(binding.actorSessionId, operation, parsed.data, currentBinding, admission, owner, source.data);
+      if (binding.backgroundScope && (!await validBackgroundSource() || !currentBinding() || admission?.isCurrent?.() === false)) {
+        return error(403, "SESSION_GRAPH_BINDING_INVALID", "Background source authority is no longer active.");
+      }
       return { status: result.status === "conflict" ? 409 : 200, value: { ...result } };
     } catch (cause) {
       return error(409, "SESSION_GRAPH_REQUEST_FAILED", cause instanceof Error ? cause.message : "Session Graph request failed.", operation === "apply" ? "unknown" : "none");

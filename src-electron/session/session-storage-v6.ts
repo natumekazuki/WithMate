@@ -626,18 +626,19 @@ export class SessionStorageV6 {
     const session = this.getSessionSummary(parentId)!;
     const aux = auxiliary ? this.db.prepare("SELECT character_id FROM auxiliary_sessions WHERE id = ?")
       .get(scope.source.sessionId) as { character_id: string | null } : null;
-    const rows = this.db.prepare(`SELECT id, session_id, phase, completed_at, assistant_message_seq
+    const rows = this.db.prepare(`SELECT id, session_id, phase, completed_at, user_message_seq, assistant_message_seq
       FROM session_turns_v6 WHERE ${owner} = ? AND assistant_message_seq BETWEEN ? AND ? ORDER BY id`)
       .all(scope.source.sessionId, scope.fromMessageSeq, scope.throughMessageSeq) as {
         id: number; session_id: string | null; phase: SessionTurnRecord["phase"];
-        completed_at: string | null; assistant_message_seq: number;
+        completed_at: string | null; user_message_seq: number | null; assistant_message_seq: number;
       }[];
     const result: BackgroundSourceSnapshot = {
       session: { id: scope.source.sessionId, incarnationId: scope.source.incarnationId, characterId: aux ? recoverStoredCharacterOwnerId(aux.character_id) : session.characterId,
         accessMode: session.accessMode, sourceSchemaVersion: session.sourceSchemaVersion, sessionKind: session.sessionKind },
       ownerIdentity: scope.source.ownerIdentity,
       turns: rows.map((row) => ({ id: row.id, sessionId: row.session_id, ...(auxiliary ? { auxiliarySessionId: scope.source.sessionId } : {}), phase: row.phase,
-        ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}), assistantMessageSeq: row.assistant_message_seq })),
+        ...(row.completed_at !== null ? { completedAt: row.completed_at } : {}),
+        ...(row.user_message_seq !== null ? { userMessageSeq: row.user_message_seq } : {}), assistantMessageSeq: row.assistant_message_seq })),
     };
     assertRuntimeTurnAdmission();
     return result;

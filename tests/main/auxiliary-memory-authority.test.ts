@@ -135,7 +135,7 @@ it("Auxiliary runtime sessionからMemory public actor authorityをowner別に�
   for (const id of [parent.id, "aux-b", "aux-c"]) {
     const runtime = id === parent.id ? parent : await service.getAuxiliaryRuntimeSession(id);
     assert.ok(runtime);
-    const authority = buildProviderAgentRuntimeAuthoritySnapshot({
+    const authority = await buildProviderAgentRuntimeAuthoritySnapshot({
       characterId: runtime.characterId,
       workspacePath: runtime.workspacePath,
       resolveCanonicalProjectId: () => "project-workspace",

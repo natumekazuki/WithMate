@@ -15,6 +15,56 @@ function input(name: string): CodexProjectionStart {
 
 // @test-value v2
 // kind = "contract"
+// claim = "Codexの画像確認・待機・圧縮・子Agent活動はitem lifecycleに沿うlive操作と確定itemへ投影され、未知itemだけ未対応診断を残す"
+// oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime; https://github.com/natumekazuki/WithMate/issues/931" }
+// fault = "startを完了扱いする、同ID完了や終端snapshotを落とす、または既知活動と未知itemを同じ未対応扱いにする"
+// observable = "実projection Workerのlive変更step、finishのitem/metadataとassistant本文"
+// observation_boundary = "public-boundary"
+// scope = "Codex 0.166 ThreadItem activity projection"
+// lifecycle = "permanent"
+// impact = "画像確認や待機の進行・履歴を識別できず、診断に偽の未対応警告が累積する"
+// distinction = "型検査や直接変換testではWorkerのclone・同ID更新と終端snapshotによる完了を検証できない。固定4活動で確認する"
+// @end-test-value
+test("Worker projects native activities through started, completed and terminal snapshots", async () => {
+  const client = new CodexProjectionClient();
+  const run = await client.begin(input("activities"));
+  const items = [
+    { id: "image", type: "imageView", path: "C:\\images\\result.png" },
+    { id: "sleep", type: "sleep", durationMs: 1500 },
+    { id: "compact", type: "contextCompaction" },
+    { id: "child", type: "subAgentActivity", kind: "started", agentThreadId: "child-thread", agentPath: "/root/check", model: "test-model", reasoningEffort: "low" },
+  ];
+  try {
+    for (const item of items) {
+      await client.call(run, { type: "event", event: { method: "item/started", params: { item } } });
+    }
+    const live = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
+    assert.deepEqual(live.changes.steps.upserts.map(({ id, type, summary, status }) => ({ id, type, summary, status })), [
+      { id: "image", type: "image_view", summary: "result.png", status: "in_progress" },
+      { id: "sleep", type: "sleep", summary: "Wait 1.5 s", status: "in_progress" },
+      { id: "compact", type: "context_compaction", summary: "Compact conversation", status: "in_progress" },
+      { id: "child", type: "subagent_activity", summary: "started: /root/check", status: "in_progress" },
+    ]);
+    assert.equal(live.changes.steps.upserts[0].details, items[0].path);
+    assert.match(live.changes.steps.upserts[3].details!, /child-thread/);
+    await client.call(run, { type: "event", event: { method: "item/completed", params: { item: items[0] } } });
+    const completed = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
+    assert.deepEqual(completed.changes.steps.upserts.map(({ id, status }) => ({ id, status })), [{ id: "image", status: "completed" }]);
+    const unknown = { id: "future", type: "futureItem", note: "keep diagnostic" };
+    await client.call(run, { type: "event", event: { method: "turn/completed", params: { turn: { id: "turn", status: "completed", items: [...items, unknown] } } } });
+    const terminal = await client.call<CodexProjectionProgress>(run, { type: "live", inputAvailable: false });
+    assert.deepEqual(terminal.changes.steps.upserts.map(({ id, status }) => ({ id, status })), [
+      { id: "sleep", status: "completed" }, { id: "compact", status: "completed" }, { id: "child", status: "completed" },
+    ]);
+    const final = await client.call<CodexProjectionFinal>(run, { type: "finish", diagnostics: [] });
+    assert.deepEqual(final.items, [...items, unknown]);
+    assert.equal(final.assistantText, "");
+    assert.deepEqual(final.providerMetadata.map(({ responseType }) => responseType), ["futureItem"]);
+  } finally { await client.release(run); }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "非同期質問は秘匿化後の本文範囲へ対応し、tool質問の挿入位置と確定範囲はpreview上限によらず全文を基準にする"
 // oracle = { type = "contract", ref = "docs/design/provider-adapter.md#current-runtime" }
 // fault = "同じ質問文を誤って対応づける、秘匿化による長さ変更で位置がずれる、またはlive上限で確定位置を失う"

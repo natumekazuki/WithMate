@@ -1,6 +1,4 @@
-import type { AffectCompositionInput } from "../../src-shared/character-affect/affect-composition.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
-import type { Session } from "../../src-shared/session/session-state.js";
 import type { BackgroundProductionRuntime, BackgroundRuntimeEvent } from "../providers/background-production-runtime.js";
 import { runBackgroundAffectCall } from "./background-affect-call.js";
 
@@ -18,7 +16,6 @@ export class BackgroundAffectController {
   constructor(private readonly deps: {
     runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure" | "forgetSource">;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
-    readMaterials(session: Session, source: CapturedBackgroundSource): Promise<Omit<AffectCompositionInput, "instructionBody">>;
   }) {}
 
   start(): void {
@@ -103,14 +100,7 @@ export class BackgroundAffectController {
       return;
     }
     if (prepared.call.context.scope.history.source.ownerIdentity !== captured.snapshot.ownerIdentity) return;
-    let materials: Omit<AffectCompositionInput, "instructionBody">;
-    try { materials = await this.deps.readMaterials(event.session, captured); }
-    catch (error) {
-      if (current()) this.deps.runtime.reportFailure({ purpose: "affect", source: event.source, selection: prepared.call.selection, stage: "materials", error });
-      return;
-    }
-    if (!current() || position.pending) return;
-    await runBackgroundAffectCall(this.deps.runtime.calls, { ...prepared.call, ...materials,
+    await runBackgroundAffectCall(this.deps.runtime.calls, { ...prepared.call,
       instructionBody: prepared.instructionText,
       onAdmitted: () => {
         if (current()) position.lastStarted = event.terminal.turnId;

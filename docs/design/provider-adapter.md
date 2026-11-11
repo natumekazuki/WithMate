@@ -49,6 +49,7 @@ providerごとの差は次。
 
 - `CodexAdapter`
   - turnごとに公式Codex CLIの`app-server --listen stdio://`を起動し、`initialize` / `initialized`後に`thread/start`または保存済みIDの`thread/resume`、`turn/start`を実行する。native item / delta / usage通知からlive state、workspace snapshotを含むartifactを組み立てる
+  - `imageView`、`sleep`、`contextCompaction`、`subAgentActivity`はitemの開始・完了をlive stepへ、画像確認・待機・会話圧縮・子Agent活動を通常のOperationsへ投影する。画像確認はファイル名とpathを保持し、画像実体の複製・本文への自動挿入を行わない。子Agent活動は操作履歴であり、Tasks UIの実行管理には接続しない。未知itemはbounded rawと未対応診断を保持する。WithMate自身の受理済みsteer診断は未対応警告と分けてinfoで記録する
   - command / file approval、permissions、user-input、MCP elicitationのserver requestを元のrequest IDとの対応を保持して共通GUIへ直列中継し、応答は元のIDへ返す。GUIのrequest IDは独立したopaque IDとする。`serverRequest/resolved`、turn終了、取消でpendingと待機列を解放し、二重回答・別turnへの回答を拒否する
   - 質問はnative `item/tool/requestUserInput`のblocking／nonblockingと、`agentMessage.delivery = async`の構造化`questions`を識別し、共通`LiveElicitationRequest.kind = question`へ投影する。本文から質問を推測しない。asyncはitem IDで重複を除き、providerの進行を待機させず複数のformを表示する。native requestの応答先とasyncの通常入力配送は分離する。質問表示時のWindows通知条件とactivationは[Desktop UI](desktop-ui.md#windows-session-notifications)を参照する
   - async質問はsource item IDと秘匿化後の本文範囲をlive/final投影へ保持する。表示前に受信済み本文を配送し、質問本文の差し替えと本文のない要求の受信位置を共通runtimeへ渡す。preview外へ移動したsourceの古い範囲は破棄し、確定全文のfinal範囲で補正する。本文のない要求の挿入位置は受信時の秘匿化後全文の末尾とし、live previewの切断位置を使わない

@@ -8,14 +8,15 @@ import { promisify } from "node:util";
 import { buildWithMateMemoryCli } from "../../scripts/build/build-withmate-memory-cli.js";
 import { getBackgroundMemoryReadOperations } from "../../src-shared/agent-runtime/background-memory-read.js";
 import { getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
-import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { BACKGROUND_REGISTRATION_OPERATIONS, backgroundMemoryToolOperations } from "../../src-shared/agent-runtime/background-operations.js";
 import type { BackgroundPurpose, BackgroundExecutionScope } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { validateCharacterMemoryAppendEpisodeRequest } from "../../src-shared/character-context/character-context-validation.js";
 import { registerBackgroundAffect } from "../../src-electron/character/background-affect-registration.js";
 import { runBackgroundAffectCall } from "../../src-electron/character/background-affect-call.js";
 import { BackgroundCallService } from "../../src-electron/providers/background-call-service.js";
+import type { BackgroundExecutionDiagnosticInput } from "../../src-electron/providers/background-failure.js";
 import { AFFECT_COMPOSITION_INSTRUCTIONS } from "../../src-shared/character-affect/affect-composition.js";
-import { AFFECT_SCHEMA_VERSION, type EffectiveAffectState } from "../../src-shared/character-affect/affect-contract.js";
+import { AFFECT_SCHEMA_VERSION } from "../../src-shared/character-affect/affect-contract.js";
 import { validateMemoryAppendRequest } from "../../src-shared/memory/memory-validation.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import { createMemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
@@ -72,9 +73,8 @@ function seed(f: Fixture) {
 }
 function start(f: Fixture, purpose: BackgroundPurpose, broad = false, provider = "claude",
   memoryTargets: BackgroundExecutionScope["memoryTargets"] = [target, characterTarget]) {
-  return f.started("main", provider, purpose, undefined, broad ? getMemoryV6AgentRuntimeOperations() : [
-    ...getBackgroundMemoryReadOperations(), BACKGROUND_REGISTRATION_OPERATIONS[purpose].operation,
-  ], { memoryTargets });
+  return f.started("main", provider, purpose, undefined, broad ? getMemoryV6AgentRuntimeOperations()
+    : Object.values(backgroundMemoryToolOperations(purpose, true)), { memoryTargets });
 }
 type Operation = { tool: string; command: string; route: string; input: Record<string, any> };
 function operation(purpose: BackgroundPurpose, key: string): Operation {
@@ -136,7 +136,11 @@ test("用途adapterを接続した背景登録がMCPと配布CLIから実Worker�
       const { client } = await f.connect(binding, "memoryUrl");
       assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [
         "character_memory.search", "memory.get_entry", "memory.list_entries", "memory.list_tags", "memory.search",
+        "character_affect.inspect", "character_context.get", "character_context.metrics", "memory.audit", "memory.characters",
+        "memory.file_usage", "memory.instances", "memory.list_targets", "memory.status",
         BACKGROUND_REGISTRATION_OPERATIONS[purpose].tool,
+        ...(purpose === "affect" ? ["character_affect.correct"] : purpose === "character-memory"
+          ? ["character_memory.correct", "character_memory.forget"] : ["memory.forget"]),
       ].sort());
       const mcpOp = operation(purpose, `${provider}-${purpose}-mcp`);
       const mcp = await client.callTool({ name: mcpOp.tool, arguments: mcpOp.input });
@@ -147,6 +151,103 @@ test("用途adapterを接続した背景登録がMCPと配布CLIから実Worker�
       await assertSaved(f, purpose, child.value, `${provider}-${purpose}-cli`);
       f.executions.finish(execution);
     }
+  } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景Memory管理役は捕捉target内だけを既存訂正・忘却で更新し、背景Affectは明示要求を偽装せず訂正できるがresetできない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "管理操作が公開入口で拒否される、capture外Memoryを忘却する、通常Affect訂正まで明示要求不要にする、または背景resetを許可する"
+// observable = "MCP/配布CLIの訂正と忘却結果、Worker本文とstate、Affect eventとbinding拒否、通常bindingの訂正拒否"
+// observation_boundary = "public-boundary"
+// scope = "背景用途bindingからmanaged MCP/配布CLIと既存Memory/Affect Worker保存まで"
+// lifecycle = "permanent"
+// impact = "記憶の誤りを管理できないか、別targetの記憶や明示要求なしのAffect resetで既存データを損なう"
+// distinction = "appendのみの既存testやtypecheckでは用途別mutation権限と通常Affectの明示要求境界を確認できない"
+// risk_tags = ["authorization", "irreversible-data-loss"]
+// @end-test-value
+test("背景管理の訂正・忘却を両入口で実保存しresetと捕捉外変更を拒否する", async () => {
+  const f = await fixture(undefined, handlers, () => new Date(completedAt));
+  try {
+    seed(f);
+    for (const purpose of ["target-memory", "character-memory"] as const) {
+      const binding = f.project(start(f, purpose, false, "claude", purpose === "target-memory" ? [target] : [characterTarget]));
+      const { client } = await f.connect(binding, "memoryUrl");
+      const original = operation(purpose, `${purpose}-original`);
+      const saved = (await cli(f, binding, original)).value;
+      assert.ok(saved.entry, JSON.stringify(saved));
+      const replacement = operation(purpose, `${purpose}-replacement`);
+      const correction = purpose === "target-memory"
+        ? { ...replacement, input: { ...replacement.input, supersedes: [saved.entry.id] } }
+        : { tool: "character_memory.correct", command: "character-memory-correct", route: "character_memory/correct",
+          input: { entryId: saved.entry.id, reason: "Incorrect observation", idempotencyKey: "correct-episode", replacement: replacement.input.episode } };
+      const corrected = await client.callTool({ name: correction.tool, arguments: correction.input });
+      assert.equal(corrected.isError, undefined, JSON.stringify(corrected));
+      const value = corrected.structuredContent as { entry: { id: string } };
+      assert.equal((await f.memoryWorker.storage.getEntry(saved.entry.id))!.state, "superseded");
+      assert.equal((await f.memoryWorker.storage.getEntry(value.entry.id))!.body, `body ${purpose}-replacement`);
+      const childReplacement = operation(purpose, `${purpose}-cli-replacement`);
+      const childCorrected = await cli(f, binding, purpose === "target-memory"
+        ? { ...childReplacement, input: { ...childReplacement.input, supersedes: [value.entry.id] } }
+        : { tool: "character_memory.correct", command: "character-memory-correct", route: "character_memory/correct",
+          input: { entryId: value.entry.id, reason: "Correct another observation", idempotencyKey: "cli-correct-episode", replacement: childReplacement.input.episode } });
+      assert.equal(childCorrected.code, 0, JSON.stringify(childCorrected.value));
+      assert.equal((await f.memoryWorker.storage.getEntry(value.entry.id))!.state, "superseded");
+      assert.equal((await f.memoryWorker.storage.getEntry(childCorrected.value.entry.id))!.body, `body ${purpose}-cli-replacement`);
+      const forgotten = await cli(f, binding, purpose === "target-memory"
+        ? { tool: "memory.forget", command: "forget", route: "forget", input: { target: { kind: "user-global" }, entryIds: [childCorrected.value.entry.id], reason: "incorrect", idempotencyKey: "forget-general" } }
+        : { tool: "character_memory.forget", command: "character-memory-forget", route: "character_memory/forget", input: { entryId: childCorrected.value.entry.id, reason: "incorrect", idempotencyKey: "forget-episode" } });
+      assert.equal(forgotten.code, 0, JSON.stringify(forgotten.value));
+      assert.equal((await f.memoryWorker.storage.getEntry(childCorrected.value.entry.id))!.state, "forgotten");
+      const extra = operation(purpose, `${purpose}-mcp-forget`);
+      const extraSaved = await client.callTool({ name: extra.tool, arguments: extra.input });
+      assert.equal(extraSaved.isError, undefined, JSON.stringify(extraSaved));
+      const extraId = (extraSaved.structuredContent as { entry: { id: string } }).entry.id;
+      const mcpForgotten = await client.callTool(purpose === "target-memory"
+        ? { name: "memory.forget", arguments: { target: { kind: "user-global" }, entryIds: [extraId], reason: "incorrect", idempotencyKey: "mcp-forget-general" } }
+        : { name: "character_memory.forget", arguments: { entryId: extraId, reason: "incorrect", idempotencyKey: "mcp-forget-episode" } });
+      assert.equal(mcpForgotten.isError, undefined, JSON.stringify(mcpForgotten));
+      assert.equal((await f.memoryWorker.storage.getEntry(extraId))!.state, "forgotten");
+      if (purpose === "target-memory") {
+        const outside = await f.memory.append({ type: "local_user", bindingIdHash: "local-user", providerId: "local-user", permissions: ["memory.append"] }, {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION, target: characterTarget, kind: "note", title: "outside", body: "outside", preview: "outside" });
+        assert.ok(!("error" in outside));
+        const denied = await client.callTool({ name: "memory.forget", arguments: { target: { kind: "character" }, entryIds: [outside.entry.id], reason: "incorrect", idempotencyKey: "outside-forget" } });
+        assert.equal(denied.isError, true);
+        assert.equal((await f.memoryWorker.storage.getEntry(outside.entry.id))!.state, "active");
+      }
+    }
+    const binding = f.project(start(f, "affect"));
+    const { client } = await f.connect(binding, "memoryUrl");
+    const original = await cli(f, binding, operation("affect", "affect-original"));
+    assert.equal(original.code, 0, JSON.stringify(original.value));
+    const eventId = original.value.saved[0].eventId;
+    const inspect = await cli(f, binding, { tool: "character_affect.inspect", command: "affect-inspect", route: "character_affect/inspect", input: {} });
+    const correction = { eventId, expectedVersion: inspect.value.version.version, reason: "Wrong target observation",
+      replacement: { schemaVersion: AFFECT_SCHEMA_VERSION, layer: "session", targetType: "task", targetId: "corrected", family: "interest",
+        value: { label: "corrected", valence: 0.2 }, intensity: 0.5, reason: "Correct observation", evidence: "Saved evidence",
+        occurredAt: completedAt, idempotencyKey: "corrected-affect" } };
+    const corrected = await client.callTool({ name: "character_affect.correct", arguments: correction });
+    assert.equal(corrected.isError, undefined, JSON.stringify(corrected));
+    const correctedValue = corrected.structuredContent as { event: { id: string }; version: string };
+    const child = await cli(f, binding, { tool: "character_affect.correct", command: "affect-correct", route: "character_affect/correct",
+      input: { ...correction, eventId: correctedValue.event.id, expectedVersion: correctedValue.version,
+        replacement: { ...correction.replacement, targetId: "cli-corrected", idempotencyKey: "cli-corrected-affect" } } });
+    assert.equal(child.code, 0, JSON.stringify(child.value));
+    assert.equal(child.value.event.targetId, "cli-corrected");
+    const reset = await direct(f, binding, { tool: "character_affect.reset", command: "affect-reset", route: "character_affect/reset",
+      input: { layer: "session", expectedVersion: child.value.version, explicitUserRequest: true, reason: "Not authorized", resetAt: completedAt, idempotencyKey: "denied-reset" } });
+    assert.ok((reset.value as { error?: unknown }).error);
+    const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex",
+      authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants: getMemoryV6AgentRuntimeOperations() });
+    const turn = f.turns.begin({ actorSessionId: "main", providerId: "codex" });
+    try {
+      const denied = await cli(f, { ...normal, memoryRuntimeOwner: owner, turnCapability: turn.capability }, {
+        tool: "character_affect.correct", command: "affect-correct", route: "character_affect/correct", input: correction });
+      assert.notEqual(denied.code, 0);
+      assert.equal(denied.value.error.field, "explicitUserRequest");
+    } finally { f.turns.end(turn); }
   } finally { await f.close(); }
 });
 
@@ -198,10 +299,10 @@ test("用途上限と保存先・source・handleの逸脱を拒否する", async
       op.input.target = { kind: "character" };
       const mcp = await client.callTool({ name: op.tool, arguments: op.input });
       assert.equal(mcp.isError, true);
-      assert.match(JSON.stringify(mcp.structuredContent), /source_denied/);
+      assert.match(JSON.stringify(mcp.structuredContent), /source_denied|MEMORY_FORBIDDEN/);
       const child = await cli(f, binding, op);
       assert.notEqual(child.code, 0);
-      assert.match(JSON.stringify(child.value), /source_denied/);
+      assert.match(JSON.stringify(child.value), /source_denied|MEMORY_FORBIDDEN/);
       f.db.prepare(`UPDATE sessions_v6 SET ${column} = ? WHERE id = 'main'`).run(column === "incarnation_id" ? "inc-main" : "character");
     }
     f.executions.finish(execution);
@@ -534,9 +635,9 @@ test("新しいTurnがあっても過去terminal Turnを選び保存できる", 
 
 // @test-value v2
 // kind = "contract"
-// claim = "Affect用途入力は未設定時だけpresetを使い、編集本文・材料を同一runOnceのAgentへ渡し、既知の登録失敗は後続取消でも失敗として先行保存を保持する"
-// oracle = { type = "contract", ref = "docs/adr/035-background-execution-binding-and-history-scope.md#登録指示のプリセットと本文編集" }
-// fault = "編集本文へpresetを重ねる、別実行で保存する、既知の登録拒否を取消や正常終了へ潰すか確定済み保存を失う"
+// claim = "Affect用途入力は未設定時だけpresetを使い、編集本文・材料を同一Agentへ渡し、後続失敗と取消を区別して登録拒否と先行保存を保持する"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
+// fault = "編集本文へpresetを重ねる、別実行で保存する、登録拒否で後続の実行失敗や取消を上書きするか確定済み保存を失う"
 // observable = "Agentが受ける本文とscope・材料、runOnce結果、MCP/CLI保存・拒否応答、後続失敗／取消への到達、通常contextと実DB件数"
 // observation_boundary = "public-boundary"
 // scope = "purpose input through real BackgroundCallService, MCP/CLI handler and normal context read"
@@ -551,10 +652,7 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
     const context = { actorSessionId: "main", session: f.sessions.get("main")!, scope: f.scope(),
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
       operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] };
-    const currentAffect: EffectiveAffectState = { schemaVersion: AFFECT_SCHEMA_VERSION, characterId: "character",
-      userId: "local-user", sessionId: "main", evaluatedAt: completedAt, layers: [], components: [] };
-    const base = { context, selection: { providerId: "claude", modelId: "fixture" }, onAdmitted() {},
-      characterDefinition: "definition material", currentAffect };
+    const base = { context, selection: { providerId: "claude", modelId: "fixture" }, onAdmitted() {} };
     for (const instructionBody of [undefined, "サブエージェントを使わない。必要な変化を登録する。", ""]) {
       let calls = 0;
       const service = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
@@ -562,8 +660,6 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
         const body = agent.userInput.split("## 登録指示\n\n")[1]!.split("\n\n## 実行範囲")[0];
         assert.equal(body, instructionBody ?? AFFECT_COMPOSITION_INSTRUCTIONS);
         if (instructionBody !== undefined) assert.equal(agent.userInput.includes(AFFECT_COMPOSITION_INSTRUCTIONS), false);
-        assert.ok(agent.userInput.includes(base.characterDefinition));
-        assert.ok(agent.userInput.includes(JSON.stringify(currentAffect)));
         assert.ok(agent.userInput.includes(JSON.stringify(context.scope)));
         // The Agent may finish without any registration. No model obedience is assumed.
       } });
@@ -572,10 +668,11 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
       assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get()!.count, 0);
     }
     for (const ending of ["failure", "cancel"] as const) {
+      const diagnostics: BackgroundExecutionDiagnosticInput[] = [];
       let rejectedExitCode: number | undefined;
       let canceledExitCode: number | undefined;
       let reachedEnding = false;
-      const service = new BackgroundCallService({ executions: f.executions, runAgent: async (agent) => {
+      const service = new BackgroundCallService({ executions: f.executions, onExecutionDiagnostic: (diagnostic) => diagnostics.push(diagnostic), runAgent: async (agent) => {
         const binding = { ...agent.binding, memoryRuntimeOwner: owner,
           managedMcp: f.host.issue({ ...agent.binding, memoryRuntimeOwner: owner }, agent.handle, agent.signal) };
         const { client } = await f.connect(binding, "memoryUrl");
@@ -596,7 +693,11 @@ test("編集本文とpresetを同じAgentへ渡しtool登録の実態を保持�
       assert.equal(reachedEnding, true);
       assert.ok(rejectedExitCode !== undefined); assert.notEqual(rejectedExitCode, 0);
       if (ending === "cancel") { assert.ok(canceledExitCode !== undefined); assert.notEqual(canceledExitCode, 0); }
-      assert.deepEqual(result, { kind: "failed", code: "invalid_input" });
+      assert.deepEqual(result, ending === "failure" ? { kind: "failed", code: "BACKGROUND_AGENT_FAILED" }
+        : { kind: "canceled", code: "BACKGROUND_CALL_CANCELED" });
+      assert.equal(diagnostics.length, 1);
+      assert.equal(diagnostics[0]!.execution.outcome, result.kind);
+      assert.ok(diagnostics[0]!.execution.operations.some((operation) => operation.failure?.code === "invalid_input"));
     }
     const normal = f.bindings.issueOrReuse({ actorSessionId: "main", providerId: "codex",
       authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] }, operationGrants: getMemoryV6AgentRuntimeOperations() });
@@ -662,4 +763,83 @@ test("途中失敗と保存応答喪失でも先行Affectを保持し後続を�
       assert.equal(f.db.prepare("SELECT COUNT(*) AS count FROM memory_entries_v6").get()!.count, 0);
     } finally { await f.close(); }
   }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxiliaryの背景Affectは公開履歴のuser/assistant seqから過去終端Turnと時刻を解決し、対応なし・未完了・範囲外・曖昧な参照入力では保存しない"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#affect登録入力と会話owner" }
+// fault = "seqをTurn IDと扱う、最新Turnへ代用する、user seq 0を失う、または根拠参照の欠落/併用・履歴外・Turn対応なしを保存する"
+// observable = "実履歴MCPのseq/Turn対応、登録MCP/配布CLI/直接HTTPの成否、SQLiteのowner・occurred_at・保存件数"
+// observation_boundary = "public-boundary"
+// scope = "Main/Auxiliaryの実Storage Worker source read・managed MCP・配布CLIからproduction Affect登録とSQLite保存まで"
+// lifecycle = "permanent"
+// impact = "感情記録が別の出来事の時刻や会話ownerへ結び付く"
+// distinction = "既存Turn ID入力testとschema/型検査ではmessage位置から実保存Turnを解決する経路と公開両入口の接続を確認できない"
+// @end-test-value
+test("背景Affectは履歴message位置から実sourceの過去Turnを解決する", async () => {
+  const f = await fixture(undefined, handlers, undefined, { affect: ["main", "auxiliary"] });
+  try {
+    for (const [id, table, column, firstTurnId] of [
+      ["main", "session_messages_v6", "session_id", 101],
+      ["aux", "auxiliary_session_messages", "auxiliary_session_id", 201],
+    ] as const) {
+      for (const seq of (id === "main" ? [2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6])) {
+        f.db.prepare(`INSERT INTO ${table}(${column},seq,role,body,created_at) VALUES (?,?,?,?,'now')`)
+          .run(id, seq, [1, 4, 6].includes(seq) ? "assistant" : "user", JSON.stringify({ text: `saved ${seq}` }));
+      }
+      for (const [offset, phase, userSeq, assistantSeq, at] of [
+        [0, "completed", 0, 1, completedAt], [1, "completed", 3, 4, "2026-11-02T01:00:00.000Z"],
+        [2, "running", 5, 6, null],
+      ] as const) {
+        f.db.prepare(`INSERT INTO session_turns_v6(id,${column},phase,user_message_seq,assistant_message_seq,started_at,completed_at,updated_at)
+          VALUES (?,?,?,?,?,?,?,?)`).run(firstTurnId + offset, id, phase, userSeq, assistantSeq, completedAt, at, completedAt);
+      }
+      const initial = f.scope(id);
+      const execution = f.executions.begin({ actorSessionId: id, providerId: "claude", session: f.sessions.get(id)!,
+        scope: { ...initial, history: { ...initial.history, throughMessageSeq: 6 } },
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+        operationGrants: [...getSessionHistoryAgentRuntimeOperations(), BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
+      const binding = f.project(execution);
+      const { client } = await f.connect(binding, "memoryUrl");
+      const { client: history } = await f.connect(binding, "sessionHistoryUrl");
+      const messages = (await history.callTool({ name: "session_history.list_messages", arguments: {} })).structuredContent as {
+        items: { seq: number; turn: { id: number } | null }[];
+      };
+      const user = messages.items.find((message) => message.seq === 0)!;
+      const assistant = messages.items.find((message) => message.seq === 1)!;
+      assert.equal(user.turn!.id, firstTurnId); assert.equal(assistant.turn!.id, firstTurnId);
+      assert.equal(messages.items.find((message) => message.seq === 2)!.turn, null);
+      const op = operation("affect", "message-source");
+      const { sourceTurnId: _sourceTurnId, ...domain } = op.input.candidates[0];
+      const input = (reference: Record<string, unknown>, suffix = "ref") => ({ candidates: [{ ...domain, targetId: `${id}-${suffix}`, ...reference }] });
+      const mcp = await client.callTool({ name: op.tool, arguments: input({ sourceMessageSeq: user.seq }, "user") });
+      assert.equal(mcp.isError, undefined, JSON.stringify(mcp));
+      assert.equal((await cli(f, binding, { ...op, input: input({ sourceMessageSeq: assistant.seq }, "assistant") })).code, 0);
+      const saved = f.db.prepare("SELECT occurred_at, session_id, auxiliary_session_id FROM character_affect_events_v6 WHERE target_id LIKE ? ORDER BY target_id")
+        .all(`${id}-%`).map((row) => ({ ...row }));
+      assert.deepEqual(saved, [0, 1].map(() => ({ occurred_at: completedAt,
+        session_id: id === "main" ? id : null, auxiliary_session_id: id === "aux" ? id : null })));
+      const count = Number(f.db.prepare("SELECT COUNT(*) AS n FROM character_affect_events_v6").get()!.n);
+      for (const reference of [{ sourceMessageSeq: 2 }, { sourceMessageSeq: 5 }, { sourceMessageSeq: 99 }, {},
+        { sourceMessageSeq: 1, sourceTurnId: firstTurnId }, { sourceMessageSeq: -1 }, { sourceMessageSeq: 1.5 }]) {
+        const rejected = { ...op, input: input(reference) };
+        assert.equal((await client.callTool({ name: op.tool, arguments: rejected.input })).isError, true, JSON.stringify(reference));
+        assert.ok(((await direct(f, binding, rejected)).value as Record<string, unknown>).error, JSON.stringify(reference));
+      }
+      assert.notEqual((await cli(f, binding, { ...op, input: input({ sourceMessageSeq: 99 }) })).code, 0);
+      assert.equal(Number(f.db.prepare("SELECT COUNT(*) AS n FROM character_affect_events_v6").get()!.n), count);
+      f.executions.finish(execution);
+      const narrowed = f.executions.begin({ actorSessionId: id, providerId: "claude", session: f.sessions.get(id)!,
+        scope: { ...initial, history: { ...initial.history, fromMessageSeq: 1, throughMessageSeq: 6 } },
+        authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
+        operationGrants: [BACKGROUND_REGISTRATION_OPERATIONS.affect.operation] });
+      const narrowedBinding = f.project(narrowed);
+      const { client: narrowClient } = await f.connect(narrowedBinding, "memoryUrl");
+      assert.equal((await narrowClient.callTool({ name: op.tool, arguments: input({ sourceMessageSeq: 0 }) })).isError, true);
+      assert.notEqual((await cli(f, narrowedBinding, { ...op, input: input({ sourceMessageSeq: 0 }) })).code, 0);
+      assert.equal(Number(f.db.prepare("SELECT COUNT(*) AS n FROM character_affect_events_v6").get()!.n), count);
+      f.executions.finish(narrowed);
+    }
+  } finally { await f.close(); }
 });

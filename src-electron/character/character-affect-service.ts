@@ -31,6 +31,7 @@ export type CharacterAffectEpisodeWriter = {
     characterId: string;
     userId: string;
     sourceSessionId: string;
+    sourceKind?: "main" | "auxiliary";
     sourceEventId: string;
     idempotencyKey: string;
     candidate: AffectMemoryEpisodeCandidate;
@@ -249,13 +250,15 @@ export class CharacterAffectService {
     if (event.memoryEntryId) {
       return event;
     }
-    if (!event.sourceSessionId) {
+    const sourceSessionId = event.sourceSessionId ?? event.sourceAuxiliarySessionId;
+    if (!sourceSessionId) {
       throw new Error("Affect event source session is unavailable for Memory episode creation.");
     }
     const episode = await this.episodeWriter.writeEpisode({
       characterId: event.characterId,
       userId: event.userId,
-      sourceSessionId: event.sourceSessionId,
+      sourceSessionId,
+      ...(event.sourceAuxiliarySessionId ? { sourceKind: "auxiliary" as const } : {}),
       sourceEventId: event.id,
       idempotencyKey: `${event.id}:memory-episode`,
       candidate,

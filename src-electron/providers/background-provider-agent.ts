@@ -1,12 +1,12 @@
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { resolveBackgroundExecutionOptions } from "../../src-shared/settings/background-settings.js";
-import { normalizeAllowedAdditionalDirectories } from "../files/additional-directories.js";
 import { resolveBackgroundProviderAvailability } from "../../src-shared/settings/background-provider-support.js";
 import type { BackgroundAgentInput } from "./background-call-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
-import type { ProviderCodingAdapter, ProviderPromptComposition } from "./provider-runtime.js";
+import type { ProviderCodingAdapter, RunSessionTurnInput } from "./provider-runtime.js";
 import { ProviderTurnError } from "./provider-runtime.js";
+import { composeProviderPrompt } from "./provider-prompt.js";
 
 export type BackgroundProviderAgentDependencies = {
   getModelCatalog: (input: BackgroundAgentInput) => ModelCatalogSnapshot | Promise<ModelCatalogSnapshot>;
@@ -14,6 +14,8 @@ export type BackgroundProviderAgentDependencies = {
   getProviderCodingAdapter: (providerId: string) => ProviderCodingAdapter;
   /** Adds host-issued MCP transport to this execution's existing binding and handle. */
   projectBinding: (input: BackgroundAgentInput) => ProviderAgentRuntimeBindingProjection | Promise<ProviderAgentRuntimeBindingProjection>;
+  resolvePromptContext?: (input: BackgroundAgentInput, settings: AppSettings) => Promise<Pick<RunSessionTurnInput,
+    "session" | "sessionFolderPath" | "characterContext" | "conversationTimingContext">>;
 };
 
 function unavailable(code: string, message: string, cause?: unknown): Error & { code: string } {
@@ -45,14 +47,6 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     const appSettings = await deps.getAppSettings();
     input.signal.throwIfAborted();
     const adapter = deps.getProviderCodingAdapter(availability.providerId);
-    const systemBodyText = "This is an app-managed background invocation. Registration instructions and reference materials are supplied in the input. There is no human approval or answer channel; process the supplied materials without interactive clarification. Registration is performed by the bound tools; final text output is discarded.";
-    const prompt: ProviderPromptComposition = {
-      systemBodyText,
-      inputBodyText: input.userInput,
-      logicalPrompt: { systemText: systemBodyText, inputText: input.userInput, composedText: [systemBodyText, input.userInput].join("\n\n") },
-      imagePaths: [],
-      additionalDirectories: normalizeAllowedAdditionalDirectories(input.session.workspacePath, input.session.allowedAdditionalDirectories),
-    };
     const pendingCleanups: Promise<void>[] = [];
     const controller = new AbortController();
     const signal = AbortSignal.any([input.signal, controller.signal]);
@@ -66,9 +60,9 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
     };
     try {
       try {
-        const result = await adapter.runSessionTurn({
+        const turnInput: RunSessionTurnInput = {
           session: input.session,
-          executionTarget: { id: input.continuation.id, threadId: input.continuation.threadId, prompt },
+          ...await deps.resolvePromptContext?.(input, appSettings),
           runtimeOwner: { kind: input.scope.history.source.kind, id: input.continuation.id, incarnationId: input.scope.history.source.incarnationId },
           executionOptions,
           providerCatalog: catalog.providers.find((provider) => provider.id === availability.providerId)!,
@@ -80,7 +74,18 @@ export function createBackgroundProviderAgent(deps: BackgroundProviderAgentDepen
           onCleanupPending: (completion) => { pendingCleanups.push(completion); },
           onApprovalRequest: () => { requireInteraction("approval"); return "deny"; },
           onElicitationRequest: () => { requireInteraction("elicitation"); return { action: "cancel" }; },
-        }, (state) => { if (state.threadId) input.continuation.onThreadId(state.threadId); });
+        };
+        signal.throwIfAborted();
+        const commonPrompt = composeProviderPrompt(turnInput);
+        const systemBodyText = [commonPrompt.systemBodyText,
+          "This is an app-managed background invocation. The input supplies the purpose instructions and captured scope. There is no human approval or answer channel. Final text output is discarded; state changes are performed by the bound tools.",
+        ].filter(Boolean).join("\n\n");
+        const prompt = { ...commonPrompt, systemBodyText, logicalPrompt: {
+          systemText: systemBodyText, inputText: commonPrompt.inputBodyText,
+          composedText: [systemBodyText, commonPrompt.inputBodyText].join("\n\n"),
+        } };
+        turnInput.executionTarget = { id: input.continuation.id, threadId: input.continuation.threadId, prompt };
+        const result = await adapter.runSessionTurn(turnInput, (state) => { if (state.threadId) input.continuation.onThreadId(state.threadId); });
         if (result.threadId) input.continuation.onThreadId(result.threadId);
         input.signal.throwIfAborted();
       } catch (error) {

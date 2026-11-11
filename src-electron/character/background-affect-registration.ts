@@ -36,15 +36,22 @@ export const registerBackgroundAffect: BackgroundRegistrationHandler = async (in
     return createCharacterContextError("authority_denied", "Affect owner does not match the saved source.", rejection);
   }
   const candidates = [];
-  for (const [candidateIndex, { sourceTurnId, ...candidate }] of request.candidates.entries()) {
-    const turn = source.turns.find((item) => item.id === sourceTurnId);
+  for (const [candidateIndex, { sourceMessageSeq, sourceTurnId, ...candidate }] of request.candidates.entries()) {
+    let turn: (typeof source.turns)[number] | undefined;
+    for (const item of source.turns) {
+      if (sourceMessageSeq !== undefined ? item.userMessageSeq === sourceMessageSeq || item.assistantMessageSeq === sourceMessageSeq
+        : item.id === sourceTurnId) turn = item;
+    }
     const belongsToSource = input.scope.history.source.kind === "main"
       ? turn?.sessionId === source.session.id && turn.auxiliarySessionId === undefined
       : turn?.sessionId === null && turn.auxiliarySessionId === source.session.id;
     if (!turn || !belongsToSource || !["completed", "failed", "canceled"].includes(turn.phase)
       || !turn.completedAt || turn.assistantMessageSeq === undefined
-      || turn.assistantMessageSeq < input.scope.history.fromMessageSeq || turn.assistantMessageSeq > input.scope.history.throughMessageSeq) {
-      return createCharacterContextError("invalid_input", "sourceTurnId must identify a terminal Turn within the execution scope.", {
+      || turn.assistantMessageSeq < input.scope.history.fromMessageSeq || turn.assistantMessageSeq > input.scope.history.throughMessageSeq
+      || (sourceMessageSeq !== undefined && (sourceMessageSeq < input.scope.history.fromMessageSeq
+        || sourceMessageSeq > input.scope.history.throughMessageSeq))) {
+      const reference = sourceMessageSeq !== undefined ? "sourceMessageSeq" : "sourceTurnId";
+      return createCharacterContextError("invalid_input", `${reference} must identify a terminal Turn within the execution scope.`, {
         ...rejection, details: { candidateIndex },
       });
     }

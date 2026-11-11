@@ -14,7 +14,7 @@ import { createWithMateSessionGraphMcpServer } from "../platform/mcp/withmate-se
 import { createWithMateSessionMcpServer } from "../platform/mcp/withmate-session-mcp.js";
 import { callWithMateMemoryRuntime, type WithMateMemoryRuntimeConnection } from "../platform/mcp/withmate-memory-runtime-client.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES } from "../platform/memory/memory-runtime-exchange.js";
-import { backgroundMemoryToolOperations, BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
+import { backgroundMemoryToolOperations, BACKGROUND_REGISTRATION_OPERATIONS, BACKGROUND_SHARED_READ_TOOL_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { supportsBackgroundRegistration, type BackgroundRegistration } from "../providers/background-registration.js";
 import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
 import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
@@ -53,7 +53,6 @@ export type ManagedHttpMcpHostOptions = {
   turns: Pick<ProviderAgentRuntimeTurnCoordinator, "admit" | "end">;
   sessionHistory?: SessionHistoryMcpRegistration;
   backgroundRegistration?: BackgroundRegistration;
-  onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
   onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
 };
 
@@ -219,6 +218,11 @@ export class ManagedHttpMcpHost {
       supportsBackgroundRegistration(this.#options.backgroundRegistration, scope.purpose, scope.history.source.kind), scope.fileAccess) : {};
   }
 
+  #backgroundEndpointOperations(context: TurnConnection, pathname: string): Readonly<Record<string, string>> {
+    return pathname === "/mcp/session-history" ? this.#options.sessionHistory!.toolOperations
+      : pathname === "/mcp/memory" ? this.#backgroundMemoryOperations(context) : BACKGROUND_SHARED_READ_TOOL_OPERATIONS;
+  }
+
   async #createEndpoint(context: TurnConnection, pathname: string): Promise<Endpoint> {
     const deliveries = new Map<RequestId, Promise<void>>();
     const calls: Endpoint["calls"] = new Map();
@@ -242,8 +246,8 @@ export class ManagedHttpMcpHost {
         }, context.binding.background ? Object.entries(this.#backgroundMemoryOperations(context))
           .filter(([, operation]) => this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok)
           .map(([name]) => name) : undefined)
-      : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps)
-      : pathname === "/mcp/session-graph" ? createWithMateSessionGraphMcpServer(deps)
+      : pathname === "/mcp/glossary" ? createWithMateGlossaryMcpServer(deps, context.binding.background)
+      : pathname === "/mcp/session-graph" ? createWithMateSessionGraphMcpServer(deps, context.binding.background)
       : pathname === "/mcp/session" ? createWithMateSessionMcpServer(deps)
       : this.#options.sessionHistory!.createServer(deps,
         Object.values(this.#options.sessionHistory!.toolOperations).filter((operation) =>
@@ -275,10 +279,10 @@ export class ManagedHttpMcpHost {
           failure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
             [context.token, context.binding.bindingReference, context.handle.capability, this.#options.connection.api.apiSecret,
               this.#options.connection.credential.adapterSecret, this.#options.fallbackAdmissionSecret]) };
-          this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
         }
-        if (call && responseId !== undefined) {
-          this.#options.onBackgroundOperation?.(context.binding.bindingId, { ...call, requestId: responseId, transport: "mcp",
+        if ((call || failure) && responseId !== undefined) {
+          this.#options.onBackgroundOperation?.(context.binding.bindingId, { operation: call?.operation ?? "unknown",
+            ...(call?.toolName ? { toolName: call.toolName } : {}), requestId: responseId, transport: "mcp",
             boundary: "mcp", phase: "response", timestamp: new Date().toISOString(), outcome: failure ? "failure" : "success", failure,
             ...("result" in message ? { result: backgroundOperationResult((message.result as { structuredContent?: unknown }).structuredContent) } : {}) });
           calls.delete(responseId);
@@ -307,7 +311,7 @@ export class ManagedHttpMcpHost {
       if (context) this.release(context.handle);
       reply(response, 401, "MCP turn credential is inactive."); return;
     }
-    if (context.binding.background ? pathname !== "/mcp/session-history" && pathname !== "/mcp/memory" : pathname === "/mcp/session-history") {
+    if (!context.binding.background && pathname === "/mcp/session-history") {
       reply(response, 403, "MCP endpoint is outside this execution scope."); return;
     }
     if (request.method !== "POST" && request.method !== "DELETE") {
@@ -327,17 +331,15 @@ export class ManagedHttpMcpHost {
       const body = request.method === "POST" ? await readBody(request,
         pathname !== "/mcp/memory" ? WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES : 256 * 1024) : undefined;
       if (!this.#isCurrent(context)) { reply(response, 401, "MCP turn credential is inactive."); return; }
-      if ((pathname === "/mcp/session-history" || pathname === "/mcp/memory" && context.binding.background)
+      if ((pathname === "/mcp/session-history" || context.binding.background)
         && body && typeof body === "object" && !Array.isArray(body)) {
         const call = body as { id?: unknown; method?: unknown; params?: { name?: unknown } };
         if (call.method === "tools/call") {
           const operation = typeof call.params?.name === "string"
-            ? (pathname === "/mcp/session-history" ? this.#options.sessionHistory?.toolOperations
-              : this.#backgroundMemoryOperations(context))?.[call.params.name] : undefined;
+            ? this.#backgroundEndpointOperations(context, pathname)[call.params.name] : undefined;
           if (!operation || !this.#options.bindingRegistry.resolve(context.binding.bindingReference, operation).ok) {
             reply(response, 403, "Background operation is not granted or connected.");
             const failure = classifyBackgroundFailure({ code: "SESSION_BINDING_FORBIDDEN", message: "Background operation is not granted or connected." }, pathname === "/mcp/session-history" ? "history" : "registration");
-            this.#options.onBackgroundOperationFailure?.(context.binding.bindingId, failure);
             const metadata = { requestId: typeof call.id === "string" || typeof call.id === "number" ? call.id : "invalid-id",
               operation: operation ?? "unknown", toolName: typeof call.params?.name === "string" ? call.params.name : "unknown",
               transport: "mcp", boundary: "mcp" as const, timestamp: new Date().toISOString() };
@@ -374,7 +376,7 @@ export class ManagedHttpMcpHost {
         const call = body as { id?: unknown; method?: unknown; params?: { name?: unknown } };
         if (call.method === "tools/call" && (typeof call.id === "string" || typeof call.id === "number") && typeof call.params?.name === "string") {
           const toolName = call.params.name;
-          const operation = (pathname === "/mcp/session-history" ? this.#options.sessionHistory?.toolOperations : this.#backgroundMemoryOperations(context))?.[toolName] ?? toolName;
+          const operation = this.#backgroundEndpointOperations(context, pathname)[toolName] ?? toolName;
           endpoint.calls.set(call.id, { operation, toolName });
           this.#options.onBackgroundOperation?.(context.binding.bindingId, { requestId: call.id, operation, toolName,
             transport: "mcp", boundary: "mcp",

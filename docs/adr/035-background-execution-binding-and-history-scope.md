@@ -4,6 +4,8 @@
 
 Accepted
 
+2026-11-08の[共通promptと用途別管理役](#共通promptと用途別管理役)により、専用prompt材料、登録のみの用途操作、Graph／Glossaryの一律除外、背景Affect訂正の明示要求必須は当該管理用途で適用対象外とする。元の判断本文を保持し、source・target・失効・resetの明示要求境界は維持する。
+
 背景のfile／exportを許可しない従前の範囲は、[背景Memoryの添付と必要時復元](#背景memoryの添付と必要時復元)の後継判断で置き換える。Memory target認可と呼出ごとのfile認可は維持・分離する。
 
 登録を一件の公開入力へ限定する範囲とAffectの候補件数上限は、[一括登録と件数上限](#一括登録と件数上限)の後継判断で置き換える。既存項目単位の保存・認可・原子性は維持する。
@@ -188,3 +190,29 @@ Memory targetの許可だけではElectron側のfile I/O権限を証明しない
 2026-11-06の追加要求により採用。通常MemoryとCharacter Memoryは同じ既存公開操作へ非空のentry／episode配列を渡せるようにし、Affect候補の最大10件を撤廃する。登録件数・呼出回数に別の固定上限を設けず、記録の粒度と必要件数はAIが判断する。本文・添付等の項目単位制約と通信・Provider・認可の制限は維持する。
 
 公開tagで成立している単件入力／応答は保持し、同じ操作の代替配列形式として追加する。項目入力を事前検証し、入力順に既存単件保存を利用する。失敗・結果不明・共通実行条件喪失で停止し、indexごとに確定済・失敗・未実行・結果不明を返す。既存item idempotencyとentry添付原子性を維持し、先行確定分を巻き戻さず、新batch DB・台帳・永続queue・全件transaction・即時全体再送を設けない。現行契約は[Background Execution](../design/background-execution.md#一括登録と項目別結果)を正本とする。
+
+## 実行終了状態と操作診断の分離
+
+2026-11-08に採用。入力拒否後に同じAgent実行内で登録できた呼出も、一度の操作失敗によって全体がfailedになる記録では、実行終了と操作成否を区別できない。このため「登録内容と失敗診断」の途中失敗後も全体失敗を維持する判断は、本項の適用対象では置き換える。当時の本文は履歴として保持する。
+
+completed／failed／canceledはAgent呼出・開始処理・取消の終了状態とし、操作拒否を全体failedへ固定しない。既存の操作列と登録応答の選別済みreceiptを正本に、拒否・部分保存・後続成功を保持する。全拒否でAgentが正常終了しても保存成功や登録不要とは判定せず、後続成功だけで回復済みとも判定しない。Provider自体の実原因と取消を先行する操作拒否で上書きしない。
+
+既存専用JSONLへ、実行自体の失敗または操作エラーがある呼出の終端診断だけを一度記録する。開始済みのkindをbackground.execution.diagnosticとし、実行自体の失敗はerror、操作エラーを含む正常終了・取消はwarnで終了状態と操作列を併記する。旧行・append-only・rotationなし・秘匿化を維持し、正常実行全履歴や新規DB・台帳・回復判定・再送queueは追加しない。
+
+前回材料も実行終了状態と操作診断を分け、completedだけで操作エラーを捨てない。次回の正常終了かつ操作エラーなしで直近診断を解放する。既存のnative文脈・sourceとProviderの寿命、onAdmittedの発火位置、認可・失効・確定済み保存保持は変更しない。現行契約は[Background Execution](../design/background-execution.md#失敗の記録)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)を正本とする。
+
+## Affectの根拠messageからのTurn解決
+
+2026-11-08に採用。AIが根拠となる保存済みmessageのseqを`sourceMessageSeq`で指定し、アプリが実sourceのTurnのuser／assistant message位置との完全一致からTurnと完了時刻を解決する。過去Turnの再検討を維持し、対応なしmessageを周辺・最新Turnへ補完しない。同一source・許可history・終端状態・失効・保存時刻の既存境界を保つ。
+
+この判断は候補へ内部Turn IDを直接指定することを必須とした部分を置き換える。公開済みの`sourceTurnId`入力は代替参照として維持し、両参照の併用と参照なしは拒否する。新しい参照台帳・DB・本文推定は持たず、既存Turn列を使う。AIの意味上の誤参照はseqでも残るため、その根絶や元ログの拒否原因の確定とは扱わない。現行契約は[Background Execution](../design/background-execution.md#affect登録入力と会話owner)を正本とする。
+
+## 共通promptと用途別管理役
+
+2026-11-08、ユーザー承認により採用。三用途は通常のsystem prompt composerと設定を共用し、実Character snapshot・Affect context・元MainのSessionFolderを供給する。Auxiliaryは自身のCharacter／Affectと親Main共有folderを使う。用途別材料に定義・Affectを再投入せず、編集可能な指示本文で管理責務を示す。非対話channelとfinal破棄は技術条件として伝える。保存済み編集本文を自動置換しない。
+
+WithMate管理readは通常と同じ認可範囲へ揃える。Memoryはuser-global・実Character・許可Project、Graphは元Main共有Graph、Glossaryは許可checkoutを参照し、背景専用Session／Graphを作らない。Graph applyとGlossary mutationは付与しない。元会話と異なるProviderを認めても、実source kind・incarnation・ownerIdentity・親・Character・checkout・Graph owner、呼出しごとのbinding／turn失効は維持する。Provider native capabilityは設定済みsandboxに従い、一律無効化を加えない。
+
+Character Memoryは既存append／correct／forget、対象Memoryはappend＋supersedes／forgetを捕捉した書込target内で利用する。Affectは既存appraiseに加え、誤eventのcorrectを背景管理権限で実行できる。通常correctの明示要求契約を弱めず、背景が`explicitUserRequest=true`を捏造する方式を採らない。自然な感情変化は新appraisalと区別し、session／relationship resetは明示指示のまま背景へ付与しない。
+
+従前の登録のみの操作上限、専用の定義／Affect材料取得、Graph／Glossaryの一律除外、背景訂正の明示要求必須はこの範囲で置き換える。汎用上書きAPI、新DB／台帳、既存データの再生成は追加しない。保存済みデータ保護、添付の独立file認可、通常turnの認可、取消後の未確定write拒否を維持する。現行契約は[Background Execution](../design/background-execution.md)と[Prompt Composition](../design/prompt-composition.md)を正本とする。

@@ -2,7 +2,7 @@ import { setTimeout, clearTimeout } from "node:timers";
 import type { Session } from "../../src-shared/session/session-state.js";
 import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
 import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
-import type { MemoryTargetSelector } from "../../src-shared/memory/memory-contract.js";
+import type { BackgroundMemoryTarget } from "../../src-shared/agent-runtime/background-execution-scope.js";
 import { getMemoryRecordingTrigger, type MemoryRecordingPurpose } from "../../src-shared/memory-recording/memory-recording-frequency.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { BackgroundProductionRuntime, BackgroundRuntimeEvent } from "../providers/background-production-runtime.js";
@@ -30,8 +30,7 @@ export class MemoryRecordingController {
     runtime: Pick<BackgroundProductionRuntime, "subscribe" | "prepare" | "calls" | "reportFailure" | "forgetSource">;
     captureSource(source: BackgroundSourceRef): Promise<CapturedBackgroundSource | null>;
     getSettings(): AppSettings | Promise<AppSettings>;
-    resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null;
-    readCharacterDefinition(characterId: string): Promise<string>;
+    resolveAuthority(session: Session): ProviderAgentRuntimeAuthoritySnapshot | null | Promise<ProviderAgentRuntimeAuthoritySnapshot | null>;
     clock?: Clock;
   }) {
     this.clock = deps.clock ?? { now: Date.now, setTimeout: (callback, delay) => setTimeout(callback, delay), clearTimeout: (timer) => clearTimeout(timer) };
@@ -152,33 +151,24 @@ export class MemoryRecordingController {
       }
       return;
     }
-    const authority = this.deps.resolveAuthority(state.session);
+    const authority = await this.deps.resolveAuthority(state.session);
+    if (!this.current(state) || position.dirty) return;
     if (!authority) {
       this.deps.runtime.reportFailure({ purpose, source: state.source, stage: "prepare", error: { code: "BACKGROUND_AUTHORITY_UNAVAILABLE" } });
       return;
     }
-    const character: MemoryTargetSelector = { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
-    const memoryTargets: MemoryTargetSelector[] = purpose === "character-memory" ? [character]
-      : [character, ...authority.allowedProjectIds.map((id): MemoryTargetSelector => ({ owner: "project", scope: "project", project: { type: "id", id } }))];
+    const character: BackgroundMemoryTarget = { owner: "character", scope: "character", character: { type: "id", id: authority.characterId } };
+    const memoryTargets: BackgroundMemoryTarget[] = purpose === "character-memory" ? [character]
+      : [character, ...authority.allowedProjectIds.map((id): BackgroundMemoryTarget => ({ owner: "project", scope: "project", project: { type: "id", id } }))];
     const lastTerminalId = pending.reduce((latest, turn) => Math.max(latest, turn.id), 0);
     const prepared = await this.deps.runtime.prepare({ purpose, source: state.source, session: state.session,
       memoryTargets });
     if (!this.current(state) || position.dirty || prepared.status !== "ready") return;
     const { scope } = prepared.call.context;
     if (scope.purpose !== "character-memory" && scope.purpose !== "target-memory") throw new Error("Memory purpose preparation returned another purpose.");
-    let characterDefinition: string | undefined;
-    if (scope.purpose === "character-memory") {
-      try { characterDefinition = await this.deps.readCharacterDefinition(authority.characterId); }
-      catch (error) {
-        if (this.current(state)) this.deps.runtime.reportFailure({ purpose, source: state.source, selection: prepared.call.selection, stage: "materials", error });
-        return;
-      }
-      if (!this.current(state) || position.dirty) return;
-    }
     await runBackgroundMemoryRegistration(this.deps.runtime.calls, { ...prepared.call,
       context: { ...prepared.call.context, scope: { ...scope, purpose: scope.purpose } },
       instructionText: prepared.instructionText,
-      characterDefinition,
       materials: "保存済み会話と必要な操作結果は、この実行に接続されたsession_history toolから固定history範囲内で取得できる。",
       onAdmitted: () => { if (this.current(state)) position.lastStarted = lastTerminalId; },
     }).catch((error) => {

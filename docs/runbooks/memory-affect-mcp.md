@@ -31,7 +31,7 @@ Characterのget/search/inspectと一般Memoryの検索・取得・一覧・診�
 
 Character Memoryのcorrect/forgetと一般Memoryのforget/move_entryをユーザーの代理として実行できる。条件は明示target、具体的な理由、idempotency key、変更後のread-backである。一般Memoryのbulk forgetは実行前にdry-runする。
 
-Affectのcorrect/resetは `explicitUserRequest: true` と具体的な `reason` を必要とし、expectedVersionによる競合検証を維持する。
+Affectの通常turnのcorrectと、すべてのresetは `explicitUserRequest: true` と具体的な `reason` を必要とし、expectedVersionによる競合検証を維持する。背景Affectのcorrectは、有効な用途bindingから管理権限を解決するため`explicitUserRequest`を省略できる。通常turnでの省略は拒否し、背景resetは公開・認可しない。
 
 ### 認証とSession binding
 
@@ -109,9 +109,9 @@ title/previewは検索・一覧で本文取得前にも表示されるため、�
 | `forget` | `memory.forget` | target/entryIds/reason/idempotencyKey。dryRunで非変更preview |
 | `move-entry` | `memory.move_entry` | entryId/from/to/reason/idempotencyKey。entry identityを保持 |
 | `context-get` | `character_context.get` | binding必須。任意query、memoryLimit既定3 |
-| `affect-appraise` | `character_affect.appraise` | binding必須。通常はcandidates、任意expectedVersion。背景Affectはdomain値とsourceTurnIdだけのcandidates |
+| `affect-appraise` | `character_affect.appraise` | binding必須。通常はcandidates、任意expectedVersion。背景Affectはdomain値とsourceMessageSeqまたはsourceTurnIdの一方を持つcandidates |
 | `affect-inspect` | `character_affect.inspect` | binding必須。現在Character / Sessionのevent・reset・version |
-| `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/explicitUserRequest/reason/replacement |
+| `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/reason/replacement、通常turnはexplicitUserRequest必須、背景Affect管理では省略可 |
 | `affect-reset` | `character_affect.reset` | binding必須。layer/expectedVersion/explicitUserRequest/reason/resetAt/idempotencyKey |
 | `character-memory-search` | `character_memory.search` | binding必須。query、明示scope、limit既定5 |
 | `character-memory-append-episode` | `character_memory.append_episode` | binding必須。episode/idempotencyKeyまたはepisodes。一括はindex別結果 |
@@ -133,7 +133,7 @@ Session bindingを受け継いだprocessでは、通常CLIをMCP障害の有無�
 '{}' | withmate-memory affect-inspect --stdin
 ```
 
-`affect-correct` / `affect-reset` は明示指示の `explicitUserRequest:true`、具体的なreason、最新expectedVersionを渡す。authorityやCharacter/Session IDは渡さない。`character-memory-correct`のreasonは自由記述、`character-memory-forget`は `user_request`、`incorrect`、`outdated`、`privacy`、`other` のいずれかである。
+通常turnの`affect-correct`と`affect-reset`は明示指示の `explicitUserRequest:true`、具体的なreason、最新expectedVersionを渡す。背景Affectの`affect-correct`は明示指示を捏造せず、管理権限をbindingから解決する。authorityやCharacter/Session IDは渡さない。`character-memory-correct`のreasonは自由記述、`character-memory-forget`は `user_request`、`incorrect`、`outdated`、`privacy`、`other` のいずれかである。
 
 `--fallback-from mcp` は通常CLIの開始条件ではなく、MCPの実transport障害後に同じ要求を明示的に再照合する限定経路である。MCP initializeと `tools/list` の正常送出後、serverが `details.fallbackEligible:true` を返した場合だけ使用する。同じruntime generation、binding、current turn、method/path/bodyへ発行された短命admissionをconsumeし、接続selectorやcaller identityを受け付けない。
 
@@ -142,6 +142,37 @@ structured domain error、authority拒否、version/idempotency conflict、migra
 writeの `effect:unknown` は保存結果不明を表す。idempotent writeは入力とkeyを変えず再照合する。`memory.get_file` / `memory.export_files` は非idempotentな出力操作であり、このfallbackでは自動再試行せず、出力先をread-onlyで確認して明示的な復旧判断を行う。
 
 ## Errorと再試行
+
+MCPとCLIは、公開入力schemaでの拒否を`withmate-memory-v1`の`WITHMATE_MEMORY_INVALID_INPUT`で返す。`error.details.tool`は公開tool名、`error.details.issues`は検証code・fieldの`path`（object keyとarray indexの配列）・message・必要な制約を示す。型は`expected`、範囲は`minimum` / `maximum`と`inclusive`、選択値は`values`、余剰fieldは`keys`で確認する。入力値全体、secret、stackは返さない。schemaの診断messageへ入力値を埋め込まない。
+
+unionの`invalid_union`は`alternatives`に各候補の`issues`を持つ。各候補内の条件はすべて満たす必要があり、候補間は代替関係である。子issueの`path`も入力rootからの絶対位置で、どちらも必須という意味にはしない。判別fieldがどの候補にも一致しない場合は、`discriminator`と`options`でfield名と選択値を示す。例えばCharacter episodeで`observedFact`と`characterObservation`が両方ない場合は次の診断になる。
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "error": {
+    "code": "WITHMATE_MEMORY_INVALID_INPUT",
+    "message": "Invalid arguments for tool character_memory.append_episode. See error.details.issues.",
+    "retryable": false,
+    "conversationMayContinue": true,
+    "effect": "none",
+    "details": {
+      "tool": "character_memory.append_episode",
+      "issues": [{
+        "code": "invalid_union",
+        "path": ["episode"],
+        "message": "Input must satisfy one of the alternatives.",
+        "alternatives": [
+          { "issues": [{ "code": "invalid_type", "path": ["episode", "observedFact"], "message": "Invalid input: expected string, received undefined", "expected": "string" }] },
+          { "issues": [{ "code": "invalid_type", "path": ["episode", "characterObservation"], "message": "Invalid input: expected string, received undefined", "expected": "string" }] }
+        ]
+      }]
+    }
+  }
+}
+```
+
+MCPでは同じJSONをtextと`structuredContent`に入れ、`isError:true`を返す。CLIの終了codeはapiError（3）。この拒否ではruntimeへdispatchせず、保存効果もfallback権限も発生しない。入力を修正して呼び直す。未知・非公開toolやJSON-RPC自体の不正はMCP protocolの拒否として扱い、domain・authority・storageの失敗は各operationの既存errorを確認する。
 
 - `invalid_input`、`unknown_character`、`unknown_scope`、`authority_denied`: request、保存済みidentity、authorityを直してから再試行する。
 - `version_conflict`: `character_context.get`または`affect-inspect`で最新versionを読み、意図を再評価して新しい`expectedVersion`を使う。状態全体を上書きしない。
@@ -167,7 +198,7 @@ Memoryは会話Agentが必要と判断したときに既存MCP／CLIで検索・
 
 Agentが記録する意味のある感情変化を認識した場合は、通常turn中にruntime binding付きの`character_affect.appraise`で保存する。感情が後で解消、反転、減衰しても先行eventは残す。具体的なeventがないturnでMCP appraisalを儀式的に呼ぶ必要はない。
 
-背景Affectの`appraise`候補はlayer・targetType・targetId・family・value・intensity・reason・evidenceと、許可範囲の保存済みMain Turnを指す`sourceTurnId`を使う。occurredAt・schemaVersion・idempotencyKey・memoryEpisode・caller identityを指定せず、expectedVersionも送らない。アプリがsourceの終端時刻とownerを検証して保存入力を確定する。変化なしなら登録toolを呼ばない。背景呼出は毎回新規keyを割り当てるため冪等ではなく、結果不明時の自動再送・補償を行わない。tool全体の`idempotentHint`もfalseとする。本文編集と実行範囲は[背景実行](../design/background-execution.md#affect登録入力とmain保存)を参照する。
+背景Affectの`appraise`候補はlayer・targetType・targetId・family・value・intensity・reason・evidenceと、根拠の保存済みuser／assistant messageの`sourceMessageSeq`を使う。`session_history`のseqをそのまま渡し、アプリが実Main／Auxiliaryの保存済み終端Turnと時刻へ解決する。Turn対応なしのmessageや許可範囲外・未完了Turnは拒否し、周辺・最新Turnへ代用しない。`sourceTurnId`による直接指定も利用できるが、両参照の併用・参照なしは拒否する。occurredAt・schemaVersion・idempotencyKey・memoryEpisode・caller identityを指定せず、expectedVersionも送らない。アプリがsourceの終端時刻とownerを検証して保存入力を確定する。変化なしなら登録toolを呼ばない。背景呼出は毎回新規keyを割り当てるため冪等ではなく、結果不明時の自動再送・補償を行わない。tool全体の`idempotentHint`もfalseとする。本文編集と実行範囲は[背景実行](../design/background-execution.md#affect登録入力と会話owner)を参照する。
 
 通常turnの後続appraisalには直前の成功応答で返されたversionを渡す。別時点または別の根拠を持つeventはfamily、target、label、意味が似ていても新しいkeyを使う。
 

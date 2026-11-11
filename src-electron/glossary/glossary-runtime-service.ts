@@ -36,6 +36,7 @@ import {
 } from "./glossary-proactive-turn.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import type { SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 
 type BindingRegistry = {
   resolve(
@@ -54,9 +55,11 @@ export type GlossaryRuntimeServiceDeps = {
   bindingRegistry: BindingRegistry;
   resolveActorSession: (
     sessionId: string,
+    sourceKind?: "main" | "auxiliary",
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
   getProactiveCreateLimit: () => Promise<number | null | undefined> | number | null | undefined;
   providerAgentRuntimeTurns: ProviderAgentRuntimeTurnCoordinator;
+  validateBackgroundSource?: (scope: SessionHistoryReadScope) => Promise<boolean>;
 };
 
 type AuthorizedCheckout = {
@@ -159,6 +162,7 @@ export class GlossaryRuntimeService {
   readonly #getProactiveCreateLimit: GlossaryRuntimeServiceDeps["getProactiveCreateLimit"];
   readonly #proactiveTurns: GlossaryProactiveTurnCoordinator;
   readonly #providerTurns: ProviderAgentRuntimeTurnCoordinator;
+  readonly #validateBackgroundSource: GlossaryRuntimeServiceDeps["validateBackgroundSource"];
 
   constructor(deps: GlossaryRuntimeServiceDeps) {
     this.#applicationService = deps.applicationService;
@@ -167,6 +171,7 @@ export class GlossaryRuntimeService {
     this.#getProactiveCreateLimit = deps.getProactiveCreateLimit;
     this.#proactiveTurns = new GlossaryProactiveTurnCoordinator(deps.providerAgentRuntimeTurns);
     this.#providerTurns = deps.providerAgentRuntimeTurns;
+    this.#validateBackgroundSource = deps.validateBackgroundSource;
   }
 
   async beginProviderTurn(
@@ -225,11 +230,12 @@ export class GlossaryRuntimeService {
     }
     const mutation = ["create", "create_batch", "update", "delete"].includes(operation);
     let turnAdmission: RuntimeTurnAdmission | undefined;
-    if (capturedBinding && (request.turnCapability || mutation)) {
+    if (capturedBinding && (request.turnCapability || mutation || capturedBinding.backgroundScope)) {
       const admitted = this.#providerTurns.admit({
         actorSessionId: capturedBinding.actorSessionId,
         providerId: capturedBinding.providerId,
         turnCapability: request.turnCapability,
+        ...(capturedBinding.backgroundScope ? { bindingId: capturedBinding.bindingId } : {}),
       });
       if (!admitted.ok) {
         return this.#respond(runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Glossary operation requires the captured provider Session turn."));
@@ -243,6 +249,7 @@ export class GlossaryRuntimeService {
             actorSessionId: capturedBinding.actorSessionId,
             providerId: capturedBinding.providerId,
             turnCapability: request.turnCapability,
+            ...(capturedBinding.backgroundScope ? { bindingId: capturedBinding.bindingId } : {}),
           });
           return current.ok
             && current.binding.bindingId === capturedBinding.bindingId
@@ -285,6 +292,11 @@ export class GlossaryRuntimeService {
       }
       return current.target;
     };
+    const respondRead = async (value: GlossaryRuntimeEnvelope<object>): Promise<AgentRuntimeExtensionResponse> => {
+      if (binding?.backgroundScope && !await guard()) return this.#respond(runtimeError(
+        "GLOSSARY_SESSION_BINDING_INVALID", "Captured background authority is no longer active."));
+      return this.#respond(value);
+    };
 
     switch (operation) {
       case "list_targets": {
@@ -292,19 +304,19 @@ export class GlossaryRuntimeService {
         const checkoutTarget: GlossaryCheckoutTarget = binding && checkoutId
           ? { checkoutId, selector: { kind: "checkout", checkoutId }, isPrimary: true, ...display }
           : { selector: { kind: "repository", path: target.rootPath }, isPrimary: false, ...display };
-        return this.#respond(runtimeEnvelope({ ok: true, targets: [checkoutTarget] }));
+        return respondRead(runtimeEnvelope({ ok: true, targets: [checkoutTarget] }));
       }
       case "list": {
         const input = glossaryOperationRequestSchemas.list.parse(request.body);
-        return this.#respond(runtimeEnvelope(await this.#applicationService.list(target, input)));
+        return respondRead(runtimeEnvelope(await this.#applicationService.list(target, input)));
       }
       case "search": {
         const input = glossaryOperationRequestSchemas.search.parse(request.body);
-        return this.#respond(runtimeEnvelope(await this.#applicationService.search(target, input)));
+        return respondRead(runtimeEnvelope(await this.#applicationService.search(target, input)));
       }
       case "get": {
         const input = glossaryOperationRequestSchemas.get.parse(request.body);
-        return this.#respond(runtimeEnvelope(await this.#applicationService.get(target, input.termOrAlias)));
+        return respondRead(runtimeEnvelope(await this.#applicationService.get(target, input.termOrAlias)));
       }
       case "create": {
         const input = glossaryOperationRequestSchemas.create.parse(request.body);
@@ -352,7 +364,7 @@ export class GlossaryRuntimeService {
         }, guard)));
       }
       case "validate":
-        return this.#respond(runtimeEnvelope(await this.#applicationService.validate(target)));
+        return respondRead(runtimeEnvelope(await this.#applicationService.validate(target)));
     }
   }
 
@@ -420,11 +432,16 @@ export class GlossaryRuntimeService {
         ),
       };
     }
-    const actorSession = await this.#resolveActorSession(resolved.binding.actorSessionId);
+    const background = resolved.binding.backgroundScope;
+    if (background && !await this.#validateBackgroundSource?.(background.history)) {
+      return { error: runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Background source authority is no longer active.") };
+    }
+    const actorSession = await this.#resolveActorSession(resolved.binding.actorSessionId, background?.history.source.kind);
     if (
       !actorSession
       || actorSession.id !== resolved.binding.actorSessionId
-      || actorSession.providerId !== resolved.binding.providerId
+      || (!resolved.binding.backgroundScope && actorSession.providerId !== resolved.binding.providerId)
+      || (background && actorSession.characterId !== resolved.binding.authoritySnapshot.characterId)
       || !actorSession.workspacePath
     ) {
       return { error: runtimeError("GLOSSARY_SESSION_BINDING_INVALID", "Actor Session binding is no longer valid.") };

@@ -134,15 +134,15 @@ Codex stream の event-level 診断ログは通常運用では出さない。
 
 ## Background Failure Log Policy
 
-背景三用途の失敗だけを`userData/logs/background-failures.jsonl`へ1行1失敗のJSONLで同期追記する。既存`AppLogService`の書式・directory作成を使い、このinstanceだけ`rotation: false`にする。容量・日数による回転・削除・起動時切詰めをせず、再生成したloggerも既存ファイルへ追記する。通常`withmate.jsonl`の5MiB・5ファイルは変更せず、通常世代の整理は専用ファイルに触れない。
+背景三用途の実行自体の失敗と、操作エラーを含む実行の診断だけを`userData/logs/background-failures.jsonl`へ1行1呼出のJSONLで同期追記する。既存`AppLogService`の書式・directory作成を使い、このinstanceだけ`rotation: false`にする。容量・日数による回転・削除・起動時切詰めをせず、再生成したloggerも既存ファイルへ追記する。既存行は変更しない。通常`withmate.jsonl`の5MiB・5ファイルは変更せず、通常世代の整理は専用ファイルに触れない。
 
-共通項目に加え、用途、実sourceのkind／ID、失敗段階と分類code／reason、取得済みProvider／Model／Depthと解決できた権限を記録する。開始済みの実行では既存binding IDを実行識別子とし、固定scope、開始／終了時刻、全体の失敗結果と操作列を含める。準備・材料取得段階の未発行IDや未取得値は推測しない。
+開始前の失敗は`background.execution.failed`のerrorとして、用途、実sourceのkind／ID、失敗段階と分類code／reason、取得済みProvider／Model／Depthと解決できた権限を記録する。開始済みの終端診断は`background.execution.diagnostic`とし、既存binding IDを実行識別子に、固定scope、開始／終了時刻、`execution.outcome`（completed／failed／canceled）、実行自体のfailureと操作列を含める。実行自体の失敗はerror、操作エラーを含む正常終了・取消はwarnにする。準備・材料取得段階の未発行IDや未取得値は推測しない。
 
 操作列は要求／応答の順序、対応する要求ID、operation／tool名、transport、境界、時刻と成否を持つ。MCP protocol境界と、HTTP内の履歴read／Memory read／登録の境界を分け、それぞれの要求IDで応答を対応付ける。実行IDとcanonical operationは共通とする。失敗診断には最初の原因だけでなく後続操作も含め、登録応答から保存ID・owner／scope・effect・replay等を選別する。部分失敗の応答に含まれる保存済みprefixも識別情報だけを残す。登録成功の応答は保存効果を示すが、実行全体の成功や取りこぼしのない処理を証明しない。
 
-`diagnostic`は実エラーのcode／message、field、検証path・期待条件、原因のcause／stack等を選別して保持する。Character／Affect保存で公開エラーへ変換される前の例外も既存admission経由でHTTPへ伝え、公開応答に含めず診断へ残す。既知のbinding／transport secretには既存redactorを使い、認証header、credential項目、secret付きURL等も秘匿化する。ProviderのpartialResult、会話本文・prompt・tool引数・履歴やMemoryの本文・環境変数全文は投影しない。文字列切詰めを秘匿化とは扱わない。専用loggerは`backgroundFailureDiagnostics: true`でこの選別済み`background.execution.failed`の`data`だけに通常の4000字／12000字上限を適用せず、原因情報を保持する。他kindと通常loggerの上限は維持する。
+`diagnostic`は実エラーのcode／message、field、検証path・期待条件、原因のcause／stack等を選別して保持する。Character／Affect保存で公開エラーへ変換される前の例外も既存admission経由でHTTPへ伝え、公開応答に含めず診断へ残す。既知のbinding／transport secretには既存redactorを使い、認証header、credential項目、secret付きURL等も秘匿化する。ProviderのpartialResult、会話本文・prompt・tool引数・履歴やMemoryの本文・環境変数全文は投影しない。文字列切詰めを秘匿化とは扱わない。専用loggerは`backgroundFailureDiagnostics: true`で選別済みの`background.execution.failed`と`background.execution.diagnostic`の`data`だけに通常の4000字／12000字上限を適用せず、原因情報を保持する。他kindと通常loggerの上限は維持する。
 
-prepare、戻り値の`failed`、捕捉した例外、bound MCP／CLIで確定した操作失敗を対象とする。呼出しの終端を共通境界で一度記録し、用途controllerから同じ結果を再記録しない。開始・正常終了・正常な保存対象なし・未設定での正常な非実行・通常取消は記録せず、正常実行の一時操作列も終了時に解放する。途中の確定済みMemory／Affectを後続失敗で巻き戻さず、失敗を保存対象なしへ置換しない。失敗後に登録できても全体結果は失敗を維持する。
+prepare、戻り値の`failed`、捕捉した例外、bound MCP／CLIで確定した操作エラーを対象とする。呼出しの終端を共通境界で一度記録し、用途controllerから同じ結果を再記録しない。操作エラーのない正常終了・登録不要終了・通常取消、未設定での正常な非実行は記録せず、一時操作列も終了時に解放する。途中の確定済みMemory／Affectを後続失敗で巻き戻さず、操作エラーを保存対象なしへ置換しない。後続で登録できても拒否の履歴を消さず、全拒否でAgentが正常終了しても保存成功とは扱わない。終了状態はAgent呼出・開始処理・取消の結果であり、操作結果や保存効果は操作列から別に確認する。
 
 専用writeが失敗しても、元の失敗理由・保存効果・前景会話の成否を変更せず、既存の診断出力へ渡す。再送queue、無制限buffer、永続実行履歴DB、重複排除台帳は持たない。ログviewer・通知・保持設定を追加せず、利用者は既存のログフォルダを開く入口からファイルを確認する。
 

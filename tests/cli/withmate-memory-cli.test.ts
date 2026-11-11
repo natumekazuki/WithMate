@@ -1567,7 +1567,7 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
   // claim = "validateはinvalid requestをJSON errorで返す"
   // oracle = { type = "contract", ref = "docs/runbooks/development-workflow.md#MCPとCLIの機能・操作契約" }
   // fault = "validateはinvalid requestをJSON errorで返すという公開契約に反する結果を返す"
-  // observable = "apiError終了code、WITHMATE_MEMORY_INVALID_INPUT、kindを示すmessage、effect none"
+  // observable = "apiError終了code、WITHMATE_MEMORY_INVALID_INPUT、kindを示すissue path、effect none"
   // observation_boundary = "public-boundary"
   // scope = "Memory CLI public input and runtime exchange"
   // lifecycle = "permanent"
@@ -1590,7 +1590,7 @@ it("stale discovery endpointが応答しない場合はtimeoutして共通transp
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
     assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_INVALID_INPUT");
-    assert.match(stdout.json().error.message, /kind/);
+    assert.ok(stdout.json().error.details.issues.some((issue: { path: string[]; code: string }) => issue.path[0] === "kind" && issue.code === "invalid_value"));
     assert.equal(stdout.json().error.effect, "none");
   });
 

@@ -22,6 +22,7 @@ V6 foundationは次を成立させる。
 - V6 Memory に紐づく暗号化 file object / quota / export / GC の拡張設計は`docs/design/v6-memory-protected-objects.md`を参照する。
 - provider runtime boundaryは`docs/design/provider-adapter.md`へ反映する。
 - current保存構造の棚卸しは`docs/design/database-schema.md`を参照する。
+- 背景AgentによるMemory管理・発火・用途別権限は[Background Execution](background-execution.md)を参照する。参照は通常認可範囲、訂正・忘却を含む書込は捕捉した用途別target内で既存操作を利用する。
 
 ## Product Principles
 
@@ -38,8 +39,6 @@ foundationでは次を扱わない。
 - Memoryの毎turn prompt常設注入
 - mutableなSession working state管理
 - session summary / next actionsの自動更新
-- turn完了後の自動Memory抽出
-- background Memory generation
 - Mate Profile / Growthの復活
 - Character definitionの自動更新
 - Character Stream / Monologue連携
@@ -73,6 +72,7 @@ CLI/MCPの公開操作、input schema、handler、errorは`src-electron/platform
 
 - provider共通MCPをagent-facing entrypointとし、initialize instructionsと`tools/list`でoperation contractを公開する。
 - agent-facing targetはactor-relative schemaを使い、user / Character / Session identityを受け付けない。runtime bindingがactor Session、Character、user、許可Projectを解決する。
+  - 通常binding、背景authority、Memory管理targetのProject IDは、Memory storage WorkerでworkspaceのProject keyから解決する。既存keyには保存済みIDを使い、新規Gitには初回保存用のcandidate IDを使う。参照だけではProjectを登録せず、非Git workspaceにはProject authorityを付与しない。MainはDBを直接開かず、解決中のruntime generation切替・maintenanceでは旧結果を利用しない。
 - `withmate-memory` Skillは配布、同期、検査しない。Memory運用方針をprovider instructionやsystem promptへ複製しない。
 - CLIもMCPもlocalhost APIを呼ぶthin adapterであり、ローカルruntime認証を維持する。通常CLIはMCP障害の有無に依存しない。
 - Character context / Affect / Character所有Memoryはbindingを要求し、現在Character / Sessionと許可Projectを解決する。一般user-global / Project Memoryは明示targetがあればbindingなしでも利用できる。binding提示時は許可範囲・失効を検証し、無効bindingを無視してunboundへ降格しない。
@@ -625,6 +625,8 @@ V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmat
 ### Target resolutionと診断範囲
 
 projectの絶対pathはruntime側でGit repositoryへ解決する。repository subdirectoryでも、root / common dir / remoteからproject scopeを決定する。同じrepositoryの別worktreeは同一project scopeとして扱う。relative pathを受け付けない。owner / scopeのallowlist、entry access、mutation permissionはapplication serviceで再検証する。
+
+Projectの許可とDB登録済み状態を区別する。未登録のpath readはrepositoryから算出したIDへ解決して空として返し、scope行を作らない。bindingで許可された未登録IDは、実actor SessionのWorkspaceから同じIDを解決できる場合だけ既存candidateを使う。成功した初回append/moveはそのadmissionを既存保存transactionへ渡す。任意IDの不存在や許可外targetを、空の正常結果へ置換しない。
 
 Session bindingによるtarget inventory・audit・largest entry詳細の権限絞り込みはpaginationとcursor生成より前に行う。bound scopeは現在Character・許可Project・共有user-globalであり、記憶を作成したSessionだけに狭めない。`characters`は現在Characterのid/name/descriptionのみを返し、renderer metadataは返さない。
 

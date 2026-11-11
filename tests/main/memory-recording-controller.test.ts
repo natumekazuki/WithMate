@@ -15,6 +15,7 @@ async function settle() { for (let i = 0; i < 12; i++) await setImmediate(); }
 function setup() {
   let now = 0, failCatalog = false;
   let catalogGate: Promise<void> | undefined;
+  let authorityGate: Promise<void> | undefined;
   const timers = new Map<ReturnType<typeof setTimeout>, { at: number; callback(): void }>();
   const clock = { now: () => now,
     setTimeout(callback: () => void, delay: number) {
@@ -29,8 +30,12 @@ function setup() {
   const agents: BackgroundAgentInput[] = [], releases: (() => void)[] = [], errors: unknown[] = [];
   let failAgent = false;
   const capture = async (source: BackgroundSourceRef) => structuredClone(sources.get(JSON.stringify([source.kind, source.sessionId])) ?? null);
-  const authority = (session: { characterId: string }) => ({ userId: "local-user" as const, characterId: session.characterId, allowedProjectIds: ["project"] });
-  const runtime = new BackgroundProductionRuntime({ executions, onFailure: (failure) => errors.push(failure), runAgent: async (input) => {
+  const authority = async (session: { characterId: string }) => {
+    await authorityGate;
+    return { userId: "local-user" as const, characterId: session.characterId, allowedProjectIds: ["project"] };
+  };
+  const runtime = new BackgroundProductionRuntime({ executions, onFailure: (failure) => errors.push(failure),
+    onExecutionDiagnostic: (diagnostic) => errors.push(diagnostic), runAgent: async (input) => {
     agents.push(input); if (failAgent) throw new Error("Agent failed"); await new Promise<void>((done) => releases.push(done));
   }, getAppSettings: () => settings, getModelCatalog: async () => {
     await catalogGate;
@@ -39,14 +44,8 @@ function setup() {
       models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] };
   }, captureSource: capture, resolveAuthority: authority,
     sourceKinds: { "character-memory": ["main", "auxiliary"], "target-memory": ["main", "auxiliary"] } });
-  const definitionReads: string[] = [];
-  let failDefinition = false;
   const controller = new MemoryRecordingController({ runtime, captureSource: capture, getSettings: () => settings,
-    resolveAuthority: authority, readCharacterDefinition: async (characterId) => {
-      definitionReads.push(characterId);
-      if (failDefinition) throw new Error("Character definition unavailable");
-      return `Definition of ${characterId}: 一人称はうち。`;
-    }, clock });
+    resolveAuthority: authority, clock });
   runtime.start(); controller.start();
   function source(kind: "main" | "auxiliary", id: string, characterId = "character") {
     const session = { ...buildNewSession({ taskTitle: id, workspaceLabel: "fixture", workspacePath: "C:/fixture", branch: "test",
@@ -71,51 +70,79 @@ function setup() {
       running(running: boolean) { runtime.publish({ kind: "run_state", source: ref, session, running }); },
       terminal(id: number, phase?: "completed" | "failed" | "canceled") { runtime.publish(add(id, phase)); } };
   }
-  return { settings, runtime, controller, executions, source, agents, errors, timers, definitionReads,
+  return { settings, runtime, controller, executions, source, agents, errors, timers,
     releaseAgents() { for (const release of releases.splice(0)) release(); },
-    setFailDefinition(value: boolean) { failDefinition = value; },
     setFailAgent(value: boolean) { failAgent = value; }, setFailCatalog(value: boolean) { failCatalog = value; },
     blockCatalog() { let release!: () => void; catalogGate = new Promise<void>((done) => { release = done; }); return () => { catalogGate = undefined; release(); }; },
+    blockAuthority() { let release!: () => void; authorityGate = new Promise<void>((done) => { release = done; }); return () => { authorityGate = undefined; release(); }; },
     async advance(ms: number) { now += ms; for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.callback(); } await settle(); },
     async close() { runtime.stop(); for (const release of releases) release(); await settle(); } };
 }
 
 // @test-value v2
 // kind = "contract"
-// claim = "Character Memoryは実Main/AuxiliaryのCharacter定義を開始入力へ渡し、取得失敗時は開始せず未開始範囲を保持する"
+// claim = "非同期authority解決中に解放したsourceを実行せず、存続sourceは解決されたProject IDを管理targetへ渡す"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
+// fault = "未awaitのauthorityを使うか、source解放後の遅延結果で背景実行を開始する"
+// observable = "実背景runtimeのAgent開始sourceとmemoryTargets、解放sourceの開始件数"
+// observation_boundary = "consumer"
+// scope = "Memory controller async authority and source lifecycle"
+// lifecycle = "permanent"
+// impact = "Project記憶管理が失敗するか削除済み会話から管理操作を開始する"
+// distinction = "既存頻度testの即時authorityではDB Worker応答待ち中のsource解放を確認できない"
+// @end-test-value
+test("authority待機中のsource解放を守り正規Project targetを渡す", async () => {
+  const f = setup();
+  const release = f.blockAuthority();
+  try {
+    f.settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
+    const removed = f.source("main", "removed");
+    const active = f.source("main", "active");
+    removed.terminal(1); active.terminal(2); await settle();
+    assert.equal(f.agents.length, 0);
+    f.controller.forget("main", "removed");
+    release(); await settle();
+    assert.equal(f.errors.length, 0);
+    assert.equal(f.agents.length, 2);
+    assert.ok(f.agents.every((agent) => agent.scope.history.source.sessionId === "active"));
+    const target = f.agents.find((agent) => agent.scope.purpose === "target-memory")!;
+    assert.ok(target.scope.purpose === "target-memory");
+    assert.deepEqual(target.scope.memoryTargets, [
+      { owner: "character", scope: "character", character: { type: "id", id: "character" } },
+      { owner: "project", scope: "project", project: { type: "id", id: "project" } },
+    ]);
+  } finally { release(); await f.close(); }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Character Memoryの管理targetと履歴sourceは実Main/AuxiliaryのCharacterに一致する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの登録本文と直接登録" }
-// fault = "親Characterの定義をAuxiliaryへ渡すか、取得失敗を空材料へ救済し範囲を消費する"
-// observable = "AgentのCharacter定義・target・history、定義取得ID、materials段階の失敗"
+// fault = "親CharacterをAuxiliaryの管理targetとして渡すか履歴sourceを親へ代用する"
+// observable = "AgentのCharacter targetとhistory source"
 // observation_boundary = "consumer"
 // scope = "Memory controller through real background runtime with distinct Main/Auxiliary Characters"
 // lifecycle = "permanent"
-// impact = "別人格の語りで経験を保存することと定義欠落による経験の取りこぼしを防ぐ"
-// distinction = "型検査と単体入力組立てでは実sourceのCharacter選択と開始位置を検証できない"
+// impact = "別Characterの記憶へ管理操作を行うことを防ぐ"
+// distinction = "型検査と単体入力組立てではcontrollerの実sourceからtargetへの対応を検証できない"
 // @end-test-value
-test("実Characterの定義を渡し取得失敗では開始位置を進めない", async () => {
+test("実Characterの管理targetと履歴sourceをMainとAuxiliaryで分ける", async () => {
   const f = setup();
   try {
     f.settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
     const main = f.source("main", "parent", "main-character");
     const aux = f.source("auxiliary", "aux", "aux-character");
-    f.setFailDefinition(true);
     main.terminal(10); aux.terminal(20); await settle();
-    assert.equal(f.agents.length, 2);
-    assert.ok(f.agents.every((agent) => agent.scope.purpose === "target-memory"));
-    assert.equal(f.errors.length, 2);
-    assert.ok(f.errors.every((error) => (error as { stage: string }).stage === "materials"));
-    f.setFailDefinition(false);
-    f.runtime.publish({ kind: "settings_changed", settings: f.settings }); await settle();
+    assert.equal(f.agents.length, 4);
+    assert.equal(f.errors.length, 0);
     const memories = f.agents.filter((agent) => agent.scope.purpose === "character-memory");
     assert.equal(memories.length, 2);
     for (const agent of memories) {
       const isMain = agent.scope.history.source.kind === "main";
       const characterId = isMain ? "main-character" : "aux-character";
-      assert.ok(agent.userInput.includes(`Definition of ${characterId}: 一人称はうち。`));
       assert.deepEqual(agent.scope.memoryTargets, [{ owner: "character", scope: "character", character: { type: "id", id: characterId } }]);
       assert.equal(agent.scope.history.source.sessionId, isMain ? "parent" : "aux");
     }
-    assert.deepEqual(f.definitionReads.sort(), ["aux-character", "aux-character", "main-character", "main-character"]);
   } finally { await f.close(); }
 });
 

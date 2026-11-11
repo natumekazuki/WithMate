@@ -38,12 +38,15 @@ function targetNotFoundError(field: string): MemoryError {
   };
 }
 
-async function resolveProject(ref: ProjectTargetRef, deps: MemoryV6TargetResolverDeps, field: string): Promise<MemoryV6ProjectContext | MemoryError> {
+async function resolveProject(ref: ProjectTargetRef, principal: MemoryV6Principal, deps: MemoryV6TargetResolverDeps, field: string): Promise<MemoryV6ProjectContext | MemoryError> {
   if (ref.type === "id") {
-    if (deps.resolveProjectById) {
-      return (await deps.resolveProjectById(ref.id)) ?? targetNotFoundError(field);
+    const existing = await deps.resolveProjectById?.(ref.id);
+    if (existing) return existing;
+    if (principal.type === "session_binding" && principal.allowedProjectIds?.includes(ref.id) && principal.workspacePath) {
+      const candidate = await deps.resolveProjectByPath?.(principal.workspacePath);
+      if (candidate?.id === ref.id) return candidate;
     }
-    return { id: ref.id, displayName: ref.id };
+    return deps.resolveProjectById ? targetNotFoundError(field) : { id: ref.id, displayName: ref.id };
   }
   return (await deps.resolveProjectByPath?.(ref.path)) ?? targetNotFoundError(field);
 }
@@ -96,7 +99,7 @@ export async function resolveMemoryV6Target(
   }
 
   if (selector.owner === "project" && selector.scope === "project") {
-    const project = await resolveProject(selector.project, resolutionDeps, "target.project");
+    const project = await resolveProject(selector.project, principal, resolutionDeps, "target.project");
     if ("code" in project) {
       return { ok: false, error: project };
     }
@@ -125,7 +128,7 @@ export async function resolveMemoryV6Target(
   if ("code" in character) {
     return { ok: false, error: character };
   }
-  const project = await resolveProject(selector.project, resolutionDeps, "target.project");
+  const project = await resolveProject(selector.project, principal, resolutionDeps, "target.project");
   if ("code" in project) {
     return { ok: false, error: project };
   }

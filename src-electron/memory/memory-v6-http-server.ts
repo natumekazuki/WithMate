@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 
 import { createMemoryErrorResponse, type MemoryAuditResponse, type MemoryErrorResponse } from "../../src-shared/memory/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
 import { validateMemoryAppendEntriesRequest } from "../../src-shared/memory/memory-validation.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import {
@@ -50,14 +51,16 @@ import {
   WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
 } from "../platform/memory/memory-runtime-exchange.js";
 import type { MemoryV6ProjectContext } from "./memory-v6-context-resolver.js";
-import { resolveMemoryV6Target } from "./memory-v6-context-resolver.js";
+import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
+import type { BackgroundMemoryTarget } from "../../src-shared/agent-runtime/background-execution-scope.js";
+import type { AffectSessionSource } from "../character/character-affect-storage.js";
 import type { BackgroundRegistration } from "../providers/background-registration.js";
 import { BACKGROUND_REGISTRATION_OPERATIONS } from "../../src-shared/agent-runtime/background-operations.js";
 import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { getSessionIncarnationId, isReadOnlySession } from "../../src-shared/session/session-state.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, RuntimeTurnInactiveError, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
-import { backgroundOperationFailure, classifyBackgroundFailure, type BackgroundFailure } from "../providers/background-failure.js";
+import { backgroundOperationFailure, classifyBackgroundFailure } from "../providers/background-failure.js";
 import { sessionHistoryRuntimeOperationByPath } from "../../src-shared/session-history/session-history-contract.js";
 import { glossaryRuntimeOperationByPath } from "../../src-shared/glossary/glossary-operation-schema.js";
 import { backgroundErrorDiagnostic, backgroundOperationResult, type BackgroundOperationObservation } from "../providers/background-diagnostics.js";
@@ -66,7 +69,6 @@ export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
   characterContextService?: CharacterContextApplicationService;
   backgroundRegistration?: BackgroundRegistration;
-  onBackgroundOperationFailure?: (bindingId: string, failure: BackgroundFailure) => void;
   onBackgroundOperation?: (bindingId: string, observation: BackgroundOperationObservation) => void;
   apiSecret: string;
   operatorApiSecret: string;
@@ -103,6 +105,8 @@ export type AgentRuntimeActorSession = {
   providerId: string;
   characterId: string;
   workspacePath?: string;
+  source?: AffectSessionSource;
+  resolveMemoryFileAccess?: (outputPath?: string) => Promise<MemoryFileAccess>;
 };
 
 export type AgentRuntimeExtensionRequest = {
@@ -462,12 +466,13 @@ async function routeCharacterContextRequest(
   route: MemoryV6Route,
   body: unknown,
   transport: CharacterContextTransport,
+  sessionSource?: AffectSessionSource,
 ): Promise<unknown> {
   if (!service) {
     return memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Character context service is unavailable.");
   }
   if (route === "character_context_get") {
-    return service.getContext(body, transport);
+    return service.getContext(body, transport, undefined, sessionSource);
   }
   if (
     transport === "mcp"
@@ -482,16 +487,16 @@ async function routeCharacterContextRequest(
   }
   const authorizedBody = resolveTransportAuthority(body, route, transport);
   if (route === "character_affect_appraise") {
-    return service.appraise(authorizedBody, transport);
+    return service.appraise(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_inspect") {
-    return service.inspectAffect(authorizedBody, transport);
+    return service.inspectAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_correct") {
-    return service.correctAffect(authorizedBody, transport);
+    return service.correctAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_affect_reset") {
-    return service.resetAffect(authorizedBody, transport);
+    return service.resetAffect(authorizedBody, transport, sessionSource);
   }
   if (route === "character_memory_search") {
     return service.searchMemory(body, transport, principal);
@@ -851,6 +856,7 @@ async function resolveAgentBoundRequestBody(
   body: unknown,
   actorSession: AgentRuntimeActorSession,
   authority: ProviderAgentRuntimeAuthoritySnapshot,
+  backgroundAffectManagement = false,
 ): Promise<AgentBodyResult> {
   if (route.startsWith("character_")) {
     if (route === "character_context_metrics") return { ok: true, value: body };
@@ -859,12 +865,13 @@ async function resolveAgentBoundRequestBody(
         return { ok: false, error: agentInputError(route, "body", "Character request body must be an object.") };
       }
       const { explicitUserRequest, ...request } = body as Record<string, unknown>;
-      if (explicitUserRequest !== true || typeof request.reason !== "string" || !request.reason.trim()) {
+      if ((!backgroundAffectManagement && explicitUserRequest !== true)
+        || typeof request.reason !== "string" || !request.reason.trim()) {
         return { ok: false, error: agentInputError(route, "explicitUserRequest", "An explicit user request and concrete reason are required.") };
       }
       return { ok: true, value: applyActorSessionToBody(route, {
         ...request,
-        authority: { kind: "explicit_user_instruction", reason: request.reason },
+        authority: { kind: backgroundAffectManagement ? "background_management" : "explicit_user_instruction", reason: request.reason },
       }, actorSession, authority) };
     }
     if (route === "character_memory_search") {
@@ -1118,14 +1125,12 @@ async function routeResolvedRequest(input: {
     if (failure && operationError !== undefined) {
       failure = { ...failure, diagnostic: backgroundErrorDiagnostic({ errors: failure.diagnostic, cause: operationError }, secrets) };
     }
-    if (binding && failure) input.options.onBackgroundOperationFailure?.(binding.bindingId, failure);
     observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(result) });
     return result;
   } catch (error) {
     const failure = classifyBackgroundFailure(error, stage, "BACKGROUND_OPERATION_FAILED");
     const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
       secrets) };
-    if (binding) input.options.onBackgroundOperationFailure?.(binding.bindingId, safeFailure);
     observe({ phase: "response", outcome: "failure", failure: safeFailure });
     throw error;
   }
@@ -1178,6 +1183,7 @@ async function dispatchResolvedRequest(input: {
           input.route,
           bindingResolution.body,
           transport,
+          bindingResolution.sessionSource,
         )
       : routeServiceRequest(
           input.options.service,
@@ -1208,6 +1214,7 @@ type RouteBindingResolution =
       principal: MemoryV6Principal | null;
       authority: ProviderAgentRuntimeAuthoritySnapshot | null;
       turnAdmission?: RuntimeTurnAdmission;
+      sessionSource?: AffectSessionSource;
       register?: () => Promise<unknown>;
     }
   | { ok: false; error: unknown };
@@ -1400,7 +1407,8 @@ async function resolveRouteAgentRuntimeBinding(input: {
       },
     };
   }
-  const actorSession = await input.options.resolveActorSession?.(binding.actorSessionId, background?.history.source.kind) ?? null;
+  const sessionSource = background?.history.source ?? binding.actorSource;
+  const actorSession = await input.options.resolveActorSession?.(binding.actorSessionId, sessionSource?.kind) ?? null;
   if (
     !actorSession
     || actorSession.id !== resolved.binding.actorSessionId
@@ -1412,39 +1420,60 @@ async function resolveRouteAgentRuntimeBinding(input: {
   if (!authority) {
     return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
   }
+  if (sessionSource && !matchesActorSource(sessionSource, actorSession.source)) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+  }
   const identityField = findCallerIdentityField(input.body, input.route === "character_memory_search");
   if (identityField) {
     return { ok: false, error: agentInputError(input.route, identityField, "Caller identity is not accepted.") };
   }
   if (turnAdmission) runWithRuntimeTurnAdmission(turnAdmission, () => undefined);
-  const targetOptions = background
-    ? { ...input.options, resolveProjectByPath: input.options.resolveKnownProjectByPath }
-    : input.options;
-  const body = await resolveAgentBoundRequestBody(targetOptions, input.route, input.body, actorSession, authority);
+  const body = await resolveAgentBoundRequestBody(input.options, input.route, input.body, actorSession, authority,
+    background?.purpose === "affect" && input.route === "character_affect_correct");
   if (!body.ok) {
     return { ok: false, error: body.error };
   }
   const principal = createSessionBindingMemoryPrincipal(binding, actorSession, authority);
+  if (!background && principal.type === "session_binding" && fileOperationRoutes.has(input.route)) {
+    const request = body.value && typeof body.value === "object" ? body.value as Record<string, unknown> : {};
+    const outputPath = input.route === "get_file" ? request.outputPath : input.route === "export_files" ? request.outputDirectoryPath : undefined;
+    principal.fileAccess = await actorSession.resolveMemoryFileAccess?.(typeof outputPath === "string" ? outputPath : undefined);
+  }
   let register: (() => Promise<unknown>) | undefined;
   if (background && principal.type === "session_binding") {
-    const readTargets = [];
-    for (const captured of background.memoryTargets) {
-      let selector = captured;
-      if (captured.scope === "project") {
-        const project = await resolveAllowedProject(targetOptions, captured.project, authority);
-        if (!project) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
-        selector = { ...captured, project: project.ref };
-      }
-      const target = await resolveMemoryV6Target(selector, principal, input.options, { projectPathResolution: "known" });
-      if (!target.ok) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
-      readTargets.push(target.target);
-    }
-    principal.readTargets = readTargets;
+    principal.sourceKind = background.history.source.kind;
+    const capturedTargets = background.memoryTargets.map(capturedMemoryTarget);
+    principal.readTargets = [
+      capturedMemoryTarget({ owner: "user", scope: "global" }),
+      capturedMemoryTarget({ owner: "character", scope: "character", character: { type: "id", id: authority.characterId } }),
+      ...authority.allowedProjectIds.flatMap((id) => [
+        capturedMemoryTarget({ owner: "project", scope: "project", project: { type: "id", id } }),
+        capturedMemoryTarget({ owner: "character", scope: "project", character: { type: "id", id: authority.characterId }, project: { type: "id", id } }),
+      ]),
+    ];
     principal.fileAccess = background.fileAccess;
     principal.permissions = ["memory.search", "memory.list_entries", "memory.get_entry", "memory.list_tags",
+      "memory.list_targets", "memory.audit", "memory.list_characters", "memory.file_usage",
       ...(background.fileAccess?.exportRoot ? ["memory.get_file", "memory.export_files"] as const : [])];
     const restoresFiles = input.route === "get_file" || input.route === "export_files";
-    if (restoresFiles || BACKGROUND_REGISTRATION_OPERATIONS[background.purpose].operation === agentRuntimeOperationForMemoryRoute(input.route)) {
+    const registrationOperation = BACKGROUND_REGISTRATION_OPERATIONS[background.purpose].operation === agentRuntimeOperationForMemoryRoute(input.route);
+    const managementMutation = ["forget", "character_memory_correct", "character_memory_forget", "character_affect_correct"].includes(input.route);
+    if (!restoresFiles && !registrationOperation && !managementMutation) {
+      const registration = input.options.backgroundRegistration;
+      if (!registration) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+      let source;
+      try {
+        source = await runWithRuntimeTurnAdmission(turnAdmission!, () => registration.readBackgroundSource(background.history));
+      } catch (error) {
+        if (error instanceof RuntimeTurnInactiveError) throw error;
+        return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+      }
+      if (!source || source.session.id !== binding.actorSessionId || source.session.characterId !== authority.characterId
+        || !matchesSessionHistorySource(background.history.source, {
+          incarnationId: getSessionIncarnationId(source.session), ownerIdentity: source.ownerIdentity,
+        })) return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+    }
+    if (restoresFiles || registrationOperation || managementMutation) {
       const registration = input.options.backgroundRegistration;
       const handler = registration?.handlers[background.purpose];
       const denied = (reason: string) => ({ ok: false as const, error: input.route.startsWith("character_")
@@ -1469,16 +1498,16 @@ async function resolveRouteAgentRuntimeBinding(input: {
         || !matchesSessionHistorySource(background.history.source, {
           incarnationId: getSessionIncarnationId(source.session), ownerIdentity: source.ownerIdentity,
         })) return denied("source_denied");
-      if (!restoresFiles && handler) {
+      principal.writeTargets = background.purpose === "affect" ? [] : background.purpose === "character-memory"
+        ? capturedTargets.filter((target) => target.owner.type === "character" && target.owner.id === authority.characterId
+          && target.scope.type === "character") : capturedTargets;
+      if (!restoresFiles && background.purpose !== "affect") principal.permissions = [...principal.permissions, "memory.append", "memory.forget"];
+      if (registrationOperation && handler) {
         const request = body.value as Record<string, unknown>;
         if (input.route === "character_affect_appraise" && Array.isArray(request.candidates)
           && request.candidates.some((candidate) => candidate && typeof candidate === "object" && "memoryEpisode" in candidate)) {
           return denied("linked_episode_forbidden");
         }
-        principal.writeTargets = background.purpose === "affect" ? undefined : background.purpose === "character-memory"
-          ? readTargets.filter((target) => target.owner.type === "character" && target.owner.id === authority.characterId
-            && target.scope.type === "character") : readTargets;
-        principal.permissions = background.purpose === "affect" ? [] : ["memory.append"];
         const registrationBody = input.route.startsWith("character_")
           ? resolveTransportAuthority(body.value, input.route, input.transport) : body.value;
         register = async () => {
@@ -1495,6 +1524,7 @@ async function resolveRouteAgentRuntimeBinding(input: {
     principal,
     authority,
     turnAdmission,
+    ...(sessionSource ? { sessionSource } : {}),
     register,
   };
 }
@@ -1510,9 +1540,29 @@ function createSessionBindingMemoryPrincipal(
     sessionId: binding.actorSessionId,
     providerId: binding.providerId,
     characterId: actorSession.characterId,
+    ...(binding.actorSource ? { sourceKind: binding.actorSource.kind } : {}),
+    ...(actorSession.workspacePath ? { workspacePath: actorSession.workspacePath } : {}),
     ...(authority ? { allowedProjectIds: authority.allowedProjectIds } : {}),
     permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
+}
+
+function matchesActorSource(captured: AffectSessionSource, current?: AffectSessionSource): boolean {
+  return Boolean(current && captured.kind === current.kind && captured.sessionId === current.sessionId
+    && captured.incarnationId === current.incarnationId && (captured.kind !== "auxiliary"
+      || (current.kind === "auxiliary" && captured.parent.sessionId === current.parent.sessionId
+        && captured.parent.incarnationId === current.parent.incarnationId)));
+}
+
+function capturedMemoryTarget(selector: BackgroundMemoryTarget): MemoryV6ResolvedTarget {
+  if (selector.owner === "user") {
+    return { owner: { type: "user", id: "local-user" }, scope: { type: "global", id: "global" } };
+  }
+  if (selector.owner === "project") {
+    return { owner: { type: "project", id: selector.project.id }, scope: { type: "project", id: selector.project.id } };
+  }
+  return { owner: { type: "character", id: selector.character.id }, scope: selector.scope === "project"
+    ? { type: "project", id: selector.project.id } : { type: "character", id: selector.character.id } };
 }
 
 function validateMcpGeneralMutationPolicy(
@@ -2047,13 +2097,11 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           const failure = classifyBackgroundFailure(error, "history", "BACKGROUND_OPERATION_FAILED");
           const safeFailure = { ...failure, diagnostic: backgroundErrorDiagnostic(failure.diagnostic,
             [apiSecret, operatorApiSecret, mcpApiSecret, payload.bindingReference ?? "", payload.turnCapability ?? ""]) };
-          if (backgroundBinding) options.onBackgroundOperationFailure?.(backgroundBinding.bindingId, safeFailure);
           observe({ phase: "response", outcome: "failure", failure: safeFailure });
           throw error;
         }
         if (historyOperation) {
           const failure = backgroundOperationFailure(extensionResponse?.value, "history");
-          if (backgroundBinding && failure) options.onBackgroundOperationFailure?.(backgroundBinding.bindingId, failure);
           observe({ phase: "response", outcome: failure ? "failure" : "success", failure, result: backgroundOperationResult(extensionResponse?.value) });
         }
         if (!extensionResponse) {

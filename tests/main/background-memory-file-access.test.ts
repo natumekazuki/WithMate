@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { it } from "node:test";
 import {
-  BackgroundMemoryFileAccessError,
+  MemoryFileAccessError,
   captureBackgroundMemoryFileAccess,
-  resolveBackgroundMemoryExportPath,
-} from "../../src-electron/memory/background-memory-file-access.js";
+  resolveMemoryExportPath,
+} from "../../src-electron/memory/memory-file-access.js";
 import { inspectMemoryProtectedObjectInputFile, MemoryProtectedObjectImportError, prepareMemoryProtectedObjectFile } from "../../src-electron/memory/memory-protected-object-importer.js";
 import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } from "../../src-electron/memory/memory-protected-object-exporter.js";
 import { MemoryProtectedObjectStore } from "../../src-electron/memory/memory-protected-object-store.js";
@@ -38,7 +38,7 @@ it("captures available roots without creating export directories", async () => {
     const unavailable = await captureBackgroundMemoryFileAccess({ readRoots: [missing], sessionFolderPath: missing, writable: true });
     assert.deepEqual(unavailable, { readRoots: [], exportRoot: null });
     const readOnly = await captureBackgroundMemoryFileAccess({ readRoots: [], sessionFolderPath: directory, writable: false });
-    await assert.rejects(() => resolveBackgroundMemoryExportPath(path.join(directory, "memory-exports", "out.txt"), readOnly), BackgroundMemoryFileAccessError);
+    await assert.rejects(() => resolveMemoryExportPath(path.join(directory, "memory-exports", "out.txt"), readOnly), MemoryFileAccessError);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -96,7 +96,7 @@ it("round-trips scoped attachments through existing encrypted objects without ov
 // claim = "背景取込と単体・複数復元は許可外pathおよびjunctionによる範囲外アクセスをI/O前に拒否する"
 // oracle = { type = "contract", ref = "docs/design/background-execution.md" }
 // fault = "字句pathだけで許可し実体の範囲外fileを読むか出力する"
-// observable = "各境界のBackgroundMemoryFileAccessErrorと未変更の許可外directory"
+// observable = "各境界のMemoryFileAccessErrorと未変更の許可外directory"
 // observation_boundary = "public-boundary"
 // scope = "protected-object-background-file-authorization"
 // lifecycle = "permanent"
@@ -116,16 +116,16 @@ it("rejects outside and junction-escaping input and output at the I/O boundaries
     const fileAccess = await captureBackgroundMemoryFileAccess({ readRoots: [allowed], sessionFolderPath: allowed, writable: true });
     await symlink(outside, path.join(allowed, "linked"), "junction");
     for (const filePath of [source, path.join(allowed, "linked", "secret.txt")]) {
-      await assert.rejects(() => inspectMemoryProtectedObjectInputFile({ path: filePath, summary: "not permitted" }, fileAccess), BackgroundMemoryFileAccessError);
+      await assert.rejects(() => inspectMemoryProtectedObjectInputFile({ path: filePath, summary: "not permitted" }, fileAccess), MemoryFileAccessError);
     }
     let reads = 0;
     const dependencies = { keyStore: { readKey: async () => { reads++; return null; } }, objectStore: { readObject: async () => { reads++; return Buffer.alloc(0); } } };
     const metadata = { objectId: "a".repeat(32), entryId: "mem-denied", keyId: "b".repeat(32), originalBytes: 0, storedBytes: 0, sha256: "", contentType: "", displayName: "" };
     const outputPath = path.join(outside, "out.txt");
-    await assert.rejects(() => exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath, fileAccess }), BackgroundMemoryFileAccessError);
+    await assert.rejects(() => exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath, fileAccess }), MemoryFileAccessError);
     await symlink(outside, fileAccess.exportRoot!, "junction");
-    await assert.rejects(() => exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath: path.join(fileAccess.exportRoot!, "out.txt"), fileAccess }), BackgroundMemoryFileAccessError);
-    await assert.rejects(() => exportMemoryProtectedObjectFiles(dependencies, { metadata: [metadata], outputDirectoryPath: path.join(fileAccess.exportRoot!, "batch"), fileAccess }), BackgroundMemoryFileAccessError);
+    await assert.rejects(() => exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath: path.join(fileAccess.exportRoot!, "out.txt"), fileAccess }), MemoryFileAccessError);
+    await assert.rejects(() => exportMemoryProtectedObjectFiles(dependencies, { metadata: [metadata], outputDirectoryPath: path.join(fileAccess.exportRoot!, "batch"), fileAccess }), MemoryFileAccessError);
     assert.equal(reads, 0);
     assert.deepEqual(await readdir(outside), ["secret.txt"]);
   } finally {

@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { BackgroundMemoryFileAccess } from "../../src-shared/agent-runtime/background-execution-scope.js";
-import { BackgroundMemoryFileAccessError, resolveBackgroundMemoryExportPath } from "./background-memory-file-access.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
+import { MemoryFileAccessError, resolveMemoryExportPath } from "./memory-file-access.js";
 import { assertRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
 
 import {
@@ -31,7 +31,7 @@ export type ExportMemoryProtectedObjectFileDependencies = {
 export type ExportMemoryProtectedObjectFileInput = {
   metadata: MemoryV6ProtectedObjectExportMetadata;
   outputPath: string;
-  fileAccess?: BackgroundMemoryFileAccess;
+  fileAccess?: MemoryFileAccess;
 };
 
 export type ExportMemoryProtectedObjectFileResult = {
@@ -41,7 +41,7 @@ export type ExportMemoryProtectedObjectFileResult = {
 export type ExportMemoryProtectedObjectFilesInput = {
   metadata: readonly MemoryV6ProtectedObjectExportMetadata[];
   outputDirectoryPath: string;
-  fileAccess?: BackgroundMemoryFileAccess;
+  fileAccess?: MemoryFileAccess;
 };
 
 export type ExportMemoryProtectedObjectFilesResult = {
@@ -59,7 +59,7 @@ export async function exportMemoryProtectedObjectFile(
   input: ExportMemoryProtectedObjectFileInput,
 ): Promise<ExportMemoryProtectedObjectFileResult> {
   assertRuntimeTurnAdmission();
-  if (input.fileAccess) await resolveBackgroundMemoryExportPath(input.outputPath, input.fileAccess);
+  if (input.fileAccess) await resolveMemoryExportPath(input.outputPath, input.fileAccess);
   assertExportMetadataWithinReadLimit(input.metadata);
   const key = await dependencies.keyStore.readKey(input.metadata.keyId);
   if (!key) {
@@ -91,13 +91,13 @@ export async function exportMemoryProtectedObjectFile(
   assertRuntimeTurnAdmission();
   let outputPath = input.outputPath;
   if (input.fileAccess) {
-    outputPath = await resolveBackgroundMemoryExportPath(outputPath, input.fileAccess);
+    outputPath = await resolveMemoryExportPath(outputPath, input.fileAccess);
     assertRuntimeTurnAdmission();
     await mkdir(path.dirname(outputPath), { recursive: true });
     try {
-      outputPath = await resolveBackgroundMemoryExportPath(outputPath, input.fileAccess);
+      outputPath = await resolveMemoryExportPath(outputPath, input.fileAccess);
     } catch (error) {
-      if (error instanceof BackgroundMemoryFileAccessError) throw new BackgroundMemoryFileAccessError("partial");
+      if (error instanceof MemoryFileAccessError) throw new MemoryFileAccessError("partial");
       throw error;
     }
   }
@@ -136,7 +136,7 @@ export async function exportMemoryProtectedObjectFiles(
 ): Promise<ExportMemoryProtectedObjectFilesResult> {
   assertRuntimeTurnAdmission();
   const outputDirectoryPath = input.fileAccess
-    ? await resolveBackgroundMemoryExportPath(input.outputDirectoryPath, input.fileAccess)
+    ? await resolveMemoryExportPath(input.outputDirectoryPath, input.fileAccess)
     : input.outputDirectoryPath;
   assertRuntimeTurnAdmission();
   await mkdir(outputDirectoryPath, { recursive: true });
@@ -147,7 +147,7 @@ export async function exportMemoryProtectedObjectFiles(
     try {
       result = await exportMemoryProtectedObjectFile(dependencies, { metadata, outputPath, fileAccess: input.fileAccess });
     } catch (error) {
-      if (error instanceof BackgroundMemoryFileAccessError) throw new BackgroundMemoryFileAccessError("partial");
+      if (error instanceof MemoryFileAccessError) throw new MemoryFileAccessError("partial");
       if (error instanceof RuntimeTurnInactiveError) {
         // The output directory and possibly earlier files have already been created.
         throw new Error("Memory file export stopped after a partial effect.", { cause: error });

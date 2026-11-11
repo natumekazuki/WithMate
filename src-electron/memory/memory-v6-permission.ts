@@ -1,6 +1,6 @@
 import type { MemoryError, MemoryPermission } from "../../src-shared/memory/memory-contract.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
-import type { BackgroundMemoryFileAccess } from "../../src-shared/agent-runtime/background-execution-scope.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
 
 export type MemoryV6LocalUserPrincipal = {
   type: "local_user";
@@ -13,15 +13,17 @@ export type MemoryV6SessionBindingPrincipal = {
   type: "session_binding";
   bindingIdHash: string;
   sessionId: string;
-  /** Conversation kind captured by a validated registration handler; omitted for ordinary Main callers. */
+  /** Conversation kind captured by a trusted binding or validated registration handler. */
   sourceKind?: "main" | "auxiliary";
   providerId: string;
   characterId: string;
   allowedProjectIds?: readonly string[];
-  /** Present only for captured background reads; an empty set permits no target. */
+  /** Trusted actor Workspace, used to resolve an authorized Project before its first save. */
+  workspacePath?: string;
+  /** Normal read authority captured for background execution; an empty set permits no target. */
   readTargets?: readonly MemoryV6ResolvedTarget[];
-  fileAccess?: BackgroundMemoryFileAccess;
-  /** Captured registration targets, present only after purpose/source/handler authorization. */
+  fileAccess?: MemoryFileAccess;
+  /** Captured management targets, present only after purpose/source/handler authorization. */
   writeTargets?: readonly MemoryV6ResolvedTarget[];
   permissions: readonly MemoryPermission[];
 };

@@ -63,6 +63,8 @@ recordの作成・更新時には何の要求・判断・活動・観測に関�
 
 `apply`は`graphOwner`を受け付けず、有効なturnで自Crewだけへ書く。呼出元、記録者、Character、権限の自己申告は受け付けない。Worker transactionでownerのincarnation、保存済みroot所属、callerの会話種別/incarnation、actorの所属、turn失効を再確認してcommitする。applicationはread targetとcallerを別々に再検証し、storage generationの切替や遅い応答から失効済みGraphを復活させない。
 
+背景三用途にも元Mainの共有Graphのread操作を公開する。背景用のSessionやGraphは作らず、`apply`は付与しない。元会話と異なるProviderを使えても、実sourceのkind・incarnation・storage ownerIdentity・Auxiliaryの親identityと捕捉Graph ownerは維持し、activeな背景binding／turnを必須とする。返却前にもsourceと失効を確認する。詳細は[Background Execution](background-execution.md#背景memory-read)を参照する。
+
 | MCP tool | CLI command | 用途 |
 | --- | --- | --- |
 | `session_graph.list_topics` | `list-topics` / `list_topics` | 話題を列挙する |

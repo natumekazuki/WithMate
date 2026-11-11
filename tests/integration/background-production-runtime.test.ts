@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { mkdir, realpath } from "node:fs/promises";
 import { BackgroundProductionRuntime, buildBackgroundExecutionScope, type BackgroundRuntimeEvent, type PrepareBackgroundCallInput } from "../../src-electron/providers/background-production-runtime.js";
 import type { BackgroundAgentInput, BackgroundAgentPort } from "../../src-electron/providers/background-call-service.js";
-import type { BackgroundFailureEvent } from "../../src-electron/providers/background-failure.js";
+import type { BackgroundFailureEvent, BackgroundExecutionDiagnosticEvent } from "../../src-electron/providers/background-failure.js";
 import { backgroundMemoryRegistrationHandlers, runBackgroundMemoryRegistration } from "../../src-electron/memory/background-memory-registration.js";
 import { registerBackgroundAffect } from "../../src-electron/character/background-affect-registration.js";
 import { runBackgroundAffectCall } from "../../src-electron/character/background-affect-call.js";
@@ -52,6 +52,36 @@ function gate() {
   const promise = new Promise<void>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "本番prepareは三用途へinspect grantを発行し、同じruntimeが開始する実bindingでも認可される"
+// oracle = { type = "contract", ref = "docs/design/background-execution.md#背景memory-read" }
+// fault = "tool公開定義だけを変更して本番prepareのread grantを更新しない"
+// observable = "用途ごとのprepared grantと実Agent呼出中のbinding解決結果"
+// observation_boundary = "consumer"
+// scope = "BackgroundProductionRuntime.prepare/runOnceと実binding registry"
+// lifecycle = "permanent"
+// impact = "本番の背景管理役が必要なAffect状態を参照できない"
+// distinction = "MCP/CLI fixtureの手動grantでは本番prepareによるgrant発行を検証できない"
+// @end-test-value
+test("本番prepareは三用途へAffect inspectを認可する", async () => {
+  const f = await backgroundHistoryFixture();
+  try {
+    seed(f);
+    const operation = "memory.route.character_affect_inspect";
+    const { runtime, input } = setup(f, async (agent) => {
+      assert.equal(f.bindings.resolve(agent.binding.bindingReference, operation).ok, true);
+    });
+    for (const purpose of ["affect", "character-memory", "target-memory"] as const) {
+      const prepared = await runtime.prepare({ ...input, purpose });
+      assert.equal(prepared.status, "ready", JSON.stringify(prepared));
+      assert.equal(prepared.call.context.operationGrants.includes(operation), true);
+      assert.deepEqual(await runtime.calls.runOnce({ ...prepared.call, userInput: "inspect material", onAdmitted() {} }), { kind: "completed" });
+    }
+    runtime.stop();
+  } finally { await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"
@@ -146,11 +176,11 @@ test("背景file scopeは現在rootと用途の書込設定を呼出ごとに固
     await mkdir(sessionFolder);
     await mkdir(extra);
     const { deps, settings, input } = setup(f, () => {});
-    const failures: BackgroundFailureEvent[] = [];
+    const failures: BackgroundExecutionDiagnosticEvent[] = [];
     const runtime = new BackgroundProductionRuntime({ ...deps,
       resolveSessionFolderPath: () => sessionFolder,
       runAgent: async () => { throw new Error("fixture agent failure"); },
-      onFailure: (event) => { failures.push(event); },
+      onExecutionDiagnostic: (event) => { failures.push(event); },
       getModelCatalog: async () => ({ providers: [...catalog.providers,
         { ...catalog.providers[0]!, id: "codex", label: "Codex" }] }),
     });
@@ -180,7 +210,7 @@ test("背景file scopeは現在rootと用途の書込設定を呼出ごとに固
       }
       f.executions.finish(execution);
       assert.equal((await runtime.calls.runOnce({ ...prepared.call, userInput: "fixture", onAdmitted() {} })).kind, "failed");
-      assert.equal(failures.at(-1)!.stage, "agent");
+      assert.equal(failures.at(-1)!.execution.failure!.stage, "agent");
       assert.deepEqual(failures.at(-1)!.execution!.scope, { purpose: input.purpose,
         history: prepared.call.context.scope.history, memoryTargets: input.memoryTargets });
       assert.ok(!JSON.stringify(failures.at(-1)).includes(sessionFolder));
@@ -332,9 +362,7 @@ test("本番設定から三用途consumerへ接続し、bound MCPで実保存す
       assert.equal(prepared.status, "ready");
       assert.equal(prepared.instructionText, settings.backgroundExecutionSettings[purpose].instructionText);
       const result = purpose === "affect"
-        ? await runBackgroundAffectCall(runtime.calls, { ...prepared.call, onAdmitted() {}, instructionBody: prepared.instructionText,
-          characterDefinition: "Character", currentAffect: { schemaVersion: "withmate-affect-v1", characterId: "character", userId: "local-user",
-            sessionId: "main", evaluatedAt: "2026-11-01T01:00:00Z", layers: [], components: [] } })
+        ? await runBackgroundAffectCall(runtime.calls, { ...prepared.call, onAdmitted() {}, instructionBody: prepared.instructionText })
         : await runBackgroundMemoryRegistration(runtime.calls, { ...prepared.call,
           context: { ...prepared.call.context, scope: { ...prepared.call.context.scope, purpose } },
           onAdmitted() {}, materials: "saved answer", instructionText: prepared.instructionText });

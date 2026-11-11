@@ -23959,7 +23959,7 @@ async function invoke(operation, input, deps) {
 		..."ok" in value && value.ok === false ? { isError: true } : {}
 	};
 }
-function createWithMateGlossaryMcpServer(deps = {}) {
+function createWithMateGlossaryMcpServer(deps = {}, readOnly = false) {
 	const server = new McpServer({
 		name: "withmate-glossary",
 		version: "1.0.0"
@@ -23981,22 +23981,24 @@ function createWithMateGlossaryMcpServer(deps = {}) {
 		description: definitions.get("get").description,
 		inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.get
 	}, (input) => invoke("get", input, deps));
-	server.registerTool("glossary.create", {
-		description: definitions.get("create").description,
-		inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.create
-	}, (input) => invoke("create", input, deps));
-	server.registerTool("glossary.create_batch", {
-		description: definitions.get("create_batch").description,
-		inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.create_batch
-	}, (input) => invoke("create_batch", input, deps));
-	server.registerTool("glossary.update", {
-		description: definitions.get("update").description,
-		inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.update
-	}, (input) => invoke("update", input, deps));
-	server.registerTool("glossary.delete", {
-		description: definitions.get("delete").description,
-		inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.delete
-	}, (input) => invoke("delete", input, deps));
+	if (!readOnly) {
+		server.registerTool("glossary.create", {
+			description: definitions.get("create").description,
+			inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.create
+		}, (input) => invoke("create", input, deps));
+		server.registerTool("glossary.create_batch", {
+			description: definitions.get("create_batch").description,
+			inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.create_batch
+		}, (input) => invoke("create_batch", input, deps));
+		server.registerTool("glossary.update", {
+			description: definitions.get("update").description,
+			inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.update
+		}, (input) => invoke("update", input, deps));
+		server.registerTool("glossary.delete", {
+			description: definitions.get("delete").description,
+			inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.delete
+		}, (input) => invoke("delete", input, deps));
+	}
 	server.registerTool("glossary.validate", {
 		description: definitions.get("validate").description,
 		inputSchema: GLOSSARY_PUBLIC_INPUT_SCHEMAS.validate

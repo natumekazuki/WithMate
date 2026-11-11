@@ -91,13 +91,13 @@ export type MemoryV6RuntimeApiHandle = {
   memoryStorage: MemoryV6StorageAccess;
   affectStorage: CharacterAffectStorageAccess;
   managedMcp: ManagedHttpMcpHost | null;
+  resolveKnownProjectByPath: MemoryV6WorkerClient["resolveKnownProjectByPath"];
   stop(): Promise<void>;
 };
 
 export type StartMemoryV6RuntimeApiOptions = {
   sessionHistoryMcp?: SessionHistoryMcpRegistration;
   backgroundRegistration?: BackgroundRegistration;
-  onBackgroundOperationFailure?: MemoryV6HttpServerOptions["onBackgroundOperationFailure"];
   onBackgroundOperation?: MemoryV6HttpServerOptions["onBackgroundOperation"];
   userDataPath: string;
   applicationInstanceId: string;
@@ -1461,7 +1461,6 @@ export async function startMemoryV6RuntimeApi(
       service,
       characterContextService,
       backgroundRegistration: options.backgroundRegistration,
-      onBackgroundOperationFailure: options.onBackgroundOperationFailure,
       onBackgroundOperation: options.onBackgroundOperation,
       apiSecret,
       operatorApiSecret,
@@ -1501,7 +1500,6 @@ export async function startMemoryV6RuntimeApi(
         turns: { admit: turns.admit.bind(turns), end: turns.end.bind(turns) },
         sessionHistory: options.sessionHistoryMcp,
         backgroundRegistration: options.backgroundRegistration,
-        onBackgroundOperationFailure: options.onBackgroundOperationFailure,
         onBackgroundOperation: options.onBackgroundOperation,
       });
       await managedMcp.start();
@@ -1719,6 +1717,7 @@ export async function startMemoryV6RuntimeApi(
       characterContextService,
       memoryStorage: storage,
       affectStorage,
+      resolveKnownProjectByPath: projectResolver.resolveKnownProjectByPath,
       managedMcp,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];

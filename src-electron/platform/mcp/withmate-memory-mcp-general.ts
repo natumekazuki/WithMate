@@ -249,7 +249,7 @@ const appendInputSchema = z.object({
     for (const key of Object.keys(item)) context.addIssue({ code: "custom", path: [key], message: "Specify entries or a single entry, not both." });
   } else {
     const parsed = appendItemSchema.safeParse(item);
-    if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ code: "custom", path: issue.path, message: issue.message });
+    if (!parsed.success) for (const issue of parsed.error.issues) context.addIssue({ ...issue });
   }
 }).meta({ oneOf: [
   { required: ["entries"], not: { anyOf: Object.keys(appendItemSchema.shape).map((key) => ({ required: [key] })) } },

@@ -13,7 +13,7 @@ import { BACKGROUND_REGISTRATION_OPERATIONS, getBackgroundMemoryFileOperations }
 import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src-shared/settings/provider-settings-state.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
 import { backgroundMemoryRegistrationHandlers } from "../../src-electron/memory/background-memory-registration.js";
-import { captureBackgroundMemoryFileAccess } from "../../src-electron/memory/background-memory-file-access.js";
+import { captureBackgroundMemoryFileAccess } from "../../src-electron/memory/memory-file-access.js";
 import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } from "../../src-electron/memory/memory-protected-object-exporter.js";
 import { inspectMemoryProtectedObjectInputFile, prepareMemoryProtectedObjectFile } from "../../src-electron/memory/memory-protected-object-importer.js";
 import { MemoryProtectedObjectStore } from "../../src-electron/memory/memory-protected-object-store.js";
@@ -127,7 +127,7 @@ test("背景添付の登録と三用途の必要時復元がMCPと配布CLIで�
   try {
     const execution = start(s); const binding = f.project(execution);
     const { client } = await f.connect(binding, "memoryUrl");
-    assert.match(client.getInstructions()!, /published file operations within the captured file scope/);
+    assert.match(client.getInstructions()!, /File restoration is a local write and is available only when its tools are published/);
     assert.match(client.getInstructions()!, /No other write or fallback authority is provided/);
     const tools = (await client.listTools()).tools;
     assert.ok(tools.some((tool) => tool.name === "memory.append" && JSON.stringify(tool.inputSchema).includes('"files"')));

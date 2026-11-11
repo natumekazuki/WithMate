@@ -19,7 +19,7 @@ import { ManagedHttpMcpHost } from "../../src-electron/memory/managed-http-mcp-h
 import { createMemoryV6HttpServer } from "../../src-electron/memory/memory-v6-http-server.js";
 import { MemoryV6WorkerClient } from "../../src-electron/memory/memory-v6-worker-client.js";
 import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory/memory-v6-service.js";
-import { CharacterAffectService } from "../../src-electron/character/character-affect-service.js";
+import { createCharacterAffectServiceWithMemory } from "../../src-electron/character/character-affect-memory-adapter.js";
 import { CharacterContextApplicationService } from "../../src-electron/character/character-context-application-service.js";
 import { GlossaryApplicationService } from "../../src-electron/glossary/glossary-application-service.js";
 import { GlossaryRuntimeService } from "../../src-electron/glossary/glossary-runtime-service.js";
@@ -32,6 +32,7 @@ import { createWithMateSessionHistoryMcpServer } from "../../src-electron/platfo
 import { SESSION_HISTORY_TOOL_OPERATIONS, getSessionHistoryAgentRuntimeOperations } from "../../src-shared/session-history/session-history-contract.js";
 import type { StorageOperationDiagnosticSink } from "../../src-electron/storage/storage-operation-diagnostics.js";
 import type { BackgroundRegistration } from "../../src-electron/providers/background-registration.js";
+import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
 
 export const owner = { applicationInstanceId: "11111111-1111-4111-8111-111111111111", runtimeGenerationId: "22222222-2222-4222-8222-222222222222" };
 export const readOperation = "session_history.route.get_message";
@@ -40,7 +41,8 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   registrationHandlers?: BackgroundRegistration["handlers"], now?: () => Date,
   sourceKinds: BackgroundRegistration["sourceKinds"] = { "character-memory": ["main"], "target-memory": ["main"], affect: ["main"] },
   memoryDependencies?: (directory: string) => Partial<Pick<MemoryV6ServiceDeps,
-    "protectedObjectImporter" | "protectedObjectExporter" | "getMemoryFileQuotaBytes">>) {
+    "protectedObjectImporter" | "protectedObjectExporter" | "getMemoryFileQuotaBytes">>,
+  resolveSessionFileAccess?: (session: Session, outputPath?: string) => Promise<MemoryFileAccess>) {
   const directory = await mkdtemp(join(tmpdir(), "withmate-background-foundation-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
@@ -75,20 +77,18 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
   const memory = new MemoryV6Service({ storage: memoryWorker.storage,
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath, ...memoryDependencies?.(directory) });
-  const affect = new CharacterAffectService(memoryWorker.affectStorage, { async evaluate() { return []; } }, {
-    async writeEpisode() { throw new Error("History fixture must not write episodes"); },
-    validateEpisode() { throw new Error("History fixture must not validate episodes"); },
-  }, "active");
+  const affect = createCharacterAffectServiceWithMemory({ affectStorage: memoryWorker.affectStorage,
+    memoryStorage: memoryWorker.storage, evaluator: { async evaluate() { return []; } }, mode: "active" });
   const characterContext = new CharacterContextApplicationService({ memoryService: memory, affectService: affect,
     resolveCharacterRuntimeSnapshot: (characterId) => characterId === "character" ? ({ characterId, name: "Character",
       description: "", iconFilePath: "", theme: { main: "#123456", sub: "#abcdef" }, definitionMarkdown: "Character",
       definitionSha256: "fixture", definitionByteSize: 9, snapshotAt: "2026-11-01T00:00:00.000Z" }) : null });
   const worker = createV6StorageWorkerBundle({ dbPath, userDataPath: directory, diagnosticSink });
   await worker.initialize();
-  const backgroundRegistration: BackgroundRegistration | undefined = registrationHandlers ? {
-    handlers: registrationHandlers, readBackgroundSource: (scope) => worker.stores.session.readBackgroundSource(scope),
+  const backgroundRegistration: BackgroundRegistration = {
+    handlers: registrationHandlers ?? {}, readBackgroundSource: (scope) => worker.stores.session.readBackgroundSource(scope),
     sourceKinds,
-  } : undefined;
+  };
   let readGate: (() => Promise<void>) | undefined;
   const history = new SessionHistoryRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     read: async (input) => {
@@ -97,17 +97,19 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     } });
   const glossary = new GlossaryRuntimeService({ applicationService: new GlossaryApplicationService(),
     bindingRegistry: bindings, providerAgentRuntimeTurns: turns, getProactiveCreateLimit: () => 1,
+    validateBackgroundSource: async (scope) => Boolean(await worker.stores.session.readBackgroundSource(scope)),
     resolveActorSession: (id) => sessions.has(id) ? { id, providerId: "codex", characterId: "character", workspacePath: directory } : null });
   const graph = new SessionGraphRuntimeService({ bindingRegistry: bindings, providerAgentRuntimeTurns: turns,
+    validateBackgroundSource: async (scope) => Boolean(await worker.stores.session.readBackgroundSource(scope)),
     applicationService: new SessionGraphApplicationService({ getStore: () => worker.stores.sessionGraph,
-      resolveSession: (id) => sessions.has(id) ? { owner: { sessionId: id, incarnationId: sessions.get(id)!.incarnationId! },
-        source: { kind: "main", incarnationId: sessions.get(id)!.incarnationId! },
-        providerId: "codex", generation: "fixture", identity: { sessionId: id, sessionTitle: id, role: "main",
+      resolveSession: (id, source) => sessions.has(id) ? { owner: source?.kind === "auxiliary"
+        ? { sessionId: "main", incarnationId: "inc-main" } : { sessionId: id, incarnationId: sessions.get(id)!.incarnationId! },
+        source: { kind: source?.kind ?? "main", incarnationId: scope(id).history.source.incarnationId },
+        providerId: "codex", generation: "fixture", identity: { sessionId: id, sessionTitle: id, role: source?.kind ?? "main",
           character: { id: "character", name: "Character" } } } : null }) });
   const runtime = createMemoryV6HttpServer({ ...owner, apiSecret: "api", mcpApiSecret: "mcp", operatorApiSecret: "operator",
     service: memory, characterContextService: characterContext, agentRuntimeBindingRegistry: bindings, providerAgentRuntimeTurns: turns,
     backgroundRegistration,
-    onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
     onBackgroundOperation: (id, observation) => executions.observeOperation(id, observation),
     resolveProjectById: memoryWorker.resolveProjectById, resolveProjectByPath: memoryWorker.resolveProjectByPath,
     resolveKnownProjectByPath: memoryWorker.resolveKnownProjectByPath,
@@ -118,11 +120,15 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
           character_id: string; provider_id: string; parent_session_id: string;
         } | undefined;
         return row ? { id, providerId: row.provider_id, characterId: row.character_id,
-          workspacePath: sessions.get(row.parent_session_id)?.workspacePath } : null;
+          ...(resolveSessionFileAccess ? { resolveMemoryFileAccess: (outputPath?: string) => resolveSessionFileAccess(sessions.get(id)!, outputPath) } : {}),
+          workspacePath: sessions.get(row.parent_session_id)?.workspacePath, source: scope(id).history.source } : null;
       }
       if (sourceKind === "main" && !db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ?").get(id)) return null;
       const session = sessions.get(id);
-      return session ? { id, providerId: session.provider, characterId: session.characterId, workspacePath: session.workspacePath } : null;
+      const snapshot = readConversationQuerySnapshot(db, "session_messages_v6", id);
+      return session ? { id, providerId: session.provider, characterId: session.characterId, workspacePath: session.workspacePath,
+        ...(resolveSessionFileAccess ? { resolveMemoryFileAccess: (outputPath?: string) => resolveSessionFileAccess(session, outputPath) } : {}),
+        ...(snapshot ? { source: { kind: "main" as const, sessionId: id, incarnationId: snapshot.incarnationId } } : {}) } : null;
     },
     routeAgentRuntimeExtension: async (request) => await history.route(request) ?? await glossary.route(request) ?? await graph.route(request),
   });
@@ -131,7 +137,6 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     baseUrl: `http://127.0.0.1:${runtime.address()!.port}`, apiSecret: "api" }, credential: { adapter: "mcp" as const, adapterSecret: "mcp" } };
   const host = new ManagedHttpMcpHost({ connection,
     bindingRegistry: bindings, turns, fallbackAdmissionSecret: "fallback", backgroundRegistration,
-    onBackgroundOperationFailure: (id, failure) => executions.reportOperationFailure(id, failure),
     onBackgroundOperation: (id, observation) => executions.observeOperation(id, observation),
     sessionHistory: { toolOperations: SESSION_HISTORY_TOOL_OPERATIONS, createServer: createWithMateSessionHistoryMcpServer } });
   await host.start();
@@ -160,7 +165,7 @@ export async function backgroundHistoryFixture(diagnosticSink?: StorageOperation
     const binding = { ...execution.binding, memoryRuntimeOwner: owner };
     return { ...binding, managedMcp: host.issue(binding, execution.handle, execution.signal) };
   }
-  async function connect(binding: ProviderAgentRuntimeBindingProjection, endpoint: "sessionHistoryUrl" | "glossaryUrl" | "memoryUrl" = "sessionHistoryUrl") {
+  async function connect(binding: ProviderAgentRuntimeBindingProjection, endpoint: "sessionHistoryUrl" | "glossaryUrl" | "memoryUrl" | "sessionGraphUrl" = "sessionHistoryUrl") {
     const client = new Client({ name: "background-test", version: "1" });
     clients.push(client);
     const transport = new StreamableHTTPClientTransport(new URL(binding.managedMcp![endpoint]!), {
