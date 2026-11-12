@@ -270,7 +270,6 @@ import { SessionManagementApplication, SessionManagementError } from "./session/
 import { SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
 import { resolveRelatedSessions } from "./session/session-relationship-resolver.js";
 import { getSessionAgentRuntimeOperations } from "../src-shared/session/session-management-contract.js";
-import { captureSessionExecutionOptions } from "../src-shared/session/session-execution-options.js";
 import { getModelDisabledReason } from "../src-shared/settings/model-availability.js";
 import { createWithMateSessionHistoryMcpServer } from "./platform/mcp/withmate-session-history-mcp.js";
 import { SESSION_HISTORY_TOOL_OPERATIONS } from "../src-shared/session-history/session-history-contract.js";
@@ -1059,23 +1058,12 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
       const session = await getQueueRuntimeSession(target.id);
       if (!session) throw new Error("The target Session is unavailable.");
       const facade = requireMainSessionTurnQueueFacade();
-      const previous = await facade.getSessionTurnQueueReceipt(target.id, input.requestId, target.incarnationId);
-      const executionOptions = previous?.accepted?.request.executionOptions ?? captureSessionExecutionOptions(session);
-      const savedOrigin = previous?.accepted?.origin;
-      if (savedOrigin && (savedOrigin.kind !== "session" || savedOrigin.actorKind !== actor.kind || savedOrigin.actorSessionId !== actor.id || savedOrigin.actorIncarnationId !== actor.incarnationId)) {
-        throw new SessionManagementError("SESSION_FORBIDDEN", "This request identity belongs to a different sender.");
-      }
-      if (savedOrigin && (savedOrigin.deliveryTiming ?? "immediate") !== (input.deliveryTiming ?? "immediate")) {
-        throw new SessionManagementError("SESSION_INVALID_REQUEST", "This request identity was already used with different delivery timing.");
-      }
-      const sender = savedOrigin ? null : actor.kind === "main" ? await getRuntimeSession(actor.id) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.id);
-      if (!savedOrigin && (!sender || getSessionIncarnationId(sender) !== actor.incarnationId)) throw new Error("The sender Session is unavailable or changed.");
-      const origin = savedOrigin ?? { kind: "session" as const, actorKind: actor.kind, actorSessionId: actor.id, actorIncarnationId: actor.incarnationId, actorTurnId: turnId,
-        deliveryTiming: input.deliveryTiming ?? "immediate", actorSnapshot: captureSessionTurnQueueDisplay(sender!), operation: "send" as const, targetSessionId: target.id, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session) };
+      const sender = actor.kind === "main" ? await getRuntimeSession(actor.id) : await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actor.id);
+      if (!sender || getSessionIncarnationId(sender) !== actor.incarnationId) throw new Error("The sender Session is unavailable or changed.");
+      const origin = { kind: "session" as const, actorKind: actor.kind, actorSessionId: actor.id, actorIncarnationId: actor.incarnationId, actorTurnId: turnId,
+        actorSnapshot: captureSessionTurnQueueDisplay(sender), operation: "send" as const, targetSessionId: target.id, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session) };
       try {
-        return await facade.enqueueSessionTurn(target.id,
-          { incarnationId: target.incarnationId, clientRequestId: input.requestId, userMessage: input.message, submitSource: "composer", executionOptions },
-          origin, assertCurrent);
+        return await facade.enqueueSessionMessage(input, origin, assertCurrent);
       } catch (error) {
         if (error instanceof SessionTurnQueuePreflightRejectedError) throw new SessionManagementError("SESSION_REJECTED", error.message);
         throw error;

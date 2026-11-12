@@ -50,6 +50,8 @@ test("normal runtime requires captured saved identity and active provider Turn",
         title: "actual",
         description: "",
         runState: "running",
+        provider: "codex",
+        workspacePath: "C:/workspace",
       },
     ],
     currentTurn: async () => ({

@@ -81,6 +81,10 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 ## Bound Session API
 
+通常親子の`enqueue`は一件ごとに実行設定を指定する。親→直属子は`model`と`reasoningEffort`を必須とし、Depth非対応Modelでは空文字列を明示する。子→直属親は両項目を個別に省略でき、省略分は受付時の親保存設定から確定する。全Providerで`approvalMode`を必須、Codex宛では`codexSandboxMode`も必須とし、他ProviderへのSandbox指定は拒否する。`get`／`list`の宛先`provider`／`workspacePath`を`get_catalog`へ渡して利用可能な選択肢を取得できる。実効ModelとDepthの組合せ、Provider対応権限、保存ReviewerとApprovalの整合を受付前に検証し、不整合ではreceiptを作らない。Reviewerを自動変更して確認手順を迂回せず、個別操作のユーザー承認・認証は従来どおり必要である。
+
+即時・遅延どちらも実効設定を`receipt.accepted.request.executionOptions`へ固定し、当該通常Turnだけに適用する。宛先Provider、保存設定、他の受付、実行中Turnは変更しない。明示設定と省略の区別を`accepted.origin.requestedExecutionOptions`へ保存し、同じrequestIdの再送は同じ本文・設定指定・配送タイミングだけを許可する。受付後の保存設定・catalog変更や送信元の後続Turnによって元の受付内容を再解決しない。過去の受付は設定指定を現在値から補記せず、そのまま照会できる。GUI送信、Coordination専用配送、進行中TurnへのSteer、受付済み条件の編集はこの指定の対象外である。
+
 通常Agentの`session.*` MCPと`withmate-session` CLIは同じSession applicationとdurable queueを使う。公開入力の正本は`src-shared/session/session-management-contract.ts`で、自己情報、Crew内既定／全Crew明示のmetadata探索、自己Title／Description更新、直属親子へのenqueue、元request keyによる受付回復、親から直属子の指定受付取消・指定Turn停止を扱う。保存済み受付／Turnの一覧、入力原文・比較対象・追加入力、出力境界とartifact詳細は同じ公開入口から`session-execution-read.ts`のbounded readへ接続し、指定実行を最新結果へ置き換えない。CLIは起動中applicationへのbound clientであり、actor指定や独立Runtimeを持たない。
 
 通常の保存会話は`list_messages`／`get_message`、保存artifactは`list_operations`／`get_operation_detail`で取得し、Turnに未対応の過去messageも対象にする。既存保存history helperのpaging／欠落契約を使い、背景実行の限定scopeやgrantを流用しない。実行参照には保存receipt、WithMate Turn、保存message sequenceのいずれか一つを指定し、messageから確定した対応がない場合は欠落として返す。

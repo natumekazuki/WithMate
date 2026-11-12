@@ -24,6 +24,7 @@ export type SessionTurnQueueOrigin = {
   actorIncarnationId?: string;
   actorTurnId?: string;
   deliveryTiming?: SessionMessageDeliveryTiming;
+  requestedExecutionOptions?: import("./session-execution-options.js").SessionMessageExecutionOptions;
   sourceTurnPhase?: Exclude<SessionMessageSourceTurnPhase, "running" | "unknown">;
   actorMainSessionId?: string;
   actorSnapshot?: SessionTurnQueueDisplaySnapshot;

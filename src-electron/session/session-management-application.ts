@@ -226,6 +226,8 @@ export class SessionManagementApplication {
             title: created.taskTitle,
             description: created.description ?? "",
             runState: created.runState,
+            provider: created.provider,
+            workspacePath: created.workspacePath,
             character: projectCharacterPublicProfile(created),
           },
           character: projectCharacterPublicProfile(created),
@@ -361,6 +363,9 @@ export class SessionManagementApplication {
             "SESSION_FORBIDDEN",
             "Messages require actual direct parent-child Sessions.",
           );
+        }
+        if (destination.parentSessionId === actor.id && (input.model === undefined || input.reasoningEffort === undefined)) {
+          throw new SessionManagementError("SESSION_INVALID_REQUEST", "Parent-to-child messages require model and reasoningEffort (use an empty string for no Depth).");
         }
         const current = await this.deps.currentTurn(actor);
         context.assertCurrent();

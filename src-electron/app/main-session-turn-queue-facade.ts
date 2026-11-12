@@ -1,6 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { normalizeSessionTurnClientRequestId, normalizeSessionTurnSubmitSource, type ComposerPreview, type RunSessionTurnRequest } from "../../src-shared/session/runtime-state.js";
-import { captureSessionExecutionOptions, validateSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import { captureSessionExecutionOptions, validateSessionExecutionOptions, type SessionExecutionOptions, type SessionMessageExecutionOptions } from "../../src-shared/session/session-execution-options.js";
+import type { SessionOperationRequest } from "../../src-shared/session/session-management-contract.js";
+import { getSandboxOptionsForProvider } from "../../src-shared/settings/provider-runtime-options.js";
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
@@ -33,6 +35,18 @@ export class MainSessionTurnQueueFacade {
     return this.withAcceptanceLock(sessionId, async () => this.projectSourceRelease(await this.accept(sessionId, input, origin, assertActorCurrent)));
   }
 
+  async enqueueSessionMessage(input: SessionOperationRequest<"enqueue">, origin: SessionTurnQueueOrigin, assertActorCurrent: () => void | Promise<void>) {
+    const requested: SessionMessageExecutionOptions = {
+      approvalMode: input.approvalMode,
+      ...(input.model === undefined ? {} : { model: input.model }),
+      ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
+      ...(input.codexSandboxMode === undefined ? {} : { codexSandboxMode: input.codexSandboxMode }),
+    };
+    return this.withAcceptanceLock(input.target.sessionId, async () => this.projectSourceRelease(await this.accept(input.target.sessionId, {
+      incarnationId: input.target.incarnationId, clientRequestId: input.requestId, userMessage: input.message, submitSource: "composer",
+    }, { ...origin, deliveryTiming: input.deliveryTiming ?? "immediate", requestedExecutionOptions: requested }, assertActorCurrent, requested)));
+  }
+
   private projectSourceRelease<T extends SessionTurnQueueReceipt | null>(receipt: T): T {
     const origin = receipt?.accepted?.origin;
     return receipt && receipt.state === "queued" && origin?.deliveryTiming === "after_source_turn"
@@ -40,11 +54,11 @@ export class MainSessionTurnQueueFacade {
       ? { ...receipt, sourceTurnPendingRelease: true } : receipt;
   }
 
-  private async accept(sessionId: string, input: RunSessionTurnRequest & { incarnationId: string }, origin?: SessionTurnQueueOrigin, assertActorCurrent?: () => void | Promise<void>) {
+  private async accept(sessionId: string, input: Omit<RunSessionTurnRequest, "executionOptions"> & { incarnationId: string; executionOptions?: SessionExecutionOptions }, origin?: SessionTurnQueueOrigin, assertActorCurrent?: () => void | Promise<void>, requested?: SessionMessageExecutionOptions) {
     await assertActorCurrent?.();
     const session = await this.readSession(sessionId);
     const owner = this.owner(session);
-    const acceptedOrigin: SessionTurnQueueOrigin = origin ? structuredClone(origin) : { kind: "gui", operation: "send", targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId };
+    let acceptedOrigin: SessionTurnQueueOrigin = origin ? structuredClone(origin) : { kind: "gui", operation: "send", targetSessionId: owner.sessionId, targetIncarnationId: owner.incarnationId };
     if (acceptedOrigin.targetSessionId !== owner.sessionId || acceptedOrigin.targetIncarnationId !== owner.incarnationId
       || acceptedOrigin.operation !== "send" || !["gui", "session"].includes(acceptedOrigin.kind)
       || (acceptedOrigin.kind === "session" && (!acceptedOrigin.actorSessionId?.trim() || !acceptedOrigin.actorIncarnationId?.trim() || !acceptedOrigin.actorTurnId?.trim()))) {
@@ -56,21 +70,37 @@ export class MainSessionTurnQueueFacade {
     if (!requestId || !source || typeof input.userMessage !== "string" || !input.userMessage.trim()) {
       throw new Error("A message, request identity, and submit source are required.");
     }
-    if (!input.executionOptions || typeof input.executionOptions !== "object") throw new Error("Turn execution options are required.");
+    const previous = await this.deps.store.getReceipt(owner, requestId);
+    this.deps.assertActive();
+    let executionOptions = input.executionOptions;
+    if (requested) {
+      if (previous) {
+        const saved = previous.accepted?.origin;
+        if (!saved || saved.kind !== "session" || saved.actorKind !== acceptedOrigin.actorKind
+          || saved.actorSessionId !== acceptedOrigin.actorSessionId || saved.actorIncarnationId !== acceptedOrigin.actorIncarnationId
+          || (saved.deliveryTiming ?? "immediate") !== acceptedOrigin.deliveryTiming
+          || !isDeepStrictEqual(saved.requestedExecutionOptions, requested)) {
+          throw new SessionTurnQueuePreflightRejectedError("This request identity was already used with different input or actor; query its receipt for the original acceptance.");
+        }
+        acceptedOrigin = saved;
+        executionOptions = previous.accepted!.request.executionOptions;
+      } else {
+        executionOptions = { ...captureSessionExecutionOptions(session), ...requested };
+      }
+    }
+    if (!executionOptions || typeof executionOptions !== "object") throw new Error("Turn execution options are required.");
     const request: RunSessionTurnRequest & { clientRequestId: string } = {
       userMessage: input.userMessage.trim(),
       clientRequestId: requestId,
       submitSource: source,
-      executionOptions: captureSessionExecutionOptions(input.executionOptions),
+      executionOptions: captureSessionExecutionOptions(executionOptions),
       ...(input.auxiliaryDraftIncarnation === undefined ? {} : { auxiliaryDraftIncarnation: input.auxiliaryDraftIncarnation }),
       ...(input.auxiliaryDraftDurableRevision === undefined ? {} : { auxiliaryDraftDurableRevision: input.auxiliaryDraftDurableRevision }),
       ...(input.displayAnchorParentMessageCount === undefined ? {} : { displayAnchorParentMessageCount: input.displayAnchorParentMessageCount }),
     };
-    const previous = await this.deps.store.getReceipt(owner, requestId);
-    this.deps.assertActive();
     if (previous) {
       if (!previous.accepted) throw new Error("The original queue acceptance input is unavailable; query its receipt instead.");
-      if (!isDeepStrictEqual(previous.accepted.request, request) || !isDeepStrictEqual(previous.accepted.origin, acceptedOrigin)) throw new Error("This request identity was already used with different input or actor.");
+      if (!isDeepStrictEqual(previous.accepted.request, request) || !isDeepStrictEqual(previous.accepted.origin, acceptedOrigin)) throw new SessionTurnQueuePreflightRejectedError("This request identity was already used with different input or actor.");
       await assertActorCurrent?.();
       this.deps.service.reconcileKnownReceipt(previous);
       return previous;
@@ -82,7 +112,13 @@ export class MainSessionTurnQueueFacade {
       if (request.auxiliaryDraftIncarnation !== undefined && (typeof request.auxiliaryDraftIncarnation !== "string" || !request.auxiliaryDraftIncarnation.trim())) throw new Error("The Auxiliary draft identity is invalid.");
       if (request.auxiliaryDraftDurableRevision !== undefined && (!Number.isSafeInteger(request.auxiliaryDraftDurableRevision) || request.auxiliaryDraftDurableRevision < 0)) throw new Error("The Auxiliary draft revision is invalid.");
       if (request.displayAnchorParentMessageCount !== undefined && (!Number.isSafeInteger(request.displayAnchorParentMessageCount) || request.displayAnchorParentMessageCount < 0)) throw new Error("The Auxiliary display anchor is invalid.");
-      prepared = await this.prepareExecution(session, request, () => this.readSession(sessionId), true);
+      if (requested) {
+        const sandbox = getSandboxOptionsForProvider(session.provider);
+        if (sandbox.length === 0 ? requested.codexSandboxMode !== undefined : !sandbox.some((option) => option.value === requested.codexSandboxMode)) {
+          throw new Error("Codex messages require codexSandboxMode; other Providers do not accept this unsupported setting.");
+        }
+      }
+      prepared = await this.prepareExecution(session, request, () => this.readSession(sessionId), true, requested !== undefined);
       await assertActorCurrent?.();
     } catch (error) {
       // Canonical lookup proved absence while this Session's intake was locked.
@@ -110,11 +146,18 @@ export class MainSessionTurnQueueFacade {
       executionOptions: captureSessionExecutionOptions(session) }, read, false);
   }
 
-  private async prepareExecution(session: Session, request: SessionTurnQueueCapturedInput["request"], readCurrent: () => Promise<Session>, resolveAttachments: boolean): Promise<SessionTurnQueueCapturedInput> {
+  private async prepareExecution(session: Session, request: SessionTurnQueueCapturedInput["request"], readCurrent: () => Promise<Session>, resolveAttachments: boolean, validateMessageSelection = false): Promise<SessionTurnQueueCapturedInput> {
     this.deps.assertAccepting();
     await this.deps.validateWorkspace(session);
     const catalog = await this.deps.validateProvider(session);
     const executionOptions = validateSessionExecutionOptions(request.executionOptions, catalog.provider);
+    if (validateMessageSelection) {
+      const model = catalog.provider.models.find((entry) => entry.id === executionOptions.model);
+      if (!model) throw new Error("The selected message model is not in the recipient's discovered model list.");
+      if (model.reasoningEfforts.length === 0 ? executionOptions.reasoningEffort !== "" : !model.reasoningEfforts.includes(executionOptions.reasoningEffort)) {
+        throw new Error("The selected message depth is not supported by this model.");
+      }
+    }
     const preview = resolveAttachments ? await this.deps.preview(session, request.userMessage) : { attachments: [], errors: [] };
     if (preview.errors.length) throw new Error(preview.errors[0]);
     assertModelEnabled((await this.deps.getAppSettings()).modelAvailability, session.provider, executionOptions.model);

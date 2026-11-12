@@ -13,6 +13,8 @@ export type RelatedSession = SessionRelationship & {
   title: string;
   description: string;
   runState: string;
+  provider: string;
+  workspacePath: string;
   character?: CharacterPublicProfile | null;
 };
 
@@ -33,7 +35,7 @@ export function resolveRelatedSessions(mains: readonly SessionSummary[], auxilia
     const relationship = normalizeSessionRelationship(main);
     return { ...relationship, id: main.id, incarnationId: getSessionIncarnationId(main), kind: "main", role: relationship.sessionRole,
       mainSessionId: main.id, mainIncarnationId: getSessionIncarnationId(main), title: main.taskTitle, description: (main as SessionSummary & { description?: string }).description ?? "", runState: main.runState,
-      character: projectCharacterPublicProfile(main) };
+      provider: main.provider, workspacePath: main.workspacePath, character: projectCharacterPublicProfile(main) };
   });
   for (const auxiliary of auxiliaries) {
     const main = byId.get(auxiliary.parentSessionId);
@@ -42,7 +44,7 @@ export function resolveRelatedSessions(mains: readonly SessionSummary[], auxilia
     entries.push({ ...relationship, parentSessionId: null, createdBySessionId: null, id: auxiliary.id,
       incarnationId: auxiliary.createdAt, kind: "auxiliary", role: "auxiliary", mainSessionId: main.id, mainIncarnationId: getSessionIncarnationId(main),
       title: auxiliary.title, description: (auxiliary as AuxiliarySessionSummary & { description?: string }).description ?? "", runState: auxiliary.runState,
-      character: projectCharacterPublicProfile(auxiliary) });
+      provider: auxiliary.provider, workspacePath: main.workspacePath, character: projectCharacterPublicProfile(auxiliary) });
   }
   return entries;
 }

@@ -36,6 +36,8 @@ turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設�
 
 質問formの記録は通常assistant messageの`elicitationRecords`へ保存し、Main／Auxiliaryの表示pageにも含める。質問文・選択肢・form回答状態に加え、質問種別と本文内の位置`textRange`を保持する。範囲を持つ質問は元の本文に含まれ、長さ0の範囲は本文を持たない質問の挿入位置を表す。位置のない既存記録は本文の後ろに表示する。入力値や既定値、再操作用のlive requestは保存しない。保存されたpending状態は失効済みとして読み、古い要求を復元しない。既存message JSONの任意fieldを使い、別tableや質問専用の永続queueは持たない。
 
+通常Session送信の`accepted_json.origin.requestedExecutionOptions`は送信時の明示設定（省略項目を除く）を保持する。省略を解決した実効設定は既存の`accepted_json.request.executionOptions`へ格納し、同一request IDの照合には両方を使う。既存行に指定情報がない場合は補完せず、保存済み受付・結果を従来どおり読み取る。専用tableやschema migrationは追加しない。
+
 Turn Queueは次の項目を保持する。
 
 - 親Session ID

@@ -122,7 +122,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       incarnationId: "child-v1",
     };
     const requestId = "11111111-1111-4111-8111-111111111111";
-    const body = { target, requestId, message: "work" };
+    const body = { target, requestId, message: "work", model: "model", reasoningEffort: "high", approvalMode: "on-request", codexSandboxMode: "workspace-write" };
     const exact = { target, turnId: "1" };
     const operationId = "11111111-1111-4111-8111-111111111111";
     const coordination = { operationId, id: "consultation" };
@@ -203,6 +203,8 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       title: "task",
       description: "full",
       runState: "running",
+      provider: "codex",
+      workspacePath: "C:/workspace",
       character: { id: "character", name: "Character", description: "公開紹介" },
     };
     const receipt = {
@@ -515,7 +517,7 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
     assert.equal(await runWithMateSessionCli(["help"], { stdout: { write: (value) => { help += String(value); return true; } } }), 0);
     assert.match(help, /deliveryTiming.*immediate.*after_source_turn/);
     for (const deliveryTiming of [undefined, "immediate", "after_source_turn"]) {
-      const input = { target, requestId, message: "report", ...(deliveryTiming ? { deliveryTiming } : {}) };
+      const input = { target, requestId, message: "report", approvalMode: "on-request", ...(deliveryTiming ? { deliveryTiming } : {}) };
       const command = await cli("enqueue", input, runtimeCall);
       const tool = await client.callTool({ name: "session.enqueue", arguments: input });
       assert.equal(command.exit, 0);
@@ -534,7 +536,7 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
     }
     for (const deliveryTiming of ["later", null, 1]) {
       const before = calls.length;
-      const input = { target, requestId, message: "report", deliveryTiming };
+      const input = { target, requestId, message: "report", approvalMode: "on-request", deliveryTiming };
       const command = await cli("enqueue", input, runtimeCall);
       const tool = await client.callTool({ name: "session.enqueue", arguments: input });
       assert.equal(command.exit, 2);

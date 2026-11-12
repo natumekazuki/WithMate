@@ -94,6 +94,10 @@ export const sessionOperationRequestSchemas = {
       requestId: queueRequestId,
       message: z.string().trim().min(1).max(100000),
       deliveryTiming: z.enum(["immediate", "after_source_turn"]).optional(),
+      model: z.string().min(1).max(500).optional(),
+      reasoningEffort: z.string().max(100).optional(),
+      approvalMode: z.enum(APPROVAL_MODE_VALUES),
+      codexSandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES).optional(),
     })
     .strict(),
   get_receipt: z
@@ -155,6 +159,8 @@ const relatedSessionSchema = z
     title: z.string(),
     description: z.string(),
     runState: z.string(),
+    provider: z.string(),
+    workspacePath: z.string(),
     character: characterPublicProfileSchema.nullable(),
   })
   .passthrough();
@@ -383,7 +389,7 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     create_child:
       "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. No Worktree creation/merge/deletion or user approval is performed. Parent selection policy remains in your Provider-managed runbook, not WithMate config synchronization.",
     get_catalog:
-      "Read existing available Provider/model/depth catalog and native approval/sandbox options for child selection. Omit provider for all Providers; omit workspacePath to use the actual bound actor's Workspace. An empty reasoningEfforts/options list means unsupported, not permission to invent a value. Use exact available values; create never silently substitutes GUI defaults or a different model.",
+      "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
     self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
     list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
     get: "Read metadata, saved public Character id/name/description, relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
@@ -393,7 +399,7 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     update_metadata:
       "Update only this actor's title and/or description. This does not change Role, execution settings or another Session's metadata.",
     enqueue:
-      "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. deliveryTiming defaults to immediate; explicitly choose after_source_turn to start the recipient's normal new Turn only after this exact sending Session/incarnation/Turn is terminal and saved (completed, failed or canceled). Both modes return a durable acceptance receipt immediately, never auto-Steer. Unknown source state does not release delayed delivery. Delayed messages do not block immediate consultation or GUI input. requestId must be a UUID and identifies the immutable acceptance, including deliveryTiming; reuse only with identical input. A receipt is acceptance, not a completed Turn. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
+      "Enqueue a normal message to an actual direct parent or child, never self, siblings or other branches. Each request requires approvalMode and, for Codex recipients, codexSandboxMode; other Providers reject sandbox. Parent-to-child requires model and reasoningEffort (\"\" explicitly means no Depth); child-to-parent may omit either to capture the parent's saved value at acceptance. Validate the effective Model/Depth against the recipient's Provider/Workspace get_catalog. Retain Reviewer; incompatible Approval is rejected, not silently downgraded. Settings affect only this receipt's normal Turn, not saved defaults or a running Turn, and do not grant user approval. deliveryTiming defaults to immediate; after_source_turn waits for this exact source Session/incarnation/Turn's saved completed/failed/canceled state. Both return a durable receipt immediately; unknown source state does not release it. No auto-Steer or blocking immediate/GUI inputs. requestId must be a UUID; identical retries preserve explicit choices (including omissions) and timing. Inspect receipt.accepted.request.executionOptions for frozen effective settings. A receipt is acceptance, not completion. On unknown outcome query get_receipt with the same requestId; do not create a new request automatically.",
     get_receipt:
       "Recover this sender's receipt by its original UUID requestId and exact target. Delayed receipts expose sourceTurnPhase (running, completed, failed, canceled or unknown); sourceTurnPendingRelease marks execution still releasing even when a terminal phase is saved. Source failure or cancellation is not successful work. Later active Turns of this sender may recover it. A requestId is not authority to read another sender's receipt.",
     cancel_receipt:
