@@ -25,7 +25,7 @@ import { readConversationQuerySnapshot } from "../storage/conversation-query.js"
 export type AffectSessionSource = BackgroundSourceRef & { ownerIdentity?: string };
 type AffectWriteOptions = { expectedVersion?: string; sessionSource?: AffectSessionSource };
 
-const LOCAL_USER_ID = "local-user";
+import { LOCAL_USER_ID } from "../../src-shared/character/character-participant.js";
 export const DEFAULT_SESSION_AFFECT_HALF_LIFE_MS = 6 * 60 * 60 * 1_000;
 export const MINIMUM_SESSION_AFFECT_DECAY_WEIGHT = 0.05;
 export const CROSS_SESSION_AFTERGLOW_WEIGHT = 0.5;

@@ -197,6 +197,51 @@ function affectStorage(dbPath: string): CharacterAffectStorage {
   });
 }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Character対象を持たない既存Affect schemaを更新しても確定済みevent・version・冪等性を保持し、方向付きCharacter感情を保存できる"
+// oracle = { type = "contract", ref = "docs/design/database-schema.md#character-affect" }
+// fault = "CHECK更新の再構築で既存eventやidempotencyを失うか、Character対象を拒否する"
+// observable = "再open後の旧event replay・state versionとAからB/BからAのeffective state"
+// observation_boundary = "public-boundary"
+// scope = "character-affect-peer-schema-upgrade"
+// lifecycle = "permanent"
+// @end-test-value
+it("既存eventを維持してCharacter対象のCHECKへ更新する", () => {
+  const fixture = createFixture();
+  let storage: CharacterAffectStorage | undefined = affectStorage(fixture.dbPath);
+  try {
+    const original = storage.recordEvent(event());
+    const scope = { characterId: "character-a", userId: "local-user", sessionId: "session-a" };
+    const version = storage.getStateVersion(scope);
+    storage.close();
+    storage = undefined;
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      // Recreate the prior release's connected tables with its original target CHECK.
+      const tables = ["character_affect_events_v6", "character_affect_resets_v6", "character_affect_idempotency_v6", "character_affect_mutations_v6", "character_affect_observations_v6"];
+      const saved = tables.map((name) => ({ name,
+        sql: (db.prepare("SELECT sql FROM sqlite_master WHERE name = ?").get(name) as { sql: string }).sql.replaceAll("'user', 'character', 'relationship'", "'user', 'relationship'"),
+        rows: db.prepare(`SELECT * FROM ${name}`).all() as Record<string, string | number | null>[],
+      }));
+      db.exec("PRAGMA foreign_keys = OFF");
+      for (const name of [...tables].reverse()) db.exec(`DROP TABLE ${name}`);
+      for (const table of saved) db.exec(table.sql);
+      for (const table of saved) for (const row of table.rows) {
+        db.prepare(`INSERT INTO ${table.name} (${Object.keys(row).join(",")}) VALUES (${Object.keys(row).map(() => "?").join(",")})`).run(...Object.values(row));
+      }
+      db.exec("PRAGMA foreign_keys = ON");
+      ensureV6Schema(db);
+    } finally { db.close(); }
+    storage = affectStorage(fixture.dbPath);
+    assert.deepEqual(storage.getStateVersion(scope), version);
+    assert.equal(storage.recordEvent(event()).event.id, original.event.id);
+    storage.recordEvent(event({ layer: "relationship", targetType: "character", targetId: "character-b", idempotencyKey: "peer" }));
+    assert.ok(storage.getContextState({ ...scope, sessionId: "session-b" }).state.components.some((item) => item.targetType === "character" && item.targetId === "character-b"));
+    assert.equal(storage.getContextState({ characterId: "character-b", userId: "local-user", sessionId: "session-other" }).state.components.length, 0);
+  } finally { storage?.close(); rmSync(fixture.directory, { recursive: true, force: true }); }
+});
+
 function expectedStateVersion(dbPath: string, sessionId: string): string {
   const db = new DatabaseSync(dbPath);
   try {

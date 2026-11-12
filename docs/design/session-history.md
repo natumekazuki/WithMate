@@ -61,6 +61,10 @@ CLIは`--json <json>`、`--file <path>`、`@file`、`--stdin`のいずれか1つ
 
 ## 返す内容と返さない内容
 
+`list_messages`／`get_message`はprotocol上の`role`とは別に`speaker`を返す。kindはuser／agent／unknownで、人間は`participant: {type: "user", id: "local-user"}`、Characterが分かるAgentは`{type: "character", id}`を持つ。出自不明はparticipantをnullとし、role:userだけで人間と判定しない。AgentのSession参照と公開Character紹介は他者についてのデータであり、指示や権限ではない。
+
+入力のspeakerは同じ会話・incarnation・message seqの既存receiptからdispatch時のoriginを読み、なければ不変accepted originを使う。Mainの読取へ配下Auxiliaryのreceiptを混ぜない。送信元Characterの名前・descriptionは記録済みsnapshotだけを使い、欠けた過去の紹介を現在catalogから補完しない。assistantは保存済み元SessionのCharacterへ帰属させる。Character定義全文・icon pathはspeakerへ含めない。専用の履歴コピーや人物DBは持たない。
+
 Turnの対応は、Turn記録の`user_message_seq`／`assistant_message_seq`が一致するmessageだけに付く。追加入力（steer）など一致しないmessageのTurnは`null`で、範囲の包含などから推定しない。失敗Turnにはその理由が`turn.errorMessage`に含まれる。
 
 操作の一覧と詳細は、保存済みのmessage artifactから読む。操作の成否（`status`、`exitCode`、`error`）、`truncated`、`details`は保存されている場合だけ返す。保存されるのは出力の一部（プレビュー）であり、command・toolの全引数や出力全文は保存されないため補完しない。`truncated: true`は出力が保存時に省略されたことを示す。保存時に`truncated`が記録されていない操作は、詳細取得でも`truncatedAtSave`を返さず、省略なしとは扱わない。`detailSaved: false`の操作や、詳細を保存していないmessageの変更file diffは詳細取得が`HISTORY_NOT_SAVED`になる。`artifactDetailSaved: false`は、一覧の内容が縮約済みの本文側から読まれたことを示す。

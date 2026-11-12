@@ -112,7 +112,7 @@ export type AuxiliarySessionSummary = Omit<
   AuxiliarySession,
   "messages" | "composerDraft" | "characterRuntimeSnapshot" | "characterRuntimeSnapshotInvalid"
   | "creationContext" | "creationRequest"
-> & { cancellationState?: "requested" | "terminating"; approvalPending?: boolean; hasUnreadResult?: boolean };
+> & { character?: string; characterDescription?: string; cancellationState?: "requested" | "terminating"; approvalPending?: boolean; hasUnreadResult?: boolean };
 
 export function applyAuxiliarySessionPatch(
   session: AuxiliarySession,
@@ -488,6 +488,8 @@ export function projectAuxiliarySessionSummary(session: AuxiliarySession): Auxil
   } = session;
   return {
     ...summary,
+    characterDescription: session.characterRuntimeSnapshot?.description ?? "",
+    character: session.characterRuntimeSnapshot?.name ?? "",
     characterIconPath: session.characterIconPath ?? session.characterRuntimeSnapshot?.iconFilePath ?? "",
     preview: session.preview ?? buildAuxiliaryPreview(session.messages),
   };

@@ -1,4 +1,5 @@
 import type { MemorySearchHit, MemoryEntrySummary } from "../memory/memory-state.js";
+import type { ConversationParticipant } from "../character/character-participant.js";
 import type { MemoryForgetReason, MemoryTag, ProjectTargetRef } from "../memory/memory-contract.js";
 import type {
   AffectEventInput,
@@ -41,6 +42,7 @@ export type CharacterContextErrorResponse = {
 };
 
 export type CharacterContextGetRequest = {
+  counterpart?: ConversationParticipant;
   schemaVersion: typeof CHARACTER_CONTEXT_SCHEMA_VERSION;
   characterId: string;
   sessionId: string;
@@ -171,6 +173,8 @@ export type CharacterMemorySearchResponse = {
 };
 
 type CharacterMemoryEpisodeBase = {
+  participants?: ConversationParticipant[];
+  factSource?: "user" | "agent" | "observation";
   title: string;
   body: string;
   preview: string;

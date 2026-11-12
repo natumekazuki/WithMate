@@ -77,6 +77,12 @@ Memoryは重要な決定や長期的な選好だけでなく、小さな好み�
 
 ### 軽い記録の入力
 
+Character episodeの`participants`は`{type: "user", id: "local-user"}`または`{type: "character", id: "Character ID"}`の配列を任意指定できる。保存先は自身のCharacterのままで、`participant-user`／`participant-character`タグとして関連付ける。相手との経験を想起するときは、自身のCharacter targetへ`memory.search`のtagsを指定し、`memory.get_entry`で本文を読む。新しいユーザーアカウントや関係DBは作らない。
+
+`observedFact`の出自を`factSource: "user" | "agent" | "observation"`で任意指定できる。evidenceタグはそれぞれuser-stated／agent-stated／observed-factとなり、省略時もuser-statedへ補完せずobserved-factにする。本文では引用・伝聞・観察と本人の受け取りを区別する。登録済みの旧entryは書き換えない。旧形式の同一key再送は、既存keyの競合時だけ旧user-statedタグを含む入力とも照合し、完全一致した既存entryをreplayする。新規entryへ旧タグを補完したり、変更済み入力の競合を隠したりしない。
+
+Affectの`targetType: "character"`と相手Character IDは、その相手に対する自分の感情を表し、relationship／sessionの両layerで使える。Character owner・固定userId・元Sessionを相手IDへ変えず、逆方向の感情は生成しない。`character_context.get`の任意`counterpart`はparticipantsと同じ単一参照で、該当相手の対人Affectと作業・自己等のAffectを返す。省略時は従来どおり全対象を返す。新しい送信先や他Characterの非公開記憶への権限は付与しない。
+
 `memory.append`では`target`、`kind`、`title`、`body`、`preview`、`idempotencyKey`を明示する。`tags`は省略でき、省略時は`[]`と同じ値へ正規化する。必要な分類がある場合は明示tagを付ける。タグの自動生成は行わない。
 
 複数の独立記録を渡す場合は、同じ操作へ共通targetと`entries`を指定する。Character Memoryも同じappend_episode操作へ`episodes`を指定できる。各itemは単件内容と自身のidempotency keyを持ち、単件fieldとは混在させない。非空配列の件数上限はないが、本文文字数・一entryの添付数等は維持する。Affect candidatesにも固定件数上限はない。
@@ -108,7 +114,7 @@ title/previewは検索・一覧で本文取得前にも表示されるため、�
 | `append` | `memory.append` | 共通targetと単件field、またはentries（各itemの内容とidempotencyKey）。一括はindex別結果 |
 | `forget` | `memory.forget` | target/entryIds/reason/idempotencyKey。dryRunで非変更preview |
 | `move-entry` | `memory.move_entry` | entryId/from/to/reason/idempotencyKey。entry identityを保持 |
-| `context-get` | `character_context.get` | binding必須。任意query、memoryLimit既定3 |
+| `context-get` | `character_context.get` | binding必須。任意query・counterpart、memoryLimit既定3 |
 | `affect-appraise` | `character_affect.appraise` | binding必須。通常はcandidates、任意expectedVersion。背景Affectはdomain値とsourceMessageSeqまたはsourceTurnIdの一方を持つcandidates |
 | `affect-inspect` | `character_affect.inspect` | binding必須。現在Character / Sessionのevent・reset・version |
 | `affect-correct` | `character_affect.correct` | binding必須。eventId/expectedVersion/reason/replacement、通常turnはexplicitUserRequest必須、背景Affect管理では省略可 |

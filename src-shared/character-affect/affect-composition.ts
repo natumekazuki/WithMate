@@ -6,7 +6,7 @@ const text = z.string().refine((value) => value.trim().length > 0, "Must not be 
 const dimension = z.number().finite().min(-1).max(1);
 export const backgroundAffectCandidateSchema = z.object({
   layer: z.enum(["relationship", "session"]),
-  targetType: z.enum(["user", "relationship", "task", "bug", "artifact", "self"]),
+  targetType: z.enum(["user", "character", "relationship", "task", "bug", "artifact", "self"]),
   targetId: text,
   family: z.enum(CHARACTER_AFFECT_FAMILIES),
   value: z.object({
@@ -23,13 +23,15 @@ export const backgroundAffectCandidateSchema = z.object({
   sourceTurnId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
     .describe("A saved terminal Turn ID, as an alternative to sourceMessageSeq. Supply exactly one source reference."),
 }).strict().refine((candidate) => candidate.layer !== "relationship"
-  || candidate.targetType === "user" || candidate.targetType === "relationship", {
-  message: "Relationship affect may only target the user or relationship.", path: ["targetType"],
+  || candidate.targetType === "user" || candidate.targetType === "character" || candidate.targetType === "relationship", {
+  message: "Relationship affect may only target a user, Character or relationship.", path: ["targetType"],
 }).refine((candidate) => (candidate.sourceMessageSeq !== undefined) !== (candidate.sourceTurnId !== undefined), {
   message: "Supply exactly one of sourceMessageSeq or sourceTurnId.", path: ["sourceMessageSeq"],
 });
 
 export const AFFECT_COMPOSITION_INSTRUCTIONS = [
+  "背景実行は元SessionのCharacter本人のAffectを管理する処理であり、独立した対話参加者ではない。session_historyのspeakerで実際の発話者とCharacter IDを確認し、role:userから人間の発言と推測しない。",
+  "ユーザーへの感情はtargetType:userとtargetId:local-user、他Characterへの感情はtargetType:characterと実際のCharacter IDを指定する。userIdや保存ownerへ相手IDを流用せず、AからBへの感情をBからAへ複製しない。名前・親子関係だけでIDや親密さを推測せず、公開紹介と自身の経験、相手の内心を区別する。",
   "Character定義・現在Affectを踏まえ、許可された保存済み会話・既存記録・必要な資料を確認し、そのCharacterにとって出来事がどう受け取られ、感情がどう変化したかを判断してAffectを管理する。",
   "必要な会話・操作結果・許可された既存Memoryを自分で選んで確認し、今回登録する変化と過去分の再検討を判断する。継続threadの過去の応答は現在の保存状態や権限の正本ではない。",
   "前回失敗の情報がある場合は、次の会話情報と合わせて必要な過去分も再検討する。現在Affectと途中まで保存された記録を確認し、失敗したから全件未保存とは決めつけず、直後の自動再試行loopは行わない。",

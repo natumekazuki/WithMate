@@ -1780,6 +1780,7 @@ export class SessionStorageV6 {
       sourceSchemaVersion: runtimePolicy.sourceSchemaVersion ?? CURRENT_SESSION_SCHEMA_VERSION,
       characterId: decoded.characterId,
       character: snapshot?.name ?? runtimePolicy.characterName,
+      characterDescription: snapshot?.description ?? "",
       characterIconPath: snapshot?.iconFilePath ?? runtimePolicy.characterIconPath,
       characterThemeColors: snapshot?.theme ?? runtimePolicy.characterThemeColors,
       runState: runtimePolicy.runState,

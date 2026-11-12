@@ -3,6 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { randomUUID } from "node:crypto";
+import { SessionTurnQueueStorageV6 } from "../../src-electron/session/session-turn-queue-storage-v6.js";
+import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src-shared/settings/approval-mode.js";
 import type { AuxiliarySession } from "../../src-shared/auxiliary/auxiliary-session-state.js";
@@ -57,13 +60,13 @@ function addTurns(turns: SessionTurnStorageV6, sessionId: string): void {
   turns.createSessionTurn({ ...base, phase: "running", userMessageSeq: 4, errorMessage: "" });
 }
 
-async function withStorages(action: (context: { main: SessionStorageV6; auxiliary: AuxiliarySessionStorage; turns: SessionTurnStorageV6 }) => Promise<void>) {
+async function withStorages(action: (context: { main: SessionStorageV6; auxiliary: AuxiliarySessionStorage; turns: SessionTurnStorageV6; dbPath: string }) => Promise<void>) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-history-"));
   const dbPath = path.join(directory, "app.db");
   const main = new SessionStorageV6(dbPath);
   const auxiliary = new AuxiliarySessionStorage(dbPath);
   const turns = new SessionTurnStorageV6(dbPath);
-  try { await action({ main, auxiliary, turns }); }
+  try { await action({ main, auxiliary, turns, dbPath }); }
   finally { turns.close(); auxiliary.close(); main.close(); await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }); }
 }
 
@@ -77,6 +80,47 @@ function read<K extends SessionHistoryOperation>(storage: { readSessionHistory(i
 }
 
 function failureCode(result: SessionHistoryResult): string | undefined { return result.ok ? undefined : result.code; }
+
+// @test-value v2
+// kind = "contract"
+// claim = "背景履歴は同じuser roleでも配送時のAgentとGUIユーザーを区別し、出自未記録の履歴を人間へ補完しない"
+// oracle = { type = "contract", ref = "docs/design/session-history.md" }
+// fault = "roleを発話主体と同一視するか、保存済みの相手プロフィールを最新情報へ置換する"
+// observable = "list_messagesとget_messageが返すspeakerのkind・participant・Character紹介"
+// observation_boundary = "public-boundary"
+// scope = "background-history-speaker"
+// lifecycle = "permanent"
+// @end-test-value
+test("背景履歴へ保存済み配送元のCharacterと固定ユーザーを返す", async () => {
+  await withStorages(async ({ main, turns, dbPath }) => {
+    const session = main.insertSession(mainSession("source"));
+    addTurns(turns, session.id);
+    const queue = new SessionTurnQueueStorageV6(dbPath);
+    const owner = { sessionId: session.id, incarnationId: getSessionIncarnationId(session) };
+    try {
+      for (const [seq, origin] of [
+        [0, { kind: "session" as const, actorKind: "main" as const, actorSessionId: "peer", actorIncarnationId: "peer-v1", actorTurnId: "7",
+          actorSnapshot: { sessionTitle: "Peer", character: { id: "peer-character", name: "Peer Name", description: "保存時の紹介", iconPath: "private.png" } } }],
+        [2, { kind: "gui" as const }],
+      ] as const) {
+        const receipt = queue.enqueue(owner, { request: { userMessage: "saved input", executionOptions: captureSessionExecutionOptions(session), clientRequestId: randomUUID() },
+          attachments: [], provider: session.provider, workspacePath: session.workspacePath,
+          origin: { ...origin, operation: "send", targetSessionId: session.id, targetIncarnationId: owner.incarnationId } });
+        queue.claimNext(owner);
+        queue.markStarted(owner, receipt.id, { turnId: String(seq + 1), userMessageSeq: seq });
+        queue.settle(owner, receipt.id, "completed");
+      }
+      const scope = mainScope(main, session);
+      const list = read(main, scope, "list_messages", {}) as Record<string, any>;
+      assert.deepEqual(list.items[0].speaker.participant, { type: "character", id: "peer-character" });
+      assert.deepEqual(list.items[0].speaker.character, { id: "peer-character", name: "Peer Name", description: "保存時の紹介" });
+      assert.deepEqual(list.items[2].speaker, { kind: "user", participant: { type: "user", id: "local-user" } });
+      assert.deepEqual(list.items[4].speaker, { kind: "unknown", participant: null });
+      assert.equal(list.items[1].speaker.kind, "agent");
+      assert.deepEqual((read(main, scope, "get_message", { seq: 0 }) as Record<string, any>).speaker, list.items[0].speaker);
+    } finally { queue.close(); }
+  });
+});
 
 // @test-value v2
 // kind = "contract"

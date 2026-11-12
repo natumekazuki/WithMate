@@ -238,6 +238,9 @@ Registration inputs:
   Background affect-appraise candidates use sourceMessageSeq from a saved user/assistant message; the app resolves the terminal Turn and time. Alternatively use sourceTurnId, never both.
   append accepts a target and either the single-entry fields or entries[]. Each entry has its own idempotencyKey.
   character-memory-append-episode accepts either episode/idempotencyKey or episodes[] of those pairs.
+  Episodes can identify participants as {type:"user",id:"local-user"} or {type:"character",id:"<Character ID>"}; factSource is user, agent or observation.
+  Recall your own Character Memory with search tags participant-user / local-user or participant-character / <Character ID>, then get-entry for its body.
+  context-get accepts counterpart with the same participant reference to select interpersonal Affect. Affect targetType:character identifies another Character without changing the owner.
   Registration arrays have no fixed item-count maximum; per-item text and attachment limits still apply.
   Batch results use input index, saved/failed/unknown/not_run and the existing single-item result.
   Processing stops at the first failure; confirmed items remain saved. Do not automatically retry a whole batch.

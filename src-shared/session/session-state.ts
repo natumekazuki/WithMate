@@ -119,6 +119,7 @@ export type Session = Partial<SessionRelationship> & {
 };
 
 export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRuntimeSnapshot" | "isPinned"> & {
+  characterDescription?: string;
   isPinned: boolean;
 };
 export type SessionDetail = Session;
@@ -461,7 +462,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
     return null;
   }
 
-  const candidate = value as Partial<Session>;
+  const candidate = value as Partial<Session & { characterDescription: string }>;
   const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "Character";
   const characterId = recoverStoredCharacterOwnerId(candidate.characterId);
   const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`;
@@ -510,6 +511,9 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
         : CURRENT_SESSION_SCHEMA_VERSION - 1,
     characterId,
     character: characterName,
+    ...(typeof candidate.characterRuntimeSnapshot?.description === "string" && candidate.characterRuntimeSnapshot.description
+      ? { characterDescription: candidate.characterRuntimeSnapshot.description }
+      : typeof candidate.characterDescription === "string" && candidate.characterDescription ? { characterDescription: candidate.characterDescription } : {}),
     characterIconPath:
       typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
         ? candidate.characterIconPath

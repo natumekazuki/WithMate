@@ -44,7 +44,7 @@ test("通常次turnと同Provider・別Providerの背景が同じ保存sourceを
     assert.deepEqual((await a.client.listTools()).tools.map((tool) => tool.name), ["session_history.list_messages", "session_history.get_message", "session_history.list_operations", "session_history.get_operation_detail"]);
     for (const client of [a.client, b.client]) {
       assert.deepEqual((await client.callTool({ name: "session_history.get_message", arguments: { seq: 0 } })).structuredContent,
-        { ok: true, seq: 0, role: "user", text: "saved source", offset: 0, nextOffset: null, totalChars: 12, turn: null });
+        { ok: true, seq: 0, role: "user", speaker: { kind: "unknown", participant: null }, text: "saved source", offset: 0, nextOffset: null, totalChars: 12, turn: null });
       assert.deepEqual((await client.callTool({ name: "session_history.get_message", arguments: { seq: 2 } })).structuredContent,
         { ok: false, code: "HISTORY_OUT_OF_RANGE", message: "The requested message is outside the permitted history range.", effect: "none" });
     }

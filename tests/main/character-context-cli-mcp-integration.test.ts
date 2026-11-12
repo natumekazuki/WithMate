@@ -26,10 +26,10 @@ function outputBuffer() {
 describe("Character context CLI / MCP integration", () => {
   // @test-value v2
   // kind = "invariant"
-  // claim = "単一owner-bound runtimeでCLI・MCPのAffect保存と各context取得経路の投影が同じclock・state・scope・versionへ収束し、未知familyを拒否する。Character Memoryのappend・correct・search・forgetがCLI/MCP間で反映され、storage障害を両adapterが失敗として返す"
+  // claim = "単一owner-bound runtimeでCLI・MCPのAffect保存と各context取得経路の投影が同じclock・state・scope・versionへ収束し、未知familyを拒否する。Character Memoryのparticipant/evidence参照とappend・correct・search・forgetが両入口で反映され、相手指定のAffect取得でユーザー対象を除外し、storage障害を両adapterが失敗として返す"
   // oracle = { type = "contract", ref = "docs/adr/020-memory-affect-mcp-application-boundary.md" }
-  // fault = "Affect投影がadapter間で不一致になる、未知familyを受理する、Character Memoryの訂正が検索へ反映されないか忘却のreadBackが成立しない、またはstorage障害を成功として返す"
-  // observable = "CLI inspectのevent件数とfamily・target、各経路のaffect投影、未知familyのinvalid input error、Memoryの追加・訂正結果と検索ID・scopeとforgetのreadBack、storage障害時のCLI終了codeとMCP isError・error code・effect"
+  // fault = "Affect投影がadapter間で不一致になる、counterpartをruntimeへ渡さず別相手を含める、未知familyを受理する、Character Memoryの参照タグや訂正・忘却が反映されない、またはstorage障害を成功として返す"
+  // observable = "CLI inspectのevent件数とfamily・target、counterpart指定時を含む両経路のaffect投影、未知familyのinvalid input error、Memoryの追加・訂正結果と相手/出自タグ・検索ID・scopeとforgetのreadBack、storage障害時のCLI終了codeとMCP isError・error code・effect"
   // observation_boundary = "public-boundary"
   // scope = "owner-bound Character context runtimeのAffect投影・入力拒否、Memory mutation/read-back、CLI/MCP storage error mapping"
   // lifecycle = "permanent"
@@ -344,6 +344,8 @@ describe("Character context CLI / MCP integration", () => {
           idempotencyKey: "cli-episode-1",
           episode: {
             title: "CLI and MCP shared state",
+            participants: [{ type: "character", id: "character-b" }],
+            factSource: "agent",
             body: "The integration test observed one shared runtime state.",
             preview: "CLI and MCP shared one state.",
             motif: "adapter-parity",
@@ -352,6 +354,26 @@ describe("Character context CLI / MCP integration", () => {
         }),
       ], { env: cliEnv, stdout: appendOutput.stream, stderr: outputBuffer().stream }), 0);
       const appended = appendOutput.json();
+      assert.ok(appended.entry.tags.some((tag: { type: string; value: string }) => tag.type === "participant-character" && tag.value === "character-b"));
+      assert.ok(appended.entry.tags.some((tag: { type: string; value: string }) => tag.type === "evidence" && tag.value === "agent-stated"));
+      const peerRead = await client.callTool({ name: "memory.get_entry", arguments: { target: { kind: "character" }, entryId: appended.entry.id } });
+      assert.equal(peerRead.isError, undefined);
+      assert.deepEqual((peerRead.structuredContent as Record<string, any>).entry.tags, appended.entry.tags);
+      const peerAffect = await client.callTool({ name: "character_affect.appraise", arguments: { candidates: [{
+        schemaVersion: "withmate-affect-v1",
+        layer: "relationship", targetType: "character", targetId: "character-b", family: "gratitude", value: { label: "Peer gratitude", valence: 0.5 },
+        intensity: 0.4, reason: "Peer helped.", evidence: "Peer reported review.", occurredAt: "2026-08-09T09:00:00.000Z", idempotencyKey: "peer-gratitude",
+      }, { schemaVersion: "withmate-affect-v1", layer: "relationship", targetType: "user", targetId: "local-user", family: "affinity",
+        value: { label: "Human affinity", valence: 0.5 }, intensity: 0.4, reason: "Human collaboration.", evidence: "Human input.",
+        occurredAt: "2026-08-09T09:00:00.000Z", idempotencyKey: "human-affinity" }] } });
+      assert.equal(peerAffect.isError, undefined, JSON.stringify(peerAffect));
+      const peerContext = await client.callTool({ name: "character_context.get", arguments: { counterpart: { type: "character", id: "character-b" } } });
+      const peerCliOutput = outputBuffer();
+      assert.equal(await runCli(["context-get", "--json", JSON.stringify({ counterpart: { type: "character", id: "character-b" } })],
+        { env: cliEnv, stdout: peerCliOutput.stream, stderr: outputBuffer().stream }), 0);
+      assert.deepEqual(peerCliOutput.json().affect, (peerContext.structuredContent as Record<string, any>).affect);
+      assert.ok(peerCliOutput.json().affect.effective.some((item: Record<string, any>) => item.targetType === "character" && item.targetId === "character-b"));
+      assert.equal(peerCliOutput.json().affect.effective.some((item: Record<string, any>) => item.targetType === "user"), false);
 
       const correctOutput = outputBuffer();
       assert.equal(await runCli([

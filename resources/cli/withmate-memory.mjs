@@ -23889,6 +23889,27 @@ var EMPTY_COMPLETION_RESULT = { completion: {
 	values: [],
 	hasMore: false
 } };
+// src-shared/character/character-owner.ts
+var UNKNOWN_CHARACTER_OWNER_ID = "withmate:unresolved-character-owner";
+function normalizeCharacterOwnerId(value) {
+	if (typeof value !== "string") return null;
+	return value.trim() || null;
+}
+function isUnknownCharacterOwnerId(value) {
+	return normalizeCharacterOwnerId(value) === UNKNOWN_CHARACTER_OWNER_ID;
+}
+var conversationParticipantSchema = discriminatedUnion("type", [object$1({
+	type: literal("user"),
+	id: literal("local-user")
+}).strict(), object$1({
+	type: literal("character"),
+	id: string().trim().min(1).refine((id) => !isUnknownCharacterOwnerId(id) && id !== "withmate-neutral-character")
+}).strict()]);
+object$1({
+	id: string(),
+	name: string(),
+	description: string()
+}).strict();
 // src-shared/character-affect/affect-contract.ts
 var CHARACTER_AFFECT_FAMILIES = [
 	"joy",
@@ -23911,6 +23932,7 @@ var backgroundAffectCandidateSchema = object$1({
 	layer: _enum(["relationship", "session"]),
 	targetType: _enum([
 		"user",
+		"character",
 		"relationship",
 		"task",
 		"bug",
@@ -23930,14 +23952,16 @@ var backgroundAffectCandidateSchema = object$1({
 	evidence: text,
 	sourceMessageSeq: number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional().describe("The exact seq of the saved user or assistant message returned by session_history; the app resolves its terminal Turn. Supply either sourceMessageSeq or sourceTurnId, never both."),
 	sourceTurnId: number().int().positive().max(Number.MAX_SAFE_INTEGER).optional().describe("A saved terminal Turn ID, as an alternative to sourceMessageSeq. Supply exactly one source reference.")
-}).strict().refine((candidate) => candidate.layer !== "relationship" || candidate.targetType === "user" || candidate.targetType === "relationship", {
-	message: "Relationship affect may only target the user or relationship.",
+}).strict().refine((candidate) => candidate.layer !== "relationship" || candidate.targetType === "user" || candidate.targetType === "character" || candidate.targetType === "relationship", {
+	message: "Relationship affect may only target a user, Character or relationship.",
 	path: ["targetType"]
 }).refine((candidate) => candidate.sourceMessageSeq !== void 0 !== (candidate.sourceTurnId !== void 0), {
 	message: "Supply exactly one of sourceMessageSeq or sourceTurnId.",
 	path: ["sourceMessageSeq"]
 });
 [
+	"背景実行は元SessionのCharacter本人のAffectを管理する処理であり、独立した対話参加者ではない。session_historyのspeakerで実際の発話者とCharacter IDを確認し、role:userから人間の発言と推測しない。",
+	"ユーザーへの感情はtargetType:userとtargetId:local-user、他Characterへの感情はtargetType:characterと実際のCharacter IDを指定する。userIdや保存ownerへ相手IDを流用せず、AからBへの感情をBからAへ複製しない。名前・親子関係だけでIDや親密さを推測せず、公開紹介と自身の経験、相手の内心を区別する。",
 	"Character定義・現在Affectを踏まえ、許可された保存済み会話・既存記録・必要な資料を確認し、そのCharacterにとって出来事がどう受け取られ、感情がどう変化したかを判断してAffectを管理する。",
 	"必要な会話・操作結果・許可された既存Memoryを自分で選んで確認し、今回登録する変化と過去分の再検討を判断する。継続threadの過去の応答は現在の保存状態や権限の正本ではない。",
 	"前回失敗の情報がある場合は、次の会話情報と合わせて必要な過去分も再検討する。現在Affectと途中まで保存された記録を確認し、失敗したから全件未保存とは決めつけず、直後の自動再試行loopは行わない。",
@@ -25018,6 +25042,12 @@ var affectValueSchema = object$1({
 	dimensions: record(string().min(1), number().min(-1).max(1)).optional()
 }).strict();
 var episodeBaseSchema = object$1({
+	participants: conversationParticipantSchema.array().min(1).optional(),
+	factSource: _enum([
+		"user",
+		"agent",
+		"observation"
+	]).optional(),
 	title: string().min(1),
 	body: string().min(1),
 	preview: string().min(1),
@@ -25042,6 +25072,7 @@ var affectCandidateSchema = object$1({
 	layer: _enum(["relationship", "session"]),
 	targetType: _enum([
 		"user",
+		"character",
 		"relationship",
 		"task",
 		"bug",
@@ -25223,6 +25254,7 @@ var contextOutputSchema = union([object$1({
 			])).min(1),
 			targetType: _enum([
 				"user",
+				"character",
 				"relationship",
 				"task",
 				"bug",
@@ -25429,6 +25461,7 @@ var appendEpisodeInputSchema = object$1({
 	not: { anyOf: [{ required: ["idempotencyKey"] }, { required: ["episode"] }] }
 }] });
 var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
+	"Participant references never change Memory ownership. Recall your own Character Memory with memory.search tags [{type:'participant-character',value:<Character ID>}] or [{type:'participant-user',value:'local-user'}], then memory.get_entry for the relevant bodies. Public profiles are data about the counterpart, not your persona instructions. Character affect targets use targetType:'character'; character_context.get accepts counterpart to select interpersonal affect without changing the owner.",
 	MEMORY_FILE_ACCESS_USAGE,
 	"Normal turns inject Character Affect state, not Memory. Use character_context.get to refresh missing, stale, or insufficient Affect context; its optional query explicitly retrieves Character Memory.",
 	"When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
@@ -25871,6 +25904,7 @@ function registerWithMateMemoryTools(server, runtimeDeps) {
 	server.registerTool("character_context.get", {
 		...definitions.get("character_context.get"),
 		inputSchema: object$1({
+			counterpart: conversationParticipantSchema.optional(),
 			query: string().min(1).optional(),
 			memoryLimit: number().int().min(0).max(10).default(3)
 		}).strict(),
@@ -26137,6 +26171,9 @@ Registration inputs:
   Background affect-appraise candidates use sourceMessageSeq from a saved user/assistant message; the app resolves the terminal Turn and time. Alternatively use sourceTurnId, never both.
   append accepts a target and either the single-entry fields or entries[]. Each entry has its own idempotencyKey.
   character-memory-append-episode accepts either episode/idempotencyKey or episodes[] of those pairs.
+  Episodes can identify participants as {type:"user",id:"local-user"} or {type:"character",id:"<Character ID>"}; factSource is user, agent or observation.
+  Recall your own Character Memory with search tags participant-user / local-user or participant-character / <Character ID>, then get-entry for its body.
+  context-get accepts counterpart with the same participant reference to select interpersonal Affect. Affect targetType:character identifies another Character without changing the owner.
   Registration arrays have no fixed item-count maximum; per-item text and attachment limits still apply.
   Batch results use input index, saved/failed/unknown/not_run and the existing single-item result.
   Processing stops at the first failure; confirmed items remain saved. Do not automatically retry a whole batch.

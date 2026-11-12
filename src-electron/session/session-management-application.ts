@@ -1,3 +1,4 @@
+import { projectCharacterPublicProfile } from "../../src-shared/character/character-participant.js";
 import {
   sessionOperationRequestSchemas,
   type SessionOperation,
@@ -225,8 +226,9 @@ export class SessionManagementApplication {
             title: created.taskTitle,
             description: created.description ?? "",
             runState: created.runState,
+            character: projectCharacterPublicProfile(created),
           },
-          character: { id: created.characterId ?? "", name: created.character },
+          character: projectCharacterPublicProfile(created),
           provider: created.provider,
           workspacePath: created.workspacePath,
           executionOptions: captureSessionExecutionOptions(created),

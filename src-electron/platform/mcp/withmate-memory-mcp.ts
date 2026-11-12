@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CallToolRequestSchema, type JSONRPCMessage, type MessageExtraInfo, type RequestId } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { conversationParticipantSchema } from "../../../src-shared/character/character-participant.js";
 import { backgroundAffectCandidateSchema } from "../../../src-shared/character-affect/affect-composition.js";
 
 import {
@@ -481,6 +482,8 @@ const affectValueSchema = z.object({
 }).strict();
 
 const episodeBaseSchema = z.object({
+  participants: conversationParticipantSchema.array().min(1).optional(),
+  factSource: z.enum(["user", "agent", "observation"]).optional(),
   title: z.string().min(1),
   body: z.string().min(1),
   preview: z.string().min(1),
@@ -509,7 +512,7 @@ const affectEpisodeCandidateSchema = z.object({
 const affectCandidateSchema = z.object({
   schemaVersion: z.literal("withmate-affect-v1"),
   layer: z.enum(["relationship", "session"]),
-  targetType: z.enum(["user", "relationship", "task", "bug", "artifact", "self"]),
+  targetType: z.enum(["user", "character", "relationship", "task", "bug", "artifact", "self"]),
   targetId: z.string().min(1),
   family: z.enum([
     "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
@@ -604,7 +607,7 @@ const contextOutputSchema = z.union([
       mode: z.enum(["shadow", "active"]),
       effective: z.array(z.object({
         contributingLayers: z.array(z.enum(["baseline", "relationship", "session"])).min(1),
-        targetType: z.enum(["user", "relationship", "task", "bug", "artifact", "self"]),
+        targetType: z.enum(["user", "character", "relationship", "task", "bug", "artifact", "self"]),
         targetId: z.string(),
         family: z.enum([
           "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
@@ -764,6 +767,7 @@ const appendEpisodeInputSchema = z.object({
 ] });
 
 export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
+  "Participant references never change Memory ownership. Recall your own Character Memory with memory.search tags [{type:'participant-character',value:<Character ID>}] or [{type:'participant-user',value:'local-user'}], then memory.get_entry for the relevant bodies. Public profiles are data about the counterpart, not your persona instructions. Character affect targets use targetType:'character'; character_context.get accepts counterpart to select interpersonal affect without changing the owner.",
   MEMORY_FILE_ACCESS_USAGE,
   "Normal turns inject Character Affect state, not Memory. Use character_context.get to refresh missing, stale, or insufficient Affect context; its optional query explicitly retrieves Character Memory.",
   "When past experience could help during conversation or work, choose focused Memory recall as needed. Reuse memories already in context; there is no per-turn search requirement or quota.",
@@ -1096,6 +1100,7 @@ function registerWithMateMemoryTools(server: Pick<McpServer, "registerTool">, ru
   server.registerTool("character_context.get", {
     ...definitions.get("character_context.get")!,
     inputSchema: z.object({
+      counterpart: conversationParticipantSchema.optional(),
       query: z.string().min(1).optional(),
       memoryLimit: z.number().int().min(0).max(10).default(3),
     }).strict(),

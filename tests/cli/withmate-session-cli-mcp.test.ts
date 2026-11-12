@@ -203,6 +203,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       title: "task",
       description: "full",
       runState: "running",
+      character: { id: "character", name: "Character", description: "公開紹介" },
     };
     const receipt = {
       id: "receipt",
@@ -343,7 +344,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       coordination_correct: { record },
       create_child: {
         session,
-        character: { id: "character", name: "Character" },
+        character: { id: "character", name: "Character", description: "公開紹介" },
         provider: "codex",
         workspacePath: "workspace",
         executionOptions: {

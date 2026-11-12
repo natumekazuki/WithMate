@@ -1,3 +1,4 @@
+import { LOCAL_USER_ID } from "../../src-shared/character/character-participant.js";
 import type {
   CharacterTargetRef,
   MemoryError,
@@ -93,7 +94,7 @@ export async function resolveMemoryV6Target(
   }
   if (selector.owner === "user" && selector.scope === "global") {
     return withAccessCheck(principal, {
-      owner: { type: "user", id: "local-user" },
+      owner: { type: "user", id: LOCAL_USER_ID },
       scope: { type: "global", id: "global" },
     });
   }

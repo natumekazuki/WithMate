@@ -1,16 +1,19 @@
 import type { ComposerAttachment, RunSessionTurnRequest } from "./runtime-state.js";
 import type { Session } from "./session-state.js";
+import { LOCAL_USER_ID, type ConversationParticipant } from "../character/character-participant.js";
+import { isUnknownCharacterOwnerId, NEUTRAL_CHARACTER_ID } from "../character/character-owner.js";
 
 export type SessionTurnQueueOwner = { sessionId: string; incarnationId: string };
 export type SessionMessageDeliveryTiming = "immediate" | "after_source_turn";
 export type SessionMessageSourceTurnPhase = "running" | "completed" | "failed" | "canceled" | "unknown";
 export type SessionTurnQueueDisplaySnapshot = {
   sessionTitle: string;
-  character: { id: string; name: string; iconPath: string };
+  character: { id: string; name: string; iconPath: string; description?: string };
 };
 export function captureSessionTurnQueueDisplay(session: Session): SessionTurnQueueDisplaySnapshot {
   return { sessionTitle: session.taskTitle, character: {
     id: session.characterId, name: session.characterRuntimeSnapshot?.name ?? session.character,
+    description: session.characterRuntimeSnapshot?.description ?? "",
     iconPath: session.characterIconPath || session.characterRuntimeSnapshot?.iconFilePath || "",
   } };
 }
@@ -37,6 +40,24 @@ export type SessionTurnQueueCapturedInput = {
   workspacePath: string;
   origin?: SessionTurnQueueOrigin;
 };
+
+/** Attribution is supplied by the application, not by claims inside the message body. */
+export function projectSessionInputSender(origin: SessionTurnQueueOrigin | null | undefined): {
+  kind: "user" | "agent" | "unknown";
+  participant: ConversationParticipant | null;
+  session?: { id: string; incarnationId?: string; kind?: "main" | "auxiliary" };
+  character?: { id: string; name: string; description?: string };
+} {
+  if (!origin) return { kind: "unknown", participant: null };
+  if (origin.kind === "gui") return { kind: "user", participant: { type: "user", id: LOCAL_USER_ID } };
+  const character = origin.actorSnapshot?.character;
+  const known = character?.id && !isUnknownCharacterOwnerId(character.id) && character.id !== NEUTRAL_CHARACTER_ID;
+  return { kind: "agent", participant: known ? { type: "character", id: character.id } : null,
+    ...(origin.actorSessionId ? { session: { id: origin.actorSessionId, incarnationId: origin.actorIncarnationId, kind: origin.actorKind } } : {}),
+    ...(known ? { character: { id: character.id, name: character.name,
+      ...(character.description === undefined ? {} : { description: character.description }) } } : {}),
+  };
+}
 export type SessionTurnQueueState = "queued" | "starting" | "running" | "completed" | "failed" | "canceled" | "interrupted";
 export type SessionTurnQueueReceipt = SessionTurnQueueOwner & {
   id: string;

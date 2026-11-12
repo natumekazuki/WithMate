@@ -25,6 +25,7 @@ import { MemoryV6Storage } from "../../src-electron/memory/memory-v6-storage.js"
 import { runWithRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
 import {
   LOCAL_USER_MEMORY_PERMISSIONS,
+  createLocalUserMemoryPrincipal,
   type MemoryV6SessionBindingPrincipal,
 } from "../../src-electron/memory/memory-v6-permission.js";
 
@@ -143,6 +144,59 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
     ...overrides,
   };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "自己所有のepisodeは相手Character参照とAgent由来の事実を保存・検索でき、相手別Affect取得もownerを変えず、旧形式の同一キー再送は既存entryを再利用する"
+// oracle = { type = "contract", ref = "docs/design/v6-memory-foundation.md; docs/design/prompt-composition.md" }
+// fault = "他Agentの発言をuser-statedと保存する、相手IDをownerへ流用する、または旧形式の再送を拒否・重複保存し変更済み入力をreplayする"
+// observable = "episodeのowner/tags、相手タグ検索、counterpart指定のcontext、旧形式再送のreplayed/entry IDと変更済み入力のerror"
+// observation_boundary = "public-boundary"
+// scope = "character-peer-memory-affect"
+// lifecycle = "permanent"
+// @end-test-value
+it("相手Characterの記憶と感情を自Characterに帰属させる", async () => {
+  const fixture = createFixture();
+  try {
+    const result = await fixture.service.appendEpisode({ schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a",
+      authority: { kind: "conversation" }, idempotencyKey: "peer-episode", episode: {
+        title: "Peer collaboration", body: "B reported a completed review; I appreciated the explanation.", preview: "Bとのreviewの経験",
+        observedFact: "B reported completion.", factSource: "agent", participants: [{ type: "character", id: "character-b" }], characterObservation: "I appreciated the explanation." } });
+    assert.equal(isCharacterContextError(result), false);
+    if (isCharacterContextError(result)) throw new Error(result.error.message);
+    assert.ok(result.entry);
+    assert.equal(result.entry.owner.id, "character-a");
+    assert.ok(result.entry.tags.some((tag) => tag.type === "participant-character" && tag.value === "character-b"));
+    assert.ok(result.entry.tags.some((tag) => tag.type === "evidence" && tag.value === "agent-stated"));
+    const entryId = result.entry.id;
+    const found = await fixture.memoryService.search(createLocalUserMemoryPrincipal(), {
+      schemaVersion: "withmate-memory-v1", targets: [{ owner: "character", scope: "character", character: { type: "id", id: "character-a" } }],
+      query: "Peer", tags: [{ type: "participant-character", value: "character-b" }] });
+    assert.ok("items" in found && found.items.some((entry) => entry.id === entryId));
+    await fixture.service.appraise({ schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a", authority: { kind: "conversation" },
+      candidates: [affectCandidate({ layer: "relationship", targetType: "character", targetId: "character-b", idempotencyKey: "peer-affect" }),
+        affectCandidate({ layer: "relationship", targetType: "user", targetId: "local-user", idempotencyKey: "human-affect" })] });
+    const context = await fixture.service.getContext({ schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a",
+      counterpart: { type: "character", id: "character-b" } });
+    assert.equal(isCharacterContextError(context), false);
+    if (isCharacterContextError(context)) throw new Error(context.error.message);
+    assert.deepEqual(context.affect.effective.map((item) => [item.targetType, item.targetId]), [["character", "character-b"]]);
+    const oldEpisode = { title: "Legacy episode", body: "The observed fact was recorded before factSource existed.", preview: "Legacy observation", observedFact: "Recorded fact." };
+    const legacy = await fixture.memoryService.append(createLocalUserMemoryPrincipal(), { schemaVersion: "withmate-memory-v1",
+      target: { owner: "character", scope: "character", character: { type: "id", id: "character-a" } }, kind: "context",
+      title: oldEpisode.title, body: oldEpisode.body, preview: oldEpisode.preview, tags: [{ type: "evidence", value: "user-stated" }], idempotencyKey: "legacy-key" });
+    assert.ok("entry" in legacy);
+    const replay = await fixture.service.appendEpisode({ schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a",
+      authority: { kind: "conversation" }, idempotencyKey: "legacy-key", episode: oldEpisode });
+    assert.ok(!isCharacterContextError(replay));
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.entry?.id, legacy.entry.id);
+    const conflict = await fixture.service.appendEpisode({ schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION, characterId: "character-a", sessionId: "session-a",
+      authority: { kind: "conversation" }, idempotencyKey: "legacy-key", episode: { ...oldEpisode, body: "Changed request." } });
+    assert.ok(isCharacterContextError(conflict));
+    assert.equal(conflict.error.code, "invalid_input");
+  } finally { fixture.close(); }
+});
 
 describe("CharacterContextApplicationService", () => {
   // @test-value v2

@@ -7,6 +7,45 @@ import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { assertChildSessionRole } from "../../src-shared/session/session-role.js";
 import { assertDirectChildSessionControl, assertDirectSessionSend, queryRelatedSessions, resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
+import { projectSessionSummary } from "../../src-shared/session/session-state.js";
+import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
+import { DatabaseSync } from "node:sqlite";
+
+// @test-value v2
+// kind = "contract"
+// claim = "Session探索は保存済みCharacterのID・名前・公開descriptionをMain/Auxiliaryで返し、公開紹介で検索できる"
+// oracle = { type = "contract", ref = "docs/design/prompt-composition.md; docs/design/character-storage.md" }
+// fault = "summary経路で公開紹介やAuxiliaryの名前が落ちるか、自己定義全文を公開する"
+// observable = "再読したMain/Auxiliary summaryからのRelatedSession.characterと検索結果"
+// observation_boundary = "public-boundary"
+// scope = "session-character-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("保存snapshotの公開プロフィールをMainとAuxiliaryの探索へ渡す", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "withmate-peer-profile-"));
+  const dbPath = path.join(directory, "app.db");
+  const storage = new SessionStorageV6(dbPath);
+  const auxiliary = new AuxiliarySessionStorage(dbPath);
+  const snapshot = { characterId: "azki", name: "AZKi", description: "落ち着いて相談する同僚", iconFilePath: "", theme: { main: "#fff", sub: "#000" },
+    definitionMarkdown: "private persona instructions", definitionSha256: "hash", definitionByteSize: 28, snapshotAt: "2026-11-12T00:00:00.000Z" };
+  try {
+    const db = new DatabaseSync(dbPath);
+    db.prepare("INSERT INTO characters (id, name, created_at, updated_at) VALUES ('azki', 'AZKi', ?, ?)").run(snapshot.snapshotAt, snapshot.snapshotAt);
+    db.close();
+    const session = storage.insertSession(buildNewSession({ id: "root", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "main",
+      characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: snapshot.theme, characterRuntimeSnapshot: snapshot, approvalMode: "on-request" }));
+    auxiliary.upsertAuxiliarySession({ id: "aux", parentSessionId: session.id, title: "Aux", runState: "idle", provider: "codex", catalogRevision: 1,
+      model: session.model, reasoningEffort: session.reasoningEffort, approvalMode: session.approvalMode, codexSandboxMode: session.codexSandboxMode,
+      codexSpeed: session.codexSpeed, codexReviewer: session.codexReviewer, customAgentName: "", threadId: "", composerDraft: "", messages: [],
+      displayAfterMessageIndex: null, createdAt: snapshot.snapshotAt, updatedAt: snapshot.snapshotAt, characterId: "azki", characterRuntimeSnapshot: snapshot });
+    const expected = { id: "azki", name: "AZKi", description: snapshot.description };
+    const entries = resolveRelatedSessions(storage.listSessionSummaries(), auxiliary.listAuxiliarySessionSummaries([session.id]));
+    assert.deepEqual(entries.map((entry) => entry.character), [expected, expected]);
+    assert.deepEqual(resolveRelatedSessions([projectSessionSummary(session)], [])[0].character, expected);
+    assert.equal(queryRelatedSessions(entries, entries[0], { searchText: "相談する同僚" }).total, 2);
+    assert.equal(JSON.stringify(entries).includes(snapshot.definitionMarkdown), false);
+  } finally { auxiliary.close(); storage.close(); await rm(directory, { recursive: true, force: true }); }
+});
 
 // @test-value v2
 // kind = "invariant"

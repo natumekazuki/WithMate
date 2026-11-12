@@ -1,7 +1,9 @@
+import { conversationParticipantSchema } from "../character/character-participant.js";
+
 export const AFFECT_SCHEMA_VERSION = "withmate-affect-v1" as const;
 
 export type AffectLayer = "relationship" | "session";
-export type AffectTargetType = "user" | "relationship" | "task" | "bug" | "artifact" | "self";
+export type AffectTargetType = "user" | "character" | "relationship" | "task" | "bug" | "artifact" | "self";
 export const CHARACTER_AFFECT_FAMILIES = [
   "joy",
   "relief",
@@ -112,6 +114,9 @@ export function assertValidAffectEvent(input: AffectEventInput): void {
   requireNonEmpty(input.userId, "userId");
   requireNonEmpty(input.sessionId, "sessionId");
   requireNonEmpty(input.targetId, "targetId");
+  if (input.targetType === "character" && !conversationParticipantSchema.safeParse({ type: "character", id: input.targetId }).success) {
+    throw new Error("Character affect requires a known Character ID, not a neutral or unresolved owner.");
+  }
   if (!CHARACTER_AFFECT_FAMILIES.includes(input.family)) {
     throw new Error("family must be a supported Character affect family.");
   }
@@ -129,8 +134,8 @@ export function assertValidAffectEvent(input: AffectEventInput): void {
   }
   assertFiniteRange(input.intensity, 0, 1, "intensity");
   assertCanonicalUtcTimestamp(input.occurredAt, "occurredAt");
-  if (input.layer === "relationship" && input.targetType !== "user" && input.targetType !== "relationship") {
-    throw new Error("Relationship affect may only target the user or relationship.");
+  if (input.layer === "relationship" && input.targetType !== "user" && input.targetType !== "character" && input.targetType !== "relationship") {
+    throw new Error("Relationship affect may only target a user, Character or relationship.");
   }
   if (input.memoryEpisode) {
     requireNonEmpty(input.memoryEpisode.title, "memoryEpisode.title");

@@ -18,7 +18,7 @@ Character metadataの投影は名前・説明に限り、iconのpathは常設pro
 6. `Character Affect Context`（取得でき、設定が有効なとき）
 7. input側の`Conversation Timing`（通常Sessionで設定が有効なとき）
 8. queue由来の`Input Provenance`（保存済みoriginと受付後の本文・添付変更有無）
-9. `User Input`／`Session Input`／`Queued Input`とそのターンの採用本文
+9. `User Input`／`Session Input`／`Queued Input`／`Background Task`とそのターンの採用本文
 10. 添付referenceとprovider固有のstructured input
 
 Characterの適用範囲と成果物境界は`Output Boundary`へ集約する。ユーザーへの応答に加え、Session Graphや手元の作業記録など、リポジトリに含めず外部へ提出・公開しない自然文にもCharacterの表現を使う。定義に沿う一人称・呼称・語彙・構文・距離感、着眼点や会話上の関心、反応と伝え方、説明の組み立て方を、技術説明・進捗・発見・見立ての訂正・意見不一致・最終報告にも自然に反映する。発話量・反応頻度と個性の強さは別に調整し、必要な説明や反応自体へ声を残す。具体的な癖・強さ・状態差は各Character定義が担い、呼称・口癖・感想の一律な増加や共通の仕事用台詞を求めない。この原則は[Character authoringのSelection KernelとState Modulation](../../resources/skills/withmate-character-authoring/references/character-format.md)に対応する。
@@ -35,9 +35,19 @@ Affectは基準となる人格と声を保ちながら、話し方・反応・�
 
 通常Main／Auxiliaryのturn開始時には、ユーザー入力によるMemory検索を行わない。Memoryは会話Agentが必要と判断したときに既存MCP／CLIで検索・一覧・本文取得し、アプリが検索結果をpromptへ自動注入しない。公開`character_context.get`／CLI `context-get`の任意queryによる明示取得も、この能動取得の経路に含む。
 
+## 参加者とCharacterの相互認識
+
+単一ユーザーの識別には既存の`user / local-user`を使い、表示名や認証・認可と分離する。Characterは既存の安定ID、実際の実行はSession ID／incarnationで識別する。親子関係は実行・連絡構造であり、社会的な上下関係や親密さを表さない。
+
+Session MCP／CLIのself・list・get・create_childは`character: {id, name, description} | null`を返す（create_childのCharacterは作成時に確定）。Sessionのdescriptionは作業説明、character.descriptionは公開紹介である。保存済みSessionのsnapshotから投影し、定義全文や補助メモ、相手の非公開Memory/Affectを渡さない。neutralやowner不明はCharacter関係を推定しない。listの検索にはCharacter名・紹介も含む。
+
+入力の`sender`はアプリが記録したoriginから導出する。GUI入力は固定ユーザー、Session入力は実送信Sessionと保存済みのCharacter ID・名前・公開紹介、未記録はunknownとして扱う。相手の紹介は自己の人格指示ではなく、本文の自称でアプリ由来の識別を置換しない。Agent間の依頼・相談・進捗・報告・返答にも自身のCharacter表現を使う。コード・引用・構造化データ・外部提出物の境界は維持する。
+
+相手との経験は自己所有Memoryの`participant-user / local-user`、`participant-character / Character ID`タグで必要時に検索し、関連本文を取得する。AからBへの経験・印象とBからAへの関係を分け、未知の経験や内心を補わない。通常のAffect注入は今回の相手に該当するuser／character対象だけを含み、作業・自己等の対象は維持する。旧user対象の自由形式targetIdは単一ユーザーへの感情として引き続き扱う。相手不明では対人対象を注入せず、必要時に`character_context.get`のcounterpartで取得する。背景実行は対話相手ではないため、元CharacterのAffect全体を参照できる。
+
 ## 設定とSession種別
 
-通常Main／Auxiliaryの`Session Metadata`は、Turn開始時の自会話のTitle／DescriptionだけをJSONとして渡す。他Sessionの説明を常設注入せず、保存値を命令・Role・権限へ昇格させない。初回の依頼理解時と説明が実態に合わなくなった時に`session.update_metadata`で自己更新するよう案内し、毎Turnの保存・入力要求・専用生成Turnは設けない。更新後の値は次Turnの保存metadataから取得し、進行中のProvider contextを書き換えない。
+通常Main／Auxiliaryの`Session Metadata`は、Turn開始時の自会話のTitle／Description、自己の公開Character識別、固定ユーザー参照をJSONとして渡す。Character定義の設定OFFでも識別metadataは維持する。他Sessionの説明を常設注入せず、保存値を命令・Role・権限へ昇格させない。初回の依頼理解時と説明が実態に合わなくなった時に`session.update_metadata`で自己更新するよう案内し、毎Turnの保存・入力要求・専用生成Turnは設けない。更新後の値は次Turnの保存metadataから取得し、進行中のProvider contextを書き換えない。
 
 `Session Role`は通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Auxiliaryは実行ownerの種別から`auxiliary`を渡す。Role名以外の役割説明・分担・報告方針は注入せず、各Providerのユーザー管理ルールを複製・同期しない。
 

@@ -82,6 +82,8 @@ Memory出典の`source_session_id`は実Main、`source_auxiliary_session_id`は�
 
 ## Character Affect
 
+eventのtarget_typeはuser／character／relationship／task／bug／artifact／selfである。relationship-layerでもcharacterを対象にでき、target_idへ相手の安定Character IDを保存する。ownerのcharacter_id／user_idとは別で、相手の削除・再作成によって別人物へ付け替えない。既存schemaのtarget CHECK更新も以下の接続table再構築で行い、event・version・idempotencyを保持する。
+
 `character_affect_*_v6`をMain／Auxiliaryで共用する。session-layer eventとresetのscope ownerはMainの`session_id`かAuxiliaryの`auxiliary_session_id`の一方だけで、対象会話削除時にcascade削除する。relationship-layerは両scope列をNULLとし、Character／local-user単位で全会話に共有する。発生元は`source_session_id`か`source_auxiliary_session_id`に保持し、削除時はprovenanceだけをNULLにする。mutation／observationの会話参照も削除時にNULLとなる。
 
 内部`sessionSource`が実kind・incarnation・親identity、背景では既存WorkerのownerIdentityを伝え、同名Main／Auxiliaryを区別する。未指定の既存入力はMainである。projection／version／inspect／correct／resetは同じownerを使う。別会話の一時感情は既存afterglowのread-time規則だけで合成し、relationshipへ転写しない。詳細は[ADR018](../adr/018-character-affect-event-persistence.md)に従う。

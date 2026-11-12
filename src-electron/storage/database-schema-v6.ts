@@ -632,14 +632,14 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && protectedObjectsSql.includes("original_bytes >= 0")
     && protectedObjectsSql.includes("stored_bytes >= 0")
     && affectEventsSql.includes("layer IN ('relationship', 'session')")
-    && affectEventsSql.includes("target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')")
+    && affectEventsSql.includes("target_type IN ('user', 'character', 'relationship', 'task', 'bug', 'artifact', 'self')")
     && affectEventsSql.includes("family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')")
     && affectEventsSql.includes("json_valid(value_json)")
     && affectEventsSql.includes("intensity >= 0 AND intensity <= 1")
     && affectEventsSql.includes("state IN ('active', 'corrected')")
     && affectEventsSql.includes("user_id <> ''")
     && affectEventsSql.includes("target_id <> ''")
-    && affectEventsSql.includes("layer <> 'relationship' OR target_type IN ('user', 'relationship')")
+    && affectEventsSql.includes("layer <> 'relationship' OR target_type IN ('user', 'character', 'relationship')")
     && affectEventsSql.includes("layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id")
     && affectEventsSql.includes("layer = 'session' AND auxiliary_session_id IS NOT NULL AND source_auxiliary_session_id = auxiliary_session_id")
     && affectEventsSql.includes("layer = 'relationship' AND session_id IS NULL")
@@ -1252,7 +1252,7 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     session_id TEXT,
     source_session_id TEXT,
     layer TEXT NOT NULL CHECK (layer IN ('relationship', 'session')),
-    target_type TEXT NOT NULL CHECK (target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')),
+    target_type TEXT NOT NULL CHECK (target_type IN ('user', 'character', 'relationship', 'task', 'bug', 'artifact', 'self')),
     target_id TEXT NOT NULL,
     family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')),
     value_json TEXT NOT NULL CHECK (json_valid(value_json)),
@@ -1278,7 +1278,7 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     UNIQUE (character_id, user_id, idempotency_key),
     CHECK (user_id <> ''),
     CHECK (target_id <> ''),
-    CHECK (layer <> 'relationship' OR target_type IN ('user', 'relationship')),
+    CHECK (layer <> 'relationship' OR target_type IN ('user', 'character', 'relationship')),
     CHECK (session_id IS NULL OR auxiliary_session_id IS NULL),
     CHECK (source_session_id IS NULL OR source_auxiliary_session_id IS NULL),
     CHECK (
@@ -1731,7 +1731,8 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 }
 
 function ensureAffectConversationOwners(db: DatabaseSync): void {
-  if (tableColumnNames(db, "character_affect_events_v6").has("auxiliary_session_id")) return;
+  if (tableColumnNames(db, "character_affect_events_v6").has("auxiliary_session_id")
+    && tableSql(db, "character_affect_events_v6").includes("target_type IN ('user', 'character', 'relationship', 'task', 'bug', 'artifact', 'self')")) return;
   const tables = ["character_affect_events_v6", "character_affect_resets_v6", "character_affect_idempotency_v6",
     "character_affect_mutations_v6", "character_affect_observations_v6"];
   // Rebuild the connected Affect tables together so every event/reset/link ID survives.

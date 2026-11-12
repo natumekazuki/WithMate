@@ -14,6 +14,8 @@ import {
   type CharacterOperationAuthority,
 } from "./character-context-contract.js";
 
+import { conversationParticipantSchema } from "../character/character-participant.js";
+
 export class CharacterContextValidationError extends Error {
   constructor(message: string, readonly field: string) {
     super(message);
@@ -83,7 +85,12 @@ function authority(value: unknown, field = "authority"): CharacterOperationAutho
 
 export function validateCharacterMemoryEpisodeInput(value: unknown, field = "episode"): CharacterMemoryEpisodeInput {
   const input = record(value, field);
-  exactKeys(input, ["title", "body", "preview", "motif", "observedFact", "characterObservation"], field);
+  exactKeys(input, ["title", "body", "preview", "motif", "observedFact", "characterObservation", "participants", "factSource"], field);
+  const participants = input.participants === undefined ? undefined : conversationParticipantSchema.array().min(1).safeParse(input.participants);
+  if (participants && !participants.success) throw new CharacterContextValidationError(`${field}.participants is invalid.`, `${field}.participants`);
+  if (input.factSource !== undefined && !["user", "agent", "observation"].includes(input.factSource as string)) {
+    throw new CharacterContextValidationError(`${field}.factSource is invalid.`, `${field}.factSource`);
+  }
   const observedFact = optionalText(input.observedFact, `${field}.observedFact`);
   const characterObservation = optionalText(input.characterObservation, `${field}.characterObservation`);
   if (!observedFact && !characterObservation) {
@@ -93,6 +100,8 @@ export function validateCharacterMemoryEpisodeInput(value: unknown, field = "epi
     );
   }
   const base = {
+    ...(participants?.success ? { participants: participants.data } : {}),
+    ...(input.factSource === undefined ? {} : { factSource: input.factSource as "user" | "agent" | "observation" }),
     title: text(input.title, `${field}.title`),
     body: text(input.body, `${field}.body`),
     preview: text(input.preview, `${field}.preview`),
@@ -105,7 +114,9 @@ export function validateCharacterMemoryEpisodeInput(value: unknown, field = "epi
 
 export function validateCharacterContextGetRequest(value: unknown): CharacterContextGetRequest {
   const input = record(value);
-  exactKeys(input, ["schemaVersion", "characterId", "sessionId", "query", "memoryLimit"]);
+  exactKeys(input, ["schemaVersion", "characterId", "sessionId", "query", "memoryLimit", "counterpart"]);
+  const counterpart = input.counterpart === undefined ? undefined : conversationParticipantSchema.safeParse(input.counterpart);
+  if (counterpart && !counterpart.success) throw new CharacterContextValidationError("counterpart is invalid.", "counterpart");
   schemaVersion(input);
   return {
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -113,6 +124,7 @@ export function validateCharacterContextGetRequest(value: unknown): CharacterCon
     sessionId: text(input.sessionId, "sessionId"),
     ...(input.query === undefined ? {} : { query: text(input.query, "query") }),
     memoryLimit: integer(input.memoryLimit, "memoryLimit", 0, 10, 3),
+    ...(counterpart?.success ? { counterpart: counterpart.data } : {}),
   };
 }
 

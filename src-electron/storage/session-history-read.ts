@@ -14,6 +14,9 @@ import { normalizeMessage, type Message, type MessageArtifact } from "../../src-
 import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { readConversationQuerySnapshot } from "./conversation-query.js";
 import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { projectSessionInputSender, type SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
+import { projectCharacterPublicProfile } from "../../src-shared/character/character-participant.js";
+import { parseCharacterRuntimeSnapshotJson } from "../../src-shared/character/character-runtime-snapshot.js";
 
 type Source = SessionHistoryReadScope["source"];
 type Window = { fromSeq: number; toSeq: number };
@@ -47,6 +50,31 @@ function decodeMessage(row: MessageRow, sessionId: string): Message {
   const message = normalizeMessage({ ...JSON.parse(row.body), role: row.role });
   if (!message) throw new Error(`Invalid history message: ${sessionId}:${row.seq}`);
   return message;
+}
+
+function readMessageSpeakers(db: DatabaseSync, layout: Layout, sessionId: string, fromSeq: number, toSeq: number) {
+  const isMain = layout.owner === "session_id";
+  const sourceTable = isMain ? "sessions_v6" : "auxiliary_sessions";
+  const source = db.prepare(`SELECT character_id, character_snapshot_json, ${isMain ? "incarnation_id" : "created_at"} AS incarnation_id
+    FROM ${sourceTable} WHERE id = ?`).get(sessionId) as {
+    character_id: string | null; character_snapshot_json: string | null; incarnation_id: string | null;
+  };
+  const rows = db.prepare(`SELECT user_message_seq, COALESCE(dispatched_json, accepted_json) AS input_json
+    FROM session_turn_queue_v6 WHERE ${layout.owner} = ? ${isMain ? "AND auxiliary_session_id IS NULL" : ""}
+      AND incarnation_id = ? AND user_message_seq BETWEEN ? AND ? ORDER BY sequence`)
+    .all(sessionId, source.incarnation_id?.trim() || `legacy:${sessionId}`, fromSeq, toSeq) as { user_message_seq: number; input_json: string | null }[];
+  const speakers = new Map<number, ReturnType<typeof projectSessionInputSender>>();
+  for (const row of rows) {
+    const origin = row.input_json ? (JSON.parse(row.input_json) as { origin?: SessionTurnQueueOrigin }).origin : null;
+    speakers.set(row.user_message_seq, projectSessionInputSender(origin));
+  }
+  const profile = projectCharacterPublicProfile({ characterId: source.character_id ?? undefined,
+    characterRuntimeSnapshot: parseCharacterRuntimeSnapshotJson(source.character_snapshot_json) });
+  const assistant = { kind: "agent" as const,
+    participant: profile ? { type: "character" as const, id: profile.id } : null,
+    session: { id: sessionId, incarnationId: source.incarnation_id?.trim() || `legacy:${sessionId}`, kind: isMain ? "main" as const : "auxiliary" as const },
+    character: profile };
+  return (row: MessageRow) => row.role === "assistant" ? assistant : speakers.get(row.seq) ?? projectSessionInputSender(null);
 }
 
 /** Turn linkage is the exact user/assistant sequence recorded on the turn; no other message is attributed to a turn. */
@@ -144,11 +172,13 @@ function listMessages(db: DatabaseSync, layout: Layout, sessionId: string, windo
   const rows = db.prepare(`SELECT seq, role, body FROM ${layout.table} WHERE ${layout.owner} = ? AND seq BETWEEN ? AND ? ORDER BY seq LIMIT ? OFFSET ?`)
     .all(sessionId, window.fromSeq, window.toSeq, limit, offset) as MessageRow[];
   const turns = readTurns(db, layout, sessionId, window.fromSeq, window.toSeq);
+  const speaker = readMessageSpeakers(db, layout, sessionId, rows[0]?.seq ?? window.fromSeq, rows.at(-1)?.seq ?? window.fromSeq);
   const items = rows.map((row) => {
     const message = decodeMessage(row, sessionId);
     const preview = sliceText(message.text, 0, SESSION_HISTORY_PREVIEW_CHARS);
     return {
       seq: row.seq, role: message.role, turn: turns.get(row.seq) ?? null,
+      speaker: speaker(row),
       textChars: preview.totalChars, textPreview: preview.text, textPreviewTruncated: preview.nextOffset !== null,
       artifact: message.artifact ? {
         operationCount: message.artifact.operationTimeline?.length ?? 0,
@@ -169,6 +199,7 @@ function getMessage(db: DatabaseSync, layout: Layout, sessionId: string, row: Me
   if (splitsSurrogatePair(message.text, offset)) return failure("HISTORY_INVALID_REQUEST", "offset is inside a surrogate pair.");
   return {
     ok: true, seq: row.seq, role: message.role, turn: readTurns(db, layout, sessionId, row.seq, row.seq).get(row.seq) ?? null,
+    speaker: readMessageSpeakers(db, layout, sessionId, row.seq, row.seq)(row),
     ...sliceText(message.text, offset, request.maxChars ?? SESSION_HISTORY_DEFAULT_TEXT_LIMIT),
     ...(message.elicitationRecords?.length ? { elicitationRecordCount: message.elicitationRecords.length } : {}),
   };

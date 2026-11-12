@@ -65,6 +65,45 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 describe("composeProviderPrompt", () => {
   // @test-value v2
   // kind = "contract"
+  // claim = "共通promptはAgentの公開人物情報を出自として渡し、現在相手へのAffectだけを対人表現へ使用する"
+  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+  // fault = "相手の人格へ切り替える指示になるか、他Characterへの感情をGUIユーザーへ混ぜる"
+  // observable = "共通Provider promptの自己定義・sender情報・Affect labelとAgent間表現の適用指示"
+  // observation_boundary = "consumer"
+  // scope = "provider-character-peer-prompt"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("相手の公開情報と自己の人格・相手別Affectを分離する", () => {
+    const session = buildNewSession({ id: "a", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "main",
+      characterId: "character-1", character: "A", characterIconPath: "", characterThemeColors, approvalMode: "untrusted",
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot() });
+    const base = { session, executionOptions: captureSessionExecutionOptions(session), providerCatalog, userMessage: "相談", appSettings: createDefaultAppSettings(), attachments: [],
+      characterContext: { schemaVersion: "withmate-character-context-v1" as const, baseline: { definitionSha256: "hash", snapshotAt: "2026-11-12T00:00:00.000Z" },
+        affect: { mode: "active" as const, version: "v1", evaluatedAt: "2026-11-12T00:00:00.000Z", updatedAt: null,
+          effective: [
+            { contributingLayers: ["relationship" as const], targetType: "user" as const, targetId: "local-user", family: "affinity" as const, label: "human-only-affinity", valence: 0.5, intensity: 0.4 },
+            { contributingLayers: ["relationship" as const], targetType: "character" as const, targetId: "b", family: "gratitude" as const, label: "peer-only-gratitude", valence: 0.4, intensity: 0.5 },
+          ] } } };
+    const user = composeProviderPrompt(base);
+    assert.ok(user.systemBodyText.includes("human-only-affinity"));
+    assert.ok(!user.systemBodyText.includes("peer-only-gratitude"));
+    const peer = composeProviderPrompt({ ...base, inputProvenance: { originalChanged: false,
+      origin: { kind: "session", operation: "send", actorSessionId: "b-session", actorIncarnationId: "v1", actorKind: "main",
+        actorSnapshot: { sessionTitle: "Peer task", character: { id: "b", name: "B", description: "短い公開紹介", iconPath: "" } },
+        targetSessionId: "a", targetIncarnationId: "v1" } } });
+    assert.ok(peer.systemBodyText.includes("peer-only-gratitude"));
+    assert.ok(!peer.systemBodyText.includes("human-only-affinity"));
+    assert.ok(peer.systemBodyText.includes("MCPのmessage本文も対象"));
+    assert.ok(peer.systemBodyText.includes("保存済みの character.md だけを runtime persona"));
+    assert.match(peer.inputBodyText, /"participant":\s*\{\s*"type":\s*"character",\s*"id":\s*"b"/);
+    assert.ok(peer.inputBodyText.includes("短い公開紹介"));
+    assert.ok(peer.inputBodyText.endsWith("# Session Input\n\n相談"));
+    const unknown = composeProviderPrompt({ ...base, inputProvenance: { origin: null, originalChanged: null } });
+    assert.ok(!unknown.systemBodyText.includes("peer-only-gratitude"));
+    assert.ok(!unknown.systemBodyText.includes("human-only-affinity"));
+  });
+  // @test-value v2
+  // kind = "contract"
   // claim = "通常Mainは保存Role名、Auxiliaryは実行owner種別に対応する自身のRole名を共通Provider入力へ渡す"
   // oracle = { type = "contract", ref = "GitHub Issue #834 第6節 Role情報の入力; docs/design/prompt-composition.md" }
   // fault = "Roleを入力から落とす、別Roleへ固定する、Auxiliaryへ所属MainのRoleを渡す"
@@ -816,7 +855,7 @@ describe("composeProviderPrompt", () => {
     assert.match(affectOff.systemBodyText, /# Tool Call Presence/);
     assert.match(affectOff.systemBodyText, /# Workspace/);
     assert.match(affectOff.inputBodyText, /# User Input\n\n続けて/);
-    assert.doesNotMatch(characterDefinitionOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
+    assert.doesNotMatch(characterDefinitionOff.systemBodyText, /# Character Definition Snapshot|保存済みの character.md だけを runtime persona/);
     assert.deepEqual(characterDefinitionOff.imagePaths, []);
     assert.match(characterDefinitionOff.systemBodyText, /# Output Boundary/);
     assert.match(characterDefinitionOff.systemBodyText, /# Tool Call Presence/);

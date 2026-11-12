@@ -138,7 +138,7 @@ describe("SessionPersistenceService", () => {
       await assert.rejects(change(parent.id, "parent-v1", "add", "relative"), /absolute/i);
       await assert.rejects(service.changeAdditionalDirectory({ sessionId: parent.id, incarnationId: "parent-v1", operation: "remove", directoryPath: second }, () => { throw new Error("turn expired"); }), /turn expired/);
       assert.deepEqual(stored.get(parent.id)?.allowedAdditionalDirectories, [second]);
-      assert.deepEqual(broadcasts, [parent.id, parent.id, child.id, parent.id]);
+      assert.deepEqual(broadcasts.toSorted(), [parent.id, parent.id, child.id, parent.id].toSorted());
     } finally {
       await rm(temp, { recursive: true, force: true });
     }

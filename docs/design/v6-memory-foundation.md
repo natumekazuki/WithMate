@@ -80,11 +80,13 @@ CLI/MCPの公開操作、input schema、handler、errorは`src-electron/platform
 
 ## Affectの更新とcontext
 
-Affect更新も通常turn内のAgentによる`character_affect.appraise`を使う。記録する意味のある感情変化だけを保存し、毎turnの必須呼出し、変化なしevent、別LLMによる後処理や補完turnは設けない。linked episodeは同じappraisalの`memoryEpisode`だけに送り、単独episodeだけを`character_memory.append_episode`で保存する。
+自動Affect更新とCharacter／対象Memoryの自動管理は、用途別の背景実行が担う。通常turnは明示依頼による登録・訂正・忘却を扱い、毎turnの必須呼出しや変化なしevent、背景処理の失敗を代行する補完turnは設けない。通常turnのlinked episodeは同じappraisalの`memoryEpisode`だけに送り、単独episodeは`character_memory.append_episode`で保存する。背景Affectはlinked episodeを受けず、Character episodeは別用途で保存する。実行・保存範囲は[Background Execution](background-execution.md)に従う。
 
 通常Main／Auxiliaryのpre-turnでは、保存済みAffectの最新状態を取得・合成し、afterglow projectionを含む`Character Affect Context`をpromptへ注入する。ユーザー入力をqueryとするMemory検索やMemory本文・previewの自動注入は行わない。MemoryはAgentが必要と判断したときに既存MCP／CLIで検索・一覧・本文取得する。想起専用Agentや検索必須ルール、代替の常設注入は設けない。
 
 公開`character_context.get`／CLI `context-get`は、任意queryによるCharacter Memoryの明示取得を維持する。これは通常turnのAffect取得とは別の利用経路であり、結果のMemoryをpromptへ自動注入しない。
+
+Character同士の経験もMemory ownerを自分のCharacterに固定し、相手を`participant-character`タグへ関連付ける。単一ユーザーは既存の`local-user`を`participant-user`へ関連付ける。episodeのparticipantsとfactSource、相手別Affectのcounterpartは[Memory / Affect MCP Runbook](../runbooks/memory-affect-mcp.md#軽い記録の入力)に従い、他者の非公開記憶や逆方向の関係を自動共有しない。
 
 保存済みevent／episode／一般Memory、version、idempotency、authorityと`effect: unknown`の照合は既存application境界に従う。turn中に保存済みの更新は、後続の応答失敗・取消で巻き戻さない。旧Affect専用queueは[Database Schema](database-schema.md#起動時の移行とデータ保護)のschema更新で除去し、候補を再適用しない。
 

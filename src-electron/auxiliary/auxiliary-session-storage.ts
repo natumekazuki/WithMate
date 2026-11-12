@@ -66,7 +66,7 @@ type AuxiliarySessionRow = {
   creation_request_json: string | null;
 };
 
-type AuxiliarySessionSummaryRow = AuxiliarySessionRow & { effective_updated_at?: string };
+type AuxiliarySessionSummaryRow = AuxiliarySessionRow & { effective_updated_at?: string; character_description?: string; character_name?: string };
 
 type AuxiliaryDraftRow = {
   id: string;
@@ -196,6 +196,10 @@ const AUXILIARY_SUMMARY_COLUMNS = `a.id, a.parent_session_id, a.created_at, a.up
   a.codex_reviewer, a.custom_agent_name,
   a.thread_id, a.display_after_message_index, a.character_id,
   NULL AS character_snapshot_json, 0 AS character_snapshot_invalid, a.character_icon_path,
+  CASE WHEN json_valid(a.character_snapshot_json) THEN CASE WHEN a.character_snapshot_invalid = 0 AND json_extract(a.character_snapshot_json, '$.characterId') = a.character_id
+    THEN json_extract(a.character_snapshot_json, '$.description') ELSE '' END ELSE '' END AS character_description,
+  CASE WHEN json_valid(a.character_snapshot_json) THEN CASE WHEN a.character_snapshot_invalid = 0 AND json_extract(a.character_snapshot_json, '$.characterId') = a.character_id
+    THEN json_extract(a.character_snapshot_json, '$.name') ELSE '' END ELSE '' END AS character_name,
   a.client_request_id, NULL AS creation_context_json, NULL AS creation_request_json`;
 
 const CREATE_AUXILIARY_SESSION_PARENT_UPDATED_INDEX_SQL = `
@@ -1312,7 +1316,7 @@ function parseAuxiliarySessionSummaryRow(
   const session = parseAuxiliarySessionRow({ ...row,
     character_snapshot_json: null, creation_context_json: null, creation_request_json: null });
   if (!session) return null;
-  const summary = projectAuxiliarySessionSummary(session);
+  const summary = { ...projectAuxiliarySessionSummary(session), character: row.character_name ?? "", characterDescription: row.character_description ?? "" };
   return row.effective_updated_at ? { ...summary, updatedAt: row.effective_updated_at } : summary;
 }
 

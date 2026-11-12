@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { characterPublicProfileSchema } from "../character/character-participant.js";
 import { SESSION_TURN_CLIENT_REQUEST_ID_PATTERN } from "./runtime-state.js";
 import { sessionTargetSchema } from "./session-target.js";
 import {
@@ -154,6 +155,7 @@ const relatedSessionSchema = z
     title: z.string(),
     description: z.string(),
     runState: z.string(),
+    character: characterPublicProfileSchema.nullable(),
   })
   .passthrough();
 const crewFolderSchema = z
@@ -194,7 +196,7 @@ export const sessionOperationSuccessSchemas = {
     .object({
       ok: z.literal(true),
       session: relatedSessionSchema,
-      character: z.object({ id: z.string(), name: z.string() }).strict(),
+      character: characterPublicProfileSchema,
       provider,
       workspacePath: z.string(),
       executionOptions: z
@@ -382,9 +384,9 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
       "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. No Worktree creation/merge/deletion or user approval is performed. Parent selection policy remains in your Provider-managed runbook, not WithMate config synchronization.",
     get_catalog:
       "Read existing available Provider/model/depth catalog and native approval/sandbox options for child selection. Omit provider for all Providers; omit workspacePath to use the actual bound actor's Workspace. An empty reasoningEfforts/options list means unsupported, not permission to invent a value. Use exact available values; create never silently substitutes GUI defaults or a different model.",
-    self: "Read the actual bound actor, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
-    list: "List saved Session metadata across the current Crew by default. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
-    get: "Read metadata, saved relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
+    self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
+    list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
+    get: "Read metadata, saved public Character id/name/description, relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
     list_directories: "Read the Workspace, managed Session and Crew Folders, and user-added directories of your own Session or an exact direct child. Main and its Auxiliary Sessions share the user-added list; different Main Sessions have independent lists.",
     add_directory: "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
     remove_directory: "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",

@@ -10,7 +10,7 @@ import {
 import type { MemoryV6ResolvedTarget } from "../memory/memory-v6-schema.js";
 import type { MemoryV6StorageAccess } from "../memory/memory-v6-service.js";
 
-const LOCAL_USER_ID = "local-user";
+import { LOCAL_USER_ID } from "../../src-shared/character/character-participant.js";
 
 export class MemoryV6CharacterAffectEpisodeWriter implements CharacterAffectEpisodeWriter {
   constructor(private readonly memoryStorage: MemoryV6StorageAccess) {}

@@ -5611,6 +5611,27 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
 	return /* @__PURE__ */ _superRefine(fn, params);
 }
+// src-shared/character/character-owner.ts
+var UNKNOWN_CHARACTER_OWNER_ID = "withmate:unresolved-character-owner";
+function normalizeCharacterOwnerId(value) {
+	if (typeof value !== "string") return null;
+	return value.trim() || null;
+}
+function isUnknownCharacterOwnerId(value) {
+	return normalizeCharacterOwnerId(value) === UNKNOWN_CHARACTER_OWNER_ID;
+}
+discriminatedUnion("type", [object({
+	type: literal("user"),
+	id: literal("local-user")
+}).strict(), object({
+	type: literal("character"),
+	id: string().trim().min(1).refine((id) => !isUnknownCharacterOwnerId(id) && id !== "withmate-neutral-character")
+}).strict()]);
+var characterPublicProfileSchema = object({
+	id: string(),
+	name: string(),
+	description: string()
+}).strict();
 // src-shared/session/runtime-state.ts
 var SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // src-shared/session/session-target.ts
@@ -5819,7 +5840,8 @@ var displaySnapshot = object({
 	character: object({
 		id: string(),
 		name: string(),
-		iconPath: string()
+		iconPath: string(),
+		description: string().optional()
 	})
 });
 var origin = object({
@@ -6362,7 +6384,8 @@ var relatedSessionSchema = object({
 	mainIncarnationId: id,
 	title: string(),
 	description: string(),
-	runState: string()
+	runState: string(),
+	character: characterPublicProfileSchema.nullable()
 }).passthrough();
 var crewFolderSchema = object({
 	rootSessionId: id,
@@ -6404,10 +6427,7 @@ var sessionOperationSuccessSchemas = {
 	create_child: object({
 		ok: literal(true),
 		session: relatedSessionSchema,
-		character: object({
-			id: string(),
-			name: string()
-		}).strict(),
+		character: characterPublicProfileSchema,
 		provider,
 		workspacePath: string(),
 		executionOptions: object({
@@ -6525,9 +6545,9 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	...SESSION_COORDINATION_DESCRIPTIONS,
 	create_child: "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. No Worktree creation/merge/deletion or user approval is performed. Parent selection policy remains in your Provider-managed runbook, not WithMate config synchronization.",
 	get_catalog: "Read existing available Provider/model/depth catalog and native approval/sandbox options for child selection. Omit provider for all Providers; omit workspacePath to use the actual bound actor's Workspace. An empty reasoningEfforts/options list means unsupported, not permission to invent a value. Use exact available values; create never silently substitutes GUI defaults or a different model.",
-	self: "Read the actual bound actor, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
-	list: "List saved Session metadata across the current Crew by default. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
-	get: "Read metadata, saved relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
+	self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
+	list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
+	get: "Read metadata, saved public Character id/name/description, relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
 	list_directories: "Read the Workspace, managed Session and Crew Folders, and user-added directories of your own Session or an exact direct child. Main and its Auxiliary Sessions share the user-added list; different Main Sessions have independent lists.",
 	add_directory: "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
 	remove_directory: "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",
@@ -8756,6 +8776,7 @@ Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join("
 Connection: --api-url <loopback-url> --discovery-file <path> --instance <id> --generation <id>
 The active binding and provider Turn come from the environment; there is no actor override or unbound administrator mode.
 Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. Targets always require saved sessionId and incarnationId.
+Session self/list/get/create-child return saved public Character id/name/description, not persona definitions. Session description is the task; character.description is the public introduction. Listing grants no additional authority.
 Directory operations target your own Session or its direct child. Main and Auxiliary share their list; changes affect subsequent Turns, not the running Turn. Removal unregisters a path and never deletes files.
 Normal messages enqueue only between actual direct parents and children, including mixed Providers. A receipt is not a completed Turn.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.

@@ -50,7 +50,7 @@ import { countMemorySearchQueryTerms } from "../memory/memory-v6-storage.js";
 import { createLocalUserMemoryPrincipal, type MemoryV6Principal } from "../memory/memory-v6-permission.js";
 import { StorageWorkerGenerationError, StorageWorkerRemoteError } from "../storage/storage-worker-client.js";
 
-const LOCAL_USER_ID = "local-user" as const;
+import { LOCAL_USER_ID, participantMemoryTag, affectMatchesParticipant } from "../../src-shared/character/character-participant.js";
 
 export type CharacterContextTransport = "lifecycle" | "cli" | "mcp" | "internal";
 
@@ -130,7 +130,8 @@ function episodeMemoryFields(episode: CharacterMemoryEpisodeInput) {
     preview: episode.preview,
     tags: [
       ...(episode.motif ? [{ type: "motif", value: episode.motif }] : []),
-      ...(episode.observedFact ? [{ type: "evidence", value: "user-stated" }] : []),
+      ...(episode.observedFact ? [{ type: "evidence", value: episode.factSource === "user" ? "user-stated" : episode.factSource === "agent" ? "agent-stated" : "observed-fact" }] : []),
+      ...(episode.participants ?? []).map(participantMemoryTag),
       ...(episode.characterObservation ? [{ type: "evidence", value: "character-observation" }] : []),
     ],
   };
@@ -298,7 +299,7 @@ export class CharacterContextApplicationService {
           },
           affect: {
             mode: state.mode,
-            effective: state.components.map((component) => ({
+            effective: state.components.filter((component) => !input.counterpart || affectMatchesParticipant(component, input.counterpart)).map((component) => ({
               contributingLayers: [...component.contributingLayers].sort((left, right) => {
                 const layerOrder = { baseline: 0, relationship: 1, session: 2 } as const;
                 return layerOrder[left] - layerOrder[right];
@@ -817,14 +818,23 @@ export class CharacterContextApplicationService {
     supersedes?: string;
     mutationReason?: string;
   }): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
-    const result = await this.deps.memoryService.append(input.principal, {
+    const request = {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: characterTarget(input.characterId),
       ...episodeMemoryFields(input.episode),
       ...(input.supersedes ? { supersedes: [input.supersedes] } : {}),
       ...(input.mutationReason ? { mutationReason: input.mutationReason } : {}),
       idempotencyKey: input.idempotencyKey,
-    });
+    };
+    let result = await this.deps.memoryService.append(input.principal, request);
+    if (memoryError(result) && result.error.code === "MEMORY_IDEMPOTENCY_CONFLICT"
+      && input.episode.observedFact && input.episode.factSource === undefined && input.episode.participants === undefined) {
+      // Released episodes implicitly tagged observedFact as user-stated. Only reconcile an
+      // already-owned key against that exact old request; never create a new legacy record.
+      result = await this.deps.memoryService.append(input.principal, { ...request,
+        tags: request.tags.map((tag) => tag.type === "evidence" && tag.value === "observed-fact" ? { ...tag, value: "user-stated" } : tag),
+      });
+    }
     if (memoryError(result)) {
       return memoryErrorToContext(result, "unknown");
     }
@@ -835,7 +845,7 @@ export class CharacterContextApplicationService {
       entry: result.entry,
       ...(input.supersedes ? { previousEntryId: input.supersedes } : {}),
       created: result.created,
-      replayed: !result.created,
+      replayed: result.replayed,
       readBack: "active",
       sourceVersion: result.entry.updatedAt,
     };
