@@ -34,6 +34,10 @@
   未設定をSession Folder/Crew Folderで代替しない。単発の配置先は恒久設定へ反映しない。
   Git操作、base branch、作成先とWorkspaceの検証・承認は別途行う。
 - 通常送信では毎回modelとreasoningEffortを明示する。Depth非対応Modelでは空文字列を指定する。
+- Codex子の作成時にReviewerを選ぶ場合はget_catalogのoptions[].reviewersを確認し、
+  create_childへcodexReviewerを指定する。省略時はuser。on-requestとauto-reviewの組合せも指定できる。
+  この選択は子へ保存され、以後の通常送信でも使われる。enqueueやsteerの引数には追加せず、
+  非対応Providerへ指定しない。Reviewerの指定は作業範囲・操作権限の追加承認ではない。
 - 子へ目的、担当範囲、必要な成果、実行条件・禁止事項を明示する。
   子が親の会話やProvider contextを共有していると仮定しない。
 - 子のtargetと依頼のreceiptIdを保持し、後から同じ依頼を確認できるようにする。

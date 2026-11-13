@@ -29,7 +29,7 @@ import { normalizeAllowedAdditionalDirectories } from "../files/additional-direc
 import { WorkspaceDirectoryValidationService } from "../files/workspace-directory-validation-service.js";
 import { addAllowedAdditionalDirectory, removeAllowedAdditionalDirectory } from "../../src-shared/settings/additional-directory-state.js";
 import type { ChangeSessionAdditionalDirectoryRequest } from "../../src-shared/session/session-mutation-contract.js";
-import { resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
+import { DEFAULT_CODEX_REVIEWER, resolveCodexReviewerUpdate } from "../../src-shared/settings/codex-reviewer.js";
 import { resolveExecutionOptionsReviewerUpdate } from "../../src-shared/settings/provider-runtime-options.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import { sessionSummaryToSession } from "./session-summary-adapter.js";
@@ -235,8 +235,9 @@ export class SessionPersistenceService {
     assertModelEnabled(settings.modelAvailability, provider.id, model.id);
     const sandbox = getSandboxOptionsForProvider(provider.id);
     if (sandbox.length === 0 ? input.codexSandboxMode !== undefined : !sandbox.some((option) => option.value === input.codexSandboxMode)) throw new Error("The selected child sandbox option is not supported by this provider.");
+    if (input.codexReviewer !== undefined && provider.id !== "codex") throw new Error("Only Codex supports codexReviewer for child creation.");
     validateSessionExecutionOptions({ model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode,
-      codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: "user", customAgentName: "" }, provider);
+      codexSandboxMode: input.codexSandboxMode ?? DEFAULT_CODEX_SANDBOX_MODE, codexSpeed: "standard", codexReviewer: input.codexReviewer ?? DEFAULT_CODEX_REVIEWER, customAgentName: "" }, provider);
     validateSessionMetadataPatch({ title: input.title ?? "New task", description: input.description ?? "" });
   }
 

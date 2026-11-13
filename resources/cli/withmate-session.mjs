@@ -6568,6 +6568,8 @@ var CODEX_SANDBOX_MODE_VALUES = [
 	"workspace-write-network",
 	"danger-full-access"
 ];
+// src-shared/settings/codex-reviewer.ts
+var CODEX_REVIEWER_VALUES = ["user", "auto-review"];
 // src-shared/session/session-management-contract.ts
 var id = string().trim().min(1).max(256);
 var queueRequestId = string().trim().regex(SESSION_TURN_CLIENT_REQUEST_ID_PATTERN, "requestId must be a UUID.");
@@ -6589,10 +6591,11 @@ var child = object({
 	reasoningEffort: string().max(100),
 	approvalMode: _enum(APPROVAL_MODE_VALUES),
 	codexSandboxMode: _enum(CODEX_SANDBOX_MODE_VALUES).optional(),
+	codexReviewer: _enum(CODEX_REVIEWER_VALUES).optional(),
 	workspacePath: string().min(1).max(32768),
 	title: string().trim().min(1).max(500).optional(),
 	description: string().max(1e4).optional()
-}).strict().refine((value) => value.provider === "codex" ? value.codexSandboxMode !== void 0 : value.codexSandboxMode === void 0, "Codex requires codexSandboxMode; other Providers do not accept this unsupported setting.");
+}).strict().refine((value) => value.provider === "codex" ? value.codexSandboxMode !== void 0 : value.codexSandboxMode === void 0, "Codex requires codexSandboxMode; other Providers do not accept this unsupported setting.").refine((value) => value.provider === "codex" || value.codexReviewer === void 0, "Only Codex supports codexReviewer for child creation.");
 var sessionOperationRequestSchemas = {
 	...executionOperationRequestSchemas,
 	...sessionCoordinationRequestSchemas,
@@ -6747,7 +6750,8 @@ var sessionOperationSuccessSchemas = {
 			model: string(),
 			reasoningEffort: string(),
 			approvalMode: _enum(APPROVAL_MODE_VALUES),
-			codexSandboxMode: _enum(CODEX_SANDBOX_MODE_VALUES)
+			codexSandboxMode: _enum(CODEX_SANDBOX_MODE_VALUES),
+			codexReviewer: _enum(CODEX_REVIEWER_VALUES)
 		}).passthrough()
 	}).strict(),
 	get_catalog: object({
@@ -6768,7 +6772,12 @@ var sessionOperationSuccessSchemas = {
 			sandboxModes: array(object({
 				value: string(),
 				label: string()
-			}).passthrough())
+			}).passthrough()),
+			reviewers: array(object({
+				value: _enum(CODEX_REVIEWER_VALUES),
+				label: string(),
+				disabled: boolean().optional()
+			}).strict())
 		}).strict())
 	}).strict(),
 	self: object({
@@ -6872,8 +6881,8 @@ var SESSION_OPERATION_DESCRIPTIONS = {
 	...Object.fromEntries(Object.entries(EXECUTION_OPERATION_DESCRIPTIONS).map(([operation, description]) => [operation, `${description} ${SESSION_HISTORY_USAGE_NOTICE}`])),
 	...SESSION_COORDINATION_DESCRIPTIONS,
 	...SESSION_OPERATING_POLICY_DESCRIPTIONS,
-	create_child: "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
-	get_catalog: "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
+	create_child: "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode and optionally accepts codexReviewer from get_catalog options[].reviewers (default user). Other Providers reject these unsupported settings. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
+	get_catalog: "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. options[].reviewers contains Codex child creation Reviewer choices; other Providers return an empty list. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
 	self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
 	list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
 	get: "Read metadata, saved public Character id/name/description, relationships, execution state, currentTurn and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. currentTurn.turnId is the running WithMate Turn ID, not the Provider native ID; null means no current saved Turn. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
@@ -9112,7 +9121,7 @@ Normal messages enqueue only between actual direct parents and children, includi
 Every enqueue requires approvalMode and, for Codex recipients, codexSandboxMode (unsupported for other Providers). Parent-to-child requests also require model and reasoningEffort; use "" for models without Depth. Child-to-parent may omit model/depth to capture the parent's saved choices at acceptance. Use the recipient's provider/workspacePath from get/list with get-catalog. These choices affect only this receipt's normal Turn, never saved settings or a running Turn; Reviewer is retained and incompatible Approval is rejected. Retries must preserve explicit choices, including omissions; inspect receipt.accepted.request.executionOptions for the effective snapshot.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.
 Only direct parents cancel pending child receipts, stop a specified child Turn, or explicitly steer a running child Turn. Steer requires target and get.currentTurn.turnId (WithMate, not native Provider ID) and message; only Codex currently supports it. It uses the running settings and never starts a Turn or automatically falls back to enqueue. applied/not-applied and SESSION_STEER_UNKNOWN (effect unknown) are distinct; inspect list-execution-inputs/get-execution-input and inputOrigin, including unresolved records, before deciding what to do. Never automatically resend unknown delivery. Queue editing, Role promotion, user answering or approval is not exposed.
-Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Character selection is automatic and identical requestId retries recover the same child/settings. No Worktree creation/merge/deletion is performed.
+Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Codex children optionally accept codexReviewer from options[].reviewers (default user); other Providers reject it. This creation choice is saved for subsequent normal sends, not an enqueue or Steer argument, and grants no new authority. Character selection is automatic and identical requestId retries recover the same child/settings. No Worktree creation/merge/deletion is performed.
 ${SESSION_OPERATING_POLICY_READ_NOTICE} CLI operation names use hyphens instead of underscores.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
 Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.

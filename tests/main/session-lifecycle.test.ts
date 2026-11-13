@@ -246,15 +246,18 @@ it("retries child creation without redrawing its Character or replacing parent e
     randomCharacter: () => 0,
     openCreatedChildSession: (session) => { openedChildren.push(session.id); },
   });
-  const request = { requestId: "same-request", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, approvalMode: "on-request" as const, codexSandboxMode: "read-only" as const, workspacePath: "C:/prepared-worktree", title: "Child" };
+  const request = { requestId: "same-request", role: "executor" as const, provider: "codex", model: "model", reasoningEffort: "high" as const, approvalMode: "on-request" as const, codexSandboxMode: "read-only" as const, codexReviewer: "auto-review" as const, workspacePath: "C:/prepared-worktree", title: "Child" };
   try {
     const actor = { id: root.id, incarnationId: root.incarnationId! };
     await assert.rejects(facade.createChildSession(actor, request, () => {}), /Files failed/);
     assert.equal(storage.listPendingSessionLifecycleOperations()[0].preparedSession?.characterId, "sora");
+    assert.equal(storage.listPendingSessionLifecycleOperations()[0].preparedSession?.codexReviewer, "auto-review");
     await assert.rejects(facade.createChildSession(actor, request, () => {}), /initial Auxiliary failed/);
     assert.equal(storage.listSessionSummaries().some((item) => item.parentSessionId === root.id), false);
     const child = await facade.createChildSession(actor, request, () => {});
     assert.equal(child.characterId, "sora");
+    assert.equal(child.codexReviewer, "auto-review");
+    assert.equal(storage.getSession(child.id)?.codexReviewer, "auto-review");
     assert.equal(snapshotCount, 1);
     assert.equal(issued, 1);
     assert.deepEqual([child.provider, child.model, child.reasoningEffort, child.approvalMode, child.codexSandboxMode, child.workspacePath], ["codex", "model", "high", "on-request", "read-only", request.workspacePath]);

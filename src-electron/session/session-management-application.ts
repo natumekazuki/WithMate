@@ -32,6 +32,8 @@ import {
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import {
   getApprovalOptionsForProvider,
+  getApprovalReviewerOptionsForProvider,
+  getDefaultApprovalModeForProvider,
   getSandboxOptionsForProvider,
 } from "../../src-shared/settings/provider-runtime-options.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
@@ -198,6 +200,9 @@ export class SessionManagementApplication {
             provider: provider.id,
             approvalModes: getApprovalOptionsForProvider(provider.id),
             sandboxModes: getSandboxOptionsForProvider(provider.id),
+            reviewers: provider.id === "codex"
+              ? getApprovalReviewerOptionsForProvider(provider.id, getDefaultApprovalModeForProvider(provider.id))
+              : [],
           })),
         };
       }

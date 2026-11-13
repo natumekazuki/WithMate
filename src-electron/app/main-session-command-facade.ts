@@ -119,7 +119,7 @@ export class MainSessionCommandFacade {
           if (!snapshot) throw new Error("The child Character snapshot could not be created.");
           operation = await persistence.prepareSessionLifecycleCreation(operationId, { id: target.id, taskTitle: input.title?.trim() || "New task", description: input.description ?? "",
             sessionRole: input.role, rootSessionId: relationship.rootSessionId, parentSessionId: parent.id, createdBySessionId: parent.id,
-            provider: input.provider, model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode, codexSandboxMode: input.codexSandboxMode,
+            provider: input.provider, model: input.model, reasoningEffort: input.reasoningEffort, approvalMode: input.approvalMode, codexSandboxMode: input.codexSandboxMode, codexReviewer: input.codexReviewer,
             workspacePath: input.workspacePath, workspaceLabel: input.workspacePath, branch: "", characterId: character.id,
             character: snapshot.name, characterIconPath: snapshot.iconFilePath ?? "", characterThemeColors: snapshot.theme, characterRuntimeSnapshot: snapshot });
         }

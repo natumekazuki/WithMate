@@ -14,6 +14,7 @@ import {
 } from "./session-coordination-contract.js";
 import { APPROVAL_MODE_VALUES } from "../settings/approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "../settings/codex-sandbox-mode.js";
+import { CODEX_REVIEWER_VALUES } from "../settings/codex-reviewer.js";
 import { SESSION_HISTORY_USAGE_NOTICE } from "../session-history/session-history-contract.js";
 import { sessionOperatingPolicyRequestSchemas, sessionOperatingPolicySuccessSchemas, SESSION_OPERATING_POLICY_READS, SESSION_OPERATING_POLICY_DESCRIPTIONS } from "./session-operating-policy.js";
 export { sessionTargetSchema, type SessionTarget } from "./session-target.js";
@@ -34,6 +35,7 @@ const child = z
     reasoningEffort: z.string().max(100),
     approvalMode: z.enum(APPROVAL_MODE_VALUES),
     codexSandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES).optional(),
+    codexReviewer: z.enum(CODEX_REVIEWER_VALUES).optional(),
     workspacePath: z.string().min(1).max(32768),
     title: z.string().trim().min(1).max(500).optional(),
     description: z.string().max(10000).optional(),
@@ -45,6 +47,10 @@ const child = z
         ? value.codexSandboxMode !== undefined
         : value.codexSandboxMode === undefined,
     "Codex requires codexSandboxMode; other Providers do not accept this unsupported setting.",
+  )
+  .refine(
+    (value) => value.provider === "codex" || value.codexReviewer === undefined,
+    "Only Codex supports codexReviewer for child creation.",
   );
 export const sessionOperationRequestSchemas = {
   ...executionOperationRequestSchemas,
@@ -215,6 +221,7 @@ export const sessionOperationSuccessSchemas = {
           reasoningEffort: z.string(),
           approvalMode: z.enum(APPROVAL_MODE_VALUES),
           codexSandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES),
+          codexReviewer: z.enum(CODEX_REVIEWER_VALUES),
         })
         .passthrough(),
     })
@@ -250,6 +257,9 @@ export const sessionOperationSuccessSchemas = {
             ),
             sandboxModes: z.array(
               z.object({ value: z.string(), label: z.string() }).passthrough(),
+            ),
+            reviewers: z.array(
+              z.object({ value: z.enum(CODEX_REVIEWER_VALUES), label: z.string(), disabled: z.boolean().optional() }).strict(),
             ),
           })
           .strict(),
@@ -395,9 +405,9 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
     ...SESSION_COORDINATION_DESCRIPTIONS,
     ...SESSION_OPERATING_POLICY_DESCRIPTIONS,
     create_child:
-      "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
+      "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode and optionally accepts codexReviewer from get_catalog options[].reviewers (default user). Other Providers reject these unsupported settings. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
     get_catalog:
-      "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
+      "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. options[].reviewers contains Codex child creation Reviewer choices; other Providers return an empty list. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
     self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
     list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
     get: "Read metadata, saved public Character id/name/description, relationships, execution state, currentTurn and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. currentTurn.turnId is the running WithMate Turn ID, not the Provider native ID; null means no current saved Turn. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",

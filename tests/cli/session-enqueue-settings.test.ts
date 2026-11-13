@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -23,6 +23,13 @@ import { buildNewSession, getSessionIncarnationId, type Session } from "../../sr
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
+import { SessionPersistenceService } from "../../src-electron/session/session-persistence-service.js";
+import { MainSessionCommandFacade } from "../../src-electron/app/main-session-command-facade.js";
+import { ProviderRuntimeOperationCoordinator } from "../../src-electron/providers/provider-runtime-operation-coordinator.js";
+import { ChildSessionCreationRejectedError } from "../../src-electron/session/session-storage-errors.js";
+import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
+import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
+import type { RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
 
 const target = (session: Session) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
 const connection: WithMateMemoryRuntimeConnection = {
@@ -56,6 +63,42 @@ async function fixture(provider = "codex") {
   const models = [{ id: "fast", label: "Fast", reasoningEfforts: ["low"] }, { id: "deep", label: "Deep", reasoningEfforts: ["high"] }, { id: "plain", label: "Plain", reasoningEfforts: [] }];
   const catalog = { id: provider, label: provider, defaultModelId: "deep", defaultReasoningEffort: "high", models };
   const unused = async (): Promise<never> => { throw new Error("Unexpected operation"); };
+  let cached = await bundle.stores.session.listSessions();
+  const persistence = new SessionPersistenceService({
+    getSessions: () => cached, setSessions: (next) => { cached = next; }, getSession: (id) => cached.find((item) => item.id === id) ?? null,
+    getStoredSession: (id) => bundle.stores.session.getSession(id), isSessionRunInFlight: () => false,
+    upsertStoredSession: (session, operation) => operation === "create" ? bundle.stores.session.insertSession(session) : bundle.stores.session.updateSession(session),
+    replaceStoredSessions: async (sessions) => { await bundle.stores.session.replaceSessions(sessions); },
+    listStoredSessions: () => bundle.stores.session.listSessions(), listStoredSessionSummaries: () => bundle.stores.session.listSessionSummaries(),
+    getSessionLifecycleOperation: (id) => bundle.stores.session.getSessionLifecycleOperation(id),
+    listPendingSessionLifecycleOperations: () => bundle.stores.session.listPendingSessionLifecycleOperations(),
+    beginSessionLifecycleOperation: (input) => bundle.stores.session.beginSessionLifecycleOperation(input),
+    prepareSessionLifecycleCreation: (id, input) => bundle.stores.session.prepareSessionLifecycleCreation(id, input),
+    advanceSessionLifecycleOperation: (id, phase, resources) => bundle.stores.session.advanceSessionLifecycleOperation(id, phase, resources),
+    appendStoredRunningTurnStart: (input) => bundle.stores.session.appendRunningTurnStart(input),
+    appendStoredSessionTerminal: (input) => bundle.stores.session.appendSessionTerminal(input),
+    checkpointStoredSessionRunMetadata: (input) => bundle.stores.session.checkpointSessionRunMetadata(input),
+    getAppSettings: () => settings, getModelCatalogSnapshot: () => ({ providers: [catalog] }),
+    syncSessionDependencies() {}, clearSessionContextTelemetry() {}, clearSessionBackgroundActivities() {}, invalidateProviderSessionThread() {}, closeSessionWindow() {}, broadcastSessions() {},
+  });
+  const coordinator = new ProviderRuntimeOperationCoordinator();
+  let childSequence = 0;
+  const commands = new MainSessionCommandFacade({
+    getSessions: () => cached, getSession: (id) => cached.find((item) => item.id === id) ?? null,
+    getStoredSessionSummaries: () => bundle.stores.session.listSessionSummaries(), getSessionStorageIdentity: () => bundle,
+    runProviderRuntimeOperationExclusive: (operation) => coordinator.runExclusive(operation),
+    resolveSessionLaunchSelection: unused, getSessionPersistenceService: () => persistence, getSessionRuntimeService: () => { throw new Error("Unexpected GUI runtime"); },
+    getProviderQuotaTelemetry: () => null, isProviderQuotaTelemetryStale: () => false, refreshProviderQuotaTelemetry: async () => null,
+    initializeCreatedSession: async (session) => { await bundle.stores.auxiliary.upsertAuxiliarySession({ ...session,
+      id: `${session.id}-aux`, parentSessionId: session.id, title: "Aux", runState: "idle", createdAt: session.updatedAt,
+      composerDraft: "", displayAfterMessageIndex: null, creationContext: { generationId: "test", parentIncarnationId: getSessionIncarnationId(session) } }); },
+    createSessionId: () => `created-${++childSequence}`,
+    createSessionFilesDirectory: async (id) => { const folder = join(directory, `files-${id}`); await mkdir(folder); return folder; },
+    resolveSessionFilesDirectory: (id) => join(directory, `files-${id}`), isSessionFilesWorkspace: () => false,
+    dismissSessionTurnNotification() {}, validateWorkspaceDirectory: async () => ({ valid: true }),
+    listActiveCharacters: () => bundle.stores.character.listCharacters(),
+    createCharacterRuntimeSnapshot: (id) => bundle.stores.character.createRuntimeSnapshot(id),
+  });
   let service: SessionTurnQueueService;
   let facade: MainSessionTurnQueueFacade;
   const startQueue = () => {
@@ -83,7 +126,14 @@ async function fixture(provider = "codex") {
       }
     },
     getReceipt: (recipient, id) => facade.getSessionTurnQueueReceipt(recipient.id, id, recipient.incarnationId),
-    directories: unused, updateMetadata: unused, cancelReceipt: unused, stopTurn: unused, steer: unused, readExecution: unused, createChild: unused, coordinate: unused,
+    createChild: async (actor, input, assertCurrent) => {
+      try { return await commands.createChildSession(actor, input, assertCurrent); }
+      catch (error) {
+        if (error instanceof ChildSessionCreationRejectedError) throw new SessionManagementError("SESSION_REJECTED", error.message);
+        throw error;
+      }
+    },
+    directories: unused, updateMetadata: unused, cancelReceipt: unused, stopTurn: unused, steer: unused, readExecution: unused, coordinate: unused,
   });
   const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
   const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, operation, bound) => {
@@ -114,9 +164,113 @@ async function fixture(provider = "codex") {
     };
   }
   return { parent, child, sourceTurns, models, settings, endpoint, get bundle() { return bundle; }, get facade() { return facade; },
+    async dispatchNext(session: Session) {
+      const receipt = await bundle.stores.queue.claimNext(target(session));
+      assert.ok(receipt);
+      const executed: { provider: string | null | undefined; input: RunSessionTurnInput }[] = [];
+      const runtime = new SessionRuntimeService({
+        getSession: (id) => bundle.stores.session.getSession(id),
+        persistRunningTurnStart: persistence.persistRunningTurnStart.bind(persistence),
+        persistQueuedTurnStart: persistence.persistQueuedTurnStart.bind(persistence),
+        assertCapturedComposerAttachmentsAvailable: async (_session, attachments) => { assert.deepEqual(attachments, []); },
+        appendRunningInput: persistence.appendRunningInput.bind(persistence),
+        appendTerminalSession: persistence.appendTerminalSession.bind(persistence),
+        checkpointRuntimeMetadata: persistence.checkpointRuntimeMetadata.bind(persistence),
+        resolveComposerPreview: unused, getAppSettings: () => settings,
+        resolveProviderCatalog: () => ({ snapshot: { providers: [catalog] }, provider: catalog }),
+        getProviderCodingAdapter: (providerId) => ({ composePrompt: composeProviderPrompt,
+          getProviderQuotaTelemetry: async () => null, invalidateSessionThread: async () => {}, invalidateAllSessionThreads: async () => {},
+          runSessionTurn: async (input) => { executed.push({ provider: providerId, input }); return { assistantText: "done", threadId: "fixture-thread", usage: null }; } }),
+        createSessionTurn: (input) => bundle.stores.turn.createSessionTurn(input), updateSessionTurn: (id, input) => bundle.stores.turn.updateSessionTurn(id, input),
+        setLiveSessionRun() {}, getLiveSessionRun: () => null, waitForApprovalDecision: () => "deny", waitForElicitationResponse: () => ({ action: "cancel" }),
+        setProviderQuotaTelemetry() {}, setSessionContextTelemetry() {}, invalidateProviderSessionThread() {}, scheduleProviderQuotaTelemetryRefresh() {},
+        broadcastLiveSessionRun() {}, resolvePendingApprovalRequest() {}, resolvePendingElicitationRequest() {},
+      });
+      const result = await runtime.runQueuedSessionTurn(receipt, async (started) => { await bundle.stores.queue.markStarted(target(session), receipt.id, started); });
+      return { result, executed };
+    },
     async reopen() { await service.close(); await bundle.client.close(); bundle = createV6StorageWorkerBundle(options); await bundle.initialize(); startQueue(); },
     async close() { for (const cleanup of cleanups) await cleanup(); await service.close(); await bundle.client.close(); await rm(directory, { recursive: true, force: true }); } };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "親はMCP/CLIでCodex子のReviewer候補を確認・指定でき、保存と初回通常TurnのProvider入力が一致し、省略はuser・非対応指定は未作成になる"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/945; docs/design/session-run-lifecycle.md#bound-session-api" }
+// fault = "Reviewerをuser固定で保存する、片入口だけ指定値を失う、初回依頼へ引き継がない、非対応指定を黙って無視して子を作る"
+// observable = "両入口のcatalog/作成結果・拒否理由、実Storage Worker再読込、同requestIdの子identity、再起動後のqueue dispatchとCodex adapter境界の実行設定"
+// observation_boundary = "public-boundary"
+// scope = "SDK MCP/bound CLI→Session application→共通子作成/lifecycle/queue/runtime→Codex adapter境界。catalog/Workspace検証/HTTP/Provider実行はfixture"
+// lifecycle = "permanent"
+// impact = "許可済み作業を委譲しても子が意図しないユーザーReviewerで起動し、運用が入力待ちで止まる"
+// distinction = "schemaのparityや設定単体では、子作成から実保存・初回通常依頼までのReviewer引継ぎを確認できない"
+// @end-test-value
+test("Codex child Reviewer selection survives creation, recovery and the first normal request", async () => {
+  const f = await fixture();
+  try {
+    await f.bundle.stores.character.createCharacter({ name: "Child fixture" });
+    const parent = await f.endpoint(f.parent);
+    const base = { role: "executor", provider: "codex", model: "deep", reasoningEffort: "high", approvalMode: "on-request", codexSandboxMode: "workspace-write", workspacePath: join(f.parent.workspacePath, "..") };
+    const created: { session: Session; reviewer: "user" | "auto-review"; requestId: string }[] = [];
+    for (const transport of ["mcp", "cli"] as const) {
+      const catalog = await parent(transport, "get_catalog", { provider: "codex", workspacePath: base.workspacePath });
+      assert.equal(catalog.ok, true);
+      const options = catalog.options as { provider: string; reviewers: { value: string; label: string }[] }[];
+      assert.deepEqual(options.find((option) => option.provider === "codex")!.reviewers, [
+        { value: "user", label: "User" }, { value: "auto-review", label: "Auto Review" },
+      ]);
+      const before = (await f.bundle.stores.session.listSessionSummaries()).length;
+      for (const codexReviewer of ["unsupported", null, 1]) {
+        const rejected = await parent(transport, "create_child", { ...base, requestId: randomUUID(), codexReviewer });
+        assertRejected(rejected);
+        assert.match(JSON.stringify(rejected), /codexReviewer|reviewer/i);
+      }
+      for (const provider of ["claude", "copilot", "opencode"]) {
+        const rejected = await parent(transport, "create_child", { ...base, requestId: randomUUID(), provider, codexSandboxMode: undefined, codexReviewer: "auto-review" });
+        assertRejected(rejected);
+        assert.match(JSON.stringify(rejected), /Codex|reviewer/i);
+      }
+      assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, before);
+      assert.equal((await f.bundle.stores.session.listPendingSessionLifecycleOperations()).length, 0);
+      for (const codexReviewer of ["auto-review", undefined, "user"] as const) {
+        const request = { ...base, requestId: randomUUID(), ...(codexReviewer === undefined ? {} : { codexReviewer }) };
+        const response = await parent(transport, "create_child", request);
+        assert.equal(response.ok, true, JSON.stringify(response));
+        const reviewer = codexReviewer ?? "user";
+        const options = response.executionOptions as { codexReviewer: string; approvalMode: string };
+        assert.equal(options.codexReviewer, reviewer);
+        assert.equal(options.approvalMode, "on-request");
+        const session = (await f.bundle.stores.session.getSession((response.session as { id: string }).id))!;
+        assert.equal(session.codexReviewer, reviewer);
+        assert.equal(session.approvalMode, "on-request");
+        assert.deepEqual(await parent(transport === "mcp" ? "cli" : "mcp", "create_child", request), response);
+        const countAfterCreation = (await f.bundle.stores.session.listSessionSummaries()).length;
+        const changed = await parent(transport, "create_child", { ...request, codexReviewer: reviewer === "user" ? "auto-review" : "user" });
+        assert.equal(changed.ok, false);
+        assert.ok(changed.message);
+        assert.equal((await f.bundle.stores.session.listSessionSummaries()).length, countAfterCreation);
+        assert.equal((await f.bundle.stores.session.getSession(session.id))!.codexReviewer, reviewer);
+        const requestId = randomUUID();
+        const sent = await parent(transport, "enqueue", { target: target(session), requestId, message: "first assigned task", model: "deep", reasoningEffort: "high", approvalMode: "on-request", codexSandboxMode: "workspace-write" });
+        assert.equal(sent.ok, true, JSON.stringify(sent));
+        assert.equal((sent.receipt as SessionTurnQueueReceipt).accepted!.request.executionOptions.codexReviewer, reviewer);
+        created.push({ session, reviewer, requestId });
+      }
+    }
+    await f.reopen();
+    for (const { session, reviewer, requestId } of created) {
+      assert.equal((await f.bundle.stores.session.getSession(session.id))!.codexReviewer, reviewer);
+      const dispatched = await f.dispatchNext(session);
+      assert.deepEqual(dispatched.result, { state: "completed" });
+      assert.equal(dispatched.executed.length, 1);
+      assert.equal(dispatched.executed[0].provider, "codex");
+      assert.equal(dispatched.executed[0].input.executionOptions.codexReviewer, reviewer);
+      assert.equal(dispatched.executed[0].input.executionOptions.approvalMode, "on-request");
+      assert.equal((await f.bundle.stores.queue.getReceipt(target(session), requestId))!.state, "completed");
+      assert.equal((await f.bundle.stores.session.getSession(session.id))!.codexReviewer, reviewer);
+    }
+  } finally { await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"
