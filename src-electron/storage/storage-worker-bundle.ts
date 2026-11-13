@@ -76,7 +76,7 @@ const STORE_METHODS = {
     "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter", "resolveLaunchCharacter",
     "createRuntimeSnapshot", "refreshRuntimeSnapshot", "deleteCharacterRootDirectory",
   ],
-  settings: ["getSettings", "updateSettings", "updateChatLayoutPreference", "resetSettings"],
+  settings: ["getSettings", "updateSettings", "updateChatLayoutPreference", "resetSettings", "getSelectionPolicy", "setSelectionPolicy", "getWorktreePolicy", "setWorktreeRoot", "setWorktreeRepository"],
   catalog: ["getCachedProviders", "getCatalog", "upsertProvider", "clear"],
   mate: [
     "initializeSchema", "getMateState", "getUserDataPath", "getMateProfile", "verifyMateProfileFiles",
@@ -104,6 +104,7 @@ const MUTATIONS = new Set([
   "updateAuxiliaryTitleIfMatches", "updateAuxiliaryMessageBookmarkIfMatches", "updateAuxiliaryExecutionOptionsIfMatches", "updateAuxiliaryDisplayAnchorIfMatches",
   "createCharacter", "updateCharacterMetadata", "updateCharacterDefinition", "archiveCharacter",
   "deleteCharacterRootDirectory", "updateSettings", "updateChatLayoutPreference", "resetSettings", "upsertProvider", "clear",
+  "setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository",
   "initializeSchema", "recoverMateProfileFilesFromActiveRevision",
   "updateMateGrowthApplyIntervalMinutes", "updateMateGrowthSettings", "createMate", "updateMate", "setMateAvatar", "resetMate",
   "deleteMateProjectionDirectory", "applyProfileFiles", "createPromptTemplate", "updatePromptTemplate", "deletePromptTemplate",
@@ -178,7 +179,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
+      if ((input.store === "settings" || input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
         if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }
@@ -238,7 +239,7 @@ export function createV6StorageWorkerBundle(options: {
             ? args[0] as { request: { operation: string }; actor: { kind: string } } : null;
           const coordinationMutation = coordinationInput !== null && coordinationInput.request.operation !== "list"
             && (coordinationInput.request.operation !== "get" || coordinationInput.actor.kind !== "user");
-          const needsTurnAdmission = graphMutation || store === "coordination" || store === "execution" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
+          const needsTurnAdmission = (store === "settings" && ["setSelectionPolicy", "setWorktreeRoot", "setWorktreeRepository"].includes(property)) || graphMutation || store === "coordination" || store === "execution" || property === "setSessionAdditionalDirectories" || property === "readSessionHistory" || property === "readBackgroundSource" || property === "captureBackgroundSource";
           if (needsTurnAdmission) assertRuntimeTurnAdmission();
           const runtimeTurnAdmissionState = needsTurnAdmission ? currentRuntimeTurnAdmissionState() : undefined;
           return client.call(property === "cancelConversationQuery" ? "conversation.cancel"

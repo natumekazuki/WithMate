@@ -36,6 +36,7 @@ import {
 } from "../../src-shared/settings/provider-runtime-options.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { SessionSteerResult } from "../../src-shared/session/session-turn-queue.js";
+import { isSessionOperatingPolicyOperation, type SessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
 
 export type SessionCurrentTurn = {
   turnId: string | null;
@@ -47,6 +48,7 @@ export type SessionManagementContext = {
   assertCurrent(): void;
 };
 export type SessionManagementApplicationDeps = {
+  operatingPolicy(actor: RelatedSession, operation: SessionOperatingPolicyOperation, request: unknown, assertCurrent: () => void): Promise<SessionOperationResult>;
   listSessions(): Promise<RelatedSession[]>;
   currentTurn(actor: RelatedSession): Promise<SessionCurrentTurn>;
   crewFolder(
@@ -162,6 +164,9 @@ export class SessionManagementApplication {
         "SESSION_ACTOR_UNAVAILABLE",
         "The bound actor no longer exists.",
       );
+    if (isSessionOperatingPolicyOperation(operation)) {
+      return this.deps.operatingPolicy(actor, operation, parsed.data, context.assertCurrent);
+    }
     const target = (reference: SessionTarget): RelatedSession => {
       const found = entries.find(
         (entry) =>

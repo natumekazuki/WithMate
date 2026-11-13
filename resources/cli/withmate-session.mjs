@@ -2429,6 +2429,138 @@ function handleIntersectionResults(result, left, right) {
 	result.value = merged.data;
 	return result;
 }
+var $ZodRecord = /*@__PURE__*/ $constructor("$ZodRecord", (inst, def) => {
+	$ZodType.init(inst, def);
+	const memo = globalConfig.memoizer;
+	memo?.attach(inst);
+	inst._zod.parse = (payload, ctx) => {
+		const input = payload.value;
+		if (!isPlainObject(input)) {
+			payload.issues.push({
+				expected: "record",
+				code: "invalid_type",
+				input,
+				inst
+			});
+			return payload;
+		}
+		const proms = [];
+		const values = def.keyType._zod.values;
+		if (values && !def.partial) {
+			payload.value = memo ? memo.alloc(inst, payload, {}, ctx) : {};
+			const recordKeys = /* @__PURE__ */ new Set();
+			for (const key of values) if (typeof key === "string" || typeof key === "number" || typeof key === "symbol") {
+				recordKeys.add(typeof key === "number" ? key.toString() : key);
+				if (key === "__proto__") continue;
+				const keyResult = def.keyType._zod.run({
+					value: key,
+					issues: []
+				}, ctx);
+				if (keyResult instanceof Promise) throw new Error("Async schemas not supported in object keys currently");
+				if (keyResult.issues.length) {
+					payload.issues.push({
+						code: "invalid_key",
+						origin: "record",
+						issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
+						input: key,
+						path: [key],
+						inst
+					});
+					continue;
+				}
+				const outKey = keyResult.value;
+				if (outKey === "__proto__") continue;
+				const result = def.valueType._zod.run({
+					value: input[key],
+					issues: []
+				}, ctx);
+				if (result instanceof Promise) proms.push(result.then((result) => {
+					if (result.issues.length) payload.issues.push(...prefixIssues(key, result.issues));
+					payload.value[outKey] = result.value;
+				}));
+				else {
+					if (result.issues.length) payload.issues.push(...prefixIssues(key, result.issues));
+					payload.value[outKey] = result.value;
+				}
+			}
+			let unrecognized;
+			for (const key in input) if (!recordKeys.has(key)) {
+				if (def.mode === "loose") {
+					if (key === "__proto__") continue;
+					payload.value[key] = input[key];
+				} else {
+					unrecognized = unrecognized ?? [];
+					unrecognized.push(key);
+				}
+			}
+			if (unrecognized && unrecognized.length > 0) payload.issues.push({
+				code: "unrecognized_keys",
+				input,
+				inst,
+				keys: unrecognized,
+				continue: true
+			});
+		} else {
+			payload.value = memo ? memo.alloc(inst, payload, {}, ctx) : {};
+			let unrecognized;
+			for (const key of Reflect.ownKeys(input)) {
+				if (key === "__proto__") continue;
+				if (!Object.prototype.propertyIsEnumerable.call(input, key)) continue;
+				let keyResult = def.keyType._zod.run({
+					value: key,
+					issues: []
+				}, ctx);
+				if (keyResult instanceof Promise) throw new Error("Async schemas not supported in object keys currently");
+				if (typeof key === "string" && number$1.test(key) && keyResult.issues.length) {
+					const retryResult = def.keyType._zod.run({
+						value: Number(key),
+						issues: []
+					}, ctx);
+					if (retryResult instanceof Promise) throw new Error("Async schemas not supported in object keys currently");
+					if (retryResult.issues.length === 0) keyResult = retryResult;
+				}
+				if (keyResult.issues.length) {
+					if (def.mode === "loose") payload.value[key] = input[key];
+					else if (values) {
+						unrecognized = unrecognized ?? [];
+						unrecognized.push(key);
+					} else payload.issues.push({
+						code: "invalid_key",
+						origin: "record",
+						issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config())),
+						input: key,
+						path: [key],
+						inst
+					});
+					continue;
+				}
+				const outKey = keyResult.value;
+				if (outKey === "__proto__") continue;
+				const result = def.valueType._zod.run({
+					value: input[key],
+					issues: []
+				}, ctx);
+				if (result instanceof Promise) proms.push(result.then((result) => {
+					if (result.issues.length) payload.issues.push(...prefixIssues(key, result.issues));
+					payload.value[outKey] = result.value;
+				}));
+				else {
+					if (result.issues.length) payload.issues.push(...prefixIssues(key, result.issues));
+					payload.value[outKey] = result.value;
+				}
+			}
+			if (unrecognized && unrecognized.length > 0) payload.issues.push({
+				code: "unrecognized_keys",
+				input,
+				inst,
+				keys: unrecognized,
+				continue: true
+			});
+		}
+		if (proms.length) return Promise.all(proms).then(() => payload);
+		return payload;
+	};
+});
 var $ZodEnum = /*@__PURE__*/ $constructor("$ZodEnum", (inst, def) => {
 	$ZodType.init(inst, def);
 	const values = getEnumValues(def.entries);
@@ -5393,6 +5525,28 @@ function intersection(left, right) {
 		right
 	});
 }
+var ZodRecord = /*@__PURE__*/ $constructor("ZodRecord", (inst, def) => {
+	_ensureDefaultMemoizer();
+	$ZodRecord.init(inst, def);
+	ZodType.init(inst, def);
+	inst._zod.processJSONSchema = (ctx, json, params) => recordProcessor(inst, ctx, json, params);
+	inst.keyType = def.keyType;
+	inst.valueType = def.valueType;
+});
+function record$1(keyType, valueType, params) {
+	if (!valueType || !valueType._zod) return new ZodRecord({
+		type: "record",
+		keyType: string(),
+		valueType: keyType,
+		...normalizeParams(valueType)
+	});
+	return new ZodRecord({
+		type: "record",
+		keyType,
+		valueType,
+		...normalizeParams(params)
+	});
+}
 var ZodEnum = /*@__PURE__*/ $constructor("ZodEnum", (inst, def) => {
 	$ZodEnum.init(inst, def);
 	ZodType.init(inst, def);
@@ -5611,6 +5765,138 @@ function refine(fn, _params = {}) {
 function superRefine(fn, params) {
 	return /* @__PURE__ */ _superRefine(fn, params);
 }
+var provider$1 = _enum([
+	"codex",
+	"copilot",
+	"claude",
+	"opencode"
+]);
+var text$1 = string().trim().min(1).max(2e4);
+var path$1 = string().min(1).max(32768);
+var workspace = { workspacePath: path$1.optional() };
+/** Human-authored guidance, not execution defaults or provider credentials. Array order is priority. */
+var selectionPolicySchema = object({
+	selectionCriteria: text$1.describe("Task/output/judgment criteria for choosing Provider and Model; not a fixed Role mapping."),
+	executionGuidelines: text$1.describe("Depth, Approval and Sandbox guidelines; these never grant permissions."),
+	contractRoutes: array(object({
+		name: string().trim().min(1).max(300),
+		provider: provider$1,
+		nativeProviderId: string().trim().min(1).max(300).optional(),
+		modelId: string().trim().min(1).max(500).optional().describe("Native model ID; for OpenCode compare nativeProviderId/modelId against get_catalog."),
+		conditions: text$1.describe("Usage conditions, plan/billing evidence and limitations. No API keys or authentication data.")
+	}).strict()).max(100).describe("Contract routes in preferred order. OpenCode nativeProviderId/modelId identify the actual route when specified.")
+}).strict();
+var worktreeRepositoryRuleSchema = object({
+	categoryPath: string().max(2e3).describe("Relative classification path, e.g. Electron or .net/MAUI. Empty string explicitly means no classification directory."),
+	repositoryName: string().min(1).max(255).describe("One directory name for this repository."),
+	layout: string().min(1).max(2e3).describe("Relative layout below root/categoryPath, containing {repository} and {branch}, e.g. {repository}/{branch}. Branch slashes form nested directories.")
+}).strict();
+object({
+	rootPath: path$1.nullable(),
+	repositories: record$1(string(), worktreeRepositoryRuleSchema)
+}).strict();
+var sessionOperatingPolicyRequestSchemas = {
+	get_selection_policy: object({}).strict(),
+	set_selection_policy: object({ policy: selectionPolicySchema.nullable() }).strict(),
+	get_provider_quota: object({ provider: provider$1.optional() }).strict(),
+	get_worktree_policy: object(workspace).strict(),
+	set_worktree_root: object({ rootPath: path$1.nullable() }).strict(),
+	set_worktree_repository: object({
+		...workspace,
+		rule: worktreeRepositoryRuleSchema.nullable()
+	}).strict(),
+	resolve_worktree: object({
+		...workspace,
+		branch: string().min(1).max(1e3),
+		destinationPath: path$1.optional()
+	}).strict()
+};
+var SESSION_OPERATING_POLICY_READS = [
+	"get_selection_policy",
+	"get_provider_quota",
+	"get_worktree_policy",
+	"resolve_worktree"
+];
+var selectionResult = object({
+	ok: literal(true),
+	policy: selectionPolicySchema.nullable()
+}).strict();
+var repositoryResult = object({
+	ok: literal(true),
+	repositoryId: path$1,
+	rootPath: path$1.nullable(),
+	rule: worktreeRepositoryRuleSchema.nullable()
+}).strict();
+var quotaTelemetry = object({
+	provider: string(),
+	updatedAt: string().nullable(),
+	snapshots: array(object({
+		quotaKey: string(),
+		entitlementRequests: number(),
+		usedRequests: number(),
+		remainingPercentage: number(),
+		overage: number(),
+		overageAllowedWithExhaustedQuota: boolean(),
+		resetDate: string().optional()
+	}).strict()),
+	rateLimits: array(object({
+		quotaKey: string(),
+		label: string().optional(),
+		usedPercentage: number(),
+		windowDurationMinutes: number().optional(),
+		resetDate: string().optional()
+	}).strict()).optional(),
+	status: _enum([
+		"loading",
+		"ready",
+		"error",
+		"unsupported"
+	]).optional()
+}).strict();
+var sessionOperatingPolicySuccessSchemas = {
+	get_selection_policy: selectionResult,
+	set_selection_policy: selectionResult,
+	get_provider_quota: object({
+		ok: literal(true),
+		providers: array(object({
+			provider: provider$1,
+			telemetry: quotaTelemetry.nullable()
+		}).strict())
+	}).strict(),
+	get_worktree_policy: repositoryResult,
+	set_worktree_root: object({
+		ok: literal(true),
+		rootPath: path$1.nullable()
+	}).strict(),
+	set_worktree_repository: repositoryResult,
+	resolve_worktree: object({
+		ok: literal(true),
+		repositoryId: path$1,
+		branch: string(),
+		status: _enum([
+			"existing",
+			"planned",
+			"unconfigured"
+		]),
+		source: _enum([
+			"git",
+			"policy",
+			"override"
+		]).nullable(),
+		destinationPath: path$1.nullable(),
+		missing: array(_enum(["rootPath", "repositoryRule"]))
+	}).strict()
+};
+var SESSION_OPERATING_POLICY_READ_NOTICE = "Before creating a child or reselecting execution settings for an existing Session, read get_selection_policy and get_catalog for the intended Provider/Workspace; use get_provider_quota when relevant. Policy is guidance, not availability, free access, permission or authority. An existing Session's Provider is fixed; enqueue selects only its next Turn's options and Steer retains running settings. Before creating a Git Worktree, read resolve_worktree for the repository and branch; distinguish an existing Worktree from a planned destination. Unconfigured policy is explicit; never substitute Session/Crew Folders. One-off instructions do not change saved policies. Git operations and external Provider rule files remain the caller's responsibility under existing user authority.";
+var SESSION_OPERATING_POLICY_DESCRIPTIONS = {
+	get_selection_policy: "Read this device's saved selection criteria, execution guidelines and ordered contract routes; policy:null means unset. Read before child creation or execution-option reselection, then validate against the actual catalog. Reading never changes settings or external rules.",
+	set_selection_policy: "Register/replace the complete device selection policy, or clear it with policy:null. Only use on the user's explicit request to change persistent configuration; never from a one-off instruction, evaluation or agent suggestion. Do not store API keys or authentication data. Does not change Session defaults, running Turns, catalog availability, permissions or external Provider rule files.",
+	get_provider_quota: "Read cached existing Provider quota telemetry without polling or saving policy. Omit provider for all four Providers. telemetry:null means not observed; preserve status, updatedAt, snapshots and rateLimits. An old success with error/loading is not fresh; unsupported/null/empty/unknown must not be interpreted as zero usage, unlimited quota or authorization to spend.",
+	get_worktree_policy: "Read the device root and repository-specific category/name/layout; null means unset. Omitted workspacePath uses the bound actor's Workspace. repositoryId is the canonical Git common directory, shared by that repository's Worktrees. Read-only; no Git or configuration changes.",
+	set_worktree_root: "Register/replace this device's absolute Worktree root, or clear with rootPath:null. Only on an explicit user request for persistent configuration. Does not create/move/delete directories or Worktrees, and preserves all repository rules.",
+	set_worktree_repository: "Register/replace this repository's complete categoryPath/repositoryName/layout rule, or remove it with rule:null. Only on explicit user request for persistent configuration. Omitted workspacePath uses the bound actor's Workspace. Applies across its linked Worktrees, not unrelated clones. Does not change the root or perform Git/filesystem mutations.",
+	resolve_worktree: "Read the applicable Worktree destination for a literal branch name. Existing registered Worktrees take precedence and return status:existing/source:git. Otherwise return status:planned from saved policy or an explicit one-off absolute destinationPath, never saving the override. Missing settings return status:unconfigured/missing with no Folder fallback. Planned is not created or guaranteed unoccupied; the caller checks Git/base/Workspace and obtains any required authority before creation. No configuration or Git mutations."
+};
 // src-shared/character/character-owner.ts
 var UNKNOWN_CHARACTER_OWNER_ID = "withmate:unresolved-character-owner";
 function normalizeCharacterOwnerId(value) {
@@ -6310,6 +6596,7 @@ var child = object({
 var sessionOperationRequestSchemas = {
 	...executionOperationRequestSchemas,
 	...sessionCoordinationRequestSchemas,
+	...sessionOperatingPolicyRequestSchemas,
 	create_child: child,
 	get_catalog: object({
 		provider: provider.optional(),
@@ -6449,6 +6736,7 @@ var receiptSchema = object({
 var sessionOperationSuccessSchemas = {
 	...executionOperationResultSchemas,
 	...sessionCoordinationSuccessSchemas,
+	...sessionOperatingPolicySuccessSchemas,
 	create_child: object({
 		ok: literal(true),
 		session: relatedSessionSchema,
@@ -6570,6 +6858,7 @@ new Map(Object.entries(SESSION_RUNTIME_OPERATION_PATHS).map(([operation, path]) 
 var sessionAgentRuntimeOperation = (operation) => `session.route.${operation}`;
 Object.fromEntries(Object.keys(sessionOperationRequestSchemas).map((operation) => [`session.${operation}`, sessionAgentRuntimeOperation(operation)]));
 var SESSION_READ_OPERATIONS = [
+	...SESSION_OPERATING_POLICY_READS,
 	"self",
 	"list",
 	"get",
@@ -6582,7 +6871,8 @@ var SESSION_READ_OPERATIONS = [
 var SESSION_OPERATION_DESCRIPTIONS = {
 	...Object.fromEntries(Object.entries(EXECUTION_OPERATION_DESCRIPTIONS).map(([operation, description]) => [operation, `${description} ${SESSION_HISTORY_USAGE_NOTICE}`])),
 	...SESSION_COORDINATION_DESCRIPTIONS,
-	create_child: "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. No Worktree creation/merge/deletion or user approval is performed. Parent selection policy remains in your Provider-managed runbook, not WithMate config synchronization.",
+	...SESSION_OPERATING_POLICY_DESCRIPTIONS,
+	create_child: "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
 	get_catalog: "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
 	self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
 	list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
@@ -8822,7 +9112,8 @@ Normal messages enqueue only between actual direct parents and children, includi
 Every enqueue requires approvalMode and, for Codex recipients, codexSandboxMode (unsupported for other Providers). Parent-to-child requests also require model and reasoningEffort; use "" for models without Depth. Child-to-parent may omit model/depth to capture the parent's saved choices at acceptance. Use the recipient's provider/workspacePath from get/list with get-catalog. These choices affect only this receipt's normal Turn, never saved settings or a running Turn; Reviewer is retained and incompatible Approval is rejected. Retries must preserve explicit choices, including omissions; inspect receipt.accepted.request.executionOptions for the effective snapshot.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.
 Only direct parents cancel pending child receipts, stop a specified child Turn, or explicitly steer a running child Turn. Steer requires target and get.currentTurn.turnId (WithMate, not native Provider ID) and message; only Codex currently supports it. It uses the running settings and never starts a Turn or automatically falls back to enqueue. applied/not-applied and SESSION_STEER_UNKNOWN (effect unknown) are distinct; inspect list-execution-inputs/get-execution-input and inputOrigin, including unresolved records, before deciding what to do. Never automatically resend unknown delivery. Queue editing, Role promotion, user answering or approval is not exposed.
-Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Character selection is automatic and identical requestId retries recover the same child/settings. Selection policy stays in your Provider-managed runbook; no Worktree creation/merge/deletion is performed.
+Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Character selection is automatic and identical requestId retries recover the same child/settings. No Worktree creation/merge/deletion is performed.
+${SESSION_OPERATING_POLICY_READ_NOTICE} CLI operation names use hyphens instead of underscores.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
 Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
 Use schema for exact shared input schemas and operation descriptions.

@@ -14,6 +14,8 @@ V6 SQLiteの起動、schema更新、WAL maintenance、診断、通常の保存�
 
 ## Storage Overview
 
+通常Sessionの端末共通運用設定は、`app_settings`の`session_selection_policy_json`（選定基準・実行設定の目安・順序付き契約経路）と`worktree_policy_json`（root・Git common directoryごとの配置ルール）に保存する。Storage Workerのtyped commandだけで更新し、未設定の読取で値を生成しない。通常の設定保存では保持し、設定全体resetでは解除する。実測quota、認証情報、Session実行設定とは独立し、schema migrationは追加しない。公開操作は[Sessionの選定方針とWorktree配置](../features/session-operating-policies.md)を参照する。
+
 | 領域 | 主な正本 |
 | --- | --- |
 | 設定・catalog | `app_settings`、`prompt_templates`、`provider_model_cache`、`characters` |

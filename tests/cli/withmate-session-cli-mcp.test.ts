@@ -127,6 +127,9 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
     const operationId = "11111111-1111-4111-8111-111111111111";
     const coordination = { operationId, id: "consultation" };
     const inputs: Record<SessionOperation, Record<string, unknown>> = {
+      get_selection_policy: {}, set_selection_policy: { policy: null }, get_provider_quota: {},
+      get_worktree_policy: {}, set_worktree_root: { rootPath: null }, set_worktree_repository: { rule: null },
+      resolve_worktree: { branch: "feat/task" },
       self: {},
       list: { allCrews: true, limit: 2 },
       get: { target },
@@ -266,6 +269,10 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       answerRevision: 0,
     };
     const values: Record<SessionOperation, Record<string, unknown>> = {
+      get_selection_policy: { policy: null }, set_selection_policy: { policy: null }, get_provider_quota: { providers: [] },
+      get_worktree_policy: { repositoryId: "C:/repo/.git", rootPath: null, rule: null }, set_worktree_root: { rootPath: null },
+      set_worktree_repository: { repositoryId: "C:/repo/.git", rootPath: null, rule: null },
+      resolve_worktree: { repositoryId: "C:/repo/.git", branch: "feat/task", status: "unconfigured", source: null, destinationPath: null, missing: ["rootPath", "repositoryRule"] },
       self: {
         session,
         currentTurn: { turnId: "1", receipt: null, origin: null },
@@ -606,6 +613,7 @@ test("directory management crosses persisted Session runtime, MCP and CLI", asyn
   const unused = async () => { throw new Error("Unexpected operation"); };
   const application = new SessionManagementApplication({
     listSessions: async () => resolveRelatedSessions(storage.listSessionSummaries(), []),
+    operatingPolicy: unused,
     directories: (session, change, assertCurrent) => manageSessionDirectories(persistence, directory, session, change, assertCurrent),
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
     updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused,
@@ -729,6 +737,7 @@ test("saved Coordination details cross the real application and both public sche
   };
   const application = new SessionManagementApplication({
     listSessions: async () => resolveRelatedSessions([source], []),
+    operatingPolicy: unused,
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }),
     crewFolder: async () => ({ rootSessionId: source.id, path: directory }),
     directories: unused,

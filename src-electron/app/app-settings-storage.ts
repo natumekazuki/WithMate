@@ -11,6 +11,8 @@ import { normalizeModelAvailability } from "../../src-shared/settings/model-avai
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "../storage/database-schema-v1.js";
 import { SESSION_GRAPH_CONTRACT_INITIALIZED_KEY } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
+import { selectionPolicySchema, worktreePolicySchema, worktreeRepositoryRuleSchema, type SelectionPolicy, type WorktreePolicy, type WorktreeRepositoryRule } from "../../src-shared/session/session-operating-policy.js";
+import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
 const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
@@ -36,6 +38,8 @@ const GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY = "glossary_proactive_create_limit";
 const GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY = "glossary_proactive_create_limit_initialized";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MODEL_AVAILABILITY_KEY = "model_availability_json";
+const SELECTION_POLICY_KEY = "session_selection_policy_json";
+const WORKTREE_POLICY_KEY = "worktree_policy_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
 const BACKGROUND_EXECUTION_SETTINGS_KEY = "background_execution_settings_json";
@@ -739,6 +743,53 @@ export class AppSettingsStorage {
           updated_at = excluded.updated_at
       `)
       .run(settingKey, settingValue, new Date().toISOString());
+  }
+
+  private readOperatingPolicy(key: string): unknown {
+    const row = this.db.prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?").get(key) as { setting_value: string } | undefined;
+    return row ? JSON.parse(row.setting_value) : undefined;
+  }
+
+  private writeOperatingPolicy(key: string, value: unknown): void {
+    assertRuntimeTurnAdmission();
+    if (value === null) {
+      this.db.prepare("DELETE FROM app_settings WHERE setting_key = ?").run(key);
+    } else {
+      this.db.prepare(`INSERT INTO app_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at`)
+        .run(key, JSON.stringify(value), new Date().toISOString());
+    }
+  }
+
+  getSelectionPolicy(): SelectionPolicy | null {
+    const value = this.readOperatingPolicy(SELECTION_POLICY_KEY);
+    return value === undefined ? null : selectionPolicySchema.parse(value);
+  }
+
+  setSelectionPolicy(policy: SelectionPolicy | null): SelectionPolicy | null {
+    const value = selectionPolicySchema.nullable().parse(policy);
+    this.writeOperatingPolicy(SELECTION_POLICY_KEY, value);
+    return value;
+  }
+
+  getWorktreePolicy(): WorktreePolicy {
+    const value = this.readOperatingPolicy(WORKTREE_POLICY_KEY);
+    return value === undefined ? { rootPath: null, repositories: {} } : worktreePolicySchema.parse(value);
+  }
+
+  setWorktreeRoot(rootPath: string | null): string | null {
+    const policy = this.getWorktreePolicy();
+    policy.rootPath = worktreePolicySchema.shape.rootPath.parse(rootPath);
+    this.writeOperatingPolicy(WORKTREE_POLICY_KEY, policy);
+    return policy.rootPath;
+  }
+
+  setWorktreeRepository(repositoryId: string, rule: WorktreeRepositoryRule | null): WorktreePolicy {
+    const policy = this.getWorktreePolicy();
+    if (rule === null) delete policy.repositories[repositoryId];
+    else policy.repositories[repositoryId] = worktreeRepositoryRuleSchema.parse(rule);
+    this.writeOperatingPolicy(WORKTREE_POLICY_KEY, policy);
+    return policy;
   }
 
   resetSettings(): AppSettings {

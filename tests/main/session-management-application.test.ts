@@ -34,6 +34,7 @@ const reference = (entry: RelatedSession) => ({
 function setup(entries: RelatedSession[]) {
   const calls: string[] = [];
   const deps: SessionManagementApplicationDeps = {
+    operatingPolicy: async () => { throw new Error("unused"); },
     listSessions: async () => entries,
     currentTurn: async () => ({
       turnId: "turn-actual",

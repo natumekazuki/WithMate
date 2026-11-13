@@ -11,6 +11,7 @@ import { createWithMateSessionMcpServer } from "../../src-electron/platform/mcp/
 import type { callWithMateMemoryRuntime, WithMateMemoryRuntimeConnection } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
 import { SessionManagementApplication, SessionManagementError } from "../../src-electron/session/session-management-application.js";
 import { SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
+import { SessionOperatingPolicyService } from "../../src-electron/session/session-operating-policy-service.js";
 import { MainSessionTurnQueueFacade, SessionTurnQueuePreflightRejectedError } from "../../src-electron/app/main-session-turn-queue-facade.js";
 import { SessionTurnQueueService } from "../../src-electron/session/session-turn-queue-service.js";
 import { resolveRelatedSessions } from "../../src-electron/session/session-relationship-resolver.js";
@@ -65,7 +66,9 @@ async function fixture(provider = "codex") {
       preview: async () => ({ errors: [], attachments: [] }), store: bundle.stores.queue, service });
   };
   startQueue();
+  const operatingPolicy = new SessionOperatingPolicyService({ getStore: () => bundle.stores.settings, getQuota: () => null });
   const application = new SessionManagementApplication({
+    operatingPolicy: (actor, operation, request, current) => operatingPolicy.execute(operation, request, actor.workspacePath, current),
     listSessions: async () => resolveRelatedSessions(await bundle.stores.session.listSessionSummaries(), []),
     currentTurn: async (actor) => ({ turnId: sourceTurns.get(actor.id)!, receipt: null, origin: null }),
     crewFolder: async () => ({ rootSessionId: parent.id, path: directory }),
@@ -114,6 +117,38 @@ async function fixture(provider = "codex") {
     async reopen() { await service.close(); await bundle.client.close(); bundle = createV6StorageWorkerBundle(options); await bundle.initialize(); startQueue(); },
     async close() { for (const cleanup of cleanups) await cleanup(); await service.close(); await bundle.client.close(); await rm(directory, { recursive: true, force: true }); } };
 }
+
+// @test-value v2
+// kind = "contract"
+// claim = "親が方針と宛先catalogを読んで選ぶ単発Depth/権限は通常Turn受付だけへ反映され、共有方針は保存時のまま残る"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/926" }
+// fault = "一度のenqueueで恒久方針が学習更新される、方針読取がcatalogを置き換える、単発指定が受付へ届かない"
+// observable = "公開方針read、宛先catalog、receipt実効設定、送信後の同じ方針本文"
+// observation_boundary = "public-boundary"
+// scope = "両入口→runtime→policy service/queue facade→実Storage Worker。catalogとHTTP交換はfixture"
+// lifecycle = "permanent"
+// distinction = "方針CRUD単体では通常送信の単発指定と恒久方針が分離されていることを検出できない"
+// @end-test-value
+test("parent reads policy and recipient catalog without persisting one-off enqueue choices", async () => {
+  const f = await fixture();
+  try {
+    const parent = await f.endpoint(f.parent);
+    const policy = { selectionCriteria: "Judgment-heavy tasks use deep; routine work uses fast.", executionGuidelines: "Select Depth and permissions per task.", contractRoutes: [{ name: "subscription", provider: "codex", conditions: "Use observed contract quota." }] };
+    await parent("cli", "set_selection_policy", { policy });
+    for (const transport of ["mcp", "cli"] as const) {
+      assert.deepEqual((await parent(transport, "get_selection_policy", {})).policy, policy);
+      const choices = await parent(transport, "get_catalog", { provider: f.child.provider, workspacePath: f.child.workspacePath });
+      const catalog = choices.catalog as { workspacePath: string; providers: { models: { id: string; reasoningEfforts: string[] }[] }[] };
+      assert.equal(catalog.workspacePath, f.child.workspacePath);
+      assert.ok(catalog.providers[0].models.some((model) => model.id === "fast" && model.reasoningEfforts.includes("low")));
+      const sent = await parent(transport, "enqueue", { target: target(f.child), requestId: randomUUID(), message: "routine task with one-off low Depth", model: "fast", reasoningEffort: "low", approvalMode: "never", codexSandboxMode: "read-only" });
+      assert.equal(sent.ok, true);
+      const effective = (sent.receipt as SessionTurnQueueReceipt).accepted!.request.executionOptions;
+      assert.equal(effective.model, "fast"); assert.equal(effective.reasoningEffort, "low"); assert.equal(effective.codexSandboxMode, "read-only");
+      assert.deepEqual((await parent(transport, "get_selection_policy", {})).policy, policy);
+    }
+  } finally { await f.close(); }
+});
 
 // @test-value v2
 // kind = "contract"

@@ -15,6 +15,7 @@ import {
 import { APPROVAL_MODE_VALUES } from "../settings/approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "../settings/codex-sandbox-mode.js";
 import { SESSION_HISTORY_USAGE_NOTICE } from "../session-history/session-history-contract.js";
+import { sessionOperatingPolicyRequestSchemas, sessionOperatingPolicySuccessSchemas, SESSION_OPERATING_POLICY_READS, SESSION_OPERATING_POLICY_DESCRIPTIONS } from "./session-operating-policy.js";
 export { sessionTargetSchema, type SessionTarget } from "./session-target.js";
 
 const id = z.string().trim().min(1).max(256);
@@ -48,6 +49,7 @@ const child = z
 export const sessionOperationRequestSchemas = {
   ...executionOperationRequestSchemas,
   ...sessionCoordinationRequestSchemas,
+  ...sessionOperatingPolicyRequestSchemas,
   create_child: child,
   get_catalog: z
     .object({
@@ -199,6 +201,7 @@ const receiptSchema = z
 export const sessionOperationSuccessSchemas = {
   ...executionOperationResultSchemas,
   ...sessionCoordinationSuccessSchemas,
+  ...sessionOperatingPolicySuccessSchemas,
   create_child: z
     .object({
       ok: z.literal(true),
@@ -367,6 +370,7 @@ export const SESSION_TOOL_OPERATIONS = Object.fromEntries(
   ]),
 );
 export const SESSION_READ_OPERATIONS: readonly SessionOperation[] = [
+  ...SESSION_OPERATING_POLICY_READS,
   "self",
   "list",
   "get",
@@ -389,8 +393,9 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
       ),
     ) as Record<keyof typeof EXECUTION_OPERATION_DESCRIPTIONS, string>),
     ...SESSION_COORDINATION_DESCRIPTIONS,
+    ...SESSION_OPERATING_POLICY_DESCRIPTIONS,
     create_child:
-      "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. No Worktree creation/merge/deletion or user approval is performed. Parent selection policy remains in your Provider-managed runbook, not WithMate config synchronization.",
+      "Create a saved normal direct child: overall-coordinator may create task-coordinator/executor, task-coordinator only executor. Provider, model, reasoningEffort, approvalMode and workspacePath are explicit; Codex also requires codexSandboxMode, unsupported sandbox settings for other Providers are rejected. Character is selected automatically from least-used normal Mains in this Crew, never caller-selected. requestId recovers the same child/Character/settings on identical retry. Read get_selection_policy and the intended Workspace get_catalog before selecting settings. No Worktree creation/merge/deletion, external rule synchronization or user approval is performed.",
     get_catalog:
       "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
     self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",

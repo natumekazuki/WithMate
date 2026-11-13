@@ -16,6 +16,8 @@ Model候補とDepthはCodex、Claude、GitHub Copilot、OpenCodeのSDK／native 
 
 ## 選択と実行
 
+通常Agentが利用する端末の選定基準・契約経路の優先順は[Sessionの選定方針](../features/session-operating-policies.md)としてcatalogとは分離して保存する。子作成前・実行設定の再選定前に方針を読み、実際の候補は宛先Provider／Workspaceの`session.get_catalog`で確認する。方針を保存しただけではcatalog、Model Availability、Session設定や実行許可は変わらない。
+
 候補の更新は選択肢の更新であり、Session migrationではない。保存済み・現在選択のmodel／Depth、入力draft、thread、実行中turn、受付済みqueueの捕捉値は変更しない。cacheから消えた現在のmodelも表示を維持する。
 
 新規会話はproviderごとの現在選択、なければ保存済みの直近値を引き継ぐ。どちらにもmodelがない場合、同contextのcacheに既定modelがあれば背景更新の失敗後も利用する。cacheがなければ初回一覧を待ち、取得したprovider defaultを使う。一覧取得に失敗した場合は固定modelや別contextへfallbackしない。

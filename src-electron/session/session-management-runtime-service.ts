@@ -15,6 +15,7 @@ import {
   SessionManagementError,
 } from "./session-management-application.js";
 import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { isSessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
 
 export class SessionManagementRuntimeService {
   constructor(
@@ -111,10 +112,10 @@ export class SessionManagementRuntimeService {
           actor: actor.data,
           assertCurrent,
         });
-      // Reads, Coordination, and directory changes carry admission into Worker.
+      // Reads, Coordination, policy and directory changes carry admission into Worker.
       // Coordination detaches its postcommit queue wake from this sender scope.
       const result = await (SESSION_READ_OPERATIONS.includes(operation) ||
-      operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory"
+      isSessionOperatingPolicyOperation(operation) || operation.startsWith("coordination_") || operation === "add_directory" || operation === "remove_directory"
         ? runWithRuntimeTurnAdmission(
             {
               state: admission.handle.revocationState,

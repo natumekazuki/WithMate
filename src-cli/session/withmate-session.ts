@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
+import { SESSION_OPERATING_POLICY_READ_NOTICE } from "../../src-shared/session/session-operating-policy.js";
 import {
   sessionOperationRequestSchemas,
   sessionOperationSuccessSchemas,
@@ -40,7 +41,8 @@ Normal messages enqueue only between actual direct parents and children, includi
 Every enqueue requires approvalMode and, for Codex recipients, codexSandboxMode (unsupported for other Providers). Parent-to-child requests also require model and reasoningEffort; use "" for models without Depth. Child-to-parent may omit model/depth to capture the parent's saved choices at acceptance. Use the recipient's provider/workspacePath from get/list with get-catalog. These choices affect only this receipt's normal Turn, never saved settings or a running Turn; Reviewer is retained and incompatible Approval is rejected. Retries must preserve explicit choices, including omissions; inspect receipt.accepted.request.executionOptions for the effective snapshot.
 Enqueue deliveryTiming is immediate by default, or explicitly after_source_turn to wait for the exact sending Turn's saved completed/failed/canceled state before starting a normal recipient Turn. Both return a durable receipt immediately; unknown source state does not release delivery. Delayed messages never auto-Steer or block immediate consultation or GUI input. Coordination remains immediate.
 Only direct parents cancel pending child receipts, stop a specified child Turn, or explicitly steer a running child Turn. Steer requires target and get.currentTurn.turnId (WithMate, not native Provider ID) and message; only Codex currently supports it. It uses the running settings and never starts a Turn or automatically falls back to enqueue. applied/not-applied and SESSION_STEER_UNKNOWN (effect unknown) are distinct; inspect list-execution-inputs/get-execution-input and inputOrigin, including unresolved records, before deciding what to do. Never automatically resend unknown delivery. Queue editing, Role promotion, user answering or approval is not exposed.
-Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Character selection is automatic and identical requestId retries recover the same child/settings. Selection policy stays in your Provider-managed runbook; no Worktree creation/merge/deletion is performed.
+Create children with explicit Provider/model/depth/approval, Codex-only sandbox and a prepared Workspace; get-catalog returns supported choices. Character selection is automatic and identical requestId retries recover the same child/settings. No Worktree creation/merge/deletion is performed.
+${SESSION_OPERATING_POLICY_READ_NOTICE} CLI operation names use hyphens instead of underscores.
 For consultation, create then deliver to the saved actual caller; the authorized respondent may escalate the same record to the user. Agent answers return directly to the immutable initiator. Save+queue delivery is atomic; reading does not consume answers. Withdrawal retains valid answers and accepted deliveries; only trusted GUI creates real user answers.
 Enqueue and get-receipt require a UUID requestId. On unknown enqueue outcome recover using get-receipt with the original requestId; never automatically create a new request.
 Use schema for exact shared input schemas and operation descriptions.

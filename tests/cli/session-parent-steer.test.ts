@@ -259,6 +259,7 @@ async function fixture(provider = "codex") {
     });
     const extra: RelatedSession[] = [];
     const application = new SessionManagementApplication({
+      operatingPolicy: unused,
       listSessions: async () => [
         ...resolveRelatedSessions(await bundle.stores.session.listSessionSummaries(), []),
         ...extra,

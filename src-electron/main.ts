@@ -267,6 +267,7 @@ import { SessionGraphApplicationService, type ResolvedSessionGraphSession } from
 import { SessionGraphRuntimeService } from "./session-graph/session-graph-runtime-service.js";
 import { SessionHistoryRuntimeService } from "./session-history/session-history-runtime-service.js";
 import { SessionManagementApplication, SessionManagementError } from "./session/session-management-application.js";
+import { SessionOperatingPolicyService } from "./session/session-operating-policy-service.js";
 import { SessionManagementRuntimeService } from "./session/session-management-runtime-service.js";
 import { resolveRelatedSessions } from "./session/session-relationship-resolver.js";
 import { getSessionAgentRuntimeOperations } from "../src-shared/session/session-management-contract.js";
@@ -996,6 +997,10 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
   bindingRegistry: agentRuntimeBindingRegistry,
   providerAgentRuntimeTurns,
   application: new SessionManagementApplication({
+    operatingPolicy: (actor, operation, request, assertCurrent) => new SessionOperatingPolicyService({
+      getStore: () => requireAppSettingsStorage(),
+      getQuota: getProviderQuotaTelemetry,
+    }).execute(operation, request, actor.workspacePath, assertCurrent),
     createChild: async (actor, request, assertCurrent) => {
       try {
         return await requireMainSessionCommandFacade().createChildSession({ id: actor.id, incarnationId: actor.incarnationId }, request, assertCurrent);

@@ -26,6 +26,13 @@
 
 ### 親として依頼するとき
 
+- 子作成前と既存Sessionの実行設定を選び直す前にget_selection_policyを読み、
+  宛先Provider/Workspaceのget_catalogで選択肢を確認する。必要ならget_provider_quotaも参照する。
+  未設定の方針を推測で補わず、quotaの取得失敗・古い観測・未対応を残量十分と扱わない。
+  既存SessionのProviderは変更できない。単発指示は今回の選択だけへ適用する。
+- Worktree作成直前に対象repositoryとbranchでresolve_worktreeを読み、既存利用と新規候補を区別する。
+  未設定をSession Folder/Crew Folderで代替しない。単発の配置先は恒久設定へ反映しない。
+  Git操作、base branch、作成先とWorkspaceの検証・承認は別途行う。
 - 通常送信では毎回modelとreasoningEffortを明示する。Depth非対応Modelでは空文字列を指定する。
 - 子へ目的、担当範囲、必要な成果、実行条件・禁止事項を明示する。
   子が親の会話やProvider contextを共有していると仮定しない。

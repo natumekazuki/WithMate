@@ -35,6 +35,7 @@ test("normal runtime requires captured saved identity and active provider Turn",
     throw new Error("read only");
   };
   const application = new SessionManagementApplication({
+    operatingPolicy: unused,
     listSessions: async () => [
       {
         id: "actual",
