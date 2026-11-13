@@ -177,6 +177,7 @@ export class GlossaryRuntimeService {
   async beginProviderTurn(
     actorSessionId: string,
     binding: ProviderAgentRuntimeBindingProjection,
+    executionOptions?: import("../../src-shared/session/session-execution-options.js").SessionExecutionOptions,
   ): Promise<{
     handle: GlossaryProactiveTurnHandle;
     binding: ProviderAgentRuntimeBindingProjection;
@@ -185,6 +186,7 @@ export class GlossaryRuntimeService {
       actorSessionId,
       providerId: binding.providerId,
       proactiveCreateLimit: await this.#getProactiveCreateLimit(),
+      executionOptions,
     });
     return {
       handle,

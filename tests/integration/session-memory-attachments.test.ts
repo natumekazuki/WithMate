@@ -7,6 +7,7 @@ import { after, before, test } from "node:test";
 import { promisify } from "node:util";
 import { buildWithMateMemoryCli } from "../../scripts/build/build-withmate-memory-cli.js";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src-shared/memory/memory-contract.js";
+import { captureSessionExecutionOptions, type SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { captureSessionMemoryFileAccess } from "../../src-electron/memory/memory-file-access.js";
 import { exportMemoryProtectedObjectFile, exportMemoryProtectedObjectFiles } from "../../src-electron/memory/memory-protected-object-exporter.js";
 import { inspectMemoryProtectedObjectInputFile, prepareMemoryProtectedObjectFile } from "../../src-electron/memory/memory-protected-object-importer.js";
@@ -45,7 +46,7 @@ async function setup(withScope = true) {
         exportFiles: (input) => exportMemoryProtectedObjectFiles({ keyStore, objectStore }, input),
       },
     };
-  }, withScope ? (session, outputPath) => captureSessionMemoryFileAccess(session, sessionFolder, outputPath) : undefined);
+  }, withScope ? (session, executionOptions, outputPath) => captureSessionMemoryFileAccess(session, executionOptions, sessionFolder, outputPath) : undefined);
   const workspace = join(f.directory, "workspace"), additional = join(f.directory, "additional");
   sessionFolder = join(f.directory, "parent-session-folder");
   const auxWorkspace = join(f.directory, "aux-workspace"), outside = join(f.directory, "outside");
@@ -58,12 +59,13 @@ async function setup(withScope = true) {
   return { f, workspace, additional, sessionFolder, auxWorkspace, outside, keyReads: () => keyReads };
 }
 type Setup = Awaited<ReturnType<typeof setup>>;
-function normal(s: Setup, id = "main") {
+function normal(s: Setup, id = "main", executionOptions: SessionExecutionOptions | null = captureSessionExecutionOptions(s.f.sessions.get(id)!)) {
   const { f } = s;
-  const binding = f.bindings.issueOrReuse({ actorSessionId: id, providerId: "codex", actorSource: f.scope(id).history.source,
+  const providerId = f.sessions.get(id)!.provider;
+  const binding = f.bindings.issueOrReuse({ actorSessionId: id, providerId, actorSource: f.scope(id).history.source,
     authoritySnapshot: { userId: "local-user", characterId: "character", allowedProjectIds: [] },
     operationGrants: getMemoryV6AgentRuntimeOperations() });
-  const handle = f.turns.begin({ actorSessionId: id, providerId: "codex" });
+  const handle = f.turns.begin({ actorSessionId: id, providerId, executionOptions: executionOptions ?? undefined });
   const projected = { ...binding, turnCapability: handle.capability, memoryRuntimeOwner: owner };
   return { handle, binding: { ...projected, managedMcp: f.host.issue(projected, handle) } };
 }
@@ -137,7 +139,7 @@ test("通常Memory添付のMCP/CLIは許可rootの実体だけに到達する", 
 
 // @test-value v2
 // kind = "security"
-// claim = "Auxiliaryのfile認可は自身の設定と親SessionFolderを使いplan/read-onlyではMemory本文を保ったまま復元だけ拒否する"
+// claim = "Auxiliaryのfile認可は自身のroot・Turn設定と親SessionFolderを使いplan/read-onlyではMemory本文を保ったまま復元だけ拒否する"
 // oracle = { type = "contract", ref = "docs/design/v6-memory-protected-objects.md#agent-bound-memoryのfile認可" }
 // fault = "Auxiliaryが親Workspaceを借用するか実行設定を無視して復元する"
 // observable = "MCP/CLIの保存・拒否結果、親folder復元bytes、key読取数と本文保存結果"
@@ -151,7 +153,7 @@ test("通常Memory添付のMCP/CLIは許可rootの実体だけに到達する", 
 test("Auxiliaryの自身rootと親SessionFolderおよびread-only/planを守る", async () => {
   const s = await setup(); const { f } = s;
   try {
-    const { binding } = normal(s, "aux"); const { client } = await f.connect(binding, "memoryUrl");
+    const active = normal(s, "aux"); const { binding } = active; const { client } = await f.connect(binding, "memoryUrl");
     const saved = await cli(s, binding, "append", append("aux-own", join(s.auxWorkspace, "evidence.txt")));
     assert.equal(saved.code, 0, JSON.stringify(saved.value));
     assert.equal((await client.callTool({ name: "memory.append", arguments: append("parent-forbidden", join(s.workspace, "evidence.txt")) })).isError, true);
@@ -159,8 +161,11 @@ test("Auxiliaryの自身rootと親SessionFolderおよびread-only/planを守る"
     const outputPath = join(s.sessionFolder, "aux-restored.txt");
     assert.equal((await client.callTool({ name: "memory.get_file", arguments: { target, objectId, outputPath } })).isError, undefined);
     assert.equal(await readFile(outputPath, "utf8"), payload);
+    f.turns.end(active.handle);
     for (const mode of ["read-only", "plan"] as const) {
       Object.assign(f.sessions.get("aux")!, { codexSandboxMode: mode === "read-only" ? mode : "workspace-write", approvalMode: mode === "plan" ? mode : "on-request" });
+      const restricted = normal(s, "aux");
+      const { binding } = restricted; const { client } = await f.connect(binding, "memoryUrl");
       const before = s.keyReads();
       const output = { target, objectId, outputPath: join(s.sessionFolder, `${mode}.txt`) };
       assert.equal((await client.callTool({ name: "memory.get_file", arguments: output })).isError, true);
@@ -168,8 +173,65 @@ test("Auxiliaryの自身rootと親SessionFolderおよびread-only/planを守る"
       assert.equal(s.keyReads(), before);
       assert.equal((await cli(s, binding, "append", append(`text-${mode}`))).code, 0);
       assert.equal((await cli(s, binding, "append", append(`read-${mode}`, join(s.sessionFolder, "evidence.txt")))).code, 0);
+      f.turns.end(restricted.handle);
     }
   } finally { await f.close(); }
+});
+
+// @test-value v2
+// kind = "security"
+// claim = "Memory添付復元の可否は同じTurnの確定権限に従い、逆向きのSession保存値や次回選択の変更に左右されない"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/940" }
+// fault = "read-only/planのTurnが書出可能になる、保存値が制限的なwritable Turnを拒否する、またはsnapshot欠落時に保存値へfallbackする"
+// observable = "MCP get_fileと配布CLI export-filesの可否、復元bytes、拒否時のkey読取数・出力不存在、本文読取結果"
+// observation_boundary = "public-boundary"
+// scope = "通常Main bindingの認可済Turn handle→Memory HTTP→実Worker・crypto/file I/O、Codex/Claude"
+// lifecycle = "permanent"
+// impact = "Agentが指定された実行権限を越えてhostへ書き出す、または許可された復元を実行できない"
+// distinction = "path認可testとProviderの設定testだけではMemory HTTPでのsnapshot受け渡しを確認できない"
+// risk_tags = ["authorization"]
+// @end-test-value
+test("Memory restoration follows captured Turn permissions rather than current Session selections", async () => {
+  for (const provider of ["codex", "claude"]) {
+    const s = await setup(); const { f } = s;
+    try {
+      const session = f.sessions.get("main")!;
+      session.provider = provider;
+      const writable = captureSessionExecutionOptions(session);
+      const restricted = { ...writable, ...(provider === "codex" ? { codexSandboxMode: "read-only" as const } : { approvalMode: "plan" as const }) };
+      const operatorTarget = { owner: "user", scope: "global" } as const;
+      const saved = await f.memory.append(createLocalUserMemoryPrincipal(), { ...append("seed", join(s.workspace, "evidence.txt")), target: operatorTarget, schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      assert.ok(!("error" in saved));
+      for (const [index, options] of [restricted, writable, null].entries()) {
+        Object.assign(session, options === writable ? restricted : writable);
+        const active = normal(s, "main", options);
+        const { client } = await f.connect(active.binding, "memoryUrl");
+        try {
+          // Changing the next-send selection while this Turn runs cannot change its authority.
+          for (const nextOptions of [restricted, writable]) {
+            Object.assign(session, nextOptions);
+            const suffix = `${index}-${nextOptions === writable ? "write" : "read"}`;
+            const outputPath = join(s.workspace, `output-${suffix}.txt`);
+            const outputDirectoryPath = join(s.sessionFolder, `batch-${suffix}`);
+            const before = s.keyReads();
+            const single = await client.callTool({ name: "memory.get_file", arguments: { target, objectId: saved.entry.files![0].objectId, outputPath } });
+            const batch = await cli(s, active.binding, "export-files", { target, entryId: saved.entry.id, outputDirectoryPath });
+            if (options === writable) {
+              assert.equal(single.isError, undefined, JSON.stringify(single)); assert.equal(batch.code, 0, JSON.stringify(batch.value));
+              assert.equal(await readFile(outputPath, "utf8"), payload);
+              assert.equal(await readFile(batch.value.files[0].outputPath, "utf8"), payload);
+            } else {
+              assert.equal(single.isError, true); assert.notEqual(batch.code, 0); assert.equal(s.keyReads(), before);
+              await assert.rejects(readFile(outputPath), { code: "ENOENT" });
+              await assert.rejects(readdir(outputDirectoryPath), { code: "ENOENT" });
+            }
+            const text = await client.callTool({ name: "memory.get_entry", arguments: { target, entryId: saved.entry.id } });
+            assert.equal(text.isError, undefined, JSON.stringify(text));
+          }
+        } finally { f.turns.end(active.handle); }
+      }
+    } finally { await f.close(); }
+  }
 });
 
 // @test-value v2

@@ -734,7 +734,7 @@ it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する"
 // claim = "開始後の次設定とdirectory選択は現在TurnのProvider再試行へ混入せず次queued Turnに適用される"
 // oracle = { type = "contract", ref = "docs/design/session-run-lifecycle.md: 次送信用設定と現在Turnのcapture分離" }
 // fault = "checkpoint ACKの新directoryや設定を現在Turnの内部再試行へ渡すか次queued Turnで旧captureを再利用する"
-// observable = "初回/内部再試行/次queued実行のProvider optionsとadditionalDirectories"
+// observable = "初回/内部再試行/次queued実行のProvider optionsとadditionalDirectories、各Turnのruntime認可に渡す同一設定"
 // observation_boundary = "public-boundary"
 // scope = "session runtime current capture and next queued execution"
 // lifecycle = "permanent"
@@ -746,6 +746,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
     allowedAdditionalDirectories: ["C:/current-context"] });
   let current = session;
   const oldOptions = captureSessionExecutionOptions(session);
+  const runtimeOptions: unknown[] = [];
   let attempts = 0;
   const runtime = createProgressRuntime(session, async (input) => {
     attempts += 1;
@@ -764,6 +765,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
     return createPartialResult({ threadId: "fresh-thread", assistantText: "done" });
   }, {
     getSession: () => current,
+    beginProviderAgentRuntimeTurn: ({ executionOptions }) => { runtimeOptions.push(executionOptions); return undefined; },
     upsertSession: (next) => { current = { ...next, ...captureSessionExecutionOptions(current), allowedAdditionalDirectories: [...current.allowedAdditionalDirectories] }; return current; },
     getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { copilot: { enabled: true } } }),
     resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("copilot")] }, provider: createProviderCatalog("copilot") }),
@@ -776,6 +778,7 @@ it("次設定とdirs変更は現在provider再試行を変えず次queueへ適�
   assert.equal(current.runState, "idle");
   assert.deepEqual(await runtime.runQueuedSessionTurn(queuedReceipt(current), async () => undefined), { state: "completed" });
   assert.equal(attempts, 3);
+  assert.deepEqual(runtimeOptions, [oldOptions, captureSessionExecutionOptions(current)]);
 });
 
 // @test-value v2

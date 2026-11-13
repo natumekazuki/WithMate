@@ -110,6 +110,7 @@ export type SessionRuntimeServiceDeps = {
   }): Awaitable<ProviderAgentRuntimeBindingProjection | null>;
   beginProviderAgentRuntimeTurn?(input: {
     session: Session;
+    executionOptions: SessionExecutionOptions;
     provider: ModelCatalogProvider;
     binding: ProviderAgentRuntimeBindingProjection | null;
     signal: AbortSignal;
@@ -1292,6 +1293,7 @@ export class SessionRuntimeService {
       const providerAgentRuntimeTurn = await Promise.resolve(
         this.deps.beginProviderAgentRuntimeTurn?.({
           session: activeRunningSession,
+          executionOptions,
           provider,
           binding: agentRuntimeBinding,
           signal: runAbortController.signal,

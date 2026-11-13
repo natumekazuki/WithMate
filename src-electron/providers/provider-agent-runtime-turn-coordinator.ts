@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 
 export type ProviderAgentRuntimeTurnHandle = Readonly<{
   actorSessionId: string;
@@ -6,6 +7,7 @@ export type ProviderAgentRuntimeTurnHandle = Readonly<{
   capability: string;
   revocationState: SharedArrayBuffer;
   bindingId?: string;
+  executionOptions?: SessionExecutionOptions;
 }>;
 
 function turnKey(actorSessionId: string, providerId: string): string {
@@ -28,6 +30,7 @@ export class ProviderAgentRuntimeTurnCoordinator {
   begin(input: {
     actorSessionId: string;
     providerId: string;
+    executionOptions?: SessionExecutionOptions;
   }): ProviderAgentRuntimeTurnHandle {
     const key = turnKey(input.actorSessionId, input.providerId);
     if (this.#activeByActor.has(key)) {
@@ -36,6 +39,7 @@ export class ProviderAgentRuntimeTurnCoordinator {
     const handle = Object.freeze({
       actorSessionId: input.actorSessionId,
       providerId: input.providerId,
+      ...(input.executionOptions ? { executionOptions: Object.freeze({ ...input.executionOptions }) } : {}),
       capability: randomBytes(32).toString("base64url"),
       revocationState: new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
     });

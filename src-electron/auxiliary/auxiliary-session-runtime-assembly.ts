@@ -126,8 +126,8 @@ export function createAuxiliarySessionRuntime(deps: AuxiliarySessionRuntimeAssem
     getProviderCodingAdapter: (providerId) => { assertOwner("provider coding adapter"); return deps.provider.getProviderCodingAdapter(providerId); },
     getProviderAgentRuntimeBinding: ({ session, provider }) => guarded("provider runtime binding", async () =>
       deps.provider.issueRuntimeBinding(session, provider, await resolveSource(session))),
-    beginProviderAgentRuntimeTurn: ({ session, provider, binding, signal }) => binding && deps.provider.beginRuntimeTurn
-      ? guarded("provider runtime turn", () => deps.provider.beginRuntimeTurn!({ session, provider, binding, signal }))
+    beginProviderAgentRuntimeTurn: (input) => input.binding && deps.provider.beginRuntimeTurn
+      ? guarded("provider runtime turn", () => deps.provider.beginRuntimeTurn!(input))
       : undefined,
     endProviderAgentRuntimeTurn: deps.provider.endProviderAgentRuntimeTurn,
     resetProviderSessionThread: (providerId, sessionId) => guarded("provider thread reset", () => deps.provider.resetProviderSessionThread!(providerId, sessionId)),

@@ -750,8 +750,8 @@ async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "
       providerId: session.provider,
       characterId: session.characterId,
       workspacePath: session.workspacePath,
-      resolveMemoryFileAccess: (outputPath?: string) => captureSessionMemoryFileAccess(
-        mainStoreContext.executionSelections.apply(session), resolveSessionFilesDirectory(app.getPath("userData"), session.id), outputPath),
+      resolveMemoryFileAccess: (executionOptions: import("../src-shared/session/session-execution-options.js").SessionExecutionOptions | undefined, outputPath?: string) => captureSessionMemoryFileAccess(
+        session, executionOptions, resolveSessionFilesDirectory(app.getPath("userData"), session.id), outputPath),
       source: { kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
     };
   }
@@ -767,8 +767,8 @@ async function resolveAgentRuntimeActorSession(sessionId: string, sourceKind?: "
         providerId: auxiliary.provider,
         characterId: auxiliary.characterId,
         workspacePath: auxiliary.workspacePath,
-        resolveMemoryFileAccess: (outputPath?: string) => captureSessionMemoryFileAccess(
-          mainStoreContext.executionSelections.apply(auxiliary), resolveSessionFilesDirectory(app.getPath("userData"), parent.id), outputPath),
+        resolveMemoryFileAccess: (executionOptions: import("../src-shared/session/session-execution-options.js").SessionExecutionOptions | undefined, outputPath?: string) => captureSessionMemoryFileAccess(
+          auxiliary, executionOptions, resolveSessionFilesDirectory(app.getPath("userData"), parent.id), outputPath),
         source: { kind: "auxiliary" as const, sessionId: auxiliary.id, incarnationId: getSessionIncarnationId(auxiliary),
           parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } },
       }
@@ -1110,10 +1110,11 @@ async function beginManagedProviderTurn(
   session: Session,
   binding: import("./providers/agent-runtime-binding.js").ProviderAgentRuntimeBindingProjection | null,
   signal: AbortSignal,
+  executionOptions: import("../src-shared/session/session-execution-options.js").SessionExecutionOptions,
 ) {
   if (!binding) return undefined;
   signal.throwIfAborted();
-  const turn = await glossaryRuntimeService.beginProviderTurn(session.id, binding);
+  const turn = await glossaryRuntimeService.beginProviderTurn(session.id, binding, executionOptions);
   try {
     const host = memoryV6RuntimeApi?.managedMcp;
     if (!host) throw new Error("Managed MCP runtime is unavailable.");
@@ -2922,7 +2923,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         resolveCrewFolderPath: resolveSavedCrewFolderPath,
         resolveProviderCatalog,
       },
-      provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal), endProviderAgentRuntimeTurn: endManagedProviderTurn },
+      provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal, executionOptions }) => beginManagedProviderTurn(session, binding, signal, executionOptions), endProviderAgentRuntimeTurn: endManagedProviderTurn },
       memory: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
         getCharacterContextService: () => memoryV6RuntimeApi?.characterContextService ?? null,
@@ -3068,7 +3069,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         resolveSessionFolderPath: (parentSessionId) => ensureSessionFilesDirectory(parentSessionId),
         resolveCrewFolderPath: resolveSavedCrewFolderPath,
         issueRuntimeBinding: async (session, provider, source) => await issueProviderAgentRuntimeBinding(session, provider.id, source),
-        beginRuntimeTurn: ({ session, binding, signal }) => beginManagedProviderTurn(session, binding, signal),
+        beginRuntimeTurn: ({ session, binding, signal, executionOptions }) => beginManagedProviderTurn(session, binding, signal, executionOptions),
       },
       memory: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),

@@ -3,6 +3,7 @@ import { access, lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type { MemoryFileAccess } from "../../src-shared/memory/memory-file-access.js";
 import type { Session } from "../../src-shared/session/session-state.js";
+import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { isPathWithinAnyDirectory, isPathWithinDirectory } from "../files/additional-directories.js";
 
 export class MemoryFileAccessError extends Error {
@@ -26,13 +27,15 @@ export async function captureBackgroundMemoryFileAccess(input: {
 }
 
 export async function captureSessionMemoryFileAccess(
-  session: Pick<Session, "workspacePath" | "allowedAdditionalDirectories" | "provider" | "approvalMode" | "codexSandboxMode">,
+  session: Pick<Session, "workspacePath" | "allowedAdditionalDirectories" | "provider">,
+  executionOptions: SessionExecutionOptions | undefined,
   sessionFolderPath: string,
   outputPath?: string,
 ): Promise<MemoryFileAccess> {
   const roots = await Promise.all([session.workspacePath, ...session.allowedAdditionalDirectories, sessionFolderPath].map(canonicalDirectory));
   const readRoots = [...new Set(roots.filter((root): root is string => root !== null))];
-  const writable = session.approvalMode !== "plan" && (session.provider !== "codex" || session.codexSandboxMode !== "read-only");
+  const writable = executionOptions && executionOptions.approvalMode !== "plan"
+    && (session.provider !== "codex" || executionOptions.codexSandboxMode !== "read-only");
   let exportRoot: string | null = null;
   if (writable && outputPath && path.isAbsolute(outputPath)) {
     const resolved = await resolveThroughExistingAncestor(outputPath, () => true).catch(() => null);
