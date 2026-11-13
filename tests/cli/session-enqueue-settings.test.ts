@@ -260,6 +260,52 @@ test("enqueue freezes per-Turn settings across retries, delayed dispatch and res
 
 function deliveryTimingOther(timing: string) { return timing === "immediate" ? "after_source_turn" : "immediate"; }
 
+// @test-value v2
+// kind = "contract"
+// claim = "Depth候補のある親のDefaultを子の報告がそのまま継承し、MCP/CLIの保存受付と次Turnへのdispatchで空文字を保つ"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/941; docs/design/model-catalog.md" }
+// fault = "Defaultを不正Depthとして拒否するか具体的Depthへ置換する、または不正Depth・必須権限欠落まで許可する"
+// observable = "公開両入口のreceipt設定、再起動後dispatch requestの空Depth、理由付き拒否と未作成receipt"
+// observation_boundary = "public-boundary"
+// scope = "Codex/OpenCode/Claudeのbound MCP/CLI→application→queue facade→実Storage Worker、catalog fixture"
+// lifecycle = "permanent"
+// impact = "Default利用中の親へ子が完了報告できず作業が停止する"
+// distinction = "schemaや具象Depthの既存testでは空文字の継承・具体候補validation・保存dispatchの接続を検証しない"
+// @end-test-value
+test("child reports inherit provider Default depth through acceptance and dispatch", async () => {
+  for (const provider of ["codex", "opencode", "claude"]) {
+    const f = await fixture(provider);
+    try {
+      await f.bundle.stores.session.updateSession({ ...f.parent, reasoningEffort: "" });
+      const child = await f.endpoint(f.child);
+      const authority = { approvalMode: "on-request", ...(provider === "codex" ? { codexSandboxMode: "workspace-write" } : {}) };
+      const ids: string[] = [];
+      for (const transport of ["mcp", "cli"] as const) {
+        const body = { target: target(f.parent), requestId: randomUUID(), message: "completed", ...authority };
+        const sent = await child(transport, "enqueue", body);
+        assert.equal(sent.ok, true, JSON.stringify(sent));
+        const receipt = sent.receipt as SessionTurnQueueReceipt;
+        ids.push(receipt.id);
+        assert.equal(receipt.accepted!.request.executionOptions.model, "deep");
+        assert.equal(receipt.accepted!.request.executionOptions.reasoningEffort, "");
+        for (const patch of [{ reasoningEffort: "low" }, { approvalMode: undefined }]) {
+          const invalid = JSON.parse(JSON.stringify({ ...body, ...patch, requestId: randomUUID() }));
+          assertRejected(await child(transport, "enqueue", invalid));
+          assert.equal(await f.bundle.stores.queue.getReceipt(target(f.parent), invalid.requestId), null);
+        }
+      }
+      await f.reopen();
+      for (const id of ids) {
+        const dispatch = await f.bundle.stores.queue.claimNext(target(f.parent));
+        assert.equal(dispatch!.id, id);
+        assert.equal(dispatch!.dispatched!.request.executionOptions.reasoningEffort, "");
+        await f.bundle.stores.queue.settle(target(f.parent), id, "completed");
+      }
+      assert.equal((await f.bundle.stores.session.getSession(f.parent.id))!.reasoningEffort, "");
+    } finally { await f.close(); }
+  }
+});
+
 function assertRejected(result: Record<string, unknown>) {
   if (result.isError === true) {
     // SDK-level schema validation returns text rather than application structuredContent.

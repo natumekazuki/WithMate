@@ -154,7 +154,7 @@ export class MainSessionTurnQueueFacade {
     if (validateMessageSelection) {
       const model = catalog.provider.models.find((entry) => entry.id === executionOptions.model);
       if (!model) throw new Error("The selected message model is not in the recipient's discovered model list.");
-      if (model.reasoningEfforts.length === 0 ? executionOptions.reasoningEffort !== "" : !model.reasoningEfforts.includes(executionOptions.reasoningEffort)) {
+      if (executionOptions.reasoningEffort !== "" && !model.reasoningEfforts.includes(executionOptions.reasoningEffort)) {
         throw new Error("The selected message depth is not supported by this model.");
       }
     }
