@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Message } from "../../../src-shared/session/session-state.js";
-import type { SessionTurnQueueReceipt, SessionTurnQueueOrigin } from "../../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueReceipt, SessionTurnQueueOrigin, SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
 import type { SessionExecutionReadResult } from "../../../src-shared/session/session-execution-window-contract.js";
 import { getWithMateApi } from "../../app/renderer-withmate-api.js";
@@ -93,7 +93,8 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
     return () => { current = false; };
   }, [identity, active]);
   const observed = loadedReference.current === referenceIdentity ? execution : null;
-  const origin = observed?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
+  // A direct additional input belongs to its own sender, not the Turn's start input.
+  const origin = input && !receiptId ? input.origin : observed?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
   return { input, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, readError, setReadError, setRevision };
 }
 
@@ -124,7 +125,7 @@ export function TurnInputStatus({ message }: { message: Message }) {
   </>;
 }
 
-export function SessionOriginRoute({ origin, target, onError }: { origin: SessionTurnQueueOrigin; target?: SessionTarget; onError: (message: string) => void }) {
+export function SessionOriginRoute({ origin, target, onError }: { origin: SessionTurnQueueOrigin | SessionSteerOrigin; target?: SessionTarget; onError: (message: string) => void }) {
   const outbound = target !== undefined;
   const snapshot = outbound ? origin.targetSnapshot : origin.actorSnapshot;
   const recipient = origin.targetSnapshot?.character.name ?? "Unknown Recipient";
@@ -157,8 +158,8 @@ function TurnInputDetailsContent({ message, receipt, read, hasRunChecks = false 
         {sourceWaitState ? <InputDetailRow label="Delivery"><span className="turn-input-state">{sourceWaitState === "waiting" ? "Waiting For Sender Turn" : "Source Turn State Unknown"}</span></InputDetailRow> : null}
         <InputDetailRow label="Receipt State">{inputDetailStateLabel(observed?.receiptState ?? receipt?.state, "No Receipt")}</InputDetailRow>
         <InputDetailRow label="Turn State">{inputDetailStateLabel(observed?.turnState, "Not Confirmed")}</InputDetailRow>
-        {origin?.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
-        {origin?.kind === "session" && origin.sourceTurnPhase ? <InputDetailRow label="Sender Turn Outcome">{inputDetailStateLabel(origin.sourceTurnPhase, "Not Confirmed")}</InputDetailRow> : null}
+        {origin?.operation === "send" && origin.kind === "session" ? <InputDetailRow label="Delivery Timing">{origin.deliveryTiming === "after_source_turn" ? "After Sender Turn" : "Immediate"}</InputDetailRow> : null}
+        {origin?.operation === "send" && origin.kind === "session" && origin.sourceTurnPhase ? <InputDetailRow label="Sender Turn Outcome">{inputDetailStateLabel(origin.sourceTurnPhase, "Not Confirmed")}</InputDetailRow> : null}
       </dl>
     </details> : null}
     {readError ? <p role="alert">{readError} <button type="button" className="drawer-toggle compact secondary" onClick={() => setRevision((value) => value + 1)}>Retry Input Details</button></p> : null}

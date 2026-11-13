@@ -597,6 +597,8 @@ Main／Auxiliaryの未開始の通常予約には、`Steer`の隣に`Edit`を表
 
 ### Turn Input Details
 
+queueを持たない直接Steerの発言者は、各messageの`turnInput.origin`から表示する。親からのSteerには保存済みの親Character・送信元Sessionを使い、origin未記録の直接入力へTurn開始時の発言者を流用しない。配送状態や本文は同じ入力の記録を保持する。
+
 入力のチャット枠は送信者・送信した本文・添付を表示し、実行詳細の入口を持たない。Agent由来の入力は予約・保存済み会話とも、受付時に保存したCharacter avatarを右側、発言者名を本文上に置く。本文側の先頭行は左に`@宛先Character`、右に独立した小さな`From 送信元Session名`リンクを置く。Auxiliary送信元は保存した所属MainとAuxiliary IDを指定して開く。宛先の呼びかけとSession識別を一つの文字列・buttonにせず、長い名前は省略とtooltip・accessible nameでの全文確認を両立する。未記録の表示snapshotは不明と示し、現在のCharacterや画面選択で過去の送受信者を補わない。通常のユーザー入力へこのAgent間ヘッダーを追加しない。応答前の予約・配送不明・失敗の理由と、編集・取消・Steer等の必要な状態・操作は対象入力の近くに残す。送信元Turn終了待ちは未開始のqueueに表示し、不明状態と区別する。
 
 実行設定・配送状態は、対応するassistantレスポンスの既存Detailsへ集約する。Detailsの展開時だけ保存応答のmessage sequenceまたは明示された実行中WithMate Turnから共通execution読取を行い、保存されたuser message sequenceから正確な開始入力の受付へつなぐ。会話内の隣接関係や現在選択から対応を推測しない。再展開時には取得し直し、閉じた後の古い読取を後の表示へ適用しない。本文・送信者表示のための入力origin読取とは取得契機を分ける。
