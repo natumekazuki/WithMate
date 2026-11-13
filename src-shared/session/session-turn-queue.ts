@@ -42,8 +42,24 @@ export type SessionTurnQueueCapturedInput = {
   origin?: SessionTurnQueueOrigin;
 };
 
+export type SessionSteerOrigin = Pick<SessionTurnQueueOrigin, "actorSnapshot" | "targetSessionId" | "targetIncarnationId" | "targetSnapshot"> & {
+  kind: "session";
+  actorKind: "main";
+  actorSessionId: string;
+  actorIncarnationId: string;
+  actorTurnId: string;
+  operation: "steer";
+};
+
+export type SessionSteerResult = {
+  outcome: "applied" | "not-applied" | "unknown";
+  turnId: string;
+  messageSeq: number | null;
+  reason?: string;
+};
+
 /** Attribution is supplied by the application, not by claims inside the message body. */
-export function projectSessionInputSender(origin: SessionTurnQueueOrigin | null | undefined): {
+export function projectSessionInputSender(origin: SessionTurnQueueOrigin | SessionSteerOrigin | null | undefined): {
   kind: "user" | "agent" | "unknown";
   participant: ConversationParticipant | null;
   session?: { id: string; incarnationId?: string; kind?: "main" | "auxiliary" };

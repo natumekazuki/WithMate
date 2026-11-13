@@ -841,10 +841,10 @@ export class SessionPersistenceService {
     });
   }
 
-  async beginRunningInput(nextSession: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[]): Promise<Session> {
+  async beginRunningInput(nextSession: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin): Promise<Session> {
     return this.enqueueSessionMutation(async () => {
       if (!this.deps.beginStoredSessionSteer) throw new Error("Durable Session input storage is unavailable.");
-      const message = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const } };
+      const message = { role: "user" as const, text, turnInput: { turnId: String(turnId), nativeTurnId, attachments, state: "pending" as const, ...(origin ? { origin } : {}) } };
       const result = await this.deps.beginStoredSessionSteer({ sessionId: nextSession.id, incarnationId: getSessionIncarnationId(nextSession),
         expectedMessageCount: nextSession.messageCount ?? nextSession.messages.length, turnId, userMessage: message,
         nativeTurnId, attachments, updatedAt: nextSession.updatedAt });

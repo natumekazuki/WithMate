@@ -53,6 +53,7 @@ export type TurnInputMetadata = {
   nativeTurnId: string;
   state: TurnInputDeliveryState;
   queueId?: string;
+  origin?: import("./session-turn-queue.js").SessionSteerOrigin;
   attachments: ComposerAttachment[];
 };
 
@@ -429,6 +430,10 @@ export function normalizeMessage(value: unknown): Message | null {
     || typeof candidate.turnInput.nativeTurnId !== "string" || !candidate.turnInput.nativeTurnId.trim()
     || !["pending", "confirmed", "unknown", "not-sent"].includes(candidate.turnInput.state)
     || !Array.isArray(candidate.turnInput.attachments))) throw new Error("The saved Turn input metadata is invalid.");
+  const inputOrigin = candidate.turnInput?.origin;
+  if (inputOrigin !== undefined && (!inputOrigin || inputOrigin.kind !== "session" || inputOrigin.actorKind !== "main" || inputOrigin.operation !== "steer"
+    || [inputOrigin.actorSessionId, inputOrigin.actorIncarnationId, inputOrigin.actorTurnId, inputOrigin.targetSessionId, inputOrigin.targetIncarnationId]
+      .some((value) => typeof value !== "string" || !value.trim()))) throw new Error("The saved Steer origin is invalid.");
 
   return {
     role: candidate.role,

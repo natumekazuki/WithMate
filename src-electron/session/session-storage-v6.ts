@@ -762,6 +762,7 @@ export class SessionStorageV6 {
     if (!input.nativeTurnId?.trim() || input.queuedInput) throw new Error("A direct Steer target is required.");
     return this.appendSessionSteer({ ...input, userMessage: { ...input.userMessage, turnInput: {
       turnId: String(input.turnId), nativeTurnId: input.nativeTurnId, state: "pending", attachments: input.attachments,
+      ...(input.userMessage.turnInput?.origin ? { origin: input.userMessage.turnInput.origin } : {}),
     } } });
   }
 

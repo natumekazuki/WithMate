@@ -12,7 +12,7 @@ import type { SessionTurnInput, SessionTurnRecord } from "../../src-shared/sessi
 import { toProviderTextPreview } from "./provider-payload-limits.js";
 import { getProviderAppSettings, type AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import { getSessionIncarnationId, isReadOnlySession, type Session } from "../../src-shared/session/session-state.js";
-import type { SessionTurnQueueReceipt, SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
+import { captureSessionTurnQueueDisplay, type SessionSteerOrigin, type SessionSteerResult, type SessionTurnQueueOwner, type SessionTurnQueueReceipt, type SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
 import { QueuedInputPreDispatchError, QueuedInputRuntimeRecoveryError, type SessionTurnQueueDispatchResult } from "./session-turn-queue-service.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { MateStorageState } from "../../src-shared/mate/mate-state.js";
@@ -56,7 +56,7 @@ export type SessionRuntimeServiceDeps = {
   onSessionRunReleased?(sessionId: string): void;
   getQueuedInputReceipt?(receipt: SessionTurnQueueReceipt): Awaitable<SessionTurnQueueReceipt | null>;
   appendRunningInput(session: Session, text: string, turnId: number, queuedInput?: { queueId: string; inputTurnId: string }): Awaitable<Session>;
-  beginRunningInput?(session: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[]): Awaitable<Session>;
+  beginRunningInput?(session: Session, text: string, turnId: number, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin): Awaitable<Session>;
   settleRunningInput?(session: Session, messageSeq: number, turnId: number, state: Exclude<TurnInputDeliveryState, "pending">): Awaitable<Session>;
   checkpointRuntimeMetadata(session: Session, expected: Session): Awaitable<Session>;
   appendTerminalSession(
@@ -484,6 +484,14 @@ class QueuedTurnPreStartCanceledError extends Error {
   override name = "AbortError";
 }
 
+type ParentSessionInput = {
+  origin: SessionSteerOrigin;
+  turnId: string;
+  assertCurrent(): void;
+  dispatched: boolean;
+  messageSeq: number | null;
+};
+
 export class SessionRuntimeService {
   private readonly inFlightSessionRuns = new Set<string>();
   private readonly startingSessionRuns = new Set<string>();
@@ -496,7 +504,7 @@ export class SessionRuntimeService {
   private readonly dispatchedSessionInputs = new Set<string>();
   private readonly finishingSessionTurns = new Set<string>();
   private readonly appendSessionInput = new Map<string, (text: string, queued?: SessionTurnQueueReceipt, inputTurnId?: string) => Promise<void>>();
-  private readonly directSessionInput = new Map<string, { begin(text: string, nativeTurnId: string, attachments: ComposerAttachment[]): Promise<number>; settle(messageSeq: number, state: Exclude<TurnInputDeliveryState, "pending">): Promise<void> }>();
+  private readonly directSessionInput = new Map<string, { begin(text: string, nativeTurnId: string, attachments: ComposerAttachment[], origin?: SessionSteerOrigin): Promise<number>; settle(messageSeq: number, state: Exclude<TurnInputDeliveryState, "pending">): Promise<void> }>();
   private readonly pendingRuns = new Set<Promise<Session>>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
@@ -649,6 +657,31 @@ export class SessionRuntimeService {
     return this.sendSessionInput(sessionId, request);
   }
 
+  async steerChildSessionTurn(target: SessionTurnQueueOwner, turnId: string, message: string,
+    source: SessionTurnQueueOwner & { turnId: string }, assertCurrent: () => void): Promise<SessionSteerResult> {
+    let parent: ParentSessionInput | undefined;
+    try {
+      // Capture one native target. Never resolve a later Turn after asynchronous preparation.
+      const live = this.deps.getLiveSessionRun(target.sessionId);
+      if (live?.sessionTurnId !== turnId || !live.turnId) throw new Error("The selected WithMate Turn is not running.");
+      const nativeTurnId = live.turnId;
+      const [sender, session] = await Promise.all([this.deps.getSession(source.sessionId), this.deps.getSession(target.sessionId)]);
+      assertCurrent();
+      if (!sender || getSessionIncarnationId(sender) !== source.incarnationId || !session || getSessionIncarnationId(session) !== target.incarnationId
+        || session.parentSessionId !== sender.id || session.rootSessionId !== sender.rootSessionId) throw new Error("The saved parent or child identity changed.");
+      parent = { turnId, assertCurrent, dispatched: false, messageSeq: null, origin: {
+        kind: "session", operation: "steer", actorKind: "main", actorSessionId: sender.id, actorIncarnationId: source.incarnationId,
+        actorTurnId: source.turnId, actorSnapshot: captureSessionTurnQueueDisplay(sender),
+        targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId, targetSnapshot: captureSessionTurnQueueDisplay(session),
+      } };
+      await this.sendSessionInput(target.sessionId, { expectedTurnId: nativeTurnId, userMessage: message }, undefined, undefined, parent);
+      return { outcome: "applied", turnId, messageSeq: parent.messageSeq };
+    } catch (error) {
+      return { outcome: parent?.dispatched ? "unknown" : "not-applied", turnId, messageSeq: parent?.messageSeq ?? null,
+        reason: error instanceof Error ? error.message : "The Steer result could not be confirmed." };
+    }
+  }
+
   answerSessionQuestion(sessionId: string, turnId: string, message: string, answer: string): Promise<SteerSessionTurnResult> {
     return this.sendSessionInput(sessionId, { expectedTurnId: turnId, userMessage: answer }, undefined, message);
   }
@@ -658,7 +691,7 @@ export class SessionRuntimeService {
     return this.sendSessionInput(receipt.sessionId, { expectedTurnId, userMessage: receipt.dispatched.request.userMessage }, receipt);
   }
 
-  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string): Promise<SteerSessionTurnResult> {
+  private sendSessionInput(sessionId: string, request: SteerSessionTurnRequest, queued?: SessionTurnQueueReceipt, providerMessage?: string, parent?: ParentSessionInput): Promise<SteerSessionTurnResult> {
     const preflightError = (message: string) => queued ? new QueuedInputPreDispatchError(message) : new Error(message);
     if (!request || typeof request.expectedTurnId !== "string" || !request.expectedTurnId.trim()
       || typeof request.userMessage !== "string" || !request.userMessage.trim()) {
@@ -668,11 +701,13 @@ export class SessionRuntimeService {
     const runController = this.sessionRunControllers.get(sessionId);
     const appendInput = this.appendSessionInput.get(sessionId);
     const assertActiveTurn = () => {
+      parent?.assertCurrent();
       const live = this.deps.getLiveSessionRun(sessionId);
       if (!this.inFlightSessionRuns.has(sessionId) || !appendInput || this.appendSessionInput.get(sessionId) !== appendInput
         || !runController || this.sessionRunControllers.get(sessionId) !== runController
         || this.sessionRunControllers.get(sessionId)?.signal.aborted || this.terminatingSessionRuns.has(sessionId) || this.finishingSessionTurns.has(sessionId)
-        || live?.cancellationState || live?.turnId !== request.expectedTurnId || live.inputAvailable !== true) {
+        || live?.cancellationState || live?.turnId !== request.expectedTurnId || live.inputAvailable !== true
+        || (parent && live.sessionTurnId !== parent.turnId)) {
         throw preflightError("The selected turn no longer accepts input. Your draft is preserved.");
       }
     };
@@ -682,6 +717,9 @@ export class SessionRuntimeService {
       assertActiveTurn();
       const session = await this.deps.getSession(sessionId);
       if (!session || session.provider !== "codex" || isReadOnlySession(session)) throw new Error("This session cannot accept input.");
+      if (parent && (getSessionIncarnationId(session) !== parent.origin.targetIncarnationId || session.parentSessionId !== parent.origin.actorSessionId)) {
+        throw new Error("The child Session identity or parent changed.");
+      }
       if (queued && (getSessionIncarnationId(session) !== queued.incarnationId || session.provider !== queued.dispatched!.provider
         || session.workspacePath !== queued.dispatched!.workspacePath || queued.inputTurnId !== request.expectedTurnId
         || queued.turnId !== this.deps.getLiveSessionRun(sessionId)?.sessionTurnId)) {
@@ -708,12 +746,15 @@ export class SessionRuntimeService {
       this.dispatchedSessionInputs.add(sessionId);
       let inputSeq: number | undefined;
       try {
-        if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments);
+        if (direct) inputSeq = await direct.begin(request.userMessage.trim(), request.expectedTurnId, preview.attachments, parent?.origin);
+        if (parent) parent.messageSeq = inputSeq ?? null;
         assertActiveTurn();
         dispatched = true;
+        if (parent) parent.dispatched = true;
         const inputText = providerMessage ?? request.userMessage.trim();
         const result = await adapter.steerSessionTurn({ sessionId, expectedTurnId: request.expectedTurnId,
-          userMessage: queued ? composeProviderInput(inputText, queuedInputProvenance(queued, queued.dispatched!)) : inputText, attachments: preview.attachments });
+          userMessage: queued ? composeProviderInput(inputText, queuedInputProvenance(queued, queued.dispatched!))
+            : parent ? composeProviderInput(inputText, { origin: parent.origin, originalChanged: false }) : inputText, attachments: preview.attachments });
         if (result.turnId !== request.expectedTurnId) throw new Error("The provider did not confirm input for the selected turn.");
         if (!appendInput || this.appendSessionInput.get(sessionId) !== appendInput) throw new Error("The selected turn ended before input could be saved.");
         if (direct && inputSeq !== undefined) await direct.settle(inputSeq, "confirmed");
@@ -1107,17 +1148,17 @@ export class SessionRuntimeService {
     let queuedInputRecoveryError: QueuedInputRuntimeRecoveryError | null = null;
     if (runningSession.provider === "codex" && this.deps.beginRunningInput && this.deps.settleRunningInput) {
       this.directSessionInput.set(sessionId, {
-        begin: async (text, nativeTurnId, attachments) => {
+        begin: async (text, nativeTurnId, attachments, origin) => {
           const messageSeq = activeRunningSession.messageCount ?? activeRunningSession.messages.length;
           try {
-            activeRunningSession = await this.deps.beginRunningInput!({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id, nativeTurnId, attachments);
+            activeRunningSession = await this.deps.beginRunningInput!({ ...activeRunningSession, updatedAt: currentTimestampLabel() }, text, runningTurn.id, nativeTurnId, attachments, origin);
           } catch (error) {
             // A lost append reply must not lead to Provider dispatch or a second append.
             const canonical = await this.deps.getSession(sessionId);
             if (canonical && getSessionIncarnationId(canonical) === getSessionIncarnationId(activeRunningSession)
               && canonical.messageCount === messageSeq + 1) {
               activeRunningSession = { ...canonical, messages: [...activeRunningSession.messages, { role: "user", text,
-                turnInput: { turnId: String(runningTurn.id), nativeTurnId, attachments, state: "pending" } }] };
+                turnInput: { turnId: String(runningTurn.id), nativeTurnId, attachments, state: "pending", ...(origin ? { origin } : {}) } }] };
               activeRunningSession = await this.deps.settleRunningInput!(activeRunningSession, messageSeq, runningTurn.id, "not-sent");
             } else if (!canonical || canonical.messageCount !== messageSeq) {
               queuedInputRecoveryError = new QueuedInputRuntimeRecoveryError("The direct input append outcome could not be confirmed.");

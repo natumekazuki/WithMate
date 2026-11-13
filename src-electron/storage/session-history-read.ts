@@ -74,7 +74,7 @@ function readMessageSpeakers(db: DatabaseSync, layout: Layout, sessionId: string
     participant: profile ? { type: "character" as const, id: profile.id } : null,
     session: { id: sessionId, incarnationId: source.incarnation_id?.trim() || `legacy:${sessionId}`, kind: isMain ? "main" as const : "auxiliary" as const },
     character: profile };
-  return (row: MessageRow) => row.role === "assistant" ? assistant : speakers.get(row.seq) ?? projectSessionInputSender(null);
+  return (row: MessageRow) => row.role === "assistant" ? assistant : speakers.get(row.seq) ?? projectSessionInputSender(decodeMessage(row, sessionId).turnInput?.origin);
 }
 
 /** Turn linkage is the exact user/assistant sequence recorded on the turn; no other message is attributed to a turn. */

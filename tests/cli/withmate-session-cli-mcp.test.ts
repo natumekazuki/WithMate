@@ -138,6 +138,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       get_receipt: { target, requestId },
       cancel_receipt: { target, receiptId: "receipt" },
       stop_turn: { target, turnId: "1" },
+      steer: { target, turnId: "1", message: "check loading first" },
       list_sent_deliveries: { target, messageSeqs: [0, 1] },
       list_executions: { target },
       get_execution: exact,
@@ -273,6 +274,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       list: { entries: [session], total: 1, hasMore: false },
       get: {
         session,
+        currentTurn: { turnId: "1", receipt: null, origin: null },
         crewFolder: { rootSessionId: "parent", path: "crew-files/parent" },
       },
       list_directories: { directories: { workspacePath: "workspace", sessionFolderPath: "session-folder", crewFolder: { rootSessionId: "parent", path: "crew-folder" }, additionalDirectories: ["C:/shared"] } },
@@ -285,6 +287,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
       get_receipt: { receipt },
       cancel_receipt: { result: { outcome: "not-applied", receipt } },
       stop_turn: { result: { outcome: "applied", turnId: "1" } },
+      steer: { result: { outcome: "applied", turnId: "1", messageSeq: 1 } },
       list_sent_deliveries: { items: [{
         receiptId: "receipt", sequence: 1, sourceTurnId: "1", sourceMessageSeq: 1, target, state: "completed",
         origin: { kind: "session", actorKind: "main", actorSessionId: "parent", actorIncarnationId: "parent-v1", actorTurnId: "1", operation: "send", targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId },
@@ -605,7 +608,7 @@ test("directory management crosses persisted Session runtime, MCP and CLI", asyn
     listSessions: async () => resolveRelatedSessions(storage.listSessionSummaries(), []),
     directories: (session, change, assertCurrent) => manageSessionDirectories(persistence, directory, session, change, assertCurrent),
     currentTurn: async () => ({ turnId: "1", receipt: null, origin: null }), crewFolder: unused,
-    updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused,
+    updateMetadata: unused, enqueue: unused, getReceipt: unused, cancelReceipt: unused, stopTurn: unused, steer: unused,
     readExecution: unused, createChild: unused, catalog: unused, coordinate: unused,
   });
   const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
@@ -734,6 +737,7 @@ test("saved Coordination details cross the real application and both public sche
     getReceipt: unused,
     cancelReceipt: unused,
     stopTurn: unused,
+    steer: unused,
     readExecution: unused,
     createChild: unused,
     catalog: unused,

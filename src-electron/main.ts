@@ -1082,6 +1082,9 @@ const sessionManagementRuntimeService = new SessionManagementRuntimeService({
     },
     cancelReceipt: (target, receiptId, assertCurrent) => requireMainSessionTurnQueueFacade().cancelSessionTurnReceipt({ sessionId: target.id, incarnationId: target.incarnationId }, receiptId, assertCurrent),
     stopTurn: (target, turnId, assertCurrent) => requireSessionRuntimeService().stopSessionTurn(target.id, target.incarnationId, turnId, assertCurrent),
+    steer: (target, input, actor, turnId, assertCurrent) => requireSessionRuntimeService().steerChildSessionTurn(
+      { sessionId: target.id, incarnationId: target.incarnationId }, input.turnId, input.message,
+      { sessionId: actor.id, incarnationId: actor.incarnationId, turnId }, assertCurrent),
   }),
 });
 
@@ -3037,7 +3040,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         persistRunningTurnStart: (session, expectedMessageCount) => requireAuxiliarySessionService().persistRunningTurnStart(session, expectedMessageCount),
         persistQueuedTurnStart: (session, count, queueId, turn) => requireAuxiliarySessionService().persistQueuedTurnStart(session, count, queueId, turn),
         appendRunningInput: (session, text, turnId, queuedInput) => requireAuxiliarySessionService().appendRunningInput(session, text, turnId, queuedInput),
-        beginRunningInput: (...args) => requireAuxiliarySessionService().beginRunningInput(...args),
+        beginRunningInput: (session, text, turnId, nativeTurnId, attachments) => requireAuxiliarySessionService().beginRunningInput(session, text, turnId, nativeTurnId, attachments),
         settleRunningInput: (...args) => requireAuxiliarySessionService().settleRunningInput(...args),
         appendTerminalSession: async (session, commit, options) => {
           const persisted = await requireAuxiliarySessionService().appendTerminalSession(session, commit, options);

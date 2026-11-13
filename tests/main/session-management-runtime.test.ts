@@ -65,6 +65,7 @@ test("normal runtime requires captured saved identity and active provider Turn",
     getReceipt: unused,
     cancelReceipt: unused,
     stopTurn: unused,
+    steer: unused,
     readExecution: unused,
     crewFolder: async () => ({
       rootSessionId: "actual",

@@ -80,7 +80,7 @@ async function fixture(provider = "codex") {
       }
     },
     getReceipt: (recipient, id) => facade.getSessionTurnQueueReceipt(recipient.id, id, recipient.incarnationId),
-    directories: unused, updateMetadata: unused, cancelReceipt: unused, stopTurn: unused, readExecution: unused, createChild: unused, coordinate: unused,
+    directories: unused, updateMetadata: unused, cancelReceipt: unused, stopTurn: unused, steer: unused, readExecution: unused, createChild: unused, coordinate: unused,
   });
   const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
   const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, operation, bound) => {

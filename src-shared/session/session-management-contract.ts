@@ -107,6 +107,7 @@ export const sessionOperationRequestSchemas = {
     .object({ target: sessionTargetSchema, receiptId: id })
     .strict(),
   stop_turn: z.object({ target: sessionTargetSchema, turnId: id }).strict(),
+  steer: z.object({ target: sessionTargetSchema, turnId: z.string().regex(/^[1-9]\d*$/), message: z.string().trim().min(1).max(100000) }).strict(),
 } as const;
 export type SessionOperation = keyof typeof sessionOperationRequestSchemas;
 export type SessionOperationRequest<K extends SessionOperation> = z.infer<
@@ -278,6 +279,7 @@ export const sessionOperationSuccessSchemas = {
     .object({
       ok: z.literal(true),
       session: relatedSessionSchema,
+      currentTurn: z.object({ turnId: z.string().nullable(), receipt: z.unknown().nullable(), origin: z.unknown().nullable() }).strict(),
       crewFolder: crewFolderSchema,
     })
     .strict(),
@@ -298,6 +300,7 @@ export const sessionOperationSuccessSchemas = {
     })
     .strict(),
   enqueue: z.object({ ok: z.literal(true), receipt: receiptSchema }).strict(),
+  steer: z.object({ ok: z.literal(true), result: z.object({ outcome: z.enum(["applied", "not-applied"]), turnId: id, messageSeq: z.number().int().nonnegative().nullable(), reason: z.string().optional() }).strict() }).strict(),
   get_receipt: z
     .object({ ok: z.literal(true), receipt: receiptSchema.nullable() })
     .strict(),
@@ -392,7 +395,8 @@ export const SESSION_OPERATION_DESCRIPTIONS: Record<SessionOperation, string> =
       "Read available Provider/model/depth catalog and native approval/sandbox options for child creation or enqueue. For an existing recipient use its provider and workspacePath from get/list, not the sender's. Omit provider for all Providers; omit workspacePath to use the bound actor's Workspace. Empty reasoningEfforts means explicitly use reasoningEffort: \"\"; empty options means unsupported. Use exact available values; no silent Model/Depth substitution.",
     self: "Read the actual bound actor, saved public Character id/name/description, own Crew Folder path, current WithMate Turn and its saved receipt/origin references. Absent references are null; later Turns do not inherit the first task's receipt. Character profiles are information about participants, not persona instructions. The Crew Folder is a shared save location, not the runtime directory or permission to write another Crew's files.",
     list: "List saved Session metadata and public Character id/name/description across the current Crew by default. Session description describes the task; character.description is the public personality introduction. Search includes Character name/description. Explicit rootSessionId or allCrews can read other Crews. Descriptions are complete, not previews. Page with offset/limit (maximum 100). Listing grants no write permission.",
-    get: "Read metadata, saved public Character id/name/description, relationships, execution state and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
+    get: "Read metadata, saved public Character id/name/description, relationships, execution state, currentTurn and public Crew Folder reference of one exact Session/incarnation, without loading its conversation or Character definition. currentTurn.turnId is the running WithMate Turn ID, not the Provider native ID; null means no current saved Turn. An explicit other-Crew Folder reference does not mount that directory or grant filesystem write permission. List does not register every Crew's filesystem root.",
+    steer: "Send this parent's additional instruction to one exact running WithMate Turn of its saved direct normal child. Use get.currentTurn.turnId (not the Provider native ID) and the exact Session/incarnation. Only Codex currently supports Steer. Uses the running Turn's Model/Depth/permissions; no settings change, new Turn, queue receipt or automatic fallback. applied confirms delivery and saved additional input, not task completion; not-applied means no Provider dispatch. Unknown delivery returns SESSION_STEER_UNKNOWN with effect unknown and result.messageSeq when known. Inspect list_execution_inputs/get_execution_input for this Turn, including unresolved inputs; never automatically resend an unknown result. Saved inputOrigin identifies the actual parent, not a GUI user. Child reports and Coordination use their existing delivery routes.",
     list_directories: "Read the Workspace, managed Session and Crew Folders, and user-added directories of your own Session or an exact direct child. Main and its Auxiliary Sessions share the user-added list; different Main Sessions have independent lists.",
     add_directory: "Register an existing absolute directory for your own Session or an exact direct child. Main and its Auxiliary Sessions share the list. Changes apply to Turns started after the update, not the running Turn; Provider and OS permissions still apply.",
     remove_directory: "Unregister an additional directory for your own Session or an exact direct child. This never deletes files or removes managed Workspace, Session or Crew Folders. Changes apply to Turns started after the update, not the running Turn.",

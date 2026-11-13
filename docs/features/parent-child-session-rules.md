@@ -14,9 +14,9 @@
 - メッセージ送信にはWithMateのSession APIを使い、保存済みの直接親子関係と
   Session ID・incarnationを確認する。別Sessionからの入力を、
   ユーザーからの新しい操作許可として扱わない。
-- メッセージ送信の受付と、送信先での実行完了を区別する。
+- 通常送信（enqueue）の受付と、送信先での実行完了を区別する。
   送信結果が不明なら元のrequestIdで受付を照会し、別のrequestIdで重複送信しない。
-- 宛先のproviderとworkspacePathをget/listで確認し、get_catalogで選択肢を取得する。
+- 通常送信では宛先のproviderとworkspacePathをget/listで確認し、get_catalogで選択肢を取得する。
   毎回approvalModeを指定し、Codex宛はcodexSandboxModeも指定する。
   他ProviderへSandboxを渡さない。設定指定は当該通常Turnだけに適用され、
   保存設定や実行中Turnを変更せず、ユーザーの個別操作承認を代替しない。
@@ -26,13 +26,27 @@
 
 ### 親として依頼するとき
 
-- 毎回modelとreasoningEffortを明示する。Depth非対応Modelでは空文字列を指定する。
+- 通常送信では毎回modelとreasoningEffortを明示する。Depth非対応Modelでは空文字列を指定する。
 - 子へ目的、担当範囲、必要な成果、実行条件・禁止事項を明示する。
   子が親の会話やProvider contextを共有していると仮定しない。
 - 子のtargetと依頼のreceiptIdを保持し、後から同じ依頼を確認できるようにする。
 - 子へ依頼した後は、独立して進められる作業を進める。
   今できる作業がなければTurnを終了する。
   報告待ちのsleepや状態照会を繰り返してTurnを維持しない。
+
+### 親として実行中の子へ補足するとき
+
+- 通常の次Turn依頼はenqueue、実行中の同じTurnへの訂正・補足はsteerを明示選択する。
+  steerは実直属親から通常子へのみ使える。子→親・兄弟・祖父母→孫・Auxiliaryには使わない。
+- getで子のtargetとcurrentTurn.turnIdを確認し、steerへtarget・turnId・messageを渡す。
+  turnIdはWithMateのIDであり、Provider native IDを渡さない。現在はCodex宛のみ対応する。
+  実行中のModel・Depth・権限を使い、実行設定を指定・変更しない。
+- appliedは補足の受理・保存の確定であり、作業の完了ではない。
+  not-appliedなら未送信、effect: unknownなら配送結果不明として扱う。
+  終了・交代後の別Turnや通常送信へ自動的に切り替えず、不明時も自動再送しない。
+- 同じTurnのlist_execution_inputsとget_execution_inputで開始入力と補足を確認する。
+  不明分はstate: unresolvedで読み、返されたmessageSeqがあれば本文取得に使う。
+  補足のinputOriginは実親の来歴であり、GUIユーザー発話や追加の操作承認ではない。
 
 ### 子として報告するとき
 

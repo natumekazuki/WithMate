@@ -35,6 +35,7 @@ import {
   getSandboxOptionsForProvider,
 } from "../../src-shared/settings/provider-runtime-options.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
+import type { SessionSteerResult } from "../../src-shared/session/session-turn-queue.js";
 
 export type SessionCurrentTurn = {
   turnId: string | null;
@@ -92,6 +93,7 @@ export type SessionManagementApplicationDeps = {
     turnId: string,
     assertCurrent: () => void,
   ): Promise<unknown>;
+  steer(target: RelatedSession, input: SessionOperationRequest<"steer">, actor: RelatedSession, turnId: string, assertCurrent: () => void): Promise<SessionSteerResult>;
   readExecution(
     target: RelatedSession,
     operation: ExecutionReadOperation,
@@ -319,6 +321,7 @@ export class SessionManagementApplication {
         return {
           ok: true,
           session: destination,
+          currentTurn: await this.deps.currentTurn(destination),
           crewFolder: await this.deps.crewFolder(destination),
         };
       }
@@ -384,6 +387,19 @@ export class SessionManagementApplication {
             context.assertCurrent,
           ),
         };
+      }
+      case "steer": {
+        const input = parsed.data as SessionOperationRequest<"steer">;
+        const destination = target(input.target);
+        try { assertDirectChildSessionControl(actor, destination); }
+        catch { throw new SessionManagementError("SESSION_FORBIDDEN", "Only an actual direct parent may Steer this normal child."); }
+        const current = await this.deps.currentTurn(actor);
+        context.assertCurrent();
+        if (!current.turnId) throw new SessionManagementError("SESSION_TURN_UNAVAILABLE", "The actor has no current saved WithMate Turn.");
+        const result = await this.deps.steer(destination, input, actor, current.turnId, context.assertCurrent);
+        return result.outcome === "unknown"
+          ? { ok: false, code: "SESSION_STEER_UNKNOWN", effect: "unknown", message: result.reason, result }
+          : { ok: true, result };
       }
       case "get_receipt": {
         const input = parsed.data as SessionOperationRequest<"get_receipt">;

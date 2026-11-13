@@ -63,6 +63,7 @@ function setup(entries: RelatedSession[]) {
       calls.push("cancel");
       return {};
     },
+    steer: async () => { throw new Error("unused"); },
     stopTurn: async () => {
       calls.push("stop");
       return {};

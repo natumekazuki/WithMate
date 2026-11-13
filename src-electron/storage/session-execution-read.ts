@@ -3,7 +3,7 @@ import type { ExecutionReadInput } from "../../src-shared/session/session-execut
 import { executionOperationRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
 import type { SessionHistoryResult, SessionHistoryOperation, SessionHistoryRequest } from "../../src-shared/session-history/session-history-contract.js";
-import type { SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionSteerOrigin, SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
 import { normalizeMessage, type Message } from "../../src-shared/session/session-state.js";
 import type { ComposerAttachment } from "../../src-shared/session/runtime-state.js";
 import { readConversationQuerySnapshot } from "./conversation-query.js";
@@ -200,12 +200,14 @@ export class SessionExecutionReadStorage {
         const start = getMessage(turn.user_message_seq);
         if (start) all.push({ seq: turn.user_message_seq, kind: "start", textChars: start.text.length, attachments: null });
       }
-      if (ref.state === "unresolved") all.push(...inputs.unresolvedReferences.map((row) => ({ ...row, kind: "additional", textChars: row.seq === null ? null : inputs.records.find((record) => record.seq === row.seq)?.textChars ?? null, attachments: null, queueId: "receiptId" in row ? row.receiptId : null })));
-      else all.push(...(ref.state === "not-sent" ? inputs.notSent : inputs.confirmed).map(({ seq, message, textChars }) => ({ seq, kind: "additional", textChars, state: message.turnInput!.state, queueId: message.turnInput!.queueId ?? null, attachments: attachments(message.turnInput!.attachments) })));
+      if (ref.state === "unresolved") all.push(...inputs.unresolvedReferences.map((row) => ({ ...row, kind: "additional", textChars: row.seq === null ? null : inputs.records.find((record) => record.seq === row.seq)?.textChars ?? null, attachments: null, queueId: "receiptId" in row ? row.receiptId : null,
+        inputOrigin: inputs.records.find((record) => record.seq === row.seq)?.message.turnInput?.origin ?? null })));
+      else all.push(...(ref.state === "not-sent" ? inputs.notSent : inputs.confirmed).map(({ seq, message, textChars }) => ({ seq, kind: "additional", textChars, state: message.turnInput!.state, queueId: message.turnInput!.queueId ?? null, attachments: attachments(message.turnInput!.attachments), inputOrigin: message.turnInput!.origin ?? null })));
       if ((ref.offset ?? 0) > all.length) return failure("EXECUTION_INVALID_REQUEST", "Offset is beyond the input list.");
       return { ok: true, ...description, ...page(all, ref.offset, ref.limit) };
     }
     if (operation === "get_execution_input") {
+      let inputOrigin: SessionSteerOrigin | null = null;
       let value: { text: string; attachments: ReturnType<typeof attachments> } | null;
       const startReceipt = turn ? this.db.prepare(`${receiptQuery} AND turn_id = ? AND input_turn_id IS NULL AND user_message_seq = ? ORDER BY sequence LIMIT 1`).get(...queueParams, String(turn.id), turn.user_message_seq) as Receipt | undefined : undefined;
       const inputReceipt = ref.seq !== undefined && ref.seq === turn?.user_message_seq ? startReceipt : receipt ?? startReceipt;
@@ -215,6 +217,7 @@ export class SessionExecutionReadStorage {
         const linked = inputs.records.find((row) => row.seq === ref.seq);
         if (linked) {
           const message = getMessage(linked.seq)!;
+          inputOrigin = message.turnInput!.origin ?? null;
           comparison = { text: message.text, attachments: attachments(message.turnInput!.attachments) };
           const linkedReceipt = linked.message.turnInput!.queueId ? this.db.prepare(`${receiptQuery} AND id = ?`).get(...queueParams, linked.message.turnInput!.queueId!) as Receipt | undefined : undefined;
           original = linkedReceipt ? publicInput(captured(linkedReceipt.accepted_json)) : linked.message.turnInput!.queueId ? null : comparison;
@@ -237,7 +240,7 @@ export class SessionExecutionReadStorage {
         if (offset > 0 && /[\uDC00-\uDFFF]/.test(input.text[offset] ?? "") && /[\uD800-\uDBFF]/.test(input.text[offset - 1])) offset -= 1;
         return { ...textPage(input.text, offset, ref.maxChars), attachments: input.attachments };
       };
-      return piece.ok ? { ...piece, ...description, attachments: value.attachments, expectedInput: token, originalKnown: original !== null, inputPair: { original: paired(original), comparison: paired(comparison) } } : piece;
+      return piece.ok ? { ...piece, ...description, inputOrigin, attachments: value.attachments, expectedInput: token, originalKnown: original !== null, inputPair: { original: paired(original), comparison: paired(comparison) } } : piece;
     }
     if (!assistant || !turn || turn.assistant_message_seq === null) return failure("EXECUTION_RESULT_NOT_SAVED", "This exact Turn has no saved assistant result yet.");
     const units = assistant.output?.units ?? (assistant.text ? [{ id: "saved-unclassified", start: 0, end: assistant.text.length, role: "unclassified", phase: null, completion: "unknown", final: false, evidence: null }] : []);

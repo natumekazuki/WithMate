@@ -89,7 +89,11 @@ Submitは同じ予約の本文・添付を保存し、Mainが保存成功を確�
 
 通常の保存会話は`list_messages`／`get_message`、保存artifactは`list_operations`／`get_operation_detail`で取得し、Turnに未対応の過去messageも対象にする。既存保存history helperのpaging／欠落契約を使い、背景実行の限定scopeやgrantを流用しない。実行参照には保存receipt、WithMate Turn、保存message sequenceのいずれか一つを指定し、messageから確定した対応がない場合は欠落として返す。
 
-actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvider Turnから解決し、Main／Auxiliaryの同名IDを読み替えない。対象も会話種別・incarnationを固定し、Auxiliaryでは所属Mainのidentityも確認する。公開保存情報の全Crew読取は送信・取消・停止の権限を与えない。通常送信は実際の直属親子だけ、取消・停止は親から直属子だけに許可し、Auxiliary所属を通常親子として扱わない。GUI限定のRole変更、待機中指示編集、Steer、ユーザー回答・承認はこのAPIから公開しない。
+actorは通常runtime bindingに捕捉した`sessionIdentity`と現在のProvider Turnから解決し、Main／Auxiliaryの同名IDを読み替えない。対象も会話種別・incarnationを固定し、Auxiliaryでは所属Mainのidentityも確認する。公開保存情報の全Crew読取は送信・取消・停止・Steerの権限を与えない。通常送信は実際の直属親子だけ、取消・停止・Steerは親から直属子だけに許可し、Auxiliary所属を通常親子として扱わない。GUI限定のRole変更、待機中指示編集、ユーザー回答・承認はこのAPIから公開しない。
+
+`steer`は親が明示した直属子の`target`（Session・incarnation）と`turnId`へ補足を送る。`get.currentTurn.turnId`で実行中のWithMate Turnを取得し、Provider native IDや最新Turnへ読み替えない。現在の対応宛先はCodexのみで、実行中TurnのModel・Depth・権限をそのまま使い、新Turn・receiptの作成や保存設定の変更はしない。通常送信の`enqueue`とは別操作であり、子からの報告やCoordinationは従来の配送を使う。
+
+`applied`はProviderの受理と追加入力保存の確定、`not-applied`はProvider未呼出を表す。終了・交代・非対応・送信準備中の失効では送信せず、別Turnや通常キューへ自動転送しない。Provider呼出後に受理または保存が確認できない場合は`SESSION_STEER_UNKNOWN`／`effect: unknown`と既知なら`result.messageSeq`を返す。自動再送せず、同じTurnの`list_execution_inputs`（不明分は`state: unresolved`）と`get_execution_input`で本文・配送状態・`inputOrigin`を照会する。`inputOrigin`はその補足を送った実親であり、開始入力の`origin`とは別に保持する。
 
 `enqueue.deliveryTiming`は`immediate`（省略時も同じ）または`after_source_turn`を送信者が明示選択し、本文から分類しない。両方ともdurable receiptを直ちに返す。`after_source_turn`は、その送信を行った正確なSession／incarnation／Turnの終端と結果保存が確定してから宛先の通常新Turnを開始可能にする。`completed`／`failed`／`canceled`はいずれも待機を解除するが、結果不明は完了扱いしない。送信元Session全体のidleは待たず、待機中の配送が宛先の即時相談・GUI入力を塞がない。自動Steerは行わない。配送先へ渡すoriginは`deliveryTiming`と、遅延配送を解除した`sourceTurnPhase`を保持し、receipt照会でも送信元の`running`／`completed`／`failed`／`canceled`／`unknown`を区別する。同じUUIDの受付内容は配送タイミングを含め不変であり、再起動後も保存済み送信元Turnから条件を再評価する。
 

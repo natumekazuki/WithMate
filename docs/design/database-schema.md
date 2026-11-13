@@ -38,6 +38,8 @@ turnはMainまたはAuxiliaryの一方だけをownerとし、phase、実行設�
 
 通常Session送信の`accepted_json.origin.requestedExecutionOptions`は送信時の明示設定（省略項目を除く）を保持する。省略を解決した実効設定は既存の`accepted_json.request.executionOptions`へ格納し、同一request IDの照合には両方を使う。既存行に指定情報がない場合は補完せず、保存済み受付・結果を従来どおり読み取る。専用tableやschema migrationは追加しない。
 
+親からの直接Steerは、子の既存user message JSONの`turnInput`へ対象WithMate Turn・native Turn・配送状態・添付と`origin`を保存する。originは実親のSession／incarnation／送信元Turn、明示宛先と表示snapshotを持ち、`kind: session`・`operation: steer`としてGUI入力と区別する。Provider呼出前にpendingを保存し、受理と保存の確定でconfirmed、送信結果不明はunknown、未送信確定はnot-sentとする。保存済みconfirmedを後続の失敗で巻き戻さない。既存のTurn入力保存・終端待機を使い、専用receipt・table・migrationは追加しない。originのない既存入力へ現在の親情報を補記しない。
+
 Turn Queueは次の項目を保持する。
 
 - 親Session ID
