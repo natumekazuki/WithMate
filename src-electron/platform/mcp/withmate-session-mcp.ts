@@ -34,7 +34,9 @@ export function createWithMateSessionMcpServer(
         annotations: {
           readOnlyHint: read,
           destructiveHint:
-            operation === "cancel_receipt" || operation === "stop_turn",
+            operation === "cancel_receipt" || operation === "stop_turn" ||
+            operation === "set_selection_policy" || operation === "set_worktree_root" ||
+            operation === "set_worktree_repository",
           idempotentHint: read || operation === "enqueue" || operation === "coordination_get",
           openWorldHint: false,
         },

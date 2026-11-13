@@ -73,6 +73,43 @@ async function cli(
 }
 // @test-value v2
 // kind = "contract"
+// claim = "Session MCPの運用設定3操作は既存設定を置換・解除する更新、4照会は読取専用としてtools/listで通知する"
+// oracle = { type = "contract", ref = "GitHub #944; https://modelcontextprotocol.io/specification/2025-11-25/schema#toolannotations" }
+// fault = "設定の置換・解除を追加のみと通知する、または設定とquotaの照会を更新操作として通知する"
+// observable = "SDK clientのtools/list応答に含まれる対象7操作のreadOnlyHintと更新3操作のdestructiveHint"
+// observation_boundary = "public-boundary"
+// scope = "Session MCP運用設定7操作の公開注釈"
+// lifecycle = "permanent"
+// impact = "MCP clientが既存設定を失い得る操作を追加のみと誤認する"
+// distinction = "入力・結果のparityや型検査では、SDKを介したtools/listの操作属性を検出できない"
+// @end-test-value
+test("MCP tools list distinguishes operating policy replacement from read-only queries", async () => {
+  const server = createWithMateSessionMcpServer({ env, connection });
+  const client = new Client({ name: "operating-policy-annotations", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b);
+    await client.connect(a);
+    const { tools } = await client.listTools();
+    for (const operation of ["set_selection_policy", "set_worktree_root", "set_worktree_repository"]) {
+      const tool = tools.find((entry) => entry.name === `session.${operation}`);
+      assert.ok(tool, operation);
+      assert.equal(tool.annotations?.readOnlyHint, false, operation);
+      assert.equal(tool.annotations?.destructiveHint, true, operation);
+    }
+    for (const operation of ["get_selection_policy", "get_provider_quota", "get_worktree_policy", "resolve_worktree"]) {
+      const tool = tools.find((entry) => entry.name === `session.${operation}`);
+      assert.ok(tool, operation);
+      assert.equal(tool.annotations?.readOnlyHint, true, operation);
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+// @test-value v2
+// kind = "contract"
 // claim = "Session MCPとbound CLIは保存実行設定と送信全文を含む同一binding/turn付き操作と結果・拒否を共有し、queue requestIdはUUIDのみ受け付け、送信応答喪失を未適用と偽らない"
 // oracle = { type = "contract", ref = "GitHub #835 MCPとbound CLIの入力・結果・拒否の同一契約" }
 // fault = "CLIが別actorで実行する、保存実行設定や送信本文を落とす、非UUIDをdispatchするかenqueue通信失敗をeffect noneとして返す"
