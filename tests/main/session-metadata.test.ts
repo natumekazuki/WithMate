@@ -35,15 +35,15 @@ it("separates metadata responsibilities in every provider's new and continuing p
       const prompt = adapter.composePrompt({ session: current, executionOptions: captureSessionExecutionOptions(current),
         providerCatalog: { id: current.provider, label: "Provider", defaultModelId: current.model, defaultReasoningEffort: current.reasoningEffort, models: [] },
         userMessage: "Continue", appSettings: { ...createDefaultAppSettings(), characterDefinitionEnabled: false }, attachments: [] });
-      assert.match(prompt.systemBodyText, /Title: a short name identifying the Session's purpose, subject, or assigned target/);
-      assert.match(prompt.systemBodyText, /Keep it unchanged for progress alone \(starting work, verification, completion\)/);
-      assert.match(prompt.systemBodyText, /Update it when the purpose or target materially changes; it is not permanently fixed/);
-      assert.match(prompt.systemBodyText, /Description: a few sentences describing your scope and current situation/);
-      assert.match(prompt.systemBodyText, /Replace the current description rather than appending history/);
-      assert.match(prompt.systemBodyText, /After completion, retain what the Session handled/);
-      assert.match(prompt.systemBodyText, /keep that Title and update only the Description/);
-      assert.match(prompt.systemBodyText, /changes to 'Coordination UI', update the Title as well as the Description/);
-      assert.match(prompt.systemBodyText, /No update is needed for a field that remains accurate/);
+      assert.match(prompt.systemBodyText, /Title is a short purpose\/subject\/target name/);
+      assert.match(prompt.systemBodyText, /Keep it for progress alone \(start, verification, completion\)/);
+      assert.match(prompt.systemBodyText, /change it when the purpose or target materially changes/);
+      assert.match(prompt.systemBodyText, /Description is a few current sentences of scope and situation/);
+      assert.match(prompt.systemBodyText, /replace it, do not append history/);
+      assert.match(prompt.systemBodyText, /retain the handled subject after completion/);
+      assert.match(prompt.systemBodyText, /'Session queue' entering verification changes only Description/);
+      assert.match(prompt.systemBodyText, /reassignment to 'Coordination UI' can change both fields/);
+      assert.match(prompt.systemBodyText, /omit fields that remain accurate/);
       assert.match(prompt.systemBodyText, /"title": "Session queue"/);
       assert.ok(prompt.systemBodyText.includes(current.description));
       assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);

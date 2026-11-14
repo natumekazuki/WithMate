@@ -546,24 +546,22 @@ describe("composeProviderPrompt", () => {
     assert.deepEqual(prompt.additionalDirectories, []);
     assert.match(prompt.systemBodyText, /保存済み snapshot の口調で話す。/);
     assert.match(prompt.systemBodyText, /# Output Boundary/);
-    assert.match(prompt.systemBodyText, /リポジトリに含めず外部へ提出・公開しない自然文に使ってください/);
-    assert.match(prompt.systemBodyText, /一人称・呼称・語彙・構文・距離感、着眼点や会話上の関心、反応と伝え方、説明の組み立て方/);
-    assert.match(prompt.systemBodyText, /技術説明、進捗、発見、見立ての訂正、意見不一致、最終報告でも、その場に合う本人らしさを保ってください/);
-    assert.match(prompt.systemBodyText, /発話量・反応の頻度と個性の強さは別に調整/);
-    assert.match(prompt.systemBodyText, /具体的な癖・強さ・状態差は各Character定義に従い/);
-    assert.match(prompt.systemBodyText, /技術判断の根拠と確度、操作、権限、検証結果、未確認事実の扱いはCharacter定義で置き換えず/);
-    assert.match(prompt.systemBodyText, /手元の記録でも、誰の要求・判断・作業・検証かを明確にし、事実・条件・状態を保ってください。/);
-    assert.match(prompt.systemBodyText, /ID、数値、列挙値、状態値、コマンド出力、正確な引用などをCharacter表現によって書き換えないでください。/);
-    assert.match(prompt.systemBodyText, /リポジトリに含めるものや外部へ提出・公開する成果物（コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、diffなど）には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。/);
-    assert.match(prompt.systemBodyText, /リポジトリや外部向けの成果物は repository instruction、既存文体、対象の目的を優先してください。/);
-    assert.match(prompt.systemBodyText, /前後のユーザー向け説明にはCharacter表現を使い、再利用される本文は提出先・repository・ユーザー指定に合う文体と形式に/);
-    assert.match(prompt.systemBodyText, /保存先だけで判定せず、提出予定の草案も成果物として扱ってください/);
+    assert.match(prompt.systemBodyText, /Session Graphや非公開の手元の自然文/);
+    assert.match(prompt.systemBodyText, /一人称・呼称・語彙・構文・距離感・着眼点・反応・説明の組み立て/);
+    assert.match(prompt.systemBodyText, /技術説明・進捗・発見・訂正・不一致・最終報告でも保ち/);
+    assert.match(prompt.systemBodyText, /発話量・反応頻度と個性の強さは別に調整/);
+    assert.match(prompt.systemBodyText, /癖・強さ・状態差は定義に従い/);
+    assert.match(prompt.systemBodyText, /Character表現で技術判断の根拠・確度、権限、検証結果、未確認事実を変えない/);
+    assert.match(prompt.systemBodyText, /手元の記録でも主体と事実・条件・状態を保ち/);
+    assert.match(prompt.systemBodyText, /ID・数値・列挙値・状態値・コマンド出力・正確な引用は書き換えません/);
+    assert.match(prompt.systemBodyText, /repository内・外部提出\/公開用の成果物には明示指定なしにCharacterの口調・設定・台詞・メタ説明を混ぜず/);
+    assert.match(prompt.systemBodyText, /repository instruction・既存文体・目的を優先/);
+    assert.match(prompt.systemBodyText, /前後の説明はCharacter表現、再利用本文は提出先・repository・ユーザー指定の文体\/形式に分け/);
+    assert.match(prompt.systemBodyText, /保存先ではなく提出予定で判定し、草案も成果物として扱って/);
     assert.match(prompt.systemBodyText, /# Tool Call Presence/);
-    assert.match(prompt.systemBodyText, /最初の実行前に1〜3文で自然に応答してください/);
-    assert.match(prompt.systemBodyText, /詳細な計画・操作説明は不要/);
-    assert.match(prompt.systemBodyText, /長い作業では必要な経過や反応を伝えてください/);
-    assert.match(prompt.systemBodyText, /定型の開始挨拶や、操作ごとの実況は不要/);
-    assert.match(prompt.systemBodyText, /tool callが不要な応答には、このためだけの前置きを加えないでください/);
+    assert.match(prompt.systemBodyText, /初回実行前は1〜3文で自然に応答/);
+    assert.match(prompt.systemBodyText, /長い作業では意味のある経過・反応を伝えて/);
+    assert.match(prompt.systemBodyText, /詳細な計画・操作説明・定型挨拶・操作ごとの実況、tool不要の応答への前置きは不要/);
     assert.doesNotMatch(prompt.systemBodyText, /character-notes\.md/);
     assert.doesNotMatch(prompt.systemBodyText, /^---$/m);
     assert.doesNotMatch(prompt.systemBodyText, /^schema:/m);
@@ -706,12 +704,12 @@ describe("composeProviderPrompt", () => {
     });
 
     const contextJson = prompt.systemBodyText.match(/# Character Affect Context[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1];
-    assert.match(prompt.systemBodyText, /speech, reactions, amount of speech, and expression of interest/);
+    assert.match(prompt.systemBodyText, /speech, reactions, response length and interest/);
     assert.match(prompt.systemBodyText, /preserving the Character's baseline personality and voice/);
-    assert.match(prompt.systemBodyText, /Do not require strong emotion or longer responses on every turn/);
-    assert.match(prompt.systemBodyText, /Distinguish the Character's own state from the user's state/);
-    assert.match(prompt.systemBodyText, /Do not present it as a diagnosis of the user or expose internal state unnecessarily/);
-    assert.match(prompt.systemBodyText, /Affect must not change technical judgments, their evidence or certainty, permissions, facts, or artifact boundaries/);
+    assert.match(prompt.systemBodyText, /do not force strong emotion or longer responses/);
+    assert.match(prompt.systemBodyText, /The Character's state is not the user's/);
+    assert.match(prompt.systemBodyText, /do not diagnose the user or expose internal state unnecessarily/);
+    assert.match(prompt.systemBodyText, /Affect never changes facts, evidence, certainty, technical judgment, permissions or artifact boundaries/);
     assert.ok(contextJson);
     const context = JSON.parse(contextJson) as {
       characterAffect: {
