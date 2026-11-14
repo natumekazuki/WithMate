@@ -67,9 +67,9 @@ function createService(
       defaultReasoningEffort: "medium",
       models: [{ id: "gpt-test", label: "Test", reasoningEfforts: ["medium"] }],
     }] }),
-    syncSessionDependencies: () => undefined,
+
     clearSessionContextTelemetry: () => undefined,
-    clearSessionBackgroundActivities: () => undefined,
+
     invalidateProviderSessionThread: () => undefined,
     revokeSessionAgentRuntimeBindings: (sessionId) => { sharedState.revoked.push(sessionId); },
     closeSessionWindow: () => undefined,

@@ -201,19 +201,13 @@ MCPは共有HTTP hostの通常Turn専用`/mcp/session`から4 Providerへ配布�
 
 V6 の通常更新と terminal 保存は、作成とは別の既存行限定 API を使う。存在確認を要求受付時だけで済ませず、保存 transaction 内で再確認する。削除が先に確定した場合は `SessionNotFoundError` で更新を拒否し、古い Session 本文、terminal marker、cache、provider binding を再作成しない。単体削除と期間指定削除で同じ契約を適用する。
 
-単体・期間指定削除は、実行中判定、DB 削除、cache 除去、親子の agent binding 失効とローカル投影までを ownership 境界内で確定する。provider thread の外部後処理はその境界を解放してから待つ。後処理が遅れても無関係な Session の削除・Affect 適用を待たせない。後処理に失敗した場合も残りの削除対象の後処理を試み、削除済みデータを復元せず、失敗を集約して呼出元へ返す。
+単体・期間指定削除は、実行中判定、DB 削除、cache 除去、親子の agent binding 失効とローカル投影までを ownership 境界内で確定する。provider thread の外部後処理はその境界を解放してから待つ。後処理が遅れても無関係な Session の削除を待たせない。後処理に失敗した場合も残りの削除対象の後処理を試み、削除済みデータを復元せず、失敗を集約して呼出元へ返す。
 
 Session の owner は ID だけでなく行の `incarnationId` で識別する。同じ ID を削除後に再作成しても新しい incarnation を発行し、古い通常更新・terminal・running 開始の保存を拒否する。既存行の更新では incarnation を保持する。
 
 provider 後処理は ownership 解放前に全対象の旧 runtime 参照を同期的に切り離してから、外部切断の完了だけを解放後に待つ。古い切断の完了が、同じ ID で作成された新 runtime を無効化してはならない。
 
 削除 commit 後に window close や broadcast 等の同期投影が失敗しても、残りの親子投影と全対象の provider 後処理を試みる。投影失敗は成功扱いせず、ownership 外で provider 後処理の完了を待ってから、その失敗と合わせて AggregateError で返す。削除済み DB 行を復元しない。
-
-### Character Affect の通常turn内更新
-
-Affect更新は通常turn中のAgentによる`character_affect.appraise`を使い、具体的な感情変化がないturnでは呼出しを必須としない。turnのterminal保存・成功判定はAffect専用enqueueやsettlementに依存しない。失敗・取消後や起動・再接続・timerから専用LLM評価を開始せず、未記録分を補完turnや合成eventで埋めない。
-
-pre-turnではAffectの最新状態取得・合成とprompt注入、取得時のafterglowを維持する。Memoryはユーザー入力による事前検索や自動prompt注入を行わず、Agentが必要時に既存MCP／CLIで取得する。通常MCPのactor、provider、captured turn、token、version、idempotency、effect certaintyは既存application boundaryに従う。turn中に保存済みのevent／episodeは、その後の応答失敗・取消で巻き戻さない。旧queueの整理と保存済み正本の保護は[Database Schema](database-schema.md#起動時の移行とデータ保護)に従う。
 
 ### Home Window Close
 
@@ -238,7 +232,7 @@ pre-turnではAffectの最新状態取得・合成とprompt注入、取得時の
 ## Background Continuation
 
 current 実装では tray 常駐までは行わない。
-全 window が閉じても app process は終了せず、Memory V6 runtime API / CLI discovery を維持する。Windows では single instance lock と `second-instance` handler により、Start Menu などから再起動されたときに既存 process の `Home Window` を再表示・focus する。
+全 window が閉じても app process は終了せず、通常Session／Graph／Glossaryの共有runtime API / CLI discovery を維持する。Windows では single instance lock と `second-instance` handler により、Start Menu などから再起動されたときに既存 process の `Home Window` を再表示・focus する。
 実行中 session がある場合は `window-all-closed` 時点でも `Home Window` を再表示し、処理の継続を優先する。
 
 ## Persistence Expectations
@@ -258,6 +252,6 @@ current 実装では tray 常駐までは行わない。
 - `electron-window-runtime.md`
   - Electron Main Process の lifecycle
 - `electron-session-store.md`
-  - session / turn / memory persistence orchestration
+  - session / turn persistence orchestration
 - `database-schema.md`
-  - session metadata と turn / memory の保存構造
+  - session metadata と turn の保存構造

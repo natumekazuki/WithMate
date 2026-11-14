@@ -77,9 +77,9 @@ describe("persistent store owner guard", () => {
       listStoredSessions: () => [],
       getAppSettings: () => ({}) as never,
       getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: () => undefined,

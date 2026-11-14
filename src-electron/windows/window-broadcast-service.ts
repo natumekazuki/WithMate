@@ -1,7 +1,6 @@
 import type { AppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
 import { projectLiveSessionRunStatus } from "../../src-shared/session/live-session-run-status.js";
-import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 import type { SessionSummaryInvalidation } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { PromptTemplate } from "../../src-shared/prompt-template.js";
@@ -16,7 +15,6 @@ import {
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
-  WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_SESSION_TURN_UPDATED_EVENT,
   WITHMATE_SESSION_TURN_QUEUE_CHANGED_EVENT,
@@ -126,13 +124,6 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
     this.broadcast(WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT, { sessionId, telemetry });
   }
 
-  public broadcastSessionBackgroundActivity(
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-    state: SessionBackgroundActivityState | null,
-  ): void {
-    this.broadcast(WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT, { sessionId, kind, state });
-  }
 
   private broadcast(channel: string, payload: unknown): void {
     this.broadcastTo(this.options.getAllWindows(), channel, payload);

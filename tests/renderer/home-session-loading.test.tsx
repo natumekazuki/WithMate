@@ -137,18 +137,6 @@ async function mountHome(initial?: { mainCancellation?: HomeSessionSummary["canc
         models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
       }],
     }),
-    getMemoryV6Diagnostics: async () => ({
-      generatedAt: "",
-      runtime: {
-        status: "stopped", applicationInstanceId: null, runtimeGenerationId: null,
-        buildChannel: null, discoveryPublished: false,
-      },
-      cliShim: {
-        platform: "win32", commandName: "withmate-memory", supported: true,
-        status: "not-installed", pathContainsShimDirectory: false,
-      },
-      lastErrors: [],
-    }),
     listSessionSummaryPage: async (request) => listPage(request ?? {}),
     listSessionMonitorPage: async () => {
       const [entries, auxiliarySessions] = await Promise.all([monitorEntries(), auxiliaryQuery()]);

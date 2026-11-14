@@ -81,18 +81,6 @@ test("Startは取得状態と選択に追従し、取得状態更新は設定済
         models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
       }],
     }),
-    getMemoryV6Diagnostics: async () => ({
-      generatedAt: "",
-      runtime: {
-        status: "stopped", applicationInstanceId: null, runtimeGenerationId: null,
-        buildChannel: null, discoveryPublished: false,
-      },
-      cliShim: {
-        platform: "win32", commandName: "withmate-memory", supported: true,
-        status: "not-installed", pathContainsShimDirectory: false,
-      },
-      lastErrors: [],
-    }),
     listSessionSummaryPage: async () => ({ entries: [], hasMore: false, nextCursor: null }),
     listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
     listSessionCharacterUsage: async () => {

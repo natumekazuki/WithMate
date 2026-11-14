@@ -129,9 +129,9 @@ function makePersistence(runtime: SessionRuntimeService, stored: Session, auxili
     },
     character: { createCharacterRuntimeSnapshot: () => null },
     effects: {
-      syncSessionDependencies() {},
+
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
+
       invalidateProviderSessionThread() {},
       revokeSessionAgentRuntimeBindings() {},
       closeSessionWindow() {},

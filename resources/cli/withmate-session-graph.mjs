@@ -5922,74 +5922,25 @@ var sessionGraphOperationRequestSchemas = {
 };
 var SESSION_GRAPH_RUNTIME_OPERATION_PATHS = Object.fromEntries(Object.keys(sessionGraphOperationRequestSchemas).map((key) => [key, `/v1/session-graph/${key.replaceAll("_", "-")}`]));
 new Map(Object.entries(SESSION_GRAPH_RUNTIME_OPERATION_PATHS).map(([key, path]) => [path, key]));
-// src-electron/platform/memory/memory-runtime-exchange.ts
-var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
-var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
-/** Non-secret application owner identity (main-process lifetime). */
-var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-memory-application-instance";
-/** Canonical Memory runtime generation header; runtime-instance remains a legacy alias. */
-var WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER = "x-withmate-memory-runtime-generation";
-var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
+// src-electron/platform/agent-runtime/runtime-exchange.ts
+var WITHMATE_AGENT_RUNTIME_NONCE_HEADER = "x-withmate-agent-runtime-nonce";
+var WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-agent-runtime-application-instance";
+var WITHMATE_AGENT_RUNTIME_GENERATION_HEADER = "x-withmate-agent-runtime-generation";
+var WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER = "x-withmate-agent-runtime-challenge";
 var WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH = "/v1/agent-runtime-extension-exchange";
-var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
-function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeGenerationId, nonce) {
+var WITHMATE_AGENT_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-agent-runtime-exchange-v1";
+function createAgentRuntimeChallenge(apiSecret, runtimeGenerationId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
 }
-/**
-* New owner-aware challenge. The legacy challenge above is intentionally kept
-* unchanged so 6.3.x clients can continue to authenticate during migration.
-*/
-function createWithMateMemoryRuntimeOwnerChallenge(apiSecret, applicationInstanceId, runtimeGenerationId, nonce) {
+function createAgentRuntimeOwnerChallenge(apiSecret, applicationInstanceId, runtimeGenerationId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${applicationInstanceId}\n${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
-}
-var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6.current.json";
-function buildWithMateMemoryDiscoveryGenerationFileName(adapter, runtimeGenerationId) {
-	return `memory-v6-${adapter}.${createHash("sha256").update(runtimeGenerationId, "utf8").digest("hex")}.json`;
-}
-function isLoopbackHostname(hostname) {
-	const normalized = hostname.toLowerCase();
-	if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]") return true;
-	const ipv4Parts = normalized.split(".");
-	return ipv4Parts.length === 4 && ipv4Parts[0] === "127" && ipv4Parts.every((part) => /^\d+$/.test(part) && Number(part) <= 255);
-}
-function normalizeWithMateMemoryApiBaseUrl(value) {
-	const trimmed = value.trim();
-	if (!trimmed) return null;
-	try {
-		const url = new URL(trimmed);
-		if (url.protocol !== "http:" || !isLoopbackHostname(url.hostname)) return null;
-		url.pathname = url.pathname.replace(/\/+$/, "");
-		url.search = "";
-		url.hash = "";
-		return url.toString().replace(/\/$/, "");
-	} catch {
-		return null;
-	}
-}
-function resolveDefaultWithMateMemoryRuntimeDirectory(env = process.env) {
-	const runtimeDirectoryPath = env.WITHMATE_MEMORY_RUNTIME_DIR?.trim();
-	if (runtimeDirectoryPath) return path.resolve(runtimeDirectoryPath);
-	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
-	return path.join(tmpdir(), "withmate-memory", ownerSegment);
-}
-function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env, _adapter = "cli") {
-	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
-}
-// src-shared/memory/memory-contract.ts
-var MEMORY_V6_SCHEMA_VERSION = "withmate-memory-v1";
-// src-shared/memory/memory-response-contract.ts
-function createMemoryErrorResponse(error) {
-	return {
-		schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-		error
-	};
 }
 // src-shared/agent-runtime/agent-runtime-binding-contract.ts
 var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
 var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
-/** Canonical, client-scoped selector for the Memory runtime owner. */
-var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID";
-var WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV = "WITHMATE_MEMORY_RUNTIME_GENERATION_ID";
+/** Canonical, client-scoped selector for the agent runtime owner. */
+var WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID";
+var WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV = "WITHMATE_AGENT_RUNTIME_GENERATION_ID";
 var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";
 var RUNTIME_DISCOVERY_ENTRY_FILE_NAME = "entry.json";
 var RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS = 5e3;
@@ -6021,7 +5972,7 @@ var BUILD_CHANNELS = /* @__PURE__ */ new Set([
 	"visual-check",
 	"unknown"
 ]);
-function isRecord$1(value) {
+function isRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function hasExactKeys(value, keys) {
@@ -6041,11 +5992,11 @@ function isSafeRelativeRuntimeDiscoveryReference(value) {
 	return typeof value === "string" && value.length > 0 && !path.posix.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.includes("/") && !value.includes("\\") && path.posix.basename(value) === value;
 }
 function isRuntimeDiscoveryIdentity(value) {
-	if (!isRecord$1(value)) return false;
+	if (!isRecord(value)) return false;
 	return typeof value.applicationInstanceId === "string" && UUID_PATTERN.test(value.applicationInstanceId) && typeof value.runtimeGenerationId === "string" && UUID_PATTERN.test(value.runtimeGenerationId) && typeof value.runtimeKind === "string" && RUNTIME_KIND_PATTERN.test(value.runtimeKind);
 }
 function isRuntimeDiscoveryAdapterReference(value) {
-	if (!isRecord$1(value) || !hasExactKeys(value, ["adapterKind", "credentialFileName"])) return false;
+	if (!isRecord(value) || !hasExactKeys(value, ["adapterKind", "credentialFileName"])) return false;
 	if (typeof value.adapterKind !== "string" || !ADAPTER_KIND_PATTERN.test(value.adapterKind)) return false;
 	if (typeof value.credentialFileName !== "string" || !CREDENTIAL_FILE_NAME_PATTERN.test(value.credentialFileName) || !isSafeRelativeRuntimeDiscoveryReference(value.credentialFileName) || value.credentialFileName === "entry.json") return false;
 	return true;
@@ -6059,7 +6010,7 @@ function buildRuntimeDiscoverySlotName(slot) {
 	return `slot-${String(slot).padStart(2, "0")}`;
 }
 function parseRuntimeDiscoveryRegistryEntry(value) {
-	if (!isRecord$1(value) || !hasExactKeys(value, [
+	if (!isRecord(value) || !hasExactKeys(value, [
 		"schemaVersion",
 		"applicationInstanceId",
 		"runtimeKind",
@@ -6073,8 +6024,8 @@ function parseRuntimeDiscoveryRegistryEntry(value) {
 	])) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry has an invalid shape.");
 	if (value.schemaVersion !== "withmate-runtime-discovery-entry-v1" || !isRuntimeDiscoveryIdentity(value) || typeof value.buildChannel !== "string" || !BUILD_CHANNELS.has(value.buildChannel) || !isUuid(value.publicationId) || !isIsoTimestamp(value.publishedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry metadata is invalid.");
 	const entry = value;
-	if (!isRecord$1(entry.process) || !hasExactKeys(entry.process, ["pid", "startedAt"]) || typeof entry.process.pid !== "number" || !Number.isSafeInteger(entry.process.pid) || entry.process.pid <= 0 || !isIsoTimestamp(entry.process.startedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry process metadata is invalid.");
-	if (!isRecord$1(entry.lease) || !hasExactKeys(entry.lease, ["heartbeatAt"]) || !isIsoTimestamp(entry.lease.heartbeatAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry lease metadata is invalid.");
+	if (!isRecord(entry.process) || !hasExactKeys(entry.process, ["pid", "startedAt"]) || typeof entry.process.pid !== "number" || !Number.isSafeInteger(entry.process.pid) || entry.process.pid <= 0 || !isIsoTimestamp(entry.process.startedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry process metadata is invalid.");
+	if (!isRecord(entry.lease) || !hasExactKeys(entry.lease, ["heartbeatAt"]) || !isIsoTimestamp(entry.lease.heartbeatAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry lease metadata is invalid.");
 	if (!Array.isArray(entry.adapters) || entry.adapters.length === 0 || !entry.adapters.every(isRuntimeDiscoveryAdapterReference)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry adapter references are invalid.");
 	const adapterKinds = /* @__PURE__ */ new Set();
 	const credentialFileNames = /* @__PURE__ */ new Set();
@@ -7565,50 +7516,42 @@ async function readRuntimeDiscoveryCredential(record, adapterKind) {
 		return null;
 	}
 }
-// src-electron/platform/mcp/withmate-memory-runtime-client.ts
-var WithMateMemoryRuntimeExchangeError = class extends Error {
+function normalizeAgentRuntimeApiBaseUrl(value) {
+	try {
+		const url = new URL(value.trim());
+		if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.username || url.password) return null;
+		url.pathname = url.pathname.replace(/\/+$/, "");
+		url.search = "";
+		url.hash = "";
+		return url.toString().replace(/\/$/, "");
+	} catch {
+		return null;
+	}
+}
+var AgentRuntimeExchangeError = class extends Error {
 	dispatched;
 	discoveryCode;
 	constructor(message, dispatched, options) {
 		super(message, options);
-		this.name = "WithMateMemoryRuntimeExchangeError";
+		this.name = "AgentRuntimeExchangeError";
 		this.dispatched = dispatched;
 		this.discoveryCode = options?.discoveryCode;
 	}
 };
-function usageError(message) {
-	return createMemoryErrorResponse({
-		code: "WITHMATE_MEMORY_CLI_USAGE",
-		message,
-		retryable: false,
-		conversationMayContinue: true,
-		effect: "none"
-	});
-}
-function transportError(message) {
-	return createMemoryErrorResponse({
-		code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
-		message,
-		effect: "none"
-	});
-}
 function readRequiredEnvValue(env, name) {
-	const value = env[name]?.trim();
-	return value ? value : void 0;
+	return env[name]?.trim() || void 0;
 }
 function resolveAdapterSecret(env, adapter) {
-	return readRequiredEnvValue(env, adapter === "cli" ? "WITHMATE_MEMORY_OPERATOR_API_SECRET" : "WITHMATE_MEMORY_MCP_API_SECRET");
+	return readRequiredEnvValue(env, adapter === "cli" ? "WITHMATE_AGENT_RUNTIME_CLI_API_SECRET" : "WITHMATE_AGENT_RUNTIME_MCP_API_SECRET");
 }
 function buildConnectionFromValues(input) {
-	const runtimeGenerationId = input.runtimeGenerationId ?? input.runtimeInstanceId;
-	if (!input.apiSecret || !input.adapterSecret || !runtimeGenerationId) return null;
+	if (!input.apiSecret || !input.adapterSecret || !input.applicationInstanceId || !input.runtimeGenerationId) return null;
 	return {
 		api: {
 			baseUrl: input.baseUrl,
 			apiSecret: input.apiSecret,
-			...input.applicationInstanceId ? { applicationInstanceId: input.applicationInstanceId } : {},
-			runtimeGenerationId,
-			runtimeInstanceId: runtimeGenerationId
+			applicationInstanceId: input.applicationInstanceId,
+			runtimeGenerationId: input.runtimeGenerationId
 		},
 		credential: {
 			adapter: input.adapter,
@@ -7616,64 +7559,20 @@ function buildConnectionFromValues(input) {
 		}
 	};
 }
-async function readDiscoveryProjection(pointerFilePath, adapter, read) {
-	const first = JSON.parse(await read(pointerFilePath, "utf8"));
-	if (first.schemaVersion === "withmate-memory-discovery-v2") return first;
-	if (first.schemaVersion !== "withmate-memory-discovery-pair-pointer-v1" || typeof first.runtimeInstanceId !== "string" || !first.runtimeInstanceId.trim()) return null;
-	const generationFilePath = path.join(path.dirname(pointerFilePath), buildWithMateMemoryDiscoveryGenerationFileName(adapter, first.runtimeInstanceId));
-	const document = JSON.parse(await read(generationFilePath, "utf8"));
-	return document.runtimeInstanceId === first.runtimeInstanceId ? document : null;
-}
-var MEMORY_RUNTIME_KIND = "memory";
-var KNOWN_MEMORY_DISCOVERY_KEYS = /* @__PURE__ */ new Set([
-	"schemaVersion",
-	"adapter",
-	"baseUrl",
-	"apiSecret",
-	"adapterSecret",
-	"applicationInstanceId",
-	"runtimeGenerationId",
-	"runtimeInstanceId",
-	"buildChannel",
-	"publishedAt"
-]);
-var KNOWN_CREDENTIAL_ENVELOPE_KEYS = /* @__PURE__ */ new Set([
-	"schemaVersion",
-	"applicationInstanceId",
-	"runtimeKind",
-	"adapterKind",
-	"runtimeGenerationId",
-	"credential"
-]);
-function isRecord(value) {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasOnlyKnownKeys(value, keys) {
-	return Object.keys(value).every((key) => keys.has(key));
-}
-function isBuildChannel(value) {
-	return value === "installed" || value === "development" || value === "visual-check" || value === "unknown";
-}
-function parseRegistryMemoryCredential(serialized, record, adapter) {
-	let value;
+function parseRegistryAgentCredential(serialized, record, adapter) {
 	try {
-		value = JSON.parse(serialized);
+		const value = JSON.parse(serialized);
+		if (!value || value.schemaVersion !== "withmate-runtime-credential-v1" || value.applicationInstanceId !== record.entry.applicationInstanceId || value.runtimeKind !== "agent-runtime" || value.adapterKind !== adapter || value.runtimeGenerationId !== record.entry.runtimeGenerationId) return null;
+		const doc = value.credential;
+		if (!doc || doc.schemaVersion !== "withmate-agent-runtime-discovery-v1" || doc.adapter !== adapter || doc.applicationInstanceId !== record.entry.applicationInstanceId || doc.runtimeGenerationId !== record.entry.runtimeGenerationId || typeof doc.baseUrl !== "string" || typeof doc.apiSecret !== "string" || typeof doc.adapterSecret !== "string") return null;
+		const baseUrl = normalizeAgentRuntimeApiBaseUrl(doc.baseUrl);
+		return baseUrl ? buildConnectionFromValues({
+			...doc,
+			baseUrl
+		}) : null;
 	} catch {
 		return null;
 	}
-	if (!isRecord(value) || !hasOnlyKnownKeys(value, KNOWN_CREDENTIAL_ENVELOPE_KEYS) || value.schemaVersion !== "withmate-runtime-credential-v1" || value.applicationInstanceId !== record.entry.applicationInstanceId || value.runtimeKind !== MEMORY_RUNTIME_KIND || value.adapterKind !== adapter || value.runtimeGenerationId !== record.entry.runtimeGenerationId || !isRecord(value.credential) || !hasOnlyKnownKeys(value.credential, KNOWN_MEMORY_DISCOVERY_KEYS)) return null;
-	const document = value.credential;
-	if (document.schemaVersion !== "withmate-memory-discovery-v2" || document.adapter !== adapter || document.applicationInstanceId !== record.entry.applicationInstanceId || document.runtimeGenerationId !== record.entry.runtimeGenerationId || document.runtimeInstanceId !== record.entry.runtimeGenerationId || typeof document.baseUrl !== "string" || document.buildChannel !== void 0 && document.buildChannel !== record.entry.buildChannel) return null;
-	const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
-	if (!baseUrl) return null;
-	return buildConnectionFromValues({
-		adapter,
-		baseUrl,
-		apiSecret: typeof document.apiSecret === "string" ? document.apiSecret.trim() : void 0,
-		adapterSecret: typeof document.adapterSecret === "string" ? document.adapterSecret.trim() : void 0,
-		applicationInstanceId: record.entry.applicationInstanceId,
-		runtimeGenerationId: record.entry.runtimeGenerationId
-	});
 }
 function buildRegistrySafeCandidate(record, now, active, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
 	return {
@@ -7692,37 +7591,6 @@ function candidateMatchesSelector(candidate, applicationInstanceId, runtimeGener
 function toSafeCandidates(candidates) {
 	return candidates.map(({ safe }) => safe);
 }
-function candidateDedupeKey(candidate) {
-	if (candidate.safe.applicationInstanceId) return `${candidate.safe.applicationInstanceId}\0${candidate.safe.runtimeGenerationId}`;
-	const baseUrl = candidate.connection?.api.baseUrl ?? "";
-	return `legacy\0${candidate.safe.runtimeGenerationId}\0${baseUrl}`;
-}
-function dedupeCandidates(candidates) {
-	const result = /* @__PURE__ */ new Map();
-	for (const candidate of candidates) {
-		let key = candidateDedupeKey(candidate);
-		if (candidate.safe.source === "legacy") {
-			const registryMatch = candidates.find((other) => other.safe.source === "registry" && other.safe.runtimeGenerationId === candidate.safe.runtimeGenerationId && other.connection?.api.baseUrl === candidate.connection?.api.baseUrl && (candidate.safe.applicationInstanceId === null || other.safe.applicationInstanceId === candidate.safe.applicationInstanceId));
-			if (registryMatch) key = candidateDedupeKey(registryMatch);
-		}
-		const existing = result.get(key);
-		if (!existing) {
-			result.set(key, candidate);
-			continue;
-		}
-		if (existing.safe.source === "legacy" && candidate.safe.source === "registry") result.set(key, {
-			safe: candidate.safe,
-			connection: candidate.connection ?? existing.connection,
-			credentialUnavailable: candidate.connection === null && existing.connection === null
-		});
-		else if (existing.safe.source === "registry" && candidate.safe.source === "legacy" && existing.connection === null) result.set(key, {
-			safe: existing.safe,
-			connection: candidate.connection,
-			credentialUnavailable: candidate.connection === null
-		});
-	}
-	return [...result.values()];
-}
 function discoveryError(code, candidates) {
 	return {
 		kind: "error",
@@ -7730,7 +7598,7 @@ function discoveryError(code, candidates) {
 		candidates: toSafeCandidates(candidates)
 	};
 }
-function mapWithMateMemoryDiscoveryCode(code) {
+function mapAgentRuntimeDiscoveryCode(code) {
 	switch (code) {
 		case "runtime_instance_mismatch": return "WITHMATE_RUNTIME_INSTANCE_MISMATCH";
 		case "runtime_generation_changed": return "WITHMATE_RUNTIME_GENERATION_CHANGED";
@@ -7743,27 +7611,26 @@ function mapWithMateMemoryDiscoveryCode(code) {
 		case "runtime_unavailable": return "WITHMATE_RUNTIME_UNAVAILABLE";
 	}
 }
-async function resolveWithMateMemoryApi(options) {
+async function resolveAgentRuntimeApi(options) {
 	const env = options.env ?? process.env;
 	const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
-	const envApplicationInstanceId = readRequiredEnvValue(env, WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV);
-	const envRuntimeGenerationId = readRequiredEnvValue(env, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV);
+	const envApplicationInstanceId = readRequiredEnvValue(env, WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV);
+	const envRuntimeGenerationId = readRequiredEnvValue(env, WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV);
 	if (bindingRequired && (!envApplicationInstanceId || !envRuntimeGenerationId)) return discoveryError("runtime_selector_invalid", []);
 	const applicationInstanceId = bindingRequired ? envApplicationInstanceId : options.applicationInstanceId ?? envApplicationInstanceId;
 	const runtimeGenerationId = bindingRequired ? envRuntimeGenerationId : options.runtimeGenerationId ?? envRuntimeGenerationId;
 	if (applicationInstanceId && !isUuid(applicationInstanceId) || runtimeGenerationId && !isUuid(runtimeGenerationId) || runtimeGenerationId && !applicationInstanceId) return discoveryError("runtime_selector_invalid", []);
-	const explicitApiUrl = options.apiUrl ?? env.WITHMATE_MEMORY_API_URL?.trim();
+	const explicitApiUrl = options.apiUrl ?? env.WITHMATE_AGENT_RUNTIME_API_URL?.trim();
 	if (explicitApiUrl) {
-		const baseUrl = normalizeWithMateMemoryApiBaseUrl(explicitApiUrl);
+		const baseUrl = normalizeAgentRuntimeApiBaseUrl(explicitApiUrl);
 		if (!baseUrl) return discoveryError("runtime_selector_invalid", []);
 		const connection = buildConnectionFromValues({
 			adapter: options.adapter,
 			baseUrl,
-			apiSecret: readRequiredEnvValue(env, "WITHMATE_MEMORY_API_SECRET"),
+			apiSecret: readRequiredEnvValue(env, "WITHMATE_AGENT_RUNTIME_API_SECRET"),
 			adapterSecret: resolveAdapterSecret(env, options.adapter),
 			applicationInstanceId,
-			runtimeGenerationId,
-			runtimeInstanceId: readRequiredEnvValue(env, "WITHMATE_MEMORY_RUNTIME_INSTANCE_ID")
+			runtimeGenerationId
 		});
 		if (!connection || bindingRequired && !connection.api.applicationInstanceId) return discoveryError("runtime_credential_unavailable", []);
 		const candidate = {
@@ -7791,9 +7658,9 @@ async function resolveWithMateMemoryApi(options) {
 	try {
 		const snapshot = await listRuntimeDiscoveryRegistryEntries(registryRootDirectoryPath);
 		for (const record of snapshot.records) {
-			if (record.entry.schemaVersion !== "withmate-runtime-discovery-entry-v1" || record.entry.runtimeKind !== MEMORY_RUNTIME_KIND) continue;
+			if (record.entry.schemaVersion !== "withmate-runtime-discovery-entry-v1" || record.entry.runtimeKind !== "agent-runtime") continue;
 			const credential = await readRuntimeDiscoveryCredential(record, options.adapter);
-			const connection = credential === null ? null : parseRegistryMemoryCredential(credential, record, options.adapter);
+			const connection = credential === null ? null : parseRegistryAgentCredential(credential, record, options.adapter);
 			const fresh = getRuntimeDiscoveryLeaseState(record.entry, now, staleThresholdMs) === "fresh";
 			registryCandidates.push({
 				safe: buildRegistrySafeCandidate(record, now, fresh, staleThresholdMs),
@@ -7813,52 +7680,7 @@ async function resolveWithMateMemoryApi(options) {
 			candidate.safe.active = false;
 		}
 	}
-	const legacyCandidates = [];
-	if (!bindingRequired) {
-		const read = options.readFile ?? readFile;
-		const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
-		const legacyDiscoveryFilePath = options.legacyDiscoveryFilePath ?? options.discoveryFilePath ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env, options.adapter));
-		try {
-			const document = await readDiscoveryProjection(legacyDiscoveryFilePath, options.adapter, read);
-			if (document?.schemaVersion === "withmate-memory-discovery-v2" && document.adapter === options.adapter && typeof document.baseUrl === "string") {
-				const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
-				const legacyGeneration = typeof document.runtimeGenerationId === "string" ? document.runtimeGenerationId.trim() : typeof document.runtimeInstanceId === "string" ? document.runtimeInstanceId.trim() : void 0;
-				const legacyApplication = typeof document.applicationInstanceId === "string" ? document.applicationInstanceId.trim() : void 0;
-				if (baseUrl && legacyGeneration && (!applicationInstanceId || legacyApplication === applicationInstanceId) && (!runtimeGenerationId || legacyGeneration === runtimeGenerationId)) {
-					const connection = buildConnectionFromValues({
-						adapter: options.adapter,
-						baseUrl,
-						apiSecret: typeof document.apiSecret === "string" ? document.apiSecret.trim() : void 0,
-						adapterSecret: typeof document.adapterSecret === "string" ? document.adapterSecret.trim() : void 0,
-						applicationInstanceId: legacyApplication,
-						runtimeGenerationId: legacyGeneration
-					});
-					if (connection) {
-						let active = false;
-						try {
-							active = await verifyRuntimeIdentity(connection.api, fetchImpl, signal);
-						} catch {
-							active = false;
-						}
-						legacyCandidates.push({
-							connection,
-							credentialUnavailable: false,
-							safe: {
-								source: "legacy",
-								applicationInstanceId: legacyApplication ?? null,
-								runtimeGenerationId: legacyGeneration,
-								buildChannel: isBuildChannel(document.buildChannel) ? document.buildChannel : "unknown",
-								pid: null,
-								leaseState: "legacy",
-								active
-							}
-						});
-					}
-				}
-			}
-		} catch {}
-	}
-	const allCandidates = dedupeCandidates([...registryCandidates, ...legacyCandidates]);
+	const allCandidates = registryCandidates;
 	const matching = allCandidates.filter((candidate) => candidateMatchesSelector(candidate, applicationInstanceId, runtimeGenerationId));
 	if (applicationInstanceId && matching.length === 0) {
 		const sameApplication = allCandidates.filter((candidate) => candidate.safe.applicationInstanceId === applicationInstanceId);
@@ -7877,29 +7699,26 @@ async function resolveWithMateMemoryApi(options) {
 		candidates: toSafeCandidates(allCandidates)
 	};
 }
-async function callWithMateMemoryRuntime(connection, operation, options) {
-	const exchangeAdapter = operation.fallbackFrom === "mcp" ? "agent_cli_fallback" : connection.credential.adapter;
-	if (exchangeAdapter === "agent_cli_fallback" && connection.credential.adapter !== "mcp") throw new WithMateMemoryRuntimeExchangeError("Agent-bound CLI fallback requires the MCP runtime credential.", false, { discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE" });
+async function callAgentRuntime(connection, operation, options) {
 	let identityOutcome;
 	try {
 		identityOutcome = await verifyRuntimeIdentityOutcome(connection.api, options.fetch ?? fetch, options.signal);
 	} catch (error) {
-		throw new WithMateMemoryRuntimeExchangeError("Memory API runtime identity preflight failed.", false, {
+		throw new AgentRuntimeExchangeError("Agent runtime runtime identity preflight failed.", false, {
 			cause: error,
 			discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE"
 		});
 	}
-	if (!identityOutcome.ok) throw new WithMateMemoryRuntimeExchangeError("Memory API runtime identity could not be verified.", false, { discoveryCode: identityOutcome.discoveryCode });
+	if (!identityOutcome.ok) throw new AgentRuntimeExchangeError("Agent runtime runtime identity could not be verified.", false, { discoveryCode: identityOutcome.discoveryCode });
 	const nonce = randomBytes(16).toString("base64url");
-	const exchangeUrl = new URL(options.exchangePath ?? "/v1/exchange", connection.api.baseUrl);
+	const exchangeUrl = new URL(options.exchangePath ?? "/v1/agent-runtime-extension-exchange", connection.api.baseUrl);
 	const payload = JSON.stringify({
-		schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+		schemaVersion: WITHMATE_AGENT_RUNTIME_EXCHANGE_SCHEMA_VERSION,
 		apiSecret: connection.api.apiSecret,
-		adapter: exchangeAdapter,
+		adapter: connection.credential.adapter,
 		adapterSecret: connection.credential.adapterSecret,
 		...options.bindingReference ? { bindingReference: options.bindingReference } : {},
 		...options.turnCapability ? { turnCapability: options.turnCapability } : {},
-		...options.fallbackAdmissionSecret ? { fallbackAdmissionSecret: options.fallbackAdmissionSecret } : {},
 		operation
 	});
 	return new Promise((resolve, reject) => {
@@ -7909,7 +7728,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 		const fail = (message, cause, discoveryCode) => {
 			if (settled) return;
 			settled = true;
-			reject(new WithMateMemoryRuntimeExchangeError(message, dispatched, {
+			reject(new AgentRuntimeExchangeError(message, dispatched, {
 				...cause === void 0 ? {} : { cause },
 				...discoveryCode === void 0 ? {} : { discoveryCode }
 			}));
@@ -7925,27 +7744,26 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				headers: {
 					"Content-Type": "application/json",
 					...options.exchangePath === "/v1/agent-runtime-extension-exchange" ? { "Content-Length": Buffer.byteLength(payload, "utf8") } : {},
-					[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
-					[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: connection.api.runtimeGenerationId,
-					[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
-					...connection.api.applicationInstanceId ? { [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.api.applicationInstanceId } : {}
+					[WITHMATE_AGENT_RUNTIME_NONCE_HEADER]: nonce,
+					[WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
+					...connection.api.applicationInstanceId ? { [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.api.applicationInstanceId } : {}
 				},
 				signal: options.signal
 			}, (response) => {
 				if (!identityVerified) {
 					response.destroy();
 					request$1.destroy();
-					fail("Memory API returned a final response before runtime identity was verified.");
+					fail("Agent runtime returned a final response before runtime identity was verified.");
 					return;
 				}
 				const chunks = [];
 				response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-				response.on("error", (error) => fail("Memory API response failed.", error));
+				response.on("error", (error) => fail("Agent runtime response failed.", error));
 				response.on("end", () => {
 					if (settled) return;
 					const text = Buffer.concat(chunks).toString("utf8");
 					if (!text.trim()) {
-						fail("Memory API returned a non-JSON response.");
+						fail("Agent runtime returned a non-JSON response.");
 						return;
 					}
 					try {
@@ -7957,49 +7775,48 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 							value
 						});
 					} catch (error) {
-						fail("Memory API returned a non-JSON response.", error);
+						fail("Agent runtime returned a non-JSON response.", error);
 					}
 				});
 			});
 		} catch (error) {
-			fail("Memory API request could not be created.", error);
+			fail("Agent runtime request could not be created.", error);
 			return;
 		}
 		request$1.on("information", (information) => {
 			if (settled || identityVerified || information.statusCode !== 103) return;
-			const runtimeInstanceId = information.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
-			const runtimeGenerationId = information.headers[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER];
-			const applicationInstanceId = information.headers[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER];
-			const challenge = information.headers[WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER];
-			const expected = createWithMateMemoryRuntimeChallenge(connection.api.apiSecret, connection.api.runtimeGenerationId, nonce);
-			if (runtimeInstanceId !== connection.api.runtimeGenerationId || runtimeGenerationId !== void 0 && runtimeGenerationId !== connection.api.runtimeGenerationId || connection.api.applicationInstanceId && runtimeGenerationId !== connection.api.runtimeGenerationId || connection.api.applicationInstanceId && applicationInstanceId !== connection.api.applicationInstanceId) {
+			const runtimeGenerationId = information.headers[WITHMATE_AGENT_RUNTIME_GENERATION_HEADER];
+			const applicationInstanceId = information.headers[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER];
+			const challenge = information.headers[WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER];
+			const expected = createAgentRuntimeChallenge(connection.api.apiSecret, connection.api.runtimeGenerationId, nonce);
+			if (runtimeGenerationId !== void 0 && runtimeGenerationId !== connection.api.runtimeGenerationId || connection.api.applicationInstanceId && runtimeGenerationId !== connection.api.runtimeGenerationId || connection.api.applicationInstanceId && applicationInstanceId !== connection.api.applicationInstanceId) {
 				request$1.destroy();
 				const discoveryCode = connection.api.applicationInstanceId && applicationInstanceId !== connection.api.applicationInstanceId ? "WITHMATE_RUNTIME_INSTANCE_MISMATCH" : "WITHMATE_RUNTIME_GENERATION_CHANGED";
-				fail("Memory API runtime identity could not be verified.", void 0, discoveryCode);
+				fail("Agent runtime runtime identity could not be verified.", void 0, discoveryCode);
 				return;
 			}
 			if (challenge !== expected) {
 				request$1.destroy();
-				fail("Memory API runtime identity challenge could not be verified.", void 0, "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE");
+				fail("Agent runtime runtime identity challenge could not be verified.", void 0, "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE");
 				return;
 			}
 			identityVerified = true;
 			dispatched = true;
 			request$1.end(payload);
 		});
-		request$1.on("error", (error) => fail("Memory API request failed.", error));
-		options.signal.addEventListener("abort", () => fail("Memory API request was aborted."), { once: true });
+		request$1.on("error", (error) => fail("Agent runtime request failed.", error));
+		options.signal.addEventListener("abort", () => fail("Agent runtime request was aborted."), { once: true });
 		try {
 			request$1.flushHeaders();
 		} catch (error) {
 			request$1.destroy();
-			fail("Memory API request could not be dispatched.", error);
+			fail("Agent runtime request could not be dispatched.", error);
 		}
 	});
 }
 function resolveAgentRuntimeBindingReference(env = process.env) {
 	const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
-	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw usageError("WithMate provider execution requires its runtime binding reference.");
+	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw new Error("WithMate provider execution requires its runtime binding reference.");
 	return reference || void 0;
 }
 function resolveAgentRuntimeTurnCapability(env = process.env) {
@@ -8017,29 +7834,27 @@ async function verifyRuntimeIdentityOutcome(connection, fetchImpl, signal) {
 		discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE"
 	};
 	const text = await response.text();
-	if (!text.trim()) throw transportError("Memory API returned a non-JSON response.");
+	if (!text.trim()) throw new Error("Agent runtime returned a non-JSON response.");
 	let status;
 	try {
 		status = JSON.parse(text);
 	} catch {
-		throw transportError("Memory API returned a non-JSON response.");
+		throw new Error("Agent runtime returned a non-JSON response.");
 	}
-	const expectedLegacyChallenge = createHmac("sha256", connection.apiSecret).update(nonce, "utf8").digest("base64url");
 	if (connection.applicationInstanceId && status.applicationInstanceId !== connection.applicationInstanceId) return {
 		ok: false,
 		discoveryCode: "WITHMATE_RUNTIME_INSTANCE_MISMATCH"
 	};
-	if (status.runtimeInstanceId !== connection.runtimeGenerationId || status.runtimeGenerationId !== void 0 && status.runtimeGenerationId !== connection.runtimeGenerationId || connection.applicationInstanceId && status.runtimeGenerationId !== connection.runtimeGenerationId) return {
+	if (status.runtimeGenerationId !== void 0 && status.runtimeGenerationId !== connection.runtimeGenerationId || connection.applicationInstanceId && status.runtimeGenerationId !== connection.runtimeGenerationId) return {
 		ok: false,
 		discoveryCode: "WITHMATE_RUNTIME_GENERATION_CHANGED"
 	};
-	if (status.challenge?.nonce !== nonce || status.challenge.hmacSha256 !== expectedLegacyChallenge) return {
+	if (status.challenge?.nonce !== nonce) return {
 		ok: false,
 		discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE"
 	};
-	if (!connection.applicationInstanceId) return { ok: true };
-	const expectedOwnerChallenge = createWithMateMemoryRuntimeOwnerChallenge(connection.apiSecret, connection.applicationInstanceId, connection.runtimeGenerationId, nonce);
-	return status.challenge.ownerHmacSha256 === expectedOwnerChallenge ? { ok: true } : {
+	const expectedOwnerChallenge = createAgentRuntimeOwnerChallenge(connection.apiSecret, connection.applicationInstanceId, connection.runtimeGenerationId, nonce);
+	return status.challenge?.ownerHmacSha256 === expectedOwnerChallenge ? { ok: true } : {
 		ok: false,
 		discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE"
 	};
@@ -8080,19 +7895,19 @@ async function callSessionGraphRuntime(operation, body, deps) {
 		const resolution = deps.connection ? {
 			kind: "selected",
 			connection: deps.connection
-		} : await resolveWithMateMemoryApi({
+		} : await resolveAgentRuntimeApi({
 			...deps,
 			adapter: "mcp",
 			signal: controller.signal
 		});
 		if (resolution.kind === "error") return {
 			ok: false,
-			code: mapWithMateMemoryDiscoveryCode(resolution.code),
+			code: mapAgentRuntimeDiscoveryCode(resolution.code),
 			effect: "none",
 			candidates: resolution.candidates
 		};
 		dispatched = true;
-		const response = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(resolution.connection, {
+		const response = await (deps.runtimeCall ?? callAgentRuntime)(resolution.connection, {
 			method: "POST",
 			path: SESSION_GRAPH_RUNTIME_OPERATION_PATHS[operation],
 			body
@@ -8104,7 +7919,7 @@ async function callSessionGraphRuntime(operation, body, deps) {
 		});
 		return response.value && typeof response.value === "object" && !Array.isArray(response.value) ? response.value : createSessionGraphTransportError(operation === "apply" ? "unknown" : "none");
 	} catch (cause) {
-		const wasDispatched = cause instanceof WithMateMemoryRuntimeExchangeError ? cause.dispatched : dispatched;
+		const wasDispatched = cause instanceof AgentRuntimeExchangeError ? cause.dispatched : dispatched;
 		return createSessionGraphTransportError(operation === "apply" && wasDispatched ? "unknown" : "none");
 	} finally {
 		clearTimeout(timeout);
@@ -8140,7 +7955,7 @@ Commands:
 
 Connection options:
   --api-url <loopback-url>
-  --discovery-file <path>
+
   --instance <application-instance-id>
   --generation <runtime-generation-id>
 
@@ -8185,7 +8000,6 @@ async function parseWithMateSessionGraphCliArgs(args, deps = {}) {
 				throw new SessionGraphCliUsageError("Input must contain valid JSON.");
 			}
 		} else if (option === "--api-url") connection.apiUrl = takeValue();
-		else if (option === "--discovery-file") connection.discoveryFilePath = takeValue();
 		else if (option === "--instance") connection.applicationInstanceId = takeValue();
 		else if (option === "--generation") connection.runtimeGenerationId = takeValue();
 		else throw new SessionGraphCliUsageError(`Unknown option: ${option}`);

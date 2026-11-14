@@ -3,7 +3,6 @@ import type {
   LiveElicitationResponse,
   RunSessionTurnRequest,
 } from "../../src-shared/session/runtime-state.js";
-import type { SessionBackgroundActivityKind } from "../../src-shared/memory/session-memory-state.js";
 
 import type {
   CreateSessionRequest,
@@ -21,7 +20,6 @@ import {
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_GET_LIVE_SESSION_RUN_CHANNEL,
   WITHMATE_GET_PROVIDER_QUOTA_TELEMETRY_CHANNEL,
-  WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
@@ -226,15 +224,6 @@ export function registerSessionRuntimeHandlers(
         return null;
       }
       return deps.getSessionContextTelemetry(sessionId);
-    },
-  );
-  ipcMain.handle(
-    WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
-    (_event, sessionId: string, kind: SessionBackgroundActivityKind) => {
-      if (!sessionId || !kind) {
-        return null;
-      }
-      return deps.getSessionBackgroundActivity(sessionId, kind);
     },
   );
   ipcMain.handle(

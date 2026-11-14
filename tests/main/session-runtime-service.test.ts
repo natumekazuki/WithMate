@@ -27,7 +27,6 @@ import {
   isRetryableStaleThreadSessionError,
 } from "../../src-electron/session/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
-import type { CharacterAffectContext } from "../../src-shared/character-context/character-context-contract.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
@@ -41,14 +40,9 @@ import type { SessionTurnRecord } from "../../src-shared/session/session-turn-st
 import { SessionObservabilityService } from "../../src-electron/session/session-observability-service.js";
 import { createMainSessionRuntime } from "../../src-electron/app/main-session-runtime-assembly.js";
 import { createAuxiliarySessionRuntime } from "../../src-electron/auxiliary/auxiliary-session-runtime-assembly.js";
-import type { SessionBackgroundEvent } from "../../src-electron/session/session-background-events.js";
 import type { SessionRuntimeService as ProductionSessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
 import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
-import { BackgroundProductionRuntime } from "../../src-electron/providers/background-production-runtime.js";
-import { BackgroundExecutionService } from "../../src-electron/providers/background-execution-service.js";
 import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
-import { MemoryRecordingController } from "../../src-electron/memory/memory-recording-controller.js";
-import type { BackgroundSourceRef, CapturedBackgroundSource } from "../../src-shared/session/background-source-snapshot.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 
 async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
@@ -315,11 +309,11 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     sessions: { ...writes, clearCharacterAuthoringRuntimeState: (session) => session },
     resolution: { ...resolution, resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture" },
     provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter },
-    memory: { getAppSettings: deps.getAppSettings, onCharacterContextFailure() {} },
+    context: { getAppSettings: deps.getAppSettings },
     turn, live, interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
       resolvePendingApprovalRequest: deps.resolvePendingApprovalRequest, resolvePendingElicitationRequest: deps.resolvePendingElicitationRequest,
       invalidateProviderSessionThread: deps.invalidateProviderSessionThread },
-    notification: { onBackgroundEvent: deps.onBackgroundEvent, notifySessionTurnTerminal: deps.notifySessionTurnTerminal }, timing: {},
+    notification: { notifySessionTurnTerminal: deps.notifySessionTurnTerminal }, timing: {},
   });
   return createAuxiliarySessionRuntime({ owner, admission,
     auxiliary: { ...writes, getRuntimeSession: async (id) => deps.getSession(id), getSession: async (id) => {
@@ -332,151 +326,16 @@ function assembleBackgroundEventRuntime(kind: "main" | "auxiliary", deps: Sessio
     provider: { getProviderCodingAdapter: deps.getProviderCodingAdapter, resetProviderSessionThread: async () => {},
       resolveProviderSession: (session) => session, resolveSessionFolderPath: () => "C:/fixture",
       issueRuntimeBinding: async (session, provider) => new AgentRuntimeBindingRegistry().issueOrReuse({ actorSessionId: session.id, providerId: provider.id, operationGrants: [] }) },
-    memory: { getAppSettings: deps.getAppSettings }, turn, live,
+    context: { getAppSettings: deps.getAppSettings }, turn, live,
     interaction: { waitForApprovalDecision: deps.waitForApprovalDecision, waitForElicitationResponse: deps.waitForElicitationResponse,
       cancelApprovals: (id) => deps.resolvePendingApprovalRequest(id, "deny"), cancelElicitations: (id) => deps.resolvePendingElicitationRequest(id, { action: "cancel" }),
       invalidateProviderSessionThread: async (provider, id) => { await deps.invalidateProviderSessionThread(provider, id); } },
-    notification() {}, onBackgroundEvent: deps.onBackgroundEvent,
+    notification() {},
   });
 }
 
-// @test-value v2
-// kind = "contract"
-// claim = "MainとAuxiliaryの本番assemblyはcompleted・failed・canceledを終端保存成功後に発行し、会話の実行開始終了を渡す"
-// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "assemblyがイベントを未接続にする、保存完了前に発行する、またはOS通知と同様にcanceledを落とす"
-// observable = "保存gate前後のイベント列、terminalのphaseと保存済みSession、run_stateの順序"
-// observation_boundary = "consumer"
-// scope = "real SessionRuntimeService through main and auxiliary production assemblies"
-// lifecycle = "permanent"
-// distinction = "通知testはcanceledを対象外とし、assemblyのbackground callbackと保存成功境界を確認しない"
-// @end-test-value
-it("本番両assemblyは保存完了後だけ背景terminalを発行する", { timeout: 5000 }, async () => {
-  for (const kind of ["main", "auxiliary"] as const) for (const phase of ["completed", "failed", "canceled"] as const) {
-    const session = createSession({ id: `${kind}-source` });
-    const parent = createSession({ id: "parent", incarnationId: "parent-inc" });
-    const entered = queueGate(), release = queueGate();
-    const events: SessionBackgroundEvent[] = [];
-    let stored: Session | undefined;
-    const runtime = createProgressRuntime(session, async () => {
-      const result = createPartialResult({ assistantText: "saved response" });
-      if (phase !== "completed") throw new ProviderTurnError("provider stopped", result, phase === "canceled");
-      return result;
-    }, { appendTerminalSession: async (next) => { entered.resolve(); await release.promise; stored = next; return next; },
-      onBackgroundEvent: (event) => { events.push(event); },
-    }, (deps) => assembleBackgroundEventRuntime(kind, deps, parent));
-    const pending = runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
-    try {
-      await entered.promise;
-      assert.deepEqual(events.map((event) => event.kind), ["run_state"]);
-      assert.equal(events[0]!.kind === "run_state" && events[0]!.running, true);
-      release.resolve(); await pending; await runtime.waitForPendingRuns();
-      assert.deepEqual(events.map((event) => event.kind), ["run_state", "terminal_saved", "run_state"]);
-      const terminal = events[1]!;
-      assert.equal(terminal.kind === "terminal_saved" && terminal.terminal.phase, phase);
-      assert.equal(terminal.session, stored);
-      assert.equal(terminal.session.id, session.id);
-      assert.equal(events[2]!.kind === "run_state" && events[2]!.running, false);
-    } finally { release.resolve(); }
-  }
-});
 
-// @test-value v2
-// kind = "contract"
-// claim = "保存拒否では背景terminalを発行せず、背景callbackの同期throw・reject・未解決Promiseは主会話を失敗させず完了待ちへ加えない"
-// oracle = { type = "contract", ref = "docs/design/background-execution.md" }
-// fault = "保存失敗を保存済みとして公開するか、背景callbackの失敗や未完了を主会話へ伝播する"
-// observable = "主会話の保存phaseと返却、イベント列、保存拒否のreject"
-// observation_boundary = "consumer"
-// scope = "session runtime terminal persistence and best effort background callback"
-// lifecycle = "permanent"
-// distinction = "OS通知の失敗隔離testではbackground callbackと保存拒否によるevent不発火を扱わない"
-// @end-test-value
-it("背景callbackの失敗と未完了は会話保存から隔離し、保存拒否では発火しない", { timeout: 5000 }, async () => {
-  for (const callback of ["throw", "reject", "pending"] as const) {
-    const session = createSession(); const phases: string[] = []; const events: string[] = [];
-    const runtime = createProgressRuntime(session, async () => createPartialResult({ assistantText: "saved" }), {
-      appendTerminalSession(next, terminal) { phases.push(terminal.phase); return next; },
-      onBackgroundEvent(event) { events.push(event.kind); if (callback === "throw") throw new Error("background failure");
-        return callback === "reject" ? Promise.reject(new Error("background failure")) : new Promise<void>(() => {}); },
-    });
-    const result = await runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
-    await runtime.waitForPendingRuns();
-    assert.equal(result.runState, "idle"); assert.deepEqual(phases, ["completed"]);
-    assert.deepEqual(events, ["run_state", "terminal_saved", "run_state"]);
-  }
-  const session = createSession(); const events: string[] = [];
-  const runtime = createProgressRuntime(session, async () => createPartialResult({ assistantText: "not saved" }), {
-    appendTerminalSession: async () => { throw new Error("storage unavailable"); },
-    onBackgroundEvent: (event) => { events.push(event.kind); },
-  });
-  await assert.rejects(runtime.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" }), /storage unavailable/);
-  await runtime.waitForPendingRuns();
-  assert.deepEqual(events, ["run_state", "run_state"]);
-});
 
-// @test-value v2
-// kind = "contract"
-// claim = "本番両assemblyの保存成功イベントからMemory controllerとprepare/runOnceへ届き、背景失敗は主会話を変えず保存拒否では発火しない"
-// oracle = { type = "contract", ref = "docs/design/background-execution.md#memoryの自動発火と開始位置" }
-// fault = "実terminalイベントがcontrollerへ届かないか、背景失敗を通常保存へ伝播するか保存失敗から生成する"
-// observable = "主会話の返却結果と背景Agent数・scope、保存拒否時のAgent数0"
-// observation_boundary = "consumer"
-// scope = "real Main/Auxiliary SessionRuntimeService assemblies through production event/runtime/controller with fake saved-source port and Agent"
-// lifecycle = "permanent"
-// distinction = "controller単体のpublishでは本番SessionRuntimeServiceの保存境界からの接続を検査できない"
-// @end-test-value
-it("実保存イベントからMemoryを発火し背景失敗を会話から隔離する", { timeout: 5000 }, async () => {
-  for (const kind of ["main", "auxiliary"] as const) for (const rejectSave of [false, true]) {
-    const session = createSession({ id: `${kind}-auto-memory`, incarnationId: "inc" });
-    const parent = createSession({ id: "parent", incarnationId: "parent-inc" });
-    const source: BackgroundSourceRef = kind === "main" ? { kind, sessionId: session.id, incarnationId: "inc" }
-      : { kind, sessionId: session.id, incarnationId: "inc", parent: { sessionId: parent.id, incarnationId: getSessionIncarnationId(parent) } };
-    const captured = { history: { source: { ...source, ownerIdentity: "saved-owner" }, fromMessageSeq: 0, throughMessageSeq: 0 },
-      snapshot: { session, ownerIdentity: "saved-owner", turns: Array<CapturedBackgroundSource["snapshot"]["turns"][number]>() } } satisfies CapturedBackgroundSource;
-    const settings = normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } });
-    for (const purpose of ["character-memory", "target-memory"] as const) {
-      settings.backgroundExecutionSettings[purpose] = { selection: { providerId: "claude", modelId: "test" } };
-    }
-    settings.memoryRecordingFrequencies = { "character-memory": { turnCount: 1, idleMinutes: 5 }, "target-memory": { turnCount: 1, idleMinutes: 5 } };
-    const agents: Array<{ purpose: string; sourceKind: string }> = [];
-    const executions = new BackgroundExecutionService({ bindings: new AgentRuntimeBindingRegistry(), turns: new ProviderAgentRuntimeTurnCoordinator(), closeConnection() {} });
-    const authority = () => ({ userId: "local-user" as const, characterId: session.characterId!, allowedProjectIds: [] });
-    const background = new BackgroundProductionRuntime({ executions, getAppSettings: () => settings,
-      getModelCatalog: () => ({ providers: [{ id: "claude", label: "Claude", defaultModelId: "test", defaultReasoningEffort: "",
-        models: [{ id: "test", label: "Test", reasoningEfforts: [] }] }] }),
-      captureSource: async () => structuredClone(captured), resolveAuthority: authority,
-      sourceKinds: { "character-memory": [kind], "target-memory": [kind] },
-      runAgent(input) { agents.push({ purpose: input.scope.purpose, sourceKind: input.scope.history.source.kind }); throw new Error("background generation failed"); } });
-    const controller = new MemoryRecordingController({ runtime: background, getSettings: () => settings,
-      captureSource: async () => structuredClone(captured), resolveAuthority: authority });
-    background.start(); controller.start();
-    const normal = createProgressRuntime(session, async () => createPartialResult({ assistantText: "saved" }), {
-      appendTerminalSession(next, terminal) {
-        if (rejectSave) throw new Error("storage denied");
-        captured.history.throughMessageSeq = terminal.assistantMessageSeq;
-        captured.snapshot.turns = [{ id: terminal.turnId, phase: terminal.phase, completedAt: terminal.completedAt,
-          assistantMessageSeq: terminal.assistantMessageSeq, sessionId: kind === "main" ? session.id : null,
-          ...(kind === "auxiliary" ? { auxiliarySessionId: session.id } : {}) }];
-        return next;
-      },
-      onBackgroundEvent(event) { background.publish({ ...event, source }); },
-    }, (deps) => assembleBackgroundEventRuntime(kind, deps, parent));
-    try {
-      const pending = normal.runSessionTurn(session.id, { executionOptions: captureSessionExecutionOptions(session), userMessage: "please" });
-      if (rejectSave) await assert.rejects(pending, /storage denied/);
-      else assert.equal((await pending).runState, "idle");
-      await normal.waitForPendingRuns();
-      if (!rejectSave) {
-        await waitForCondition(() => agents.length === 2, "both Memory purposes did not start");
-        assert.deepEqual([...agents].sort((left, right) => left.purpose.localeCompare(right.purpose)), [
-          { purpose: "character-memory", sourceKind: kind }, { purpose: "target-memory", sourceKind: kind },
-        ]);
-      }
-      else { await new Promise<void>((done) => setImmediate(done)); assert.deepEqual(agents, []); }
-    } finally { background.stop(); }
-  }
-});
 
 function queuedReceipt(session: Session): SessionTurnQueueReceipt {
   const receipt: SessionTurnQueueReceipt = { sessionId: session.id, incarnationId: getSessionIncarnationId(session), id: "queue-1", requestId: "13d5a026-53b0-4d79-94bc-a63b7733ab10",
@@ -600,7 +459,7 @@ it("runtimeは取消・reset・終端で全approval callbackを回収する", as
 // @end-test-value
 it("承認の本文位置を受信時に固定してFIFOの交代まで保持する", async () => {
   const session = createSession();
-  const owner = new SessionObservabilityService({ onLiveSessionRunChanged() {}, onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {}, onSessionBackgroundActivityChanged() {} });
+  const owner = new SessionObservabilityService({ onLiveSessionRunChanged() {}, onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {},  });
   const approvals = new SessionApprovalService({ updateLiveSessionRun: (id, recipe) => owner.updateLiveSessionRun(id, recipe) });
   const before = "最初の操作の説明";
   const queuedAt = `${before}\n\n次の操作の説明`;
@@ -687,7 +546,7 @@ it("turn終端でprovider別のquota更新を予約する", async () => {
 // @end-test-value
 it("変更progressをMainの完全snapshotへ統合しcontrolでも保持する", async () => {
   const session = createSession();
-  const owner = new SessionObservabilityService({ onLiveSessionRunChanged() {}, onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {}, onSessionBackgroundActivityChanged() {} });
+  const owner = new SessionObservabilityService({ onLiveSessionRunChanged() {}, onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {},  });
   const step = (id: string, details = id): LiveSessionRunState["steps"][number] => ({ id, type: "command", status: "completed", summary: id, details });
   const runtime = createProgressRuntime(session, async (_input, progress) => {
     assert.ok(progress);
@@ -1907,17 +1766,17 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "contract"
-  // claim = "送信開始時に更新されたCharacter定義と当turnのAffectはClaudeの継続・明示resume appendへ反映する"
+  // claim = "送信開始時に更新されたCharacter定義snapshotはClaudeの継続・明示resume appendへ反映する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md; Issue #775; Issue #751 T751-3" }
   // fault = "runtimeが更新前Sessionをadapterへ渡す、またはClaudeが前turnのsystem appendを使い続ける"
-  // observable = "SDK queryのresume値・append内のturn固有定義とAffect、および保存snapshot identityとmetadata"
+  // observable = "SDK queryのresume値・append内のturn固有Character定義、および保存snapshot identityとmetadata"
   // observation_boundary = "public-boundary"
   // scope = "Main runtime send-time refresh through Claude SDK query boundary"
   // lifecycle = "permanent"
-  // impact = "Character編集とAffect更新が継続会話へ反映されず、ユーザーの設定に反する応答になる"
+  // impact = "Character編集が継続会話へ反映されず、ユーザーの設定に反する応答になる"
   // distinction = "canonical snapshot更新単体testとadapter単体testの間にあるruntime配線を、実composerとSDK query captureで確認する"
   // @end-test-value
-  it("送信時Character更新とAffectをClaudeの次turn・明示resume appendへ接続する", async () => {
+  it("送信時Character更新をClaudeの次turn・明示resume appendへ接続する", async () => {
     let stored = createSession({ provider: "claude", workspacePath: process.cwd(), approvalMode: "on-request" });
     let current = "old";
     const seen: Options[] = [];
@@ -1940,10 +1799,6 @@ describe("SessionRuntimeService", () => {
         theme: { main: "#112233", sub: "#445566" }, definitionMarkdown: `Definition ${current}`,
         definitionSha256: current, definitionByteSize: current.length, snapshotAt: "2026-10-03T00:00:00Z",
       } }),
-      resolveCharacterContext: () => ({ schemaVersion: "withmate-character-context-v1",
-        baseline: { definitionSha256: current, snapshotAt: "2026-10-03T00:00:00Z" },
-        affect: { mode: "active", effective: [{ contributingLayers: ["session"], targetType: "user", targetId: "user", family: null,
-          label: `Affect ${current}`, valence: 0.5, intensity: 0.5 }], evaluatedAt: "2026-10-03T00:00:00Z", version: current, updatedAt: null } }),
       resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
       getAppSettings: () => normalizeAppSettings({ codingProviderSettings: { claude: { enabled: true } } }),
       resolveProviderCatalog: () => ({ snapshot: { providers: [createProviderCatalog("claude")] }, provider: createProviderCatalog("claude") }),
@@ -1962,9 +1817,8 @@ describe("SessionRuntimeService", () => {
       const system = seen[index].systemPrompt;
       assert.ok(system && typeof system === "object" && !Array.isArray(system) && system.type === "preset");
       assert.match(system.append!, new RegExp(`Definition ${marker}`));
-      assert.match(system.append!, new RegExp(`Affect ${marker}`));
       for (const other of ["old", "new", "resumed"].filter((value) => value !== marker)) {
-        assert.doesNotMatch(system.append!, new RegExp(`Definition ${other}|Affect ${other}`));
+        assert.doesNotMatch(system.append!, new RegExp(`Definition ${other}`));
       }
       assert.equal(completed.characterRuntimeSnapshot?.characterId, "char-a");
       assert.equal(completed.characterRuntimeSnapshot?.name, "Saved name");
@@ -2181,23 +2035,21 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "各turnで最新Character contextをprovider promptへ渡し、completed Sessionのterminal commit後に通知して次turnを受け付ける"
+  // claim = "terminal保存ACK後に通知して次turnを受け付け、Timing解決は前turnの確定完了時刻を観測する"
   // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal / notifySessionTurnTerminalBestEffort" }
   // fault = "永続化前の通知により通知先が未保存状態を読むか、次turnが前turnの完了時刻を取得できない"
-  // observable = "providerへ渡されたturnごとのCharacter context、terminal commit後の通知順序、次turnの完了時刻snapshot"
+  // observable = "terminal保存ACK前後の通知数と呼出し順、次turn受付時のrun状態、Timing resolverの前回完了時刻snapshot"
   // observation_boundary = "public-boundary"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
   // @end-test-value
-  it("各turnで最新Character contextを取得し、terminal commit後に通知して次turnを受け付ける", async () => {
+  it("各turnの保存済み状態を用い、terminal commit後に通知して次turnを受け付ける", async () => {
     let storedSession = createSession();
-    let contextVersion = 0;
     let turnId = 0;
     let completionNotificationCount = 0;
     const callOrder: string[] = [];
     const timingCompletionSnapshots: Array<string | null> = [];
     let lastCommittedAt: string | null = null;
-    const composedCharacterContextVersions: string[] = [];
     const confirmedPreviewTexts: Array<string | null | undefined> = [];
     let terminalUpsertCount = 0;
     let terminalUpsertStarted = false;
@@ -2221,24 +2073,12 @@ describe("SessionRuntimeService", () => {
       async invalidateSessionThread() {},
       async invalidateAllSessionThreads() {},
       async runSessionTurn(input) {
-        if (input.characterContext) composedCharacterContextVersions.push(input.characterContext.affect.version);
         return {
           ...createPartialResult({ assistantText: "完了" }),
           lastNonEmptyAssistantMessageText: "完了",
         };
       },
     };
-    const context = (version: number): CharacterAffectContext => ({
-      schemaVersion: "withmate-character-context-v1",
-      baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
-      affect: {
-        mode: "active",
-        effective: [],
-        evaluatedAt: "2026-08-09T00:00:00.000Z",
-        version: `affect-v1-${version}`,
-        updatedAt: "2026-08-09T00:00:00.000Z",
-      },
-    });
 
     const service = createTestRuntime({
       getSession(sessionId) {
@@ -2283,10 +2123,6 @@ describe("SessionRuntimeService", () => {
       resolveConversationTimingContext() {
         timingCompletionSnapshots.push(lastCommittedAt);
         return null;
-      },
-      resolveCharacterContext() {
-        contextVersion += 1;
-        return context(contextVersion);
       },
       createSessionTurn(input) {
         turnId += 1;
@@ -2338,8 +2174,6 @@ describe("SessionRuntimeService", () => {
     callOrder.push("second-returned");
 
 
-    assert.equal(contextVersion, 2);
-    assert.deepEqual(composedCharacterContextVersions, ["affect-v1-1", "affect-v1-2"]);
     assert.equal(timingCompletionSnapshots[0], null);
     assert.equal(timingCompletionSnapshots[1], firstCompletedAt);
     for (const [turnId, returned] of [

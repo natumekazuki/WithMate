@@ -72,11 +72,6 @@ export function createWindowApi(
     openSettingsWindow() {
       return ipcRenderer.invoke(channels.WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL);
     },
-    openMemoryV6ReviewWindow() {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
-      );
-    },
     openCharacterEditorWindow(characterId) {
       return ipcRenderer.invoke(
         channels.WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,

@@ -1,6 +1,4 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { BackgroundExecutionSettings, type BackgroundExecutionSettingsProps } from "./BackgroundExecutionSettings.js";
-import { parseMemoryRecordingFrequencies } from "../../src-shared/settings/background-settings.js";
 import type { ModelCatalogSnapshot } from "../../src-shared/settings/model-catalog.js";
 import type { ModelAvailabilitySettings } from "../../src-shared/settings/model-availability.js";
 import { ProviderModelSettings } from "./provider-model-settings.js";
@@ -13,15 +11,11 @@ import {
   isPreviewWheelZoomStep,
 } from "../../src-shared/settings/provider-settings-state.js";
 import type { KeyboardShortcutSettings } from "../../src-shared/settings/keyboard-shortcut-state.js";
-import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import {
-  getMemoryFileQuotaMegabytes,
-  getMemoryFileQuotaMegabytesInputBounds,
   type HomeProviderSettingRow,
 } from "./settings-view-model.js";
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
-  SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL,
   SETTINGS_CHARACTER_DEFINITION_LABEL,
   SETTINGS_CONVERSATION_TIMING_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
@@ -30,8 +24,6 @@ import {
   SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP,
   SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL,
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
-  SETTINGS_MEMORY_FILE_QUOTA_HELP,
-  SETTINGS_MEMORY_FILE_QUOTA_LABEL,
   SETTINGS_OPEN_LOG_FOLDER_LABEL,
   SETTINGS_OPEN_CRASH_DUMP_FOLDER_LABEL,
   SETTINGS_PROVIDER_FILE_SETTINGS_HELP,
@@ -56,18 +48,11 @@ import { SettingsActionButton } from "./SettingsActionButton.js";
 import { SessionFolderCleanup } from "./SessionFolderCleanup.js";
 
 export type HomeSettingsContentProps = {
-  modelCatalog?: BackgroundExecutionSettingsProps["catalog"];
-  onChangeBackgroundPurpose: BackgroundExecutionSettingsProps["onChangePurpose"];
-  onChangeMemoryRecordingFrequencies: BackgroundExecutionSettingsProps["onChangeFrequencies"];
   settingsDraft: AppSettings;
   providerSettingRows: HomeProviderSettingRow[];
   modelDiscovery?: ModelCatalogSnapshot["discovery"];
   onChangeModelAvailability: (availability: ModelAvailabilitySettings) => void;
-  memoryV6Diagnostics: MemoryV6Diagnostics | null;
   settingsDraftLoaded: boolean;
-  memoryV6DiagnosticsLoadStatus: "loading" | "loaded" | "error";
-  memoryV6DiagnosticsLoadError: string;
-  onRetryMemoryV6Diagnostics: () => void;
   appSettingsLoadStatus: "loading" | "loaded" | "error";
   appSettingsLoadError: string;
   onRetryAppSettings: () => void;
@@ -81,7 +66,6 @@ export type HomeSettingsContentProps = {
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeCharacterDefinitionEnabled: (enabled: boolean) => void;
-  onChangeCharacterAffectContextEnabled: (enabled: boolean) => void;
   onChangeConversationTimingEnabled: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
   onChangePreviewWheelZoomStep: (value: number) => void;
@@ -91,7 +75,6 @@ export type HomeSettingsContentProps = {
   onChangeSessionApprovalNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
   onChangeToolCallPresenceEnabled: (enabled: boolean) => void;
-  onChangeMemoryFileQuotaMegabytes: (value: string) => void;
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
@@ -103,9 +86,6 @@ export type HomeSettingsContentProps = {
   onBrowseProviderInstructionRelativePath: (providerId: string) => void | Promise<void>;
   onOpenAppLogFolder: () => void | Promise<void>;
   onOpenCrashDumpFolder: () => void | Promise<void>;
-  onOpenMemoryV6Review: () => void | Promise<void>;
-  onInstallMemoryV6CliShim: () => void | Promise<void>;
-  onUninstallMemoryV6CliShim: () => void | Promise<void>;
   onDeleteSessionsLastActiveBefore: () => void | Promise<void>;
   onSaveSettings: () => void | Promise<void>;
 };
@@ -113,9 +93,6 @@ export type HomeSettingsContentProps = {
 type SettingsActionKey =
   | "open-logs"
   | "open-crash-dumps"
-  | "review-memory"
-  | "install-cli-shim"
-  | "uninstall-cli-shim"
   | `browse-root:${string}`
   | `browse-skill:${string}`
   | `browse-instruction:${string}`
@@ -129,12 +106,9 @@ function settingsActionsConflict(action: SettingsActionKey, pending: SettingsAct
   // Keep native file dialogs single-flight, including provider draft pickers.
   const opensFileDialog = (key: SettingsActionKey) =>
     key.startsWith("browse-");
-  const updatesCliShim = (key: SettingsActionKey) =>
-    key === "install-cli-shim" || key === "uninstall-cli-shim";
   return action === pending
     || (updatesSettingsOrSessions(action) && updatesSettingsOrSessions(pending))
-    || (opensFileDialog(action) && opensFileDialog(pending))
-    || (updatesCliShim(action) && updatesCliShim(pending));
+    || (opensFileDialog(action) && opensFileDialog(pending));
 }
 
 type PromptContextToggleProps = {
@@ -159,18 +133,11 @@ function PromptContextToggle({ id, label, checked, onChange }: PromptContextTogg
 }
 
 export function HomeSettingsContent({
-  modelCatalog = null,
-  onChangeBackgroundPurpose,
-  onChangeMemoryRecordingFrequencies,
   settingsDraft,
   providerSettingRows,
   modelDiscovery,
   onChangeModelAvailability,
-  memoryV6Diagnostics,
   settingsDraftLoaded,
-  memoryV6DiagnosticsLoadStatus,
-  memoryV6DiagnosticsLoadError,
-  onRetryMemoryV6Diagnostics,
   appSettingsLoadStatus,
   appSettingsLoadError,
   onRetryAppSettings,
@@ -184,7 +151,6 @@ export function HomeSettingsContent({
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeCharacterDefinitionEnabled,
-  onChangeCharacterAffectContextEnabled,
   onChangeConversationTimingEnabled,
   onChangeScrollToLatestOnSend,
   onChangePreviewWheelZoomStep,
@@ -194,7 +160,6 @@ export function HomeSettingsContent({
   onChangeSessionApprovalNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
   onChangeToolCallPresenceEnabled,
-  onChangeMemoryFileQuotaMegabytes,
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeProviderEnabled,
@@ -206,9 +171,6 @@ export function HomeSettingsContent({
   onBrowseProviderInstructionRelativePath,
   onOpenAppLogFolder,
   onOpenCrashDumpFolder,
-  onOpenMemoryV6Review,
-  onInstallMemoryV6CliShim,
-  onUninstallMemoryV6CliShim,
   onDeleteSessionsLastActiveBefore,
   onSaveSettings,
 }: HomeSettingsContentProps) {
@@ -227,10 +189,6 @@ export function HomeSettingsContent({
     }
   }, [modelProviderId]);
   const previewWheelZoomStepInvalid = invalidPreviewWheelZoomStep !== null;
-  let memoryRecordingFrequenciesInvalid = false;
-  try { parseMemoryRecordingFrequencies(settingsDraft.memoryRecordingFrequencies); } catch { memoryRecordingFrequenciesInvalid = true; }
-  const memoryFileQuotaMegabytes = getMemoryFileQuotaMegabytes(settingsDraft);
-  const memoryFileQuotaBounds = getMemoryFileQuotaMegabytesInputBounds();
   const runAction = async (action: SettingsActionKey, callback: () => void | Promise<void>) => {
     if ([...busyActionsRef.current].some((pending) => settingsActionsConflict(action, pending))) {
       return;
@@ -397,12 +355,7 @@ export function HomeSettingsContent({
                 checked={settingsDraft.characterDefinitionEnabled}
                 onChange={onChangeCharacterDefinitionEnabled}
               />
-              <PromptContextToggle
-                id="settings-prompt-context-character-affect"
-                label={SETTINGS_CHARACTER_AFFECT_CONTEXT_LABEL}
-                checked={settingsDraft.characterAffectContextEnabled}
-                onChange={onChangeCharacterAffectContextEnabled}
-              />
+
               <PromptContextToggle
                 id="settings-prompt-context-conversation-timing"
                 label={SETTINGS_CONVERSATION_TIMING_LABEL}
@@ -571,112 +524,11 @@ export function HomeSettingsContent({
           </> : null}
           </fieldset>
 
-          {settingsDraftLoaded ? <fieldset className="settings-app-settings-fieldset" disabled={appSettingsLoadStatus !== "loaded"}>
-            <BackgroundExecutionSettings settings={settingsDraft} catalog={modelCatalog}
-              onChangePurpose={onChangeBackgroundPurpose} onChangeFrequencies={onChangeMemoryRecordingFrequencies} />
-          </fieldset> : null}
+
           <details className="settings-section-card" open>
             <summary>{SETTINGS_DIAGNOSTICS_LABEL}</summary>
             <div className="settings-field">
-              <details className="settings-subsection" open>
-                <summary>Memory</summary>
-                <div className="settings-subsection-body">
-                  {memoryV6Diagnostics ? (
-                    <>
-                      <div className="settings-diagnostics-grid">
-                        <div className="settings-diagnostics-item">
-                          <span>Memory API</span>
-                          <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                          <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "Discovery Published" : "Discovery Unavailable"}</small>
-                        </div>
-                        <div className="settings-diagnostics-item">
-                          <span>CLI Shim</span>
-                          <strong>{memoryV6Diagnostics.cliShim.status}</strong>
-                          <small>{formatCliShimDetail(memoryV6Diagnostics)}</small>
-                        </div>
-                        <div className="settings-diagnostics-item settings-diagnostics-wide">
-                          <span>Last Error</span>
-                          <strong>
-                            {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
-                              ?? memoryV6Diagnostics.lastErrors[0]?.kind
-                              ?? "None"}
-                          </strong>
-                          {memoryV6Diagnostics.lastErrors.length > 0 ? <small>Review the application log for details.</small> : null}
-                        </div>
-                      </div>
-                      {memoryV6DiagnosticsLoadStatus === "loading" ? (
-                        <LoadingIndicator label="Refreshing Memory V6 diagnostics" inline />
-                      ) : null}
-                      {memoryV6DiagnosticsLoadStatus === "error" ? (
-                        <LoadError
-                          message={memoryV6DiagnosticsLoadError || "Could not refresh Memory V6 diagnostics."}
-                          onRetry={onRetryMemoryV6Diagnostics}
-                        />
-                      ) : null}
-                    </>
-                  ) : memoryV6DiagnosticsLoadStatus === "loading" ? (
-                    <LoadingIndicator label="Loading Memory V6 diagnostics" inline />
-                  ) : memoryV6DiagnosticsLoadStatus === "error" ? (
-                    <LoadError
-                      message={memoryV6DiagnosticsLoadError || "Could not load Memory V6 diagnostics."}
-                      onRetry={onRetryMemoryV6Diagnostics}
-                    />
-                  ) : (
-                    <p className="settings-empty-state">Diagnostics are unavailable.</p>
-                  )}
-                  <div className="settings-actions">
-                    <button
-                      className="launch-toggle"
-                      type="button"
-                      onClick={() => void runAction("review-memory", onOpenMemoryV6Review)}
-                      disabled={actionIsBlocked("review-memory")}
-                      aria-busy={actionIsBusy("review-memory")}
-                      aria-label={actionIsBusy("review-memory") ? "Opening Memory review" : "Review Memory"}
-                    >
-                      <ButtonContent
-                        busy={actionIsBusy("review-memory")}
-                        busyLabel="Opening Memory review."
-                      >
-                        Review Memory
-                      </ButtonContent>
-                    </button>
-                    <SettingsActionButton
-                      failure={settingsErrors.get("install-cli-shim")}
-                      actionLabel="Install CLI Shim"
-                      className="launch-toggle"
-                      type="button"
-                      onClick={() => void runAction("install-cli-shim", onInstallMemoryV6CliShim)}
-                      disabled={actionIsBlocked("install-cli-shim") || !memoryV6Diagnostics?.cliShim.supported}
-                      aria-busy={actionIsBusy("install-cli-shim")}
-                      aria-label={actionIsBusy("install-cli-shim") ? "Installing CLI shim" : "Install CLI Shim"}
-                    >
-                      <ButtonContent
-                        busy={actionIsBusy("install-cli-shim")}
-                        busyLabel="Installing CLI shim."
-                      >
-                        Install CLI Shim
-                      </ButtonContent>
-                    </SettingsActionButton>
-                    <SettingsActionButton
-                      failure={settingsErrors.get("uninstall-cli-shim")}
-                      actionLabel="Uninstall CLI Shim"
-                      className="launch-toggle"
-                      type="button"
-                      onClick={() => void runAction("uninstall-cli-shim", onUninstallMemoryV6CliShim)}
-                      disabled={actionIsBlocked("uninstall-cli-shim") || !canUninstallCliShim(memoryV6Diagnostics)}
-                      aria-busy={actionIsBusy("uninstall-cli-shim")}
-                      aria-label={actionIsBusy("uninstall-cli-shim") ? "Uninstalling CLI shim" : "Uninstall CLI Shim"}
-                    >
-                      <ButtonContent
-                        busy={actionIsBusy("uninstall-cli-shim")}
-                        busyLabel="Uninstalling CLI shim."
-                      >
-                        Uninstall CLI Shim
-                      </ButtonContent>
-                    </SettingsActionButton>
-                  </div>
-                </div>
-              </details>
+
               <details className="settings-subsection" open>
                 <summary>Application Logs</summary>
                 <div className="settings-subsection-body settings-actions">
@@ -744,21 +596,7 @@ export function HomeSettingsContent({
           <details className="settings-section-card" open>
             <summary>Storage Maintenance</summary>
             <div className="settings-field">
-              <label className="settings-provider-input">
-                <span>{SETTINGS_MEMORY_FILE_QUOTA_LABEL}</span>
-                <div className="settings-inline-input-row">
-                  <input
-                    type="number"
-                    min={memoryFileQuotaBounds.min}
-                    max={memoryFileQuotaBounds.max}
-                    step={64}
-                    value={memoryFileQuotaMegabytes}
-                    onChange={(event) => onChangeMemoryFileQuotaMegabytes(event.target.value)}
-                  />
-                  <span className="settings-inline-unit">MB</span>
-                </div>
-                <p className="settings-help">{SETTINGS_MEMORY_FILE_QUOTA_HELP}</p>
-              </label>
+
               <details className="settings-subsection" open>
                 <summary>{SETTINGS_DELETE_OLD_SESSIONS_LABEL}</summary>
                 <div className="settings-subsection-body">
@@ -819,7 +657,7 @@ export function HomeSettingsContent({
           className="launch-toggle"
           type="button"
           onClick={() => void runAction("save-settings", onSaveSettings)}
-          disabled={!settingsDirty || previewWheelZoomStepInvalid || memoryRecordingFrequenciesInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
+          disabled={!settingsDirty || previewWheelZoomStepInvalid || actionIsBlocked("save-settings") || appSettingsLoadStatus !== "loaded"}
           aria-busy={actionIsBusy("save-settings")}
           aria-label={actionIsBusy("save-settings") ? "Saving settings" : "Save Settings"}
         >
@@ -833,22 +671,4 @@ export function HomeSettingsContent({
       </div>
     </>
   );
-}
-
-function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
-  const shim = diagnostics.cliShim;
-  if (!shim.supported) {
-    return shim.status === "managed-by-installer" ? "Managed By Installer" : "Unsupported";
-  }
-
-  const pathStatus = shim.pathContainsShimDirectory ? "PATH Ready" : "PATH Missing";
-  return `${pathStatus}: ${shim.commandName}`;
-}
-
-function canUninstallCliShim(diagnostics: MemoryV6Diagnostics | null): boolean {
-  return diagnostics?.cliShim.supported === true && [
-    "installed",
-    "installed-path-missing",
-    "stale",
-  ].includes(diagnostics.cliShim.status);
 }

@@ -1,28 +1,30 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import test from "node:test";
+import { startAgentRuntimeApi, type StartAgentRuntimeApiOptions } from "../../src-electron/platform/agent-runtime/runtime-api.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/providers/agent-runtime-binding.js";
+import { ProviderAgentRuntimeTurnCoordinator } from "../../src-electron/providers/provider-agent-runtime-turn-coordinator.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  createMemoryV6HttpServer,
-  type MemoryV6HttpServerOptions,
-} from "../../src-electron/memory/memory-v6-http-server.js";
+  callAgentRuntime, resolveAgentRuntimeApi,
+  AgentRuntimeExchangeError,
+  type AgentRuntimeConnection,
+} from "../../src-electron/platform/agent-runtime/runtime-client.js";
 import {
-  callWithMateMemoryRuntime,
-  WithMateMemoryRuntimeExchangeError,
-  type WithMateMemoryRuntimeConnection,
-} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
-import {
-  createWithMateMemoryRuntimeChallenge,
+  createAgentRuntimeChallenge, createAgentRuntimeOwnerChallenge, WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER,
   WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
   WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES,
-  WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
-  WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
-  WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
-} from "../../src-electron/platform/memory/memory-runtime-exchange.js";
+  WITHMATE_AGENT_RUNTIME_GENERATION_HEADER,
+  WITHMATE_AGENT_RUNTIME_NONCE_HEADER,
+  WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER,
+} from "../../src-electron/platform/agent-runtime/runtime-exchange.js";
 
 const apiSecret = "extension-test-api";
 const adapterSecret = "extension-test-adapter";
-const generation = "extension-test-generation";
+const generation = "22222222-2222-4222-8222-222222222222";
+const applicationInstanceId = "11111111-1111-4111-8111-111111111111";
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -31,54 +33,39 @@ function deferred() {
   return { promise, resolve };
 }
 async function fixture(
-  route: NonNullable<MemoryV6HttpServerOptions["routeAgentRuntimeExtension"]>,
-  options: Partial<MemoryV6HttpServerOptions> = {},
+  route: NonNullable<StartAgentRuntimeApiOptions["routeAgentRuntimeExtension"]>,
+  options: Partial<StartAgentRuntimeApiOptions> = {},
 ) {
-  const server = createMemoryV6HttpServer({
-    service: {} as MemoryV6HttpServerOptions["service"],
-    apiSecret,
-    operatorApiSecret: adapterSecret,
-    mcpApiSecret: adapterSecret,
-    runtimeInstanceId: generation,
-    routeAgentRuntimeExtension: route,
-    ...options,
+  const directory = await mkdtemp(join(tmpdir(), "withmate-extension-"));
+  const server = await startAgentRuntimeApi({
+    applicationInstanceId, buildChannel: "development",
+    registryDirectoryPath: directory, runtimePathSecurity: async () => {},
+    agentRuntimeBindingRegistry: new AgentRuntimeBindingRegistry(), providerAgentRuntimeTurns: new ProviderAgentRuntimeTurnCoordinator(),
+    routeAgentRuntimeExtension: route, ...options,
   });
-  await server.start();
-  const address = server.address()!;
-  const connection: WithMateMemoryRuntimeConnection = {
-    api: {
-      baseUrl: `http://127.0.0.1:${address.port}`,
-      apiSecret,
-      runtimeInstanceId: generation,
-      runtimeGenerationId: generation,
-    },
-    credential: { adapter: "mcp", adapterSecret },
-  };
+  const resolved = await resolveAgentRuntimeApi({ env: {}, adapter: "mcp", registryRootDirectoryPath: directory,
+    applicationInstanceId, runtimeGenerationId: server.runtimeGenerationId });
+  if (resolved.kind !== "selected") { await server.stop(); throw new Error(JSON.stringify(resolved)); }
+  const connection = resolved.connection;
   return {
-    server,
+    server: { async stop() { await server.stop(); await rm(directory, { recursive: true, force: true }); } },
     connection,
-    call: (path: string, body: unknown = {}) =>
-      callWithMateMemoryRuntime(
-        connection,
-        { method: "POST", path, body },
-        {
-          signal: AbortSignal.timeout(5000),
-          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
-        },
-      ),
+    call: (path: string, body: unknown = {}) => callAgentRuntime(connection, { method: "POST", path, body },
+      { signal: AbortSignal.timeout(5000), exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH }),
   };
 }
+
 function rawCall(
-  connection: WithMateMemoryRuntimeConnection,
+  connection: AgentRuntimeConnection,
   path: string,
   padding: string,
   length: number | null = null,
 ) {
   const payload = JSON.stringify({
-    schemaVersion: "withmate-memory-runtime-exchange-v1",
-    apiSecret,
+    schemaVersion: "withmate-agent-runtime-exchange-v1",
+    apiSecret: connection.api.apiSecret,
     adapter: "mcp",
-    adapterSecret,
+    adapterSecret: connection.credential.adapterSecret,
     operation: { method: "POST", path, body: { padding } },
   });
   const nonce = "raw-capacity-test";
@@ -92,8 +79,9 @@ function rawCall(
         method: "POST",
         headers: {
           "content-type": "application/json",
-          [WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
-          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: generation,
+          [WITHMATE_AGENT_RUNTIME_NONCE_HEADER]: nonce,
+          [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
+          [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.api.applicationInstanceId,
           ...(length === null ? {} : { "content-length": length }),
         },
         signal: AbortSignal.timeout(5000),
@@ -119,8 +107,8 @@ function rawCall(
     request.on("information", (information) => {
       if (information.statusCode !== 103) return;
       assert.equal(
-        information.headers[WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER],
-        createWithMateMemoryRuntimeChallenge(apiSecret, generation, nonce),
+        information.headers[WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER],
+        createAgentRuntimeChallenge(connection.api.apiSecret, connection.api.runtimeGenerationId, nonce),
       );
       request.end(payload);
     });
@@ -130,10 +118,10 @@ function rawCall(
 
 // @test-value v2
 // kind = "contract"
-// claim = "小さいSession/Graph読取の5並列exchangeは同時受理され通常Memoryと同じ上限枠を共有する"
+// claim = "小さいSession/Graph読取の5並列exchangeは同時受理され共通の小要求上限枠を共有する"
 // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md#V7共有extensionの容量分類" }
 // fault = "小要求をglobal1件で拒否するか共通枠を迂回して上限を超える"
-// observable = "実HTTPの5同時dispatchと全成功、共有枠超過時429、解放後の成功"
+// observable = "実HTTPの5同時dispatchと全成功、6件目のAgentRuntimeExchangeError(dispatched=false)、解放後の成功"
 // observation_boundary = "public-boundary"
 // scope = "HTTP runtime clientとextension admission（application routeは待機を制御するfixture）"
 // lifecycle = "permanent"
@@ -169,13 +157,9 @@ test("five small Session and Graph calls share the existing normal request pool"
     await assert.rejects(
       runtime.call("/v1/session/self"),
       (error) =>
-        error instanceof WithMateMemoryRuntimeExchangeError &&
+        error instanceof AgentRuntimeExchangeError &&
         error.dispatched === false,
     );
-    const memory = await fetch(`${runtime.connection.api.baseUrl}/v1/unknown`, {
-      headers: { "x-withmate-memory-api-secret": apiSecret },
-    });
-    assert.equal(memory.status, 429);
     gate.resolve();
     assert.deepEqual(
       (await results).map((result) => result.status),
@@ -194,7 +178,7 @@ test("five small Session and Graph calls share the existing normal request pool"
 // claim = "大/長さ不明要求と小Glossary dispatchは同じ1枠を保持し小Session読取を不必要に拒否しない"
 // oracle = { type = "contract", ref = "docs/adr/022-repository-glossary-boundary.md#V7共有extensionの容量分類" }
 // fault = "小Glossaryを多重dispatchする、大要求の1枠を倍増する、または小Sessionへ大枠を要求する"
-// observable = "実HTTPのGlossary/large/unknown相互429、small Session成功、解放後の再受理"
+// observable = "Glossary保持中と不明長要求保持中の大要求exchange例外、Glossary要求の429拒否、small Session成功と解放後のGlossary成功"
 // observation_boundary = "public-boundary"
 // scope = "authenticated extensionのsmall/large容量とGlossary dispatch admission"
 // lifecycle = "permanent"
@@ -219,7 +203,7 @@ test("Glossary and large or unknown bodies retain their single shared slot", asy
     assert.equal((await runtime.call("/v1/glossary/get")).status, 429);
     await assert.rejects(
       runtime.call("/v1/session/get", { padding: "x".repeat(2000) }),
-      WithMateMemoryRuntimeExchangeError,
+      AgentRuntimeExchangeError,
     );
     assert.equal((await runtime.call("/v1/session/self")).status, 200);
     gate.resolve();
@@ -230,7 +214,7 @@ test("Glossary and large or unknown bodies retain their single shared slot", asy
     await entered.promise;
     await assert.rejects(
       runtime.call("/v1/session/get", { padding: "x".repeat(2000) }),
-      WithMateMemoryRuntimeExchangeError,
+      AgentRuntimeExchangeError,
     );
     assert.equal((await runtime.call("/v1/glossary/get")).status, 429);
     assert.equal((await runtime.call("/v1/session/self")).status, 200);
@@ -278,10 +262,10 @@ test("declared lengths never bypass body caps or runtime credentials", async () 
     );
     assert.equal(oversized.status, 413);
     assert.equal(
-      (oversized.value as { error: { code: string } }).error.code,
-      "MEMORY_REQUEST_TOO_LARGE",
+      (oversized.value as { code: string }).code,
+      "RUNTIME_REQUEST_TOO_LARGE",
     );
-    const denied = await callWithMateMemoryRuntime(
+    const denied = await callAgentRuntime(
       {
         ...runtime.connection,
         credential: { adapter: "mcp", adapterSecret: "wrong" },
@@ -311,8 +295,9 @@ test("declared lengths never bypass body caps or runtime credentials", async () 
             signal: AbortSignal.timeout(5000),
             headers: {
               "content-type": "application/json",
-              [WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
-              [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: generation,
+              [WITHMATE_AGENT_RUNTIME_NONCE_HEADER]: nonce,
+              [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]: runtime.connection.api.runtimeGenerationId,
+              [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]: runtime.connection.api.applicationInstanceId,
               ...(length === null ? {} : { "content-length": length }),
             },
           },
@@ -338,10 +323,10 @@ test("declared lengths never bypass body caps or runtime credentials", async () 
           if (information.statusCode !== 103) return;
           try {
             assert.equal(
-              information.headers[WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER],
-              createWithMateMemoryRuntimeChallenge(
-                apiSecret,
-                generation,
+              information.headers[WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER],
+              createAgentRuntimeChallenge(
+                runtime.connection.api.apiSecret,
+                runtime.connection.api.runtimeGenerationId,
                 nonce,
               ),
             );
@@ -392,21 +377,19 @@ test("extension length metadata precedes only the verified owner body", async ()
       )!;
       response.end(
         JSON.stringify({
-          runtimeInstanceId: generation,
+          applicationInstanceId, runtimeGenerationId: generation,
           challenge: {
             nonce,
-            hmacSha256: createHmac("sha256", apiSecret)
-              .update(nonce)
-              .digest("base64url"),
+            ownerHmacSha256: createAgentRuntimeOwnerChallenge(apiSecret, applicationInstanceId, generation, nonce),
           },
         }),
       );
       return;
     }
     declared = Number(request.headers["content-length"]);
-    assert.equal(request.headers["x-withmate-memory-api-secret"], undefined);
+    assert.equal(request.headers["x-withmate-agent-runtime-api-secret"], undefined);
     assert.equal(
-      request.headers["x-withmate-memory-operator-api-secret"],
+      request.headers["x-withmate-agent-runtime-cli-api-secret"],
       undefined,
     );
     request.on("data", (chunk) => {
@@ -414,25 +397,26 @@ test("extension length metadata precedes only the verified owner body", async ()
     });
     response.writeEarlyHints({
       link: `<${WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH}>; rel=preconnect`,
-      [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: generation,
-      [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: "forged",
+      [WITHMATE_AGENT_RUNTIME_GENERATION_HEADER]: generation,
+      [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_HEADER]: applicationInstanceId,
+      [WITHMATE_AGENT_RUNTIME_CHALLENGE_HEADER]: "forged",
     });
     response.end("{}");
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as import("node:net").AddressInfo).port;
-  const connection: WithMateMemoryRuntimeConnection = {
+  const connection: AgentRuntimeConnection = {
     api: {
       baseUrl: `http://127.0.0.1:${port}`,
       apiSecret,
       runtimeGenerationId: generation,
-      runtimeInstanceId: generation,
+      applicationInstanceId,
     },
     credential: { adapter: "mcp", adapterSecret },
   };
   try {
     await assert.rejects(
-      callWithMateMemoryRuntime(
+      callAgentRuntime(
         connection,
         { method: "POST", path: "/v1/session/self", body: { label: "日本語" } },
         {
@@ -441,12 +425,12 @@ test("extension length metadata precedes only the verified owner body", async ()
         },
       ),
       (error) =>
-        error instanceof WithMateMemoryRuntimeExchangeError &&
+        error instanceof AgentRuntimeExchangeError &&
         error.dispatched === false &&
         error.discoveryCode === "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE",
     );
     const payload = JSON.stringify({
-      schemaVersion: "withmate-memory-runtime-exchange-v1",
+      schemaVersion: "withmate-agent-runtime-exchange-v1",
       apiSecret,
       adapter: "mcp",
       adapterSecret,

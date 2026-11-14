@@ -1,5 +1,7 @@
 # ADR 018: Character affectはappend-only eventから投影する
 
+2026-11-15の[ADR 036](036-memory-affect-removal.md)により、Memory／Affect専用の本判断は適用対象外とする。機構と専用データは退避せず廃止し、製品外は変更しない。以下の当時の本文は判断履歴として保持する。
+
 ## Status
 
 Accepted

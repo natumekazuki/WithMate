@@ -187,9 +187,9 @@ test("paged Renderer metadata更新はfull履歴とBookmarkを保持する", asy
       listStoredSessions: () => [],
       getAppSettings: () => normalizeAppSettings({}),
       getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-      syncSessionDependencies: () => undefined,
+
       clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined,
+
       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined,
       broadcastSessions: () => undefined,

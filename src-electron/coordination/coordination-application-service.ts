@@ -1,6 +1,6 @@
 import { coordinationRequestSchema, type CoordinationActor, type CoordinationIdentity, type CoordinationRecord, type CoordinationRequest, type CoordinationResult, type CoordinationStore } from "../../src-shared/coordination/coordination-contract.js";
 import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
-import { assertRuntimeTurnAdmission, runWithoutRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, runWithoutRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CoordinationRejectedError, isCoordinationDeletedError } from "./coordination-errors.js";
 
 export type CoordinationApplicationDeps = {

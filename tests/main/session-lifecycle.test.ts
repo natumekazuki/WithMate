@@ -31,7 +31,7 @@ function lifecyclePersistence(storage: SessionStorageV6, catalog: ModelCatalogPr
     beginSessionLifecycleOperation: storage.beginSessionLifecycleOperation.bind(storage), prepareSessionLifecycleCreation: storage.prepareSessionLifecycleCreation.bind(storage), advanceSessionLifecycleOperation: storage.advanceSessionLifecycleOperation.bind(storage),
     deleteSessionCrewForLifecycle: storage.deleteSessionCrewForLifecycle.bind(storage),
     getAppSettings: createDefaultAppSettings, getModelCatalogSnapshot: () => ({ providers: [catalog] }),
-    syncSessionDependencies: () => {}, clearSessionContextTelemetry: () => {}, clearSessionBackgroundActivities: () => {}, invalidateProviderSessionThread: () => {}, closeSessionWindow: () => {}, broadcastSessions: () => {},
+     clearSessionContextTelemetry: () => {},  invalidateProviderSessionThread: () => {}, closeSessionWindow: () => {}, broadcastSessions: () => {},
   });
   return { persistence, cached: () => cached };
 }
@@ -224,7 +224,7 @@ it("retries child creation without redrawing its Character or replacing parent e
     getSessionLifecycleOperation: storage.getSessionLifecycleOperation.bind(storage), listPendingSessionLifecycleOperations: storage.listPendingSessionLifecycleOperations.bind(storage),
     beginSessionLifecycleOperation: storage.beginSessionLifecycleOperation.bind(storage), prepareSessionLifecycleCreation: storage.prepareSessionLifecycleCreation.bind(storage), advanceSessionLifecycleOperation: storage.advanceSessionLifecycleOperation.bind(storage),
     getAppSettings: createDefaultAppSettings, getModelCatalogSnapshot: () => ({ providers: [catalog] }),
-    syncSessionDependencies: () => {}, clearSessionContextTelemetry: () => {}, clearSessionBackgroundActivities: () => {}, invalidateProviderSessionThread: () => {}, closeSessionWindow: () => {}, broadcastSessions: () => {},
+     clearSessionContextTelemetry: () => {},  invalidateProviderSessionThread: () => {}, closeSessionWindow: () => {}, broadcastSessions: () => {},
   });
   const facade = new MainSessionCommandFacade({
     getSessions: () => cached, getSession: (id) => cached.find((item) => item.id === id) ?? null, getStoredSessionSummaries: storage.listSessionSummaries.bind(storage),

@@ -7,7 +7,6 @@ import { Worker } from "node:worker_threads";
 
 import { AuxiliarySessionService } from "../../src-electron/auxiliary/auxiliary-session-service.js";
 import { StorageWorkerClient, StorageWorkerGenerationError, StorageWorkerRemoteError } from "../../src-electron/storage/storage-worker-client.js";
-import { MemoryV6FileQuotaExceededError } from "../../src-electron/memory/memory-v6-storage.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { createPersistentStoreLifecycleService } from "../../src-electron/storage/persistent-store-lifecycle-service.js";
@@ -57,8 +56,6 @@ function createFixtureWorkerUrl(): URL {
         process.exit(1);
       } else if (message.command === "bad-frame") {
         parentPort.postMessage({ type: "result", generationId: workerData.generationId, value: "missing-request-id" });
-      } else if (message.command === "typed-error") {
-        parentPort.postMessage({ type: "error", requestId: message.context.requestId, generationId: workerData.generationId, name: "MemoryV6FileQuotaExceededError", code: "MEMORY_V6_FILE_QUOTA_EXCEEDED", message: "Memory V6 file quota would be exceeded.", details: { quotaBytes: 10, usedBytes: 8, incomingBytes: 5 } });
       } else {
         parentPort.postMessage({ type: "error", requestId: message.context.requestId, generationId: workerData.generationId, name: "CommandError", message: "not allowed" });
       }
@@ -118,32 +115,7 @@ test("V6 storage workerは最小turnとgeneration境界を維持する", async (
   }
 });
 
-// @test-value v2
-// kind = "contract"
-// claim = "Storage worker は許可されたMemoryドメイン例外の型と詳細をtransport越しに復元する"
-// oracle = { type = "contract", ref = "docs/design/v6-database-foundation.md#runtime-ownerとschema" }
-// fault = "quota競合が汎用RemoteErrorとなり、HTTP層が正しいエラー分類や残量詳細を失う"
-// observable = "worker callの拒否エラーのinstanceofとquota詳細"
-// observation_boundary = "public-boundary"
-// scope = "storage-worker-domain-errors"
-// lifecycle = "permanent"
-// impact = "Memory file quota応答とretry判断がWorker境界の前後で同一契約になる"
-// distinction = "型検査では確認できないtransportのエラー型・詳細復元を実動作で確認する"
-// @end-test-value
-test("storage worker rehydrates allowlisted memory domain errors", async () => {
-  const client = new StorageWorkerClient(createFixtureWorkerUrl(), { workerData: {} });
-  try {
-    await assert.rejects(() => client.call("typed-error", null), (error: unknown) => {
-      assert.ok(error instanceof MemoryV6FileQuotaExceededError);
-      assert.equal(error.quotaBytes, 10);
-      assert.equal(error.usedBytes, 8);
-      assert.equal(error.incomingBytes, 5);
-      return true;
-    });
-  } finally {
-    await client.close();
-  }
-});
+
 
 // @test-value v2
 // kind = "invariant"

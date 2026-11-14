@@ -1,9 +1,6 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
-import type { CharacterAffectContext, CharacterContextErrorResponse } from "../../src-shared/character-context/character-context-contract.js";
-import { resolveRuntimeCharacterContext } from "../character/character-context-runtime.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
 import { resolveConversationTimingContext, type ConversationTimingContext, type ConversationTimingStorageSnapshot } from "../session/conversation-timing.js";
-import type { CharacterContextApplicationService } from "../character/character-context-application-service.js";
 
 type CreateSessionTurnInput = Parameters<NonNullable<SessionRuntimeServiceDeps["createSessionTurn"]>>[0];
 
@@ -24,16 +21,14 @@ export type MainSessionRuntimeAssemblyDeps = {
     assertCapturedComposerAttachmentsAvailable?: SessionRuntimeServiceDeps["assertCapturedComposerAttachmentsAvailable"];
   };
   provider: Pick<SessionRuntimeServiceDeps, "getProviderCodingAdapter" | "resetProviderSessionThread" | "getProviderAgentRuntimeBinding" | "beginProviderAgentRuntimeTurn" | "endProviderAgentRuntimeTurn">;
-  memory: {
+  context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
-    getCharacterContextService?: () => Pick<CharacterContextApplicationService, "getContext"> | null;
-    onCharacterContextFailure: (session: Session, error: CharacterContextErrorResponse) => void;
     getConversationTimingSnapshot?: (sessionId: string, observedAt: string) => Promise<ConversationTimingStorageSnapshot | null>;
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
   interaction: Pick<SessionRuntimeServiceDeps, "waitForApprovalDecision" | "waitForElicitationResponse" | "resolvePendingApprovalRequest" | "resolvePendingElicitationRequest" | "invalidateProviderSessionThread">;
-  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased" | "onBackgroundEvent">;
+  notification: Pick<SessionRuntimeServiceDeps, "notifySessionTurnTerminal" | "onSessionRunReleased">;
   timing: {
     currentTimestampLabel?: () => string;
   };
@@ -46,17 +41,6 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     assertOwner(operation);
     const result = await callback();
     assertOwner(operation);
-    return result;
-  };
-
-  const resolveCharacterContext = async (session: Session): Promise<CharacterAffectContext | null> => {
-    assertOwner("character context");
-    const result = await resolveRuntimeCharacterContext({
-      session, service: deps.memory.getCharacterContextService?.(),
-      sessionSource: { kind: "main", sessionId: session.id, incarnationId: getSessionIncarnationId(session) },
-      onFailure: deps.memory.onCharacterContextFailure,
-    });
-    assertOwner("character context");
     return result;
   };
 
@@ -87,24 +71,23 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     resolveCrewFolderPath: deps.resolution.resolveCrewFolderPath
       ? (id) => guarded("crew folder path", () => deps.resolution.resolveCrewFolderPath!(id))
       : undefined,
-    getAppSettings: () => guarded("settings read", deps.memory.getAppSettings),
+    getAppSettings: () => guarded("settings read", deps.context.getAppSettings),
     resolveProviderCatalog: (providerId, revision) => guarded("provider catalog", () => deps.resolution.resolveProviderCatalog(providerId, revision)),
     getProviderCodingAdapter: deps.provider.getProviderCodingAdapter,
     resetProviderSessionThread: deps.provider.resetProviderSessionThread,
     getProviderAgentRuntimeBinding: deps.provider.getProviderAgentRuntimeBinding,
     beginProviderAgentRuntimeTurn: deps.provider.beginProviderAgentRuntimeTurn,
     endProviderAgentRuntimeTurn: deps.provider.endProviderAgentRuntimeTurn,
-    resolveConversationTimingContext: deps.memory.getConversationTimingSnapshot
+    resolveConversationTimingContext: deps.context.getConversationTimingSnapshot
       ? async (session, observedAt): Promise<ConversationTimingContext | null> => {
         assertOwner("conversation timing");
         if (session.sessionKind !== "default") return null;
-        const snapshot = await deps.memory.getConversationTimingSnapshot!(session.id, observedAt.toISOString());
+        const snapshot = await deps.context.getConversationTimingSnapshot!(session.id, observedAt.toISOString());
         assertOwner("conversation timing");
         if (!snapshot) return null;
         return resolveConversationTimingContext(snapshot, observedAt);
       }
       : undefined,
-    resolveCharacterContext,
     createSessionTurn: (entry: CreateSessionTurnInput) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
     updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },
@@ -119,7 +102,6 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     resolvePendingApprovalRequest: deps.interaction.resolvePendingApprovalRequest,
     resolvePendingElicitationRequest: deps.interaction.resolvePendingElicitationRequest,
     notifySessionTurnTerminal: deps.notification.notifySessionTurnTerminal,
-    onBackgroundEvent: deps.notification.onBackgroundEvent,
     onSessionRunReleased: (sessionId) => {
       if (deps.owner.isActive()) deps.notification.onSessionRunReleased?.(sessionId);
     },

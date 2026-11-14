@@ -57,13 +57,11 @@ recordの作成・更新時には何の要求・判断・活動・観測に関�
 
 ## MCPと更新
 
-`withmate-session-graph`はMCPとCLIで同じ6操作を公開し、入力意味・結果・エラー・保存契約を共有する。MCPはMemory・Glossaryと同じmanaged HTTP MCP hostを利用し、Codex、Copilot、Claudeのprovider turnへ専用endpointを渡す。CLIも同じ起動中runtimeへの認証・instance/generation照合とextension exchangeを通り、application service／Storage Workerへ操作を送る。CLIがDBやSessionFolderを直接更新する経路はない。
+`withmate-session-graph`はMCPとCLIで同じ6操作を公開し、入力意味・結果・エラー・保存契約を共有する。MCPはGlossary・通常Sessionと同じmanaged HTTP MCP hostを利用し、Codex、Copilot、Claudeのprovider turnへ専用endpointを渡す。CLIも同じ起動中runtimeへの認証・instance/generation照合とextension exchangeを通り、application service／Storage Workerへ操作を送る。CLIがDBやSessionFolderを直接更新する経路はない。
 
 両入口とも既存Session bindingから実callerの会話種別・incarnation・所属Crewを解決し、bindingなし・無効・失効を別Sessionや無bindingアクセスへ置き換えない。読取は自Crewを既定とし、`graphOwner: { sessionId, incarnationId }`で別Crewの起点Main Graphを明示指定できる。Session探索で得た起点identityを使い、対象削除・置換・非起点の指定はfallbackせず失敗する。読取先を変えてもcallerや帰属を置き換えない。分析専用grantは不要である。
 
 `apply`は`graphOwner`を受け付けず、有効なturnで自Crewだけへ書く。呼出元、記録者、Character、権限の自己申告は受け付けない。Worker transactionでownerのincarnation、保存済みroot所属、callerの会話種別/incarnation、actorの所属、turn失効を再確認してcommitする。applicationはread targetとcallerを別々に再検証し、storage generationの切替や遅い応答から失効済みGraphを復活させない。
-
-背景三用途にも元Mainの共有Graphのread操作を公開する。背景用のSessionやGraphは作らず、`apply`は付与しない。元会話と異なるProviderを使えても、実sourceのkind・incarnation・storage ownerIdentity・Auxiliaryの親identityと捕捉Graph ownerは維持し、activeな背景binding／turnを必須とする。返却前にもsourceと失効を確認する。詳細は[Background Execution](background-execution.md#背景memory-read)を参照する。
 
 | MCP tool | CLI command | 用途 |
 | --- | --- | --- |

@@ -1,5 +1,4 @@
 import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
-import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 
 export const PROVIDER_QUOTA_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const PROVIDER_QUOTA_MIN_REFRESH_INTERVAL_MS = 60 * 1000;
@@ -7,11 +6,6 @@ const PROVIDER_QUOTA_MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 type SessionObservabilityServiceOptions = {
   onProviderQuotaTelemetryChanged: (providerId: string, telemetry: ProviderQuotaTelemetry | null) => void;
   onSessionContextTelemetryChanged: (sessionId: string, telemetry: SessionContextTelemetry | null) => void;
-  onSessionBackgroundActivityChanged: (
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-    state: SessionBackgroundActivityState | null,
-  ) => void;
   onLiveSessionRunChanged: (sessionId: string, state: LiveSessionRunState | null) => void;
 };
 
@@ -19,7 +13,6 @@ export class SessionObservabilityService {
   private readonly liveSessionRuns = new Map<string, LiveSessionRunState>();
   private readonly providerQuotaTelemetryByProvider = new Map<string, ProviderQuotaTelemetry>();
   private readonly sessionContextTelemetryBySessionId = new Map<string, SessionContextTelemetry>();
-  private readonly sessionBackgroundActivities = new Map<string, SessionBackgroundActivityState>();
   private readonly providerQuotaRefreshPromises = new Map<string, { promise: Promise<ProviderQuotaTelemetry | null>; controller: AbortController }>();
   private readonly providerQuotaRefreshTimers = new Map<string, NodeJS.Timeout[]>();
   private readonly providerQuotaPollingTimers = new Map<string, NodeJS.Timeout>();
@@ -36,7 +29,6 @@ export class SessionObservabilityService {
     this.clearAllProviderQuotaTelemetry();
     this.providerQuotaTelemetryByProvider.clear();
     this.sessionContextTelemetryBySessionId.clear();
-    this.sessionBackgroundActivities.clear();
     this.liveSessionRuns.clear();
   }
 
@@ -256,43 +248,9 @@ export class SessionObservabilityService {
     }
   }
 
-  public getSessionBackgroundActivity(
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-  ): SessionBackgroundActivityState | null {
-    return this.sessionBackgroundActivities.get(this.buildSessionBackgroundActivityKey(sessionId, kind)) ?? null;
-  }
 
-  public setSessionBackgroundActivity(
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-    state: SessionBackgroundActivityState | null,
-  ): void {
-    const key = this.buildSessionBackgroundActivityKey(sessionId, kind);
-    if (state) {
-      this.sessionBackgroundActivities.set(key, state);
-    } else {
-      this.sessionBackgroundActivities.delete(key);
-    }
 
-    this.options.onSessionBackgroundActivityChanged(sessionId, kind, state);
-  }
 
-  public clearSessionBackgroundActivities(sessionId: string): void {
-    this.setSessionBackgroundActivity(sessionId, "memory-generation", null);
-    this.setSessionBackgroundActivity(sessionId, "monologue", null);
-  }
-
-  public clearAllSessionBackgroundActivities(): void {
-    const activityKeys = Array.from(this.sessionBackgroundActivities.keys());
-    this.sessionBackgroundActivities.clear();
-    for (const key of activityKeys) {
-      const [sessionId, kind] = key.split("\u001f") as [string | undefined, SessionBackgroundActivityKind | undefined];
-      if (sessionId && kind) {
-        this.options.onSessionBackgroundActivityChanged(sessionId, kind, null);
-      }
-    }
-  }
 
   public getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
     return this.liveSessionRuns.get(sessionId) ?? null;
@@ -322,7 +280,4 @@ export class SessionObservabilityService {
     return next;
   }
 
-  private buildSessionBackgroundActivityKey(sessionId: string, kind: SessionBackgroundActivityKind): string {
-    return `${sessionId}\u001f${kind}`;
-  }
 }

@@ -6,7 +6,6 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import {
-  MEMORY_FILE_QUOTA_DEFAULT_BYTES,
   createDefaultAppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
 import { AppSettingsStorage } from "../../src-electron/app/app-settings-storage.js";
@@ -492,7 +491,7 @@ describe("AppSettingsStorage", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "foreground prompt context の4項目は app settings DB に個別保存され、旧DBの欠損・不正値は既定有効へ戻る"
+  // claim = "foreground prompt context の3項目は app settings DB に個別保存され、旧DBの欠損・不正値は既定有効へ戻る"
   // oracle = { type = "contract", ref = "Prompt context settings persistence" }
   // fault = "toggle を保存しても次回読み込みで失われるか、既存DBの欠損・不正値で注入が意図せず無効になる"
   // observable = "AppSettingsStorage の保存・再読込結果"
@@ -500,7 +499,7 @@ describe("AppSettingsStorage", () => {
   // scope = "app-settings-prompt-context-persistence"
   // lifecycle = "permanent"
   // impact = "Settings の次回 turn 反映と既存利用者の注入互換性が崩れる"
-  // distinction = "4つの新規 key を各項目単独のfalse保存、再読込、欠損、不正値で横断確認する"
+  // distinction = "3つのprompt context key を各項目単独のfalse保存、再読込、欠損、不正値で横断確認する"
   // @end-test-value
   it("foreground prompt context の個別設定を保存・再読込し、欠損と不正値を既定へ戻す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
@@ -509,17 +508,14 @@ describe("AppSettingsStorage", () => {
     try {
       const storage = new AppSettingsStorage(dbPath);
       assert.equal(storage.getSettings().characterDefinitionEnabled, true);
-      assert.equal(storage.getSettings().characterAffectContextEnabled, true);
       assert.equal(storage.getSettings().conversationTimingEnabled, true);
       assert.equal(storage.getSettings().toolCallPresenceEnabled, true);
       storage.updateSettings({
         ...storage.getSettings(),
         characterDefinitionEnabled: false,
-        characterAffectContextEnabled: false,
         conversationTimingEnabled: false,
         toolCallPresenceEnabled: false,
       });
-      assert.equal(storage.getSettings().characterAffectContextEnabled, false);
       assert.equal(storage.getSettings().characterDefinitionEnabled, false);
       assert.equal(storage.getSettings().conversationTimingEnabled, false);
       assert.equal(storage.getSettings().toolCallPresenceEnabled, false);
@@ -527,17 +523,14 @@ describe("AppSettingsStorage", () => {
 
       const reopenedStorage = new AppSettingsStorage(dbPath);
       assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, false);
-      assert.equal(reopenedStorage.getSettings().characterAffectContextEnabled, false);
       assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
       assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, false);
       reopenedStorage.updateSettings({
         ...reopenedStorage.getSettings(),
         characterDefinitionEnabled: true,
-        characterAffectContextEnabled: true,
         conversationTimingEnabled: false,
         toolCallPresenceEnabled: true,
       });
-      assert.equal(reopenedStorage.getSettings().characterAffectContextEnabled, true);
       assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, true);
       assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
       assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, true);
@@ -545,7 +538,6 @@ describe("AppSettingsStorage", () => {
 
       const promptContextFields = [
         "characterDefinitionEnabled",
-        "characterAffectContextEnabled",
         "conversationTimingEnabled",
         "toolCallPresenceEnabled",
       ] as const;
@@ -554,7 +546,6 @@ describe("AppSettingsStorage", () => {
         isolatedStorage.updateSettings({
           ...isolatedStorage.getSettings(),
           characterDefinitionEnabled: disabledField === "characterDefinitionEnabled" ? false : true,
-          characterAffectContextEnabled: disabledField === "characterAffectContextEnabled" ? false : true,
           conversationTimingEnabled: disabledField === "conversationTimingEnabled" ? false : true,
           toolCallPresenceEnabled: disabledField === "toolCallPresenceEnabled" ? false : true,
         });
@@ -563,7 +554,6 @@ describe("AppSettingsStorage", () => {
         const isolatedReloadedStorage = new AppSettingsStorage(dbPath);
         const isolatedSettings = isolatedReloadedStorage.getSettings();
         assert.equal(isolatedSettings.characterDefinitionEnabled, disabledField !== "characterDefinitionEnabled");
-        assert.equal(isolatedSettings.characterAffectContextEnabled, disabledField !== "characterAffectContextEnabled");
         assert.equal(isolatedSettings.conversationTimingEnabled, disabledField !== "conversationTimingEnabled");
         assert.equal(isolatedSettings.toolCallPresenceEnabled, disabledField !== "toolCallPresenceEnabled");
         isolatedReloadedStorage.close();
@@ -571,25 +561,23 @@ describe("AppSettingsStorage", () => {
 
       const invalidDatabase = new DatabaseSync(dbPath);
       invalidDatabase
-        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key IN (?, ?, ?, ?)")
-        .run("invalid", "character_definition_enabled", "character_affect_context_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key IN (?, ?, ?)")
+        .run("invalid", "character_definition_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
       invalidDatabase.close();
 
       const invalidValueStorage = new AppSettingsStorage(dbPath);
       assert.equal(invalidValueStorage.getSettings().characterDefinitionEnabled, true);
-      assert.equal(invalidValueStorage.getSettings().characterAffectContextEnabled, true);
       assert.equal(invalidValueStorage.getSettings().conversationTimingEnabled, true);
       assert.equal(invalidValueStorage.getSettings().toolCallPresenceEnabled, true);
       invalidValueStorage.close();
 
       const missingDatabase = new DatabaseSync(dbPath);
       missingDatabase
-        .prepare("DELETE FROM app_settings WHERE setting_key IN (?, ?, ?, ?)")
-        .run("character_definition_enabled", "character_affect_context_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
+        .prepare("DELETE FROM app_settings WHERE setting_key IN (?, ?, ?)")
+        .run("character_definition_enabled", "conversation_timing_enabled", "tool_call_presence_enabled");
       missingDatabase.close();
 
       const missingValueStorage = new AppSettingsStorage(dbPath);
-      assert.equal(missingValueStorage.getSettings().characterAffectContextEnabled, true);
       assert.equal(missingValueStorage.getSettings().characterDefinitionEnabled, true);
       assert.equal(missingValueStorage.getSettings().conversationTimingEnabled, true);
       assert.equal(missingValueStorage.getSettings().toolCallPresenceEnabled, true);
@@ -656,7 +644,6 @@ describe("AppSettingsStorage", () => {
       assert.equal(layoutReopened.getSettings().chatLayoutPreference.sidePane, "context");
       const updated = layoutReopened.updateSettings({
         ...createDefaultAppSettings(),
-        memoryGenerationEnabled: false,
         launchAtLoginEnabled: true,
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
@@ -674,7 +661,6 @@ describe("AppSettingsStorage", () => {
             },
           },
         },
-        memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         codingProviderSettings: {
           codex: {
             enabled: false,
@@ -690,37 +676,6 @@ describe("AppSettingsStorage", () => {
             skillRelativePath: "skills",
             instructionRelativePath: "copilot-instructions.md",
           },
-        },
-        memoryExtractionProviderSettings: {
-          codex: {
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
-            outputTokensThreshold: 240,
-            timeoutSeconds: 240,
-          },
-          copilot: {
-            model: "gpt-5",
-            reasoningEffort: "low",
-            outputTokensThreshold: 180,
-            timeoutSeconds: 360,
-          },
-        },
-        mateMemoryGenerationSettings: {
-          priorityList: [
-            {
-              provider: "copilot",
-              model: "gpt-5.4",
-              reasoningEffort: "high",
-              timeoutSeconds: 300,
-            },
-            {
-              provider: "codex",
-              model: "gpt-5.4-mini",
-              reasoningEffort: "medium",
-              timeoutSeconds: 180,
-            },
-          ],
-          triggerIntervalMinutes: 90,
         },
       });
       layoutReopened.close();
@@ -859,7 +814,7 @@ describe("AppSettingsStorage", () => {
   // claim = "chat layout の単一項目更新は他の app settings を維持する"
   // oracle = { type = "contract", ref = "Chat layout preference update boundary" }
   // fault = "layout 更新で他設定が巻き戻るか再読込結果が変わる"
-  // observable = "更新後と再読込後の chatLayoutPreference"
+  // observable = "再読込後のchatLayoutPreferenceと、layout更新直後・再読込後の非既定launchAtLoginEnabled"
   // observation_boundary = "public-boundary"
   // scope = "chat-layout-persistence"
   // lifecycle = "permanent"
@@ -880,11 +835,12 @@ describe("AppSettingsStorage", () => {
 
       storage.updateSettings({
         ...createDefaultAppSettings(),
-        memoryGenerationEnabled: false,
+        launchAtLoginEnabled: true,
       });
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      assert.equal(storage.getSettings().launchAtLoginEnabled, true);
       storage.close();
 
       const reopened = new AppSettingsStorage(dbPath);
@@ -896,7 +852,7 @@ describe("AppSettingsStorage", () => {
         actionDock: "expanded",
         sidePane: "files",
       });
-      assert.equal(loaded.memoryGenerationEnabled, false);
+      assert.equal(loaded.launchAtLoginEnabled, true);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
@@ -1022,7 +978,6 @@ describe("AppSettingsStorage", () => {
       const storage = new AppSettingsStorage(dbPath);
       storage.updateSettings({
         ...createDefaultAppSettings(),
-        memoryGenerationEnabled: false,
         launchAtLoginEnabled: true,
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
@@ -1047,31 +1002,6 @@ describe("AppSettingsStorage", () => {
             skillRelativePath: "skills",
             instructionRelativePath: "copilot-instructions.md",
           },
-        },
-        memoryExtractionProviderSettings: {
-          codex: {
-            model: "gpt-5.4-mini",
-            reasoningEffort: "medium",
-            outputTokensThreshold: 240,
-            timeoutSeconds: 240,
-          },
-          copilot: {
-            model: "gpt-5",
-            reasoningEffort: "low",
-            outputTokensThreshold: 180,
-            timeoutSeconds: 360,
-          },
-        },
-        mateMemoryGenerationSettings: {
-          priorityList: [
-            {
-              provider: "copilot",
-              model: "gpt-5.4",
-              reasoningEffort: "high",
-              timeoutSeconds: 300,
-            },
-          ],
-          triggerIntervalMinutes: 90,
         },
       });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });

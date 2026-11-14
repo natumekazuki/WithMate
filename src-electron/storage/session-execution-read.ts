@@ -11,7 +11,7 @@ import { readConversationQuerySnapshot } from "./conversation-query.js";
 import { readSessionHistory } from "./session-history-read.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
-import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 
 type Result = { ok: true; [key: string]: unknown } | { ok: false; code: string; message: string; effect: "none" };
 type Receipt = { id: string; sequence: number; state: string; captured_json: string; accepted_json: string | null; dispatched_json: string | null; turn_id: string | null; input_turn_id: string | null; user_message_seq: number | null; updated_at: string };

@@ -22,6 +22,7 @@ export const WITHMATE_SESSION_CLI_EXIT_CODES = {
   transportError: 3,
 } as const;
 export type SessionCliDeps = SessionRuntimeClientDeps & {
+  readFile?: typeof readFile;
   stdin?: NodeJS.ReadableStream;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
@@ -32,7 +33,7 @@ const operations = Object.keys(
 ) as SessionOperation[];
 export const SESSION_CLI_HELP = `Usage: withmate-session <command> [--json <json> | --file <path> | @file | --stdin]
 Commands: ${operations.map((operation) => operation.replaceAll("_", "-")).join(", ")}, schema, help
-Connection: --api-url <loopback-url> --discovery-file <path> --instance <id> --generation <id>
+Connection: --api-url <loopback-url> --instance <id> --generation <id>
 The active binding and provider Turn come from the environment; there is no actor override or unbound administrator mode.
 Crew reads default to this Crew; list supports explicit rootSessionId/allCrews. Targets always require saved sessionId and incarnationId.
 Session self/list/get/create-child return saved public Character id/name/description, not persona definitions. Session description is the task; character.description is the public introduction. Listing grants no additional authority.
@@ -63,7 +64,6 @@ export async function parseWithMateSessionCliArgs(
   const connection: Pick<
     SessionRuntimeClientDeps,
     | "apiUrl"
-    | "discoveryFilePath"
     | "applicationInstanceId"
     | "runtimeGenerationId"
   > = {};
@@ -102,8 +102,6 @@ export async function parseWithMateSessionCliArgs(
         throw new SessionCliUsageError("Input must contain valid JSON.");
       }
     } else if (option === "--api-url") connection.apiUrl = take();
-    else if (option === "--discovery-file")
-      connection.discoveryFilePath = take();
     else if (option === "--instance") connection.applicationInstanceId = take();
     else if (option === "--generation") connection.runtimeGenerationId = take();
     else throw new SessionCliUsageError(`Unknown option: ${option}`);

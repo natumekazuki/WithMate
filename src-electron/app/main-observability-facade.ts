@@ -1,5 +1,4 @@
 import type { LiveSessionRunState, ProviderQuotaTelemetry, SessionContextTelemetry } from "../../src-shared/session/runtime-state.js";
-import type { SessionBackgroundActivityKind, SessionBackgroundActivityState } from "../../src-shared/memory/session-memory-state.js";
 import { getProviderAppSettings, type AppSettings, type ProviderAppSettings } from "../../src-shared/settings/provider-settings-state.js";
 import type { ProviderCodingAdapter } from "../providers/provider-runtime.js";
 import { fetchProviderQuotaTelemetry } from "../providers/provider-support.js";
@@ -103,28 +102,9 @@ export class MainObservabilityFacade {
     this.deps.getSessionObservabilityService().clearAllSessionContextTelemetry();
   }
 
-  getSessionBackgroundActivity(
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-  ): SessionBackgroundActivityState | null {
-    return this.deps.getSessionObservabilityService().getSessionBackgroundActivity(sessionId, kind);
-  }
 
-  setSessionBackgroundActivity(
-    sessionId: string,
-    kind: SessionBackgroundActivityKind,
-    state: SessionBackgroundActivityState | null,
-  ): void {
-    this.deps.getSessionObservabilityService().setSessionBackgroundActivity(sessionId, kind, state);
-  }
 
-  clearSessionBackgroundActivities(sessionId: string): void {
-    this.deps.getSessionObservabilityService().clearSessionBackgroundActivities(sessionId);
-  }
 
-  clearAllSessionBackgroundActivities(): void {
-    this.deps.getSessionObservabilityService().clearAllSessionBackgroundActivities();
-  }
 
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null {
     return this.deps.getSessionObservabilityService().getLiveSessionRun(sessionId);

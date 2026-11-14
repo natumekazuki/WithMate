@@ -43,7 +43,7 @@ provider実行結果から取得済みassistant本文とartifactをMainへ返し
 共通結果の`output`は通常messageにも保存し、本文は`Message.text`へ一度だけ置く。各unitはnative identityと順序、message／block参照、UTF-16本文範囲、`progress / answer / unclassified`、native phase（欠落はnull）、`complete / partial / streaming`、最終回答の判定と根拠を分ける。`finality`は`identified / none / unknown`で、空本文の成功と最終回答未確定を区別する。失敗・取消後も確定済みunitはそのまま保存し、実行成否を本文phaseから推測しない。
 
 Codexはitem IDと`commentary / partial_answer / final_answer`を保持し、completed itemの明示final phaseだけを最終回答とする。Copilotはmessage IDで増分と確定snapshotを置換し、本文が同じ別messageも残す。native phaseをCodexと同義にせず、要求完了と`originatingMessageId`・native Turnが対応する終端message群を特定できた場合だけ最終回答とする。対応が欠ける場合はunknownである。Claudeは同じnative message IDを共有するblock単位通知を、通知UUIDと通知内位置で区別して保持する。同じ通知UUIDの再通知だけを訂正として置換し、別通知の取得済みblockは残す。partial eventのcontent block startからnative indexを対応付けた場合だけ`blockIndex`を保持し、そのblockの確定通知で対応する増分だけを置換する。通知内位置をnative indexに流用しない。対応resultの本文が終端native messageの本文と一致し、その終端blockがtextの場合だけそのblock群を最終回答とする。それ以外はresult独立unitとして保持し、古い同文messageを最終回答にしない。result後にも親の出力が続いた場合は古いresultを現在の最終回答へ昇格させない。OpenCodeはmessage ID・part ordinalを保持し、step finishとは別に`finish: stop`の確定messageと直前のlength継続messageを回答範囲にする。公開型にないphaseは補完しない。
-Main Processでは`MainProviderFacade`が通常turnのadapterを提供し、`SessionRuntimeService`が実行する。Memory／Affect更新は通常turn内MCPから既存application serviceへ接続する。
+Main Processでは`MainProviderFacade`が通常turnのadapterを提供し、`SessionRuntimeService`が実行する。
 
 providerごとの差は次。
 
@@ -90,7 +90,7 @@ providerごとの差は次。
   - 再開時の内部通知など別入力のresultでは終了せず、その本文・usageを入力対応resultとして採用しない。子の通知処理で続く親assistant本文は通常の受信経路で保持する。`background_tasks_changed`の非ambientなlive集合と`task_notification`を既存のbackground progressへ投影するが、snapshotからの消失を報告配送済み・親の完了とはみなさない。ambient監視や常駐shellを含む完了待ちの範囲はSDKのsession state契約に従う
   - 送信に紐づかないsession全体の失敗、子の失敗・停止、入力対応result後の子報告回収turnの失敗、正常終端前のEOFは失敗として扱い、取得済み本文・操作をpartial resultへ保持する。子の失敗・停止は親の取りまとめを回収してから失敗を返す。取消は既存の取消経路で停止する。空本文だけで正常結果を失敗へ変更しない
   - modelとDepth候補はSDKから取得する。WithMateのApprovalとReviewerの組合せをSDKの6 permission modeへ写像し、Speedは`Standard / Fast`へ対応する。Codexのsandbox選択は提供しない
-  - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter / Affectを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
+  - 共通promptのsystem本文を`claude_code` presetの`append`へ渡し、`snapshot: false`でturnごとのCharacter snapshotを反映する。既存のuser / project / local設定、repositoryの`CLAUDE.md`と`.claude/skills`、MCP設定をSDKのnative経路で読み込む
   - `Provider Controlled + User`ではSDKの`PreToolUse`でread-only以外をaskにし、native設定が自動許可する場合も`canUseTool`からWithMateの共通承認UIへ中継する。`Auto Run`と`Auto Review`では通常toolの強制askを行わず、選択したnative modeの制御へ任せる。いずれもSDKから届く承認要求は共通UIへ中継する。`AskUserQuestion`は選択肢と自由入力を保持した共通質問UIへ、MCP elicitationも共通UIへ中継する。同一turnの承認・質問は直列化し、未回答のpending要求を上書きしない。MCPのfield変換はCopilotと共有し、選択肢のlabel、既定値、入力制約を保持する。応答・tool操作・usageを共通live state、artifactへ投影し、Bashだけをraw command付きの`command_execution`として扱う
   - quotaはモデルを実行しないcontrol APIで取得し、Mainの非永続cacheへ保持する。取得用の非永続sessionはtools / MCP / hooksを無効化し、`resolveSettings({ cwd, settingSources: [] })`でmanaged sourceまたは設定検査失敗を検出した場合は実行物を起動せず拒否する。user / project / local設定は読まず、親プロセスの環境変数とSDKが参照する既存CLIログインを利用する。設定ファイルだけにある認証helperや認証・接続先設定は共有しない
   - SDK transcriptはWithMateの履歴・workspaceとは別にClaude側が管理し、WithMateのsession削除で消さない。token / cache usageは通常turn単位で扱う。API換算USDは実請求額として表示しない。認証先と利用枠の対応は[Provider Usage Telemetry](provider-usage-telemetry.md)に従う
@@ -109,19 +109,19 @@ providerごとの差は次。
 
 ### Managed HTTP MCP
 
-アプリ管理の背景呼出しも既存の四つのadapterを使う。共通層の独立`executionTarget`でnative threadとcacheを元会話から分け、通常の承認・sandbox・管理者policyを維持する。独立binding／handle・履歴専用接続・指示と出力の境界は[Background Execution](background-execution.md)を参照する。通常adapterの対応を、背景だけの絶対的な副作用隔離や実認証推論確認済みと読み替えない。
+Coding planeのGlossary、[Session Graph](session-graph.md)、[Session操作](session-run-lifecycle.md#bound-session-api)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。通常Turnのendpointは`/mcp/glossary`、`/mcp/session-graph`、`/mcp/session`である。tool schemaは`src-electron/platform/mcp/`、runtime clientは`src-electron/platform/agent-runtime/`に置き、対応するbound CLIと共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
 
-Coding planeのMemory／Character、Glossary、[Session Graph](session-graph.md)、[Session操作](session-run-lifecycle.md#bound-session-api)は、Mainが所有する1つのlocalhost Streamable HTTP listenerへ接続する。通常Turnのendpointは`/mcp/memory`、`/mcp/glossary`、`/mcp/session-graph`、`/mcp/session`である。tool schemaとruntime clientは`src-electron/platform/mcp/`に置き、対応するbound CLIと共有する。内側のruntime exchangeとapplication serviceを通し、DBへ直結しない。
+共有runtimeの正本は`src-electron/platform/agent-runtime/`の`runtime-api.ts`、`runtime-client.ts`、`runtime-exchange.ts`、`runtime-turn-admission.ts`、`managed-http-mcp-host.ts`である。既存registryの`runtimeKind: agent-runtime`と`runtimeOwner: RuntimeOwnerSelector`を使い、application instance／generationは`WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID`／`WITHMATE_AGENT_RUNTIME_GENERATION_ID`で渡す。Memory legacy discoveryやfallback admissionは使わず、通常Session／Graph／Glossaryで同じexact owner・短命binding・失効確認を維持する。
 
 - Mainはactor、provider、runtime owner、binding generation、captured logical turnへ固定した短命tokenをmemory内で発行する。全requestを`x-withmate-mcp-token`で認証し、MCP session IDはprotocol stateの選択にだけ使う。
-- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認したmanaged名だけを当threadで無効化し、通常Turnでは`withmate-memory-http`／`withmate-glossary-http`／`withmate-session-graph-http`／`withmate-session-http`を登録する。第三者MCPと永続configは変更しない。
+- Codexはtokenをprivate envへ渡し、processとthreadの一時configに`env_http_headers`を設定する。native `config/read`で存在を確認したmanaged名だけを当threadで無効化し、通常Turnでは`withmate-glossary-http`／`withmate-session-graph-http`／`withmate-session-http`を登録する。第三者MCPと永続configは変更しない。
 - CopilotとClaudeは当turnのnative session／query optionsへ標準managed名のHTTP設定を渡す。既存native設定の探索と保存済みthreadのresumeは維持する。
 - OpenCodeは確定workspaceのlocationへ`mcp.add`で当turnのHTTP設定を登録し、必要なmanaged MCPの接続を`mcp.list`で確認してからpromptを送る。第三者MCPと永続設定は変更しない。
 - tokenはprompt、通常log、通常履歴、artifactへ投影せず、bindingと同じredactorで除去する。
 - 取消受付、turn終了、binding失効、runtime停止でtokenとcaptured turnを失効させる。queued Workerにも共有失効stateを渡し、SQLite transactionとfilesystem副作用の境界で再確認する。確定済み副作用はpartial／unknownとして維持する。
-- HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。CLIは同じ公開操作・認可の明示入口として利用でき、admission付きの同一要求再照合は通常CLIとは別の限定経路として扱う。
+- HTTP hostが利用不能ならprovider起動を明示失敗にし、stdio自動fallbackや無認証設定へ切り替えない。CLIは同じ公開操作・認可の明示入口として利用できる。
 
-内側のextension exchangeはContent-Lengthが通常body上限以内ならMemoryと同じ共通枠（既定8件・各256KiB）、大きい／長さ不明なら既存34MiB・1件枠で受信する。宣言が小さくても実byte上限は拡張しない。小さいGlossaryも認証後に大要求と同じ1件枠を取得してからdispatchする。Session／Graphの小さい通常readは並列に実行でき、既存総受信容量とGlossary同時数は増やさない。Content-Lengthだけを先送りし、credentialと本文は103によるexact owner確認後に送る。
+内側のextension exchangeはContent-Lengthが通常body上限以内なら共通枠（既定8件・各256KiB）、大きい／長さ不明なら既存34MiB・1件枠で受信する。宣言が小さくても実byte上限は拡張しない。小さいGlossaryも認証後に大要求と同じ1件枠を取得してからdispatchする。Session／Graphの小さい通常readは並列に実行でき、既存総受信容量とGlossary同時数は増やさない。Content-Lengthだけを先送りし、credentialと本文は103によるexact owner確認後に送る。
 
 provider adapterは共通のnative実行を所有し、用途別の背景SDK engineは持たない。Copilotの通常turnに属するbackground task監視はlive stateとして維持する。
 

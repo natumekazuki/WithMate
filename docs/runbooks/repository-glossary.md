@@ -1,6 +1,6 @@
 # Repository Glossary
 
-Repository Glossaryの正本はGit checkout内の`.withmate/glossary.yaml`である。Session UIはprimary checkoutの用語をSession messageとright paneへ表示し、MCPとCLIは認可されたcheckoutまたは明示したrepositoryを操作する。WithMate DB、Memory、Session data、provider promptへ用語集内容はコピーされない。
+Repository Glossaryの正本はGit checkout内の`.withmate/glossary.yaml`である。Session UIはprimary checkoutの用語をSession messageとright paneへ表示し、MCPとCLIは認可されたcheckoutまたは明示したrepositoryを操作する。WithMate DB、Session data、provider promptへ用語集内容はコピーされない。
 
 ## File format
 
@@ -33,9 +33,9 @@ fileが`invalid`、`unsupported`、`watch-error`、`missing`になった場合�
 
 WithMateから起動したprovider Sessionではmanaged `withmate-glossary` Skillを利用できる。公開operationは`list-targets`、`list`、`search`、`get`、`create`、`create-batch`、`update`、`delete`、`validate`の9操作である。MCPは`glossary.list_targets`、`glossary.create_batch`のように名前を対応させ、CLIと同じ入力意味・結果・エラー・保存契約を使う。operation schemaは`src-shared/glossary/glossary-operation-schema.ts`、利用上の判断はmanaged Skillの`SKILL.md`を参照する。
 
-MCPはMainの共有localhost HTTP listenerの`/mcp/glossary`へ当turnの短命tokenで接続する。providerの一時設定へ注入し、永続設定やpromptへtokenを保存しない。Memory／Characterとlistenerを共有するが、protocol stateとapplication boundaryは独立している。手動stdio MCPも同じcanonical tool定義を利用する。
+MCPはMainの共有localhost HTTP listenerの`/mcp/glossary`へ当turnの短命tokenで接続する。providerの一時設定へ注入し、永続設定やpromptへtokenを保存しない。Session／Session Graphとlistenerを共有するが、protocol stateとapplication boundaryは独立している。手動stdio MCPも同じcanonical tool定義を利用する。
 
-CLIと手動stdio MCPも起動中のWithMate runtimeへ接続し、既存のlocal runtime認証・instance/generation照合を通る。CLIがfileへ直接書き込む経路はなく、MCPと同じapplication serviceを使用する。GlossaryにはMemory CLI fallbackを設けない。
+CLIと手動stdio MCPも起動中のWithMate runtimeへ接続し、既存のlocal runtime認証・instance/generation照合を通る。CLIがfileへ直接書き込む経路はなく、MCPと同じapplication serviceを使用する。
 
 Session bindingがある場合は、既定の`{ "kind": "primary" }`、`list-targets`が返すopaqueな`{ "kind": "checkout", "checkoutId": "..." }`、または`{ "kind": "repository", "path": "<absolute-path>" }`を指定できる。いずれもbindingが許可したprimary checkoutに限る。無効・失効したbindingを無視して無binding操作へ降格せず、Session IDを自己申告して対象を切り替えることもできない。binding付きmutationはCLI／MCPともcaptured turnを必要とし、非同期actor解決前とfile commit前に有効性を照合する。取消・終了したturnへ新turnの権限を付け替えない。
 

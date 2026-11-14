@@ -10,7 +10,7 @@ WithMateのコード変更、検証、課題管理、Git操作の運用規則で
 
 ## 実装境界
 
-Main、preload、renderer、CLIの境界をまたぐ型・定数・正規化処理は、`src-shared/`のIPC、session、settings、character、memoryなどのdomainを正本とします。利用側は必要なdomainから直接importし、共有層へReact・DOM・Electron・filesystem・DBの実装を持ち込みません。
+Main、preload、renderer、CLIの境界をまたぐ型・定数・正規化処理は、`src-shared/`のIPC、session、settings、characterなどのdomainを正本とします。利用側は必要なdomainから直接importし、共有層へReact・DOM・Electron・filesystem・DBの実装を持ち込みません。
 
 Chat layout preferenceの型・既定値・検証は`src-shared/settings/chat-layout-preference.ts`に置き、保存APIを呼ぶrenderer adapterは`src/chat/chat-layout-preference.ts`に置きます。
 

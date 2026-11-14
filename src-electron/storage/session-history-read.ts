@@ -13,7 +13,7 @@ import {
 import { normalizeMessage, type Message, type MessageArtifact } from "../../src-shared/session/session-state.js";
 import { matchesSessionHistorySource, type SessionHistoryReadScope } from "../../src-shared/session/session-history-read-scope.js";
 import { readConversationQuerySnapshot } from "./conversation-query.js";
-import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { projectSessionInputSender, type SessionTurnQueueOrigin } from "../../src-shared/session/session-turn-queue.js";
 import { projectCharacterPublicProfile } from "../../src-shared/character/character-participant.js";
 import { parseCharacterRuntimeSnapshotJson } from "../../src-shared/character/character-runtime-snapshot.js";

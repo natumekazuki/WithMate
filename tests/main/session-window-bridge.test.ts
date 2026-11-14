@@ -73,7 +73,7 @@ it("queue準備中のAuxiliary取消はquit中止後のcloseでも親を監視�
     });
     const observability = new SessionObservabilityService({
       onLiveSessionRunChanged: (id, state) => parents.publish(id, state, owner),
-      onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {}, onSessionBackgroundActivityChanged() {},
+      onProviderQuotaTelemetryChanged() {}, onSessionContextTelemetryChanged() {},
     });
     const unexpected = () => assert.fail("Canceled admission must not reach provider preparation or persistence");
     const runtime = new SessionRuntimeService({

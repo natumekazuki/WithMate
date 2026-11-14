@@ -9,7 +9,7 @@ WithMate の `Home Window`、`Session Window`、`Session Monitor Window`、`Sett
 - この文書は `window-architecture.md` の supporting doc として扱う
 - window の上位責務と mode 切り替え判断は `docs/design/window-architecture.md` を正本とする
 - session 実行 lifecycle は `docs/design/session-run-lifecycle.md` を参照する
-- session / turn / memory persistence は `docs/design/electron-session-store.md` を参照する
+- session / turn persistence は `docs/design/electron-session-store.md` を参照する
 
 ## Scope
 
@@ -95,14 +95,14 @@ Bridgeの`presentation: "minimized"`指定は、新規Windowのready時に通常
 
 - `MainWindowComposition` は BrowserWindow の共通生成設定、cursor placement、Homeと同じWindowでの起動状態表示を所有する。bootstrap完了時にAuxWindowServiceがそのWindowをHomeとして引き継ぐ
 - `MainWindowRuntime` は WindowEntryLoader、WindowBroadcastService、WindowDialogService、AuxWindowService、SessionWindowBridge、SessionWindowRestoreService を一つの window runtime として所有する
-- runtime は session lookup、run-in-flight、draft flush、restore persistence などの narrow port だけを受け取り、Memory、Character、Provider、Storage の service bag を保持しない
+- runtime は session lookup、run-in-flight、draft flush、restore persistence などの narrow port だけを受け取り、Character、Provider、Storage の service bag を保持しない
 - window service の生成・状態は MainInfrastructureRegistry から分離し、Main Process の app/service registry と二重管理しない
 
 ### Live Run Delivery
 
 `WindowBroadcastService`はlive詳細snapshotをMainが解決した実行ownerの登録済みSession Windowだけへ配信する。Mainは自身のWindow、Auxiliaryは保存済み親SessionのWindowを宛先とし、payloadの`sessionId`は元の会話IDを維持する。宛先不明・破棄済み・配送失敗時に他Sessionや全Windowへ代替配信しない。非表示のownerにも配信し、再open後はWindow registryから新しい宛先を引き直す。
 
-Home／Session Monitorには別の`withmate:live-session-run-status` eventで`runState`・`cancellationState`を明示投影し、承認待ちのときだけ`approvalPending: true`を付加する。非待機時は`approvalPending`を省略する。本文、reasoning、step、operation、承認・質問詳細を生成・転送・保持せず、本文サイズと独立したpayloadにする。Settings／MemoryReview等はこの通知の宛先に含めない。Home／Monitorは通知をsummary再取得の契機とし、表示の正本は既存のsummary応答とする。
+Home／Session Monitorには別の`withmate:live-session-run-status` eventで`runState`・`cancellationState`を明示投影し、承認待ちのときだけ`approvalPending: true`を付加する。非待機時は`approvalPending`を省略する。本文、reasoning、step、operation、承認・質問詳細を生成・転送・保持せず、本文サイズと独立したpayloadにする。Settings等はこの通知の宛先に含めない。Home／Monitorは通知をsummary再取得の契機とし、表示の正本は既存のsummary応答とする。
 
 Auxiliaryの配送用親関連は実行受付とruntimeの保存済みactive会話読込みから得る。admissionの予約とは分け、run呼出しが収束した後も取消実終了待ち・retained live・background通知・終端`null`へ適用する。admission・実行（取消実終了待ちを含む）・保持liveがすべてなくなった時に、終端通知の配送後に解除する。
 
@@ -153,7 +153,7 @@ node-ptyはタブごとのElectron utility process内で起動要求時にload�
 
 Mainとhostの接続にはElectronのメッセージAPIを使う。workspace内や相対PATHの同名プログラムをshellに選ばず、cwdの文字列をtrimしない。load・shell・cwd・spawnの失敗は端末単位の失敗として返し、外部Terminalへのfallbackや自動respawnは行わない。
 
-出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、Memory、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
+出力は専用eventからxtermの`write`へ渡し、その完了callbackで処理済み文字数を返す。PTYは未処理量のhigh/low watermarkでpause/resumeする。非選択・折りたたみ中も受信と処理を継続し、本文をReact state、Session保存、診断ログへ複製しない。端末の履歴はxtermのscrollback上限に従う。
 
 タブ終了、Window破棄、renderer終了・document navigation、Session削除、アプリ終了でownerのPTYと購読を解放する。起動待機中に解放された要求は、後からspawnが完了してもPTYを残さない。
 
@@ -229,6 +229,6 @@ preload API / IPC の成立を優先し、現行実装は `sandbox: false` を�
 - `desktop-ui.md`
   - 現行 desktop UI の構成
 - `electron-session-store.md`
-  - session / turn / memory persistence orchestration
+  - session / turn persistence orchestration
 - `session-run-lifecycle.md`
   - running session の保護制御

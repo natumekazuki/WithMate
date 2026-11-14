@@ -5,7 +5,7 @@
 
 AuxiliaryはMainと同じWindowで利用する独立した会話である。Main 1件とAuxiliary複数件を保持し、画面にはMainと選択中のAuxiliaryを表示する。Session Graphを開いている間は、送信対象の会話だけをGraphの隣に表示する（[Session Graph](session-graph.md#閲覧ui)）。非表示のAuxiliaryも会話、draft、Character、実行状態を保持し、後から同じ会話を継続できる。
 
-Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionとして扱う。Main・兄弟Auxiliaryとのtranscript、provider context、Memoryを自動同期しない。
+Auxiliaryは監査専用ではなく、通常のprovider chat/coding sessionとして扱う。Main・兄弟Auxiliaryとのtranscript、provider contextを自動同期しない。
 
 ## Scope
 
@@ -48,7 +48,7 @@ Shared ActionDock ──┘
 
 commitの排他境界内で同じ親の使用状況を再確認する。準備したCharacterが既存Auxiliaryで使用済みになり、未使用候補が残る場合は保存せず、coordinatorの外でCharacter選択とsnapshot準備をやり直す。再度commitするときも取消、storage、親identity、runtime selection、Characterのactive状態を検証する。既存Auxiliaryのidentity、snapshot、会話は変更しない。
 
-作成時に`characterId`と初期`CharacterRuntimeSnapshot`を保存し、provider prompt、表示、一覧icon、Memory owner、binding解決で同じidentityを使う。
+作成時に`characterId`と初期`CharacterRuntimeSnapshot`を保存し、provider prompt、表示、一覧icon、binding解決で同じidentityを使う。
 
 送信開始時は[Character Storage](character-storage.md#runtime-snapshot)に従い、active Characterの変更された有効な定義部分だけを更新する。表示metadataとownerは維持し、archived Characterではcanonical fileを読まず保存済みsnapshotを使う。
 

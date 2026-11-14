@@ -78,7 +78,7 @@ function fixture() {
     return new SessionObservabilityService({
       onProviderQuotaTelemetryChanged: () => {},
       onSessionContextTelemetryChanged: () => {},
-      onSessionBackgroundActivityChanged: () => {},
+
       onLiveSessionRunChanged: (id, state) => parents.publish(id, state, capturedOwner),
     });
   };

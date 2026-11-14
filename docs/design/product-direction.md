@@ -6,7 +6,7 @@ WithMateは、CodexとGitHub Copilotのcoding agentを、選択したCharacter�
 
 1. workspace、session、実行状態、承認、差分、失敗と回復を正しく扱い、coding agentとして成立させる。
 2. Characterの話し方や反応を作業体験へ反映しつつ、ファイル操作、検証結果、権限、repository instructionの正確さを損なわない。
-3. MemoryとCharacter Affectで会話の継続性を支え、忘却・訂正・権限境界を守る。
+3. Character定義、通常Sessionの保存履歴、Session GraphとRepository Glossaryをそれぞれの責務で使い、対話と作業の継続性を支える。
 
 Characterの表現は、情報を読む・判断する・操作するための視認性と到達性を犠牲にしない。作業結果とCharacterらしい応答の役割は[Prompt Composition](prompt-composition.md)の境界に従う。
 
@@ -22,8 +22,6 @@ provider間の対応状況は[Coding Agent Capability Matrix](coding-agent-capab
 ## Characterと継続性
 
 Characterはcatalogからsessionごとに選ぶ。通常sessionはstable ownerと表示metadataを維持し、active Characterの有効な定義変更を次の送信開始時に反映する。同名Characterへの切り替えや、更新のための会話履歴・provider threadの破棄は行わない。作成・編集はCharacter Editorで行い、Character authoringは専用の通常Sessionと管理されたSkillを使う。保存とsnapshotの境界は[Character Storage](character-storage.md)に記す。
-
-Memoryは通常のturnへ常設注入せず、権限を持つagentが必要なときに検索・追加・忘却するlocal serviceとする。Affectも永続eventとread-time projectionを区別する。正本、権限、privacy、データ保護は[V6 Memory Foundation](v6-memory-foundation.md)と関連ADRに従う。
 
 ## UIの判断基準
 

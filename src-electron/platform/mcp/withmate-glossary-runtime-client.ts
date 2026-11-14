@@ -1,4 +1,3 @@
-import type { readFile } from "node:fs/promises";
 
 import {
   GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -6,45 +5,43 @@ import {
   type GlossaryRuntimeEnvelope,
 } from "../../../src-shared/glossary/glossary-contract.js";
 import type { GlossaryRuntimeOperation } from "../../../src-shared/glossary/glossary-operation-schema.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../memory/memory-runtime-exchange.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../agent-runtime/runtime-exchange.js";
 import type { RuntimeDiscoveryClock } from "../runtime-discovery/runtime-discovery-contract.js";
 import {
-  callWithMateMemoryRuntime,
-  mapWithMateMemoryDiscoveryCode,
+  callAgentRuntime,
+  mapAgentRuntimeDiscoveryCode,
   resolveAgentRuntimeBindingReference,
   resolveAgentRuntimeTurnCapability,
-  resolveWithMateMemoryApi,
-  WithMateMemoryRuntimeExchangeError,
-  type WithMateMemoryRuntimeConnection,
-  type WithMateMemoryRuntimeOperation,
-  type WithMateMemoryPublicDiscoveryCode,
-  type WithMateMemoryRuntimeResponse,
-  type WithMateMemoryRuntimeResolution,
-} from "./withmate-memory-runtime-client.js";
+  resolveAgentRuntimeApi,
+  AgentRuntimeExchangeError,
+  type AgentRuntimeConnection,
+  type AgentRuntimeOperation,
+  type AgentRuntimePublicDiscoveryCode,
+  type AgentRuntimeResponse,
+  type AgentRuntimeResolution,
+} from "../agent-runtime/runtime-client.js";
 
 export type GlossaryRuntimeClientDeps = {
   adapter: "cli" | "mcp";
   env?: NodeJS.ProcessEnv;
-  connection?: WithMateMemoryRuntimeConnection;
+  connection?: AgentRuntimeConnection;
   apiUrl?: string;
-  discoveryFilePath?: string;
   applicationInstanceId?: string;
   runtimeGenerationId?: string;
   registryRootDirectoryPath?: string;
   clock?: RuntimeDiscoveryClock;
   staleThresholdMs?: number;
   fetch?: typeof fetch;
-  readFile?: typeof readFile;
   runtimeCall?: (
-    connection: WithMateMemoryRuntimeConnection,
-    operation: WithMateMemoryRuntimeOperation,
+    connection: AgentRuntimeConnection,
+    operation: AgentRuntimeOperation,
     options: {
       signal: AbortSignal;
       bindingReference?: string;
       turnCapability?: string;
       exchangePath?: string;
     },
-  ) => Promise<WithMateMemoryRuntimeResponse>;
+  ) => Promise<AgentRuntimeResponse>;
   requestTimeoutMs?: number;
 };
 
@@ -83,7 +80,7 @@ function createGlossaryBindingRequiredError(): GlossaryRuntimeEnvelope<GlossaryO
 }
 
 function mapGlossaryRuntimeDiscoveryCode(
-  discoveryCode: WithMateMemoryPublicDiscoveryCode,
+  discoveryCode: AgentRuntimePublicDiscoveryCode,
 ): GlossaryOperationError["code"] {
   switch (discoveryCode) {
     case "WITHMATE_RUNTIME_INSTANCE_MISMATCH":
@@ -106,8 +103,8 @@ function mapGlossaryRuntimeDiscoveryCode(
 }
 
 function createGlossaryPublicDiscoveryError(
-  discoveryCode: WithMateMemoryPublicDiscoveryCode,
-  candidates: Extract<WithMateMemoryRuntimeResolution, { kind: "error" }>["candidates"] = [],
+  discoveryCode: AgentRuntimePublicDiscoveryCode,
+  candidates: Extract<AgentRuntimeResolution, { kind: "error" }>["candidates"] = [],
 ): GlossaryRuntimeEnvelope<GlossaryOperationError> {
   return {
     schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -124,10 +121,10 @@ function createGlossaryPublicDiscoveryError(
 }
 
 function createGlossaryRuntimeDiscoveryError(
-  resolution: Extract<WithMateMemoryRuntimeResolution, { kind: "error" }>,
+  resolution: Extract<AgentRuntimeResolution, { kind: "error" }>,
 ): GlossaryRuntimeEnvelope<GlossaryOperationError> {
   return createGlossaryPublicDiscoveryError(
-    mapWithMateMemoryDiscoveryCode(resolution.code),
+    mapAgentRuntimeDiscoveryCode(resolution.code),
     resolution.candidates,
   );
 }
@@ -163,20 +160,18 @@ export async function callGlossaryRuntime(input: {
   } catch {
     return createGlossaryBindingRequiredError();
   }
-  let resolution: WithMateMemoryRuntimeResolution | { kind: "selected"; connection: WithMateMemoryRuntimeConnection };
+  let resolution: AgentRuntimeResolution | { kind: "selected"; connection: AgentRuntimeConnection };
   try {
-    resolution = deps.connection ? { kind: "selected", connection: deps.connection } : await resolveWithMateMemoryApi({
+    resolution = deps.connection ? { kind: "selected", connection: deps.connection } : await resolveAgentRuntimeApi({
       adapter: deps.adapter,
       env: deps.env,
       apiUrl: deps.apiUrl,
-      discoveryFilePath: deps.discoveryFilePath,
       applicationInstanceId: deps.applicationInstanceId,
       runtimeGenerationId: deps.runtimeGenerationId,
       registryRootDirectoryPath: deps.registryRootDirectoryPath,
       clock: deps.clock,
       staleThresholdMs: deps.staleThresholdMs,
       fetch: deps.fetch,
-      readFile: deps.readFile,
     });
   } catch {
     return createGlossaryTransportError("WithMate runtime discovery failed.");
@@ -189,7 +184,7 @@ export async function callGlossaryRuntime(input: {
   const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 10_000);
   let dispatched = false;
   try {
-    const response = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
+    const response = await (deps.runtimeCall ?? callAgentRuntime)(connection, {
       method: "POST",
       path: input.path,
       body: input.body,
@@ -211,10 +206,10 @@ export async function callGlossaryRuntime(input: {
       isWriteOperation(input.operation) ? "unknown" : "none",
     );
   } catch (error) {
-    const wasDispatched = error instanceof WithMateMemoryRuntimeExchangeError
+    const wasDispatched = error instanceof AgentRuntimeExchangeError
       ? error.dispatched
       : dispatched;
-    if (error instanceof WithMateMemoryRuntimeExchangeError && !wasDispatched && error.discoveryCode) {
+    if (error instanceof AgentRuntimeExchangeError && !wasDispatched && error.discoveryCode) {
       return createGlossaryPublicDiscoveryError(error.discoveryCode);
     }
     return createGlossaryTransportError(

@@ -232,7 +232,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - 本文はWindow幅を使うinner scrollで流し、scrollbarを右端へ置いて保存footerの操作領域と分ける
   - `Session Window`
     - `Close Action Dock After Send`
-  - `Prompt Context` の4項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない
+  - `Prompt Context` の3項目を個別に切り替える。説明だけのhelper文やHelp iconは常設しない
   - `Coding Agent Providers`ではproviderごとに開閉し、見出しで有効状態を確認し、展開内でenable / disableを編集する。sectionやproviderを装飾cardで入れ子にしない。詳細は[Settings UI](settings-ui.md#layout)を参照する
   - OpenCodeの認証はOpenCode側で設定し、WithMate専用のGo key入力・OAuth接続・account切替UIは置かない。provider file設定は維持する
   - `Diagnostics`
@@ -479,9 +479,7 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
 - right pane shell は Agent で共有する。表示する内容がない mode では pane 構造だけを残し、説明文や空メッセージを常設しない
 - right pane の本文scrollbarはtab直下からpane下端まで共通の高さにし、`Messages`と`Coordination`のfilter・操作欄、`Glossary`の検索欄は本文の上端へ固定して一覧だけを流す。Coordinationは詳細から一覧へ戻る時に、選んだ行とスクロール位置へ戻る
 - Messages navigatorと全履歴query pageは総件数に対してrowをvirtualizeし、All／Bookmarkのいずれも未取得pageを含む全履歴を対象にする。native rowのaccessible nameとfocusを保ち、Arrowで全件内を巡回、Home／Endで先頭／末尾、Enterで本文へjumpする。結果pageの到着でscroll位置を初期化しない。Bookmark切替と会話owner変更では一覧を先頭へ戻し、owner変更ではAllへ戻す。loading／error／Retryと成功0件の空本文を区別する
-- `Generate Memory` は current UI では表示しない
 - Coordinationの閲覧・回答中は、commandやstreaming、相談の更新で選択tab・focus・scroll・draftを変更しない
-- MemoryGeneration / 独り言の right pane 自動切り替えは行わない
 - right pane の正常empty / idle bodyはblankにし、pane shell・tab・必要な操作・accessible statusだけを残す。実エラー、validation、安全・復旧説明は維持する
 - `Latest Command` には raw command、status、source、rough risk badge、必要時だけ開く `details` を出す
 - 同owner・同turnの保存済みcommandと詳細は、通知・Session更新・Retryによる再取得中と失敗時にも保持する。loading／errorと`Retry`はcommandの有無に依存せず同じpaneへ表示する。新turn、会話やincarnationの切替では旧commandを表示しない
@@ -490,7 +488,6 @@ Mainの`Rename`は保存前失敗時に入力を保持してalertで失敗を示
   - full timeline には戻さず、summary + optional `details` に留める
 - provider が `Copilot` で background task snapshot が来た時は、right pane の `Tasks` tab で `agent / shell` の running / completed / failed を確認できるようにする
 - `Tasks` tab は `/tasks` 全機能の再現ではなく、current session に紐づく background task の coarse な観測面に留める
-- `Memory生成` tab は current UI では表示しない
 - provider が `Copilot` の時だけ、`Latest Command` の下に `Copilot Usage` の薄い strip を常設し、残量だけを即読できるようにする
 - `Context` は同じ領域の collapsed details として置き、ユーザーが開くまでは右 pane の面積をほとんど使わない
 - `assistantText` は会話本文としてのみ扱い、`agent_message` を activity row へ戻さない

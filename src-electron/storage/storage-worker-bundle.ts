@@ -1,5 +1,6 @@
 import { AuxiliarySessionStorage, type AuxiliarySessionStorage as AuxiliarySessionStorageType } from "../auxiliary/auxiliary-session-storage.js";
 import type { WorkerOptions } from "node:worker_threads";
+import { existsSync } from "node:fs";
 import { SessionTurnStorageV6 } from "../session/session-turn-storage-v6.js";
 import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage-v6.js";
 import { SessionGraphStorageV6 } from "../session-graph/session-graph-storage-v6.js";
@@ -7,7 +8,7 @@ import { SessionExecutionReadStorage } from "./session-execution-read.js";
 import { CoordinationStorageV7 } from "../coordination/coordination-storage-v7.js";
 import type { SessionGraphOwner, SessionGraphIdentity, SessionGraphStorageAuthority } from "../../src-shared/session-graph/session-graph-contract.js";
 import type { SessionGraphStorageOperation, SessionGraphStorageRequest, SessionGraphStorageResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
-import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, currentRuntimeTurnAdmissionState, runWithRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { AppSettingsStorage } from "../app/app-settings-storage.js";
 import { MateStorage } from "../mate/mate-storage.js";
@@ -17,6 +18,7 @@ import { SessionStorageV6 } from "../session/session-storage-v6.js";
 import { sessionSummariesToSessions } from "../session/session-summary-adapter.js";
 import { ensureV6Schema, isValidV6Database } from "./database-schema-v6.js";
 import { openAppDatabase, truncateAppDatabaseWalIfLargerThan } from "./sqlite-connection.js";
+import { assertRetiredMemoryAffectDatabasePath } from "./migrations/memory-affect-removal.js";
 import { StorageWorkerClient } from "./storage-worker-client.js";
 import type { StorageWorkerEntryData } from "./storage-worker-protocol.js";
 import type { StorageOperationDiagnosticSink } from "./storage-operation-diagnostics.js";
@@ -43,7 +45,7 @@ const STORE_METHODS = {
   sessionGraph: ["execute"],
   execution: ["execute"],
   session: [
-    "getSessionView", "getConversationPage", "readSessionHistory", "readBackgroundSource", "captureBackgroundSource", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
+    "getSessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",
     "listSessionFilePins", "pinSessionFile", "unpinSessionFile",
     "listSessions", "listSessionSummaries", "listSessionSummaryPage", "listSessionCharacterUsage",
     "getLatestSessionSummaryForProvider", "getSession", "getSessionSummary", "getSessionMetadata", "getSessionMessageIdentity", "setSessionPinned", "getSessionMessageArtifact",
@@ -121,6 +123,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
     throw new Error("V6 storage worker requires dbPath and userDataPath.");
   }
   const dbPath = data.dbPath;
+  if (existsSync(dbPath)) assertRetiredMemoryAffectDatabasePath(dbPath);
   const schemaDb = openAppDatabase(dbPath);
   try {
     ensureV6Schema(schemaDb);
@@ -179,7 +182,7 @@ function createStoreHandlers(data: StorageWorkerEntryData) {
       const store = currentInstances[input.store as keyof StorageInstances] as Record<string, AnyMethod>;
       const method = store[input.method];
       if (typeof method !== "function") throw new Error(`Storage worker method is unavailable: ${input.store}.${input.method}`);
-      if ((input.store === "settings" || input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory" || input.method === "readBackgroundSource" || input.method === "captureBackgroundSource") && input.runtimeTurnAdmissionState !== undefined) {
+      if ((input.store === "settings" || input.store === "coordination" || input.store === "sessionGraph" || input.store === "execution" || input.method === "setSessionAdditionalDirectories" || input.method === "readSessionHistory") && input.runtimeTurnAdmissionState !== undefined) {
         if (!(input.runtimeTurnAdmissionState instanceof SharedArrayBuffer) || input.runtimeTurnAdmissionState.byteLength !== Int32Array.BYTES_PER_ELEMENT) throw new Error("Runtime turn admission state is invalid.");
         return runWithRuntimeTurnAdmission({ state: input.runtimeTurnAdmissionState }, () => method.apply(store, input.args!));
       }

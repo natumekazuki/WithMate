@@ -306,9 +306,9 @@ test("SessionPersistenceService deferred thread patchはcacheを安全に投影�
         deleteStoredSessions: async (sessionIds) => storage.deleteSessions(sessionIds),
         getAppSettings: () => ({}) as never,
         getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-        syncSessionDependencies: () => undefined,
+
         clearSessionContextTelemetry: () => undefined,
-        clearSessionBackgroundActivities: () => undefined,
+
         invalidateProviderSessionThread: async () => undefined,
         closeSessionWindow: () => undefined,
         broadcastSessions: () => undefined,

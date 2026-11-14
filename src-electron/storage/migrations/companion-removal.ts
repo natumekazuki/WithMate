@@ -5,7 +5,6 @@ import type { DatabaseSync } from "node:sqlite";
 import { openAppDatabase, openAppDatabaseReadOnly } from "../sqlite-connection.js";
 import { TextBlobStore } from "../text-blob-store.js";
 import { resolveSessionFilesDirectory } from "../../files/session-files.js";
-import { MemoryProtectedObjectStore } from "../../memory/memory-protected-object-store.js";
 import {
   applyCompanionRemovalDatabaseTarget,
   collectCompanionRemovalDatabaseTarget,
@@ -13,6 +12,11 @@ import {
   type CompanionRemovalDatabaseTarget,
 } from "./companion-removal-database.js";
 import { captureCompanionGitRemovalProgress, removeCompanionGitAssets, type CompanionRemovalGitProgress } from "./companion-removal-git.js";
+
+function resolveLegacyMemoryObjectPath(root: string, id: string): string {
+  if (!/^[a-f0-9]{32}$/.test(id)) throw new Error("Companion removal found an invalid Memory object ID.");
+  return path.join(root, "memory-objects", "v6", id.slice(0, 2), `${id}.bin`);
+}
 
 const COMPLETED_KEY = "companion_removal_completed_at";
 const PENDING_KEY = "companion_removal_pending";
@@ -270,9 +274,8 @@ async function collectFileTargets(root: string, data: CompanionRemovalDatabaseTa
     }
   }
   const survivingObjects = new Set(data.flatMap((item) => item.survivingProtectedObjectIds));
-  const objectStore = MemoryProtectedObjectStore.fromUserDataPath(root);
   for (const objectId of new Set(data.flatMap((item) => item.ownedProtectedObjectIds))) {
-    if (!survivingObjects.has(objectId)) await add(objectStore.resolveObjectPath(objectId));
+    if (!survivingObjects.has(objectId)) await add(resolveLegacyMemoryObjectPath(root, objectId));
   }
   return targets.filter((target, index) => targets.findIndex((other) => samePath(other.path, target.path)) === index);
 }
@@ -300,8 +303,7 @@ function parsePlan(value: string, root: string, paths: string[]): RemovalPlan {
       if (path.basename(folder) !== id) throw new Error("Invalid Session ID in removal progress.");
       return folder;
     });
-  const objectStore = MemoryProtectedObjectStore.fromUserDataPath(root);
-  const objectPaths = inventories.flatMap((data) => data.ownedProtectedObjectIds).map((id) => objectStore.resolveObjectPath(id));
+  const objectPaths = inventories.flatMap((data) => data.ownedProtectedObjectIds).map((id) => resolveLegacyMemoryObjectPath(root, id));
   const blobIds = new Set(inventories.flatMap((data) => data.ownedBlobIds));
   for (const file of plan.files) {
     const segments = path.relative(root, file.path).split(path.sep);

@@ -7,7 +7,7 @@ import { SessionTurnQueueStorageV6 } from "../session/session-turn-queue-storage
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureCoordinationSchemaV7 } from "./coordination-schema-v7.js";
 import { assertSessionLifecycleReady } from "../session/session-lifecycle-operation.js";
-import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CoordinationDeletedError, CoordinationRejectedError } from "./coordination-errors.js";
 
 const same = (a: { kind: string; sessionId?: string; incarnationId?: string }, b: { kind: string; sessionId?: string; incarnationId?: string }) => a.kind === b.kind && a.sessionId === b.sessionId && a.incarnationId === b.incarnationId;

@@ -1,12 +1,14 @@
 # ADR 020: MemoryとCharacter AffectのMCPは共通application boundaryへ接続する
 
+2026-11-15の[ADR 036](036-memory-affect-removal.md)により、Memory／Affect専用の本判断は適用対象外とする。機構と専用データは退避せず廃止し、製品外は変更しない。以下の当時の本文は判断履歴として保持する。
+
 ## Status
 
 Accepted
 
 ## Subsequent decisions
 
-通常Main／Auxiliaryのpre-turnでMemoryを検索し、Character Memoryをpromptへ自動注入する判断は現行運用の適用対象外とする。Memory想起は会話Agentが必要時に既存MCP／CLIで行う検索・一覧・本文取得へ統一し、公開`character_context.get`／CLI `context-get`の任意queryによる明示取得は維持する。pre-turnで維持するのはAffectの最新状態取得・合成、afterglow projectionと`Character Affect Context`の注入である。後継の現行定義は[V6 Memory Foundation](../design/v6-memory-foundation.md#affectの更新とcontext)と[Prompt Composition](../design/prompt-composition.md#通常sessionの入力)を参照する。以下の当時の本文は保持する。
+通常Main／Auxiliaryのpre-turnでMemoryを検索し、Character Memoryをpromptへ自動注入する判断は現行運用の適用対象外とする。Memory想起は会話Agentが必要時に既存MCP／CLIで行う検索・一覧・本文取得へ統一し、公開`character_context.get`／CLI `context-get`の任意queryによる明示取得は維持する。pre-turnで維持するのはAffectの最新状態取得・合成、afterglow projectionと`Character Affect Context`の注入である。後継の現行定義は[V6 Memory Foundation](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/v6-memory-foundation.md#affectの更新とcontext)と[Prompt Composition](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/prompt-composition.md#通常sessionの入力)を参照する。以下の当時の本文は保持する。
 
 [ADR 029](029-cli-mcp-parity-context-binding.md)により、CLI専用operator操作とMCPの公開範囲を分ける判断、通常CLIを障害時に限る判断は現行運用の適用対象外とする。両入口の公開契約と文脈別binding要否を統一する。共通application boundaryと保存・検証契約は維持し、以下の本文は当時の判断として保持する。
 
@@ -20,7 +22,7 @@ ADR 024は、agent-facing Memoryについて本ADRの明示target、adapter cred
 
 本ADRの共通application boundary、SQLite非直結、effect certainty、idempotency、episode mutation ownerは維持する。lifecycle/event-time appraisalの契約も維持する。
 
-独立Auditの詳細保存・閲覧とprogress永続化に関する本文の判断は現行運用の適用対象外とする。操作結果は通常履歴のartifact、実行phase・Timing・Affect correlationは最小turnを正本とする後継判断へ置換した。現行契約は[Session Run Lifecycle](../design/session-run-lifecycle.md)、[Provider Adapter](../design/provider-adapter.md)、[Database Schema](../design/database-schema.md)を参照する。本文は当時の判断として保持する。
+独立Auditの詳細保存・閲覧とprogress永続化に関する本文の判断は現行運用の適用対象外とする。操作結果は通常履歴のartifact、実行phase・Timing・Affect correlationは最小turnを正本とする後継判断へ置換した。現行契約は[Session Run Lifecycle](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/session-run-lifecycle.md)、[Provider Adapter](../design/provider-adapter.md)、[Database Schema](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/database-schema.md)を参照する。本文は当時の判断として保持する。
 
 ## Context
 

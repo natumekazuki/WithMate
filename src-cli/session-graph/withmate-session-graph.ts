@@ -9,6 +9,7 @@ const operations = ["list_topics", "recent", "context", "get", "search", "apply"
 type Operation = typeof operations[number];
 type Command = Operation | "help" | "schema";
 export type SessionGraphCliDeps = SessionGraphRuntimeClientDeps & {
+  readFile?: typeof readFile;
   stdin?: NodeJS.ReadableStream;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
@@ -28,7 +29,7 @@ Commands:
 
 Connection options:
   --api-url <loopback-url>
-  --discovery-file <path>
+
   --instance <application-instance-id>
   --generation <runtime-generation-id>
 
@@ -45,7 +46,7 @@ export async function parseWithMateSessionGraphCliArgs(args: readonly string[], 
     ? name as Command : (() => { throw new SessionGraphCliUsageError(`Unknown command: ${args[0]}`); })();
   let body: unknown = {};
   let inputSeen = false;
-  const connection: Pick<SessionGraphRuntimeClientDeps, "apiUrl" | "discoveryFilePath" | "applicationInstanceId" | "runtimeGenerationId"> = {};
+  const connection: Pick<SessionGraphRuntimeClientDeps, "apiUrl" | "applicationInstanceId" | "runtimeGenerationId"> = {};
   for (let index = 1; index < args.length; index += 1) {
     const option = args[index];
     const takeValue = () => {
@@ -70,7 +71,6 @@ export async function parseWithMateSessionGraphCliArgs(args: readonly string[], 
       try { body = JSON.parse(raw); }
       catch { throw new SessionGraphCliUsageError("Input must contain valid JSON."); }
     } else if (option === "--api-url") connection.apiUrl = takeValue();
-    else if (option === "--discovery-file") connection.discoveryFilePath = takeValue();
     else if (option === "--instance") connection.applicationInstanceId = takeValue();
     else if (option === "--generation") connection.runtimeGenerationId = takeValue();
     else throw new SessionGraphCliUsageError(`Unknown option: ${option}`);

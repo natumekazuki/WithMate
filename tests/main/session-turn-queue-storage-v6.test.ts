@@ -80,8 +80,8 @@ test("queued開始・終端はmessage・minimum turn・receiptを原子的に保
       appendStoredRunningTurnStart: (command) => sessions.appendRunningTurnStart(command),
       replaceStoredSessions: () => undefined, listStoredSessions: () => { throw new Error("Unexpected full list"); },
       getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-      syncSessionDependencies: () => undefined, clearSessionContextTelemetry: () => undefined,
-      clearSessionBackgroundActivities: () => undefined, invalidateProviderSessionThread: () => undefined,
+       clearSessionContextTelemetry: () => undefined,
+       invalidateProviderSessionThread: () => undefined,
       closeSessionWindow: () => undefined, broadcastSessions: (ids) => broadcasts.push(Array.from(ids ?? [])),
     });
     for (const target of ["turn", "receipt"] as const) {

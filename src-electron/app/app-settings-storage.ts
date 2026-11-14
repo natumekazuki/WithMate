@@ -12,17 +12,15 @@ import { CREATE_APP_SETTINGS_TABLE_SQL } from "../storage/database-schema-v1.js"
 import { SESSION_GRAPH_CONTRACT_INITIALIZED_KEY } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { selectionPolicySchema, worktreePolicySchema, worktreeRepositoryRuleSchema, type SelectionPolicy, type WorktreePolicy, type WorktreeRepositoryRule } from "../../src-shared/session/session-operating-policy.js";
-import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 
 const DEFAULT_APP_SETTINGS: AppSettings = createDefaultAppSettings();
-const MEMORY_GENERATION_ENABLED_KEY = "memory_generation_enabled";
 const LAUNCH_AT_LOGIN_ENABLED_KEY = "launch_at_login_enabled";
 const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled";
 const SESSION_APPROVAL_NOTIFICATION_ENABLED_KEY = "session_approval_notification_enabled";
 const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
   "session_turn_notification_response_preview_enabled";
 const CHARACTER_DEFINITION_ENABLED_KEY = "character_definition_enabled";
-const CHARACTER_AFFECT_CONTEXT_ENABLED_KEY = "character_affect_context_enabled";
 const CONVERSATION_TIMING_ENABLED_KEY = "conversation_timing_enabled";
 const TOOL_CALL_PRESENCE_ENABLED_KEY = "tool_call_presence_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
@@ -33,17 +31,12 @@ const SESSION_ACTION_DOCK_PRESENTATION_KEY = "session_action_dock_presentation";
 const SESSION_SIDE_PANE_KEY = "session_side_pane";
 const LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const KEYBOARD_SHORTCUTS_KEY = "keyboard_shortcuts_json";
-const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY = "glossary_proactive_create_limit";
 const GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY = "glossary_proactive_create_limit_initialized";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MODEL_AVAILABILITY_KEY = "model_availability_json";
 const SELECTION_POLICY_KEY = "session_selection_policy_json";
 const WORKTREE_POLICY_KEY = "worktree_policy_json";
-const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
-const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
-const BACKGROUND_EXECUTION_SETTINGS_KEY = "background_execution_settings_json";
-const MEMORY_RECORDING_FREQUENCIES_KEY = "memory_recording_frequencies_json";
 const OBSOLETE_MICROCOPY_SETTING_KEYS = [
   "user_microcopy_catalog_json",
   "user_microcopy_catalog_english_migrated",
@@ -109,13 +102,6 @@ export class AppSettingsStorage {
         VALUES (?, ?, ?)
         ON CONFLICT(setting_key) DO NOTHING
       `)
-      .run(MEMORY_GENERATION_ENABLED_KEY, String(DEFAULT_APP_SETTINGS.memoryGenerationEnabled), updatedAt);
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
       .run(LAUNCH_AT_LOGIN_ENABLED_KEY, String(DEFAULT_APP_SETTINGS.launchAtLoginEnabled), updatedAt);
     this.db
       .prepare(`
@@ -159,17 +145,6 @@ export class AppSettingsStorage {
       .run(
         CHARACTER_DEFINITION_ENABLED_KEY,
         String(DEFAULT_APP_SETTINGS.characterDefinitionEnabled),
-        updatedAt,
-      );
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(
-        CHARACTER_AFFECT_CONTEXT_ENABLED_KEY,
-        String(DEFAULT_APP_SETTINGS.characterAffectContextEnabled),
         updatedAt,
       );
     this.db
@@ -244,13 +219,6 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(KEYBOARD_SHORTCUTS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.keyboardShortcuts), updatedAt);
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(DEFAULT_APP_SETTINGS.memoryFileQuotaBytes), updatedAt);
     const glossaryLimitInitialized = this.db
       .prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
       .get(GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY);
@@ -281,28 +249,6 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.codingProviderSettings), updatedAt);
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(
-        MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
-        JSON.stringify(DEFAULT_APP_SETTINGS.memoryExtractionProviderSettings),
-        updatedAt,
-      );
-    this.db
-      .prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO NOTHING
-      `)
-      .run(
-        MATE_MEMORY_GENERATION_SETTINGS_KEY,
-        JSON.stringify(DEFAULT_APP_SETTINGS.mateMemoryGenerationSettings),
-        updatedAt,
-      );
   }
 
   getSettings(): AppSettings {
@@ -316,10 +262,6 @@ export class AppSettingsStorage {
     const settings = createDefaultAppSettings();
     let glossaryProactiveCreateLimitFound = false;
     for (const row of rows) {
-      if (row.setting_key === MEMORY_GENERATION_ENABLED_KEY) {
-        settings.memoryGenerationEnabled = row.setting_value === "true";
-        continue;
-      }
       if (row.setting_key === LAUNCH_AT_LOGIN_ENABLED_KEY) {
         settings.launchAtLoginEnabled = row.setting_value === "true";
         continue;
@@ -345,12 +287,6 @@ export class AppSettingsStorage {
       if (row.setting_key === CHARACTER_DEFINITION_ENABLED_KEY) {
         if (row.setting_value === "true" || row.setting_value === "false") {
           settings.characterDefinitionEnabled = row.setting_value === "true";
-        }
-        continue;
-      }
-      if (row.setting_key === CHARACTER_AFFECT_CONTEXT_ENABLED_KEY) {
-        if (row.setting_value === "true" || row.setting_value === "false") {
-          settings.characterAffectContextEnabled = row.setting_value === "true";
         }
         continue;
       }
@@ -392,10 +328,6 @@ export class AppSettingsStorage {
         settings.chatLayoutPreference.sidePane = normalizeSessionSidePane(row.setting_value);
         continue;
       }
-      if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
-        settings.memoryFileQuotaBytes = Number(row.setting_value);
-        continue;
-      }
       if (row.setting_key === PREVIEW_WHEEL_ZOOM_STEP_KEY) {
         settings.previewWheelZoomStep = Number(row.setting_value);
         continue;
@@ -429,34 +361,6 @@ export class AppSettingsStorage {
       }
     }
 
-    const memoryExtractionProviderSettingsJson = rows.find(
-      (row) => row.setting_key === MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
-    )?.setting_value;
-    if (memoryExtractionProviderSettingsJson) {
-      try {
-        settings.memoryExtractionProviderSettings = normalizeAppSettings({
-          ...settings,
-          memoryExtractionProviderSettings: JSON.parse(memoryExtractionProviderSettingsJson),
-        }).memoryExtractionProviderSettings;
-      } catch {
-        settings.memoryExtractionProviderSettings = createDefaultAppSettings().memoryExtractionProviderSettings;
-      }
-    }
-
-    const mateMemoryGenerationSettingsJson = rows.find(
-      (row) => row.setting_key === MATE_MEMORY_GENERATION_SETTINGS_KEY,
-    )?.setting_value;
-    if (mateMemoryGenerationSettingsJson) {
-      try {
-        settings.mateMemoryGenerationSettings = normalizeAppSettings({
-          ...settings,
-          mateMemoryGenerationSettings: JSON.parse(mateMemoryGenerationSettingsJson),
-        }).mateMemoryGenerationSettings;
-      } catch {
-        settings.mateMemoryGenerationSettings = createDefaultAppSettings().mateMemoryGenerationSettings;
-      }
-    }
-
     const keyboardShortcutsJson = rows.find((row) => row.setting_key === KEYBOARD_SHORTCUTS_KEY)?.setting_value;
     if (keyboardShortcutsJson) {
       try {
@@ -468,14 +372,8 @@ export class AppSettingsStorage {
         settings.keyboardShortcuts = createDefaultAppSettings().keyboardShortcuts;
       }
     }
-
-    // Missing keys use defaults; malformed or invalid explicit values must surface to the caller.
-    const backgroundSettingsRow = rows.find((row) => row.setting_key === BACKGROUND_EXECUTION_SETTINGS_KEY);
-    const memoryFrequenciesRow = rows.find((row) => row.setting_key === MEMORY_RECORDING_FREQUENCIES_KEY);
     return normalizeAppSettings({
       ...settings,
-      backgroundExecutionSettings: backgroundSettingsRow ? JSON.parse(backgroundSettingsRow.setting_value) : undefined,
-      memoryRecordingFrequencies: memoryFrequenciesRow ? JSON.parse(memoryFrequenciesRow.setting_value) : undefined,
     });
   }
 
@@ -495,15 +393,6 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(MODEL_AVAILABILITY_KEY, JSON.stringify(normalized.modelAvailability), updatedAt);
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(MEMORY_GENERATION_ENABLED_KEY, String(normalized.memoryGenerationEnabled), updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -563,19 +452,6 @@ export class AppSettingsStorage {
         .run(
           CHARACTER_DEFINITION_ENABLED_KEY,
           String(normalized.characterDefinitionEnabled),
-          updatedAt,
-        );
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(
-          CHARACTER_AFFECT_CONTEXT_ENABLED_KEY,
-          String(normalized.characterAffectContextEnabled),
           updatedAt,
         );
       this.db
@@ -652,15 +528,6 @@ export class AppSettingsStorage {
             setting_value = excluded.setting_value,
             updated_at = excluded.updated_at
         `)
-        .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(normalized.memoryFileQuotaBytes), updatedAt);
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
         .run(
           GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY,
           normalized.glossaryProactiveCreateLimit === null
@@ -677,41 +544,6 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(CODING_PROVIDER_SETTINGS_KEY, JSON.stringify(normalized.codingProviderSettings), updatedAt);
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(
-          MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY,
-          JSON.stringify(normalized.memoryExtractionProviderSettings),
-          updatedAt,
-        );
-      this.db
-        .prepare(`
-          INSERT INTO app_settings (setting_key, setting_value, updated_at)
-          VALUES (?, ?, ?)
-          ON CONFLICT(setting_key) DO UPDATE SET
-            setting_value = excluded.setting_value,
-            updated_at = excluded.updated_at
-        `)
-        .run(
-          MATE_MEMORY_GENERATION_SETTINGS_KEY,
-          JSON.stringify(normalized.mateMemoryGenerationSettings),
-          updatedAt,
-        );
-      const saveBackgroundSetting = this.db.prepare(`
-        INSERT INTO app_settings (setting_key, setting_value, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(setting_key) DO UPDATE SET
-          setting_value = excluded.setting_value,
-          updated_at = excluded.updated_at
-      `);
-      saveBackgroundSetting.run(BACKGROUND_EXECUTION_SETTINGS_KEY, JSON.stringify(normalized.backgroundExecutionSettings), updatedAt);
-      saveBackgroundSetting.run(MEMORY_RECORDING_FREQUENCIES_KEY, JSON.stringify(normalized.memoryRecordingFrequencies), updatedAt);
       this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");

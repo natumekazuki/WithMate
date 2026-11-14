@@ -9,11 +9,12 @@ import {
   collectCompanionRemovalDatabaseTarget,
 } from "../../src-electron/storage/migrations/companion-removal-database.js";
 import { ensureV6Schema } from "../../src-electron/storage/database-schema-v6.js";
+import { RELEASED_V6_SCHEMA_SQL } from "./fixtures/released-v6-schema.js";
 
 function database(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
-  ensureV6Schema(db);
+  db.exec(RELEASED_V6_SCHEMA_SQL);
   installReleasedLegacyAuxiliarySessionsTable(db);
   db.exec(`
     CREATE TABLE session_turn_provider_outputs_v6 (

@@ -7,14 +7,14 @@ import {
 import type {
   AgentRuntimeExtensionRequest,
   AgentRuntimeExtensionResponse,
-} from "../memory/memory-v6-http-server.js";
+} from "../platform/agent-runtime/runtime-api.js";
 import type { AgentRuntimeBindingRegistry } from "../providers/agent-runtime-binding.js";
 import type { ProviderAgentRuntimeTurnCoordinator } from "../providers/provider-agent-runtime-turn-coordinator.js";
 import {
   SessionManagementApplication,
   SessionManagementError,
 } from "./session-management-application.js";
-import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { runWithRuntimeTurnAdmission, RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { isSessionOperatingPolicyOperation } from "../../src-shared/session/session-operating-policy.js";
 
 export class SessionManagementRuntimeService {
@@ -61,12 +61,6 @@ export class SessionManagementRuntimeService {
         "An active normal Session binding is required.",
       );
     const binding = resolved.binding;
-    if (binding.backgroundScope)
-      return failure(
-        403,
-        "SESSION_BINDING_FORBIDDEN",
-        "Background execution cannot use normal Session operations.",
-      );
     const actor = sessionTargetSchema.safeParse(
       binding.authoritySnapshot.sessionIdentity,
     );

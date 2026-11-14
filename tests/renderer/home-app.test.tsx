@@ -95,18 +95,6 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
         models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["high"] }],
       }],
     }),
-    getMemoryV6Diagnostics: async () => ({
-      generatedAt: "",
-      runtime: {
-        status: "stopped", applicationInstanceId: null, runtimeGenerationId: null,
-        buildChannel: null, discoveryPublished: false,
-      },
-      cliShim: {
-        platform: "win32", commandName: "withmate-memory", supported: true,
-        status: "not-installed", pathContainsShimDirectory: false,
-      },
-      lastErrors: [],
-    }),
     listSessionSummaryPage: async () => ({ entries: [], hasMore: false, nextCursor: null }),
     listSessionMonitorPage: async () => ({ entries: [], auxiliarySessions: [], hasMore: false, nextCursor: null }),
     executeCoordination: async () => ({ items: [], total: 0, nextOffset: null }),
@@ -221,10 +209,10 @@ test("HomeのCharacter再取得中もNew Sessionの一覧を維持し、再表�
 
 // @test-value v2
 // kind = "contract"
-// claim = "Settingsのapp settingsとmodel catalogは個別に読込・回復し、その未完了や失敗でMemory diagnosticsの表示と準備済みの操作を塞がずcatalogの購読更新も画面へ反映する"
+// claim = "Settingsのapp settingsとmodel catalogは個別に読込・回復し、その未完了や失敗で準備済みの操作を塞がずcatalogの購読更新も画面へ反映する"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#runtime-policy and GitHub Issue #744" }
 // fault = "Settingsの初回readを一括待機し、別領域の内容や操作を隠すか、失敗後の再取得またはcatalog購読更新の表示をできなくする"
-// observable = "deferred API応答中のSettings section、独立したLoadError/LoadingIndicator、Retry後と購読更新後のprovider row"
+// observable = "deferred API応答中のSettings section、独立したLoadError/LoadingIndicator、catalog失敗中の保存回数とpayload、Retry後と購読更新後のprovider row"
 // observation_boundary = "component-behavior"
 // scope = "Settings Window independent initial reads, recovery and model catalog subscription"
 // lifecycle = "permanent"
@@ -248,12 +236,6 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
   const savedSettings: ReturnType<typeof createDefaultAppSettings>[] = [];
   const originalSettings = {
     ...createDefaultAppSettings(),
-    memoryExtractionProviderSettings: {
-      codex: {
-        ...createDefaultAppSettings().memoryExtractionProviderSettings.codex,
-        model: "preserve-this-memory-model",
-      },
-    },
   };
   const catalog: ModelCatalogSnapshot = {
     providers: [{
@@ -277,18 +259,6 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
       catalogListeners.add(listener);
       return () => { catalogListeners.delete(listener); };
     },
-    getMemoryV6Diagnostics: async () => ({
-      generatedAt: "",
-      runtime: {
-        status: "stopped", applicationInstanceId: null, runtimeGenerationId: null,
-        buildChannel: null, discoveryPublished: false,
-      },
-      cliShim: {
-        platform: "win32", commandName: "withmate-memory", supported: true,
-        status: "not-installed", pathContainsShimDirectory: false,
-      },
-      lastErrors: [],
-    }),
     updateAppSettings: async (settings) => { savedSettings.push(settings); return settings; },
   };
   dom.window.withmate = api as WithMateWindowApi;
@@ -310,13 +280,11 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
     assert.ok(rootElement.querySelector(".settings-window-shell"));
     assert.ok(rootElement.querySelector('[aria-label="Loading app settings"]'));
     assert.ok(rootElement.querySelector('[aria-label="Loading model catalog"]'));
-    assert.ok(rootElement.textContent?.includes("stopped"), "diagnostics should resolve independently");
 
     await act(async () => firstSettingsLoad.reject(new Error("Settings unavailable")));
     assert.match(rootElement.textContent ?? "", /Settings unavailable/);
     await act(async () => firstCatalogLoad.reject(new Error("Catalog unavailable")));
     assert.match(rootElement.textContent ?? "", /Catalog unavailable/);
-    assert.ok(rootElement.textContent?.includes("stopped"), "catalog error should not hide diagnostics");
 
     const settingsRetry = rootElement.querySelector<HTMLButtonElement>(".load-error button");
     assert.ok(settingsRetry);
@@ -331,7 +299,9 @@ test("Settingsは独立したreadのpending/error中も準備済み領域を表�
     assert.ok(appSettingToggle);
     await act(async () => appSettingToggle.click());
     await act(async () => findButton(rootElement, "Save Settings").click());
-    assert.equal(savedSettings[0]?.memoryExtractionProviderSettings.codex?.model, "preserve-this-memory-model");
+    assert.match(rootElement.textContent ?? "", /Catalog unavailable/);
+    assert.equal(savedSettings.length, 1);
+    assert.equal(savedSettings[0]?.launchAtLoginEnabled, !originalSettings.launchAtLoginEnabled);
 
     const catalogError = Array.from(rootElement.querySelectorAll(".load-error"))
       .find((error) => error.textContent?.includes("Catalog unavailable"));

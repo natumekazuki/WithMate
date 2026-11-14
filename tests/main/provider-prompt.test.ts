@@ -65,42 +65,30 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 describe("composeProviderPrompt", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "共通promptはAgentの公開人物情報を出自として渡し、現在相手へのAffectだけを対人表現へ使用する"
+  // claim = "共通promptはAgentの公開人物情報を出自として渡し、自己personaとSession入力を分離してAgent間の自然文にも自己表現を適用する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
-  // fault = "相手の人格へ切り替える指示になるか、他Characterへの感情をGUIユーザーへ混ぜる"
-  // observable = "共通Provider promptの自己定義・sender情報・Affect labelとAgent間表現の適用指示"
+  // fault = "自己personaの正本やAgent間表現の指示を失うか、公開sender情報またはSession入力の出自を混同する"
+  // observable = "system本文のpersona正本とAgent間表現の指示、input本文のsender participant/public profile・Session Input末尾"
   // observation_boundary = "consumer"
   // scope = "provider-character-peer-prompt"
   // lifecycle = "permanent"
   // @end-test-value
-  it("相手の公開情報と自己の人格・相手別Affectを分離する", () => {
+  it("相手の公開情報と自己の人格・発話者を分離する", () => {
     const session = buildNewSession({ id: "a", taskTitle: "Task", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "main",
       characterId: "character-1", character: "A", characterIconPath: "", characterThemeColors, approvalMode: "untrusted",
       characterRuntimeSnapshot: createCharacterRuntimeSnapshot() });
     const base = { session, executionOptions: captureSessionExecutionOptions(session), providerCatalog, userMessage: "相談", appSettings: createDefaultAppSettings(), attachments: [],
-      characterContext: { schemaVersion: "withmate-character-context-v1" as const, baseline: { definitionSha256: "hash", snapshotAt: "2026-11-12T00:00:00.000Z" },
-        affect: { mode: "active" as const, version: "v1", evaluatedAt: "2026-11-12T00:00:00.000Z", updatedAt: null,
-          effective: [
-            { contributingLayers: ["relationship" as const], targetType: "user" as const, targetId: "local-user", family: "affinity" as const, label: "human-only-affinity", valence: 0.5, intensity: 0.4 },
-            { contributingLayers: ["relationship" as const], targetType: "character" as const, targetId: "b", family: "gratitude" as const, label: "peer-only-gratitude", valence: 0.4, intensity: 0.5 },
-          ] } } };
-    const user = composeProviderPrompt(base);
-    assert.ok(user.systemBodyText.includes("human-only-affinity"));
-    assert.ok(!user.systemBodyText.includes("peer-only-gratitude"));
+    };
     const peer = composeProviderPrompt({ ...base, inputProvenance: { originalChanged: false,
       origin: { kind: "session", operation: "send", actorSessionId: "b-session", actorIncarnationId: "v1", actorKind: "main",
         actorSnapshot: { sessionTitle: "Peer task", character: { id: "b", name: "B", description: "短い公開紹介", iconPath: "" } },
         targetSessionId: "a", targetIncarnationId: "v1" } } });
-    assert.ok(peer.systemBodyText.includes("peer-only-gratitude"));
-    assert.ok(!peer.systemBodyText.includes("human-only-affinity"));
     assert.ok(peer.systemBodyText.includes("MCPのmessage本文も対象"));
     assert.ok(peer.systemBodyText.includes("保存済みの character.md だけを runtime persona"));
     assert.match(peer.inputBodyText, /"participant":\s*\{\s*"type":\s*"character",\s*"id":\s*"b"/);
     assert.ok(peer.inputBodyText.includes("短い公開紹介"));
     assert.ok(peer.inputBodyText.endsWith("# Session Input\n\n相談"));
     const unknown = composeProviderPrompt({ ...base, inputProvenance: { origin: null, originalChanged: null } });
-    assert.ok(!unknown.systemBodyText.includes("peer-only-gratitude"));
-    assert.ok(!unknown.systemBodyText.includes("human-only-affinity"));
   });
   // @test-value v2
   // kind = "contract"
@@ -640,115 +628,10 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
-  // @test-value v2
-  // kind = "security"
-  // claim = "Affectは人格・事実・権限を保ちつつ話し方・反応・発話量・関心へ反映する指示と、identity-freeなbaseline・version・全effective componentだけを渡す"
-  // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#通常Sessionの入力" }
-  // fault = "Affectの反映対象と不変境界の指示を落とす、公開baseline・affect情報を欠落させる、または非公開fieldや内部identityをproviderへ漏らす"
-  // observable = "provider向けCharacter Affect Contextの利用指示・JSON envelopeとsystem section順序"
-  // observation_boundary = "component-behavior"
-  // scope = "composeProviderPrompt Character Affect Context projection"
-  // lifecycle = "permanent"
-  // distinction = "application responseのfield制限ではなく、provider向けJSON envelopeがidentityを再構成しないことを検証する"
-  // @end-test-value
-  it("固定system sectionの後ろへidentity-free Character Affect Contextを置き、契約fieldを保持する", () => {
-    const session = buildNewSession({
-      taskTitle: "task",
-      workspaceLabel: "workspace",
-      workspacePath: "workspace",
-      branch: "",
-      characterId: "character-1",
-      character: "Saved Character",
-      characterIconPath: "",
-      characterThemeColors,
-      characterRuntimeSnapshot: createCharacterRuntimeSnapshot(),
-      approvalMode: "untrusted",
-    });
-    const evaluatedAt = "2026-08-09T06:00:00.000Z";
-    const prompt = composeProviderPrompt({
-      session,
-      executionOptions: captureSessionExecutionOptions(session),
-      providerCatalog,
-      userMessage: "続けて",
-      appSettings: createDefaultAppSettings(),
-      attachments: [],
-      characterContext: {
-        schemaVersion: "withmate-character-context-v1",
-        baseline: {
-          definitionSha256: "sha256-character-definition",
-          snapshotAt: "2026-06-14T00:00:00.000Z",
-        },
-        affect: {
-          mode: "active",
-          effective: Array.from({ length: 13 }, (_, index) => ({
-            contributingLayers: ["session" as const],
-            targetType: "task",
-            targetId: `current-task-${index}`,
-            family: "interest",
-            label: "focused",
-            valence: 0.4,
-            intensity: 0.5,
-            ...(index === 0
-              ? {
-                  sourceSessionId: "session-b",
-                  reason: "PRIVATE_AFTERGLOW_REASON",
-                  evidence: "PRIVATE_AFTERGLOW_EVIDENCE",
-                }
-              : {}),
-          })),
-          evaluatedAt,
-          version: "affect-v1-provider-prompt",
-          updatedAt: "2026-08-09T00:00:00.000Z",
-        },
-      },
-    });
-
-    const contextJson = prompt.systemBodyText.match(/# Character Affect Context[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1];
-    assert.match(prompt.systemBodyText, /speech, reactions, response length and interest/);
-    assert.match(prompt.systemBodyText, /preserving the Character's baseline personality and voice/);
-    assert.match(prompt.systemBodyText, /do not force strong emotion or longer responses/);
-    assert.match(prompt.systemBodyText, /The Character's state is not the user's/);
-    assert.match(prompt.systemBodyText, /do not diagnose the user or expose internal state unnecessarily/);
-    assert.match(prompt.systemBodyText, /Affect never changes facts, evidence, certainty, technical judgment, permissions or artifact boundaries/);
-    assert.ok(contextJson);
-    const context = JSON.parse(contextJson) as {
-      characterAffect: {
-        effective: unknown[];
-        evaluatedAt: string;
-        version: string;
-        updatedAt: string | null;
-      };
-      baselineRef: { definitionSha256: string; snapshotAt: string };
-    };
-    assertSectionOrder(prompt.logicalPrompt.composedText, [
-      "# Character Definition Snapshot",
-      "# Output Boundary",
-      "# Tool Call Presence",
-      "# Workspace",
-      "# SessionFolder",
-      "# Additional Directories",
-      "# Character Affect Context",
-      "# User Input",
-    ]);
-    assert.equal(context.characterAffect.effective.length, 13);
-    assert.equal(context.characterAffect.evaluatedAt, evaluatedAt);
-    assert.equal(context.characterAffect.version, "affect-v1-provider-prompt");
-    assert.equal(context.characterAffect.updatedAt, "2026-08-09T00:00:00.000Z");
-    assert.deepEqual(Object.keys(context).sort(), ["baselineRef", "characterAffect"]);
-    assert.deepEqual(Object.keys(context.characterAffect).sort(), ["effective", "evaluatedAt", "updatedAt", "version"]);
-    assert.doesNotMatch(
-      contextJson,
-      /characterId|sessionId|userId|"scope"|sourceSessionId|PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE/,
-    );
-    assert.deepEqual(context.baselineRef, {
-      definitionSha256: "sha256-character-definition",
-      snapshotAt: "2026-06-14T00:00:00.000Z",
-    });
-  });
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "foreground prompt context の4つの toggle は対象 section だけを省略し、作業境界と User Input を保持する"
+  // claim = "foreground prompt context の3つの toggle は対象 section だけを省略し、作業境界と User Input を保持する"
   // oracle = { type = "contract", ref = "docs/design/prompt-composition.md#設定とSession種別" }
   // fault = "1つの設定をOFFにしたとき別の context や作業境界まで消える、または空の section 見出しが provider prompt に残る"
   // observable = "composeProviderPrompt の systemBodyText、inputBodyText、logicalPrompt"
@@ -758,7 +641,7 @@ describe("composeProviderPrompt", () => {
   // impact = "Settings の個別切替と Codex/Copilot 共通の論理 prompt が一致しない"
   // distinction = "既存の default-on 順序・authoring test とは別に、各 toggle の単独 OFF と固定 boundary の保持を確認する"
   // @end-test-value
-  it("foreground prompt context の4項目を個別にOFFにできる", () => {
+  it("foreground prompt context の3項目を個別にOFFにできる", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -784,28 +667,6 @@ describe("composeProviderPrompt", () => {
         totalCompletedTurnDurationMs: 18 * 60 * 60_000 + 37 * 60_000,
       },
     };
-    const characterContext = {
-      schemaVersion: "withmate-character-context-v1" as const,
-      baseline: {
-        definitionSha256: "sha256-character-definition",
-        snapshotAt: "2026-06-14T00:00:00.000Z",
-      },
-      affect: {
-        mode: "active" as const,
-        effective: [{
-          contributingLayers: ["session" as const],
-          targetType: "task" as const,
-          targetId: "task-1",
-          family: "interest" as const,
-          label: "focused",
-          valence: 0.4,
-          intensity: 0.5,
-        }],
-        evaluatedAt: "2026-08-09T06:00:00.000Z",
-        version: "affect-v1-provider-prompt",
-        updatedAt: "2026-08-09T00:00:00.000Z",
-      },
-    };
     const baseInput = {
       session,
       executionOptions: captureSessionExecutionOptions(session),
@@ -813,13 +674,8 @@ describe("composeProviderPrompt", () => {
       userMessage: "続けて",
       attachments: [],
       conversationTimingContext: timingContext,
-      characterContext,
     };
     const defaultSettings = createDefaultAppSettings();
-    const affectOff = composeProviderPrompt({
-      ...baseInput,
-      appSettings: { ...defaultSettings, characterAffectContextEnabled: false },
-    });
     const characterDefinitionOff = composeProviderPrompt({
       ...baseInput,
       appSettings: { ...defaultSettings, characterDefinitionEnabled: false },
@@ -841,27 +697,17 @@ describe("composeProviderPrompt", () => {
       );
     };
 
-    for (const prompt of [affectOff, characterDefinitionOff, timingOff, toolCallPresenceOff]) {
+    for (const prompt of [ characterDefinitionOff, timingOff, toolCallPresenceOff]) {
       assertLogicalPromptViews(prompt);
     }
 
-    assert.doesNotMatch(affectOff.systemBodyText, /# Character Affect Context/);
-    assert.doesNotMatch(affectOff.systemBodyText, /affect-v1-provider-prompt/);
-    assert.match(affectOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
-    assert.match(affectOff.systemBodyText, /# Output Boundary/);
-    assert.match(affectOff.inputBodyText, /# Conversation Timing/);
-    assert.match(affectOff.systemBodyText, /# Tool Call Presence/);
-    assert.match(affectOff.systemBodyText, /# Workspace/);
-    assert.match(affectOff.inputBodyText, /# User Input\n\n続けて/);
     assert.doesNotMatch(characterDefinitionOff.systemBodyText, /# Character Definition Snapshot|保存済みの character.md だけを runtime persona/);
     assert.deepEqual(characterDefinitionOff.imagePaths, []);
     assert.match(characterDefinitionOff.systemBodyText, /# Output Boundary/);
     assert.match(characterDefinitionOff.systemBodyText, /# Tool Call Presence/);
-    assert.match(characterDefinitionOff.systemBodyText, /# Character Affect Context/);
     assert.match(characterDefinitionOff.inputBodyText, /# Conversation Timing/);
     assert.match(characterDefinitionOff.systemBodyText, /# Workspace/);
     assert.match(characterDefinitionOff.inputBodyText, /# User Input\n\n続けて/);
-    assert.match(timingOff.systemBodyText, /# Character Affect Context/);
     assert.doesNotMatch(timingOff.inputBodyText, /# Conversation Timing/);
     assert.doesNotMatch(timingOff.inputBodyText, /Observed local time|2026-08-04T21:32/);
     assert.match(timingOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
@@ -869,7 +715,6 @@ describe("composeProviderPrompt", () => {
     assert.match(timingOff.systemBodyText, /# Tool Call Presence/);
     assert.match(timingOff.systemBodyText, /# Workspace/);
     assert.match(timingOff.inputBodyText, /# User Input\n\n続けて/);
-    assert.match(toolCallPresenceOff.systemBodyText, /# Character Affect Context/);
     assert.match(toolCallPresenceOff.systemBodyText, /# Character Definition Snapshot|Saved Character/);
     assert.match(toolCallPresenceOff.systemBodyText, /# Output Boundary/);
     assert.match(toolCallPresenceOff.inputBodyText, /# Conversation Timing/);

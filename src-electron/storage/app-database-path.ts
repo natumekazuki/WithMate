@@ -18,6 +18,7 @@ import {
   readV6DatabaseUserVersion,
 } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
+import { assertRetiredMemoryAffectDatabasePath, removeRetiredMemoryAffectFiles, RETIRED_MEMORY_AFFECT_TABLES } from "./migrations/memory-affect-removal.js";
 import { removeCompanionData } from "./migrations/companion-removal.js";
 import { createMigrationWriteReport as migrateV1ToV2Report } from "./migrations/migrate-database-v1-to-v2.js";
 import { createMigrationWriteReport as migrateV2ToV3Report } from "./migrations/migrate-database-v2-to-v3.js";
@@ -36,13 +37,16 @@ function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
     return;
   }
 
+  assertRetiredMemoryAffectDatabasePath(dbPath);
   const db = openAppDatabase(dbPath);
-  const hasLegacyTurns = Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'audit_events_v6'").get());
+  const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all().map((row) => row.name));
+  const mustPreserveExisting = tables.has("audit_events_v6") || RETIRED_MEMORY_AFFECT_TABLES.some((name) => tables.has(name));
   try {
     ensureV6Schema(db);
   } catch (error) {
-    if (hasLegacyTurns) throw error;
-    // Repair failure must not block fallback to a valid legacy database generation.
+    // A failed retirement must not become a successful replacement from V4.
+    if (mustPreserveExisting) throw error;
+    // Keep the established fallback for unrelated invalid, non-retirement DBs.
   } finally {
     db.close();
   }
@@ -107,6 +111,7 @@ export async function resolveOrMigrateAppDatabasePath(
     title: "Updating saved data",
     detail: `Removing retired feature data (${phase}).`,
   }));
+  await removeRetiredMemoryAffectFiles(userDataPath);
   const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
   onProgress?.({
     title: "Checking saved data",

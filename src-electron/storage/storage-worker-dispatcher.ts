@@ -3,13 +3,7 @@ import type {
   StorageWorkerErrorMessage,
   StorageWorkerRequestContext,
 } from "./storage-worker-protocol.js";
-import {
-  MemoryV6EntryNotFoundError,
-  MemoryV6FileQuotaExceededError,
-  MemoryV6IdempotencyConflictError,
-} from "../memory/memory-v6-storage.js";
-import { CharacterAffectIdempotencyConflictError, CharacterAffectVersionConflictError } from "../character/character-affect-storage.js";
-import { RuntimeTurnInactiveError } from "../platform/memory/runtime-turn-admission.js";
+import { RuntimeTurnInactiveError } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { CoordinationDeletedError, CoordinationRejectedError } from "../coordination/coordination-errors.js";
 
 export type StorageWorkerHandlerContext = StorageWorkerRequestContext & {
@@ -56,27 +50,12 @@ export function serializeStorageWorkerError(
 ): StorageWorkerErrorMessage {
   const normalized = error instanceof Error ? error : new Error(String(error));
   let code = "STORAGE_WORKER_COMMAND_FAILED";
-  let details: Record<string, string | number> | undefined;
   if (normalized instanceof RuntimeTurnInactiveError) {
     code = "RUNTIME_TURN_INACTIVE";
   } else if (normalized instanceof CoordinationRejectedError || normalized instanceof CoordinationDeletedError) {
     code = normalized.code;
   } else if (normalized instanceof StorageWorkerCommandNotAllowedError) {
     code = normalized.code;
-  } else if (normalized instanceof MemoryV6IdempotencyConflictError) {
-    code = "MEMORY_V6_IDEMPOTENCY_CONFLICT";
-  } else if (normalized instanceof MemoryV6EntryNotFoundError) {
-    code = "MEMORY_V6_ENTRY_NOT_FOUND";
-    const entryId = normalized.message.match(/: (.*)$/)?.[1];
-    if (entryId) details = { entryId };
-  } else if (normalized instanceof MemoryV6FileQuotaExceededError) {
-    code = "MEMORY_V6_FILE_QUOTA_EXCEEDED";
-    details = { quotaBytes: normalized.quotaBytes, usedBytes: normalized.usedBytes, incomingBytes: normalized.incomingBytes, availableBytes: normalized.availableBytes };
-  } else if (normalized instanceof CharacterAffectVersionConflictError) {
-    code = "CHARACTER_AFFECT_VERSION_CONFLICT";
-    details = { expectedVersion: normalized.expectedVersion, actualVersion: normalized.actualVersion };
-  } else if (normalized instanceof CharacterAffectIdempotencyConflictError) {
-    code = "CHARACTER_AFFECT_IDEMPOTENCY_CONFLICT";
   }
   // Domain rejections are known outcomes (and may persist rejection telemetry).
   // An arbitrary exception after a mutation remains an unknown write outcome.
@@ -91,6 +70,5 @@ export function serializeStorageWorkerError(
     code,
     outcome,
     ...(normalized.stack ? { stack: normalized.stack } : {}),
-    ...(details ? { details } : {}),
   };
 }

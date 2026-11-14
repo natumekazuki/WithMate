@@ -10,7 +10,7 @@ import {
 describe("resetAppDatabaseTargets", () => {
   // @test-value v2
   // kind = "contract"
-  // claim = "未指定のDB resetはSession・Project Memory・App Settingsを全対象にする"
+  // claim = "未指定のDB resetはSession・App Settingsを全対象にする"
   // oracle = { type = "contract", ref = "src-shared/window/withmate-window-types.ts ResetAppDatabaseTarget" }
   // fault = "未指定resetが保存領域を取りこぼすか対象外領域を含む"
   // observable = "normalizeResetAppDatabaseTargetsの対象一覧"
@@ -20,7 +20,7 @@ describe("resetAppDatabaseTargets", () => {
   // @end-test-value
   it("未指定時は全対象を返す", () => {
     assert.deepEqual(normalizeResetAppDatabaseTargets(undefined), [...ALL_RESET_APP_DATABASE_TARGETS]);
-    assert.deepEqual(new Set(normalizeResetAppDatabaseTargets(undefined)), new Set(["sessions", "projectMemory", "appSettings"]));
+    assert.deepEqual(new Set(normalizeResetAppDatabaseTargets(undefined)), new Set(["sessions", "appSettings"]));
   });
 
   // @test-value v2

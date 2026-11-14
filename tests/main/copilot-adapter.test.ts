@@ -40,7 +40,7 @@ import {
   toProviderQuotaSnapshots,
 } from "../../src-electron/providers/copilot/copilot-quota-telemetry.js";
 import { toProviderMetadataLogData } from "../../src-electron/providers/provider-metadata-log.js";
-import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER, WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV, WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV } from "../../src-electron/providers/provider-agent-runtime-binding.js";
+import { PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER, WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV, WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV, WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV } from "../../src-electron/providers/provider-agent-runtime-binding.js";
 import { SessionApprovalService } from "../../src-electron/session/session-approval-service.js";
 import { ProviderTurnError, type ProviderPromptComposition, type RunSessionTurnInput, type RunSessionTurnResult } from "../../src-electron/providers/provider-runtime.js";
 
@@ -412,14 +412,14 @@ function createRunSessionInput(options?: {
 
 // @test-value v2
 // kind = "contract"
-// claim = "Copilot foregroundは当turnのMemory・Glossary・Graph HTTP MCP endpointとcredentialをsession設定へ渡し、promptや第三者設定探索を変更しない"
+// claim = "Copilot foregroundは当turnのGlossary・Graph HTTP MCP endpointとcredentialをsession設定へ渡し、promptへtokenを混ぜず第三者設定探索を無効にしない"
 // oracle = { type = "contract", ref = "docs/adr/027-shared-localhost-http-mcp-turn-identity.md" }
 // fault = "HTTP serverや認証headerを欠落させる、tokenをpromptへ混ぜる、またはnative設定探索を無効にする"
 // observable = "buildCopilotSessionSettingsのconfigとcomposePromptの戻り値"
 // observation_boundary = "consumer"
 // scope = "Copilot native foreground session HTTP MCP configuration"
 // lifecycle = "permanent"
-// impact = "Memory・Glossary・Graphが認証できず、第三者設定が使えなくなるかtokenがprompt監査へ漏れる"
+// impact = "Glossary・Graphが認証できず、第三者設定が使えなくなるかtokenがprompt監査へ漏れる"
 // distinction = "SDKの型だけではWithMateが設定を渡すことやprompt分離を保証しない。固定fixtureでnative設定境界を確認する"
 // risk_tags = ["privacy", "authentication"]
 // @end-test-value
@@ -427,12 +427,11 @@ it("Copilot foregroundの当turn HTTP MCP設定をpromptから分離する", () 
   const input = createRunSessionInput();
   input.agentRuntimeBinding = {
     ...input.agentRuntimeBinding!,
-    managedMcp: { memoryUrl: "http://127.0.0.1:47891/memory", glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
+    managedMcp: {  glossaryUrl: "http://127.0.0.1:47891/glossary", sessionGraphUrl: "http://127.0.0.1:47891/session-graph", token: "opaque-http-token" },
   };
   const prompt = new CopilotAdapter().composePrompt(input);
   const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
   assert.deepEqual(config.mcpServers, {
-    "withmate-memory": { type: "http", url: "http://127.0.0.1:47891/memory", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
     "withmate-glossary": { type: "http", url: "http://127.0.0.1:47891/glossary", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
     "withmate-session-graph": { type: "http", url: "http://127.0.0.1:47891/session-graph", headers: { "x-withmate-mcp-token": "opaque-http-token" } },
   });
@@ -492,15 +491,17 @@ describe("CopilotAdapter env", () => {
     assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
-// claim = "Copilot child environment receives the Memory owner selector only for bound execution"
+// claim = "Copilot child environment receives the runtime owner selector only for bound execution"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "Copilot selector is missing for bound execution or survives in unbound environment"
+// fault = "Copilot selector is missing for bound execution or stale binding survives in unbound environment"
+// observable = "bound/unbound environment binding reference and runtime owner fields, preserved PATH and omitted undefined entry"
+// observation_boundary = "component-behavior"
 // scope = "copilot-provider-environment"
 // lifecycle = "permanent"
 // @end-test-value
-it("Copilot child CLIへSession generationごとのopaque referenceとMemory owner selectorを渡す", () => {
+it("Copilot child CLIへSession generationごとのopaque referenceとruntime owner selectorを渡す", () => {
     const binding = {
       bindingId: "binding-a",
       bindingReference: "opaque-reference-a",
@@ -508,7 +509,7 @@ it("Copilot child CLIへSession generationごとのopaque referenceとMemory own
       executionGeneration: "generation-a",
       transport: "env" as const,
       expiresAt: null,
-      memoryRuntimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
+      runtimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
     };
     const boundEnv = buildCopilotClientEnv({
       PATH: "test-path",
@@ -521,25 +522,27 @@ it("Copilot child CLIへSession generationごとのopaque referenceとMemory own
     });
 
     assert.equal(boundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], binding.bindingReference);
-    assert.equal(boundEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
-    assert.equal(boundEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
+    assert.equal(boundEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
+    assert.equal(boundEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
     assert.equal(boundEnv.PATH, "test-path");
     assert.equal("EMPTY" in boundEnv, false);
     assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], undefined);
     assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV.toLowerCase()], undefined);
-    assert.equal(unboundEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()], undefined);
-    assert.equal(unboundEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase()], undefined);
+    assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()], undefined);
+    assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV.toLowerCase()], undefined);
   });
 
-// @test-value v1
+// @test-value v2
 // kind = "invariant"
-// claim = "Copilot clients are separated by Memory owner selector and background clients are unbound"
+// claim = "Copilot clients are separated by runtime owner selector and settings-only clients are unbound"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "Copilot client cache reuses a client for a different application instance or runtime generation"
+// fault = "Copilot client cache reuses a client across owners or passes Session binding to settings-only clients"
+// observable = "client identity and cache keys across retries/owners, and resolved environment of bound and settings-only clients"
+// observation_boundary = "component-behavior"
 // scope = "copilot-provider-adapter"
 // lifecycle = "permanent"
 // @end-test-value
-it("Session generationごとのclientを分離しbackground clientをunboundに保つ", () => {
+it("Session generationごとのclientを分離しsettings-only clientをunboundに保つ", () => {
     const adapter = new CopilotAdapter() as unknown as {
       getClient(providerId: string, input: RunSessionTurnInput): {
         client: { resolvedEnv: Record<string, string | undefined> };
@@ -557,14 +560,14 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       executionGeneration: "generation-a",
       transport: "env" as const,
       expiresAt: null,
-      memoryRuntimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
+      runtimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
     };
     const bindingB = {
       ...bindingA,
       bindingId: "binding-b",
       bindingReference: "opaque-reference-b",
       executionGeneration: "generation-b",
-      memoryRuntimeOwner: { applicationInstanceId: "app-instance-b", runtimeGenerationId: "memory-generation-b" },
+      runtimeOwner: { applicationInstanceId: "app-instance-b", runtimeGenerationId: "memory-generation-b" },
     };
     const inputA = createRunSessionInput({ agentRuntimeBinding: bindingA });
     const inputB = { ...inputA, agentRuntimeBinding: bindingB };
@@ -585,17 +588,17 @@ it("Session generationごとのclientを分離しbackground clientをunboundに�
       clientB.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
       bindingB.bindingReference,
     );
-    assert.equal(clientA.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
-    assert.equal(clientA.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
-    assert.equal(clientB.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-b");
-    assert.equal(clientB.client.resolvedEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-b");
+    assert.equal(clientA.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
+    assert.equal(clientA.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
+    assert.equal(clientB.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-b");
+    assert.equal(clientB.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], "memory-generation-b");
     assert.equal(backgroundClient.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], undefined);
-    assert.equal(backgroundClient.resolvedEnv[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], undefined);
-    assert.equal(backgroundClient.resolvedEnv[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], undefined);
+    assert.equal(backgroundClient.resolvedEnv[WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV], undefined);
+    assert.equal(backgroundClient.resolvedEnv[WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV], undefined);
     assert.equal(
       Object.keys(backgroundClient.resolvedEnv).some(
-        (key) => key.toLowerCase() === WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()
-          || key.toLowerCase() === WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase(),
+        (key) => key.toLowerCase() === WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()
+          || key.toLowerCase() === WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV.toLowerCase(),
       ),
       false,
     );

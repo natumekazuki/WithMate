@@ -40,11 +40,6 @@ type SessionContextTelemetryPayload = {
     ReturnType<WithMateWindowApi["getSessionContextTelemetry"]>
   >;
 };
-type SessionBackgroundActivityPayload = {
-  sessionId: string;
-  kind: Parameters<WithMateWindowApi["getSessionBackgroundActivity"]>[1];
-  state: Awaited<ReturnType<WithMateWindowApi["getSessionBackgroundActivity"]>>;
-};
 
 export function createSubscriptionApi(
   ipcRenderer: IpcRendererLike,
@@ -182,14 +177,6 @@ export function createSubscriptionApi(
         channels.WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
         (payload: SessionContextTelemetryPayload) =>
           listener(payload.sessionId, payload.telemetry ?? null),
-      );
-    },
-    subscribeSessionBackgroundActivity(listener) {
-      return subscribe(
-        ipcRenderer,
-        channels.WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
-        (payload: SessionBackgroundActivityPayload) =>
-          listener(payload.sessionId, payload.kind, payload.state ?? null),
       );
     },
     subscribeSessionGlossary(listener) {

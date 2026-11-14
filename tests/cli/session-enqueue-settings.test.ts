@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { runWithMateSessionCli } from "../../src-cli/session/withmate-session.js";
 import { createWithMateSessionMcpServer } from "../../src-electron/platform/mcp/withmate-session-mcp.js";
-import type { callWithMateMemoryRuntime, WithMateMemoryRuntimeConnection } from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
+import type { callAgentRuntime, AgentRuntimeConnection } from "../../src-electron/platform/agent-runtime/runtime-client.js";
 import { SessionManagementApplication, SessionManagementError } from "../../src-electron/session/session-management-application.js";
 import { SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
 import { SessionOperatingPolicyService } from "../../src-electron/session/session-operating-policy-service.js";
@@ -32,8 +32,8 @@ import { composeProviderPrompt } from "../../src-electron/providers/provider-pro
 import type { RunSessionTurnInput } from "../../src-electron/providers/provider-runtime.js";
 
 const target = (session: Session) => ({ kind: "main" as const, sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
-const connection: WithMateMemoryRuntimeConnection = {
-  api: { baseUrl: "http://127.0.0.1:7777", apiSecret: "secret", applicationInstanceId: "instance", runtimeGenerationId: "generation", runtimeInstanceId: "generation" },
+const connection: AgentRuntimeConnection = {
+  api: { baseUrl: "http://127.0.0.1:7777", apiSecret: "secret", applicationInstanceId: "instance", runtimeGenerationId: "generation" },
   credential: { adapter: "mcp", adapterSecret: "adapter" },
 };
 
@@ -78,8 +78,7 @@ async function fixture(provider = "codex") {
     appendStoredRunningTurnStart: (input) => bundle.stores.session.appendRunningTurnStart(input),
     appendStoredSessionTerminal: (input) => bundle.stores.session.appendSessionTerminal(input),
     checkpointStoredSessionRunMetadata: (input) => bundle.stores.session.checkpointSessionRunMetadata(input),
-    getAppSettings: () => settings, getModelCatalogSnapshot: () => ({ providers: [catalog] }),
-    syncSessionDependencies() {}, clearSessionContextTelemetry() {}, clearSessionBackgroundActivities() {}, invalidateProviderSessionThread() {}, closeSessionWindow() {}, broadcastSessions() {},
+    getAppSettings: () => settings, getModelCatalogSnapshot: () => ({ providers: [catalog] }), clearSessionContextTelemetry() {}, invalidateProviderSessionThread() {}, closeSessionWindow() {}, broadcastSessions() {},
   });
   const coordinator = new ProviderRuntimeOperationCoordinator();
   let childSequence = 0;
@@ -136,7 +135,7 @@ async function fixture(provider = "codex") {
     directories: unused, updateMetadata: unused, cancelReceipt: unused, stopTurn: unused, steer: unused, readExecution: unused, coordinate: unused,
   });
   const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
-  const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, operation, bound) => {
+  const runtimeCall: typeof callAgentRuntime = async (_connection, operation, bound) => {
     const response = await runtime.route({ ...operation, transport: "mcp", bindingReference: bound.bindingReference, turnCapability: bound.turnCapability });
     assert.ok(response);
     return { ok: response.status >= 200 && response.status < 300, status: response.status, value: response.value };

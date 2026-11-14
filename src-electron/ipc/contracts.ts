@@ -9,20 +9,6 @@ import type {
   MarkdownLinkContextMenuResult,
 } from "../../src-shared/window/markdown-link-context-menu.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
-import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
-import type {
-  MemoryForgetReason,
-  MemoryV6ReviewSearchRequest,
-} from "../../src-shared/memory/memory-contract.js";
-import type { MemoryFileUsageResponse } from "../../src-shared/memory/memory-response-contract.js";
-import type {
-  MemoryV6ReviewEntryDetail,
-  MemoryV6ReviewExportFilesResult,
-  MemoryV6ReviewForgetResult,
-  MemoryV6ProtectedObjectGcRequest,
-  MemoryV6ProtectedObjectGcResponse,
-  MemoryV6ReviewSearchResult,
-} from "../../src-shared/memory/memory-review-state.js";
 import type {
   LiveApprovalDecision,
   LiveElicitationResponse,
@@ -31,10 +17,6 @@ import type {
   RunSessionTurnRequest,
   SessionContextTelemetry,
 } from "../../src-shared/session/runtime-state.js";
-import type {
-  SessionBackgroundActivityKind,
-  SessionBackgroundActivityState,
-} from "../../src-shared/memory/session-memory-state.js";
 import type {
   SessionCharacterUsage,
   SessionSummaryPageRequest,
@@ -207,9 +189,6 @@ export type MainIpcSessionWindowDeps = {
 export type MainIpcSettingsWindowDeps = {
   isSettingsWindow(window: BrowserWindow): boolean;
 };
-export type MainIpcMemoryReviewWindowDeps = {
-  isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
-};
 export type MainIpcSessionMonitorWindowDeps = {
   isSessionMonitorWindow(window: BrowserWindow): boolean;
 };
@@ -251,7 +230,6 @@ export type MainIpcWindowDeps = MainIpcEventWindowDeps &
     openHomeWindow(): Promise<void>;
     openSessionMonitorWindow(): Promise<void>;
     openSettingsWindow(): Promise<void>;
-    openMemoryV6ReviewWindow(): Promise<void>;
     openCharacterEditorWindow(characterId?: string | null): Promise<void>;
     openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
     listSessionFilePreviewWindows(): Promise<SessionFilePreviewWindowGroup[]>;
@@ -315,7 +293,7 @@ export type MainIpcCatalogDeps = MainIpcEventWindowDeps &
 export type MainIpcSettingsDeps = MainIpcEventWindowDeps &
   MainIpcHomeWindowDeps &
   MainIpcSettingsWindowDeps &
-  MainIpcMemoryReviewWindowDeps & {
+  {
     getAppSettings(): Awaitable<AppSettings>;
     updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
     updateChatLayoutPreference(
@@ -324,28 +302,6 @@ export type MainIpcSettingsDeps = MainIpcEventWindowDeps &
     getAppDatabaseDiagnostics(): Awaitable<AppDatabaseDiagnostics>;
     scanSessionFolderCleanup(request: SessionFolderCleanupRequest): Promise<SessionFolderCleanupScan>;
     runSessionFolderCleanup(request: { scanId: string }): Promise<SessionFolderCleanupResult>;
-    getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
-    installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
-    uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
-    getMemoryV6FileUsage(): Awaitable<MemoryFileUsageResponse>;
-    exportMemoryV6EntryFiles(
-      entryId: string,
-      targetWindow?: MaybeWindow,
-    ): Awaitable<MemoryV6ReviewExportFilesResult | null>;
-    runMemoryV6ProtectedObjectGc(
-      request: MemoryV6ProtectedObjectGcRequest,
-    ): Awaitable<MemoryV6ProtectedObjectGcResponse>;
-    searchMemoryV6Entries(
-      request: MemoryV6ReviewSearchRequest | null | undefined,
-    ): Awaitable<MemoryV6ReviewSearchResult>;
-    listMemoryV6ReviewTargets(): Awaitable<import("../../src-shared/memory/memory-review-state.js").MemoryV6ReviewTargets>;
-    getMemoryV6Entry(
-      entryId: string,
-    ): Awaitable<MemoryV6ReviewEntryDetail | null>;
-    forgetMemoryV6Entry(
-      entryId: string,
-      reason?: MemoryForgetReason | null,
-    ): Awaitable<MemoryV6ReviewForgetResult>;
     resetAppDatabase(
       request: ResetAppDatabaseRequest | null | undefined,
     ): Promise<unknown>;
@@ -604,10 +560,6 @@ export type MainIpcSessionRuntimeDeps = MainIpcEventWindowDeps &
       options?: { cacheOnly?: boolean },
     ): Promise<ProviderQuotaTelemetry | null>;
     getSessionContextTelemetry(sessionId: string): SessionContextTelemetry | null;
-    getSessionBackgroundActivity(
-      sessionId: string,
-      kind: SessionBackgroundActivityKind,
-    ): SessionBackgroundActivityState | null;
     resolveLiveApproval(
       sessionId: string,
       requestId: string,

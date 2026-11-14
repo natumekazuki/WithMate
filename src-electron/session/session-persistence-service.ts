@@ -116,9 +116,7 @@ export type SessionPersistenceServiceDeps = {
   getAppSettings: () => Awaitable<AppSettings>;
   getModelCatalogSnapshot(workspacePath?: string, providerId?: string): Awaitable<ModelCatalogSnapshot>;
   createCharacterRuntimeSnapshot?(characterId: string): Awaitable<CharacterRuntimeSnapshot | null>;
-  syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
-  clearSessionBackgroundActivities(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   revokeSessionAgentRuntimeBindings?(sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
@@ -696,7 +694,6 @@ export class SessionPersistenceService {
       projectDeletion(() => this.deps.revokeSessionAgentRuntimeBindings?.(sessionId));
       runtimeIdentities.push({ id: sessionId, provider: deletedSession?.provider ?? null });
       projectDeletion(() => this.deps.clearSessionContextTelemetry(sessionId));
-      projectDeletion(() => this.deps.clearSessionBackgroundActivities(sessionId));
       projectDeletion(() => (this.deps.discardSessionWindow ?? this.deps.closeSessionWindow)(sessionId));
     }
     const deletableParentIds = new Set(deletableSessionIds);
@@ -710,7 +707,6 @@ export class SessionPersistenceService {
       projectDeletion(() => this.deps.revokeSessionAgentRuntimeBindings?.(auxiliary.id));
       runtimeIdentities.push({ id: auxiliary.id, provider: auxiliary.provider });
       projectDeletion(() => this.deps.clearSessionContextTelemetry(auxiliary.id));
-      projectDeletion(() => this.deps.clearSessionBackgroundActivities(auxiliary.id));
       projectDeletion(() => (this.deps.discardSessionWindow ?? this.deps.closeSessionWindow)(auxiliary.id));
     }
 
@@ -1071,7 +1067,6 @@ export class SessionPersistenceService {
         await this.deps.invalidateProviderSessionThread(previousSession.provider, previousSession.id);
       }
       if (!nextSession) {
-        this.deps.clearSessionBackgroundActivities(previousSession.id);
       }
     }
 
@@ -1137,7 +1132,6 @@ export class SessionPersistenceService {
   }
 
   private syncStoredSession(stored: Session): void {
-    this.deps.syncSessionDependencies(stored);
   }
 
   private runCommittedProjectionBestEffort(owner: string, label: string, operation: () => void): void {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { createV6StorageWorkerBundle } from "../../src-electron/storage/storage-worker-bundle.js";
-import { RuntimeTurnInactiveError, runWithRuntimeTurnAdmission } from "../../src-electron/platform/memory/runtime-turn-admission.js";
+import { RuntimeTurnInactiveError, runWithRuntimeTurnAdmission } from "../../src-electron/platform/agent-runtime/runtime-turn-admission.js";
 import { buildNewSession, getSessionIncarnationId } from "../../src-shared/session/session-state.js";
 
 // @test-value v2

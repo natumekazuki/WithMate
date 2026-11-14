@@ -50,19 +50,6 @@ export function resolveTargetWindow(
   );
 }
 
-export function assertMemoryV6ReviewSender(
-  event: IpcMainInvokeEvent,
-  deps: MainIpcEventWindowDeps & MainIpcMemoryReviewWindowDeps,
-): void {
-  const window = deps.resolveEventWindow(event);
-  if (window && deps.isMemoryV6ReviewWindow(window)) {
-    return;
-  }
-  throw new Error(
-    "Memory V6 Review IPC is only available from the Memory Review window.",
-  );
-}
-
 export function assertSettingsWindowSender(
   event: IpcMainInvokeEvent,
   deps: MainIpcEventWindowDeps & MainIpcSettingsWindowDeps,
@@ -823,7 +810,6 @@ import type {
   MainIpcEventWindowDeps,
   MainIpcFilePreviewWindowDeps,
   MainIpcHomeWindowDeps,
-  MainIpcMemoryReviewWindowDeps,
   MainIpcSessionMonitorWindowDeps,
   MainIpcSessionWindowDeps,
   MainIpcSettingsWindowDeps,

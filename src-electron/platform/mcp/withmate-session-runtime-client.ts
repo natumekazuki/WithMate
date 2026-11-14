@@ -6,21 +6,21 @@ import {
   sessionOperationSuccessSchemas,
   type SessionOperation,
 } from "../../../src-shared/session/session-management-contract.js";
-import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../memory/memory-runtime-exchange.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../agent-runtime/runtime-exchange.js";
 import {
-  callWithMateMemoryRuntime,
-  mapWithMateMemoryDiscoveryCode,
-  resolveWithMateMemoryApi,
+  callAgentRuntime,
+  mapAgentRuntimeDiscoveryCode,
+  resolveAgentRuntimeApi,
   resolveAgentRuntimeBindingReference,
   resolveAgentRuntimeTurnCapability,
-  type WithMateMemoryRuntimeConnection,
-} from "./withmate-memory-runtime-client.js";
+  type AgentRuntimeConnection,
+} from "../agent-runtime/runtime-client.js";
 export type SessionRuntimeClientDeps = Omit<
-  Parameters<typeof resolveWithMateMemoryApi>[0],
+  Parameters<typeof resolveAgentRuntimeApi>[0],
   "adapter" | "signal"
 > & {
-  connection?: WithMateMemoryRuntimeConnection;
-  runtimeCall?: typeof callWithMateMemoryRuntime;
+  connection?: AgentRuntimeConnection;
+  runtimeCall?: typeof callAgentRuntime;
   requestTimeoutMs?: number;
 };
 export function createSessionTransportError(
@@ -81,7 +81,7 @@ export async function callSessionRuntime(
       return { ok: false, code: "SESSION_BINDING_REQUIRED", effect: "none" };
     const resolution = deps.connection
       ? { kind: "selected" as const, connection: deps.connection }
-      : await resolveWithMateMemoryApi({
+      : await resolveAgentRuntimeApi({
           ...deps,
           adapter: "mcp",
           signal: controller.signal,
@@ -89,12 +89,12 @@ export async function callSessionRuntime(
     if (resolution.kind === "error")
       return {
         ok: false,
-        code: mapWithMateMemoryDiscoveryCode(resolution.code),
+        code: mapAgentRuntimeDiscoveryCode(resolution.code),
         effect: "none",
         candidates: resolution.candidates,
       };
     sent = true;
-    const response = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(
+    const response = await (deps.runtimeCall ?? callAgentRuntime)(
       resolution.connection,
       {
         method: "POST",

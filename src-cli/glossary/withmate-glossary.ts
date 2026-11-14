@@ -18,7 +18,8 @@ import {
   type GlossaryRuntimeClientDeps,
 } from "../../src-electron/platform/mcp/withmate-glossary-runtime-client.js";
 
-export type GlossaryCliDeps = Omit<GlossaryRuntimeClientDeps, "adapter" | "apiUrl" | "discoveryFilePath"> & {
+export type GlossaryCliDeps = Omit<GlossaryRuntimeClientDeps, "adapter" | "apiUrl"> & {
+  readFile?: typeof readFile;
   stdin?: NodeJS.ReadableStream;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
@@ -76,7 +77,6 @@ Input shorthands:
 
 Connection options:
   --api-url <loopback-url>
-  --discovery-file <path>
   --instance <application-instance-id>
   --generation <runtime-generation-id>
 `;
@@ -85,7 +85,6 @@ type ParsedCliRequest = {
   command: GlossaryRuntimeOperation | "help" | "schema" | "mcp_server";
   body: Record<string, unknown>;
   apiUrl?: string;
-  discoveryFilePath?: string;
   applicationInstanceId?: string;
   runtimeGenerationId?: string;
 };
@@ -140,7 +139,6 @@ export async function parseWithMateGlossaryCliArgs(
   let body: Record<string, unknown> = {};
   let inputSourceSeen = false;
   let apiUrl: string | undefined;
-  let discoveryFilePath: string | undefined;
   let applicationInstanceId: string | undefined;
   let runtimeGenerationId: string | undefined;
   let checkoutId: string | undefined;
@@ -171,9 +169,7 @@ export async function parseWithMateGlossaryCliArgs(
     } else if (argument === "--api-url") {
       apiUrl = requireOptionValue(args, index, argument);
       index += 1;
-    } else if (argument === "--discovery-file") {
-      discoveryFilePath = requireOptionValue(args, index, argument);
-      index += 1;
+
     } else if (argument === "--instance") {
       applicationInstanceId = requireOptionValue(args, index, argument);
       index += 1;
@@ -231,7 +227,6 @@ export async function parseWithMateGlossaryCliArgs(
     command,
     body,
     ...(apiUrl ? { apiUrl } : {}),
-    ...(discoveryFilePath ? { discoveryFilePath } : {}),
     ...(applicationInstanceId ? { applicationInstanceId } : {}),
     ...(runtimeGenerationId ? { runtimeGenerationId } : {}),
   };
@@ -277,7 +272,6 @@ export async function runWithMateGlossaryCli(
       ...deps,
       adapter: "cli",
       apiUrl: request.apiUrl,
-      discoveryFilePath: request.discoveryFilePath,
       applicationInstanceId: request.applicationInstanceId,
       runtimeGenerationId: request.runtimeGenerationId,
     });

@@ -1,11 +1,10 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import { CurrentExecutionSelections } from "../session/current-execution-selections.js";
 import type { AppDatabaseDiagnostics } from "../../src-shared/window/app-database-diagnostics-state.js";
-import type { MemoryV6Diagnostics } from "../../src-shared/memory/memory-diagnostics-state.js";
 import type { MateProfileItemStorage } from "../mate/mate-profile-item-storage.js";
 import type { PromptTemplateStorage } from "../prompt-templates/prompt-template-storage.js";
 import type { V6StorageWorkerBundle } from "../storage/storage-worker-bundle.js";
-import type { SessionTurnStorageAccess, AuxiliarySessionStorageAccess, CharacterStorageAccess, PersistentStoreBundle, PersistentStoreBundleLike, ProjectMemoryStorageAccess, SessionMemoryStorageAccess, SessionStorageRead } from "../storage/persistent-store-lifecycle-service.js";
+import type { SessionTurnStorageAccess, AuxiliarySessionStorageAccess, CharacterStorageAccess, PersistentStoreBundle, PersistentStoreBundleLike, SessionStorageRead } from "../storage/persistent-store-lifecycle-service.js";
 
 /** Owns the live persistent-store generation and its lifecycle state. */
 export class MainStoreContext {
@@ -14,8 +13,6 @@ export class MainStoreContext {
     sessions: Session[];
     owner: PersistentStoreBundle | null;
     sessionStorage: SessionStorageRead | null;
-    sessionMemoryStorage: SessionMemoryStorageAccess | null;
-    projectMemoryStorage: ProjectMemoryStorageAccess | null;
     modelCatalogStorage: PersistentStoreBundle["modelCatalogStorage"] | null;
     characterStorage: CharacterStorageAccess | null;
     sessionTurnStorage: SessionTurnStorageAccess | null;
@@ -27,22 +24,18 @@ export class MainStoreContext {
     mateProfileItemStorage: MateProfileItemStorage | null;
     dbPath: string;
     diagnostics: AppDatabaseDiagnostics | null;
-    memoryStatus: MemoryV6Diagnostics["runtime"]["status"];
     walTimer: ReturnType<typeof setInterval> | null;
   } = {
-    sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null,
-    projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null,
+    sessions: [], owner: null, sessionStorage: null, modelCatalogStorage: null, characterStorage: null,
     sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null,
     storageWorker: null, promptTemplateStorage: null, mateStorage: null,
-    mateProfileItemStorage: null, dbPath: "", diagnostics: null, memoryStatus: "stopped",
+    mateProfileItemStorage: null, dbPath: "", diagnostics: null,
     walTimer: null,
   };
 
   public get sessions() { return this.state.sessions; }
   public get activePersistentStoreOwner() { return this.state.owner; }
   public get sessionStorage() { return this.state.sessionStorage; }
-  public get sessionMemoryStorage() { return this.state.sessionMemoryStorage; }
-  public get projectMemoryStorage() { return this.state.projectMemoryStorage; }
   public get modelCatalogStorage() { return this.state.modelCatalogStorage; }
   public get characterStorage() { return this.state.characterStorage; }
   public get sessionTurnStorage() { return this.state.sessionTurnStorage; }
@@ -54,12 +47,10 @@ export class MainStoreContext {
   public get mateProfileItemStorage() { return this.state.mateProfileItemStorage; }
   public get dbPath() { return this.state.dbPath; }
   public get appDatabaseDiagnostics() { return this.state.diagnostics; }
-  public get memoryV6RuntimeStatus() { return this.state.memoryStatus; }
   public get walMaintenanceTimer() { return this.state.walTimer; }
 
   public setDbPath(value: string): void { this.state.dbPath = value; }
   public setDatabaseDiagnostics(value: AppDatabaseDiagnostics | null): void { this.state.diagnostics = value; }
-  public setMemoryRuntimeStatus(value: MemoryV6Diagnostics["runtime"]["status"]): void { this.state.memoryStatus = value; }
   public setSessions(value: Session[]): void {
     const nextById = new Map(value.map((session) => [session.id, session]));
     for (const previous of this.state.sessions) {
@@ -103,8 +94,6 @@ export class MainStoreContext {
       modelCatalogStorage: this.state.modelCatalogStorage,
       characterStorage: this.state.characterStorage,
       sessionStorage: this.state.sessionStorage,
-      sessionMemoryStorage: this.state.sessionMemoryStorage,
-      projectMemoryStorage: this.state.projectMemoryStorage,
       sessionTurnStorage: this.state.sessionTurnStorage,
       auxiliarySessionStorage: this.state.auxiliarySessionStorage,
       appSettingsStorage: this.state.appSettingsStorage,
@@ -125,8 +114,6 @@ export class MainStoreContext {
     this.state.modelCatalogStorage = bundle.modelCatalogStorage;
     this.state.characterStorage = bundle.characterStorage;
     this.state.sessionStorage = bundle.sessionStorage;
-    this.state.sessionMemoryStorage = bundle.sessionMemoryStorage;
-    this.state.projectMemoryStorage = bundle.projectMemoryStorage;
     this.state.sessionTurnStorage = bundle.sessionTurnStorage;
     this.state.auxiliarySessionStorage = bundle.auxiliarySessionStorage;
     this.state.appSettingsStorage = bundle.appSettingsStorage;
@@ -136,6 +123,6 @@ export class MainStoreContext {
 
   public clearReferences(): void {
     this.executionSelections.clear();
-    this.state = { ...this.state, sessions: [], owner: null, sessionStorage: null, sessionMemoryStorage: null, projectMemoryStorage: null, modelCatalogStorage: null, characterStorage: null, sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null, storageWorker: null, promptTemplateStorage: null, mateStorage: null, mateProfileItemStorage: null, walTimer: null };
+    this.state = { ...this.state, sessions: [], owner: null, sessionStorage: null, modelCatalogStorage: null, characterStorage: null, sessionTurnStorage: null, auxiliarySessionStorage: null, appSettingsStorage: null, storageWorker: null, promptTemplateStorage: null, mateStorage: null, mateProfileItemStorage: null, walTimer: null };
   }
 }

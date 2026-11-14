@@ -27,13 +27,7 @@ import { AppSettingsStorage } from "../app/app-settings-storage.js";
 import { AuxiliarySessionStorage } from "../auxiliary/auxiliary-session-storage.js";
 import { CharacterStorage } from "../character/character-storage.js";
 import { MateStorage, type MateProfileFileMismatch } from "../mate/mate-storage.js";
-import {
-  ProjectMemoryStorageV2Read,
-  SessionMemoryStorageV2Read,
-} from "../memory/memory-storage-v2-read.js";
 import { ModelCatalogStorage } from "../settings/model-catalog-storage.js";
-import { ProjectMemoryStorage } from "../memory/project-memory-storage.js";
-import { SessionMemoryStorage } from "../session/session-memory-storage.js";
 import { SessionStorage } from "../session/session-storage.js";
 import { SessionStorageV2 } from "../session/session-storage-v2.js";
 import { SessionStorageV3 } from "../session/session-storage-v3.js";
@@ -192,8 +186,6 @@ export type SessionTurnStorageAccess = AwaitableStorageMethods<
   SessionTurnStorageV6,
   "createSessionTurn" | "updateSessionTurn" | "getLatestSessionTurn" | "getConversationTimingSnapshot"
 > & Pick<SessionTurnStorageV6, "close">;
-export type SessionMemoryStorageAccess = SessionMemoryStorage | SessionMemoryStorageV2Read;
-export type ProjectMemoryStorageAccess = ProjectMemoryStorage | ProjectMemoryStorageV2Read;
 export type AuxiliarySessionStorageAccess = AuxiliarySessionStorageAsyncAccess;
 export type CharacterStorageAccess = CharacterStorageAsyncAccess;
 
@@ -201,8 +193,6 @@ export type PersistentStoreBundle = {
   modelCatalogStorage: ModelCatalogStorageAsyncAccess;
   characterStorage: CharacterStorageAccess;
   sessionStorage: SessionStorageRead;
-  sessionMemoryStorage: SessionMemoryStorageAccess;
-  projectMemoryStorage: ProjectMemoryStorageAccess;
   sessionTurnStorage: SessionTurnStorageAccess | null;
   auxiliarySessionStorage: AuxiliarySessionStorageAccess;
   appSettingsStorage: AppSettingsStorageAsyncAccess;
@@ -223,8 +213,6 @@ type PersistentStoreLifecycleDeps = {
   createModelCatalogStorage(dbPath: string): ModelCatalogStorage;
   createCharacterStorage?(dbPath: string, userDataPath: string): CharacterStorageAccess;
   createSessionStorage(dbPath: string): SessionStorage;
-  createSessionMemoryStorage(dbPath: string): SessionMemoryStorage;
-  createProjectMemoryStorage(dbPath: string): ProjectMemoryStorage;
   createAuxiliarySessionStorage?(dbPath: string): AuxiliarySessionStorageAccess;
   createAppSettingsStorage(dbPath: string): AppSettingsStorage;
   createMateStorage(dbPath: string, userDataPath: string): MateStorage;
@@ -284,12 +272,6 @@ export class PersistentStoreLifecycleService {
       : isV2Database
       ? new SessionStorageV2(dbPath)
       : this.deps.createSessionStorage(dbPath);
-    const sessionMemoryStorage = isV6Database || isV3Database || isV2Database
-      ? new SessionMemoryStorageV2Read()
-      : this.deps.createSessionMemoryStorage(dbPath);
-    const projectMemoryStorage = isV6Database || isV3Database || isV2Database
-      ? new ProjectMemoryStorageV2Read()
-      : this.deps.createProjectMemoryStorage(dbPath);
     const sessionTurnStorage = storageWorker ? storageWorker.stores.turn : null;
     const auxiliarySessionStorage = storageWorker
       ? storageWorker.stores.auxiliary
@@ -313,8 +295,6 @@ export class PersistentStoreLifecycleService {
       modelCatalogStorage,
       characterStorage,
       sessionStorage,
-      sessionMemoryStorage,
-      projectMemoryStorage,
       sessionTurnStorage,
       auxiliarySessionStorage,
       appSettingsStorage,
@@ -332,8 +312,6 @@ export class PersistentStoreLifecycleService {
       bundle.modelCatalogStorage,
       bundle.characterStorage,
       bundle.sessionStorage,
-      bundle.sessionMemoryStorage,
-      bundle.projectMemoryStorage,
       bundle.sessionTurnStorage,
       bundle.auxiliarySessionStorage,
       bundle.appSettingsStorage,
@@ -594,8 +572,6 @@ export function createPersistentStoreLifecycleService(): PersistentStoreLifecycl
     createModelCatalogStorage: (dbPath) => new ModelCatalogStorage(dbPath),
     createCharacterStorage: (dbPath, userDataPath) => new CharacterStorage(dbPath, userDataPath),
     createSessionStorage: (dbPath) => new SessionStorage(dbPath),
-    createSessionMemoryStorage: (dbPath) => new SessionMemoryStorage(dbPath),
-    createProjectMemoryStorage: (dbPath) => new ProjectMemoryStorage(dbPath),
     createAuxiliarySessionStorage: (dbPath) => new AuxiliarySessionStorage(dbPath),
     createAppSettingsStorage: (dbPath) => new AppSettingsStorage(dbPath),
     createMateStorage: (dbPath, userDataPath) => new MateStorage(dbPath, userDataPath),

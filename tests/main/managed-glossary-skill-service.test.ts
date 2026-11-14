@@ -13,7 +13,7 @@ import {
 import {
   BUNDLED_GLOSSARY_CLI_FILE_NAME,
 } from "../../src-shared/cli/cli-artifacts.js";
-import { buildWithMateGlossaryCli } from "../../scripts/build/build-withmate-memory-cli.js";
+import { buildWithMateGlossaryCli } from "../../scripts/build/build-managed-cli.js";
 
 const bundlePath = path.resolve("resources", "skills", WITHMATE_GLOSSARY_SKILL_NAME);
 const bundle: ManagedSkillBundleDescriptor = {

@@ -27,10 +27,8 @@ WithMateの利用者向け機能ガイドです。機能ごとの使い方をま
 ## RepositoryとCharacter
 
 - [Repository Glossary](repository-glossary.md)
-- [Cross-session Affect afterglow](cross-session-affect-afterglow.md)
 
 ## 性能とruntime
 
 - [長いSessionの性能改善](long-session-performance.md)
 - [running turn開始時の永続化](running-turn-start-persistence.md)
-- [Memory runtimeの複数instance discovery](memory-runtime-discovery.md)

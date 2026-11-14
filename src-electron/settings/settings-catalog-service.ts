@@ -58,7 +58,6 @@ export type SettingsCatalogServiceDeps = {
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<void>;
   onChatLayoutPreferenceSaveError?(update: ChatLayoutPreferenceUpdate, error: unknown): void;
   onProviderTurnAvailable?(providerId: string): void;
-  invalidateBackgroundProvider?(providerId: string): void;
   getModelCatalog(): Awaitable<ModelCatalogSnapshot>;
   replaceAllSessions(
     nextSessions: Session[],
@@ -73,11 +72,9 @@ export type SettingsCatalogServiceDeps = {
   clearSessionContextTelemetry(sessionId: string): void;
   invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   resetAppSettings(): Awaitable<AppSettings>;
-  clearProjectMemories(): void;
   resetSessionRuntime(): void;
   clearAllProviderQuotaTelemetry(): void;
   clearAllSessionContextTelemetry(): void;
-  clearAllSessionBackgroundActivities(): void;
   invalidateAllProviderSessionThreads(): Awaitable<void>;
   closeResetTargetWindows(): void;
   dismissSessionTurnNotification(sessionId: string): void;
@@ -160,15 +157,6 @@ export class SettingsCatalogService {
     return (this.affectedProviders.get(providerId) ?? 0) === 0;
   }
 
-  private invalidateChangedBackgroundProviders(previousSettings: AppSettings, savedSettings: AppSettings): void {
-    const providersWithApiKeyChange = new Set(getProvidersWithApiKeyChange(previousSettings, savedSettings));
-    for (const providerId of Object.keys(previousSettings.codingProviderSettings)) {
-      if (providersWithApiKeyChange.has(providerId)
-        || (getProviderAppSettings(previousSettings, providerId).enabled && !getProviderAppSettings(savedSettings, providerId).enabled)) {
-        this.deps.invalidateBackgroundProvider?.(providerId);
-      }
-    }
-  }
 
   async getAppSettings(): Promise<AppSettings> {
     return this.withCurrentChatLayout(await this.deps.getAppSettings());
@@ -267,7 +255,6 @@ export class SettingsCatalogService {
     let savedSettings: AppSettings | null = null;
     try {
       savedSettings = await this.deps.updateAppSettings(nextSettings);
-      this.invalidateChangedBackgroundProviders(previousSettings, savedSettings);
       for (const providerId of providersWithApiKeyChange) {
         this.deps.clearProviderQuotaTelemetry(providerId);
       }
@@ -451,7 +438,6 @@ export class SettingsCatalogService {
       this.chatLayoutCurrent = {};
       this.dismissSessionTurnNotifications(previousSessionNotificationIds);
       this.deps.resetSessionRuntime();
-      this.deps.clearAllSessionBackgroundActivities();
       await this.deps.invalidateAllProviderSessionThreads();
       this.deps.clearAllProviderQuotaTelemetry();
       this.deps.clearAllSessionContextTelemetry();
@@ -463,18 +449,13 @@ export class SettingsCatalogService {
         await this.deps.replaceAllSessions([], { broadcast: false });
         this.dismissSessionTurnNotifications(previousSessionNotificationIds);
         this.deps.resetSessionRuntime();
-        this.deps.clearAllSessionBackgroundActivities();
         await this.deps.invalidateAllProviderSessionThreads();
       }
       if (appliedTargets.has("appSettings")) {
         const previousSettings = await this.deps.getAppSettings();
         const savedSettings = await this.deps.resetAppSettings();
-        this.invalidateChangedBackgroundProviders(previousSettings, savedSettings);
         this.chatLayoutCurrent = {};
         this.deps.clearAllProviderQuotaTelemetry();
-      }
-      if (appliedTargets.has("projectMemory")) {
-        this.deps.clearProjectMemories();
       }
       modelCatalog = await this.deps.getModelCatalog();
       appSettings = await this.deps.getAppSettings();

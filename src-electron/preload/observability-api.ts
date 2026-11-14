@@ -43,7 +43,6 @@ export function createObservabilityApi(
   | "reportRendererLog"
   | "getProviderQuotaTelemetry"
   | "getSessionContextTelemetry"
-  | "getSessionBackgroundActivity"
   | "listOpenSessionWindowIds"
 > {
   return {
@@ -61,13 +60,6 @@ export function createObservabilityApi(
       return ipcRenderer.invoke(
         channels.WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
         sessionId,
-      );
-    },
-    getSessionBackgroundActivity(sessionId, kind) {
-      return ipcRenderer.invoke(
-        channels.WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
-        sessionId,
-        kind,
       );
     },
     listOpenSessionWindowIds() {

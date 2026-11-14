@@ -9,9 +9,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { runWithMateSessionCli } from "../../src-cli/session/withmate-session.js";
 import { createWithMateSessionMcpServer } from "../../src-electron/platform/mcp/withmate-session-mcp.js";
 import type {
-  callWithMateMemoryRuntime,
-  WithMateMemoryRuntimeConnection,
-} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
+  callAgentRuntime,
+  AgentRuntimeConnection,
+} from "../../src-electron/platform/agent-runtime/runtime-client.js";
 import { SessionManagementApplication } from "../../src-electron/session/session-management-application.js";
 import { SessionManagementRuntimeService } from "../../src-electron/session/session-management-runtime-service.js";
 import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
@@ -41,13 +41,12 @@ const target = (session: Session): SessionTarget => ({
   incarnationId: getSessionIncarnationId(session),
 });
 const owner = (session: Session) => ({ sessionId: session.id, incarnationId: getSessionIncarnationId(session) });
-const connection: WithMateMemoryRuntimeConnection = {
+const connection: AgentRuntimeConnection = {
   api: {
     baseUrl: "http://127.0.0.1:7777",
     apiSecret: "secret",
     applicationInstanceId: "instance",
     runtimeGenerationId: "generation",
-    runtimeInstanceId: "generation",
   },
   credential: { adapter: "mcp", adapterSecret: "adapter" },
 };
@@ -144,9 +143,7 @@ async function fixture(provider = "codex") {
       checkpointStoredSessionRunMetadata: (input) => bundle.stores.session.checkpointSessionRunMetadata(input),
       getAppSettings: () => settings,
       getModelCatalogSnapshot: () => ({ providers: [catalog] }),
-      syncSessionDependencies() {},
       clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
       invalidateProviderSessionThread() {},
       closeSessionWindow() {},
       broadcastSessions() {},
@@ -311,7 +308,7 @@ async function fixture(provider = "codex") {
       bindingRegistry: bindings,
       providerAgentRuntimeTurns: turns,
     });
-    const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, operation, bound) => {
+    const runtimeCall: typeof callAgentRuntime = async (_connection, operation, bound) => {
       const response = await routing.route({
         ...operation,
         transport: "mcp",

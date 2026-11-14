@@ -272,22 +272,6 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:delete-sessions-last-active-before",
     args: [{ cutoffDate: "2026-07-01" }],
   });
-  assert.deepEqual(await api.getMemoryV6Diagnostics(), {
-    channel: "withmate:get-memory-v6-diagnostics",
-    args: [],
-  });
-  assert.deepEqual(await api.installMemoryV6CliShim(), {
-    channel: "withmate:install-memory-v6-cli-shim",
-    args: [],
-  });
-  assert.deepEqual(await api.uninstallMemoryV6CliShim(), {
-    channel: "withmate:uninstall-memory-v6-cli-shim",
-    args: [],
-  });
-  assert.deepEqual(await api.openMemoryV6ReviewWindow(), {
-    channel: "withmate:open-memory-v6-review-window",
-    args: [],
-  });
   assert.deepEqual(await api.getSessionGlossaryProjection("session-1"), {
     channel: "withmate:get-session-glossary-projection",
     args: ["session-1"],
@@ -295,30 +279,6 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.searchSessionGlossary("session-1", { query: "runtime" }), {
     channel: "withmate:search-session-glossary",
     args: ["session-1", { query: "runtime" }],
-  });
-  assert.deepEqual(await api.getMemoryV6FileUsage(), {
-    channel: "withmate:get-memory-v6-file-usage",
-    args: [],
-  });
-  assert.deepEqual(await api.exportMemoryV6EntryFiles("mem-1"), {
-    channel: "withmate:export-memory-v6-entry-files",
-    args: ["mem-1"],
-  });
-  assert.deepEqual(await api.runMemoryV6ProtectedObjectGc({ dryRun: true }), {
-    channel: "withmate:run-memory-v6-protected-object-gc",
-    args: [{ dryRun: true }],
-  });
-  assert.deepEqual(await api.searchMemoryV6Entries({ query: "release" }), {
-    channel: "withmate:search-memory-v6-entries",
-    args: [{ query: "release" }],
-  });
-  assert.deepEqual(await api.getMemoryV6Entry("mem-1"), {
-    channel: "withmate:get-memory-v6-entry",
-    args: ["mem-1"],
-  });
-  assert.deepEqual(await api.forgetMemoryV6Entry("mem-1", "incorrect"), {
-    channel: "withmate:forget-memory-v6-entry",
-    args: ["mem-1", "incorrect"],
   });
   assert.deepEqual(await api.getMateState(), {
     channel: "withmate:get-mate-state",
@@ -386,10 +346,6 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   }), {
     channel: "withmate:start-character-authoring-session",
     args: [{ mode: "improve", characterId: "char-1", provider: "codex" }],
-  });
-  assert.deepEqual(await api.getSessionBackgroundActivity("session-1", "memory-generation"), {
-    channel: "withmate:get-session-background-activity",
-    args: ["session-1", "memory-generation"],
   });
   assert.deepEqual(await api.listSessionSummaryPage({ scope: "recent", limit: 25 }), {
     channel: "withmate:list-session-summary-page",
@@ -852,19 +808,11 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getLatestSessionTurn",
     "getMateProfile",
     "getMateState",
-    "getMemoryV6Diagnostics",
-    "getMemoryV6Entry",
-    "exportMemoryV6EntryFiles",
-    "getMemoryV6FileUsage",
-    "listMemoryV6ReviewTargets",
-    "runMemoryV6ProtectedObjectGc",
-    "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",
     "getUnreadSessionResult",
     "markSessionResultRead",
     "getFileRootDiff",
-    "installMemoryV6CliShim",
     "listAuxiliarySessions",
     "listCharacters",
     "listConversationNavigator",
@@ -902,7 +850,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openSessionMonitorWindow",
     "openSessionTerminal",
     "openSettingsWindow",
-    "openMemoryV6ReviewWindow",
     "openTerminalAtPath",
     "validateSessionWorkspace",
     "validateSessionAdditionalDirectory",
@@ -945,7 +892,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "steerAuxiliarySessionTurn",
     "saveAuxiliaryDraft",
     "savePastedSessionFile",
-    "searchMemoryV6Entries",
     "searchConversation",
     "searchSessionGlossary",
     "setMateAvatar",
@@ -969,7 +915,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeProviderQuotaTelemetry",
     "subscribeSessionFilePreviewNavigation",
     "subscribeSessionInvalidation",
-    "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
     "subscribeSessionDraftFlushRelease",
     "subscribeSessionDraftFlushRequest",
@@ -981,8 +926,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "readSessionGraphWindow",
     "updateSessionGraphWindowState",
     "subscribeTerminalEvents",
-    "forgetMemoryV6Entry",
-    "uninstallMemoryV6CliShim",
     "updateAppSettings",
     "updateChatLayoutPreference",
     "setAuxiliaryExecutionOptions",
@@ -1259,18 +1202,25 @@ test("createWithMateWindowApi はAuxiliary navigation payloadを検証してunwr
   assert.equal(listeners.has("withmate:open-auxiliary-session"), false);
 });
 
-test("createWithMateWindowApi は telemetry / background activity の payload も unwrap する", () => {
+// @test-value v2
+// kind = "contract"
+// claim = "quota購読callbackへproviderIdとtelemetry、Glossary購読callbackへprojectionを渡し、Glossaryの解除後はlistenerを残さない"
+// oracle = { type = "contract", ref = "src-shared/ipc/withmate-window-api.ts: WithMateWindowSubscriptionApi" }
+// fault = "callbackへElectron eventやpayload wrapperを渡す、payloadを欠落させる、またはGlossary解除でlistenerを外さない"
+// observable = "quotaReceivedとglossaryReceivedのcallback引数、および解除後のGlossary channel listener有無"
+// observation_boundary = "public-boundary"
+// scope = "preloadのquota telemetryとSession Glossary購読API"
+// lifecycle = "permanent"
+// distinction = "callbackの型だけでは実行時IPC payloadのunwrapと購読解除を保証できない"
+// @end-test-value
+test("createWithMateWindowApi は telemetry / glossary の payload も unwrap する", () => {
   const { ipcRenderer, listeners } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
   const quotaReceived: unknown[] = [];
-  const backgroundReceived: unknown[] = [];
   const glossaryReceived: unknown[] = [];
 
   const disposeQuota = api.subscribeProviderQuotaTelemetry((providerId, telemetry) => {
     quotaReceived.push({ providerId, telemetry });
-  });
-  const disposeBackground = api.subscribeSessionBackgroundActivity((sessionId, kind, state) => {
-    backgroundReceived.push({ sessionId, kind, state });
   });
   const disposeGlossary = api.subscribeSessionGlossary((projection) => {
     glossaryReceived.push(projection);
@@ -1280,11 +1230,6 @@ test("createWithMateWindowApi は telemetry / background activity の payload �
     providerId: "copilot",
     telemetry: { provider: "copilot", snapshots: [] },
   });
-  listeners.get("withmate:session-background-activity")?.({}, {
-    sessionId: "session-1",
-    kind: "monologue",
-    state: { kind: "monologue", status: "running" },
-  });
   listeners.get("withmate:session-glossary-changed")?.({}, {
     sessionId: "session-1",
     scopeRevision: "scope-1",
@@ -1293,13 +1238,9 @@ test("createWithMateWindowApi は telemetry / background activity の payload �
     state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
   });
   disposeQuota();
-  disposeBackground();
   disposeGlossary();
 
   assert.deepEqual(quotaReceived, [{ providerId: "copilot", telemetry: { provider: "copilot", snapshots: [] } }]);
-  assert.deepEqual(backgroundReceived, [
-    { sessionId: "session-1", kind: "monologue", state: { kind: "monologue", status: "running" } },
-  ]);
   assert.deepEqual(glossaryReceived, [{
     sessionId: "session-1",
     scopeRevision: "scope-1",

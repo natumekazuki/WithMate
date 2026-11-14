@@ -8,10 +8,10 @@
     "dev": "vite",
     "icon:generate": "node --import tsx scripts/build/generate-app-icon.ts",
     "stage:provider-binaries": "node --import tsx scripts/build/stage-provider-binaries.ts",
-    "build:memory-cli": "tsx scripts/build/build-withmate-memory-cli.ts",
+    "build:cli": "tsx scripts/build/build-managed-cli.ts",
     "build:pdf-reader": "vite build --config vite.pdf-reader.config.ts",
     "build:renderer": "vite build && npm run build:pdf-reader",
-    "build:electron": "npm run build:memory-cli && tsc -p tsconfig.electron.json",
+    "build:electron": "npm run build:cli && tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
     "electron:dev": "npm run build:electron && npm run build:pdf-reader && tsx scripts/dev/run-electron-dev.ts",
     "electron:start": "npm run build && electron dist-electron/src-electron/main.js",
@@ -130,20 +130,12 @@
     ],
     "extraFiles": [
       {
-        "from": "build/cli/withmate-memory.cmd",
-        "to": "withmate-memory.cmd"
-      },
-      {
         "from": "build/cli/withmate-glossary.cmd",
         "to": "withmate-glossary.cmd"
       },
       {
         "from": "build/cli/withmate-session-graph.cmd",
         "to": "withmate-session-graph.cmd"
-      },
-      {
-        "from": "build/cli/withmate-session-history.cmd",
-        "to": "withmate-session-history.cmd"
       },
       {
         "from": "build/cli/withmate-session.cmd",

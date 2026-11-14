@@ -76,9 +76,9 @@ it("deletion commits before provider cleanup and allows unrelated deletion", { t
             listStoredSessionIdsLastActiveBefore: (cutoff) => storage.listSessionIdsLastActiveBefore(cutoff),
             getAppSettings: () => normalizeAppSettings({}),
             getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-            syncSessionDependencies: () => undefined,
+
             clearSessionContextTelemetry: () => undefined,
-            clearSessionBackgroundActivities: () => undefined,
+
             revokeSessionAgentRuntimeBindings: (id) => { revoked.push(id); },
             closeSessionWindow: (id) => {
               closed.push(id);
@@ -221,7 +221,7 @@ it("parent deletion serializes with an Auxiliary commit paused after its parent 
         listStoredSessionIdsLastActiveBefore: () => [parent.id],
         getAppSettings: () => normalizeAppSettings({}),
         getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
-        syncSessionDependencies() {}, clearSessionContextTelemetry() {}, clearSessionBackgroundActivities() {},
+         clearSessionContextTelemetry() {},
         invalidateProviderSessionThread() {}, closeSessionWindow() {}, broadcastSessions() {},
       });
       creating = auxiliary.createAuxiliarySession({ parentSessionId: parent.id, provider: "codex", runtimeSelection: "latest-session", clientRequestId: "create" });

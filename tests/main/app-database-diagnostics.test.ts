@@ -7,7 +7,6 @@ import { describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/storage/app-database-v6-bootstrap.js";
 import { inspectAppDatabase } from "../../src-electron/storage/app-database-diagnostics.js";
-import { startMemoryV6RuntimeApi } from "../../src-electron/memory/memory-v6-runtime.js";
 import { APP_DATABASE_V3_FILENAME, CREATE_V3_SCHEMA_SQL } from "../../src-electron/storage/database-schema-v3.js";
 import {
   APP_DATABASE_V4_FILENAME,
@@ -145,45 +144,7 @@ describe("inspectAppDatabase", () => {
     }
   });
 
-  // @test-value v1
-  // kind = "regression"
-  // claim = "分離registryを使うMemory runtime bootstrap後もV6 runtime DB diagnosticsがreadyになる"
-  // oracle = { type = "contract", ref = "V6 runtime database diagnostics" }
-  // failure_mode = "runtime discovery初期化の追加によりV6 DB bootstrapまたはdiagnosticsのruntime eligible判定が失敗する"
-  // scope = "memory-v6-database-bootstrap-diagnostics"
-  // lifecycle = "permanent"
-  // @end-test-value
-  it("分離registryを使うMemory V6 runtime bootstrap後のfresh diagnosticsはV6 runtime DBを返す", async () => {
-    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));
-    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
-    try {
-      const activeDatabasePath = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
-      const runtime = await startMemoryV6RuntimeApi({
-        userDataPath,
-        applicationInstanceId: "11111111-1111-4111-8111-111111111111",
-        buildChannel: "development",
-        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
-        runtimeDirectoryPath,
-      });
-      try {
-        const diagnostics = inspectAppDatabase(userDataPath, activeDatabasePath, false);
-        const v6File = diagnostics.files.find((file) => file.fileName === APP_DATABASE_V6_FILENAME);
 
-        assert.equal(diagnostics.compatibilityMode, "v4");
-        assert.equal(diagnostics.exists, false);
-        assert.equal(diagnostics.valid, true);
-        assert.equal(v6File?.exists, true);
-        assert.equal(v6File?.schemaValid, true);
-        assert.equal(v6File?.runtimeEligible, true);
-        assert.equal(v6File?.status, "ready");
-      } finally {
-        await runtime.stop();
-      }
-    } finally {
-      await rm(userDataPath, { recursive: true, force: true });
-      await rm(runtimeDirectoryPath, { recursive: true, force: true });
-    }
-  });
 
   it("activeDatabasePath に V6 DB を渡した場合は v6 として診断する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));

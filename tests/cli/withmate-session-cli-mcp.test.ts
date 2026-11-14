@@ -10,9 +10,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { runWithMateSessionCli } from "../../src-cli/session/withmate-session.js";
 import { createWithMateSessionMcpServer } from "../../src-electron/platform/mcp/withmate-session-mcp.js";
 import type {
-  callWithMateMemoryRuntime,
-  WithMateMemoryRuntimeConnection,
-} from "../../src-electron/platform/mcp/withmate-memory-runtime-client.js";
+  callAgentRuntime,
+  AgentRuntimeConnection,
+} from "../../src-electron/platform/agent-runtime/runtime-client.js";
 import {
   SESSION_RUNTIME_OPERATION_PATHS,
   getSessionAgentRuntimeOperations,
@@ -37,20 +37,19 @@ const env = {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding",
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn",
 };
-const connection: WithMateMemoryRuntimeConnection = {
+const connection: AgentRuntimeConnection = {
   api: {
     baseUrl: "http://127.0.0.1:7777",
     apiSecret: "secret",
     applicationInstanceId: "instance",
     runtimeGenerationId: "generation",
-    runtimeInstanceId: "generation",
   },
   credential: { adapter: "mcp", adapterSecret: "adapter" },
 };
 async function cli(
   command: string,
   body: unknown,
-  runtimeCall: typeof callWithMateMemoryRuntime,
+  runtimeCall: typeof callAgentRuntime,
   boundEnv = env,
 ) {
   let output = "";
@@ -124,7 +123,7 @@ test("bound CLI and MCP share dispatch, denial and unknown mutation outcome", as
   let lose = false;
   let reject = true;
   let successValues: Record<string, Record<string, unknown>> = {};
-  const runtimeCall: typeof callWithMateMemoryRuntime = async (
+  const runtimeCall: typeof callAgentRuntime = async (
     _connection,
     request,
     options,
@@ -544,7 +543,7 @@ test("CLI and MCP preserve explicit enqueue timing and reject invalid timing", a
   const target = { kind: "main", sessionId: "child", incarnationId: "child-v1" };
   const requestId = randomUUID();
   let phase = "running";
-  const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, request) => {
+  const runtimeCall: typeof callAgentRuntime = async (_connection, request) => {
     calls.push(request.body);
     return {
       ok: true,
@@ -641,9 +640,7 @@ test("directory management crosses persisted Session runtime, MCP and CLI", asyn
     setStoredSessionAdditionalDirectories: (id, incarnation, directories) => storage.setSessionAdditionalDirectories(id, incarnation, directories),
     replaceStoredSessions: (sessions) => { storage.replaceSessions(sessions); },
     listStoredSessions: () => storage.listSessions(),
-    getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: () => ({ providers: [] }),
-    syncSessionDependencies: () => undefined, clearSessionContextTelemetry: () => undefined,
-    clearSessionBackgroundActivities: () => undefined, invalidateProviderSessionThread: () => undefined,
+    getAppSettings: () => normalizeAppSettings({}), getModelCatalogSnapshot: () => ({ providers: [] }), clearSessionContextTelemetry: () => undefined, invalidateProviderSessionThread: () => undefined,
     closeSessionWindow: () => undefined, broadcastSessions: () => undefined,
   });
   const bindings = new AgentRuntimeBindingRegistry();
@@ -663,7 +660,7 @@ test("directory management crosses persisted Session runtime, MCP and CLI", asyn
     readExecution: unused, createChild: unused, catalog: unused, coordinate: unused,
   });
   const runtime = new SessionManagementRuntimeService({ application, bindingRegistry: bindings, providerAgentRuntimeTurns: turns });
-  const runtimeCall: typeof callWithMateMemoryRuntime = async (_connection, operation, options) => {
+  const runtimeCall: typeof callAgentRuntime = async (_connection, operation, options) => {
     const response = await runtime.route({ method: operation.method, path: operation.path, body: operation.body, transport: "mcp",
       bindingReference: options.bindingReference, turnCapability: options.turnCapability });
     assert.ok(response);
@@ -812,7 +809,7 @@ test("saved Coordination details cross the real application and both public sche
     bindingRegistry: bindings,
     providerAgentRuntimeTurns: turns,
   });
-  const runtimeCall: typeof callWithMateMemoryRuntime = async (
+  const runtimeCall: typeof callAgentRuntime = async (
     _connection,
     operation,
     options,

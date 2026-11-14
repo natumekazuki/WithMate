@@ -502,24 +502,24 @@ it("OpenCode ignores interaction answers resolved after root completion", async 
 // kind = "security"
 // claim = "同workspaceの並行OpenCode turnは各tokenを明示locationのruntime MCPだけへ渡す"
 // oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/879" }
-// fault = "locationを省略するか並行turnのtokenを共有して別actorのMemoryを操作する"
+// fault = "managed MCP登録locationを省略するか並行turnのtokenを取り違える"
 // observable = "並行adapterのMCP登録locationとheaderおよび送信promptのsecret不在"
 // observation_boundary = "public-boundary"
 // scope = "OpenCode runtime MCP turn isolation"
 // lifecycle = "permanent"
 // risk_tags = ["authorization", "privacy"]
-// impact = "Main/Aux間のMemory権限と本文の混線を防ぐ"
+// impact = "並行turnが別actorのMCP credentialを使うか異なるnative locationへ接続することを防ぐ"
 // distinction = "managed MCP host側testはnative location登録や並行provider変換を通らない"
 // @end-test-value
 it("OpenCode keeps per-turn managed MCP tokens at an explicit native location", async () => {
   const turns = [input(), input()];
   turns.forEach((turn, index) => { turn.agentRuntimeBinding = { providerId: "opencode", bindingId: `binding-${index}`, bindingReference: `secret-binding-${index}`, executionGeneration: `generation-${index}`, transport: "env", expiresAt: null,
-    managedMcp: { token: `secret-token-${index}`, memoryUrl: "http://localhost/memory", glossaryUrl: "http://localhost/glossary", sessionGraphUrl: "http://localhost/session-graph" } }; });
+    managedMcp: { token: `secret-token-${index}`,  glossaryUrl: "http://localhost/glossary", sessionGraphUrl: "http://localhost/session-graph" } }; });
   const fixtures = turns.map((turn) => fixture(turn));
   await Promise.all(fixtures.map((run, index) => run.adapter.runSessionTurn(turns[index])));
   fixtures.forEach((run, index) => {
     const expectedUrls: Record<string, string> = {
-      "withmate-memory": "http://localhost/memory", "withmate-glossary": "http://localhost/glossary", "withmate-session-graph": "http://localhost/session-graph",
+      "withmate-glossary": "http://localhost/glossary", "withmate-session-graph": "http://localhost/session-graph",
     };
     assert.deepEqual(run.mcpRegistrations.map((registration) => registration.server).sort(), Object.keys(expectedUrls).sort());
     for (const registration of run.mcpRegistrations) {

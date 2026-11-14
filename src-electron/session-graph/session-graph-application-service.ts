@@ -1,5 +1,5 @@
 import type { SessionGraphIdentity, SessionGraphOperation, SessionGraphOperationResult, SessionGraphOwner, SessionGraphRequest, SessionGraphSource, SessionGraphStorageAuthority } from "../../src-shared/session-graph/session-graph-contract.js";
-import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, type RuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission, runWithRuntimeTurnAdmission, type RuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { sessionGraphStorageRequestSchemas, type SessionGraphStorageOperation, type SessionGraphStorageRequest, type SessionGraphStorageResult, type SessionGraphUiReadOperation, type SessionGraphUiReadRequest, type SessionGraphUiReadResult } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 
 export type ResolvedSessionGraphSession = {

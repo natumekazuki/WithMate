@@ -232,7 +232,7 @@ it("snapshotなしneutral SessionはCharacterの再解決を行わない", async
 
 // @test-value v2
 // kind = "invariant"
-// claim = "foreground prompt context が無効な turn では timing / affect resolver を呼ばず、provider prompt へ context を渡さない"
+// claim = "foreground prompt context が無効な turn では timing resolver を呼ばず、provider prompt へ context を渡さない"
 // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
 // fault = "表示しない context のために foreground resolver を実行し、provider prompt へ古い context を渡す"
 // observable = "resolver call count と ProviderCodingAdapter.runSessionTurn の入力"
@@ -242,10 +242,9 @@ it("snapshotなしneutral SessionはCharacterの再解決を行わない", async
 // impact = "OFF設定でも不要な foreground context 取得・provider prompt への token 注入が発生する"
 // distinction = "provider prompt の section omission だけでなく、turn開始時の resolver 呼び出し境界を確認する"
 // @end-test-value
-it("foreground prompt context が無効な turn では不要な resolver を呼ばない", async () => {
+it("foreground prompt context が無効な turn では不要なTiming resolver を呼ばない", async () => {
   const session = createSession();
   let timingResolverCalls = 0;
-  let affectResolverCalls = 0;
   let composedInput: RunSessionTurnInput | null = null;
   const adapter: ProviderCodingAdapter = {
     ...createAdapter(async (input) => {
@@ -266,16 +265,11 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
   const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
     getAppSettings: () => ({
       ...normalizeAppSettings({}),
-      characterAffectContextEnabled: false,
       conversationTimingEnabled: false,
     }),
     resolveConversationTimingContext() {
       timingResolverCalls += 1;
       throw new Error("timing resolver must not run");
-    },
-    resolveCharacterContext() {
-      affectResolverCalls += 1;
-      throw new Error("affect resolver must not run");
     },
   }));
 
@@ -283,15 +277,12 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
 
   assert.equal(result.runState, "error");
   assert.equal(timingResolverCalls, 0);
-  assert.equal(affectResolverCalls, 0);
   assert.ok(composedInput);
   const composed = composedInput as RunSessionTurnInput;
   assert.equal(composed.conversationTimingContext, undefined);
-  assert.equal(composed.characterContext, undefined);
 
   const runWithSettings = async (appSettings: ReturnType<typeof normalizeAppSettings>) => {
     let timingCalls = 0;
-    let affectCalls = 0;
     let composedInput: RunSessionTurnInput | null = null;
     const timingContext = {
       observedAt: "2026-09-19T04:00:00.000+09:00",
@@ -300,17 +291,6 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
       sameCharacterOtherSession: null,
       sameCharacterSharedWork: null,
     } satisfies NonNullable<RunSessionTurnInput["conversationTimingContext"]>;
-    const characterContext = {
-      schemaVersion: "withmate-character-context-v1",
-      baseline: { definitionSha256: "sentinel-definition", snapshotAt: "2026-09-19T04:00:00.000Z" },
-      affect: {
-        mode: "active",
-        effective: [],
-        evaluatedAt: "2026-09-19T04:00:00.000Z",
-        version: "sentinel-affect",
-        updatedAt: null,
-      },
-    } satisfies NonNullable<RunSessionTurnInput["characterContext"]>;
     const partialAdapter: ProviderCodingAdapter = {
       ...createAdapter(async (input) => {
         composedInput = input;
@@ -333,36 +313,26 @@ it("foreground prompt context が無効な turn では不要な resolver を呼�
         timingCalls += 1;
         return timingContext;
       },
-      resolveCharacterContext() {
-        affectCalls += 1;
-        return characterContext;
-      },
     }));
 
     const partialResult = await partialService.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
     assert.equal(partialResult.runState, "error");
     assert.ok(composedInput);
-    return { timingCalls, affectCalls, composedInput: composedInput! };
+    return { timingCalls, composedInput: composedInput! };
   };
   const timingOff = await runWithSettings({
     ...normalizeAppSettings({}),
-    characterAffectContextEnabled: true,
     conversationTimingEnabled: false,
   });
-  const affectOff = await runWithSettings({
+  const timingOn = await runWithSettings({
     ...normalizeAppSettings({}),
-    characterAffectContextEnabled: false,
     conversationTimingEnabled: true,
   });
 
   assert.equal(timingOff.timingCalls, 0);
-  assert.equal(timingOff.affectCalls, 1);
   assert.equal((timingOff.composedInput as RunSessionTurnInput).conversationTimingContext, undefined);
-  assert.equal((timingOff.composedInput as RunSessionTurnInput).characterContext?.affect.version, "sentinel-affect");
-  assert.equal(affectOff.timingCalls, 1);
-  assert.equal(affectOff.affectCalls, 0);
-  assert.equal((affectOff.composedInput as RunSessionTurnInput).conversationTimingContext?.observedAt, "2026-09-19T04:00:00.000+09:00");
-  assert.equal((affectOff.composedInput as RunSessionTurnInput).characterContext, undefined);
+  assert.equal(timingOn.timingCalls, 1);
+  assert.equal((timingOn.composedInput as RunSessionTurnInput).conversationTimingContext?.observedAt, "2026-09-19T04:00:00.000+09:00");
 });
 
 // @test-value v2

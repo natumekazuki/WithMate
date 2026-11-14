@@ -1,5 +1,7 @@
 # ADR 035: 背景実行のbindingと履歴read scopeを分離する
 
+2026-11-15の[ADR 036](036-memory-affect-removal.md)により、Memory／Affect専用の入口・保存・背景実行と専用History公開入口に関する範囲は適用対象外とする。通常Session／Graph／Glossaryの共有runtime・認可・instance／generation失効・MCP／CLI契約、通常Sessionの保存履歴readの責務は維持する。以下の当時の本文は判断履歴として保持する。
+
 ## Status
 
 Accepted
@@ -40,9 +42,9 @@ Issue #888の三用途を通常Sessionのactor／Providerキーで実行する�
 
 ## 適用範囲
 
-2026-11-01の精度要求変更により、上記Decision末尾の用途別checkpoint・atomic位置確定・応答消失／再起動照合を具体化する方針は適用対象外とする。後継判断は、取得時点の許可材料から一度生成し、既存storeで保存し、失敗・結果不明はその状態で終了する方式である。内容精度のための追随・再照合・専用復旧は不要とし、binding／read scope／admission／保存データ保護の判断は維持する。現在の呼出・保存結果の契約は[Background Execution](../design/background-execution.md#共通の単発呼出)を正本とする。
+2026-11-01の精度要求変更により、上記Decision末尾の用途別checkpoint・atomic位置確定・応答消失／再起動照合を具体化する方針は適用対象外とする。後継判断は、取得時点の許可材料から一度生成し、既存storeで保存し、失敗・結果不明はその状態で終了する方式である。内容精度のための追随・再照合・専用復旧は不要とし、binding／read scope／admission／保存データ保護の判断は維持する。現在の呼出・保存結果の契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#共通の単発呼出)を正本とする。
 
-実装済みの共通基盤と寿命は[Background Execution](../design/background-execution.md)を正本とする。Providerの制限された単発推論、用途別設定、生成・保存の統合、checkpointの実装をこのADRの採用だけで完了扱いしない。
+実装済みの共通基盤と寿命は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md)を正本とする。Providerの制限された単発推論、用途別設定、生成・保存の統合、checkpointの実装をこのADRの採用だけで完了扱いしない。
 
 ADR028の「専用post-turn生成を設けない」という方針は今回の背景生成方針で置換する。ただし現在稼働する通常turn内のMemory／Affect操作は、生成担当の接続と現行説明の更新を同じ論理変更で行うまで維持する。保存済みevent／episode／一般Memory・version・idempotency情報を削除する判断ではない。ADR029のMCP／CLI同等契約と通常turnの認可は維持する。
 
@@ -52,7 +54,7 @@ Character Memory・対象Memoryは、取得時点の許可された材料から�
 
 未開始対象の末尾はowner×用途ごとにアプリ生存期間内だけ保持し、admissionを取得して開始したときに進める。失敗／unknownでも戻さず、開始見送りなら進めない。この位置は保存成功の証明ではない。保存の失敗／unknown／取消では残りの候補を呼ばず、確認できた保存だけを成功として扱う。永続checkpoint、候補queue、新batchによる一括確定、read-reconcile、自動再送や失敗範囲の完全回収を後続の必須課題にしない。
 
-認可・正しいowner／target・失効拒否・入力検証・既存privacy忘却とデータ保護は維持する。共通binding／履歴read／admissionおよび#910の方針は変更しない。現在の実装済み範囲は[Memory生成の純粋な用途契約](../design/background-execution.md#memory生成の純粋な用途契約)を正本とし、後継判断の採用をProvider・read・保存接続の実装完了とは扱わない。
+認可・正しいowner／target・失効拒否・入力検証・既存privacy忘却とデータ保護は維持する。共通binding／履歴read／admissionおよび#910の方針は変更しない。現在の実装済み範囲は[Memory生成の純粋な用途契約](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#memory生成の純粋な用途契約)を正本とし、後継判断の採用をProvider・read・保存接続の実装完了とは扱わない。
 
 ## 背景実行内のMCP／CLI直接登録
 
@@ -83,13 +85,13 @@ MCPとCLIは同じ用途別の操作・入力・認可・保存効果・エラ�
 
 構造化finalのschema／parser、後段保存callback、用途別の専用保存applicationと結果変換は、直接登録へ接続した範囲から、不要な型・test・説明とともに整理する。必要な検証はtool境界へ移し、通常turnの公開操作や保存済みデータを削除しない。実Provider接続、自動起動・設定、Auxiliaryの保存対応を、この方式の採用だけで完了扱いしない。
 
-現行説明は各branchの実装変更と同じ論理変更で更新する。本判断の採用時点では、[Background Execution](../design/background-execution.md)に記載された構造化final／後段保存方式が実装されている。
+現行説明は各branchの実装変更と同じ論理変更で更新する。本判断の採用時点では、[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md)に記載された構造化final／後段保存方式が実装されている。
 
 ### 共通基盤への適用
 
 共通runOnceは一回のAgent実行と実行終了の契約へ変更し、final schema／parser／後段save callbackと専用保存phaseを除去した。用途ごとのoperation上限、同一背景admissionとtrusted source／保存先を検証する登録port、未接続handlerのMCP非公開・直接runtime拒否を適用した。通常turnの公開操作と保存済みデータは維持する。
 
-共通基盤取り込み時点では、三用途の入力検証と保存adapterは登録portへまだ接続していない。用途専用applicationは実行経路から外れており、検証移設と未使用コードの整理は用途担当が行う。実Provider・本番自動起動・設定・Auxiliary保存の適用完了を意味しない。現在の接続契約は[Background Execution](../design/background-execution.md#用途限定の登録接続)を正本とする。
+共通基盤取り込み時点では、三用途の入力検証と保存adapterは登録portへまだ接続していない。用途専用applicationは実行経路から外れており、検証移設と未使用コードの整理は用途担当が行う。実Provider・本番自動起動・設定・Auxiliary保存の適用完了を意味しない。現在の接続契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#用途限定の登録接続)を正本とする。
 
 2026-11-03に#909のMemory二用途へ直接登録を適用した。既存の公開入力とappend／episode validatorを利用し、実Mainの保存済み終端Turnのhistory／processing所属を用途handlerで確認する。個別の構造化根拠参照契約は新設せず、内容の意味判断はAgentへ委ねる。旧候補finalと専用後段保存を撤去し、Mainへ二handlerを接続した。Affect登録、実Provider・本番起動・設定・Auxiliary保存はこの適用に含まない。
 
@@ -125,7 +127,7 @@ Decisionと直接登録の維持境界にある二つの同時上限・その起
 
 共通runtimeへ三用途のAppSettings・編集面、Claude専用単発Provider port、Main／Auxiliary共通のsource capture／read、保存成功後terminalと会話実行状態・設定変更・停止の購読接点を接続した。登録本文未設定時だけ用途presetを使い、空文字列を含む編集本文は単独で渡す。通常会話のthread・選択・出力は変更しない。
 
-Providerの機械制限はSDK設定と同一bindingのmanaged MCPで行い、制限を保証できないProvider・構成へfallbackしない。共通source対応と用途保存対応は区別し、三用途の現行handlerはMainだけを有効にする。用途controllerの購読・自動発火・未開始位置管理、Auxiliaryの保存意味・store対応、実認証推論の確認はこの適用範囲へ含めない。現行APIと制限は[Background Execution](../design/background-execution.md#本番共通runtimeとprovider)を正本とする。
+Providerの機械制限はSDK設定と同一bindingのmanaged MCPで行い、制限を保証できないProvider・構成へfallbackしない。共通source対応と用途保存対応は区別し、三用途の現行handlerはMainだけを有効にする。用途controllerの購読・自動発火・未開始位置管理、Auxiliaryの保存意味・store対応、実認証推論の確認はこの適用範囲へ含めない。現行APIと制限は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#本番共通runtimeとprovider)を正本とする。
 
 ## 三用途の統合への適用
 
@@ -139,7 +141,7 @@ Providerの機械制限はSDK設定と同一bindingのmanaged MCPで行い、制
 
 Auxiliary登録は既存のMemory／episodeサービスとWorkerを利用する。Main専用の出典FKとepisode scope確認だけでは実Auxiliaryを扱えないため、ユーザー承認に基づき既存MemoryへnullableなAuxiliary出典FKを追加し、実bindingによるepisodeの会話確認を利用する。Mainの出典欄や親IDへ付け替えず、通常明示操作と既存保存データ・忘却を維持する。別DB・同等application・別toolは作らない。
 
-この適用はMemory二用途に限り、共通接続時点のMemory controller／Auxiliary未接続という適用範囲を置き換える。Affect controller・Auxiliary保存、追加Provider、実認証による推論確認の完了は意味しない。現行の接続契約は[Background Execution](../design/background-execution.md#memoryの自動発火と開始位置)に示す。
+この適用はMemory二用途に限り、共通接続時点のMemory controller／Auxiliary未接続という適用範囲を置き換える。Affect controller・Auxiliary保存、追加Provider、実認証による推論確認の完了は意味しない。現行の接続契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#memoryの自動発火と開始位置)に示す。
 
 ## 共通Provider実行とDepth
 
@@ -151,7 +153,7 @@ Auxiliary登録は既存のMemory／episodeサービスとWorkerを利用する�
 
 WithMateの履歴範囲・owner／保存先・入力・用途operation grantは行動制限ではなく、trusted sourceからのアクセス認可とデータ保護として維持する。独立binding、失効後の未確定write拒否、確定済み保存保持、同用途並行、主Cancel／Window closeからの独立も維持する。
 
-#909と#910の本番controller、Main／Auxiliary登録・contextを共存させた。Memory出典列追加とAffect owner schema再構成は既存行・ID・link・versionを保持する。通常Auxiliary手動Affect owner公開APIは拡張しない。実認証推論と統合先branchへの適用は、この担当branchの実装・fake transport検証とは区別する。現行契約は[Background Execution](../design/background-execution.md)に示す。
+#909と#910の本番controller、Main／Auxiliary登録・contextを共存させた。Memory出典列追加とAffect owner schema再構成は既存行・ID・link・versionを保持する。通常Auxiliary手動Affect owner公開APIは拡張しない。実認証推論と統合先branchへの適用は、この担当branchの実装・fake transport検証とは区別する。現行契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md)に示す。
 
 ## 用途別権限・非対話終了・失敗ログ
 
@@ -161,13 +163,13 @@ WithMateの履歴範囲・owner／保存先・入力・用途operation grantは�
 
 背景の失敗だけを`logs/background-failures.jsonl`へ追記し、回転・切詰め・自動削除は行わない。通常ログの5MiB・5ファイルは維持する。診断項目と安全な短い原因だけを残し、本文・credential・raw例外を保存しない。重複記録は既存呼出境界の責務で避け、台帳・DB・queue・viewerを追加しない。
 
-共通Provider実行時点のsource権限継承とcallback省略による拒否の扱いは本判断で置き換える。当時の本文は保持する。独立binding・元thread非再開・認可・データ保護と直接登録は維持する。現行実装は[用途別権限と非対話終了](../design/background-execution.md#用途別権限と非対話終了)と[失敗ログ](../design/app-log-base.md#background-failure-log-policy)に示す。
+共通Provider実行時点のsource権限継承とcallback省略による拒否の扱いは本判断で置き換える。当時の本文は保持する。独立binding・元thread非再開・認可・データ保護と直接登録は維持する。現行実装は[用途別権限と非対話終了](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#用途別権限と非対話終了)と[失敗ログ](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/app-log-base.md#background-failure-log-policy)に示す。
 
 ## 登録内容と失敗診断
 
 三用途の登録本文は自身の目的・材料・判断・登録・終了条件から構成し、自然言語の分量制限を設けない。Character Memoryには実Characterの定義を参照材料として渡し、観察事実と本人の解釈を区別した本人の語りを保存する。共通Provider systemでその語りを否定しない。編集本文によるプリセット置換と、保存済み編集本文の保護を維持する。
 
-失敗の定型分類だけでは操作の拒否理由や、失敗と同じ実行で確認できた保存を追えないため、既存実行寿命に操作の要求・応答metadataと選別・秘匿化した原因を保持する。実行が失敗した時だけ既存の専用JSONLへ出し、正常な成功実行の恒久履歴や新規台帳・DB・再送queueは設けない。途中失敗後の保存成功は診断材料であり、全体の失敗を成功へ変えない。会話・prompt・tool引数や応答本文の無差別dumpは行わず、診断に必要な実code／message・検証箇所・期待条件・cause／stackと保存識別情報を選ぶ。認証情報を秘匿化し、原因情報を恣意的な短文化で落とさない。現行仕様は[Background Execution](../design/background-execution.md)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)に示す。
+失敗の定型分類だけでは操作の拒否理由や、失敗と同じ実行で確認できた保存を追えないため、既存実行寿命に操作の要求・応答metadataと選別・秘匿化した原因を保持する。実行が失敗した時だけ既存の専用JSONLへ出し、正常な成功実行の恒久履歴や新規台帳・DB・再送queueは設けない。途中失敗後の保存成功は診断材料であり、全体の失敗を成功へ変えない。会話・prompt・tool引数や応答本文の無差別dumpは行わず、診断に必要な実code／message・検証箇所・期待条件・cause／stackと保存識別情報を選ぶ。認証情報を秘匿化し、原因情報を恣意的な短文化で落とさない。現行仕様は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md)と[App Log Base](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/app-log-base.md#background-failure-log-policy)に示す。
 
 ## 背景native threadの継続
 
@@ -175,7 +177,7 @@ WithMateの履歴範囲・owner／保存先・入力・用途operation grantは�
 
 native文脈と呼出ごとのbinding／credential／scopeの寿命を分ける。resumeには現在の接続情報を渡し、各呼出終了で認可を失効させる。native履歴は文脈として利用できるが、現在の保存状態・権限の正本とはしない。失敗しても利用可能なthreadは保持し、次の会話Turnによる用途発火へ失敗事実と新しい材料を渡す。即時の自動retryや、失敗を全件未保存とする補償は行わない。
 
-発火頻度の位置はAIの処理済み範囲と分離し、生成・登録対象をアプリのprocessing区間へ固定しない。AIは認可された保存済みhistory内で必要な会話・操作結果・既存記録・過去Turnの再検討を選ぶ。実source・owner・Character・許可target・terminal Turn・履歴末尾windowと失効write拒否は維持する。再起動後は継続状態を復元せず、新しい会話Turnから新threadを開始する。既存Memory／Affectを削除・再生成せず、独自の完了台帳・hash・再送DBは設けない。現行仕様は[Background Execution](../design/background-execution.md#native文脈の継続と失敗情報)に示す。
+発火頻度の位置はAIの処理済み範囲と分離し、生成・登録対象をアプリのprocessing区間へ固定しない。AIは認可された保存済みhistory内で必要な会話・操作結果・既存記録・過去Turnの再検討を選ぶ。実source・owner・Character・許可target・terminal Turn・履歴末尾windowと失効write拒否は維持する。再起動後は継続状態を復元せず、新しい会話Turnから新threadを開始する。既存Memory／Affectを削除・再生成せず、独自の完了台帳・hash・再送DBは設けない。現行仕様は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#native文脈の継続と失敗情報)に示す。
 
 ## 背景Memoryの添付と必要時復元
 
@@ -183,13 +185,13 @@ native文脈と呼出ごとのbinding／credential／scopeの寿命を分ける�
 
 Memory targetの許可だけではElectron側のfile I/O権限を証明しないため、毎呼出のbindingへfile scopeを捕捉する。取込はsource Workspace・許可Additional Directory・既存SessionFolder、復元はそのSessionFolder内memory-exportsだけに限定する。AuxiliaryのSessionFolderは既存の親Main共有を用いる。書込不可の用途設定では復元を拒否し、全FS設定でもtool上限は拡大しない。実体pathと現在admissionをI/O境界で確認し、root外のsymlink／junction、既存出力の上書きを拒否する。
 
-添付選択・必要時復元はAIの判断とし、本文は添付なしでも主題・保持理由を理解できる形を保つ。継続threadの過去応答や失敗事実を機械的な再添付・再exportの根拠とせず、確定済み保存を維持する。復元の応答喪失を未実行扱いで自動retryしない。現行仕様は[Background Execution](../design/background-execution.md#背景memoryの添付と必要時復元)を正本とする。
+添付選択・必要時復元はAIの判断とし、本文は添付なしでも主題・保持理由を理解できる形を保つ。継続threadの過去応答や失敗事実を機械的な再添付・再exportの根拠とせず、確定済み保存を維持する。復元の応答喪失を未実行扱いで自動retryしない。現行仕様は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#背景memoryの添付と必要時復元)を正本とする。
 
 ## 一括登録と件数上限
 
 2026-11-06の追加要求により採用。通常MemoryとCharacter Memoryは同じ既存公開操作へ非空のentry／episode配列を渡せるようにし、Affect候補の最大10件を撤廃する。登録件数・呼出回数に別の固定上限を設けず、記録の粒度と必要件数はAIが判断する。本文・添付等の項目単位制約と通信・Provider・認可の制限は維持する。
 
-公開tagで成立している単件入力／応答は保持し、同じ操作の代替配列形式として追加する。項目入力を事前検証し、入力順に既存単件保存を利用する。失敗・結果不明・共通実行条件喪失で停止し、indexごとに確定済・失敗・未実行・結果不明を返す。既存item idempotencyとentry添付原子性を維持し、先行確定分を巻き戻さず、新batch DB・台帳・永続queue・全件transaction・即時全体再送を設けない。現行契約は[Background Execution](../design/background-execution.md#一括登録と項目別結果)を正本とする。
+公開tagで成立している単件入力／応答は保持し、同じ操作の代替配列形式として追加する。項目入力を事前検証し、入力順に既存単件保存を利用する。失敗・結果不明・共通実行条件喪失で停止し、indexごとに確定済・失敗・未実行・結果不明を返す。既存item idempotencyとentry添付原子性を維持し、先行確定分を巻き戻さず、新batch DB・台帳・永続queue・全件transaction・即時全体再送を設けない。現行契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#一括登録と項目別結果)を正本とする。
 
 ## 実行終了状態と操作診断の分離
 
@@ -199,13 +201,13 @@ completed／failed／canceledはAgent呼出・開始処理・取消の終了状�
 
 既存専用JSONLへ、実行自体の失敗または操作エラーがある呼出の終端診断だけを一度記録する。開始済みのkindをbackground.execution.diagnosticとし、実行自体の失敗はerror、操作エラーを含む正常終了・取消はwarnで終了状態と操作列を併記する。旧行・append-only・rotationなし・秘匿化を維持し、正常実行全履歴や新規DB・台帳・回復判定・再送queueは追加しない。
 
-前回材料も実行終了状態と操作診断を分け、completedだけで操作エラーを捨てない。次回の正常終了かつ操作エラーなしで直近診断を解放する。既存のnative文脈・sourceとProviderの寿命、onAdmittedの発火位置、認可・失効・確定済み保存保持は変更しない。現行契約は[Background Execution](../design/background-execution.md#失敗の記録)と[App Log Base](../design/app-log-base.md#background-failure-log-policy)を正本とする。
+前回材料も実行終了状態と操作診断を分け、completedだけで操作エラーを捨てない。次回の正常終了かつ操作エラーなしで直近診断を解放する。既存のnative文脈・sourceとProviderの寿命、onAdmittedの発火位置、認可・失効・確定済み保存保持は変更しない。現行契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#失敗の記録)と[App Log Base](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/app-log-base.md#background-failure-log-policy)を正本とする。
 
 ## Affectの根拠messageからのTurn解決
 
 2026-11-08に採用。AIが根拠となる保存済みmessageのseqを`sourceMessageSeq`で指定し、アプリが実sourceのTurnのuser／assistant message位置との完全一致からTurnと完了時刻を解決する。過去Turnの再検討を維持し、対応なしmessageを周辺・最新Turnへ補完しない。同一source・許可history・終端状態・失効・保存時刻の既存境界を保つ。
 
-この判断は候補へ内部Turn IDを直接指定することを必須とした部分を置き換える。公開済みの`sourceTurnId`入力は代替参照として維持し、両参照の併用と参照なしは拒否する。新しい参照台帳・DB・本文推定は持たず、既存Turn列を使う。AIの意味上の誤参照はseqでも残るため、その根絶や元ログの拒否原因の確定とは扱わない。現行契約は[Background Execution](../design/background-execution.md#affect登録入力と会話owner)を正本とする。
+この判断は候補へ内部Turn IDを直接指定することを必須とした部分を置き換える。公開済みの`sourceTurnId`入力は代替参照として維持し、両参照の併用と参照なしは拒否する。新しい参照台帳・DB・本文推定は持たず、既存Turn列を使う。AIの意味上の誤参照はseqでも残るため、その根絶や元ログの拒否原因の確定とは扱わない。現行契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md#affect登録入力と会話owner)を正本とする。
 
 ## 共通promptと用途別管理役
 
@@ -215,4 +217,4 @@ WithMate管理readは通常と同じ認可範囲へ揃える。Memoryはuser-glo
 
 Character Memoryは既存append／correct／forget、対象Memoryはappend＋supersedes／forgetを捕捉した書込target内で利用する。Affectは既存appraiseに加え、誤eventのcorrectを背景管理権限で実行できる。通常correctの明示要求契約を弱めず、背景が`explicitUserRequest=true`を捏造する方式を採らない。自然な感情変化は新appraisalと区別し、session／relationship resetは明示指示のまま背景へ付与しない。
 
-従前の登録のみの操作上限、専用の定義／Affect材料取得、Graph／Glossaryの一律除外、背景訂正の明示要求必須はこの範囲で置き換える。汎用上書きAPI、新DB／台帳、既存データの再生成は追加しない。保存済みデータ保護、添付の独立file認可、通常turnの認可、取消後の未確定write拒否を維持する。現行契約は[Background Execution](../design/background-execution.md)と[Prompt Composition](../design/prompt-composition.md)を正本とする。
+従前の登録のみの操作上限、専用の定義／Affect材料取得、Graph／Glossaryの一律除外、背景訂正の明示要求必須はこの範囲で置き換える。汎用上書きAPI、新DB／台帳、既存データの再生成は追加しない。保存済みデータ保護、添付の独立file認可、通常turnの認可、取消後の未確定write拒否を維持する。現行契約は[Background Execution](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/background-execution.md)と[Prompt Composition](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/prompt-composition.md)を正本とする。

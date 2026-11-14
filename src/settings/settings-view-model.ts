@@ -1,13 +1,9 @@
 import {
-  MEMORY_FILE_QUOTA_MAX_BYTES,
-  MEMORY_FILE_QUOTA_MIN_BYTES,
-  getResolvedProviderSettingsBundle,
+  getProviderAppSettings,
   type AppSettings,
-  type MemoryExtractionProviderSettings,
   type ProviderAppSettings,
 } from "../../src-shared/settings/provider-settings-state.js";
 import {
-  getReasoningEffortOptionsForModel,
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../../src-shared/settings/model-catalog.js";
@@ -48,10 +44,6 @@ export function resolveProviderRelativePathFromSelection(
 export type HomeProviderSettingRow = {
   provider: ModelCatalogProvider;
   settings: ProviderAppSettings;
-  memoryExtractionSettings: MemoryExtractionProviderSettings;
-  resolvedMemoryExtractionModel: string;
-  resolvedMemoryExtractionReasoningEffort: MemoryExtractionProviderSettings["reasoningEffort"];
-  availableMemoryExtractionReasoningEfforts: readonly MemoryExtractionProviderSettings["reasoningEffort"][];
 };
 
 export function buildHomeProviderSettingRows(
@@ -59,57 +51,11 @@ export function buildHomeProviderSettingRows(
   appSettings: AppSettings,
 ): HomeProviderSettingRow[] {
   return (modelCatalog?.providers ?? []).map((provider) => {
-    const resolvedSettings = getResolvedProviderSettingsBundle(appSettings, provider.id);
-    const settings = resolvedSettings.coding;
-    const memoryExtractionSettings = resolvedSettings.memoryExtraction;
+    const settings = getProviderAppSettings(appSettings, provider.id);
 
     return {
       provider,
       settings,
-      memoryExtractionSettings,
-      resolvedMemoryExtractionModel: memoryExtractionSettings.model,
-      resolvedMemoryExtractionReasoningEffort: memoryExtractionSettings.reasoningEffort,
-      availableMemoryExtractionReasoningEfforts: getReasoningEffortOptionsForModel(
-        provider,
-        memoryExtractionSettings.model,
-      ),
     };
   });
-}
-
-export function buildNormalizedMemoryExtractionProviderSettings(
-  rows: readonly HomeProviderSettingRow[],
-): Record<string, MemoryExtractionProviderSettings> {
-  return Object.fromEntries(
-    rows.map((row) => [
-      row.provider.id,
-      {
-        model: row.resolvedMemoryExtractionModel,
-        reasoningEffort: row.resolvedMemoryExtractionReasoningEffort,
-        outputTokensThreshold: row.memoryExtractionSettings.outputTokensThreshold,
-        timeoutSeconds: row.memoryExtractionSettings.timeoutSeconds,
-      } satisfies MemoryExtractionProviderSettings,
-    ]),
-  );
-}
-
-export function buildPersistedAppSettingsFromRows(
-  draft: AppSettings,
-  rows: readonly HomeProviderSettingRow[],
-): AppSettings {
-  return {
-    ...draft,
-    memoryExtractionProviderSettings: buildNormalizedMemoryExtractionProviderSettings(rows),
-  };
-}
-
-export function getMemoryFileQuotaMegabytes(settings: Pick<AppSettings, "memoryFileQuotaBytes">): number {
-  return Math.round(settings.memoryFileQuotaBytes / 1024 / 1024);
-}
-
-export function getMemoryFileQuotaMegabytesInputBounds(): { min: number; max: number } {
-  return {
-    min: Math.ceil(MEMORY_FILE_QUOTA_MIN_BYTES / 1024 / 1024),
-    max: Math.floor(MEMORY_FILE_QUOTA_MAX_BYTES / 1024 / 1024),
-  };
 }

@@ -22,9 +22,7 @@ export type SessionPersistenceAssemblyDeps = {
     createCharacterRuntimeSnapshot(characterId: string): ReturnType<NonNullable<SessionPersistenceServiceDeps["createCharacterRuntimeSnapshot"]>>;
   };
   effects: {
-    syncSessionDependencies: SessionPersistenceServiceDeps["syncSessionDependencies"];
     clearSessionContextTelemetry: SessionPersistenceServiceDeps["clearSessionContextTelemetry"];
-    clearSessionBackgroundActivities: SessionPersistenceServiceDeps["clearSessionBackgroundActivities"];
     invalidateProviderSessionThread: SessionPersistenceServiceDeps["invalidateProviderSessionThread"];
     revokeSessionAgentRuntimeBindings(sessionId: string): void;
     closeSessionWindow: SessionPersistenceServiceDeps["closeSessionWindow"];
@@ -252,9 +250,7 @@ export function createSessionPersistenceAssembly(deps: SessionPersistenceAssembl
     getAppSettings: async () => { assertOwner("settings read"); const result = await deps.settings.getAppSettings(); assertOwner("settings read"); return result; },
     getModelCatalogSnapshot: async (workspacePath, providerId) => { assertOwner("catalog read"); const result = await deps.settings.getModelCatalogSnapshot(workspacePath, providerId); assertOwner("catalog read"); return result; },
     createCharacterRuntimeSnapshot: async (characterId) => { assertOwner("character snapshot"); const result = await deps.character.createCharacterRuntimeSnapshot(characterId); assertOwner("character snapshot"); return result; },
-    syncSessionDependencies: (session) => { assertOwner("session dependency sync"); deps.effects.syncSessionDependencies(session); },
     clearSessionContextTelemetry: (sessionId) => { assertOwner("context telemetry clear"); deps.effects.clearSessionContextTelemetry(sessionId); },
-    clearSessionBackgroundActivities: (sessionId) => { assertOwner("background activity clear"); deps.effects.clearSessionBackgroundActivities(sessionId); },
     invalidateProviderSessionThread: async (providerId, sessionId) => { assertOwner("provider thread invalidation"); await deps.effects.invalidateProviderSessionThread(providerId, sessionId); assertOwner("provider thread invalidation"); },
     revokeSessionAgentRuntimeBindings: (sessionId) => { assertOwner("agent runtime revoke"); deps.effects.revokeSessionAgentRuntimeBindings(sessionId); },
     closeSessionWindow: (sessionId) => { assertOwner("session window close"); deps.effects.closeSessionWindow(sessionId); },

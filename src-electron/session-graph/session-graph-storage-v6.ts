@@ -4,7 +4,7 @@ import { SESSION_GRAPH_RELATION_LIMIT } from "../../src-shared/session-graph/ses
 import { sessionGraphRecordSchema } from "../../src-shared/session-graph/session-graph-operation-schema.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
-import { assertRuntimeTurnAdmission } from "../platform/memory/runtime-turn-admission.js";
+import { assertRuntimeTurnAdmission } from "../platform/agent-runtime/runtime-turn-admission.js";
 import { sessionGraphStorageRequestSchemas, type SessionGraphStorageOperation, type SessionGraphStorageRequest, type SessionGraphStorageResult, type SessionGraphOverviewCategory, type SessionGraphOverviewGroup, type SessionGraphRecordSummary, type SessionGraphTopicOverview, type SessionGraphTopicRelation } from "../../src-shared/session-graph/session-graph-ui-read-contract.js";
 
 type JsonRow = { payload_json: string };

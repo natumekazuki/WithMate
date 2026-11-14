@@ -3,10 +3,9 @@ import type { IpcRendererLike } from "./ipc.js";
 import { createAuxiliaryApi } from "./auxiliary-api.js";
 import { createCatalogApi, createWindowApi } from "./navigation-api.js";
 import {
-  createMemoryV6ReviewApi,
   createPickerApi,
   createPromptTemplateApi,
-} from "./memory-api.js";
+} from "./template-picker-api.js";
 import { createObservabilityApi } from "./observability-api.js";
 import { createSessionApi } from "./session-api.js";
 import { createSubscriptionApi } from "./subscription-api.js";
@@ -29,7 +28,6 @@ export function createWithMateWindowApi(
   installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),
-    ...createMemoryV6ReviewApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer, platform),
     ...createAuxiliaryApi(ipcRenderer),

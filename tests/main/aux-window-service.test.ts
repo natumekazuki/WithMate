@@ -76,7 +76,7 @@ function createDiffPreview(): DiffPreviewPayload {
 // claim = "singleton Windowを再利用し、live状態通知の宛先は生存するHome／Monitorに限定する"
 // oracle = { type = "contract", ref = "src-electron/auxiliary/aux-window-service.ts" }
 // fault = "singleton各windowの再利用・分類判定・close後のregistry解除またはlive状態宛先を誤る"
-// observable = "home/settings/memory-reviewのwindow identity、load mode列、生成数、close後の判定、live状態宛先集合"
+// observable = "home/settingsのwindow identity、load mode列、生成数、close後の判定、live状態宛先集合"
 // observation_boundary = "public-boundary"
 // scope = "tests/main/aux-window-service.test.ts"
 // lifecycle = "permanent"
@@ -105,23 +105,16 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   const first = await service.openHomeWindow();
   const second = await service.openHomeWindow();
   const settings = await service.openSettingsWindow();
-  const memoryReview = await service.openMemoryV6ReviewWindow();
 
   assert.equal(first, second);
   assert.notEqual(first, settings);
-  assert.notEqual(settings, memoryReview);
   assert.equal(service.isSettingsWindow(settings), true);
-  assert.equal(service.isSettingsWindow(memoryReview), false);
-  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), true);
-  assert.equal(service.isMemoryV6ReviewWindow(settings), false);
-  assert.deepEqual(homeLoads, ["home", "settings", "memory-review"]);
-  assert.equal(created.length, 3);
+  assert.deepEqual(homeLoads, ["home", "settings"]);
+  assert.equal(created.length, 2);
   const monitor = await service.openSessionMonitorWindow();
   assert.deepEqual(service.listLiveSessionRunStatusWindows(), [first, monitor]);
   monitor.close();
   assert.deepEqual(service.listLiveSessionRunStatusWindows(), [first]);
-  memoryReview.close();
-  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), false);
   settings.close();
   assert.equal(service.isSettingsWindow(settings), false);
 });
@@ -731,42 +724,6 @@ test("AuxWindowService は close 済み Session の遅延 file preview admission
   );
   assert.equal(stubs.length, 0);
   assert.equal(service.getFilePreviewPayload("preview-1"), null);
-});
-
-// @test-value v2
-// kind = "contract"
-// claim = "AuxWindowService は reset 時に Memory Review window を close する"
-// oracle = { type = "contract", ref = "src-electron/auxiliary/aux-window-service.ts" }
-// fault = "reset後もMemory Review windowをregistryに残しclose判定を誤る"
-// observable = "destroyed state、Memory Review判定、home window一覧"
-// observation_boundary = "public-boundary"
-// scope = "tests/main/aux-window-service.test.ts"
-// lifecycle = "permanent"
-// @end-test-value
-test("AuxWindowService は reset 時に Memory Review window を close する", async () => {
-  const service = new AuxWindowService({
-    createWindow() {
-      const stub = createWindowStub();
-      return stub.window;
-    },
-    async loadHomeEntry() {},
-    async loadDiffEntry() {},
-    async loadFilePreviewEntry() {},
-    async loadChatEntry() {},
-    async loadCharacterEditorEntry() {},
-    generateDiffToken() {
-      return "diff-token";
-    },
-  });
-
-  const memoryReview = await service.openMemoryV6ReviewWindow();
-  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), true);
-
-  service.closeResetTargetWindows();
-
-  assert.equal(memoryReview.isDestroyed(), true);
-  assert.equal(service.isMemoryV6ReviewWindow(memoryReview), false);
-  assert.deepEqual(service.listHomeWindows(), []);
 });
 
 // @test-value v2

@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
-import type { ProviderAgentRuntimeAuthoritySnapshot } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 import { WITHMATE_MANAGED_MCP_TOKEN_ENV } from "./managed-http-mcp.js";
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
-  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
-  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+  WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV,
 } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 
 export {
@@ -15,8 +14,8 @@ export {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_HEADER,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
-  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
-  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+  WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV,
 } from "../../src-shared/agent-runtime/agent-runtime-binding-contract.js";
 
 export type ProviderAgentRuntimeBindingCapability = {
@@ -30,34 +29,6 @@ export type ProviderAgentRuntimeBindingRedactor = {
   sanitizeText: (value: string, previewLimit?: number) => string;
   sanitize: <T>(value: T) => T;
 };
-
-export type ProviderAgentRuntimeAuthoritySnapshotInput = {
-  characterId: string | null | undefined;
-  workspacePath: string | null | undefined;
-  resolveCanonicalProjectId: (workspacePath: string) => string | null | undefined | Promise<string | null | undefined>;
-};
-
-/**
- * Builds the canonical actor authority snapshot from the bound Session only.
- * The storage resolver retains the stored ID for an existing Project key;
- * a workspace with no resolved Project grants no project target.
- */
-export async function buildProviderAgentRuntimeAuthoritySnapshot(
-  input: ProviderAgentRuntimeAuthoritySnapshotInput,
-): Promise<ProviderAgentRuntimeAuthoritySnapshot | null> {
-  const characterId = input.characterId?.trim() ?? "";
-  if (!characterId) {
-    return null;
-  }
-  const workspacePath = input.workspacePath?.trim() ?? "";
-  const resolvedProjectId = workspacePath ? (await input.resolveCanonicalProjectId(workspacePath))?.trim() ?? "" : "";
-  const allowedProjectIds = resolvedProjectId ? [resolvedProjectId] : [];
-  return {
-    userId: "local-user",
-    characterId,
-    allowedProjectIds,
-  };
-}
 
 /**
  * Sanitizes projection copies only. Raw provider events must remain untouched
@@ -136,9 +107,9 @@ export function getProviderAgentRuntimeBindingCapability(
 export function buildProviderAgentRuntimeBindingEnv(
   projection: ProviderAgentRuntimeBindingProjection | null | undefined,
 ): Record<string, string> {
-  const memoryOwner = projection?.memoryRuntimeOwner;
-  const memoryApplicationInstanceId = memoryOwner?.applicationInstanceId?.trim();
-  const memoryGenerationId = memoryOwner?.runtimeGenerationId?.trim();
+  const runtimeOwner = projection?.runtimeOwner;
+  const runtimeApplicationInstanceId = runtimeOwner?.applicationInstanceId?.trim();
+  const runtimeGenerationId = runtimeOwner?.runtimeGenerationId?.trim();
   return projection?.transport === "env"
       ? {
         [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: projection.bindingReference,
@@ -149,10 +120,10 @@ export function buildProviderAgentRuntimeBindingEnv(
         ...(projection.turnCapability
           ? { [WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV]: projection.turnCapability }
           : {}),
-        ...(memoryApplicationInstanceId && memoryGenerationId
+        ...(runtimeApplicationInstanceId && runtimeGenerationId
           ? {
-            [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV]: memoryApplicationInstanceId,
-            [WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]: memoryGenerationId,
+            [WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV]: runtimeApplicationInstanceId,
+            [WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV]: runtimeGenerationId,
           }
           : {}),
       }
@@ -165,7 +136,7 @@ export function buildProviderAgentRuntimeBindingCacheKey(
   if (!projection || projection.transport === "unsupported") {
     return "";
   }
-  const memoryOwner = projection.memoryRuntimeOwner;
+  const runtimeOwner = projection.runtimeOwner;
   return JSON.stringify([
     projection.bindingId,
     projection.providerId,
@@ -174,8 +145,8 @@ export function buildProviderAgentRuntimeBindingCacheKey(
     projection.turnCapability
       ? createHash("sha256").update(projection.turnCapability, "utf8").digest("base64url")
       : null,
-    memoryOwner?.applicationInstanceId ?? null,
-    memoryOwner?.runtimeGenerationId ?? null,
+    runtimeOwner?.applicationInstanceId ?? null,
+    runtimeOwner?.runtimeGenerationId ?? null,
   ]);
 }
 
@@ -187,16 +158,16 @@ export function mergeDefinedProviderEnv(
   const bindingReferenceKey = WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV.toLowerCase();
   const bindingRequiredKey = WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV.toLowerCase();
   const turnCapabilityKey = WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV.toLowerCase();
-  const memoryApplicationInstanceIdKey = WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase();
-  const memoryGenerationIdKey = WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase();
+  const runtimeApplicationInstanceIdKey = WITHMATE_AGENT_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase();
+  const runtimeGenerationIdKey = WITHMATE_AGENT_RUNTIME_GENERATION_ID_ENV.toLowerCase();
   for (const [key, value] of Object.entries(baseEnv)) {
     const normalizedKey = key.toLowerCase();
     if (
       normalizedKey !== bindingReferenceKey
       && normalizedKey !== bindingRequiredKey
       && normalizedKey !== turnCapabilityKey
-      && normalizedKey !== memoryApplicationInstanceIdKey
-      && normalizedKey !== memoryGenerationIdKey
+      && normalizedKey !== runtimeApplicationInstanceIdKey
+      && normalizedKey !== runtimeGenerationIdKey
       && normalizedKey !== WITHMATE_MANAGED_MCP_TOKEN_ENV.toLowerCase()
       && value !== undefined
     ) {
