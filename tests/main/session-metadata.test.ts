@@ -9,6 +9,48 @@ import { createDefaultAppSettings } from "../../src-shared/settings/provider-set
 import { SessionStorageV6 } from "../../src-electron/session/session-storage-v6.js";
 import { AuxiliarySessionStorage } from "../../src-electron/auxiliary/auxiliary-session-storage.js";
 import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
+import { CodexAdapter } from "../../src-electron/providers/codex/codex-adapter.js";
+import { CopilotAdapter } from "../../src-electron/providers/copilot/copilot-adapter.js";
+import { ClaudeAdapter } from "../../src-electron/providers/claude/claude-adapter.js";
+import { OpenCodeAdapter } from "../../src-electron/providers/opencode/opencode-adapter.js";
+
+// @test-value v2
+// kind = "contract"
+// claim = "新規と継続Sessionの4 Provider共通入力はTitleの目的名とDescriptionの現状説明を分け、進捗と目的変更の更新例を渡す"
+// oracle = { type = "contract", ref = "https://github.com/natumekazuki/WithMate/issues/951; docs/design/prompt-composition.md" }
+// fault = "Providerがmetadata保守指示を欠落させるか、進捗更新と目的変更を同じ更新契機として案内する"
+// observable = "各adapter.composePromptのsystemBodyTextとlogicalPromptに含まれる指示・保存metadata"
+// observation_boundary = "public-boundary"
+// scope = "4 Providerの新規・継続Session prompt composition"
+// lifecycle = "permanent"
+// impact = "進捗ごとの改名により関連Session一覧の宛先識別が不安定になる"
+// distinction = "schemaと保存testは意味を持つ保守指示の欠落を検出せず、実モデルの更新選択は別途観測する"
+// @end-test-value
+it("separates metadata responsibilities in every provider's new and continuing prompt", () => {
+  const session = buildNewSession({ id: "metadata", taskTitle: "Session queue", workspaceLabel: "Workspace", workspacePath: "C:/work", branch: "",
+    characterId: "azki", character: "AZKi", characterIconPath: "", characterThemeColors: { main: "#fff", sub: "#000" }, approvalMode: "on-request" });
+  for (const [provider, adapter] of [["codex", new CodexAdapter()], ["copilot", new CopilotAdapter()], ["claude", new ClaudeAdapter()], ["opencode", new OpenCodeAdapter()]] as const) {
+    for (const threadId of ["", "saved-thread"]) {
+      const current = { ...session, provider, threadId, description: threadId ? "Queue verification underway." : "Queue implementation." };
+      const prompt = adapter.composePrompt({ session: current, executionOptions: captureSessionExecutionOptions(current),
+        providerCatalog: { id: current.provider, label: "Provider", defaultModelId: current.model, defaultReasoningEffort: current.reasoningEffort, models: [] },
+        userMessage: "Continue", appSettings: { ...createDefaultAppSettings(), characterDefinitionEnabled: false }, attachments: [] });
+      assert.match(prompt.systemBodyText, /Title: a short name identifying the Session's purpose, subject, or assigned target/);
+      assert.match(prompt.systemBodyText, /Keep it unchanged for progress alone \(starting work, verification, completion\)/);
+      assert.match(prompt.systemBodyText, /Update it when the purpose or target materially changes; it is not permanently fixed/);
+      assert.match(prompt.systemBodyText, /Description: a few sentences describing your scope and current situation/);
+      assert.match(prompt.systemBodyText, /Replace the current description rather than appending history/);
+      assert.match(prompt.systemBodyText, /After completion, retain what the Session handled/);
+      assert.match(prompt.systemBodyText, /keep that Title and update only the Description/);
+      assert.match(prompt.systemBodyText, /changes to 'Coordination UI', update the Title as well as the Description/);
+      assert.match(prompt.systemBodyText, /No update is needed for a field that remains accurate/);
+      assert.match(prompt.systemBodyText, /"title": "Session queue"/);
+      assert.ok(prompt.systemBodyText.includes(current.description));
+      assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
+      assert.ok(prompt.logicalPrompt.composedText.includes(prompt.systemBodyText));
+    }
+  }
+});
 
 // @test-value v2
 // kind = "invariant"

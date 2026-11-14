@@ -49,6 +49,10 @@ Session MCP／CLIのself・list・get・create_childは`character: {id, name, de
 
 通常Main／Auxiliaryの`Session Metadata`は、Turn開始時の自会話のTitle／Description、自己の公開Character識別、固定ユーザー参照をJSONとして渡す。Character定義の設定OFFでも識別metadataは維持する。他Sessionの説明を常設注入せず、保存値を命令・Role・権限へ昇格させない。初回の依頼理解時と説明が実態に合わなくなった時に`session.update_metadata`で自己更新するよう案内し、毎Turnの保存・入力要求・専用生成Turnは設けない。更新後の値は次Turnの保存metadataから取得し、進行中のProvider contextを書き換えない。
 
+Titleは目的・主題・担当対象を見分ける短い名前とし、着手・検証中・完了という進捗だけでは変えない。目的や対象が実質的に変わった場合は更新できる。Descriptionは担当範囲と現在状況を数文で置き換え、履歴を積まず、完了後も何を扱ったSessionかを残す。例えば`Session queue`の検証開始ではTitleを維持してDescriptionだけを更新し、担当が`Coordination UI`へ変わった場合は両方を更新する。適切な項目は再保存しない。この案内の正本は`src-electron/providers/provider-prompt.ts`、MCP／CLI共通の操作説明は`src-shared/session/session-management-contract.ts`に置く。
+
+共通指示のコード変更は、それを含むbuildで動くアプリから、新規Sessionの初回Turnと既存Sessionの次の通常Turnへ渡る。Codex／OpenCodeは各Turnの結合入力、Copilotはsession設定のsystemMessage（変更時にcacheを切替）、Claudeは各queryのsystemPrompt appendに反映する。既存threadの破棄や既存Sessionの一括改名は行わない。古いbuildで稼働中のアプリや進行中Turn、入力本文だけを追加するSteerにはコード編集だけで新指示が届いたとは扱わない。指示・保存値の入力反映と、モデルが更新操作を選ぶ行動の観測は別に確認する。
+
 `Session Role`は通常Mainの保存済み`sessionRole`（未指定は`standalone`）、Auxiliaryは実行ownerの種別から`auxiliary`を渡す。Role名以外の役割説明・分担・報告方針は注入せず、各Providerのユーザー管理ルールを複製・同期しない。
 
 背景のCharacter Memory・対象Memory・Affectも同じ`composeProviderPrompt()`を利用する。`resolveBackgroundPromptContext()`が実sourceのsnapshotを通常と同じ更新規則で解決し、設定が有効なら同じCharacter context resolverからAffectを取得する。MainのTimingは元Mainの保存済み情報を使い、Auxiliaryは通常turnと同じく独立したTiming投影を持たない。SessionFolderはMain自身、Auxiliaryでは親Mainのものを解決し、通常と同じmanaged additional directoryとしてProviderへ渡す。
