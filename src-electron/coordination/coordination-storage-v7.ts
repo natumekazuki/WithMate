@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { coordinationNotificationText, type CoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
 import type { DatabaseSync } from "node:sqlite";
 import { coordinationRequestSchema, type CoordinationActor, type CoordinationIdentity, type CoordinationRecord, type CoordinationResult, type CoordinationStorageInput, type CoordinationStorageResult } from "../../src-shared/coordination/coordination-contract.js";
 import type { SessionTurnQueueReceipt } from "../../src-shared/session/session-turn-queue.js";
@@ -207,10 +208,10 @@ export class CoordinationStorageV7 {
     if (deliveryTarget) {
       this.identity(deliveryTarget);
       if (!input.delivery || !same(input.delivery.target, deliveryTarget) || input.delivery.captured.request.clientRequestId !== request.operationId) throw new Error("Coordination delivery input is unavailable or target changed.");
-      const notification = JSON.stringify({ coordinationId: record.id, kind: record.kind, consultation: record.body, actor, operation: request.operation, answer: answer ?? null, state: record.state, withdrawalReason: record.withdrawalReason ?? null });
+      const notification: CoordinationNotification = { coordinationId: record.id, kind: record.kind, consultation: record.body, actor, operation: request.operation, answer: answer ?? null, state: record.state, withdrawalReason: record.withdrawalReason ?? null };
       const display = input.delivery.captured.origin;
       const actorRoute = actor.kind === "auxiliary" && display?.actorMainSessionId ? { actorMainSessionId: display.actorMainSessionId } : {};
-      const captured = { ...input.delivery.captured, attachments: [], request: { ...input.delivery.captured.request, userMessage: notification, submitSource: "retry" as const }, origin: { kind: actor.kind === "user" ? "gui" as const : "session" as const, ...(actor.kind !== "user" ? { actorKind: actor.kind, actorSessionId: actor.sessionId, actorIncarnationId: actor.incarnationId, actorTurnId: actor.turnId, ...actorRoute, ...(display?.actorSnapshot ? { actorSnapshot: display.actorSnapshot } : {}) } : {}), operation: "send" as const, targetSessionId: deliveryTarget.sessionId, targetIncarnationId: deliveryTarget.incarnationId, ...(display?.targetSnapshot ? { targetSnapshot: display.targetSnapshot } : {}) }, coordination: { id: record.id, operation: request.operation, actor, answerId: answer?.id, answerRevision: answer?.revision } };
+      const captured = { ...input.delivery.captured, attachments: [], request: { ...input.delivery.captured.request, userMessage: coordinationNotificationText(notification), submitSource: "retry" as const }, origin: { kind: actor.kind === "user" ? "gui" as const : "session" as const, ...(actor.kind !== "user" ? { actorKind: actor.kind, actorSessionId: actor.sessionId, actorIncarnationId: actor.incarnationId, actorTurnId: actor.turnId, ...actorRoute, ...(display?.actorSnapshot ? { actorSnapshot: display.actorSnapshot } : {}) } : {}), operation: "send" as const, targetSessionId: deliveryTarget.sessionId, targetIncarnationId: deliveryTarget.incarnationId, ...(display?.targetSnapshot ? { targetSnapshot: display.targetSnapshot } : {}) }, coordination: { id: record.id, operation: request.operation, actor, answerId: answer?.id, answerRevision: answer?.revision, notification } };
       receipt = this.queue.enqueue(deliveryTarget, captured);
       if (answer) answer.receiptId = receipt.id;
     }

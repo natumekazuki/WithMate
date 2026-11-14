@@ -89,7 +89,7 @@ export function SessionTurnQueueRow(props: Parameters<typeof SessionTurnQueueSta
     {isSessionOrigin ? <TurnInputOriginAvatar read={read} /> : null}
     <div className={`message-card ${role}`}><div className="message-card-content">
       {isSessionOrigin && read.origin ? <SessionOriginRoute origin={read.origin} onError={read.setReadError} /> : null}
-      <MessageRichText text={props.receipt.captured.request.userMessage} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
+      <MessageRichText text={read.text} resolveImageSource={props.resolveImageSource} markdownImageContext={props.markdownImageContext} markdownLinkFileContext={props.markdownImageContext} />
       {read.readError ? <p className="pending-run-error-note" role="alert">{read.readError}</p> : null}
       <SessionTurnQueueStatus {...props} />
     </div></div>

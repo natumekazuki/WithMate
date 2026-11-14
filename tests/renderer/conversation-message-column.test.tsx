@@ -12,9 +12,10 @@ import {
 } from "../../src/chat/conversation-message-column.js";
 import type { SessionMessageColumnProps } from "../../src/chat/conversation/session-message-column.js";
 import { SessionMessageColumn } from "../../src/chat/conversation/session-message-column.js";
+import { SessionTurnQueueRow } from "../../src/chat/conversation/session-turn-queue-row.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import type { ConversationPage } from "../../src-shared/session/conversation-page.js";
-import type { SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
+import type { SessionTurnQueueCapturedInput, SessionTurnQueueReceipt, SessionTurnQueueStore } from "../../src-shared/session/session-turn-queue.js";
 import { buildNewSession } from "../../src-shared/session/session-state.js";
 import { captureSessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import { MainSessionTurnQueueFacade } from "../../src-electron/app/main-session-turn-queue-facade.js";
@@ -1408,6 +1409,66 @@ test("sent deliveries render full content with the source conversation file cont
         if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
       }
     }
+  }
+});
+
+// @test-value v2
+// kind = "contract"
+// claim = "Main/Auxの相談・回答は新旧受付と保存済み会話で自然文を表示し、通常JSONと保存した発言者を維持する"
+// oracle = { type = "contract", ref = "docs/design/desktop-ui.md#turn-input-details" }
+// fault = "受信本文に通知JSONを表示する、通常JSONを相談として解釈する、または再読込で送信者を取り違える"
+// observable = "本番Columnとqueue行のMarkdown本文、Character名、送信元リンク、正確なmessageSeqとtargetへの読取"
+// observation_boundary = "consumer"
+// scope = "SessionMessageColumn、SessionTurnQueueRowと共通execution読取のrenderer接続。IPCはfixture"
+// lifecycle = "permanent"
+// impact = "相談と回答を会話として読めず、誰から届いた判断かを取り違える"
+// distinction = "SQLite testは実際のMarkdown consumerへの本文渡しと保存済み会話の非同期再表示を検証しない。小さいDOMで両ownerと新旧形式を比較する"
+// @end-test-value
+test("received Coordination text stays authored across queue and saved Main/Aux conversations", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  const globals = { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, Node: dom.window.Node, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = new Map(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals)) Object.defineProperty(globalThis, key, { configurable: true, value });
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  Object.defineProperties(dom.window.HTMLElement.prototype, { offsetHeight: { get: () => 720 }, offsetWidth: { get: () => 800 }, clientHeight: { get: () => 720 } });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    for (const kind of ["main", "auxiliary"] as const) for (const operation of ["create", "answer"]) {
+      const target = kind === "main" ? { kind, sessionId: "receiver", incarnationId: "inc" } : { kind, sessionId: "receiver", incarnationId: "inc", mainSessionId: "parent", mainIncarnationId: "parent-inc" };
+      const context = { ownerSessionId: "parent", target };
+      const actor = { kind: "main" as const, sessionId: "sender", incarnationId: "sender-inc", turnId: "1" };
+      const origin = { kind: "session" as const, operation: "send" as const, actorKind: actor.kind, actorSessionId: actor.sessionId, actorIncarnationId: actor.incarnationId, actorTurnId: actor.turnId, targetSessionId: target.sessionId, targetIncarnationId: target.incarnationId,
+        actorSnapshot: { sessionTitle: "Saved Sender Session", character: { id: "sender-character", name: "Saved Sender", iconPath: "" } }, targetSnapshot: { sessionTitle: "Receiver", character: { id: "receiver-character", name: "Receiver", iconPath: "" } } };
+      const notification = { coordinationId: "consultation", kind: "blocker" as const, consultation: "Which **approach**?", actor, operation, answer: { id: "answer", revision: 1, actor, body: "Use the **agreed approach**.", selectedChoices: [], createdAt: "now" }, state: "open" as const, withdrawalReason: null };
+      const text = operation === "answer" ? notification.answer.body : notification.consultation;
+      const raw = JSON.stringify(notification);
+      const base = buildNewSession({ id: "receiver", taskTitle: "Receiver", workspaceLabel: "Workspace", workspacePath: "C:/workspace", branch: "main", characterId: "unknown", character: "Unknown", characterIconPath: "", characterThemeColors: { main: "#123456", sub: "#234567" }, approvalMode: "on-request" });
+      const captured: SessionTurnQueueCapturedInput = { request: { clientRequestId: "request", userMessage: text, executionOptions: captureSessionExecutionOptions(base) }, attachments: [], provider: "codex", workspacePath: base.workspacePath, origin,
+        coordination: { id: "consultation", operation, actor, answerId: "answer", answerRevision: 1, notification } };
+      const receipt: SessionTurnQueueReceipt = { id: "receipt", sessionId: "receiver", incarnationId: "inc", requestId: "request", sequence: 1, queuePosition: 1, state: "queued", turnId: null, userMessageSeq: null, releasedAt: null, reason: null, createdAt: "now", updatedAt: "now", captured };
+      for (const legacy of [false, true]) {
+        const input = structuredClone(captured);
+        if (legacy) { input.request.userMessage = raw; delete input.coordination!.notification; }
+        await act(async () => root.render(<SessionTurnQueueRow receipt={{ ...receipt, captured: input }} character={{ name: "Receiver", iconPath: "" }} busy={false} onCancel={() => {}} onRelease={() => {}} />));
+        assert.equal(dom.window.document.querySelector(".rich-text")?.textContent, operation === "answer" ? "Use the agreed approach." : "Which approach?");
+      }
+      const requests: number[] = [];
+      Object.defineProperty(dom.window, "withmate", { configurable: true, value: { readSessionExecution: async (_owner: string, op: string, request: { target: unknown; messageSeq: number }) => {
+        if (op === "list_sent_deliveries") return { ok: true, items: [], nextCursor: null };
+        assert.deepEqual(request.target, target); requests.push(request.messageSeq);
+        return { ok: true, origin: request.messageSeq === 3 ? origin : null, ...(request.messageSeq === 3 ? { coordination: { id: "consultation", text } } : {}) };
+      } } });
+      await act(async () => root.render(<SessionMessageColumn key={`${kind}-${operation}`} {...createBaseProps("receiver")} inputReadContext={context}
+        messages={[{ role: "user", text: raw, historyIndex: 3 }, { role: "user", text: raw, historyIndex: 4 }]} messageKeys={["received", "ordinary"]} />));
+      const rows = [...dom.window.document.querySelectorAll("[data-message-body]")];
+      assert.equal(rows[0]?.textContent, operation === "answer" ? "Use the agreed approach." : "Which approach?");
+      assert.equal(rows[1]?.textContent, raw.replaceAll("**", ""));
+      assert.match(dom.window.document.querySelector(".message-row.session-origin")?.textContent ?? "", /Saved Sender.*Saved Sender Session/);
+      assert.deepEqual(requests.sort(), [3, 4]);
+    }
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
 });
 

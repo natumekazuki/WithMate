@@ -18,7 +18,7 @@ import type { CoordinationIdentity, CoordinationRecord, CoordinationResult } fro
 import { SessionRuntimeService } from "../../src-electron/session/session-runtime-service.js";
 import { sessionSummaryToSession } from "../../src-electron/session/session-summary-adapter.js";
 import { createDefaultAppSettings } from "../../src-shared/settings/provider-settings-state.js";
-import { composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
+import { composeProviderInput, composeProviderPrompt } from "../../src-electron/providers/provider-prompt.js";
 import type { LiveSessionRunState } from "../../src-shared/session/runtime-state.js";
 import { SessionExecutionReadStorage } from "../../src-electron/storage/session-execution-read.js";
 import { executionOperationResultSchemas } from "../../src-shared/session/session-execution-read.js";
@@ -28,10 +28,10 @@ const record = (result: CoordinationResult): CoordinationRecord => { assert.ok("
 
 // @test-value v2
 // kind = "contract"
-// claim = "取り下げ後の回答を一度だけ保存し、実runtimeのTurn入力保存と回答取得済みを一体で確定してProviderへ届ける"
+// claim = "取り下げ後の回答を一度だけ自然文として保存し、構造化通知を分けてProviderへ渡し、Turn入力保存と回答取得済みを一体で確定する"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md#coordination" }
 // fault = "回答とqueueを別transactionへ分離、再送で二重配送、Turn保存の失敗後も取得済みにする、またはTurn保存後も回答変更を許す"
-// observable = "実SQLiteの回答とreceipt原文/固定本文、開始保存失敗時の取得・message・Turnのrollback、Provider呼出前の取得済み、取得後の変更拒否"
+// observable = "実SQLiteの自然文と受付/採用通知、開始保存失敗時のrollback、Providerへの自然文と別context、新旧保存本文の再読込と原文を変えないexecution投影、取得後の変更拒否"
 // observation_boundary = "public-boundary"
 // scope = "CoordinationStorageV7.execute、SessionTurnQueueStorageV6、SessionRuntimeServiceとMain atomic start/terminalの実SQLite連携"
 // lifecycle = "permanent"
@@ -74,8 +74,11 @@ test("Coordination answers survive withdrawal and atomic queue acceptance", asyn
     store.execute({ actor: user, request: { operation: "withdraw", operationId: randomUUID(), id: original.id, reason: "New reason" } });
     const dispatched = queue.claimNext(actor)!;
     assert.equal(record(store.execute({ actor: user, request: { operation: "get", id: original.id } })).answers[0]?.acquiredAt, undefined);
-    assert.equal(JSON.parse(dispatched.dispatched!.request.userMessage).withdrawalReason, "New reason");
-    assert.equal(JSON.parse(dispatched.accepted!.request.userMessage).withdrawalReason, "Already solved");
+    assert.equal(dispatched.dispatched!.request.userMessage, "A is correct");
+    assert.equal(dispatched.accepted!.request.userMessage, "A is correct");
+    assert.equal(dispatched.dispatched!.coordination?.notification?.withdrawalReason, "New reason");
+    assert.equal(dispatched.accepted!.coordination?.notification?.withdrawalReason, "Already solved");
+    assert.equal(dispatched.dispatched!.coordination?.notification?.answer?.revision, 1);
     const beforeRun = structuredClone(dispatched);
     const queuedInput = dispatched.dispatched!;
     const options = queuedInput.request.executionOptions;
@@ -115,8 +118,15 @@ test("Coordination answers survive withdrawal and atomic queue acceptance", asyn
         runSessionTurn: async (input) => {
           providerCalls++;
           assert.ok(record(store.execute({ actor: user, request: { operation: "get", id: original.id } })).answers[0]?.acquiredAt);
-          assert.equal(JSON.parse(input.userMessage).withdrawalReason, "New reason");
-          assert.equal(input.inputProvenance?.originalChanged, true);
+          assert.equal(input.userMessage, "A is correct");
+          assert.equal(input.inputProvenance?.coordination?.withdrawalReason, "New reason");
+          assert.equal(input.inputProvenance?.coordination?.coordinationId, original.id);
+          assert.equal(input.inputProvenance?.coordination?.answer?.revision, 1);
+          assert.deepEqual(input.inputProvenance?.coordination?.answer?.selectedChoices, ["A"]);
+          const prompt = composeProviderInput(input.userMessage, input.inputProvenance);
+          assert.equal(prompt.split("# User Input\n\n")[1], "A is correct");
+          assert.match(prompt.split("# User Input")[0], /"withdrawalReason": "New reason"/);
+          assert.equal(input.inputProvenance?.originalChanged, false);
           assert.equal(input.inputProvenance?.coordinationOperation, "answer");
           return { assistantText: "received current withdrawal state", threadId: "thread", usage: null };
         } }),
@@ -130,10 +140,27 @@ test("Coordination answers survive withdrawal and atomic queue acceptance", asyn
     assert.equal(providerCalls, 1);
     const finished = queue.getReceipt(actor, answerId)!;
     assert.equal(finished.state, "completed");
-    assert.equal(sessions.getSession(source.id)?.messages[0]?.text, dispatched.dispatched!.request.userMessage);
+    assert.equal(sessions.getSession(source.id)?.messages[0]?.text, "A is correct");
     assert.deepEqual(finished.accepted, beforeRun.accepted);
     assert.deepEqual(finished.captured, beforeRun.captured);
     assert.deepEqual(finished.dispatched, beforeRun.dispatched);
+    const executions = new SessionExecutionReadStorage(dbPath);
+    try {
+      const target = { kind: "main" as const, sessionId: source.id, incarnationId: actor.incarnationId };
+      const get = () => executionOperationResultSchemas.get_execution.parse(executions.execute({ target, operation: "get_execution", request: { target, messageSeq: 0 } }));
+      assert.deepEqual(get().coordination, { id: original.id, text: "A is correct" });
+      // Reproduce a released saved input, not a migration of the user's database.
+      const legacy = structuredClone(beforeRun.dispatched!);
+      legacy.request.userMessage = JSON.stringify(legacy.coordination!.notification);
+      delete legacy.coordination!.notification;
+      db.prepare("UPDATE session_turn_queue_v6 SET captured_json=?,accepted_json=?,dispatched_json=? WHERE id=?").run(JSON.stringify(legacy), JSON.stringify(legacy), JSON.stringify(legacy), finished.id);
+      db.prepare("UPDATE session_messages_v6 SET body=json_set(body,'$.text',?) WHERE session_id=? AND seq=0").run(legacy.request.userMessage, source.id);
+      assert.deepEqual(get().coordination, { id: original.id, text: "A is correct" });
+      assert.deepEqual(get().origin, legacy.origin);
+      assert.equal(sessions.getSession(source.id)?.messages[0]?.text, legacy.request.userMessage);
+      const input = executionOperationResultSchemas.get_execution_input.parse(executions.execute({ target, operation: "get_execution_input", request: { target, messageSeq: 0, stage: "original" } }));
+      assert.equal(input.text, legacy.request.userMessage);
+    } finally { executions.close(); }
     assert.equal(listCrewCoordinationBlockers(db, [{ id: source.id, kind: "main" }]).length, 0);
     assert.throws(() => store.execute({ actor: user, request: { ...answer, operationId: randomUUID(), expectedAnswerRevision: 1, body: "Changed" } }), /already received/);
     const consume = { operation: "consume" as const, operationId: randomUUID(), id: original.id, answerId, answerRevision: 1 };
@@ -150,7 +177,7 @@ test("Coordination answers survive withdrawal and atomic queue acceptance", asyn
 // claim = "保存された実呼出元だけへ相談を届け、未取得回答の引継ぎでは旧配送を退けて理由と元の起票Sessionを保つ"
 // oracle = { type = "contract", ref = "docs/design/database-schema.md#coordination" }
 // fault = "宛先や起票元を取り違える、引継ぎ時に未取得の旧回答を配送する、または引継ぎ理由を失う"
-// observable = "保存recordのcaller/initiator/respondentと引継ぎ理由、旧receipt取消、ユーザー回答receiptのowner、権限外操作の拒否"
+// observable = "保存recordのcaller/initiator/respondentと引継ぎ理由、相談配送の自然文と別通知、旧形式受付の不変原文と自然文dispatch、旧receipt取消、ユーザー回答receiptのowner、権限外操作の拒否"
 // observation_boundary = "public-boundary"
 // scope = "CoordinationStorageV7の保存origin解決・引継ぎ・通常queue返信"
 // lifecycle = "permanent"
@@ -179,6 +206,19 @@ test("Coordination escalation retains original initiator and exact saved caller"
     const created = store.execute({ actor: initiator, request: { operation: "create", operationId, kind: "escalation", body: "Question", choices: [], deliver: true }, delivery: { target: caller, captured: captured(a, operationId) } });
     assert.ok("receipt" in created && created.receipt);
     assert.equal(created.receipt.sessionId, a.id);
+    assert.equal(created.receipt.captured.request.userMessage, "Question");
+    assert.equal(created.receipt.captured.coordination?.notification?.coordinationId, created.record.id);
+    assert.equal(created.receipt.captured.coordination?.notification?.operation, "create");
+    // Released preview histories stored the complete notification as userMessage.
+    const legacy = structuredClone(created.receipt.captured);
+    const legacyNotification = legacy.coordination!.notification!;
+    legacy.request.userMessage = JSON.stringify(legacyNotification);
+    delete legacy.coordination!.notification;
+    db.prepare("UPDATE session_turn_queue_v6 SET captured_json=?,accepted_json=? WHERE id=?").run(JSON.stringify(legacy), JSON.stringify(legacy), created.receipt.id);
+    const deliveredQuestion = queue.claimNext(caller)!;
+    assert.deepEqual(deliveredQuestion.accepted, legacy);
+    assert.equal(deliveredQuestion.dispatched!.request.userMessage, "Question");
+    assert.equal(deliveredQuestion.dispatched!.coordination?.notification?.state, "open");
     const id = created.record.id;
     assert.throws(() => store.execute({ actor: caller, request: { operation: "withdraw", operationId: randomUUID(), id, reason: "Not mine" } }), /originating/);
     const preliminaryId = randomUUID();
@@ -392,7 +432,8 @@ test("only the origin acquires the current answer and queued replacements delive
     assert.throws(() => store.execute({ actor: user, request: { ...second, operationId: randomUUID(), expectedAnswerRevision: 2 } }), /already received/);
     const delivered = queue.claimNext(origin)!;
     assert.equal(delivered.requestId, secondId);
-    assert.equal(JSON.parse(delivered.dispatched!.request.userMessage).answer.body, "Current answer");
+    assert.equal(delivered.dispatched!.request.userMessage, "Current answer");
+    assert.equal(delivered.dispatched!.coordination?.notification?.answer?.body, "Current answer");
   } finally { queue.close(); store.close(); sessions.close(); db.close(); await rm(temporary, { recursive: true, force: true }); }
 });
 
@@ -438,6 +479,7 @@ test("Auxiliary answer acquisition commits with the queued Turn input", async ()
     db.exec("DROP TRIGGER fail_coordination_start");
     assert.equal(record(store.execute({ actor: user, request: { operation: "get", id: created.id } })).answers[0]?.acquiredAt, undefined);
     assert.ok(auxiliaries.appendAuxiliaryRunningTurnStart(start)?.queuedTurn);
+    assert.equal(auxiliaries.getAuxiliarySession(aux.id)?.messages[0]?.text, "Proceed");
     assert.ok(record(store.execute({ actor: user, request: { operation: "get", id: created.id } })).answers[0]?.acquiredAt);
     assert.throws(() => store.execute({ actor: user, request: { ...request, operationId: randomUUID(), expectedAnswerRevision: 1 } }), /already received/);
   } finally { queue.close(); store.close(); auxiliaries.close(); sessions.close(); db.close(); await rm(temporary, { recursive: true, force: true }); }

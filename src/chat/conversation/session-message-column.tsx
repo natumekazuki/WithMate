@@ -37,7 +37,7 @@ import {
   isMessageRenderedSearchTextNode,
   resolveMessageSourceMatchTarget,
 } from "./message-rendered-search-text.js";
-import { projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
+import { projectMessagePlainText, projectMessageRenderedSearchText } from "../../../src-shared/session/message-search.js";
 import {
   appendRenderedTextMatches,
   applyRenderedTextHighlights,
@@ -1502,6 +1502,7 @@ export function SessionMessageColumn({
                 ) : null}
               <TurnInputReadBoundary message={message} receipt={turnQueueMetadata?.get(messageKey)} context={inputReadContext}>{(read) => {
                 const isSessionOrigin = message.role === "user" && read.origin?.kind === "session";
+                const collapsedPreview = read.text === message.text ? messageCollapseTarget?.preview : projectMessagePlainText(read.text);
                 const displayedRole = isSessionOrigin ? "session-origin" : message.role;
                 return <article
                 className={`message-row ${displayedRole}${isAwaitingSavedResponse || sharedPending && absoluteIndex === messages.length - 1 ? " pending-row" : ""}${message.accent ? " accent" : ""}${
@@ -1565,7 +1566,7 @@ export function SessionMessageColumn({
                               onClick={() => onToggleMessageCollapse(messageKey)}
                               aria-expanded={!isMessageCollapsed}
                               aria-controls={messageBodyId}
-                              aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                              aria-label={`${messageCollapseLabel}: ${collapsedPreview}`}
                               title={messageCollapseLabel}
                             >
                               <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
@@ -1599,7 +1600,7 @@ export function SessionMessageColumn({
                             sessionId={sessionId}
                             workspacePath={workspacePath}
                             disabled={elicitationDisabled}
-                            text={message.text}
+                            text={read.text}
                             responseProvider={message.role === "assistant" ? provider : undefined}
                             records={absoluteIndex === pendingResponseMessageIndex ? [...message.elicitationRecords ?? [], ...visibleLiveElicitationRecords ?? []] : message.elicitationRecords}
                             requests={absoluteIndex === pendingResponseMessageIndex ? activeQuestions : []}
@@ -1633,7 +1634,7 @@ export function SessionMessageColumn({
                             />}
                           />
                         ) : (
-                          <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
+                          <p className="message-collapsed-preview">{collapsedPreview}</p>
                         )}
                       </div>
                     </div>

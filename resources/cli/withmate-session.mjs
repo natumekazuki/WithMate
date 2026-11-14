@@ -6292,6 +6292,10 @@ var executionOperationResultSchemas = {
 	}).passthrough(),
 	get_execution: description.extend({
 		...ok,
+		coordination: object({
+			id: id$1,
+			text: string()
+		}).optional(),
 		executionSettings: executionSettings.nullable(),
 		output: object({
 			finality: _enum([
@@ -6388,7 +6392,7 @@ var EXECUTION_OPERATION_DESCRIPTIONS = {
 	list_operations: "Read bounded saved operation, changed-file or run-check previews for one exact saved message, including historical messages without Turn linkage.",
 	get_operation_detail: "Read an exact saved message's artifact or elicitation detail with shared saved-history text/row paging. Unsaved details are explicit failures, not regenerated content.",
 	list_executions: "List saved receipts or WithMate Turns of an exact Session in any Crew, including receipt-less historical Turns and receipts without a Turn. Page with offset/limit.",
-	get_execution: "Read one exact receipt, WithMate Turn or saved messageSeq, its saved state, input comparison/additional-input coverage, captured execution settings and output/artifact references. Settings are the input's captured selection, or the saved Turn settings when no receipt exists; they are not proof of Provider-applied settings. Missing historical settings stay unknown. messageSeq resolves only recorded receipt/Turn/input linkage; unlinked historical messages remain unknown. Never substitutes the latest result. A Steer receipt references the entire same Turn, not its own answer.",
+	get_execution: "Read one exact receipt, WithMate Turn or saved messageSeq, its saved state, input comparison/additional-input coverage, captured execution settings and output/artifact references. Stored Coordination deliveries also include coordination.id and the full authored coordination.text; original saved inputs remain available unchanged. Settings are the input's captured selection, or the saved Turn settings when no receipt exists; they are not proof of Provider-applied settings. Missing historical settings stay unknown. messageSeq resolves only recorded receipt/Turn/input linkage; unlinked historical messages remain unknown. Never substitutes the latest result. A Steer receipt references the entire same Turn, not its own answer.",
 	list_execution_inputs: "List the exact Turn's start input and confirmed additional inputs in saved sequence order; unresolved/not-sent records are separate. Parent Steer inputs expose inputOrigin with the actual sender, separate from the entry receipt origin. Missing historical linkage is unknown, never zero-confirmed proof of no additions.",
 	get_execution_input: "Read original or current comparison input with attachments and comparison state. No seq selects the entry receipt input; seq selects one linked input. inputOrigin identifies a recorded parent Steer sender, separately from the entry receipt origin; null is not proof of GUI authorship. For paging send expectedInput returned on the first page; changed input requires a fresh read. Offsets are UTF-16 code units.",
 	list_execution_outputs: "List ordered saved output boundaries, native phase, text completion and final-answer evidence separately from execution outcome. Historical unclassified text remains available without inventing finality.",

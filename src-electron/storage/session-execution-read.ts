@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { coordinationDeliveryText } from "../../src-shared/coordination/coordination-delivery.js";
 import type { ExecutionReadInput } from "../../src-shared/session/session-execution-read.js";
 import { executionOperationRequestSchemas } from "../../src-shared/session/session-execution-read.js";
 import type { SessionTarget } from "../../src-shared/session/session-target.js";
@@ -88,12 +89,7 @@ export class SessionExecutionReadStorage {
       const turnIds = sourceTurns.map((turn) => String(turn.id));
       const limit = options.limit ?? 20;
       const rows = this.db.prepare(`SELECT q.id, q.sequence, q.state, q.session_id, q.auxiliary_session_id, q.incarnation_id,
-        parent.incarnation_id AS main_incarnation_id, json_extract(q.accepted_json, '$.origin') AS origin_json,
-        json_extract(q.accepted_json, '$.request.userMessage') AS text,
-        json_extract(q.accepted_json, '$.coordination.id') AS coordination_id,
-        CASE WHEN json_type(q.accepted_json, '$.coordination')='object' THEN COALESCE(
-          json_extract(json_extract(q.accepted_json, '$.request.userMessage'), '$.answer.body'),
-          json_extract(json_extract(q.accepted_json, '$.request.userMessage'), '$.consultation')) END AS coordination_text
+        parent.incarnation_id AS main_incarnation_id, q.accepted_json AS input_json
         FROM session_turn_queue_v6 q JOIN sessions_v6 parent ON parent.id=q.session_id
         LEFT JOIN auxiliary_sessions auxiliary ON auxiliary.id=q.auxiliary_session_id AND auxiliary.parent_session_id=parent.id
         WHERE json_extract(q.accepted_json, '$.origin.actorKind')=?
@@ -102,13 +98,14 @@ export class SessionExecutionReadStorage {
           AND json_extract(q.accepted_json, '$.origin.actorTurnId') IN (${marks(turnIds)})
           AND json_extract(q.accepted_json, '$.origin.kind')='session' AND q.sequence>?
           AND ((q.auxiliary_session_id IS NULL AND parent.incarnation_id=q.incarnation_id) OR auxiliary.created_at=q.incarnation_id)
-        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; origin_json: string; text: string; coordination_id: string | null; coordination_text: string | null }>;
+        ORDER BY q.sequence LIMIT ?`).all(target.kind, target.sessionId, target.incarnationId, ...turnIds, options.cursor ?? 0, limit + 1) as Array<{ id: string; sequence: number; state: string; session_id: string; auxiliary_session_id: string | null; incarnation_id: string; main_incarnation_id: string; input_json: string }>;
       return { ok: true, items: rows.slice(0, limit).map((row) => {
-        const origin = JSON.parse(row.origin_json) as NonNullable<SessionTurnQueueCapturedInput["origin"]>;
+        const input = captured(row.input_json)!;
+        const origin = input.origin!;
         const sourceTurn = sourceTurns.find((turn) => String(turn.id) === origin.actorTurnId)!;
         const recipient = row.auxiliary_session_id ? { kind: "auxiliary", sessionId: row.auxiliary_session_id, incarnationId: row.incarnation_id, mainSessionId: row.session_id, mainIncarnationId: row.main_incarnation_id } : { kind: "main", sessionId: row.session_id, incarnationId: row.incarnation_id };
-        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: sourceTurn.assistant_message_seq !== null && messageSeqs.includes(sourceTurn.assistant_message_seq) ? sourceTurn.assistant_message_seq : sourceTurn.user_message_seq !== null && messageSeqs.includes(sourceTurn.user_message_seq) ? sourceTurn.user_message_seq : null, target: recipient, state: row.state, origin, text: row.text,
-          ...(row.coordination_id ? { coordination: { id: row.coordination_id, text: row.coordination_text ?? "" } } : {}) };
+        return { receiptId: row.id, sequence: row.sequence, sourceTurnId: origin.actorTurnId, sourceMessageSeq: sourceTurn.assistant_message_seq !== null && messageSeqs.includes(sourceTurn.assistant_message_seq) ? sourceTurn.assistant_message_seq : sourceTurn.user_message_seq !== null && messageSeqs.includes(sourceTurn.user_message_seq) ? sourceTurn.user_message_seq : null, target: recipient, state: row.state, origin, text: input.request.userMessage,
+          ...(input.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input) } } : {}) };
       }), nextCursor: rows.length > limit ? rows[limit - 1].sequence : null };
     }
     const getMessage = (seq: number | null): Message | null => {
@@ -192,7 +189,9 @@ export class SessionExecutionReadStorage {
       const executionSettings = input ? { source: "input", provider: input.provider, ...input.request.executionOptions }
         : turn ? { source: "turn", provider: turn.provider_id, model: turn.model_id, reasoningEffort: turn.reasoning_effort,
           approvalMode: turn.approval_mode, codexSandboxMode: turn.sandbox_mode, codexReviewer: null, codexSpeed: null, customAgentName: null } : null;
-      return { ok: true, ...description, executionSettings, output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
+      return { ok: true, ...description, executionSettings,
+        ...(input?.coordination ? { coordination: { id: input.coordination.id, text: coordinationDeliveryText(input) } } : {}),
+        output: assistant ? { finality: assistant.output?.finality ?? "unknown", unitCount: assistant.output?.units.length ?? (assistant.text ? 1 : 0), textChars: assistant.text.length, artifactSaved: Boolean(assistant.artifact) } : null };
     }
     if (operation === "list_execution_inputs") {
       const all: object[] = [];

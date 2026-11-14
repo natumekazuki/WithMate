@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { coordinationNotificationText, readCoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
 import type { CoordinationIdentity, CoordinationRecord } from "../../src-shared/coordination/coordination-contract.js";
 import type { SessionTurnQueueCapturedInput } from "../../src-shared/session/session-turn-queue.js";
 
@@ -9,8 +10,10 @@ export function coordinationDispatchJson(db: DatabaseSync, json: string): string
   const row = db.prepare("SELECT payload_json FROM coordination_records_v7 WHERE id=?").get(captured.coordination.id) as { payload_json: string } | undefined;
   if (!row) throw new Error("Coordination delivery no longer has its saved record.");
   const record = JSON.parse(row.payload_json) as CoordinationRecord;
-  const accepted = JSON.parse(captured.request.userMessage) as Record<string, unknown>;
-  captured.request.userMessage = JSON.stringify({ ...accepted, state: record.state, withdrawalReason: record.withdrawalReason ?? null });
+  const accepted = readCoordinationNotification(captured);
+  if (!accepted) throw new Error("Coordination delivery has no saved notification.");
+  captured.coordination.notification = { ...accepted, state: record.state, withdrawalReason: record.withdrawalReason ?? null };
+  captured.request.userMessage = coordinationNotificationText(accepted);
   return JSON.stringify(captured);
 }
 

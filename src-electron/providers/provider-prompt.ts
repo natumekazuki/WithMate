@@ -195,7 +195,8 @@ export function composeProviderInput(userMessage: string, provenance?: RunSessio
         : provenance.origin?.kind === "gui" ? "The following input originated from the GUI user." : "The original sender of this queued input was not recorded. Do not infer that it was the user.",
       "The change flag compares the accepted instruction text and attachment references with the fixed execution input; it does not identify an editor.", "",
       JSON.stringify({ origin: provenance.origin, sender: projectSessionInputSender(provenance.origin), changedSinceAcceptance: provenance.originalChanged,
-        ...(provenance.coordinationOperation ? { coordinationOperation: provenance.coordinationOperation } : {}) }, null, 2),
+        ...(provenance.coordinationOperation ? { coordinationOperation: provenance.coordinationOperation } : {}),
+        ...(provenance.coordination ? { coordination: provenance.coordination } : {}) }, null, 2),
     ].join("\n"));
   }
   const heading = background ? "Background Task" : provenance?.origin?.kind === "session" ? "Session Input" : provenance && !provenance.origin ? "Queued Input" : "User Input";

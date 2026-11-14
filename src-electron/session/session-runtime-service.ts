@@ -1,5 +1,6 @@
 import { currentTimestampLabel as defaultCurrentTimestampLabel } from "../../src-shared/time-state.js";
 import { isDeepStrictEqual } from "node:util";
+import { readCoordinationNotification } from "../../src-shared/coordination/coordination-delivery.js";
 import type { ComposerAttachment, ComposerPreview, LiveApprovalDecision, LiveApprovalRequest, LiveElicitationRequest, LiveElicitationResponse, LiveSessionRunState, ProviderQuotaTelemetry, RunSessionTurnRequest, SessionContextTelemetry, SteerSessionTurnRequest, SteerSessionTurnResult } from "../../src-shared/session/runtime-state.js";
 import type { MessageArtifact, TurnInputDeliveryState } from "../../src-shared/session/session-state.js";
 import { normalizeSessionTurnCorrelation } from "../../src-shared/session/runtime-state.js";
@@ -476,7 +477,7 @@ function queuedInputProvenance(receipt: SessionTurnQueueReceipt, input: SessionT
     originalChanged: receipt.accepted ? !isDeepStrictEqual(
       { text: receipt.accepted.request.userMessage, attachments: receipt.accepted.attachments },
       { text: input.request.userMessage, attachments: input.attachments }) : null,
-    ...(input.coordination ? { coordinationOperation: input.coordination.operation } : {}) };
+    ...(input.coordination ? { coordinationOperation: input.coordination.operation, coordination: readCoordinationNotification(input) ?? undefined } : {}) };
 }
 
 class QueuedTurnPreflightError extends Error {}

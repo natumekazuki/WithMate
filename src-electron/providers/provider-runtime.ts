@@ -38,7 +38,7 @@ export type RunSessionTurnInput = {
   character?: CharacterProfile;
   providerCatalog: ModelCatalogProvider;
   userMessage: string;
-  inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; coordinationOperation?: string };
+  inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; coordinationOperation?: string; coordination?: import("../../src-shared/coordination/coordination-delivery.js").CoordinationNotification };
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
   conversationTimingContext?: ConversationTimingContext;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { coordinationDeliveryText } from "../../../src-shared/coordination/coordination-delivery.js";
 import type { Message } from "../../../src-shared/session/session-state.js";
 import type { SessionTurnQueueReceipt, SessionTurnQueueOrigin, SessionSteerOrigin } from "../../../src-shared/session/session-turn-queue.js";
 import type { SessionTarget } from "../../../src-shared/session/session-target.js";
@@ -95,7 +96,8 @@ export function useTurnInputRead({ message, receipt, context, turnId, active = t
   const observed = loadedReference.current === referenceIdentity ? execution : null;
   // A direct additional input belongs to its own sender, not the Turn's start input.
   const origin = input && !receiptId ? input.origin : observed?.origin ?? receipt?.accepted?.origin ?? receipt?.captured.origin;
-  return { input, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, readError, setReadError, setRevision };
+  const text = message.role === "user" ? receipt?.captured.coordination ? coordinationDeliveryText(receipt.dispatched ?? receipt.captured) : observed?.coordination?.text ?? message.text : message.text;
+  return { input, text, execution: loadedReference.current === referenceIdentity ? execution : null, observed, origin, statusReference, receiptId, identity, readError, setReadError, setRevision };
 }
 
 export function TurnExecutionDetails(props: TurnInputProps & { hasRunChecks?: boolean }) {

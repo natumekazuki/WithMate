@@ -34,7 +34,7 @@ export type SessionTurnQueueOrigin = {
   targetSnapshot?: SessionTurnQueueDisplaySnapshot;
 };
 export type SessionTurnQueueCapturedInput = {
-  coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; answerId?: string; answerRevision?: number };
+  coordination?: { id: string; operation: string; actor: import("../coordination/coordination-contract.js").CoordinationActor; answerId?: string; answerRevision?: number; notification?: import("../coordination/coordination-delivery.js").CoordinationNotification };
   request: RunSessionTurnRequest & { clientRequestId: string };
   attachments: ComposerAttachment[];
   provider: string;
