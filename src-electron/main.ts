@@ -561,10 +561,11 @@ const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationServ
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
+// App shutdown state outlives persistent-store generations (including quit cleanup).
+let appLifecycleService: AppLifecycleService | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
       PersistentStoreLifecycleService,
-      AppLifecycleService,
       MainBootstrapService
     >
   | null = null;
@@ -1214,7 +1215,6 @@ function listRunningActiveAuxiliaryParentSessionIds(parentSessionIds: readonly s
 
 function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
   PersistentStoreLifecycleService,
-  AppLifecycleService,
   MainBootstrapService
 > {
   if (!mainInfrastructureRegistry) {
@@ -1273,52 +1273,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             await rm(directoryPath, { recursive: true, force: true });
           },
         }),
-      createAppLifecycleService: () =>
-        new AppLifecycleService(
-          createAppLifecycleDeps({
-            hasInFlightSessionRuns,
-            getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
-            setAllowQuitWithInFlightRuns: (value) => {
-              allowQuitWithInFlightRuns = value;
-            },
-            createHomeWindow: async () => {
-              await createHomeWindow();
-            },
-            quitApp: () => {
-              app.quit();
-            },
-            shouldQuitWhenAllWindowsClosed: () => false,
-            confirmQuitWhileRunning: () => {
-              const choice = dialog.showMessageBoxSync({
-                type: "warning",
-                buttons: ["Go Back", "Quit"],
-                defaultId: 0,
-                cancelId: 0,
-                title: "Session Is Running",
-                message: "A session is still running.",
-                detail: "Quitting WithMate will interrupt the running work.",
-                noLink: true,
-              });
-              return choice === 1;
-            },
-            prepareSessionWindowSnapshotForQuit: () =>
-              requireSessionWindowBridge().prepareSnapshotForQuit(),
-            flushSessionWindowDrafts: async () => {
-              sessionTurnQueueService?.beginShutdown();
-              let flushed = false;
-              try {
-                flushed = await requireSessionWindowBridge().flushSessionWindowDrafts();
-                return flushed;
-              } finally {
-                if (!flushed) sessionTurnQueueService?.resume();
-              }
-            },
-            stopAgentRuntime: stopAgentRuntimeApiBestEffort,
-            closePersistentStores,
-            invalidateAllProviderSessionThreads,
-            revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
-          }),
-        ),
       createMainBootstrapService: () =>
         new MainBootstrapService(
           createMainBootstrapDeps({
@@ -3021,7 +2975,54 @@ function requirePersistentStoreLifecycleService(): PersistentStoreLifecycleServi
 }
 
 function requireAppLifecycleService(): AppLifecycleService {
-  return requireMainInfrastructureRegistry().getAppLifecycleService();
+  if (!appLifecycleService) {
+    appLifecycleService = new AppLifecycleService(
+      createAppLifecycleDeps({
+        hasInFlightSessionRuns,
+        getAllowQuitWithInFlightRuns: () => allowQuitWithInFlightRuns,
+        setAllowQuitWithInFlightRuns: (value) => {
+          allowQuitWithInFlightRuns = value;
+        },
+        createHomeWindow: async () => {
+          await createHomeWindow();
+        },
+        quitApp: () => {
+          app.quit();
+        },
+        shouldQuitWhenAllWindowsClosed: () => false,
+        confirmQuitWhileRunning: () => {
+          const choice = dialog.showMessageBoxSync({
+            type: "warning",
+            buttons: ["Go Back", "Quit"],
+            defaultId: 0,
+            cancelId: 0,
+            title: "Session Is Running",
+            message: "A session is still running.",
+            detail: "Quitting WithMate will interrupt the running work.",
+            noLink: true,
+          });
+          return choice === 1;
+        },
+        prepareSessionWindowSnapshotForQuit: () =>
+          requireSessionWindowBridge().prepareSnapshotForQuit(),
+        flushSessionWindowDrafts: async () => {
+          sessionTurnQueueService?.beginShutdown();
+          let flushed = false;
+          try {
+            flushed = await requireSessionWindowBridge().flushSessionWindowDrafts();
+            return flushed;
+          } finally {
+            if (!flushed) sessionTurnQueueService?.resume();
+          }
+        },
+        stopAgentRuntime: stopAgentRuntimeApiBestEffort,
+        closePersistentStores,
+        invalidateAllProviderSessionThreads,
+        revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
+      }),
+    );
+  }
+  return appLifecycleService;
 }
 
 function requireMainBootstrapService(): MainBootstrapService {

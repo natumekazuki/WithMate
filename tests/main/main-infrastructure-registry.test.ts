@@ -5,7 +5,7 @@ import { MainInfrastructureRegistry } from "../../src-electron/app/main-infrastr
 
 // @test-value v2
 // kind = "invariant"
-// claim = "Main infrastructureのstore・lifecycle・bootstrap serviceは同じregistry世代では共有され、reset後は再生成される"
+// claim = "DB世代のstore・bootstrap serviceは同じregistry内では共有され、reset後は再生成される"
 // oracle = { type = "contract", ref = "src-electron/app/main-infrastructure-registry.ts: MainInfrastructureRegistry lazy initialization and reset" }
 // fault = "getterのたびにserviceを作る、別serviceを先に作る、またはreset後も旧serviceを返す"
 // observable = "factory呼出順を含む生成値、同一getterの返却identity、reset前後のidentity"
@@ -18,7 +18,6 @@ test("MainInfrastructureRegistry は service を lazy に 1 回だけ生成し r
   const create = (label: string) => () => `${label}-${++counter}`;
   const registry = new MainInfrastructureRegistry({
     createPersistentStoreLifecycleService: create("store"),
-    createAppLifecycleService: create("lifecycle"),
     createMainBootstrapService: create("bootstrap"),
   });
 
@@ -29,15 +28,11 @@ test("MainInfrastructureRegistry は service を lazy に 1 回だけ生成し r
   assert.equal(firstStore, secondStore);
   assert.equal(firstBootstrap, "bootstrap-2");
   assert.equal(registry.getMainBootstrapService(), firstBootstrap);
-  const firstLifecycle = registry.getAppLifecycleService();
-  assert.equal(firstLifecycle, "lifecycle-3");
-  assert.equal(registry.getAppLifecycleService(), firstLifecycle);
 
   registry.reset();
 
   const thirdStore = registry.getPersistentStoreLifecycleService();
   assert.notEqual(thirdStore, firstStore);
-  assert.equal(thirdStore, "store-4");
-  assert.equal(registry.getMainBootstrapService(), "bootstrap-5");
-  assert.equal(registry.getAppLifecycleService(), "lifecycle-6");
+  assert.equal(thirdStore, "store-3");
+  assert.equal(registry.getMainBootstrapService(), "bootstrap-4");
 });

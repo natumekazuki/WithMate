@@ -67,6 +67,8 @@ flowchart LR
 
 ### AppLifecycleService
 
+Main Processのアプリ寿命で保持する。DB世代を所有する`MainInfrastructureRegistry`のresetや破棄では再生成しない。通常終了でpersistent storeを閉じた後の`app.quit()`再入も同じ終了状態で扱う。
+
 - `activate`
 - `second-instance`
 - `window-all-closed`
