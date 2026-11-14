@@ -3,7 +3,6 @@ import type { ProviderLogicalPrompt, ProviderDiagnosticMetadata, ProviderUsage, 
 import type { CharacterProfile } from "../../src-shared/character/character-state.js";
 import type { MessageArtifact, Session } from "../../src-shared/session/session-state.js";
 import type { ModelCatalogProvider } from "../../src-shared/settings/model-catalog.js";
-import type { ConversationTimingContext } from "../session/conversation-timing.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { SessionExecutionOptions } from "../../src-shared/session/session-execution-options.js";
 import type { ProviderOutput } from "../../src-shared/session/provider-output.js";
@@ -30,7 +29,7 @@ export type RunSessionTurnInput = {
   inputProvenance?: { origin: SessionTurnQueueOrigin | import("../../src-shared/session/session-turn-queue.js").SessionSteerOrigin | null; originalChanged: boolean | null; coordinationOperation?: string; coordination?: import("../../src-shared/coordination/coordination-delivery.js").CoordinationNotification };
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
-  conversationTimingContext?: ConversationTimingContext;
+  currentDateTime?: string;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
   /** Resolves only after owned process cleanup is confirmed, independently of turn outcome. */

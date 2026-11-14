@@ -33,8 +33,7 @@ export const SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL =
 export const SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL = "Close Action Dock After Send";
 export const SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL = "Scroll To Latest On Send";
 export const SETTINGS_CHARACTER_DEFINITION_LABEL = "Character Definition Snapshot";
-export const SETTINGS_CONVERSATION_TIMING_LABEL = "Conversation Timing";
-export const SETTINGS_TOOL_CALL_PRESENCE_LABEL = "Tool Call Presence";
+export const SETTINGS_CURRENT_DATE_LABEL = "Current Date";
 export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL = "Glossary Proactive Create Limit";
 export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP =
   "Maximum terms an agent can create proactively in one turn. 0 disables proactive creation but not explicit requests.";

@@ -1,6 +1,5 @@
 import { getSessionIncarnationId, type Session } from "../../src-shared/session/session-state.js";
 import { SessionRuntimeService, type SessionRuntimeServiceDeps } from "../session/session-runtime-service.js";
-import { resolveConversationTimingContext, type ConversationTimingContext, type ConversationTimingStorageSnapshot } from "../session/conversation-timing.js";
 
 type CreateSessionTurnInput = Parameters<NonNullable<SessionRuntimeServiceDeps["createSessionTurn"]>>[0];
 
@@ -23,7 +22,6 @@ export type MainSessionRuntimeAssemblyDeps = {
   provider: Pick<SessionRuntimeServiceDeps, "getProviderCodingAdapter" | "resetProviderSessionThread" | "getProviderAgentRuntimeBinding" | "beginProviderAgentRuntimeTurn" | "endProviderAgentRuntimeTurn">;
   context: {
     getAppSettings: SessionRuntimeServiceDeps["getAppSettings"];
-    getConversationTimingSnapshot?: (sessionId: string, observedAt: string) => Promise<ConversationTimingStorageSnapshot | null>;
   };
   turn: Pick<SessionRuntimeServiceDeps, "createSessionTurn" | "updateSessionTurn">;
   live: Pick<SessionRuntimeServiceDeps, "setLiveSessionRun" | "getLiveSessionRun" | "setProviderQuotaTelemetry" | "setSessionContextTelemetry" | "scheduleProviderQuotaTelemetryRefresh" | "broadcastLiveSessionRun">;
@@ -78,16 +76,6 @@ export function createMainSessionRuntime(deps: MainSessionRuntimeAssemblyDeps): 
     getProviderAgentRuntimeBinding: deps.provider.getProviderAgentRuntimeBinding,
     beginProviderAgentRuntimeTurn: deps.provider.beginProviderAgentRuntimeTurn,
     endProviderAgentRuntimeTurn: deps.provider.endProviderAgentRuntimeTurn,
-    resolveConversationTimingContext: deps.context.getConversationTimingSnapshot
-      ? async (session, observedAt): Promise<ConversationTimingContext | null> => {
-        assertOwner("conversation timing");
-        if (session.sessionKind !== "default") return null;
-        const snapshot = await deps.context.getConversationTimingSnapshot!(session.id, observedAt.toISOString());
-        assertOwner("conversation timing");
-        if (!snapshot) return null;
-        return resolveConversationTimingContext(snapshot, observedAt);
-      }
-      : undefined,
     createSessionTurn: (entry: CreateSessionTurnInput) => guarded("turn create", () => deps.turn.createSessionTurn(entry)),
     updateSessionTurn: (id, entry) => guarded("turn update", () => deps.turn.updateSessionTurn(id, entry)),
     setLiveSessionRun: (id, state) => { assertOwner("live session projection"); deps.live.setLiveSessionRun(id, state); },

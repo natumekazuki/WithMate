@@ -20,8 +20,7 @@ export type AppSettings = {
   sessionApprovalNotificationEnabled: boolean;
   sessionTurnNotificationResponsePreviewEnabled: boolean;
   characterDefinitionEnabled: boolean;
-  conversationTimingEnabled: boolean;
-  toolCallPresenceEnabled: boolean;
+  currentDateEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
   scrollToLatestOnSend: boolean;
   previewWheelZoomStep: number;
@@ -69,8 +68,7 @@ export function createDefaultAppSettings(): AppSettings {
     sessionApprovalNotificationEnabled: true,
     sessionTurnNotificationResponsePreviewEnabled: false,
     characterDefinitionEnabled: true,
-    conversationTimingEnabled: true,
-    toolCallPresenceEnabled: true,
+    currentDateEnabled: true,
     autoCollapseActionDockOnSend: true,
     scrollToLatestOnSend: true,
     previewWheelZoomStep: PREVIEW_WHEEL_ZOOM_STEP_DEFAULT,
@@ -176,10 +174,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         : false,
     characterDefinitionEnabled:
       typeof candidate.characterDefinitionEnabled === "boolean" ? candidate.characterDefinitionEnabled : true,
-    conversationTimingEnabled:
-      typeof candidate.conversationTimingEnabled === "boolean" ? candidate.conversationTimingEnabled : true,
-    toolCallPresenceEnabled:
-      typeof candidate.toolCallPresenceEnabled === "boolean" ? candidate.toolCallPresenceEnabled : true,
+    currentDateEnabled:
+      typeof candidate.currentDateEnabled === "boolean" ? candidate.currentDateEnabled : true,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
     scrollToLatestOnSend:

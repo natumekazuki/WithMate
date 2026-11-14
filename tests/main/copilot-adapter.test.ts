@@ -1318,17 +1318,14 @@ it("Session generationごとのclientを分離しsettings-only clientをunbound�
   // impact = "CopilotがCharacterの現行定義を受け取れないか、可変contextの配置を誤る"
   // distinction = "composer単体ではなくCopilotのsession設定へ渡す値を実際のcompose経路から確認する"
   // @end-test-value
-  it("character prompt だけをCopilot systemMessageへ変換し、可変timingはinput側に留める", () => {
+  it("character prompt だけをCopilot systemMessageへ変換し、現在日時はinput側に留める", () => {
     const input = createRunSessionInput();
     input.session.characterRuntimeSnapshot = {
       characterId: "char-a", name: "A", description: "Saved metadata", iconFilePath: "C:/Character Data/キャラ/icon.png",
       theme: input.session.characterThemeColors, definitionMarkdown: "あなたは頼れる相棒です。",
       definitionSha256: "definition", definitionByteSize: 48, snapshotAt: "2026-10-03T00:00:00Z",
     };
-    input.conversationTimingContext = {
-      observedAt: "2026-08-04T21:32:00+09:00", observedDayOfWeek: "tuesday",
-      currentSession: null, sameCharacterOtherSession: null, sameCharacterSharedWork: null,
-    };
+    input.currentDateTime = "2026-08-04T21:32:00+09:00";
     const prompt = new CopilotAdapter().composePrompt(input);
     const { config } = buildCopilotSessionSettings(input, prompt, "client-key", resolveCustomAgents);
 
@@ -1337,8 +1334,8 @@ it("Session generationごとのclientを分離しsettings-only clientをunbound�
       content: prompt.systemBodyText,
     });
     assert.match(config.systemMessage?.content ?? "", /あなたは頼れる相棒です。/);
-    assert.doesNotMatch(config.systemMessage?.content ?? "", /Conversation Timing|2026-08-04|# User Input/);
-    assert.match(prompt.inputBodyText, /# Conversation Timing[\s\S]*# User Input\n\nhello/);
+    assert.doesNotMatch(config.systemMessage?.content ?? "", /Current Date|2026-08-04|# User Input/);
+    assert.match(prompt.inputBodyText, /# Current Date[\s\S]*# User Input\n\nhello/);
     assert.deepEqual(buildCopilotMessageAttachments(input.attachments), []);
     assert.deepEqual(prompt.imagePaths, []);
   });
@@ -2366,7 +2363,7 @@ describe("CopilotAdapter session settings", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Copilot の system 側 prompt context 変更は session settings key を分け、input 側 Conversation Timing 変更は同じ key を使う"
+  // claim = "Copilot の system 側 prompt context 変更は session settings key を分け、input 側 Current Date 変更は同じ key を使う"
   // oracle = { type = "contract", ref = "Copilot prompt cache boundary" }
   // fault = "system message の切替で古い session を再利用するか、timing の変化だけで不要な session 再接続を起こす"
   // observable = "buildCopilotSessionSettings の settingsKey と systemMessage"
@@ -2380,7 +2377,7 @@ describe("CopilotAdapter session settings", () => {
     const input = createRunSessionInput({ threadId: "thread-1" });
     const promptWithContext: ProviderPromptComposition = {
       ...EMPTY_PROMPT,
-      systemBodyText: "# Character Affect Context\n\n{}\n\n# Tool Call Presence\n\nreply first",
+      systemBodyText: "# Character Definition Snapshot\n\n更新された定義",
     };
     const promptWithoutContext: ProviderPromptComposition = {
       ...promptWithContext,
@@ -2388,7 +2385,7 @@ describe("CopilotAdapter session settings", () => {
     };
     const promptWithLaterTiming: ProviderPromptComposition = {
       ...promptWithContext,
-      inputBodyText: "# Conversation Timing\n\n- Observed local time: later\n\n# User Input\n\nhello",
+      inputBodyText: "# Current Date\n\n- Observed local time: later\n\n# User Input\n\nhello",
     };
 
     const withContext = buildCopilotSessionSettings(input, promptWithContext, "client-key", resolveCustomAgents);

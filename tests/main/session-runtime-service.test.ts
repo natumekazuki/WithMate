@@ -26,7 +26,6 @@ import {
   hasMeaningfulPartialRunResult,
   isRetryableStaleThreadSessionError,
 } from "../../src-electron/session/session-runtime-service.js";
-import type { ConversationTimingContext } from "../../src-electron/session/conversation-timing.js";
 import { SessionWindowBridge } from "../../src-electron/windows/session-window-bridge.js";
 import { WindowBroadcastService } from "../../src-electron/windows/window-broadcast-service.js";
 import { AppLifecycleService } from "../../src-electron/app/app-lifecycle-service.js";
@@ -1578,8 +1577,8 @@ describe("SessionRuntimeService", () => {
     await steer;
     assert.deepEqual(sent[0]?.attachments, receipt.captured.attachments);
     assert.match(sent[0]!.userMessage, /# Session Input\n\nqueued @captured/);
-    assert.match(sent[0]!.userMessage, /"actorSessionId": "actual-parent"/);
-    assert.match(sent[0]!.userMessage, /"changedSinceAcceptance": false/);
+    assert.match(sent[0]!.userMessage, /Session: "actual-parent"/);
+    assert.match(sent[0]!.userMessage, /Changed since acceptance: false/);
     assert.equal(sent.length, 1);
     finishTurn();
     assert.deepEqual((await turn).messages.map((message) => message.text), ["start", "queued @captured", "done"]);
@@ -2035,10 +2034,10 @@ describe("SessionRuntimeService", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "terminal保存ACK後に通知して次turnを受け付け、Timing解決は前turnの確定完了時刻を観測する"
+  // claim = "terminal保存ACK後に通知して次turnを受け付ける"
   // oracle = { type = "contract", ref = "src-electron/session/session-runtime-service.ts: runSessionTurnInternal / notifySessionTurnTerminalBestEffort" }
-  // fault = "永続化前の通知により通知先が未保存状態を読むか、次turnが前turnの完了時刻を取得できない"
-  // observable = "terminal保存ACK前後の通知数と呼出し順、次turn受付時のrun状態、Timing resolverの前回完了時刻snapshot"
+  // fault = "永続化前の通知により通知先が未保存状態を読むか、次turnを受付できない"
+  // observable = "terminal保存ACK前後の通知数と呼出し順、次turn受付時のrun状態"
   // observation_boundary = "public-boundary"
   // scope = "session-runtime-terminal-completion-order"
   // lifecycle = "permanent"
@@ -2048,7 +2047,6 @@ describe("SessionRuntimeService", () => {
     let turnId = 0;
     let completionNotificationCount = 0;
     const callOrder: string[] = [];
-    const timingCompletionSnapshots: Array<string | null> = [];
     let lastCommittedAt: string | null = null;
     const confirmedPreviewTexts: Array<string | null | undefined> = [];
     let terminalUpsertCount = 0;
@@ -2120,10 +2118,6 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
-      resolveConversationTimingContext() {
-        timingCompletionSnapshots.push(lastCommittedAt);
-        return null;
-      },
       createSessionTurn(input) {
         turnId += 1;
         return { ...createSessionTurnBase(input), id: turnId };
@@ -2163,7 +2157,6 @@ describe("SessionRuntimeService", () => {
     releaseFirstTerminalUpsert();
     await firstRun;
     callOrder.push("first-returned");
-    const firstCompletedAt = lastCommittedAt;
     assert.equal(service.isRunInFlight(storedSession.id), false);
     assert.equal(confirmedPreviewTexts[0], "完了");
     await service.runSessionTurn(storedSession.id, { executionOptions: TEST_EXECUTION_OPTIONS,
@@ -2174,8 +2167,6 @@ describe("SessionRuntimeService", () => {
     callOrder.push("second-returned");
 
 
-    assert.equal(timingCompletionSnapshots[0], null);
-    assert.equal(timingCompletionSnapshots[1], firstCompletedAt);
     for (const [turnId, returned] of [
       [1, "first-returned"],
       [2, "second-returned"],
@@ -3645,18 +3636,10 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     const seenThreadIds: string[] = [];
     const seenBindingGenerations: Array<string | undefined> = [];
     let bindingGeneration = 0;
-    const timingContexts: Array<ConversationTimingContext | undefined> = [];
     const fixedObservedAt = new Date("2026-08-04T12:32:00.000Z");
-    const timingContext: ConversationTimingContext = {
-      observedAt: "2026-08-04T21:32:00.000+09:00",
-      observedDayOfWeek: "tuesday",
-      currentSession: null,
-      sameCharacterOtherSession: null,
-      sameCharacterSharedWork: null,
-    };
+
     let attempt = 0;
     let notificationCount = 0;
-    let timingResolutionCount = 0;
     let currentDateCount = 0;
     const runtimeTurnHandles: object[] = [];
     const endedRuntimeTurnHandles: unknown[] = [];
@@ -3664,7 +3647,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
-        timingContexts.push(input.conversationTimingContext);
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -3683,7 +3665,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
         seenThreadIds.push(input.session.threadId);
         seenBindingGenerations.push(input.agentRuntimeBinding?.executionGeneration);
         seenTurnCapabilities.push(input.agentRuntimeBinding?.turnCapability);
-        timingContexts.push(input.conversationTimingContext);
         if (attempt === 1) {
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
         }
@@ -3740,11 +3721,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
       },
       endProviderAgentRuntimeTurn(handle) {
         endedRuntimeTurnHandles.push(handle);
-      },
-      resolveConversationTimingContext(_session, observedAt) {
-        timingResolutionCount += 1;
-        assert.equal(observedAt, fixedObservedAt);
-        return timingContext;
       },
       createSessionTurn(input) {
         return createSessionTurnBase(input);
@@ -3805,9 +3781,6 @@ rejectProvider!(new ProviderTurnError("workspace snapshot failed", createPartial
     assert.equal(turnUpdates.at(-1)?.phase, "completed");
     assert.equal(notificationCount, 1);
     assert.equal(currentDateCount, 1);
-    assert.equal(timingResolutionCount, 1);
-    assert.deepEqual(timingContexts, [timingContext, timingContext]);
-    assert.equal(timingContexts[0], timingContexts[1]);
   });
 
   // @test-value v2

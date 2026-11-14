@@ -3,7 +3,7 @@ import type { AppSettings } from "../../src-shared/settings/provider-settings-st
 import {
   updateAutoCollapseActionDockOnSend,
   updateCharacterDefinitionEnabled,
-  updateConversationTimingEnabled,
+  updateCurrentDateEnabled,
   updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderInstructionRelativePathDraft,
@@ -16,7 +16,6 @@ import {
   updateSessionTurnNotificationEnabled,
   updateSessionApprovalNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
-  updateToolCallPresenceEnabled,
 } from "./settings-draft.js";
 
 type SetSettingsDraft = (updater: (current: AppSettings) => AppSettings) => void;
@@ -67,16 +66,10 @@ export function handleChangeCharacterDefinitionEnabled(input: SettingsDraftActio
   input.setSettingsDraft((current) => updateCharacterDefinitionEnabled(current, input.enabled));
 }
 
-export function handleChangeConversationTimingEnabled(input: SettingsDraftActionInput & {
+export function handleChangeCurrentDateEnabled(input: SettingsDraftActionInput & {
   enabled: boolean;
 }): void {
-  input.setSettingsDraft((current) => updateConversationTimingEnabled(current, input.enabled));
-}
-
-export function handleChangeToolCallPresenceEnabled(input: SettingsDraftActionInput & {
-  enabled: boolean;
-}): void {
-  input.setSettingsDraft((current) => updateToolCallPresenceEnabled(current, input.enabled));
+  input.setSettingsDraft((current) => updateCurrentDateEnabled(current, input.enabled));
 }
 
 export function handleChangeScrollToLatestOnSend(input: SettingsDraftActionInput & {

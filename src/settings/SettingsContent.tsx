@@ -17,7 +17,7 @@ import {
 import {
   SETTINGS_ACTION_DOCK_AUTO_CLOSE_LABEL,
   SETTINGS_CHARACTER_DEFINITION_LABEL,
-  SETTINGS_CONVERSATION_TIMING_LABEL,
+  SETTINGS_CURRENT_DATE_LABEL,
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
@@ -38,7 +38,6 @@ import {
   SETTINGS_SESSION_APPROVAL_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
-  SETTINGS_TOOL_CALL_PRESENCE_LABEL,
 } from "./settings-ui.js";
 import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 import { LoadingIndicator } from "../ui/loading-indicator.js";
@@ -66,7 +65,7 @@ export type HomeSettingsContentProps = {
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeCharacterDefinitionEnabled: (enabled: boolean) => void;
-  onChangeConversationTimingEnabled: (enabled: boolean) => void;
+  onChangeCurrentDateEnabled: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
   onChangePreviewWheelZoomStep: (value: number) => void;
   onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
@@ -74,7 +73,6 @@ export type HomeSettingsContentProps = {
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionApprovalNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
-  onChangeToolCallPresenceEnabled: (enabled: boolean) => void;
   onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
@@ -151,7 +149,7 @@ export function HomeSettingsContent({
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeCharacterDefinitionEnabled,
-  onChangeConversationTimingEnabled,
+  onChangeCurrentDateEnabled,
   onChangeScrollToLatestOnSend,
   onChangePreviewWheelZoomStep,
   onChangeKeyboardShortcuts,
@@ -159,7 +157,6 @@ export function HomeSettingsContent({
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionApprovalNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
-  onChangeToolCallPresenceEnabled,
   onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeProviderEnabled,
@@ -357,16 +354,10 @@ export function HomeSettingsContent({
               />
 
               <PromptContextToggle
-                id="settings-prompt-context-conversation-timing"
-                label={SETTINGS_CONVERSATION_TIMING_LABEL}
-                checked={settingsDraft.conversationTimingEnabled}
-                onChange={onChangeConversationTimingEnabled}
-              />
-              <PromptContextToggle
-                id="settings-prompt-context-tool-call-presence"
-                label={SETTINGS_TOOL_CALL_PRESENCE_LABEL}
-                checked={settingsDraft.toolCallPresenceEnabled}
-                onChange={onChangeToolCallPresenceEnabled}
+                id="settings-prompt-context-current-date"
+                label={SETTINGS_CURRENT_DATE_LABEL}
+                checked={settingsDraft.currentDateEnabled}
+                onChange={onChangeCurrentDateEnabled}
               />
             </div>
           </details>

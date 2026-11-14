@@ -164,45 +164,37 @@ describe("provider-settings-state", () => {
   // scope = "prompt-context-settings-normalization"
   // lifecycle = "permanent"
   // impact = "設定保存・IPC・provider prompt 合成へ渡る toggle の既定状態が変わる"
-  // distinction = "既存の boolean settings の normalize と異なる prompt context 3項目を一括で確認する"
+  // distinction = "既存の boolean settings の normalize と異なる prompt context 2項目を一括で確認する"
   // @end-test-value
   it("foreground prompt context は既定有効で、false と無効値を正しく normalize する", () => {
     const defaults = createDefaultAppSettings();
 
     assert.equal(defaults.characterDefinitionEnabled, true);
-    assert.equal(defaults.conversationTimingEnabled, true);
-    assert.equal(defaults.toolCallPresenceEnabled, true);
+    assert.equal(defaults.currentDateEnabled, true);
     const normalizedOff = normalizeAppSettings({
       characterDefinitionEnabled: false,
-      conversationTimingEnabled: false,
-      toolCallPresenceEnabled: false,
+      currentDateEnabled: false,
     });
     assert.equal(normalizedOff.characterDefinitionEnabled, false);
-    assert.equal(normalizedOff.conversationTimingEnabled, false);
-    assert.equal(normalizedOff.toolCallPresenceEnabled, false);
+    assert.equal(normalizedOff.currentDateEnabled, false);
     const normalizedMixed = normalizeAppSettings({
       characterDefinitionEnabled: true,
-      conversationTimingEnabled: false,
-      toolCallPresenceEnabled: true,
+      currentDateEnabled: false,
     });
 
     assert.equal(normalizedMixed.characterDefinitionEnabled, true);
-    assert.equal(normalizedMixed.conversationTimingEnabled, false);
-    assert.equal(normalizedMixed.toolCallPresenceEnabled, true);
+    assert.equal(normalizedMixed.currentDateEnabled, false);
     const normalizedInvalid = normalizeAppSettings({
       characterDefinitionEnabled: "false",
-      conversationTimingEnabled: null,
-      toolCallPresenceEnabled: 0,
+      currentDateEnabled: null,
     });
 
     assert.equal(normalizedInvalid.characterDefinitionEnabled, true);
-    assert.equal(normalizedInvalid.conversationTimingEnabled, true);
-    assert.equal(normalizedInvalid.toolCallPresenceEnabled, true);
+    assert.equal(normalizedInvalid.currentDateEnabled, true);
 
     const normalizedMissing = normalizeAppSettings({});
     assert.equal(normalizedMissing.characterDefinitionEnabled, true);
-    assert.equal(normalizedMissing.conversationTimingEnabled, true);
-    assert.equal(normalizedMissing.toolCallPresenceEnabled, true);
+    assert.equal(normalizedMissing.currentDateEnabled, true);
   });
 
 });

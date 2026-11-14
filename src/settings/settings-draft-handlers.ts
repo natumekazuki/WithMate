@@ -4,7 +4,7 @@ import type { HomeSettingsContentBaseProps } from "./home-settings-content-props
 import {
   handleChangeAutoCollapseActionDockOnSend,
   handleChangeCharacterDefinitionEnabled,
-  handleChangeConversationTimingEnabled,
+  handleChangeCurrentDateEnabled,
   handleChangeGlossaryProactiveCreateLimit,
   handleChangeKeyboardShortcuts,
   handleChangeLaunchAtLoginEnabled,
@@ -17,7 +17,6 @@ import {
   handleChangeSessionTurnNotificationEnabled,
   handleChangeSessionApprovalNotificationEnabled,
   handleChangeSessionTurnNotificationResponsePreviewEnabled,
-  handleChangeToolCallPresenceEnabled,
 } from "./settings-draft-actions.js";
 
 type SettingsDraftHandlersContext = {
@@ -29,7 +28,7 @@ export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
   | "onChangeCharacterDefinitionEnabled"
-  | "onChangeConversationTimingEnabled"
+  | "onChangeCurrentDateEnabled"
   | "onChangeScrollToLatestOnSend"
   | "onChangePreviewWheelZoomStep"
   | "onChangeKeyboardShortcuts"
@@ -37,7 +36,6 @@ export type SettingsDraftHandlers = Pick<
   | "onChangeSessionTurnNotificationEnabled"
   | "onChangeSessionApprovalNotificationEnabled"
   | "onChangeSessionTurnNotificationResponsePreviewEnabled"
-  | "onChangeToolCallPresenceEnabled"
   | "onChangeGlossaryProactiveCreateLimit"
   | "onChangeProviderEnabled"
   | "onChangeModelAvailability"
@@ -65,8 +63,8 @@ export function buildSettingsDraftHandlers({
     onChangeCharacterDefinitionEnabled: (enabled) => {
       handleChangeCharacterDefinitionEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
     },
-    onChangeConversationTimingEnabled: (enabled) => {
-      handleChangeConversationTimingEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
+    onChangeCurrentDateEnabled: (enabled) => {
+      handleChangeCurrentDateEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
     },
     onChangeScrollToLatestOnSend: (enabled) => {
       handleChangeScrollToLatestOnSend({ enabled, setSettingsDraft: updateSettingsDraft });
@@ -88,9 +86,6 @@ export function buildSettingsDraftHandlers({
     },
     onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled) => {
       handleChangeSessionTurnNotificationResponsePreviewEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
-    },
-    onChangeToolCallPresenceEnabled: (enabled) => {
-      handleChangeToolCallPresenceEnabled({ enabled, setSettingsDraft: updateSettingsDraft });
     },
     onChangeGlossaryProactiveCreateLimit: (value) => {
       handleChangeGlossaryProactiveCreateLimit({ value, setSettingsDraft: updateSettingsDraft });

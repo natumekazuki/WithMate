@@ -70,7 +70,6 @@ test("既存V6を最小turnへ移行し通常履歴とturn ownerを保持する"
       assert.equal(main?.threadId, "thread");
       assert.equal(main?.completedAt, "2026-10-01T01:00:00.000Z");
       assert.equal(turns.getLatestSessionTurn("aux")?.errorMessage, "cancel");
-      assert.equal(turns.getConversationTimingSnapshot("main", "2026-10-02").currentSessionLastCompletedAt, main?.completedAt);
     } finally { turns.close(); }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -25,7 +25,7 @@
 
 1. ユーザーが Home toolbar の `Settings` を押す
 2. 独立した `Settings Window` が開く
-3. App 表示設定、PromptContext の3項目、coding provider の enable / disable と provider file settingsを編集して保存する。window が小さいときは内部スクロールで下端まで移動する
+3. App 表示設定、Prompt Context の2項目、coding provider の enable / disable と provider file settingsを編集して保存する。window が小さいときは内部スクロールで下端まで移動する
 4. 結果は window 内の短いフィードバックで返す
 
 設定編集で保存中に新しい変更が入った場合、保存済みの値だけを同期し、新しいdraftはdirtyのまま保持する。
@@ -49,8 +49,7 @@
     - `Preview Wheel Zoom Step`
   - `Prompt Context`
     - `Character Definition Snapshot`
-    - `Conversation Timing`
-    - `Tool Call Presence`
+    - `Current Date`
   - `Coding Agent Providers`
     - providerごとの開閉見出しに名前とEnabled / Disabledを表示し、展開内のEnabled checkboxで有効化を編集する
     - providerごとの`Models`からModel管理を開く
@@ -90,11 +89,10 @@ Model一覧の先頭に`Enable All`／`Disable All`を置く。OpenCodeでは展
 - `App` の `Close Action Dock After Send` を含む表示設定の保存
 - `Preview Wheel Zoom Step`は画像／SVG／Mermaidの共通previewと画像lightboxのCtrl＋wheelの加算刻みを設定する。labelと3桁用の短い入力欄を横並びにし、通常時の説明文・単位表示は置かない。単位はpercentage points、既定値5、範囲は整数1〜100とする。空入力・小数・範囲外は入力欄にエラーを示して保存を止め、保存境界でも不正値を拒否する。設定項目がない既存データは5で初期化し、明示された不正な保存値を既定値へ置き換えない
 - 刻みはapp共通の`AppSettings.previewWheelZoomStep`として永続化し、保存後は開いているSession／独立File Previewへ通知する。次のCtrl＋wheelから新しい刻みを使い、現在倍率・Fit状態・pan位置、Zoom In／Outの10ポイント刻みは変えない。独立File Previewは初期取得と変更通知を購読し、設定取得中・失敗時はCtrl＋wheelの倍率変更だけを止める。preview本体と他の倍率操作は維持し、読込中表示と失敗時のRetryを提供する
-- `Prompt Context` の3項目を個別に保存し、既定値はすべて有効とする。表示labelは `Character Definition Snapshot` / `Conversation Timing` / `Tool Call Presence` とし、補足説明やHelp iconは表示しない。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
+- `Prompt Context` の2項目を個別に保存し、既定値はすべて有効とする。表示labelは `Character Definition Snapshot` / `Current Date` とし、補足説明やHelp iconは表示しない。`Output Boundary`、`Workspace`、`User Input`、添付 reference などの作業境界は切り替えない
   - `Character Definition Snapshot` は Character の名前・説明・`character.md` 本文を切り替える。OFFでも通常 session の Character snapshot に対する `Output Boundary` は残す
-  - `Conversation Timing` は input 側の該当 section と通常 session の timing 取得を切り替える
-  - `Tool Call Presence` は既存の通常 session の character snapshot 境界内で該当 section を切り替える。`character-authoring` には注入しない
-- `Conversation Timing` は Copilot の system session cache を変えず、system 側の2項目は合成された system message の変更として扱う
+  - `Current Date` は通常SessionのinputへUTC offset付き現在日時を渡すか切り替える。保存済みの日時ON/OFFは維持し、履歴・作業時間の集計は行わない
+- `Current Date` は Copilot の system session cache を変えず、Character定義の切替はsystem messageの変更として扱う
 - `Launch At Login` の保存。保存後は Electron login item 設定へ反映し、起動時は `--background` で Boot / Home window を表示しない
 - coding provider ごとの enable / disable
 - Claude AgentとOpenCodeは初期状態で無効とし、有効化した場合だけ新規Sessionのprovider候補に出す。Codexは既定のproviderとして維持する

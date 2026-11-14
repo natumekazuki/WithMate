@@ -491,7 +491,7 @@ describe("AppSettingsStorage", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "foreground prompt context の3項目は app settings DB に個別保存され、旧DBの欠損・不正値は既定有効へ戻る"
+  // claim = "foreground prompt context の2項目は app settings DB に個別保存され、旧DBの欠損・不正値は既定有効へ戻る"
   // oracle = { type = "contract", ref = "Prompt context settings persistence" }
   // fault = "toggle を保存しても次回読み込みで失われるか、既存DBの欠損・不正値で注入が意図せず無効になる"
   // observable = "AppSettingsStorage の保存・再読込結果"
@@ -499,7 +499,7 @@ describe("AppSettingsStorage", () => {
   // scope = "app-settings-prompt-context-persistence"
   // lifecycle = "permanent"
   // impact = "Settings の次回 turn 反映と既存利用者の注入互換性が崩れる"
-  // distinction = "3つのprompt context key を各項目単独のfalse保存、再読込、欠損、不正値で横断確認する"
+  // distinction = "2つのprompt context key を各項目単独のfalse保存、再読込、欠損、不正値で横断確認する"
   // @end-test-value
   it("foreground prompt context の個別設定を保存・再読込し、欠損と不正値を既定へ戻す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
@@ -508,54 +508,45 @@ describe("AppSettingsStorage", () => {
     try {
       const storage = new AppSettingsStorage(dbPath);
       assert.equal(storage.getSettings().characterDefinitionEnabled, true);
-      assert.equal(storage.getSettings().conversationTimingEnabled, true);
-      assert.equal(storage.getSettings().toolCallPresenceEnabled, true);
+      assert.equal(storage.getSettings().currentDateEnabled, true);
       storage.updateSettings({
         ...storage.getSettings(),
         characterDefinitionEnabled: false,
-        conversationTimingEnabled: false,
-        toolCallPresenceEnabled: false,
+        currentDateEnabled: false,
       });
       assert.equal(storage.getSettings().characterDefinitionEnabled, false);
-      assert.equal(storage.getSettings().conversationTimingEnabled, false);
-      assert.equal(storage.getSettings().toolCallPresenceEnabled, false);
+      assert.equal(storage.getSettings().currentDateEnabled, false);
       storage.close();
 
       const reopenedStorage = new AppSettingsStorage(dbPath);
       assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, false);
-      assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
-      assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, false);
+      assert.equal(reopenedStorage.getSettings().currentDateEnabled, false);
       reopenedStorage.updateSettings({
         ...reopenedStorage.getSettings(),
         characterDefinitionEnabled: true,
-        conversationTimingEnabled: false,
-        toolCallPresenceEnabled: true,
+        currentDateEnabled: false,
       });
       assert.equal(reopenedStorage.getSettings().characterDefinitionEnabled, true);
-      assert.equal(reopenedStorage.getSettings().conversationTimingEnabled, false);
-      assert.equal(reopenedStorage.getSettings().toolCallPresenceEnabled, true);
+      assert.equal(reopenedStorage.getSettings().currentDateEnabled, false);
       reopenedStorage.close();
 
       const promptContextFields = [
         "characterDefinitionEnabled",
-        "conversationTimingEnabled",
-        "toolCallPresenceEnabled",
+        "currentDateEnabled",
       ] as const;
       for (const disabledField of promptContextFields) {
         const isolatedStorage = new AppSettingsStorage(dbPath);
         isolatedStorage.updateSettings({
           ...isolatedStorage.getSettings(),
           characterDefinitionEnabled: disabledField === "characterDefinitionEnabled" ? false : true,
-          conversationTimingEnabled: disabledField === "conversationTimingEnabled" ? false : true,
-          toolCallPresenceEnabled: disabledField === "toolCallPresenceEnabled" ? false : true,
+          currentDateEnabled: disabledField === "currentDateEnabled" ? false : true,
         });
         isolatedStorage.close();
 
         const isolatedReloadedStorage = new AppSettingsStorage(dbPath);
         const isolatedSettings = isolatedReloadedStorage.getSettings();
         assert.equal(isolatedSettings.characterDefinitionEnabled, disabledField !== "characterDefinitionEnabled");
-        assert.equal(isolatedSettings.conversationTimingEnabled, disabledField !== "conversationTimingEnabled");
-        assert.equal(isolatedSettings.toolCallPresenceEnabled, disabledField !== "toolCallPresenceEnabled");
+        assert.equal(isolatedSettings.currentDateEnabled, disabledField !== "currentDateEnabled");
         isolatedReloadedStorage.close();
       }
 
@@ -567,8 +558,7 @@ describe("AppSettingsStorage", () => {
 
       const invalidValueStorage = new AppSettingsStorage(dbPath);
       assert.equal(invalidValueStorage.getSettings().characterDefinitionEnabled, true);
-      assert.equal(invalidValueStorage.getSettings().conversationTimingEnabled, true);
-      assert.equal(invalidValueStorage.getSettings().toolCallPresenceEnabled, true);
+      assert.equal(invalidValueStorage.getSettings().currentDateEnabled, true);
       invalidValueStorage.close();
 
       const missingDatabase = new DatabaseSync(dbPath);
@@ -579,8 +569,7 @@ describe("AppSettingsStorage", () => {
 
       const missingValueStorage = new AppSettingsStorage(dbPath);
       assert.equal(missingValueStorage.getSettings().characterDefinitionEnabled, true);
-      assert.equal(missingValueStorage.getSettings().conversationTimingEnabled, true);
-      assert.equal(missingValueStorage.getSettings().toolCallPresenceEnabled, true);
+      assert.equal(missingValueStorage.getSettings().currentDateEnabled, true);
       missingValueStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });

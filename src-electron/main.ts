@@ -2524,10 +2524,6 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       provider: { getProviderCodingAdapter, resetProviderSessionThread, getProviderAgentRuntimeBinding: ({ session, provider }) => issueProviderAgentRuntimeBinding(session, provider.id), beginProviderAgentRuntimeTurn: ({ session, binding, signal, executionOptions }) => beginManagedProviderTurn(session, binding, signal, executionOptions), endProviderAgentRuntimeTurn: endManagedProviderTurn },
       context: {
         getAppSettings: () => requireAppSettingsStorage().getSettings(),
-        getConversationTimingSnapshot: async (sessionId, observedAt) => {
-          const storage = requireSessionTurnStorage();
-          return storage.getConversationTimingSnapshot(sessionId, observedAt);
-        },
       },
       turn: { createSessionTurn: (entry) => requireSessionTurnService().createSessionTurn(entry), updateSessionTurn: (id, entry) => requireSessionTurnService().updateSessionTurn(id, entry) },
       live: { setLiveSessionRun, getLiveSessionRun, setProviderQuotaTelemetry: (telemetry) => setProviderQuotaTelemetry(telemetry.provider, telemetry), setSessionContextTelemetry: (telemetry) => setSessionContextTelemetry(telemetry.sessionId, telemetry), scheduleProviderQuotaTelemetryRefresh, broadcastLiveSessionRun },

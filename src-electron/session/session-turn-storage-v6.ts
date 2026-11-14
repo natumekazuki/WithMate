@@ -5,10 +5,6 @@ import type {
 } from "../../src-shared/session/session-turn-state.js";
 import { ensureV6Schema } from "../storage/database-schema-v6.js";
 import { openAppDatabase } from "../storage/sqlite-connection.js";
-import type {
-  CompletedTurnTimingRow,
-  ConversationTimingStorageSnapshot,
-} from "./conversation-timing.js";
 
 type TurnRow = {
   id: number;
@@ -161,98 +157,6 @@ export class SessionTurnStorageV6 {
       )
       .get(sessionId, sessionId) as TurnRow | undefined;
     return row ? turnRowToRecord(row) : null;
-  }
-
-  getConversationTimingSnapshot(
-    sessionId: string,
-    observedAt: string,
-  ): ConversationTimingStorageSnapshot {
-    const currentSessionRow = this.db
-      .prepare(
-        `
-      SELECT character_id, session_kind
-      FROM sessions_v6
-      WHERE id = ?
-    `,
-      )
-      .get(sessionId) as
-      { character_id: string | null; session_kind: string } | undefined;
-    const currentSessionCompleted = this.db
-      .prepare(
-        `
-      SELECT completed_at
-      FROM session_turns_v6
-      WHERE session_id = ?
-        AND phase = 'completed'
-        AND assistant_message_seq IS NOT NULL
-        AND completed_at IS NOT NULL
-        AND julianday(completed_at) <= julianday(?)
-      ORDER BY completed_at DESC, id DESC
-      LIMIT 1
-    `,
-      )
-      .get(sessionId, observedAt) as { completed_at: string } | undefined;
-
-    const characterId =
-      currentSessionRow?.session_kind === "default"
-        ? currentSessionRow.character_id?.trim() || null
-        : null;
-    if (!characterId) {
-      return {
-        currentSessionLastCompletedAt:
-          currentSessionCompleted?.completed_at ?? null,
-        sameCharacterOtherSessionLastCompletedAt: null,
-        sameCharacterCompletedTurns: null,
-      };
-    }
-
-    const otherSessionCompleted = this.db
-      .prepare(
-        `
-      SELECT turns.completed_at
-      FROM session_turns_v6 AS turns
-      INNER JOIN sessions_v6 AS sessions ON sessions.id = turns.session_id
-      WHERE sessions.character_id = ?
-        AND sessions.session_kind = 'default'
-        AND sessions.id <> ?
-        AND turns.phase = 'completed'
-        AND turns.assistant_message_seq IS NOT NULL
-        AND turns.completed_at IS NOT NULL
-        AND julianday(turns.completed_at) <= julianday(?)
-      ORDER BY turns.completed_at DESC, turns.id DESC
-      LIMIT 1
-    `,
-      )
-      .get(characterId, sessionId, observedAt) as
-      { completed_at: string } | undefined;
-    const completedTurns = this.db
-      .prepare(
-        `
-      SELECT turns.started_at, turns.completed_at
-      FROM session_turns_v6 AS turns
-      INNER JOIN sessions_v6 AS sessions ON sessions.id = turns.session_id
-      WHERE sessions.character_id = ?
-        AND sessions.session_kind = 'default'
-        AND turns.phase = 'completed'
-        AND turns.assistant_message_seq IS NOT NULL
-        AND turns.completed_at IS NOT NULL
-      ORDER BY turns.id ASC
-    `,
-      )
-      .all(characterId) as Array<{ started_at: string; completed_at: string }>;
-
-    return {
-      currentSessionLastCompletedAt:
-        currentSessionCompleted?.completed_at ?? null,
-      sameCharacterOtherSessionLastCompletedAt:
-        otherSessionCompleted?.completed_at ?? null,
-      sameCharacterCompletedTurns: completedTurns.map(
-        (turn): CompletedTurnTimingRow => ({
-          startedAt: turn.started_at,
-          completedAt: turn.completed_at,
-        }),
-      ),
-    };
   }
 
   close(): void {

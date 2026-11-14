@@ -386,7 +386,7 @@ runの解放は先行commandの後に配送し、Workerのowner削除応答かWo
 
 - assistant本文と操作結果は通常履歴・artifactへ保存し、`Details`で閲覧する。操作の配列順を保持し、独立した順序台帳を設けない
 - prompt、transport payload、raw event、本文tokenやstdout chunkごとの累積snapshotを別に保存しない
-- 最小turnはphase、実行設定、message位置、thread、時刻、error summaryを保存し、取消・retry・Conversation Timingの関連付けに使う
+- 最小turnはphase、実行設定、message位置、thread、時刻、error summaryを保存し、取消・retry・実行履歴の関連付けに使う
 - 保存失敗、結果不明、owner不一致を正常emptyや成功に変換せず、旧storage generationや削除済みownerへ書き戻さない
 
 ## Slash Command Routing

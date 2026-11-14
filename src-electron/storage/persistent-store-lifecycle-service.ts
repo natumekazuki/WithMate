@@ -184,7 +184,7 @@ export type MateStorageAsyncAccess = AwaitableStorageMethods<
 
 export type SessionTurnStorageAccess = AwaitableStorageMethods<
   SessionTurnStorageV6,
-  "createSessionTurn" | "updateSessionTurn" | "getLatestSessionTurn" | "getConversationTimingSnapshot"
+  "createSessionTurn" | "updateSessionTurn" | "getLatestSessionTurn"
 > & Pick<SessionTurnStorageV6, "close">;
 export type AuxiliarySessionStorageAccess = AuxiliarySessionStorageAsyncAccess;
 export type CharacterStorageAccess = CharacterStorageAsyncAccess;

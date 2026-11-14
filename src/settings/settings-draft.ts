@@ -27,23 +27,13 @@ export function updateCharacterDefinitionEnabled(
   };
 }
 
-export function updateConversationTimingEnabled(
+export function updateCurrentDateEnabled(
   draft: AppSettings,
   enabled: boolean,
 ): AppSettings {
   return {
     ...draft,
-    conversationTimingEnabled: enabled,
-  };
-}
-
-export function updateToolCallPresenceEnabled(
-  draft: AppSettings,
-  enabled: boolean,
-): AppSettings {
-  return {
-    ...draft,
-    toolCallPresenceEnabled: enabled,
+    currentDateEnabled: enabled,
   };
 }
 

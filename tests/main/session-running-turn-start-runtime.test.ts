@@ -231,109 +231,32 @@ it("snapshotなしneutral SessionはCharacterの再解決を行わない", async
 });
 
 // @test-value v2
-// kind = "invariant"
-// claim = "foreground prompt context が無効な turn では timing resolver を呼ばず、provider prompt へ context を渡さない"
-// oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-// fault = "表示しない context のために foreground resolver を実行し、provider prompt へ古い context を渡す"
-// observable = "resolver call count と ProviderCodingAdapter.runSessionTurn の入力"
+// kind = "contract"
+// claim = "通常Turnは開始日時をProviderへ渡し、設定OFFとauthoringでは日時を渡さない"
+// oracle = { type = "contract", ref = "docs/design/prompt-composition.md" }
+// fault = "現在日時が欠落するか設定/Session種別を無視して送信する"
+// observable = "Provider runSessionTurnが受け取るcurrentDateTime"
 // observation_boundary = "consumer"
-// scope = "session-runtime-prompt-context-resolution"
+// scope = "SessionRuntimeServiceの現在日時入力"
 // lifecycle = "permanent"
-// impact = "OFF設定でも不要な foreground context 取得・provider prompt への token 注入が発生する"
-// distinction = "provider prompt の section omission だけでなく、turn開始時の resolver 呼び出し境界を確認する"
 // @end-test-value
-it("foreground prompt context が無効な turn では不要なTiming resolver を呼ばない", async () => {
-  const session = createSession();
-  let timingResolverCalls = 0;
-  let composedInput: RunSessionTurnInput | null = null;
-  const adapter: ProviderCodingAdapter = {
-    ...createAdapter(async (input) => {
-      composedInput = input;
-      throw new Error("provider stopped for resolver boundary test");
-    }),
-    composePrompt(input) {
-      composedInput = input;
-      return {
-        systemBodyText: "system",
-        inputBodyText: "input",
-        logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-        imagePaths: [],
-        additionalDirectories: [],
-      };
-    },
-  };
-  const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
-    getAppSettings: () => ({
-      ...normalizeAppSettings({}),
-      conversationTimingEnabled: false,
-    }),
-    resolveConversationTimingContext() {
-      timingResolverCalls += 1;
-      throw new Error("timing resolver must not run");
-    },
-  }));
-
-  const result = await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
-
-  assert.equal(result.runState, "error");
-  assert.equal(timingResolverCalls, 0);
-  assert.ok(composedInput);
-  const composed = composedInput as RunSessionTurnInput;
-  assert.equal(composed.conversationTimingContext, undefined);
-
-  const runWithSettings = async (appSettings: ReturnType<typeof normalizeAppSettings>) => {
-    let timingCalls = 0;
-    let composedInput: RunSessionTurnInput | null = null;
-    const timingContext = {
-      observedAt: "2026-09-19T04:00:00.000+09:00",
-      observedDayOfWeek: "saturday",
-      currentSession: null,
-      sameCharacterOtherSession: null,
-      sameCharacterSharedWork: null,
-    } satisfies NonNullable<RunSessionTurnInput["conversationTimingContext"]>;
-    const partialAdapter: ProviderCodingAdapter = {
-      ...createAdapter(async (input) => {
-        composedInput = input;
-        throw new Error("provider stopped for resolver gate test");
-      }),
-      composePrompt(input) {
-        composedInput = input;
-        return {
-          systemBodyText: "system",
-          inputBodyText: "input",
-          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
-          imagePaths: [],
-          additionalDirectories: [],
-        };
-      },
-    };
-    const partialService = new SessionRuntimeService(createRuntimeDeps(session, partialAdapter, {
-      getAppSettings: () => appSettings,
-      resolveConversationTimingContext() {
-        timingCalls += 1;
-        return timingContext;
-      },
+it("開始時の現在日時を通常Turnの設定に従って渡す", async () => {
+  for (const [sessionKind, enabled] of [["default", true], ["default", false], ["character-authoring", true]] as const) {
+    const session = createSession({ sessionKind });
+    const seen: Array<string | undefined> = [];
+    const adapter = createAdapter(async (input) => { seen.push(input.currentDateTime); throw new Error("stop after dispatch"); });
+    const observed = new Date("2026-11-01T03:00:00Z");
+    const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
+      getAppSettings: () => ({ ...normalizeAppSettings({}), currentDateEnabled: enabled }),
+      currentDate: () => observed,
     }));
-
-    const partialResult = await partialService.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "お願い" });
-    assert.equal(partialResult.runState, "error");
-    assert.ok(composedInput);
-    return { timingCalls, composedInput: composedInput! };
-  };
-  const timingOff = await runWithSettings({
-    ...normalizeAppSettings({}),
-    conversationTimingEnabled: false,
-  });
-  const timingOn = await runWithSettings({
-    ...normalizeAppSettings({}),
-    conversationTimingEnabled: true,
-  });
-
-  assert.equal(timingOff.timingCalls, 0);
-  assert.equal((timingOff.composedInput as RunSessionTurnInput).conversationTimingContext, undefined);
-  assert.equal(timingOn.timingCalls, 1);
-  assert.equal((timingOn.composedInput as RunSessionTurnInput).conversationTimingContext?.observedAt, "2026-09-19T04:00:00.000+09:00");
+    await service.runSessionTurn(session.id, { executionOptions: TEST_EXECUTION_OPTIONS, userMessage: "依頼" });
+    assert.equal(seen.length, 1);
+    if (enabled && sessionKind === "default") assert.equal(Date.parse(seen[0]!), observed.getTime());
+    else assert.equal(seen[0], undefined);
+  }
 });
+
 
 // @test-value v2
 // kind = "invariant"

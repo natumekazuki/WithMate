@@ -216,9 +216,9 @@ describe("home-settings-draft", () => {
 
   // @test-value v2
   // kind = "invariant"
-  // claim = "Home Settings の foreground prompt context 3項目の handler は、他の2つのPrompt Context値を保持したまま対象draftだけを更新する"
+  // claim = "Home Settings の foreground prompt context 2項目の handler は、他の1つのPrompt Context値を保持したまま対象draftだけを更新する"
   // oracle = { type = "contract", ref = "docs/design/settings-ui.md#current-scope" }
-  // fault = "3つの checkbox handler が同じ state を更新するか、対象以外のPrompt Context値をdraftで巻き戻す"
+  // fault = "2つの checkbox handler が同じ state を更新するか、対象以外のPrompt Context値をdraftで巻き戻す"
   // observable = "buildSettingsDraftHandlers 経由で checkbox handler を適用した AppSettings"
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-draft"
@@ -230,8 +230,7 @@ describe("home-settings-draft", () => {
     const initialDraft = {
       ...createDefaultAppSettings(),
       characterDefinitionEnabled: true,
-      conversationTimingEnabled: true,
-      toolCallPresenceEnabled: false,
+      currentDateEnabled: true,
     };
     const scenarios = [
       {
@@ -241,16 +240,10 @@ describe("home-settings-draft", () => {
           handlers.onChangeCharacterDefinitionEnabled(false),
       },
       {
-        field: "conversationTimingEnabled",
+        field: "currentDateEnabled",
         value: false,
         apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
-          handlers.onChangeConversationTimingEnabled(false),
-      },
-      {
-        field: "toolCallPresenceEnabled",
-        value: true,
-        apply: (handlers: ReturnType<typeof buildSettingsDraftHandlers>) =>
-          handlers.onChangeToolCallPresenceEnabled(true),
+          handlers.onChangeCurrentDateEnabled(false),
       },
     ] as const;
 
@@ -260,7 +253,7 @@ describe("home-settings-draft", () => {
       scenario.apply(handlers);
 
       assert.equal(state.draft[scenario.field], scenario.value);
-      for (const field of ["characterDefinitionEnabled", "conversationTimingEnabled", "toolCallPresenceEnabled"] as const) {
+      for (const field of ["characterDefinitionEnabled", "currentDateEnabled"] as const) {
         if (field !== scenario.field) {
           assert.equal(state.draft[field], initialDraft[field]);
         }

@@ -27,7 +27,7 @@ import { composeProviderInput } from "../providers/provider-prompt.js";
 import type { Awaitable } from "../storage/persistent-store-lifecycle-service.js";
 import type { SessionTurnTerminalNotification } from "./session-turn-notification-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "../providers/agent-runtime-binding.js";
-import type { ConversationTimingContext } from "./conversation-timing.js";
+import { formatCurrentDateTime } from "./current-date.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import { DEFAULT_PROVIDER_CANCEL_GRACE_MS } from "./session-run-timeouts.js";
 import { applyProviderProgressChanges } from "../providers/provider-progress.js";
@@ -76,10 +76,6 @@ export type SessionRuntimeServiceDeps = {
     provider: ModelCatalogProvider;
   }>;
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
-  resolveConversationTimingContext?: (
-    session: Session,
-    observedAt: Date,
-  ) => Awaitable<ConversationTimingContext | null>;
   createSessionTurn(input: SessionTurnInput): Awaitable<SessionTurnRecord>;
   updateSessionTurn(id: number, input: SessionTurnInput): Awaitable<void | SessionTurnRecord>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -1033,11 +1029,6 @@ export class SessionRuntimeService {
       this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
     );
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
-    const conversationTimingContext = appSettings.conversationTimingEnabled
-      ? await Promise.resolve(
-        this.deps.resolveConversationTimingContext?.(session, observedAt) ?? null,
-      )
-      : null;
     throwIfRunCanceled(runAbortController.signal, queued);
     try {
       assertModelEnabled((await this.deps.getAppSettings()).modelAvailability, provider.id, executionOptions.model);
@@ -1206,7 +1197,7 @@ export class SessionRuntimeService {
         ...(queued ? { inputProvenance: queuedInputProvenance(queued.receipt, queued.input) } : {}),
         appSettings,
         attachments: composerPreview.attachments,
-        conversationTimingContext: conversationTimingContext ?? undefined,
+        currentDateTime: appSettings.currentDateEnabled && session.sessionKind === "default" ? formatCurrentDateTime(observedAt) : undefined,
         agentRuntimeBinding,
         signal: runAbortController.signal,
         onCleanupPending: (completion) => this.trackTerminatingSessionRun(sessionId, completion),

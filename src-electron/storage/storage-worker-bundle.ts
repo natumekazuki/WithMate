@@ -57,7 +57,7 @@ const STORE_METHODS = {
     "clearCharacterAuthoringRuntimeState", "appendRunningTurnStart", "appendSessionSteer", "appendSessionTerminal", "checkpointSessionRunMetadata", "insertSession", "replaceSessions",
     "deleteSession", "deleteSessions", "clearSessions",
   ],
-  turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn", "getConversationTimingSnapshot"],
+  turn: ["createSessionTurn", "updateSessionTurn", "getLatestSessionTurn"],
   queue: ["enqueue", "getReceipt", "getReceiptById", "listActive", "listReceipts", "listPendingOwners", "claimNext", "claimForInput", "restoreQueuedInput", "markStarted", "settle", "cancelQueued", "updateQueued", "reorderQueued", "recoverInterrupted", "releaseInterrupted"],
   auxiliary: [
     "getAuxiliarySessionView", "getConversationPage", "readSessionHistory", "searchConversation", "listConversationNavigator", "cancelConversationQuery",

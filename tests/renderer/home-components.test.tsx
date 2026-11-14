@@ -84,14 +84,13 @@ describe("HomeSettingsContent", () => {
       deletingOldSessions={false}
       onChangeAutoCollapseActionDockOnSend={noOp}
       onChangeCharacterDefinitionEnabled={noOp}
-      onChangeConversationTimingEnabled={noOp}
+      onChangeCurrentDateEnabled={noOp}
       onChangeScrollToLatestOnSend={noOp}
       onChangePreviewWheelZoomStep={noOp}
       onChangeLaunchAtLoginEnabled={noOp}
       onChangeSessionTurnNotificationEnabled={noOp}
       onChangeSessionApprovalNotificationEnabled={noOp}
       onChangeSessionTurnNotificationResponsePreviewEnabled={noOp}
-      onChangeToolCallPresenceEnabled={noOp}
       onChangeKeyboardShortcuts={noOp}
       onChangeGlossaryProactiveCreateLimit={noOp}
       onChangeSessionCleanupCutoffDate={noOp}
@@ -232,7 +231,7 @@ describe("HomeSettingsContent", () => {
         notifications.querySelector("summary")!.click();
         section("App").querySelector("summary")!.click();
       });
-      await act(async () => container.querySelector<HTMLInputElement>("#settings-prompt-context-tool-call-presence")!.click());
+      await act(async () => container.querySelector<HTMLInputElement>("#settings-prompt-context-current-date")!.click());
       assert.equal(providers.open, false);
       assert.equal(section("App").open, false);
       assert.equal(section("Prompt Context").open, true);
@@ -256,7 +255,7 @@ describe("HomeSettingsContent", () => {
       assert.equal(saves, 1);
       assert.equal(saved?.codingProviderSettings.codex.skillRootPath, "C:/provider-config");
       assert.equal(saved?.codingProviderSettings.codex.enabled, false);
-      assert.equal(saved?.toolCallPresenceEnabled, false);
+      assert.equal(saved?.currentDateEnabled, false);
     });
   });
 
@@ -288,10 +287,10 @@ describe("HomeSettingsContent", () => {
   // observation_boundary = "component-behavior"
   // scope = "home-settings-prompt-context-ui"
   // lifecycle = "permanent"
-  // impact = "ユーザーが3つの foreground prompt context の設定面を見つけられないか、既定状態を判断できない"
+  // impact = "ユーザーが2つの prompt context の設定面を見つけられないか、既定状態を判断できない"
   // distinction = "個別 state/action の保存handlerは draft test に分け、static DOMではsection labelと既定stateだけを確認する"
   // @end-test-value
-  it("Prompt Context に3項目の個別 toggle を既定有効で表示する", () => {
+  it("Prompt Context に2項目の個別 toggle を既定有効で表示する", () => {
     const html = renderSettings();
     const document = new JSDOM(html).window.document;
     const promptContextSection = Array.from(document.querySelectorAll("details.settings-section-card"))
@@ -302,8 +301,7 @@ describe("HomeSettingsContent", () => {
 
     const promptContextLabels = [
       "Character Definition Snapshot",
-      "Conversation Timing",
-      "Tool Call Presence",
+      "Current Date",
     ];
     const promptContextRows = Array.from(promptContextSection.querySelectorAll(".settings-provider-toggle-row"));
     assert.equal(promptContextRows.length, promptContextLabels.length);
