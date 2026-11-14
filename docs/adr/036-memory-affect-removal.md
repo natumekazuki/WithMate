@@ -52,7 +52,7 @@ Memoryの利用実態調査では、過去の記録を検索して本文を取�
 - [Memory設計](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/design/v6-memory-foundation.md)
 - [跨SessionのAffect設計](https://github.com/natumekazuki/WithMate/blob/e60cee1cc31a805be29bfa42c98bddce6a6f113e/docs/features/cross-session-affect-afterglow.md)
 
-削除commit Dは本文作成時点では未確定である。撤去の統合commit確定後、別のdocs commitでDの完全hashとPからDまでの比較rangeを追記する。PをDとして扱わず、未確定のhashを記載しない。
+削除commit Dは [da64723f6073955becf1859c265ccfcba70da16b](https://github.com/natumekazuki/WithMate/commit/da64723f6073955becf1859c265ccfcba70da16b)（`refactor: Memory・Affectの専用機構を撤去`）であり、直接の親はPである。撤去差分は [P..D（e60cee1cc31a805be29bfa42c98bddce6a6f113e..da64723f6073955becf1859c265ccfcba70da16b）](https://github.com/natumekazuki/WithMate/compare/e60cee1cc31a805be29bfa42c98bddce6a6f113e..da64723f6073955becf1859c265ccfcba70da16b) で参照する。この削除地点の記録はD後の別のdocs commitで追加し、PとDを区別する。Dのlocal commit確定は、稼働環境への適用・データ破棄完了やreleaseを意味しない。
 
 ## 従前判断の適用範囲
 
