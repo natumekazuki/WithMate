@@ -457,7 +457,16 @@ test("parent Steer preserves the exact Turn, attribution and settings through MC
       assert.equal(history.speaker.kind, "agent");
       assert.equal(history.speaker.session.id, f.parent.id);
       assert.equal(f.sent.at(-1)!.expectedTurnId, "native-turn");
-      assert.match(f.sent.at(-1)!.userMessage, /not spoken directly by the user/);
+      const providerInputLines = f.sent.at(-1)!.userMessage.split("\n");
+      for (const expectedLine of [
+        "Sender: Session",
+        `Session: ${JSON.stringify(f.parent.id)}`,
+        `Incarnation: ${JSON.stringify(f.parent.incarnationId)}`,
+        `Source Turn: ${JSON.stringify(String(f.source.id))}`,
+        'Operation: "steer"',
+      ]) {
+        assert.ok(providerInputLines.includes(expectedLine), expectedLine);
+      }
       assert.ok(f.sent.at(-1)!.userMessage.includes(text));
     }
     const inputs = await parent.call("cli", "list_execution_inputs", { target: target(f.child), turnId });
